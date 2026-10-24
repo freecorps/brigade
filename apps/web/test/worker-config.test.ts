@@ -59,3 +59,19 @@ describe("web Worker → API Worker → WorkspaceDO, with the real configs", () 
     expect(await (await get("/app.js")).text()).toContain("built asset");
   });
 });
+
+describe("wrangler.jsonc environments", () => {
+  // Service bindings are not inherited by environments, so each one must name its own API Worker.
+  test.each([
+    ["top level (production)", rawConfig.services],
+    ["dev", rawConfig.env?.dev?.services],
+    ["staging", rawConfig.env?.staging?.services],
+  ])("%s binds API to its own API Worker", (name, services) => {
+    const expected = {
+      "top level (production)": "brigade-api",
+      dev: "brigade-api-dev",
+      staging: "brigade-api-staging",
+    }[name];
+    expect(services).toEqual([{ binding: "API", service: expected }]);
+  });
+});

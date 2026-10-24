@@ -1,0 +1,46 @@
+{
+  "name": "@freecorps/brigade-i18n",
+  "version": "0.0.0",
+  "description": "Message catalog (en, pt-BR) and Intl helpers for Freecorps Brigade (server, web and mobile).",
+  "homepage": "https://github.com/freecorps/brigade#readme",
+  "bugs": {
+    "url": "https://github.com/freecorps/brigade/issues"
+  },
+  "license": "MIT",
+  "author": "Freecorps Tecnologia da Informação LTDA",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freecorps/brigade.git",
+    "directory": "packages/i18n"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./labels": "./dist/labels.mjs",
+    "./messages": "./dist/messages.mjs",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "compile": "vpx scripts/compile.ts",
+    "build": "vpx scripts/compile.ts && vp pack",
+    "dev": "vpx scripts/dev.ts",
+    "test": "vp test",
+    "check": "vp check"
+  },
+  "devDependencies": {
+    "@freecorps/brigade-schema": "workspace:*",
+    "@inlang/paraglide-js": "2.29.1",
+    "@inlang/plugin-message-format": "4.5.5",
+    "@inlang/sdk": "4.0.4",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:"
+  }
+}

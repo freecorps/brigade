@@ -1,0 +1,36 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "app_name": "Brigade",
+  "app_tagline": "Open-source incident management that deploys to your Cloudflare account.",
+  "theme_label": "Theme",
+  "theme_light": "Light",
+  "theme_dark": "Dark",
+  "theme_system": "System",
+  "language_label": "Language",
+  "severity_sev1": "Critical",
+  "severity_sev2": "High",
+  "severity_sev3": "Medium",
+  "severity_sev4": "Low",
+  "incident_status_triage": "Triage",
+  "incident_status_investigating": "Investigating",
+  "incident_status_fixing": "Fixing",
+  "incident_status_monitoring": "Monitoring",
+  "incident_status_resolved": "Resolved",
+  "incident_status_declined": "Declined",
+  "incidents_active_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countExact = count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countExact", "countPlural"],
+      "match": {
+        "countExact=0, countPlural=*": "No active incidents",
+        "countExact=*, countPlural=one": "{countFormatted} active incident",
+        "countExact=*, countPlural=*": "{countFormatted} active incidents"
+      }
+    }
+  ]
+}

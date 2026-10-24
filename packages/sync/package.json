@@ -1,0 +1,71 @@
+{
+  "name": "@freecorps/brigade-sync",
+  "version": "0.0.0",
+  "description": "Brigade Sync client for Freecorps Brigade (web and mobile): wire protocol, sync client and React hooks.",
+  "homepage": "https://github.com/freecorps/brigade#readme",
+  "bugs": {
+    "url": "https://github.com/freecorps/brigade/issues"
+  },
+  "license": "MIT",
+  "author": "Freecorps Tecnologia da Informação LTDA",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freecorps/brigade.git",
+    "directory": "packages/sync"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "@freecorps/source": "./src/index.ts",
+      "default": "./dist/index.mjs"
+    },
+    "./protocol": {
+      "@freecorps/source": "./src/protocol.ts",
+      "default": "./dist/protocol.mjs"
+    },
+    "./react": {
+      "@freecorps/source": "./src/react.ts",
+      "default": "./dist/react.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": "./dist/index.mjs",
+      "./protocol": "./dist/protocol.mjs",
+      "./react": "./dist/react.mjs",
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "check": "vp check"
+  },
+  "dependencies": {
+    "@freecorps/brigade-schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  }
+}

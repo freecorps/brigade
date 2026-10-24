@@ -106,6 +106,28 @@
         "vite-plus": "catalog:",
       },
     },
+    "packages/sync": {
+      "name": "@freecorps/brigade-sync",
+      "version": "0.0.0",
+      "dependencies": {
+        "@freecorps/brigade-schema": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^26.6.5",
+        "@types/react": "^19.3.0",
+        "@types/react-dom": "^19.3.0",
+        "react": "^19.3.1",
+        "react-dom": "^19.3.1",
+        "typescript": "^7.0.2",
+        "vite-plus": "catalog:",
+      },
+      "peerDependencies": {
+        "react": "^18.0.0 || ^19.0.0",
+      },
+      "optionalPeers": [
+        "react",
+      ],
+    },
     "packages/ui": {
       "name": "@freecorps/brigade-ui",
       "version": "0.0.0",
@@ -492,6 +514,8 @@
     "@freecorps/brigade-mobile": ["@freecorps/brigade-mobile@workspace:apps/mobile"],
 
     "@freecorps/brigade-schema": ["@freecorps/brigade-schema@workspace:packages/schema"],
+
+    "@freecorps/brigade-sync": ["@freecorps/brigade-sync@workspace:packages/sync"],
 
     "@freecorps/brigade-ui": ["@freecorps/brigade-ui@workspace:packages/ui"],
 

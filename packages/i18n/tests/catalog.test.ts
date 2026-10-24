@@ -89,7 +89,9 @@ test("committed src/paraglide matches the message sources", async () => {
     const text = fs.readFileSync(path.join(outdir, file), "utf8").replaceAll("\r\n", "\n");
     expect(text, `${stale} (${file})`).toBe(content);
   }
-});
+  // A full in-memory compile: about 1-2 s alone, past the 5 s default when `vp run -r test` runs it
+  // alongside apps/web's tests, which start workerd.
+}, 30_000);
 
 test("explicit locale wins over the current locale", () => {
   expect(m.incident_status_investigating()).toBe("Investigating");

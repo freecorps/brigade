@@ -5,11 +5,15 @@
 ## Runtime overview
 
 ```
-                       ┌───────────────────────── Cloudflare account ─────────────────────────┐
- Web dashboard ──WS──▶ │ api Worker (router, auth, REST/OpenAPI, webhooks in)                 │
- Mobile (Expo) ──WS──▶ │   ├─▶ WorkspaceDO   (SQLite) services, on-call, incident index       │
- Slack ─────HTTP─────▶ │   ├─▶ IncidentDO    (SQLite) timeline, roles, fields, escalation     │
- Alert sources ──────▶ │   ├─▶ AlertGroupDO  (SQLite) dedupe/grouping window                  │
+                       ┌───────────────────────── Cloudflare account ──────────────────────────┐
+ Web dashboard ──────▶ │ web Worker: SPA on static assets; /api/* ─(service binding API)─┐     │
+                       │   prefix stripped, WebSocket upgrades pass through              │     │
+                       │ ┌───────────────────────────────────────────────────────────────┘     │
+                       │ ▼                                                                     │
+ Mobile (Expo) ──WS──▶ │ api Worker (router, auth, REST/OpenAPI, webhooks in)                  │
+ Slack ─────HTTP─────▶ │   ├─▶ WorkspaceDO   (SQLite) services, on-call, incident index        │
+ Alert sources ──────▶ │   ├─▶ IncidentDO    (SQLite) timeline, roles, fields, escalation      │
+                       │   ├─▶ AlertGroupDO  (SQLite) dedupe/grouping window                   │
                        │   └─▶ D1            cross-workspace index, search, reporting          │
                        │                                                                       │
                        │ ProbeDO × N regions (locationHint) ── alarm ──▶ checks ─▶ AlertGroupDO│
@@ -17,7 +21,7 @@
                        │ Queues: events ─▶ notifier Worker ─▶ push relay / Slack / email / SMS │
                        │ R2: attachments, exports, backups      Workers AI: summaries          │
                        └───────────────────────────────────────────────────────────────────────┘
-                                                   │
+                                                  │
                          relay Worker (operated by Freecorps, also self-hostable) ─▶ APNs / FCM
 ```
 
@@ -42,7 +46,8 @@ and may lag by milliseconds.
 apps/
   api/         Cloudflare Worker: HTTP/WS entry, Durable Objects, queue consumers      (AGPL-3.0)
   relay/       Push relay Worker (RFC 0006)                                            (AGPL-3.0)
-  web/         Dashboard SPA (React + Vite), served by Workers static assets           (AGPL-3.0)
+  web/         Dashboard SPA (React + Vite) on Workers static assets, plus a small     (AGPL-3.0)
+               Worker that forwards /api/* to the api Worker (service binding)
   mobile/      Expo app (iOS/Android)                                                  (AGPL-3.0)
   site/        Public website + docs, i18n                                             (AGPL-3.0)
 packages/

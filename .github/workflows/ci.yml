@@ -2,7 +2,7 @@
 # "Check, test and build" job by name; rename both together.
 name: CI
 
-# Prose-only changes start no runner.
+# Prose-only pushes to main start no runner.
 on:
   workflow_dispatch:
   push:
@@ -12,12 +12,8 @@ on:
       - "*.md"
       - ".agents/**/*.md"
       - ".claude/**/*.md"
+  # No paths-ignore here: this job is a required check, and a check that never starts blocks the merge.
   pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "*.md"
-      - ".agents/**/*.md"
-      - ".claude/**/*.md"
 
 permissions:
   contents: read

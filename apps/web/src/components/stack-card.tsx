@@ -108,7 +108,7 @@ export function StackCard() {
   );
 
   return (
-    <Card aria-labelledby="stack-title" aria-busy={checking}>
+    <Card aria-labelledby="stack-title">
       <CardHeader>
         <CardTitle id="stack-title">{m.stack_title()}</CardTitle>
         <CardDescription className="tabular-nums" aria-live="polite">
@@ -125,7 +125,7 @@ export function StackCard() {
         {failed ? null : <CardAction>{checkAgain}</CardAction>}
       </CardHeader>
 
-      <CardContent className="flex flex-col gap-5">
+      <CardContent className="flex flex-col gap-5" aria-busy={checking}>
         <Verdict state={state} />
 
         <ul className="grid overflow-hidden rounded-md border sm:grid-cols-2">

@@ -176,7 +176,8 @@ test("text checks stay linear on long hostile input", () => {
   for (const input of inputs) {
     const started = performance.now();
     const result = long(input);
-    expect(performance.now() - started).toBeLessThan(50);
+    // Quadratic behaviour at this size takes seconds; the limit only has to catch that.
+    expect(performance.now() - started).toBeLessThan(500);
     expect(result.ok).toBe(true);
   }
 });

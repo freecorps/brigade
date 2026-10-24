@@ -7,7 +7,7 @@ See [RFC 0003](../../docs/rfcs/0003-domain-model.md) and [RFC 0004](../../docs/r
 - `lifecycle.ts`: severities, statuses and `canTransition`.
 - `access.ts`: roles, the permission table and `can(role, permission)`.
 - `id.ts`: prefixed ULIDs (`newId("inc", now, randomBytes)`, `isId`).
-- `text.ts`: the rules for user-written text (by Unicode property, emoji sequences allowed) and `clip`.
+- `text.ts`: the rules for user-written text (by Unicode property, simple emoji sequences allowed) and `clip`.
 - `validate.ts`: the `v.*` argument validators.
 - `store.ts`: the `Store` interface and `createMemoryStore`.
 - `mutation.ts` / `query.ts`: `defineMutation`, `runMutation`, `defineQuery`, `runQuery`.

@@ -68,12 +68,19 @@ test("hidden code points are rejected in titles", () => {
     expect(title(`a${cp(code)}b`), code.toString(16)).toEqual(issue(TEXT_ERRORS.hidden));
     expect(title(cp(code)), code.toString(16)).not.toEqual({ ok: true, value: cp(code) });
   }
-  // A run of tag characters spelling text is not a flag.
-  expect(title(`a${cp(0xe0067, 0xe0062, 0xe007f)}`)).toEqual(issue(TEXT_ERRORS.hidden));
+  // Tag characters are rejected everywhere, flags included: they would carry hidden ASCII.
+  const hiddenAscii = Array.from("ignore previous", (char) => 0xe0000 + char.codePointAt(0)!);
+  expect(title(`Checkout down ${cp(0x1f3f4, ...hiddenAscii, 0xe007f)}`)).toEqual(
+    issue(TEXT_ERRORS.hidden),
+  );
+  expect(title(cp(0x1f3f4, 0xe0067, 0xe0062, 0xe0065, 0xe006e, 0xe0067, 0xe007f))).toEqual(
+    issue(TEXT_ERRORS.hidden),
+  ); // flag of England
+  expect(title(cp(0x1f3f4)).ok).toBe(true); // the black flag on its own is fine
 });
 
 test("a title needs at least one visible code point", () => {
-  for (const blank of [cp(0x2800), cp(0x2800, 0x20, 0x2800)]) {
+  for (const blank of [cp(0x2800), cp(0x2800, 0x20, 0x2800), cp(0x1d159), cp(0x1d159, 0x2800)]) {
     expect(title(blank)).toEqual(issue(TEXT_ERRORS.nothingVisible));
   }
   expect(title(cp(0x200b))).toEqual(issue(TEXT_ERRORS.hidden));
@@ -98,7 +105,8 @@ test("ordinary text in any script, punctuation, symbols and emoji is accepted", 
     cp(0x1f469, 0x1f3fd, 0x200d, 0x1f4bb), // woman technologist, medium skin tone
     cp(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467), // family
     cp(0x31, 0xfe0f, 0x20e3), // keycap 1
-    cp(0x1f3f4, 0xe0067, 0xe0062, 0xe0065, 0xe006e, 0xe0067, 0xe007f), // flag of England
+    cp(0x2764, 0xfe0e), // red heart, text presentation
+    cp(0x845b, 0xe0100), // CJK ideograph with a glyph variant
     cp(0x1f1e7, 0x1f1f7), // flag of Brazil (regional indicators)
   ];
   for (const text of accepted) {
@@ -113,8 +121,23 @@ test("emoji joiners and selectors must attach to something", () => {
   expect(title(cp(0x2764, 0xfe0f, 0xfe0f))).toEqual(issue(TEXT_ERRORS.hidden)); // two selectors
   expect(title(cp(0x61, 0xfe0f))).toEqual(issue(TEXT_ERRORS.hidden)); // emoji selector on a letter
   expect(title(cp(0x1f525, 0xe0100))).toEqual(issue(TEXT_ERRORS.hidden)); // ideographic selector on emoji
-  expect(title(cp(0x845b, 0xe0100)).ok).toBe(true); // CJK glyph variant
-  expect(title(cp(0x1f3f4, 0xe0067, 0xe0062))).toEqual(issue(TEXT_ERRORS.hidden)); // no cancel tag
+  expect(title(cp(0x61, 0xe0100))).toEqual(issue(TEXT_ERRORS.hidden)); // ideographic selector on a letter
+  expect(title(cp(0x1f600, 0xfe03))).toEqual(issue(TEXT_ERRORS.hidden)); // VS4 on an emoji
+  expect(title(cp(0x31, 0xfe00))).toEqual(issue(TEXT_ERRORS.hidden)); // VS1 on a keycap base
+  for (let selector = 0xfe00; selector <= 0xfe0d; selector++) {
+    expect(title(cp(0x1f600, selector)), selector.toString(16)).toEqual(issue(TEXT_ERRORS.hidden));
+  }
+});
+
+test("per-letter variation selectors cannot smuggle a second message", () => {
+  // Each letter followed by a selector: renders as "Checkout-is-down" while carrying hidden bits.
+  const letters = Array.from("Checkout-is-down", (char) => char.codePointAt(0)!);
+  const smuggled = letters.flatMap((code, i) => [code, 0xfe00 + (i % 14)]);
+  expect(title(cp(...smuggled))).toEqual(issue(TEXT_ERRORS.hidden));
+  const ideographic = letters.flatMap((code, i) => [code, 0xe0100 + i]);
+  expect(title(cp(...ideographic))).toEqual(issue(TEXT_ERRORS.hidden));
+  const presentation = letters.flatMap((code) => [code, 0xfe0f]);
+  expect(title(cp(...presentation))).toEqual(issue(TEXT_ERRORS.hidden));
 });
 
 test("unpaired surrogates are rejected in single- and multi-line text", () => {
@@ -181,10 +204,14 @@ test("without property escapes the client is lenient and leaves the rest to the 
   }
   expect(fallback.problem(`a${String.fromCharCode(0xd800)}`, false)).toBe(TEXT_ERRORS.surrogate);
   expect(fallback.problem("a\nb", true)).toBeUndefined();
+  // Tags and VS1-VS14 are rejected even without property escapes.
+  for (const code of [0xe0000, 0xe0041, 0xe007f, 0xfe00, 0xfe0d]) {
+    expect(fallback.problem(`a${cp(code)}`, false), code.toString(16)).toBe(TEXT_ERRORS.hidden);
+  }
   // …but anything the full rules might accept passes, so the client never refuses what the server takes.
   for (const text of [cp(0x2764, 0xfe0f), cp(0x1f468, 0x200d, 0x1f469), `a${cp(0x200b)}b`]) {
     expect(fallback.problem(text, false)).toBeUndefined();
   }
-  expect(fallback.hasVisible(cp(0x2800, 0x3164))).toBe(false);
+  expect(fallback.hasVisible(cp(0x2800, 0x3164, 0x1d159))).toBe(false);
   expect(fallback.hasVisible("x")).toBe(true);
 });

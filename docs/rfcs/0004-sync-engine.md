@@ -94,17 +94,20 @@ runQuery(queries, name, rawArgs, store, role, { onError? }) // → { ok: true, r
   accepts only plain objects and rejects unknown keys. `v.string` rejects raw input longer than about twice its
   limit before any work, then walks the code points once (linear) and trims an explicit whitespace set (not the
   engine's `trim`). The rule is by Unicode property, not a hand list: reject any code point in `Cc`, `Cf`, `Cs`,
-  `Co`, `Cn`, `Default_Ignorable_Code_Point`, `Zl` or `Zp`, except the joiners, variation selectors and tags of
-  well-formed emoji sequences (ZWJ between pictographs, a selector right after what it selects, a black-flag tag
-  run ending in the cancel tag); multi-line text may also hold `\n` and `\t`. The result must contain at least
-  one letter, number, symbol or punctuation that is not a blank look-alike (Braille blank, Hangul fillers), and
-  `min` is checked after all that. Errors carry at most 10 issues, and echoed names and paths are cut to 64 code
+  `Co`, `Cn`, `Default_Ignorable_Code_Point`, `Zl` or `Zp`, with exactly three exceptions: ZWJ between two
+  `Extended_Pictographic` code points; one U+FE0E or U+FE0F right after an `Extended_Pictographic` code point or a
+  keycap base (`0-9`, `#`, `*`); one U+E0100–U+E01EF right after an `Ideographic` code point. Every other variation
+  selector (U+FE00–U+FE0D, or any selector elsewhere) and every tag character (U+E0000–U+E007F, so subdivision
+  flags too) is rejected, so no invisible code point can carry a hidden message. Multi-line text may also hold
+  `\n` and `\t`. The result must contain at least one letter, number, symbol or punctuation that is not a blank
+  look-alike (Braille blank, musical null notehead U+1D159, Hangul fillers), and `min` is checked after all that. Errors carry at most 10 issues, and echoed names and paths are cut to 64 code
   units without splitting a pair, with rejected code points shown as U+FFFD. Valibot is the upgrade if the arg
   shapes outgrow this.
 - **Unicode property escapes** (`\p{…}` with the `u` flag) are in V8 (Workers, Chrome, Node) and in Hermes since
   2024 (facebook/hermes#1295, behind a build flag that defaults to on). The regexes are built at runtime: on an
-  engine without them, clients fall back to rejecting only controls, separators, bidi overrides/isolates and
-  unpaired surrogates, and leave the rest to the server, which always runs the full rule.
+  engine without them, clients fall back to rejecting only controls, separators, bidi overrides/isolates, tag
+  characters, U+FE00–U+FE0D and unpaired surrogates, and leave the rest to the server, which always runs the full
+  rule.
   `UNICODE_PROPERTY_ESCAPES` tells which path is active; S4 checks it is `true` on device. Unassigned (`Cn`) depends
   on each engine's Unicode version, so a code point newer than a client's tables can fail there optimistically
   while the server accepts it; the server's answer wins.

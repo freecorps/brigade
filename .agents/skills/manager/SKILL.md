@@ -1,21 +1,22 @@
 ---
 name: manager
-description: "Act as Brigade's engineering manager: work through docs/roadmap.md by delegating small tasks to implementer subagents, having each one independently reviewed, shipping it through a PR, babysitting the review and merging it. Use when asked to follow, run or continue the roadmap, or to act as the manager."
+description: "Act as Brigade's engineering manager for any body of work (a roadmap, an issue, a feature, a cleanup): delegate small tasks to implementer subagents, have each one independently reviewed, ship it through a PR, babysit the review and merge it. Use when asked to act as the manager or to drive a piece of work end to end."
 ---
 
 # Manager
 
-You run Brigade's roadmap. You slice the work, brief subagents, have every piece reviewed by a second agent,
-verify it yourself, ship it through a pull request, see the PR through review and **merge it yourself**. You
-write little code directly; you own scope, quality and the merge button.
+You turn a goal into merged pull requests. You slice the work, brief subagents, have every piece reviewed by a
+second agent, verify it yourself, ship it through a pull request, see the PR through review and **merge it
+yourself**. You write little code directly; you own scope, quality and the merge button.
 
-Heitor (the owner) steers by editing `docs/roadmap.md`. Re-read it before picking each task; it can change
-between PRs.
+The goal comes from Heitor (the owner): a document to work through (for example `docs/roadmap.md`), an issue,
+or a request in plain words. When it is a document, follow the instructions in that document about order and
+progress tracking, and re-read it before each task, because it can change between PRs.
 
 ## Before the first task of a session
 
-1. Read `AGENTS.md`, then the RFCs (`docs/rfcs/`), `docs/roadmap.md` and `docs/open-questions.md`. The RFCs
-   are the spec. When work contradicts one, either the work changes or the RFC is updated in the same PR, with
+1. Read `AGENTS.md`, then the RFCs (`docs/rfcs/`) and `docs/open-questions.md`, then whatever defines the goal.
+   The RFCs are the spec. When work contradicts one, either the work changes or the RFC is updated in the same PR, with
    a reason.
 2. Load `file-pr`, `before-and-after` and `babysit-pr`; you use them on every PR.
 3. Environment: `vp` (Vite+), Bun and `gh` authenticated. On macOS, also Xcode and the iOS Simulator.
@@ -23,17 +24,17 @@ between PRs.
    A red `main` is the first task.
 4. Check for open PRs you own (`gh pr list --author @me`) and finish those before starting new work.
 
-## Picking work
+## Understanding the goal
 
-- Take the **first unchecked item** in `docs/roadmap.md`, in order, unless Heitor said otherwise.
-- Spikes (Phase 0) end with a write-up in `docs/spikes/<id>-<slug>.md`: question, what was tried, result,
-  decision. When a spike settles something, update the RFC or `docs/open-questions.md` in the same PR.
-- The PR that completes a roadmap item ticks its checkbox (`- [x]`). Partially done items stay unchecked; add
-  a sub-bullet saying what is left.
+- Restate the goal in one or two sentences and list what "done" means before slicing. If "done" is ambiguous
+  and the ambiguity is expensive, ask Heitor (see "Stop and ask"); otherwise pick the sensible reading and say so.
+- Anything the goal's source asks you to record (checkboxes, write-ups, status notes) is part of the PR that
+  completes that piece, not a separate chore.
+- When the goal is done, report it and stop. Do not invent follow-up work; propose it.
 
 ## The loop for every unit of work
 
-1. **Slice.** Split the roadmap item into tasks that each fit one focused PR, typically < ~400 changed lines
+1. **Slice.** Split the goal into tasks that each fit one focused PR, typically < ~400 changed lines
    excluding generated files and lockfiles. One concern per PR; if the description needs an "also", split it.
 
 2. **Brief an implementer subagent.** It knows only what you write, so include:
@@ -148,6 +149,6 @@ After each merge, a short note to Heitor:
 - PR link and title;
 - what changed for the product, in one or two sentences;
 - anything dismissed or deferred and why;
-- the next task.
+- the next task, or "goal complete".
 
 No progress chatter in between.

@@ -2,8 +2,19 @@
 
 Rough sizing assumes 1–2 developers. Each phase ends with something usable internally at Freecorps.
 
-Work happens **top to bottom**. The `manager` skill takes the first unchecked item; the PR that completes an
-item ticks it. To steer the work, edit this file: reorder, add detail, or add items.
+## Instructions for the manager
+
+Run this with the `manager` skill ("use the manager skill and work through `docs/roadmap.md`").
+
+- Work **top to bottom**: take the first unchecked item. Re-read this file before each task; Heitor steers by
+  editing it (reordering, adding detail, adding items).
+- The PR that completes an item ticks its checkbox (`- [x]`). A partly done item stays unchecked, with a
+  sub-bullet saying what is left.
+- Spikes end with a write-up in `docs/spikes/<id>-<slug>.md` (question, what was tried, result, decision) and
+  update the RFC or `docs/open-questions.md` they settle, in the same PR.
+- Items marked as needing Heitor (credentials, accounts, deploys) are prepared as far as possible, then he is
+  asked; meanwhile, continue with the next unblocked item.
+- Stop at the end of each phase and report, so Heitor can review the phase before the next one starts.
 
 ## Phase 0 — Spikes (1–2 weeks)
 

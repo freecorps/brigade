@@ -1,0 +1,31 @@
+{
+  "name": "@freecorps/brigade-api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Freecorps Brigade API: the Cloudflare Worker and its Durable Objects.",
+  "license": "AGPL-3.0-only",
+  "author": "Freecorps Tecnologia da Informação LTDA",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freecorps/brigade.git",
+    "directory": "apps/api"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "build:dev": "CLOUDFLARE_ENV=dev vp build",
+    "build:staging": "CLOUDFLARE_ENV=staging vp build",
+    "test": "wrangler types --check && vp test",
+    "check": "vp check",
+    "cf-typegen": "wrangler types",
+    "cf-typegen:check": "wrangler types --check"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.65.0",
+    "@cloudflare/vitest-plugin": "^1.4.7",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:",
+    "wrangler": "^4.152.0"
+  }
+}

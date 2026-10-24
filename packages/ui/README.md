@@ -60,9 +60,10 @@ through Tailwind's variable syntax: `duration-(--brigade-duration-fast)`.
 No CSS. Import the objects and pick the theme from the colour scheme:
 
 ```ts
-import { Platform } from "react-native";
+import { Platform, useColorScheme } from "react-native";
 import { themes, spacing, fontFamily, fontSize, radius, motion } from "@freecorps/brigade-ui";
 
+const scheme = useColorScheme(); // inside a component
 const colors = themes[scheme === "dark" ? "dark" : "light"];
 const badge = { backgroundColor: colors.severity.sev1.bg, color: colors.severity.sev1.fg };
 const code = { fontFamily: Platform.select(fontFamily.native.mono) };

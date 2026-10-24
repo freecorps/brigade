@@ -238,6 +238,37 @@ server → client
 - Shards keep a bounded change log (rows changed per version) to serve resumes cheaply.
 - WebSocket Hibernation API on the DO keeps idle connections cheap.
 
+## Shard server (`WorkspaceDO`, settled in spike S3)
+
+- **Store layout:** one `store_rows` table holds every table in `TABLES` as JSON documents keyed by (table, id),
+  with the version that last changed each row. Queries filter and sort in JavaScript and rows travel as JSON, so
+  real columns would only add a migration per new field; a table that outgrows a scan gets columns and indexes
+  then. Server-only tables (`counters`) live there too and never reach the change log.
+- **Transactions:** `sql.exec` refuses `SAVEPOINT`, but `ctx.storage.transactionSync` nests and the runtime runs
+  the nested call as a savepoint (inner rollback undoes only its writes, outer rollback undoes everything;
+  `apps/api/test/store.test.ts`). The store's `transaction` is `transactionSync`.
+- **Version and change log:** in `runMutation`'s `commit` hook, inside the mutation's transaction, the shard
+  bumps `version` once, records (version, table, id) for every synced row whose value changed, stamps those rows,
+  writes the outbox and stores the result. The log keeps the last 1000 versions (`CHANGE_LOG_VERSIONS`); a
+  resume from before them, or from a version ahead of the shard, gets a snapshot.
+- **Patches** are computed from each changed row's value before and after the mutation: a row that matches a
+  subscription's `filter` now is an upsert, one that matched before and no longer does is a delete. No per-socket
+  result sets are kept, so nothing about a socket lives in memory.
+- **De-duplication:** the result of every `mutate` (ok or not) is stored by (clientId, mutationId) for 7 days
+  (`RESULT_RETENTION_MS`); an ok result commits with the mutation's rows, so a retry after a crash between commit
+  and send still gets it. Clients drop pending mutations older than that. Results older than the window are
+  pruned on the next mutation.
+- **Sockets:** Hibernation API. The attachment holds the client id, the actor and each subscription's query,
+  validated args and last version (at most 32 subscriptions and 8 KiB per socket). Handlers are synchronous, so a
+  socket's frames are handled in arrival order and frames from different sockets never interleave.
+- **Close policy:** a socket-level protocol error (malformed or binary frame, over 64 KiB, a frame before `hello`,
+  a second `hello`, another protocol version) gets `error { code: "protocol" }` and a close with code 1002. A
+  refused subscription (`unknown_query`, `forbidden`, `invalid_args`, `internal`, or `limit` past 32) is an error
+  with its `subId` and the socket stays open. An unexpected exception is logged, answered with
+  `error { code: "internal" }` and the socket closes with 1011; the client reconnects and resumes.
+- **Dev only, until auth:** every socket acts as `{ kind: "user", id: "usr_dev", role: "responder" }`, and the
+  Worker passes the workspace id to the shard in a header on the upgrade, which the shard records on first use.
+
 ## Socket topology
 
 **Decision (v1): one WebSocket per shard, hidden behind the client library.**

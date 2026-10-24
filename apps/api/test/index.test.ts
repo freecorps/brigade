@@ -1,10 +1,14 @@
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { describe, expect, test, vi } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import worker, { WorkspaceDO } from "../src/index.ts";
 
 const api = (path: string, init?: RequestInit) =>
   exports.default.fetch(`http://api.test${path}`, init);
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("api worker", () => {
   test("GET and HEAD /health return 200", async () => {
@@ -12,6 +16,12 @@ describe("api worker", () => {
     expect(get.status).toBe(200);
     expect(await get.json()).toEqual({ ok: true });
     const head = await api("/health", { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
+  });
+
+  test("HEAD /workspaces/:id returns 200 with an empty body", async () => {
+    const head = await api("/workspaces/acme", { method: "HEAD" });
     expect(head.status).toBe(200);
     expect(await head.text()).toBe("");
   });
@@ -53,15 +63,15 @@ describe("api worker", () => {
     }
   });
 
-  test("maps Durable Object failures to 503 or 500 and logs one JSON line", async () => {
-    const cases: [Record<string, boolean>, number, string][] = [
-      [{ retryable: true }, 503, "unavailable"],
-      [{ overloaded: true }, 503, "unavailable"],
-      [{}, 500, "internal"],
-    ];
-    for (const [flags, status, error] of cases) {
+  test.for([
+    [{ retryable: true }, 503, "unavailable"],
+    [{ overloaded: true }, 503, "unavailable"],
+    [{}, 500, "internal"],
+  ] as const)(
+    "maps Durable Object error %o to %i and logs one JSON line",
+    async ([flags, status, error]) => {
       const failing = Object.assign(new Error("boom"), flags);
-      const stub = vi.spyOn(env.WORKSPACE, "getByName").mockReturnValue({
+      vi.spyOn(env.WORKSPACE, "getByName").mockReturnValue({
         info: () => Promise.reject(failing),
       } as unknown as ReturnType<typeof env.WORKSPACE.getByName>);
       const log = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -72,12 +82,13 @@ describe("api worker", () => {
       expect(log).toHaveBeenCalledTimes(1);
       expect(JSON.parse(String(log.mock.calls[0]![0]))).toEqual({
         message: "WorkspaceDO.info failed",
+        workspace: "acme",
+        retryable: "retryable" in flags,
+        overloaded: "overloaded" in flags,
         error: "Error: boom",
       });
-      stub.mockRestore();
-      log.mockRestore();
-    }
-  });
+    },
+  );
 });
 
 describe("WorkspaceDO", () => {

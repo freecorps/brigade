@@ -35,5 +35,6 @@ dist-ssr
 # PR media (before-and-after skill)
 test-results/
 
-# Wrangler and Cloudflare Vite plugin local state
+# Wrangler and Cloudflare Vite plugin local state and secrets
 .wrangler
+.dev.vars*

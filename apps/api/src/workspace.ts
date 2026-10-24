@@ -15,10 +15,15 @@ export class WorkspaceDO extends DurableObject<Env> {
   info(): WorkspaceInfo {
     const { sql } = this.ctx.storage;
     // `sqlite_version()` is not authorized in Durable Object SQLite, so read the catalog instead.
-    // Local Miniflare adds a `__miniflare_do_name` table; skip `__*` so every runtime reports the same.
+    // Skip internal tables so every runtime reports the same: Cloudflare's `_cf_*`, SQLite's
+    // `sqlite_sequence` and the `__miniflare_do_name` table that local Miniflare adds.
     const { tables } = sql
       .exec<{ tables: number }>(
-        "select count(*) as tables from sqlite_master where type = 'table' and substr(name, 1, 2) != '__'",
+        `select count(*) as tables from sqlite_master
+         where type = 'table'
+           and name not like '!_cf!_%' escape '!'
+           and name not like '!_!_%' escape '!'
+           and name != 'sqlite_sequence'`,
       )
       .one();
     return { tables, databaseSize: sql.databaseSize };

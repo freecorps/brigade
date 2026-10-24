@@ -16,24 +16,37 @@ export default {
     if (workspace === undefined) return json({ ok: true });
     // Checked before any decoding: the charset has no `%`, so encoded or malformed input is rejected.
     if (!WORKSPACE_ID.test(workspace)) return json({ error: "invalid_workspace_id" }, 400);
+    // Dev-only placeholder with no auth: it must sit behind auth (or be removed) before any route
+    // or workers_dev is enabled.
     try {
       const info = await env.WORKSPACE.getByName(workspace).info();
       return json({ workspace, ...info });
     } catch (error) {
-      console.error(JSON.stringify({ message: "WorkspaceDO.info failed", error: String(error) }));
-      // Overloaded objects must not be retried; other retryable errors are transient.
-      return isUnavailable(error)
+      const retryable = flag(error, "retryable");
+      const overloaded = flag(error, "overloaded");
+      console.error(
+        JSON.stringify({
+          message: "WorkspaceDO.info failed",
+          workspace,
+          retryable,
+          overloaded,
+          error: String(error),
+        }),
+      );
+      return retryable || overloaded
         ? json({ error: "unavailable" }, 503)
         : json({ error: "internal" }, 500);
     }
   },
 } satisfies ExportedHandler<Env>;
 
-function isUnavailable(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
+/** Durable Object errors carry boolean `retryable` / `overloaded` properties. */
+function flag(error: unknown, name: "retryable" | "overloaded"): boolean {
   return (
-    ("retryable" in error && error.retryable === true) ||
-    ("overloaded" in error && error.overloaded === true)
+    typeof error === "object" &&
+    error !== null &&
+    name in error &&
+    Reflect.get(error, name) === true
   );
 }
 

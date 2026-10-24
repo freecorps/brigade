@@ -368,8 +368,14 @@ test("malformed server frames are logged and ignored, never thrown", async () =>
     "[]",
     "null",
     new Uint8Array([1, 2, 3]),
-    JSON.stringify({ type: "snapshot", subId: "s0", version: -1, rows: [] }),
-    JSON.stringify({ type: "snapshot", subId: "s0", version: 1, rows: [{ title: "no id" }] }),
+    JSON.stringify({ type: "snapshot", subId: "s0", epoch: "e", version: -1, rows: [] }),
+    JSON.stringify({
+      type: "snapshot",
+      subId: "s0",
+      epoch: "e",
+      version: 1,
+      rows: [{ title: "no id" }],
+    }),
     JSON.stringify({ type: "patch", subId: "s0", version: 1, upserts: [], deletes: [1] }),
     JSON.stringify({ type: "mutationResult", mutationId: "m", ok: "yes" }),
     JSON.stringify({

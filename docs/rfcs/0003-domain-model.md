@@ -46,10 +46,28 @@ Implemented in `packages/schema` (`canTransition`). Severity is independent of s
 - Any target acks → run stops. Timeout → level N+1. Last level exhausted → repeat policy (configurable) and flag "unacknowledged".
 - Every notification attempt and delivery receipt is recorded (debuggable: "why didn't I get paged?").
 
+## Tenancy and access control
+
+- **Workspace = Better Auth organization** (`organization` plugin). Users can belong to many workspaces and switch
+  between them; invitations, membership and the active workspace come from Better Auth.
+- **Teams** use the plugin's teams support (on-call schedules and service ownership point at teams).
+- **Roles** are defined with Better Auth access control (`createAccessControl`) in `packages/schema`, so the same
+  permission table is used by the API, the sync engine (mutation RBAC) and the UI (hide what you cannot do):
+
+| Role        | Typical permissions                                                                    |
+| ----------- | -------------------------------------------------------------------------------------- |
+| `owner`     | Everything, including billing/deletion and transferring ownership                      |
+| `admin`     | Manage members, integrations, monitors, schedules, policies                            |
+| `responder` | Declare/run incidents, ack/escalate pages, edit timeline, manage own on-call overrides |
+| `viewer`    | Read-only (stakeholders)                                                               |
+
+- Workspace-defined custom roles can come later via Better Auth dynamic access control.
+- Every DO key is prefixed by the organization id; a shard never serves data of another workspace.
+
 ## Storage sketch
 
 DO SQLite tables mirror the entities they own (RFC 0002). Every table row carries `version` (monotonic per DO)
-for the sync protocol (RFC 0004). D1 holds `users`, `sessions`, `workspaces`, `memberships`, `devices`,
+for the sync protocol (RFC 0004). D1 holds the Better Auth tables (users, sessions, organizations, members, teams, invitations), `devices`,
 and projection tables `incident_index`, `search_documents`.
 
 Exact columns are defined in code (`packages/schema`) rather than duplicated here.

@@ -50,10 +50,30 @@ server → client
 - Shards keep a bounded change log (rows changed per version) to serve resumes cheaply.
 - WebSocket Hibernation API on the DO keeps idle connections cheap.
 
-## Routing
+## Socket topology
 
-The `api` Worker authenticates the socket, then forwards to the shard. A client typically holds one socket per
-shard it watches (workspace + open incident). Open question Q4: multiplex through a gateway instead.
+**Decision (v1): one WebSocket per shard, hidden behind the client library.**
+
+```
+                       ┌── wss /sync/ws_123            ──▶ WorkspaceDO(ws_123)
+SyncClient (web/mobile)┤
+  connection pool      └── wss /sync/ws_123/inc_456    ──▶ IncidentDO(inc_456)
+```
+
+- The `api` Worker authenticates the upgrade request (Better Auth session or bearer token), checks membership and
+  role in the workspace, then hands the socket to the shard (`stub.fetch(request)`); the DO accepts it with the
+  Hibernation API. Auth context travels as a signed header from the Worker to the DO.
+- `SyncClient` owns a pool: it opens a shard connection on the first subscription to it and closes it a few
+  seconds after the last unsubscribe. Apps only see `useQuery` / `useMutation`.
+- Typical load is small: web dashboard = workspace + 0–3 open incidents; mobile = workspace + current incident.
+- Every message already carries its shard id, so the protocol does not change if we move to a gateway.
+- Reconnect: exponential backoff with jitter; on reconnect, `hello` sends `lastVersions` and each subscription resumes.
+- Session revocation: the Worker records active sockets per session in the shard; revoking a session (Better Auth
+  hook) broadcasts a close to those sockets.
+
+**Upgrade path (only if spike S3 or production metrics show a need):** a `SessionDO` per client session holding the
+single client socket and fanning out to shards over DO RPC, with shards pushing patches back via RPC. It costs an
+extra hop and more moving parts, so we start without it.
 
 ## Clients
 

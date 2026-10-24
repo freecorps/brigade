@@ -43,6 +43,41 @@ Declining the call counts as "not acknowledged" and the escalation continues.
 PSTN stays as an optional last step: VoIP fails exactly when the phone has signal but no data (roaming, weak 4G).
 Escalation policies decide which steps to use; self-hosters can skip PSTN entirely.
 
+## PSTN step (optional last resort)
+
+### Notifier contract
+
+```ts
+interface VoiceProvider {
+  id: string; // "twilio", "zenvia", ...
+  call(to: E164, script: VoiceScript, callbackUrl: string): Promise<{ providerCallId: string }>;
+  sms(to: E164, text: string, callbackUrl: string): Promise<{ providerMessageId: string }>;
+  parseCallback(req: Request): Promise<VoiceCallback>; // answered | dtmf | no-answer | busy | failed | sms-reply
+}
+```
+
+A provider qualifies if it supports outbound calls with text-to-speech, DTMF capture with a webhook, and SMS with
+inbound replies. Twilio (TwiML `<Say>` + `<Gather>`) is the reference; local providers are evaluated by price.
+
+### Call flow
+
+```
+IncidentDO alarm (level N = PSTN)
+  └─▶ queue: notify.voice ─▶ notifier Worker ─▶ provider.call(+55…, script, /webhooks/voice/<attemptId>)
+                                                          │
+  phone rings → TTS: "Brigade. SEV1 checkout API down. Press 1 to acknowledge, 2 to escalate."
+                                                          │ DTMF webhook (signed, provider-verified)
+  api Worker ─▶ incident.ack / incident.escalate (system actor "voice:<userId>") ─▶ timeline
+```
+
+- **SMS:** short code per page attempt ("Reply 1 to ack — #4821"); replies map back by attempt id.
+- **Phone verification:** users add numbers through an OTP flow; unverified numbers are never called.
+- **Cost control:** PSTN only from escalation levels that enable it; per-workspace monthly budget and rate limit;
+  usage shown in settings. Self-hosters bring their own provider credentials.
+- **Caller ID tip:** the app offers a contact card ("Brigade Paging") with the provider's numbers so users can mark it
+  as a favorite / emergency bypass and let it ring through Do Not Disturb.
+- **Delivery receipts:** every attempt and provider callback is stored on the page record ("why wasn't I paged?").
+
 ## Relay impact (RFC 0006)
 
 - VoIP pushes use a separate PushKit token and the `<bundle-id>.voip` APNs topic; the relay supports both token types.

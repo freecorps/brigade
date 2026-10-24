@@ -1,9 +1,11 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
-import { themes } from "@freecorps/brigade-ui";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite-plus";
+// By path, not "@freecorps/brigade-ui": the config loader does not use the @freecorps/source condition,
+// so the package name would need packages/ui built first (tests run before builds in CI).
+import { themes } from "../../packages/ui/src/tokens.ts";
 import { workspaceSource } from "../../vite.workspace.ts";
 
 /**

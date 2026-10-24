@@ -10,13 +10,14 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { writeLocale } from "@/lib/locale";
+import { LOCALE_STORAGE_KEY, readLocale, writeLocale } from "@/lib/locale";
 import { getStorage } from "@/lib/storage";
 import {
   applyTheme,
   DARK_QUERY,
   readThemePreference,
   resolveTheme,
+  THEME_STORAGE_KEY,
   writeThemePreference,
   type ResolvedTheme,
   type ThemePreference,
@@ -58,13 +59,20 @@ export function PreferencesProvider({
   const prefersDark = useSyncExternalStore(subscribeToSystemTheme, systemPrefersDark);
   const resolvedTheme = resolveTheme(theme, prefersDark);
 
-  const setLocale = useCallback((next: Locale) => {
+  const applyLocale = useCallback((next: Locale) => {
     // The i18n runtime first, so the render this state change triggers reads the new locale.
     void setI18nLocale(next);
-    writeLocale(getStorage(), next);
     document.documentElement.lang = next;
     setLocaleState(next);
   }, []);
+
+  const setLocale = useCallback(
+    (next: Locale) => {
+      writeLocale(getStorage(), next);
+      applyLocale(next);
+    },
+    [applyLocale],
+  );
 
   const setTheme = useCallback((next: ThemePreference) => {
     writeThemePreference(getStorage(), next);
@@ -76,17 +84,26 @@ export function PreferencesProvider({
     applyTheme(document.documentElement, resolvedTheme);
     // The browser chrome (status bar on phones) takes the page ground, read from the tokens.
     const ground = getComputedStyle(document.documentElement).getPropertyValue("--background");
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", ground.trim());
+    for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
+      meta.setAttribute("content", ground.trim());
+    }
   }, [resolvedTheme]);
 
-  // Other tabs changing the theme follow along.
+  // Other tabs changing the theme or the language follow along (the event fires only in other tabs).
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.storageArea === getStorage()) setThemeState(readThemePreference(getStorage()));
+      const storage = getStorage();
+      if (event.storageArea !== storage) return;
+      if (event.key === null || event.key === THEME_STORAGE_KEY) {
+        setThemeState(readThemePreference(storage));
+      }
+      if (event.key === null || event.key === LOCALE_STORAGE_KEY) {
+        applyLocale(readLocale(storage, navigator.languages));
+      }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, []);
+  }, [applyLocale]);
 
   const value = useMemo(
     () => ({ locale, setLocale, theme, resolvedTheme, setTheme }),

@@ -4,11 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <!-- Set from the --background token once the styles load (src/components/preferences.tsx). -->
-    <meta name="theme-color" content="" />
+    <!-- The page ground per theme, filled in from packages/ui by vite.config.ts (themeColor). Right for
+         the system theme without script; the script below and React override both for a chosen theme. -->
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="%BRIGADE_GROUND_LIGHT%"
+    />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="%BRIGADE_GROUND_DARK%" />
     <title>Brigade</title>
     <!-- Before first paint: the stored theme (or the system one) and locale, so nothing flashes.
-         Mirrors src/lib/theme.ts and src/lib/locale.ts; test/theme.test.ts runs it against them. -->
+         Mirrors src/lib/theme.ts and src/lib/locale.ts; test/theme.test.ts runs it against them.
+         A future Content-Security-Policy must allow this script by hash (apps/web/README.md). -->
     <script id="preferences-script">
       (function () {
         var root = document.documentElement;
@@ -25,6 +32,9 @@
           } catch (error) {}
         }
         root.classList.toggle("dark", dark);
+        var ground = dark ? "%BRIGADE_GROUND_DARK%" : "%BRIGADE_GROUND_LIGHT%";
+        var metas = document.querySelectorAll('meta[name="theme-color"]');
+        for (var i = 0; i < metas.length; i++) metas[i].setAttribute("content", ground);
         if (locale === "en" || locale === "pt-BR") root.lang = locale;
       })();
     </script>

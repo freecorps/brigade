@@ -69,14 +69,19 @@ describe("index.html pre-paint script", () => {
   function run(storage: object, systemDark: boolean) {
     const root = fakeRoot();
     const window = { matchMedia: () => ({ matches: systemDark }) };
+    // Two theme-color tags, one per media query, as index.html ships them.
+    const metas = [new Map<string, string>(), new Map<string, string>()];
+    const document = {
+      documentElement: root,
+      querySelectorAll: () =>
+        metas.map((meta) => ({
+          setAttribute: (name: string, value: string) => meta.set(name, value),
+        })),
+    };
     // The script reads globals; hand them in as parameters instead.
     // oxlint-disable-next-line typescript/no-implied-eval -- runs the committed inline script.
-    new Function("document", "window", "localStorage", script)(
-      { documentElement: root },
-      window,
-      storage,
-    );
-    return root;
+    new Function("document", "window", "localStorage", script)(document, window, storage);
+    return Object.assign(root, { themeColors: metas.map((meta) => meta.get("content")) });
   }
 
   test("exists and uses the same storage keys as the app", () => {
@@ -91,6 +96,9 @@ describe("index.html pre-paint script", () => {
         const expected = resolveTheme(readThemePreference(memoryStorage(stored)), systemDark);
         const root = run(memoryStorage(stored), systemDark);
         expect(root.isDark(), `${value} with system dark ${systemDark}`).toBe(expected === "dark");
+        // Both tags take the chosen theme's ground (filled in from packages/ui by vite.config.ts).
+        const ground = expected === "dark" ? "%BRIGADE_GROUND_DARK%" : "%BRIGADE_GROUND_LIGHT%";
+        expect(root.themeColors).toEqual([ground, ground]);
       }
     }
   });

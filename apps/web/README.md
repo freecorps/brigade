@@ -17,19 +17,31 @@ Cloudflare Vite plugin runs `apps/api` as an auxiliary worker in dev, and the `A
 it by name.
 
 ```bash
-vp run --filter @freecorps/brigade-web test   # Worker routing, theme and locale logic (Node, no browser)
+vp run --filter @freecorps/brigade-web test   # Worker routing, theme, locale and stack-check logic
 vp run --filter @freecorps/brigade-web build  # dist/client (assets) + dist/brigade_web (Worker, wrangler.json)
 ```
 
+`test/worker-config.test.ts` runs this Worker from the real `wrangler.jsonc` in front of the real API Worker
+(`apps/api`) and its `WorkspaceDO`, through the `API` service binding, with wrangler's local test harness: it
+checks that `/api` and `/api/*` reach the Worker (and the DO), and that a deep SPA path like `/incidents/42` gets
+`index.html`. The only change to the config is the assets directory, a two-file fixture in `test/fixtures/assets`,
+because the real one is the client build output that the Cloudflare Vite plugin fills in. The other tests run the
+fetch handler with stub bindings.
+
+The `build` task is defined in `vite.config.ts` (not `package.json`) so it can exclude the two files the build
+rewrites, `src/routeTree.gen.ts` and `.wrangler/deploy/`, from its cache inputs; otherwise Vite Task never
+caches it.
+
 ## How requests are served
 
-| Request        | Served by                                                                         |
-| -------------- | --------------------------------------------------------------------------------- |
-| `/api/*`       | This Worker (`run_worker_first`), forwarded to the API Worker with `/api` removed |
-| a built asset  | Static assets                                                                     |
-| any other path | `index.html` (`not_found_handling: "single-page-application"`)                    |
+| Request          | Served by                                                                         |
+| ---------------- | --------------------------------------------------------------------------------- |
+| `/api`, `/api/*` | This Worker (`run_worker_first`), forwarded to the API Worker with `/api` removed |
+| a built asset    | Static assets                                                                     |
+| any other path   | `index.html` (`not_found_handling: "single-page-application"`)                    |
 
-If the API Worker binding throws, the Worker answers `502 {"error":"api_unreachable"}`. There is no auth yet:
+Method, headers and body are forwarded unchanged, so WebSocket upgrades pass through too. If the API Worker
+binding throws, the Worker answers `502 {"error":"api_unreachable"}`. There is no auth yet:
 `workers_dev` and `preview_urls` are off, so a deployed Worker has no public URL. Keep it dev-only.
 
 ## Environments
@@ -49,10 +61,16 @@ The build bundles only this Worker; `apps/api` builds and deploys on its own.
 
 - **Theme:** light, dark or system, stored in `localStorage` (`brigade-theme`) and applied as the `dark` class on
   `<html>`. An inline script in `index.html` applies it before first paint, so nothing flashes;
-  `test/theme.test.ts` runs that script against `src/lib/theme.ts` so the two cannot drift.
+  `test/theme.test.ts` runs that script against `src/lib/theme.ts` so the two cannot drift. **A future
+  Content-Security-Policy must allow this inline script by its hash** (`script-src 'sha256-…'`, computed from the
+  built `dist/client/index.html`, since the build fills the token colours into it), not with `'unsafe-inline'`.
+- **Browser chrome:** two `theme-color` tags (light and dark media queries) carry the page ground from
+  `packages/ui`, filled in at build time by the `themeColor` plugin in `vite.config.ts`; the inline script and
+  React point both at the chosen theme.
 - **Language:** `en` or `pt-BR`, stored in `localStorage` (`brigade-locale`), else the browser's language. Changing
   it calls `setLocale` from `@freecorps/brigade-i18n`, updates `<html lang>` and re-renders the page content (keyed
-  on the locale). Every user-facing string lives in `packages/i18n`.
+  on the locale). Every user-facing string lives in `packages/i18n`. Other tabs follow both choices through the
+  `storage` event.
 
 ## UI rules
 

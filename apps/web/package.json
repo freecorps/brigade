@@ -13,7 +13,6 @@
   "type": "module",
   "scripts": {
     "dev": "vp dev",
-    "build": "vp build",
     "build:dev": "CLOUDFLARE_ENV=dev vp build",
     "build:staging": "CLOUDFLARE_ENV=staging vp build",
     "test": "wrangler types worker/worker-configuration.d.ts --check && vp test",

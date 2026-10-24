@@ -8,8 +8,7 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    // Resolve workspace packages to their TS source (the source export condition, RFC 0002).
-    // "source" is the condition's name until the rename to "@freecorps/source" lands on main; drop it then.
+    // Resolve workspace packages to their TS source (the @freecorps/source export condition, RFC 0002).
     "customConditions": ["@freecorps/source"],
     "types": ["vite-plus/client"],
     "paths": { "@/*": ["./src/*"] },

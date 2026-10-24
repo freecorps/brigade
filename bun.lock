@@ -66,8 +66,8 @@
         "class-variance-authority": "^0.7.1",
         "cn": "^0.5.0",
         "lucide-react": "^1.61.0",
-        "react": "^19.3.1",
-        "react-dom": "^19.3.1",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
       },
       "devDependencies": {
         "@cloudflare/vite-plugin": "^1.65.0",
@@ -106,6 +106,28 @@
         "vite-plus": "catalog:",
       },
     },
+    "packages/sync": {
+      "name": "@freecorps/brigade-sync",
+      "version": "0.0.0",
+      "dependencies": {
+        "@freecorps/brigade-schema": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^26.6.5",
+        "@types/react": "^19.3.0",
+        "@types/react-dom": "^19.3.0",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "typescript": "^7.0.2",
+        "vite-plus": "catalog:",
+      },
+      "peerDependencies": {
+        "react": "^18.0.0 || ^19.0.0",
+      },
+      "optionalPeers": [
+        "react",
+      ],
+    },
     "packages/ui": {
       "name": "@freecorps/brigade-ui",
       "version": "0.0.0",
@@ -118,6 +140,8 @@
     },
   },
   "overrides": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "vite": "catalog:",
   },
   "catalog": {
@@ -492,6 +516,8 @@
     "@freecorps/brigade-mobile": ["@freecorps/brigade-mobile@workspace:apps/mobile"],
 
     "@freecorps/brigade-schema": ["@freecorps/brigade-schema@workspace:packages/schema"],
+
+    "@freecorps/brigade-sync": ["@freecorps/brigade-sync@workspace:packages/sync"],
 
     "@freecorps/brigade-ui": ["@freecorps/brigade-ui@workspace:packages/ui"],
 
@@ -2118,10 +2144,6 @@
     "@expo/package-manager/ora": ["ora@3.4.0", "", { "dependencies": { "chalk": "^2.4.2", "cli-cursor": "^2.1.0", "cli-spinners": "^2.0.0", "log-symbols": "^2.2.0", "strip-ansi": "^5.2.0", "wcwidth": "^1.0.1" } }, "sha512-eNwHudNbO1folBP3JsZ19v9azXWtQZjICdr3Q0TDPIaeBQ3mXLrh54wM+er0+hSp+dWKf+Z8KM58CYzEyIYxYg=="],
 
     "@expo/plist/xmlbuilder": ["xmlbuilder@15.1.1", "", {}, "sha512-yMqGBqtXyeN1e3TGYvgNgDVZ3j84W4cwkOXQswghol6APgZWaff9lnbvN7MHYJOiXsvGPXtjTYJEiC9J2wv9Eg=="],
-
-    "@freecorps/brigade-web/react": ["react@19.3.1", "", {}, "sha512-QNhWdt7nrgVWWQG58QuGsAR3jv3Hbe4mb4vz7w2csnHavciZJgda1CPNaldF6eVxv90ud3jUXpKlHL69gO38yw=="],
-
-    "@freecorps/brigade-web/react-dom": ["react-dom@19.3.1", "", { "dependencies": { "scheduler": "^0.28.0" }, "peerDependencies": { "react": "^19.3.1" } }, "sha512-Y0bARz53lhEC1NMCASs0/j+faB/zqt3R8hpvg1e8+61ZVJ4UL0UdC4cBbXfZMcIuhrfgeILTLe+ZeBCavQPtKQ=="],
 
     "@jest/schemas/@sinclair/typebox": ["@sinclair/typebox@0.27.12", "", {}, "sha512-hhyNJ+nbR6ZR7pToHvllEFun9TL0sbL+tk/ON75lo+Xas054uez98qRbsuNt7MBCyZKK4+8Yli/OAGZhmfBZ/g=="],
 

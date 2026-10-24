@@ -65,6 +65,7 @@ function scaleVars(): Vars {
     vars.push([`brigade-ease-${kebab(k)}`, bezier(p)]);
   }
   vars.push(["brigade-motion-travel", motion.travel]);
+  vars.push(["brigade-motion-press-scale", motion.pressScale]);
   return vars;
 }
 
@@ -76,11 +77,12 @@ const block = (selector: string, vars: Vars, indent = "", extra: string[] = []) 
     `${indent}}`,
   ].join("\n");
 
-/** `tokens.css`: light values on `:root`, dark on `.dark`, reduced motion drops travel. */
+/** `tokens.css`: light values on `:root`, dark on `.dark`, reduced motion drops travel and press scale. */
 export function tokensCss(): string {
   const reduced: Vars = [
     ...durationVars(motion.reduced.duration),
     ["brigade-motion-travel", motion.reduced.travel],
+    ["brigade-motion-press-scale", motion.reduced.pressScale],
   ];
   return (
     [

@@ -82,6 +82,8 @@ mobile). Under it, movement goes and short fades stay:
 
 - `tokens.css` shortens `--brigade-duration-*` to 100-150ms and sets `--brigade-motion-travel` to `0`.
   Write distances as `calc(8px * var(--brigade-motion-travel))` and they collapse on their own.
+- Pressed controls scale to `--brigade-motion-press-scale` (0.97; `1` under reduced motion), e.g.
+  `active:scale-(--brigade-motion-press-scale)`, so press feedback needs no `motion-reduce:` variant.
 - Any `transform` that is not written that way must be removed by the app under reduced motion.
   Opacity and colour transitions may stay.
 - **Tailwind's `duration-*`, `animate-*` and tw-animate-css utilities are not covered

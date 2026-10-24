@@ -262,8 +262,9 @@ export const radius = {
 
 /**
  * Durations in ms and easing curves; feedback stays under 300ms. `travel` multiplies every movement
- * distance (translate, scale offset). Under prefers-reduced-motion use `reduced`: movement is
- * removed (travel 0, and apps drop transforms), while short opacity and colour fades remain.
+ * distance (translate, scale offset). `pressScale` is the scale of a pressed control (buttons,
+ * pressable rows). Under prefers-reduced-motion use `reduced`: movement is removed (travel 0, no
+ * press scale, and apps drop transforms), while short opacity and colour fades remain.
  */
 export const motion = {
   duration: {
@@ -277,15 +278,18 @@ export const motion = {
     drawer: [0.32, 0.72, 0, 1], // sheets and drawers
   },
   travel: 1,
+  pressScale: 0.97,
   reduced: {
     duration: { fast: 100, base: 120, slow: 150 },
     travel: 0,
+    pressScale: 1,
   },
 } as const satisfies {
   duration: Record<string, number>;
   easing: Record<string, readonly [number, number, number, number]>;
   travel: number;
-  reduced: { duration: Record<string, number>; travel: number };
+  pressScale: number;
+  reduced: { duration: Record<string, number>; travel: number; pressScale: number };
 };
 
 export const tokens = {

@@ -101,6 +101,7 @@
   --brigade-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --brigade-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --brigade-motion-travel: 1;
+  --brigade-motion-press-scale: 0.97;
   color-scheme: light;
 }
 
@@ -166,5 +167,6 @@
     --brigade-duration-base: 120ms;
     --brigade-duration-slow: 150ms;
     --brigade-motion-travel: 0;
+    --brigade-motion-press-scale: 1;
   }
 }

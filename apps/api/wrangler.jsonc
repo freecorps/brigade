@@ -18,11 +18,15 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WorkspaceDO"] }],
   // Durable Object bindings are not inherited, so each environment repeats them.
+  // No `vars` here: production (and staging) must never set SYNC_DEV_ACTOR (src/workspace.ts).
   "env": {
     "dev": {
       "durable_objects": {
         "bindings": [{ "name": "WORKSPACE", "class_name": "WorkspaceDO" }],
       },
+      // DEV ONLY until auth exists: every sync socket acts as a dev responder. `vars` are not inherited; local
+      // runs set it in vite.config.ts (apps/api, apps/web) and the tests' configs.
+      "vars": { "SYNC_DEV_ACTOR": "1" },
     },
     "staging": {
       "durable_objects": {

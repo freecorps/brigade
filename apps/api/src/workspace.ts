@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { Actor, BrigadeTables } from "@freecorps/brigade-schema";
+import type { Actor } from "@freecorps/brigade-schema";
 import {
   encode,
   parseClientMessage,
@@ -8,7 +8,7 @@ import {
   type ServerMessage,
   type SubscriptionChanges,
 } from "@freecorps/brigade-sync/protocol";
-import { findQuery, Shard } from "./shard.ts";
+import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
 import type { RowChange } from "./store.ts";
 
 export interface WorkspaceInfo {
@@ -25,27 +25,51 @@ export const WORKSPACE_ID = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 export const WORKSPACE_HEADER = "Brigade-Workspace";
 
 /**
- * DEV ONLY. There is no auth yet, so every socket acts as this responder. Once auth exists the Worker
- * authenticates the upgrade and passes the actor to the shard in a signed header (RFC 0004 "Socket topology").
+ * DEV ONLY. There is no auth yet, so every socket acts as this responder, and only where `SYNC_DEV_ACTOR` is "1":
+ * the `dev` environment in wrangler.jsonc and local runs (vite.config.ts, the tests). Anywhere else the sync
+ * upgrade is refused with 501. Once auth exists the Worker authenticates the upgrade and passes the actor to the
+ * shard in a signed header (RFC 0004 "Socket topology").
  */
 export const DEV_ACTOR: Actor = { kind: "user", id: "usr_dev", role: "responder" };
 
+/** The variable that enables `DEV_ACTOR`. */
+export const DEV_ACTOR_VAR = "SYNC_DEV_ACTOR";
+
+/** The actor every sync socket acts as here, or undefined if this deployment has none (no auth yet). */
+export function syncActor(env: object): Actor | undefined {
+  return Reflect.get(env, DEV_ACTOR_VAR) === "1" ? DEV_ACTOR : undefined;
+}
+
+/** The answer to a sync upgrade where `syncActor` gives none. */
+export function syncUnavailable(): Response {
+  return Response.json(
+    {
+      error: "not_implemented",
+      message: `Sync needs auth, which does not exist yet; only deployments with ${DEV_ACTOR_VAR}=1 (dev) serve it`,
+    },
+    { status: 501 },
+  );
+}
+
 /** Subscriptions per socket; each lives in the socket's attachment. */
 export const MAX_SUBSCRIPTIONS = 32;
-/** Serialized attachment budget, well under the runtime's 16 KiB limit. */
+/**
+ * Attachment budget, well under the runtime's 16 KiB limit. Measured approximately, as the UTF-8 length of the
+ * state's JSON: the runtime stores the structured-clone encoding, whose size differs a little, so the margin
+ * covers it.
+ */
 export const MAX_ATTACHMENT_BYTES = 8 * 1024;
 
 /** WebSocket close codes the shard uses. */
 export const CLOSE_PROTOCOL_ERROR = 1002;
 export const CLOSE_INTERNAL_ERROR = 1011;
+export const CLOSE_SERVICE_RESTART = 1012;
 
 type Subscription = {
   subId: string;
   query: string;
   /** Validated args, as the query's validator returned them. */
   args: unknown;
-  /** The last version sent for this subscription. */
-  version: number;
 };
 
 /**
@@ -99,6 +123,19 @@ export class WorkspaceDO extends DurableObject<Env> {
     return { tables, databaseSize: sql.databaseSize };
   }
 
+  /**
+   * The restore hook: every path that restores this object's storage (point-in-time recovery, importing a
+   * nightly export; RFC 0004 "Shard server", open question Q3) calls this right after the restore, before the
+   * shard is reachable again. It writes a new epoch and closes every open socket, so each client reconnects and
+   * gets a snapshot instead of resuming from versions the restore reused. Returns the new epoch.
+   */
+  rotateEpoch(): string {
+    const epoch = this.shard.rotateEpoch();
+    this.log("epoch rotated", { epoch });
+    for (const ws of this.ctx.getWebSockets()) close(ws, CLOSE_SERVICE_RESTART, "epoch rotated");
+    return epoch;
+  }
+
   /** Accepts a sync socket the Worker forwarded (`GET /sync/:workspaceId`). */
   override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
@@ -107,6 +144,8 @@ export class WorkspaceDO extends DurableObject<Env> {
         { status: 426, headers: { Upgrade: "websocket" } },
       );
     }
+    const actor = syncActor(this.env);
+    if (!actor) return syncUnavailable();
     const workspace = request.headers.get(WORKSPACE_HEADER) ?? "";
     if (!WORKSPACE_ID.test(workspace))
       return Response.json({ error: "invalid_workspace_id" }, { status: 400 });
@@ -116,7 +155,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server);
-    const state: SocketState = { workspace, actor: DEV_ACTOR, clientId: null, subs: [] };
+    const state: SocketState = { workspace, actor, clientId: null, subs: [] };
     server.serializeAttachment(state);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -211,7 +250,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     args: unknown,
   ): void {
     const now = Date.now();
-    const stored = this.shard.storedResult(clientId, mutationId, now);
+    const stored = this.shard.storedResult(state.actor.id, clientId, mutationId, now);
     if (stored) return this.send(ws, stored);
     const { result, changes } = this.shard.mutate({
       clientId,
@@ -251,7 +290,7 @@ export class WorkspaceDO extends DurableObject<Env> {
 
     const version = this.shard.version();
     const { epoch } = this.shard;
-    state.subs.push({ subId, query: name, args: args.value, version });
+    state.subs.push({ subId, query: name, args: args.value });
     if (new TextEncoder().encode(JSON.stringify(state)).length > MAX_ATTACHMENT_BYTES) {
       state.subs.pop();
       return refuse("limit", "Too much subscription state on this socket");
@@ -276,60 +315,58 @@ export class WorkspaceDO extends DurableObject<Env> {
    */
   private broadcast(version: number, changes: readonly RowChange[], origin: WebSocket): void {
     for (const ws of this.ctx.getWebSockets()) {
-      const state = ws.deserializeAttachment() as SocketState | null;
-      if (!state?.clientId) continue;
-      // No prototype: a subId such as `__proto__` stays an ordinary key.
-      const subs = Object.create(null) as { [subId: string]: SubscriptionChanges };
-      const failed: string[] = [];
-      let touched = false;
-      for (const sub of state.subs) {
-        const patch = this.diff(sub, changes);
-        if (patch === "failed") failed.push(sub.subId);
-        else if (patch) {
-          subs[sub.subId] = patch;
-          touched = true;
-        }
+      try {
+        this.patchSocket(ws, version, changes, ws === origin);
+      } catch (error) {
+        // One socket's failure (a corrupt attachment, a closed socket) must not stop the others' patches. This one
+        // would miss the version, so it closes and its client resumes.
+        this.log("sync patch failed", { error });
+        close(ws, CLOSE_INTERNAL_ERROR, "internal error");
       }
-      if (failed.length > 0) {
-        // A patch at `version` says the whole socket holds it, which a subscription that missed this change does
-        // not: refuse it first (the client lets go of its rows), so the patch claims only what it carries.
-        state.subs = state.subs.filter((sub) => !failed.includes(sub.subId));
-        for (const subId of failed) {
-          this.send(ws, { type: "error", subId, code: "internal", message: "Internal error" });
-        }
-      }
-      if (touched || ws === origin) {
-        for (const sub of state.subs) sub.version = version;
-        this.send(ws, { type: "patch", epoch: this.shard.epoch, version, subs });
-      }
-      if (failed.length > 0 || touched || ws === origin) ws.serializeAttachment(state);
     }
   }
 
-  /**
-   * What `changes` do to one subscription's result, undefined if nothing, or "failed" if its query is gone or its
-   * filter threw (logged).
-   */
-  private diff(
-    sub: Subscription,
+  /** One socket's patch for `version`; see `broadcast`. */
+  private patchSocket(
+    ws: WebSocket,
+    version: number,
     changes: readonly RowChange[],
-  ): SubscriptionChanges | undefined | "failed" {
-    const query = findQuery(sub.query);
-    if (!query) return "failed";
-    const patch: SubscriptionChanges = { upserts: [], deletes: [] };
-    const matches = (row: unknown) =>
-      row !== undefined && query.filter(row as BrigadeTables[typeof query.table], sub.args);
-    try {
-      for (const change of changes) {
-        if (change.table !== query.table) continue;
-        if (matches(change.after)) patch.upserts.push(change.after!);
-        else if (matches(change.before)) patch.deletes.push(change.id);
+    origin: boolean,
+  ): void {
+    const state = ws.deserializeAttachment() as SocketState | null;
+    if (!state?.clientId) return;
+    // No prototype: a subId such as `__proto__` stays an ordinary key.
+    const subs = Object.create(null) as { [subId: string]: SubscriptionChanges };
+    const failed: string[] = [];
+    let touched = false;
+    for (const sub of state.subs) {
+      const query = findQuery(sub.query);
+      let patch;
+      try {
+        if (!query) throw new Error(`Unknown query ${sub.query.slice(0, 64)}`);
+        patch = subscriptionChanges(query, sub.args, changes);
+      } catch (error) {
+        this.log("query filter failed", { query: sub.query.slice(0, 64), error });
+        failed.push(sub.subId);
+        continue;
       }
-    } catch (error) {
-      this.log("query filter failed", { query: query.name, error });
-      return "failed";
+      if (patch) {
+        subs[sub.subId] = patch;
+        touched = true;
+      }
     }
-    return patch.upserts.length || patch.deletes.length ? patch : undefined;
+    if (failed.length > 0) {
+      // A patch at `version` says the whole socket holds it, which a subscription that missed this change does
+      // not: refuse it first (the client lets go of its rows), so the patch claims only what it carries.
+      state.subs = state.subs.filter((sub) => !failed.includes(sub.subId));
+      ws.serializeAttachment(state);
+      for (const subId of failed) {
+        this.send(ws, { type: "error", subId, code: "internal", message: "Internal error" });
+      }
+    }
+    if (touched || origin) {
+      this.send(ws, { type: "patch", epoch: this.shard.epoch, version, subs });
+    }
   }
 
   /**
@@ -342,6 +379,9 @@ export class WorkspaceDO extends DurableObject<Env> {
     const id = state.clientId === null ? undefined : salvage(data);
     if (!id) return this.refuse(ws, reason);
     if ("subId" in id) {
+      // Like any `subscribe`, it replaces a subscription with the same subId, here with nothing.
+      state.subs = state.subs.filter((sub) => sub.subId !== id.subId);
+      ws.serializeAttachment(state);
       return this.send(ws, { type: "error", code: "invalid_args", message: reason, ...id });
     }
     this.send(ws, {

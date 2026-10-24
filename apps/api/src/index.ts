@@ -1,4 +1,4 @@
-import { WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
+import { syncActor, syncUnavailable, WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
 
 export { WorkspaceDO } from "./workspace.ts";
 
@@ -34,9 +34,14 @@ export default {
 
 /**
  * `GET /sync/:workspaceId` with `Upgrade: websocket`: hands the socket to the workspace's shard (RFC 0004).
- * Dev-only placeholder with no auth, like `/workspaces/:id`: every socket acts as `DEV_ACTOR`. It must sit
- * behind auth (the Worker authenticates the upgrade and passes the actor in a signed header) before any route or
- * workers_dev is enabled.
+ * Dev-only placeholder with no auth, like `/workspaces/:id`: every socket acts as `DEV_ACTOR`, and only where
+ * `SYNC_DEV_ACTOR` is "1" (the `dev` environment, local runs); elsewhere the upgrade gets 501.
+ *
+ * TODO(auth, RFC 0003): before any route or workers_dev is enabled, authenticate the upgrade (Better Auth session
+ * or bearer token), check membership and role in the workspace, and pass the actor to the shard in a signed
+ * header. Browsers send cookies on a cross-site WebSocket upgrade and CORS does not apply to it, so a
+ * cookie-authenticated upgrade must also check `Origin` against the dashboard's origins (cross-site WebSocket
+ * hijacking).
  */
 async function openSync(request: Request, env: Env, workspace: string): Promise<Response> {
   if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405, { Allow: "GET" });
@@ -44,6 +49,7 @@ async function openSync(request: Request, env: Env, workspace: string): Promise<
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
     return json({ error: "upgrade_required" }, 426, { Upgrade: "websocket" });
   }
+  if (!syncActor(env)) return syncUnavailable();
   // The shard is named by the workspace id alone; entity shards will be `${workspaceId}:${entityId}`.
   const headers = new Headers(request.headers);
   headers.set(WORKSPACE_HEADER, workspace);

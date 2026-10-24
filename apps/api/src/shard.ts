@@ -12,6 +12,8 @@ import {
   TABLES,
   type Actor,
   type AnyQuery,
+  type BrigadeTables,
+  type DomainEvent,
   type MutationContext,
   type QueryResult,
   type RandomBytes,
@@ -33,6 +35,8 @@ export const CHANGE_LOG_VERSIONS = 1000;
  * `MUTATION_RETENTION_MS`). Clients never re-send a mutation older than this.
  */
 export const RESULT_RETENTION_MS = MUTATION_RETENTION_MS;
+/** While nothing drains the outbox, its size is logged each time it grows by this many rows. */
+export const OUTBOX_LOG_EVERY = 1000;
 
 const SCHEMA = `
   create table if not exists shard_meta (key text primary key, value) without rowid;
@@ -43,11 +47,12 @@ const SCHEMA = `
     primary key (version, tbl, id)
   ) without rowid;
   create table if not exists mutation_results (
+    actor_id text not null,
     client_id text not null,
     mutation_id text not null,
     at integer not null,
     result text not null,
-    primary key (client_id, mutation_id)
+    primary key (actor_id, client_id, mutation_id)
   ) without rowid;
   create index if not exists mutation_results_at on mutation_results (at);
   ${OUTBOX_SCHEMA}
@@ -70,14 +75,12 @@ export type MutateOutcome = {
 
 export type Logger = (message: string, fields: Record<string, unknown>) => void;
 
+type Committed = { changes: RowChange[]; result: MutationResultMessage };
+
 export class Shard {
   readonly store: SqlStore;
-  /**
-   * Opaque id created with the storage and kept for its life; versions only compare within one epoch (RFC 0004).
-   * A token (`ep_<ULID>`), as the protocol requires.
-   */
-  readonly epoch: string;
   private readonly sql: SqlStorage;
+  private current: string;
 
   constructor(
     storage: DurableObjectStorage,
@@ -92,8 +95,36 @@ export class Shard {
   ) {
     this.sql = storage.sql;
     this.store = new SqlStore(storage);
+    // Spike storage from before results were keyed by actor: the table is only a de-duplication cache.
+    const [results] = this.sql
+      .exec<{ sql: string }>("select sql from sqlite_master where name = 'mutation_results'")
+      .toArray();
+    if (results && !results.sql.includes("actor_id")) this.sql.exec("drop table mutation_results");
     this.sql.exec(SCHEMA);
-    this.epoch = this.text("epoch") ?? this.createEpoch();
+    this.current = this.text("epoch") ?? this.rotateEpoch();
+  }
+
+  /**
+   * Opaque id created with the storage and replaced on every restore; versions only compare within one epoch
+   * (RFC 0004). A token (`ep_<ULID>`), as the protocol requires.
+   */
+  get epoch(): string {
+    return this.current;
+  }
+
+  /**
+   * Writes a new epoch. Every restore of this shard's storage calls it before the shard serves a socket again
+   * (RFC 0004 "Shard server"): a restored shard reuses versions for other changes, and only a new epoch makes
+   * every client's resume point invalid, so each resume gets a snapshot. Also how the epoch is first created.
+   */
+  rotateEpoch(): string {
+    const epoch = newId("ep", Date.now(), this.options.randomBytes);
+    this.sql.exec(
+      "insert into shard_meta (key, value) values ('epoch', ?) on conflict (key) do update set value = excluded.value",
+      epoch,
+    );
+    this.current = epoch;
+    return epoch;
   }
 
   /** The last committed version; 0 before the first mutation. */
@@ -121,15 +152,21 @@ export class Shard {
     return current === workspaceId;
   }
 
-  /** A stored result for a retried mutation, if it is still within retention. */
+  /**
+   * A stored result for a retried mutation, if it is still within retention. Results are kept apart per actor and
+   * client: another actor reusing a client id and mutation id never gets this one's result.
+   */
   storedResult(
+    actorId: string,
     clientId: string,
     mutationId: string,
     now: number,
   ): MutationResultMessage | undefined {
     const [row] = this.sql
       .exec<{ result: string }>(
-        "select result from mutation_results where client_id = ? and mutation_id = ? and at >= ?",
+        `select result from mutation_results
+         where actor_id = ? and client_id = ? and mutation_id = ? and at >= ?`,
+        actorId,
         clientId,
         mutationId,
         now - RESULT_RETENTION_MS,
@@ -140,8 +177,12 @@ export class Shard {
 
   /**
    * Runs a mutation as `actor` (RFC 0004): its rows, the version bump, the change log, the outbox and its stored
-   * result all commit in one transaction, or none do. A failure's result is stored too, so a retry gets the same
-   * answer. The caller checks `storedResult` first.
+   * result all commit in one transaction, or none do. The caller checks `storedResult` first.
+   *
+   * A failed mutation's result is stored too, so a retry gets the same answer, except `unknown_mutation` (a later
+   * deploy may know the name). A failure while committing (storage, the outbox) is not the mutation's answer: it
+   * rolls back, nothing is stored and it is rethrown, so the socket closes and the client replays the mutation.
+   * Only an exception in the mutation's own code becomes a stored `internal`.
    */
   mutate(input: MutateInput): MutateOutcome {
     const { clientId, mutationId, actor, now } = input;
@@ -149,48 +190,29 @@ export class Shard {
     if (workspaceId === undefined) throw new Error("Shard has no workspace yet");
     const ctx: MutationContext = { actor, now, server: true };
     // Set by `commit`; a box, because TypeScript does not see assignments made inside the callback.
-    const done: { committed?: { changes: RowChange[]; result: MutationResultMessage } } = {};
+    const done: { committed?: Committed; failed?: { error: unknown } } = {};
 
     this.store.track();
     let outcome;
     try {
       outcome = runMutation(mutations, input.name, input.args, this.store, ctx, {
         commit: (events) => {
-          const version = this.version() + 1;
-          this.setMeta("version", version);
-          const changes = this.store.changes().filter((change) => !TABLES[change.table].serverOnly);
-          this.store.stamp(changes, version);
-          for (const { table, id } of changes) {
-            this.sql.exec(
-              "insert into change_log (version, tbl, id) values (?, ?, ?)",
-              version,
-              table,
-              id,
-            );
+          try {
+            done.committed = this.commit(events, { ...input, workspaceId });
+          } catch (error) {
+            // `runMutation` would answer it with `internal`; it is rethrown below instead.
+            done.failed = { error };
+            throw error;
           }
-          this.compact(version);
-          writeOutbox(this.sql, events, {
-            workspaceId,
-            shard: this.options.shard,
-            actor,
-            now,
-            version,
-            randomBytes: this.options.randomBytes,
-          });
-          const result: MutationResultMessage = {
-            type: "mutationResult",
-            mutationId,
-            ok: true,
-            version,
-          };
-          this.saveResult(clientId, mutationId, now, result);
-          done.committed = { changes, result };
         },
-        onError: (error, name) => this.options.log("mutation failed", { mutation: name, error }),
+        onError: (error, name) => {
+          if (!done.failed) this.options.log("mutation failed", { mutation: name, error });
+        },
       });
     } finally {
       this.store.untrack();
     }
+    if (done.failed) throw done.failed.error;
 
     this.prune(now);
     if (outcome.ok && done.committed) return done.committed;
@@ -203,8 +225,43 @@ export class Shard {
           error: { code: "internal", message: "failed" },
         }
       : { type: "mutationResult", mutationId, ok: false, error: outcome.error };
-    this.saveResult(clientId, mutationId, now, result);
+    if (result.ok || result.error.code !== "unknown_mutation") {
+      this.saveResult(actor.id, clientId, mutationId, now, result);
+    }
     return { result, changes: [] };
+  }
+
+  /** `runMutation`'s commit hook, inside the mutation's transaction: version, change log, outbox and result. */
+  private commit(
+    events: readonly DomainEvent[],
+    input: MutateInput & { workspaceId: string },
+  ): Committed {
+    const { clientId, mutationId, actor, now, workspaceId } = input;
+    const version = this.version() + 1;
+    this.setMeta("version", version);
+    const changes = this.store.changes().filter((change) => !TABLES[change.table].serverOnly);
+    this.store.stamp(changes, version);
+    for (const { table, id } of changes) {
+      this.sql.exec(
+        "insert into change_log (version, tbl, id) values (?, ?, ?)",
+        version,
+        table,
+        id,
+      );
+    }
+    this.compact(version);
+    writeOutbox(this.sql, events, {
+      workspaceId,
+      shard: this.options.shard,
+      actor,
+      now,
+      version,
+      randomBytes: this.options.randomBytes,
+    });
+    this.watchOutbox();
+    const result: MutationResultMessage = { type: "mutationResult", mutationId, ok: true, version };
+    this.saveResult(actor.id, clientId, mutationId, now, result);
+    return { changes, result };
   }
 
   /** Runs a query for a subscription (permission and args checked by `runQuery`). */
@@ -253,30 +310,40 @@ export class Shard {
     this.setMeta("log_start", start);
   }
 
+  /**
+   * TODO(RFC 0005): drain the outbox to the `brigade-events` Queue from an alarm, deleting rows only after the send
+   * succeeds. Until then rows only accumulate, so the count is logged each time it grows by `OUTBOX_LOG_EVERY`.
+   * Nothing deletes yet, so `max(seq) - min(seq) + 1` is the row count without a scan.
+   */
+  private watchOutbox(): void {
+    const { rows } = this.sql
+      .exec<{ rows: number | null }>("select max(seq) - min(seq) + 1 as rows from outbox")
+      .one();
+    if (rows !== null && rows > 0 && rows % OUTBOX_LOG_EVERY === 0) {
+      this.options.log("outbox not drained", { rows });
+    }
+  }
+
   private prune(now: number): void {
     this.sql.exec("delete from mutation_results where at < ?", now - RESULT_RETENTION_MS);
   }
 
   private saveResult(
+    actorId: string,
     clientId: string,
     mutationId: string,
     now: number,
     result: MutationResultMessage,
   ): void {
     this.sql.exec(
-      `insert into mutation_results (client_id, mutation_id, at, result) values (?, ?, ?, ?)
-       on conflict (client_id, mutation_id) do update set at = excluded.at, result = excluded.result`,
+      `insert into mutation_results (actor_id, client_id, mutation_id, at, result) values (?, ?, ?, ?, ?)
+       on conflict (actor_id, client_id, mutation_id) do update set at = excluded.at, result = excluded.result`,
+      actorId,
       clientId,
       mutationId,
       now,
       JSON.stringify(result),
     );
-  }
-
-  private createEpoch(): string {
-    const epoch = newId("ep", Date.now(), this.options.randomBytes);
-    this.sql.exec("insert into shard_meta (key, value) values ('epoch', ?)", epoch);
-    return epoch;
   }
 
   private text(key: string): string | undefined {
@@ -300,6 +367,30 @@ export class Shard {
       value,
     );
   }
+}
+
+/**
+ * What `changes` do to one subscription's result: rows in it now (entered or changed) are upserts, ids that were
+ * in it and are not any more are deletes; undefined if it is untouched. Membership is `evaluateQuery`'s: a query
+ * with a `key` holds only the row with that id, whatever its filter says. Throws if the query's code does.
+ */
+export function subscriptionChanges(
+  query: AnyQuery,
+  args: unknown,
+  changes: readonly RowChange[],
+): SubscriptionChanges | undefined {
+  const key = query.key?.(args);
+  const member = (row: WireRow | undefined) =>
+    row !== undefined &&
+    (key === undefined || row.id === key) &&
+    query.filter(row as BrigadeTables[typeof query.table], args);
+  const patch: SubscriptionChanges = { upserts: [], deletes: [] };
+  for (const change of changes) {
+    if (change.table !== query.table) continue;
+    if (member(change.after)) patch.upserts.push(change.after!);
+    else if (member(change.before)) patch.deletes.push(change.id);
+  }
+  return patch.upserts.length || patch.deletes.length ? patch : undefined;
 }
 
 /** The registry entry for a query name off the wire (own entries only). */

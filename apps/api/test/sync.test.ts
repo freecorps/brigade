@@ -4,6 +4,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { isId, newId } from "@freecorps/brigade-schema";
 import { MAX_CLIENT_MESSAGE_LENGTH, PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
+import worker from "../src/index.ts";
 import { MAX_SUBSCRIPTIONS, type SocketState } from "../src/workspace.ts";
 
 type Frame = { type: string; [key: string]: unknown };
@@ -348,7 +349,7 @@ describe("GET /sync/:workspaceId", () => {
         workspace: ws,
         actor: { kind: "user", id: "usr_dev", role: "responder" },
         clientId: "client-attached",
-        subs: [{ subId: "one", query: "incident.byId", args: { id }, version: 1 }],
+        subs: [{ subId: "one", query: "incident.byId", args: { id } }],
       });
     });
     a.send({ type: "unsubscribe", subId: "one" });
@@ -462,6 +463,147 @@ describe("GET /sync/:workspaceId", () => {
     await runInDurableObject(env.WORKSPACE.getByName(ws), (_instance, state) => {
       const attached = state.getWebSockets()[0]!.deserializeAttachment() as SocketState;
       expect(attached.subs.map((sub) => sub.subId)).toEqual(["live"]);
+    });
+  });
+
+  test("without SYNC_DEV_ACTOR the upgrade is refused with 501, before the shard", async () => {
+    // As in production and staging: the variable is unset (test/wrangler-config and apps/web's config test).
+    // A plain object: setting a key on one whose prototype is `env` would write through to the real env.
+    const bare: Env = { WORKSPACE: env.WORKSPACE };
+    const request = new Request(`http://api.test/sync/${workspace()}`, {
+      headers: { Upgrade: "websocket" },
+    }) as Parameters<typeof worker.fetch>[0];
+    const response = await worker.fetch(request, bare);
+    expect(response.status).toBe(501);
+    expect(await response.json()).toMatchObject({
+      error: "not_implemented",
+      message: expect.stringContaining("SYNC_DEV_ACTOR"),
+    });
+  });
+
+  test(`a socket holds at most ${MAX_SUBSCRIPTIONS} subscriptions; re-subscribing one replaces it`, async () => {
+    const a = (await connect(workspace())).hello();
+    for (let i = 0; i < MAX_SUBSCRIPTIONS; i++) {
+      a.send(active(`s${i}`));
+      expect(await a.next()).toMatchObject({ type: "snapshot", subId: `s${i}` });
+    }
+    a.send(active("one-more"));
+    expect(await a.next()).toEqual({
+      type: "error",
+      subId: "one-more",
+      code: "limit",
+      message: `At most ${MAX_SUBSCRIPTIONS} subscriptions per socket`,
+    });
+    a.send(active("s0"));
+    expect(await a.next()).toMatchObject({ type: "snapshot", subId: "s0" });
+  });
+
+  test("rotating the epoch (the restore hook) closes sockets, and resumes from the old one get snapshots", async () => {
+    const ws = workspace();
+    const a = (await connect(ws)).hello("client-restore");
+    a.send(active("active"));
+    const before = await a.next();
+    const id = incidentId();
+    a.send(declare(id));
+    expect(await a.next()).toMatchObject({ type: "mutationResult", ok: true, version: 1 });
+    expect(await a.next()).toMatchObject({ type: "patch", version: 1 });
+
+    const epoch = await env.WORKSPACE.getByName(ws).rotateEpoch();
+    expect(epoch).not.toBe(before.epoch);
+    expect(isId("ep", epoch)).toBe(true);
+    expect(await epochOf(ws)).toBe(epoch);
+    expect(await a.closed).toMatchObject({ code: 1012 });
+
+    // Same version as the client holds, but another epoch: a snapshot, not an empty resume patch.
+    const b = (await connect(ws)).hello("client-restore");
+    b.send(active("active", { version: 1, epoch: before.epoch as string }));
+    expect(await b.next()).toEqual({
+      type: "snapshot",
+      subId: "active",
+      epoch,
+      version: 1,
+      rows: [expect.objectContaining({ id })],
+    });
+  });
+
+  test("a socket's subscription state is capped at 8 KiB", async () => {
+    const ws = workspace();
+    const a = (await connect(ws)).hello();
+    a.send(active("first"));
+    expect((await a.next()).type).toBe("snapshot");
+    // No query's args are that large yet, so the state is grown directly.
+    await runInDurableObject(env.WORKSPACE.getByName(ws), (_instance, state) => {
+      const socket = state.getWebSockets()[0]!;
+      const attached = socket.deserializeAttachment() as SocketState;
+      attached.subs[0]!.args = { padding: "x".repeat(8000) };
+      socket.serializeAttachment(attached);
+    });
+    a.send(active("second"));
+    expect(await a.next()).toEqual({
+      type: "error",
+      subId: "second",
+      code: "limit",
+      message: "Too much subscription state on this socket",
+    });
+    await runInDurableObject(env.WORKSPACE.getByName(ws), (_instance, state) => {
+      const attached = state.getWebSockets()[0]!.deserializeAttachment() as SocketState;
+      expect(attached.subs.map((sub) => sub.subId)).toEqual(["first"]);
+    });
+  });
+
+  test("a malformed subscribe replaces the subscription with its subId by nothing", async () => {
+    const ws = workspace();
+    const a = (await connect(ws)).hello();
+    const b = (await connect(ws)).hello();
+    a.send(active("live"));
+    expect((await a.next()).type).toBe("snapshot");
+    a.send({ ...active("live"), extra: 1 });
+    expect(await a.next()).toEqual({
+      type: "error",
+      subId: "live",
+      code: "invalid_args",
+      message: "unexpected field extra",
+    });
+    // The old subscription is gone: a change it would have shown sends this socket nothing.
+    b.send(declare(incidentId()));
+    expect(await b.next()).toMatchObject({ type: "mutationResult", ok: true });
+    expect(await a.drain()).toEqual([]);
+  });
+
+  test("a row enters and leaves a filtered subscription through a non-id field", async () => {
+    const ws = workspace();
+    const a = (await connect(ws)).hello();
+    const b = (await connect(ws)).hello();
+    b.send(active("active"));
+    expect((await b.next()).type).toBe("snapshot");
+    const id = incidentId();
+    a.send(declare(id));
+    expect((await b.next()).subs).toEqual({
+      active: { upserts: [expect.objectContaining({ id })], deletes: [] },
+    });
+    const status = (to: string, n: number) => ({
+      type: "mutate",
+      mutationId: `status-${n}`,
+      name: "incident.setStatus",
+      args: { id, status: to },
+    });
+    // Resolved leaves the active list; reopening (resolved → investigating) brings it back as an upsert.
+    a.send(status("resolved", 1));
+    expect(await b.next()).toMatchObject({
+      type: "patch",
+      version: 2,
+      subs: { active: { upserts: [], deletes: [id] } },
+    });
+    a.send(status("investigating", 2));
+    expect(await b.next()).toMatchObject({
+      type: "patch",
+      version: 3,
+      subs: {
+        active: {
+          upserts: [expect.objectContaining({ id, status: "investigating" })],
+          deletes: [],
+        },
+      },
     });
   });
 

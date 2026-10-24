@@ -40,7 +40,16 @@ export default defineConfig(({ command, mode }) => ({
             // `vp dev` also runs the API Worker (and its WorkspaceDO), so one command serves the SPA,
             // this Worker and the API; the `API` service binding resolves to it by name. The build
             // only bundles this Worker: apps/api builds and deploys on its own.
-            auxiliaryWorkers: command === "serve" ? [{ configPath: "../api/wrangler.jsonc" }] : [],
+            // In dev it also gets the API's local-only vars (apps/api/vite.config.ts: the dev sync actor).
+            auxiliaryWorkers:
+              command === "serve"
+                ? [
+                    {
+                      configPath: "../api/wrangler.jsonc",
+                      config: { vars: { SYNC_DEV_ACTOR: "1" } },
+                    },
+                  ]
+                : [],
           }),
           workspaceSource(),
         ],

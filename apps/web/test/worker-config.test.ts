@@ -20,7 +20,8 @@ const server = createTestHarness({
         assets: { ...rawConfig.assets, directory: "./test/fixtures/assets" },
       },
     },
-    { configPath: "../api/wrangler.jsonc" },
+    // As in `vp dev` (vite.config.ts): the dev sync actor, set only for local runs.
+    { configPath: "../api/wrangler.jsonc", vars: { SYNC_DEV_ACTOR: "1" } },
   ],
 });
 
@@ -84,6 +85,22 @@ describe("web Worker → API Worker → WorkspaceDO, with the real configs", () 
       rows: [],
     });
     socket.close(1000, "done");
+  });
+});
+
+describe("apps/api wrangler.jsonc: the dev sync actor", () => {
+  const api = experimental_readRawConfig({ config: "../api/wrangler.jsonc" }).rawConfig;
+  // DEV ONLY until auth exists (apps/api/src/workspace.ts): a deployment with it lets anyone act as a responder.
+  test.each([
+    ["top level (production)", api.vars],
+    ["staging", api.env?.staging?.vars],
+  ])("%s does not set SYNC_DEV_ACTOR", (_name, vars) => {
+    expect(vars?.SYNC_DEV_ACTOR).toBeUndefined();
+  });
+
+  test("only the dev environment sets it", () => {
+    expect(api.env?.dev?.vars).toEqual({ SYNC_DEV_ACTOR: "1" });
+    expect(Object.keys(api.env ?? {}).sort()).toEqual(["dev", "staging"]);
   });
 });
 

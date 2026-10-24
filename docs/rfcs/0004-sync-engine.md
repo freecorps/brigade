@@ -245,12 +245,15 @@ server → client
   real columns would only add a migration per new field; a table that outgrows a scan gets columns and indexes
   then. Server-only tables (`counters`) live there too and never reach the change log.
 - **Shard metadata:** `shard_meta` (key, value) holds `version` (the last committed version, 0 before the first
-  mutation), `log_start`, `workspace` (recorded on first use) and `epoch`: an `ep_<ULID>` token created the first
-  time the storage is initialised and never rewritten, so a restored backup keeps it and a re-created storage gets
-  a new one. **Known limitation:** a restore that lands on the same version the clients hold, with different
-  contents, is not detected: same epoch and same version look like "nothing changed", so a client resumes with an
-  empty patch and keeps rows the shard no longer has until they change again. Only a version behind the client's
-  (a snapshot, and confirmed mutations above it dropped) or a new epoch is noticed.
+  mutation), `log_start`, `workspace` (recorded on first use) and `epoch`, an `ep_<ULID>` token.
+- **Epoch:** created the first time the storage is initialised, and **rotated on every restore**: the procedure
+  that restores a shard's storage (point-in-time recovery, or importing the nightly export of open question Q3)
+  must call `WorkspaceDO.rotateEpoch()` right after the restore, before the shard is reachable again. It writes a
+  new epoch and closes every open socket with 1012, so each client reconnects, resumes with the old epoch and gets
+  a snapshot. Without it, a restore landing on exactly the version a client holds, with different contents, would
+  look like "nothing changed" and the client would keep rows the shard no longer has. No restore path exists yet;
+  whichever is built first calls the hook (`apps/api/test/sync.test.ts` checks that resumes after it get
+  snapshots). A re-created storage gets a new epoch on its own.
 - **Transactions:** `sql.exec` refuses `SAVEPOINT`, but `ctx.storage.transactionSync` nests and the runtime runs
   the nested call as a savepoint (inner rollback undoes only its writes, outer rollback undoes everything;
   `apps/api/test/store.test.ts`). The store's `transaction` is `transactionSync`.
@@ -259,48 +262,71 @@ server → client
   stamps those rows, writes the outbox and stores the result. The log keeps the last 1000 versions
   (`CHANGE_LOG_VERSIONS`; `log_start` is the newest version dropped); a resume from before `log_start`, from a
   version ahead of the shard or from another epoch gets a snapshot.
-- **Patches** are computed from each changed row's value before and after the mutation: a row that matches a
-  subscription's `filter` now is an upsert, one that matched before and no longer does is a delete. No per-socket
-  result sets are kept, so nothing about a socket lives in memory. Every `subscribe` answer and every patch is at
-  the shard's current version, and every version that touches a socket's subscriptions reaches it, so a data
-  frame at V is true for the whole socket. If a subscription's query can no longer be evaluated (its filter
-  throws, or a deploy removed it), the shard refuses it with `error { subId, code: "internal" }` before sending
-  that socket the version's patch, so the patch never claims a version for a subscription that missed it.
+- **Resume patches** hold the rows changed since the client's version that are in the result now, and as deletes
+  every other id changed since then in the query's table, since the shard keeps no per-subscription result sets to
+  tell which of them the client held. A delete for a row the client lacks is a no-op. So a resume's `deletes` may
+  name ids that were never in the subscription, ids of rows the client may not see included; that is harmless
+  while every responder reads every incident, and must be fixed (filter the deletes by what the actor may read)
+  once row-level access exists.
+- **Patches** are computed from each changed row's value before and after the mutation: a row that is in the
+  subscription now is an upsert, one that was and no longer is a delete. Membership is `evaluateQuery`'s: the
+  query's `filter`, and for a query with a `key`, only the row with that id. No per-socket result sets are kept, so
+  nothing about a socket lives in memory, and a version that touches none of a socket's subscriptions costs it no
+  attachment write. Every `subscribe` answer and every patch is at the shard's current version, and every version
+  that touches a socket's subscriptions reaches it, so a data frame at V is true for the whole socket. If a
+  subscription's query can no longer be evaluated (its filter throws, or a deploy removed it), the shard refuses
+  it with `error { subId, code: "internal" }` before sending that socket the version's patch, so the patch never
+  claims a version for a subscription that missed it. A failure while patching one socket is logged and closes
+  that socket alone with 1011 (its client resumes); the other sockets still get their patches.
 - **The always-sent patch:** after an ok `mutationResult` the mutating socket gets the patch for that version,
   with `subs: {}` when the mutation touched nothing on it. A retry answered from the stored result gets that result
   and nothing else: the client re-sends only on a new socket, right after `hello` and before its `subscribe`s,
-  whose answers are at the current version (at or after the result's) and settle the mutation. A patch there would
-  add nothing: no subscription is in sync on that socket yet.
-- **De-duplication:** the result of every `mutate` the shard ran (ok or not) is stored by (clientId, mutationId)
-  in `mutation_results` for 7 days from when the shard ran it (`RESULT_RETENTION_MS` = `MUTATION_RETENTION_MS`);
-  an ok result commits with the mutation's rows, so a retry after a crash between commit and send still gets it.
-  Clients stop re-sending a mutation 7 days after creating it, which is never later than the shard's window.
+  whose answers are at the current version (at or after the result's) and settle the mutation.
+- **De-duplication:** the result of a `mutate` the shard ran is stored by (actor id, clientId, mutationId) in
+  `mutation_results` for 7 days from when the shard ran it (`RESULT_RETENTION_MS` = `MUTATION_RETENTION_MS`), so
+  one actor can never be answered with another's result. An ok result commits with the mutation's rows, so a retry
+  after a crash between commit and send still gets it. Domain failures, invalid args and an exception in the
+  mutation's own code (`internal`) are stored too; `unknown_mutation` is not, since a later deploy may know the
+  name. Clients stop re-sending a mutation 7 days after creating it, which is never later than the shard's window.
   Results older than the window are pruned on the next mutation.
-- **Sockets:** Hibernation API. The attachment holds the client id, the actor and each subscription's query,
-  validated args and last version (at most 32 subscriptions and 8 KiB per socket). Handlers are synchronous, so a
-  socket's frames are handled in arrival order and frames from different sockets never interleave.
+- **Commit failures are not answers:** if storage fails while committing (the version, the change log, the
+  outbox, the stored result), the transaction rolls back, nothing is stored, and the error is rethrown instead of
+  becoming `runMutation`'s `internal`. The socket closes with 1011 and the client replays the mutation on the next
+  one, so a transient storage failure never turns into a permanent, de-duplicated `internal`.
+- **Outbox:** written in the mutation's transaction (RFC 0005) and not drained yet (no Queue). Until it is, the
+  shard logs the outbox's row count each time it grows by 1000 (`outbox not drained`).
+- **Sockets:** Hibernation API. The attachment holds the client id, the actor and each subscription's query and
+  validated args, at most 32 subscriptions and 8 KiB per socket. The 8 KiB is measured approximately, as the
+  UTF-8 length of the state's JSON; the runtime stores the structured-clone encoding, under its 16 KiB limit, and
+  the margin covers the difference. Handlers are synchronous, so a socket's frames are handled in arrival order and
+  frames from different sockets never interleave.
 - **Close policy:**
   - Socket-level protocol error: `error { code: "protocol" }` without ids, then a close with code 1002. That covers
     a frame that cannot be parsed and has no readable id (not JSON, binary, unknown type, over 64 KiB without a
-    readable id), a second `hello`, another protocol version and **any frame before `hello`, a `mutate`
-    included**: the rule that a parseable `mutate` never gets a `protocol` error applies after `hello`. A frame
-    before `hello` says the socket is broken, not that mutation; the client always sends `hello` first, and after
-    the close it reconnects and replays the mutation behind one instead of failing it for good.
+    readable id), a second `hello`, another protocol version and any frame before `hello`, a `mutate` included
+    (see "Protocol"): after the close the client reconnects and replays the mutation behind a `hello`.
   - After `hello`, a frame the parser refuses but whose id is readable is refused alone and the socket stays open:
-    a `subscribe` gets `error { subId, code: "invalid_args" }` (its one answer); a `mutate` (too large, unknown
-    field, a non-string name) gets `mutationResult { ok: false, error: { code: "invalid_args" } }`, as invalid args
-    from `runMutation` would, but it is not stored, since it never ran.
+    a `subscribe` gets `error { subId, code: "invalid_args" }` (its one answer) and, like any `subscribe`,
+    replaces an existing subscription with that subId, here by none; a `mutate` (too large, unknown field, a
+    non-string name) gets `mutationResult { ok: false, error: { code: "invalid_args" } }`, as invalid args from
+    `runMutation` would, but it is not stored, since it never ran.
   - A refused subscription (`unknown_query`, `forbidden`, `invalid_args`, `internal`, or `limit` past 32
     subscriptions or 8 KiB of state) is an error with its `subId`; the socket stays open.
   - The shard sends no `error` with a `mutationId` yet; it is reserved for a final refusal before running (a
     per-client limit).
-  - An unexpected exception (a bug, a storage failure, a mutation's transaction failing outside `runMutation`) is
-    logged as one JSON line, answered with `error { code: "internal" }` without ids, and the socket closes with 1011. Nothing of a failed mutation committed or was stored, so the client replays it on the next socket. A
-    `send` that throws closes the socket with 1011 too: a lost frame would make the next patch claim a version the
-    socket never fully got.
+  - An unexpected exception (a bug, a storage failure, a commit failure as above) is logged as one JSON line,
+    answered with `error { code: "internal" }` without ids, and the socket closes with 1011. A `send` that throws
+    closes the socket with 1011 too: a lost frame would make the next patch claim a version the socket never fully
+    got.
+  - `rotateEpoch()` closes every socket with 1012.
 - **Dev only, until auth:** every socket acts as `{ kind: "user", id: "usr_dev", role: "responder" }`
-  (`DEV_ACTOR`), `hello.token` is ignored, and the Worker passes the workspace id to the shard in a header on the
-  upgrade, which the shard records on first use and checks on every later one.
+  (`DEV_ACTOR`), and only where the `SYNC_DEV_ACTOR` variable is `"1"`: the `dev` environment in
+  `apps/api/wrangler.jsonc`, and local runs (`vp dev` and the tests set it in their Vite configs, never in a
+  build). Production and staging do not set it (`apps/web/test/worker-config.test.ts` checks), so there the sync
+  upgrade gets `501`. `hello.token` is ignored, and the Worker passes the workspace id to the shard in a header on
+  the upgrade, which the shard records on first use and checks on every later one. When auth comes, the Worker
+  also checks `Origin` on the upgrade: browsers send cookies on a cross-site WebSocket upgrade and CORS does not
+  apply to it.
 
 ## Socket topology
 

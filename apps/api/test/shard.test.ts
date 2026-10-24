@@ -2,10 +2,12 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, test } from "vite-plus/test";
-import { isId, newId, type Actor } from "@freecorps/brigade-schema";
-import { RESULT_RETENTION_MS, Shard } from "../src/shard.ts";
+import { defineQuery, isId, newId, v, type Actor } from "@freecorps/brigade-schema";
+import { RESULT_RETENTION_MS, Shard, subscriptionChanges } from "../src/shard.ts";
+import type { RowChange } from "../src/store.ts";
 
 const ana: Actor = { kind: "user", id: "usr_ana", role: "responder" };
+const bia: Actor = { kind: "user", id: "usr_bia", role: "responder" };
 const NOW = Date.UTC(2026, 9, 24, 12, 0, 0);
 const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
 const incidentId = () => newId("inc", NOW, random);
@@ -107,23 +109,38 @@ describe("Shard", () => {
       expect(shard.version()).toBe(0);
       expect(count(sql, "outbox")).toBe(0);
       expect(count(sql, "change_log")).toBe(0);
-      expect(shard.storedResult("c1", "m-missing", NOW)).toEqual(outcome.result);
+      expect(shard.storedResult(ana.id, "c1", "m-missing", NOW)).toEqual(outcome.result);
     });
   });
 
-  test("an outbox failure rolls back the rows, the counter and the version, and logs the cause", async () => {
+  test("an unknown mutation's result is not stored: a later deploy may know the name", async () => {
+    await withShard((shard, sql) => {
+      const outcome = shard.mutate({
+        clientId: "c1",
+        mutationId: "m-unknown",
+        actor: ana,
+        name: "incident.fromTheFuture",
+        args: {},
+        now: NOW,
+      });
+      expect(outcome.result).toMatchObject({ ok: false, error: { code: "unknown_mutation" } });
+      expect(count(sql, "mutation_results")).toBe(0);
+    });
+  });
+
+  test("a storage failure while committing rolls everything back, stores nothing and throws", async () => {
     await withShard((shard, sql, logs) => {
       sql.exec("drop table outbox");
       const id = incidentId();
-      const { result } = declare(shard, id);
-      expect(result).toMatchObject({ ok: false, error: { code: "internal" } });
+      // Not a stored `internal`: the socket closes and the client replays the mutation.
+      expect(() => declare(shard, id)).toThrow(/outbox/);
       expect(shard.store.get("incidents", id)).toBeUndefined();
       expect(shard.store.get("counters", "incident")).toBeUndefined();
       expect(shard.version()).toBe(0);
       expect(count(sql, "change_log")).toBe(0);
-      expect(logs).toEqual([
-        expect.objectContaining({ message: "mutation failed", mutation: "incident.declare" }),
-      ]);
+      expect(count(sql, "mutation_results")).toBe(0);
+      // The caller (WorkspaceDO) logs it; the shard does not log it as the mutation's failure.
+      expect(logs).toEqual([]);
     });
   });
 
@@ -131,13 +148,71 @@ describe("Shard", () => {
     await withShard((shard, sql) => {
       const { result } = declare(shard);
       const { mutationId } = result;
-      expect(shard.storedResult("c1", mutationId, NOW + RESULT_RETENTION_MS)).toEqual(result);
-      expect(shard.storedResult("c1", mutationId, NOW + RESULT_RETENTION_MS + 1)).toBeUndefined();
-      expect(shard.storedResult("c2", mutationId, NOW)).toBeUndefined();
+      expect(shard.storedResult(ana.id, "c1", mutationId, NOW + RESULT_RETENTION_MS)).toEqual(
+        result,
+      );
+      expect(
+        shard.storedResult(ana.id, "c1", mutationId, NOW + RESULT_RETENTION_MS + 1),
+      ).toBeUndefined();
       // The next mutation prunes them.
       declare(shard, incidentId(), NOW + RESULT_RETENTION_MS + 1);
       expect(count(sql, "mutation_results")).toBe(1);
     });
+  });
+
+  test("results are kept apart per actor and per client", async () => {
+    await withShard((shard, sql) => {
+      const run = (actor: Actor, clientId: string, id = incidentId()) =>
+        shard.mutate({
+          clientId,
+          mutationId: "same",
+          actor,
+          name: "incident.declare",
+          args: { id, title: "Checkout down", severity: "sev2" },
+          now: NOW,
+        }).result;
+      const anaC1 = run(ana, "c1");
+      expect(run(ana, "c2")).toMatchObject({ ok: true, version: 2 });
+      expect(run(bia, "c1")).toMatchObject({ ok: true, version: 3 });
+      expect(shard.storedResult(ana.id, "c1", "same", NOW)).toEqual(anaC1);
+      expect(shard.storedResult(ana.id, "c2", "same", NOW)).toMatchObject({ version: 2 });
+      expect(shard.storedResult(bia.id, "c1", "same", NOW)).toMatchObject({ version: 3 });
+      expect(shard.storedResult(bia.id, "c2", "same", NOW)).toBeUndefined();
+      expect(count(sql, "mutation_results")).toBe(3);
+    });
+  });
+
+  test("a key query holds only its row, whatever its filter says", () => {
+    const anything = defineQuery({
+      name: "test.anyById",
+      args: v.object({ id: v.id("inc") }),
+      permission: "incident:read",
+      table: "incidents",
+      key: (args) => args.id,
+      filter: () => true,
+    });
+    const row = (id: string, title: string) =>
+      ({
+        id,
+        number: 1,
+        title,
+        severity: "sev2",
+        status: "triage",
+        declaredAt: NOW,
+        declaredBy: ana.id,
+        updatedAt: NOW,
+      }) as const;
+    const mine = incidentId();
+    const other = incidentId();
+    const changes: RowChange[] = [
+      { table: "incidents", id: other, before: undefined, after: row(other, "Other") },
+      { table: "incidents", id: mine, before: row(mine, "Old"), after: row(mine, "New") },
+    ];
+    expect(subscriptionChanges(anything, { id: mine }, changes)).toEqual({
+      upserts: [row(mine, "New")],
+      deletes: [],
+    });
+    expect(subscriptionChanges(anything, { id: incidentId() }, changes)).toBeUndefined();
   });
 
   test("the change log keeps the last N versions; older resumes need a snapshot", async () => {

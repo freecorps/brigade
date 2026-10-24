@@ -15,19 +15,22 @@ Sync, RFC 0004). Every write is a named mutation from `@freecorps/brigade-schema
 |                       | `503` if the object is overloaded or the error is retryable, `500` otherwise    |
 | `GET /sync/:id`       | `101`: a Brigade Sync WebSocket to the workspace's shard (`Upgrade: websocket`) |
 |                       | `426` without `Upgrade: websocket`, `400` for a bad id, `405` for other methods |
+|                       | `501` where `SYNC_DEV_ACTOR` is not `"1"` (production, staging: no auth yet)    |
 | other methods         | `405` with `Allow: GET, HEAD`                                                   |
 | anything else         | `404`                                                                           |
 
 `/workspaces/:id` and `/sync/:id` are dev-only placeholders with no auth. Every sync socket acts as the dev actor
 `{ kind: "user", id: "usr_dev", role: "responder" }` (`DEV_ACTOR` in `src/workspace.ts`), and `hello.token` is
-ignored. Until auth exists, `workers_dev` and `preview_urls` are off, so a deployed Worker has no public URL.
+ignored. That needs `SYNC_DEV_ACTOR=1`: set in the `dev` environment (`wrangler.jsonc`) and by `vp dev` and the
+tests (`vite.config.ts` here and in apps/web, only when serving, never in a build). Production and staging leave it
+unset, and there `/sync/:id` answers `501`. Until auth exists, `workers_dev` and `preview_urls` are off, so a deployed Worker has no public URL.
 Through the dashboard Worker the endpoint is `/api/sync/:id` (the service binding forwards the upgrade).
 
 ## Sync server
 
 `src/workspace.ts` speaks the protocol in `@freecorps/brigade-sync/protocol` over the WebSocket Hibernation API;
 `src/shard.ts` keeps the shard's state in SQLite. Everything a socket needs (client id, actor, subscriptions with
-their args and last version) is in its attachment, so the object can hibernate between frames. Handlers are
+their args) is in its attachment, so the object can hibernate between frames. Handlers are
 synchronous, so frames are handled strictly in arrival order. The details and the reasons are in RFC 0004,
 "Shard server".
 
@@ -39,20 +42,25 @@ synchronous, so frames are handled strictly in arrival order. The details and th
 | `mutation_results` | The result of each (clientId, mutationId) the shard ran, kept 7 days from the run for de-duplication                            |
 | `outbox`           | RFC 0005 event envelopes, written in the mutation's transaction; not drained yet (no Queue)                                     |
 
-- **Epoch:** created once with the storage and never rewritten; a resume from another epoch, from a version ahead
-  of the shard or from before the change log gets a snapshot, otherwise a patch. A restore that lands on the same
-  version with different contents is not detected.
-- **Patches:** one per version per socket, for the subscriptions it touched; the socket that ran an ok mutation
-  always gets that version's patch, with `subs: {}` if nothing on it changed. A retry answered from
-  `mutation_results` gets the stored result only.
+- **Epoch:** created with the storage and rotated by `WorkspaceDO.rotateEpoch()`, which every restore must call
+  before the shard is reachable again (it also closes every socket with 1012). A resume from another epoch, from a
+  version ahead of the shard or from before the change log gets a snapshot, otherwise a patch.
+- **Patches:** one per version per socket, for the subscriptions it touched (a `key` query holds only its row);
+  the socket that ran an ok mutation always gets that version's patch, with `subs: {}` if nothing on it changed. A
+  retry answered from `mutation_results` gets the stored result only. A resume's `deletes` may name ids the
+  subscription never held (fine until row-level access exists).
+- **Results:** keyed by (actor id, clientId, mutationId); `unknown_mutation` is not stored. A storage failure while
+  committing stores nothing and closes the socket with 1011, so the client replays the mutation.
+- **Outbox:** not drained yet; its row count is logged every 1000 rows (`outbox not drained`).
 - **Limits:** client frames up to 64 KiB of text (binary frames are refused); 32 subscriptions per socket and
-  8 KiB of attachment state.
+  about 8 KiB of attachment state (measured as JSON).
 - **Errors and closes:** any frame before `hello` (a `mutate` too), a second `hello`, another protocol version or a
   frame with no readable id gets `error { code: "protocol" }` and a close with code 1002. After `hello`, a
   malformed `subscribe` or `mutate` with a readable id is refused alone with `invalid_args` (an `error` with its
-  `subId`, or a failed `mutationResult`) and the socket stays open, as for any refused subscription. Unexpected
-  failures, and a `send` that throws, are logged as one JSON line (`console.error`), answered with
-  `error { code: "internal" }` when possible, and close the socket with 1011; the client reconnects and replays.
+  `subId`, which also drops a subscription with that subId, or a failed `mutationResult`) and the socket stays
+  open, as for any refused subscription. Unexpected failures, and a `send` that throws, are logged as one JSON line
+  (`console.error`), answered with `error { code: "internal" }` when possible, and close the socket with 1011; the
+  client reconnects and replays.
 
 ## Run it
 

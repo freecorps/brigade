@@ -74,5 +74,19 @@
   "stack_erroring": "Com erro",
   "stack_api_stuck": "O Worker da API não está respondendo a tempo",
   "stack_timed_out": "Tempo esgotado",
-  "stack_hint_api_stuck": "A API parece estar rodando, mas travada. Procure no terminal que está rodando:"
+  "stack_hint_api_stuck": "A API parece estar rodando, mas travada. Procure no terminal que está rodando:",
+  "mobile_overview_description": "A legenda de severidade e status, a partir dos tokens e do catálogo compartilhados.",
+  "dates_title": "Datas e horários",
+  "dates_absolute": "Data e hora",
+  "dates_relative": "Relativo",
+  "intl_open": "Diagnóstico de Intl",
+  "intl_title": "Suporte a Intl",
+  "intl_description": "O que este motor JavaScript oferece sozinho e o que os helpers compartilhados exibem com isso.",
+  "intl_feature": "Recurso",
+  "intl_native": "Nativo",
+  "intl_polyfilled": "Com polyfill",
+  "intl_missing": "Ausente",
+  "intl_engine": "Motor: {engine}",
+  "intl_rendered": "Exibido pelos helpers compartilhados",
+  "intl_engine_other": "outro motor"
 }

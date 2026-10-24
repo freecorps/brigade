@@ -43,6 +43,7 @@ function ActiveIncidents() {
     if (!result.ok) showError(result.error); // typed: forbidden, invalid_args, conflict, expired, …
   };
   // rows already holds the new incident (number: null) while the server confirms it.
+  return <IncidentList rows={rows} loading={status === "loading"} pending={pending} onDeclare={onDeclare} />;
 }
 ```
 

@@ -1,0 +1,8 @@
+{
+  // Runtime code: no Node types, so a Node-only API in src fails `vp check` and the declaration build.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": []
+  },
+  "include": ["."]
+}

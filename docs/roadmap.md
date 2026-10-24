@@ -32,7 +32,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - One `WorkspaceDO` with `subscribe` / `mutate` / `resume`; `packages/sync` with `useQuery` / `useMutation`.
 - [ ] **S4 — Expo in the workspace.** Pass: development build runs on the iOS Simulator importing `packages/*`
       through Metro; `eas build` succeeds (needs Heitor's EAS account); Hermes `Intl.PluralRules`,
-      `RelativeTimeFormat` and `dateStyle`/`timeStyle` checked (polyfill if missing).
+      `RelativeTimeFormat` and `dateStyle`/`timeStyle` checked (polyfill if missing); Hermes regex Unicode
+      property escapes checked (`UNICODE_PROPERTY_ESCAPES` from `packages/schema` is `true`, RFC 0004).
 - [ ] **S2 — Probe placement** (RFC 0007). Pass: observed colo per `locationHint` over 48h (deploy needs Heitor's approval).
 - [ ] **S1 — APNs from a Worker and payload encryption** (RFC 0006). Pass: push received on a real iPhone from a
       Worker, decrypted in the Notification Service Extension (needs Apple credentials and a device).

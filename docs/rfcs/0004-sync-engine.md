@@ -28,6 +28,92 @@ LiveStore's protocol is a good reference.
 - **Mutations** are named, typed functions in `packages/schema`: `incident.ack`, `incident.setSeverity`, …
   The same code runs optimistically on the client and authoritatively (with RBAC) on the server.
 
+## Shared core (`packages/schema`)
+
+Settled in spike S3. Server and clients run the same pure code; only the store underneath differs.
+
+```ts
+interface Store<S> {                         // SQLite in the DO; createMemoryStore() on clients and in tests
+  get(table, id); insert(table, row); delete(table, id);
+  update(table, id, patch);                  // keys set to undefined are ignored; null clears
+  scan(table);                               // rows ordered by id
+  transaction(fn);                           // undo every write if fn throws; re-entrant
+}
+
+type MutationContext = { actor: { kind: "user" | "system" | "integration"; id; role }; now: number; server: boolean };
+
+defineMutation({ name: "incident.declare", args: v.object({ … }), permission: "incident:declare",
+  apply(store, args, ctx) { …; return ok(event) /* or fail("not_found", …) */ } });
+defineQuery({ name: "incidents.active", args: v.object({}), permission: "incident:read",
+  table: "incidents", filter: (row, args) => …, sort: (a, b) => …, key?: (args) => id });
+
+runMutation(mutations, name, rawArgs, store, ctx, { commit?(events), onError?(error, name) })
+  // → { ok: true, events } | { ok: false, error: { code, message, issues? } }
+runQuery(queries, name, rawArgs, store, role, { onError? }) // → { ok: true, rows } | { ok: false, error }
+```
+
+- **Mutations** are deterministic and side-effect free: they read and write only the store, and time comes from
+  `ctx.now` (epoch milliseconds, a safe non-negative integer, else `internal`; the same unit as ULIDs and SQLite
+  integers; ISO 8601 only in event envelopes and the UI). `runMutation` checks the role against the access-control
+  table (`can(role, permission)`, shaped for Better Auth's `createAccessControl`, RFC 0003), validates args, then
+  runs `apply` and then `commit` in one `store.transaction`, so any failure writes nothing. Failures are typed
+  (`unknown_mutation`, `forbidden`, `invalid_args`, `not_found`, `invalid_transition`, `conflict`); an unexpected
+  exception becomes `internal`, whose cause goes only to `onError` (server logs), never over the wire. Neither
+  `runMutation` nor `runQuery` throws, whatever arrives off the wire (a non-string name is an unknown one; args
+  that throw while being read are `internal`). System and integration actors carry a role and pass the same check.
+- **Events and the outbox**: a successful mutation returns its domain events (`type`, `subject`, `data`). The
+  server writes them to the outbox in `commit`, inside the mutation's transaction (RFC 0005); if `commit` throws,
+  the rows roll back too. Clients drop the events. Every success must emit an event: one with none is a bug in
+  the mutation and becomes `internal`. So "no change" (setting the current status or severity) is one code for
+  both, `conflict`, which also covers an existing id; it also makes a rebased mutation the server already applied
+  fail locally and drop out of the optimistic view.
+- **Transactions are re-entrant.** The server already runs inside its own transaction when it calls
+  `runMutation`, so the SQLite store's `transaction` must nest with savepoints: an inner rollback undoes only its
+  writes; an outer rollback undoes everything. The in-memory store copies its table
+  maps per transaction, O(rows): fine for an incident index, not for large tables.
+- **Server-only work** runs when `ctx.server` is true. `INC-n` comes from a `counters` row written in the
+  mutation's own transaction, not from an injected callback, so it stays atomic and replayable; the client's
+  optimistic row has `number: null` until the server's patch arrives. Tables are marked server-only in data
+  (`TABLES`); they are never synced, and `defineQuery` refuses them.
+- **Client-generated ids**: the client makes the prefixed ULID (`newId("inc", now, randomBytes)`) and passes it in
+  the args, so the optimistic row and the server row share one id. The server checks the format (`isId`), rejects
+  an existing id with `conflict`, and rejects an id dated more than 10 minutes in the future of its clock
+  (`invalid_args`), so a bad clock cannot pin an incident above newer ones. Any past id time is accepted:
+  declaring an incident must never fail because the phone was offline. The row's `declaredAt` is the server's
+  `now`, so an old id only affects id order, never the incident's dates.
+- **Shard names never come from a client-chosen id alone.** A shard is named from the workspace id and the
+  entity id (`${workspaceId}:${incidentId}`), and the Worker checks that the entity belongs to the caller's
+  workspace (the `WorkspaceDO` index) before routing. Client-generated ids make this mandatory: otherwise a client
+  could pick an id that addresses another workspace's shard.
+- **Queries are data over one table** (`table`, `filter`, `sort`, optional `key` for a single-row read). The
+  server uses `filter` to tell which subscriptions a changed row touches; clients re-run the query over local rows
+  after an optimistic mutation. Limitation: no joins or aggregates; a view that needs them is a projection table
+  the shard maintains in its mutations.
+- **Validation** is a handful of hand-written validators (`v.object`, `v.string`, `v.picklist`, `v.id`) in
+  `packages/schema`: no dependency, nothing engine-specific (runs on Workers, browsers and Hermes). `v.object`
+  accepts only plain objects and rejects unknown keys. `v.string` rejects raw input longer than about twice its
+  limit before any work, then walks the code points once (linear) and trims an explicit whitespace set (not the
+  engine's `trim`). The rule is by Unicode property, not a hand list: reject any code point in `Cc`, `Cf`, `Cs`,
+  `Co`, `Cn`, `Default_Ignorable_Code_Point`, `Zl` or `Zp`, with exactly three exceptions: ZWJ between two
+  `Extended_Pictographic` code points; one U+FE0E or U+FE0F right after an `Extended_Pictographic` code point or a
+  keycap base (`0-9`, `#`, `*`); one U+E0100–U+E01EF right after an `Ideographic` code point. Every other variation
+  selector (U+FE00–U+FE0D, or any selector elsewhere) and every tag character (U+E0000–U+E007F, so subdivision
+  flags too) is rejected, so no invisible code point can carry a hidden message. Multi-line text may also hold
+  `\n` and `\t`. The result must contain at least one letter, number, symbol or punctuation that is not a blank
+  look-alike (Braille blank, musical null notehead U+1D159, Hangul fillers), and `min` is checked after all that. Errors carry at most 10 issues, and echoed names and paths are cut to 64 code
+  units without splitting a pair, with rejected code points shown as U+FFFD. Valibot is the upgrade if the arg
+  shapes outgrow this.
+- **Unicode property escapes** (`\p{…}` with the `u` flag) are in V8 (Workers, Chrome, Node) and in Hermes since
+  2024 (facebook/hermes#1295, behind a build flag that defaults to on). The regexes are built at runtime: on an
+  engine without them, clients fall back to rejecting only controls, separators, bidi overrides/isolates, tag
+  characters, U+FE00–U+FE0D and unpaired surrogates, and leave the rest to the server, which always runs the full
+  rule.
+  `UNICODE_PROPERTY_ESCAPES` tells which path is active; S4 checks it is `true` on device. Unassigned (`Cn`) depends
+  on each engine's Unicode version, so a code point newer than a client's tables can fail there optimistically
+  while the server accepts it; the server's answer wins.
+- **In S3 the `WorkspaceDO` incident index is temporarily authoritative** for status and severity. Once
+  `IncidentDO` exists it owns them, and the index becomes a projection fed from `IncidentDO`'s outbox (RFC 0002).
+
 ## Protocol (WebSocket, JSON; binary later if needed)
 
 ```
@@ -46,7 +132,17 @@ server → client
 - On reconnect the client sends `lastVersions`; the shard replies with patches since that version, or a fresh
   snapshot if the change log was compacted.
 - Optimistic layer: pending mutations are re-applied on top of every server patch until confirmed or rejected
-  (rollback on rejection).
+  (rollback on rejection). Each pending mutation keeps the `MutationContext` (`now`, `actor`) of its first run on
+  every re-apply, so re-applying is deterministic. A pending mutation that fails on local re-apply (the server
+  state moved under it) is dropped from the optimistic view silently; only a rejection in the server's
+  `mutationResult` is shown to the user.
+- Ordering: on a socket, the shard sends a mutation's `mutationResult` before any `patch` that contains its
+  effects, and the socket delivers in order. The client drops a pending mutation when its result arrives, so the
+  patch is never re-applied on top of its own effects. (Re-applied after them, a mutation can still succeed and
+  show a stale state: Ana's "resolve" applied, Bia reopens, a patch-first client would re-resolve.) A `conflict`
+  on re-apply is only a fallback for a lost result, until the reconnect replays it.
+- The server de-duplicates `mutate` by `(clientId, mutationId)`: a retry after a lost connection gets the stored
+  `mutationResult` instead of running the mutation twice.
 - Shards keep a bounded change log (rows changed per version) to serve resumes cheaply.
 - WebSocket Hibernation API on the DO keeps idle connections cheap.
 
@@ -57,12 +153,15 @@ server → client
 ```
                        ┌── wss /sync/ws_123            ──▶ WorkspaceDO(ws_123)
 SyncClient (web/mobile)┤
-  connection pool      └── wss /sync/ws_123/inc_456    ──▶ IncidentDO(inc_456)
+  connection pool      └── wss /sync/ws_123/inc_456    ──▶ IncidentDO(ws_123:inc_456)
 ```
 
 - The `api` Worker authenticates the upgrade request (Better Auth session or bearer token), checks membership and
   role in the workspace, then hands the socket to the shard (`stub.fetch(request)`); the DO accepts it with the
   Hibernation API. Auth context travels as a signed header from the Worker to the DO.
+- For an entity shard, the Worker first checks that the entity belongs to the workspace (`inc_456` is in
+  `WorkspaceDO(ws_123)`'s index) and names the shard from both ids (`ws_123:inc_456`), never from the client's id
+  alone.
 - `SyncClient` owns a pool: it opens a shard connection on the first subscription to it and closes it a few
   seconds after the last unsubscribe. Apps only see `useQuery` / `useMutation`.
 - Typical load is small: web dashboard = workspace + 0–3 open incidents; mobile = workspace + current incident.

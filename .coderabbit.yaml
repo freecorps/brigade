@@ -1,0 +1,144 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit config for freecorps/brigade. Reference: https://docs.coderabbit.ai/reference/configuration
+language: en-US
+tone_instructions: "Be concise. Lead with the concrete failure scenario. Cite the RFC in docs/rfcs/ when a finding is about a design rule. Skip praise."
+early_access: false
+
+reviews:
+  # Agents fix findings automatically (babysit-pr); fewer, sharper findings beat a flood of nitpicks.
+  profile: chill
+  high_level_summary: true
+  review_status: true
+  commit_status: true
+  collapse_walkthrough: true
+  changed_files_summary: true
+  sequence_diagrams: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  suggested_labels: false
+  suggested_reviewers: false
+  poem: false
+  abort_on_close: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches: ["^main$"]
+    ignore_title_keywords: ["WIP", "DO NOT REVIEW"]
+
+  # Vendored skills, lockfiles and generated output are not ours to review.
+  path_filters:
+    - "!.agents/**"
+    - "!.claude/**"
+    - "!skills-lock.json"
+    - "!bun.lock"
+    - "!LICENSE"
+    - "!**/dist/**"
+    - "!**/*.gen.ts"
+
+  path_instructions:
+    - path: "packages/**"
+      instructions: |
+        MIT-licensed shared packages used by Workers, the web dashboard and React Native.
+        Flag: imports from apps/* or integrations/* (AGPL), React or browser/Node-only globals in packages
+        other than sync and ui, and any mutation that does not validate its input.
+    - path: "packages/schema/**"
+      instructions: |
+        Mutations here run optimistically on clients and authoritatively on the server (RFC 0004).
+        They must be deterministic (no Date.now/Math.random without an injected clock or id), side-effect free,
+        and check permissions through the shared access-control table (RFC 0003).
+    - path: "apps/api/**"
+      instructions: |
+        Cloudflare Worker + Durable Objects. Check against RFC 0002, 0004 and 0005:
+        every write goes through a named mutation inside the owning DO; events are written to the DO outbox in the
+        same transaction, never sent to a Queue directly; WebSockets use the Hibernation API; no global mutable state
+        across requests; no floating promises (use ctx.waitUntil); secrets only from env bindings.
+        Any change on a paging path (escalation alarms, notifiers, push, voice) needs a fallback and a test.
+    - path: "apps/relay/**"
+      instructions: |
+        Push relay (RFC 0006). The relay must never see plaintext notification content, must check that a handle
+        belongs to the calling instance, and must rate-limit per instance. Flag any logging of payloads or tokens.
+    - path: "apps/mobile/**"
+      instructions: |
+        Expo app. Flag: hard-coded user-facing strings (must use packages/i18n), missing dark-mode handling,
+        PushKit/VoIP pushes that do not report a CallKit call immediately (RFC 0010), and secrets in app config.
+    - path: "apps/web/**"
+      instructions: |
+        React + TanStack Router + shadcn/ui dashboard. Flag hard-coded user-facing strings (must use packages/i18n),
+        missing loading/empty/error states, and accessibility issues (labels, focus, contrast in dark mode).
+    - path: "integrations/**"
+      instructions: |
+        Providers implement the interfaces in packages/sdk (RFC 0005). Verify inbound webhook signatures and keep
+        handlers idempotent by event id.
+    - path: "docs/rfcs/**"
+      instructions: |
+        Design documents. Check internal consistency with the other RFCs and docs/open-questions.md; flag decisions
+        that contradict an earlier RFC without updating it. Do not nitpick prose style.
+    - path: ".github/workflows/**"
+      instructions: |
+        Third-party actions are pinned by commit SHA with the version in a comment. Least-privilege permissions.
+
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+    title:
+      mode: warning
+      requirements: "English, imperative, describes the outcome; no conventional-commit prefix (feat:, fix:, chore:)."
+    description:
+      mode: warning
+    issue_assessment:
+      mode: warning
+    custom_checks:
+      - name: "RFCs stay in sync"
+        mode: warning
+        instructions: |
+          If the PR changes behavior or architecture described in docs/rfcs/ or settles an item in
+          docs/open-questions.md, the same PR must update that document. Fail when it does not.
+      - name: "Strings are translated"
+        mode: warning
+        instructions: |
+          New or changed user-facing strings in apps/* or integrations/* must come from packages/i18n with both
+          en and pt-BR messages. Fail on hard-coded UI text.
+      - name: "License boundary"
+        mode: error
+        instructions: |
+          Code under packages/* (MIT) must not import from apps/* or integrations/* (AGPL-3.0). Fail on any such import.
+
+  tools:
+    # Oxlint/Oxfmt are the project's linter and formatter (Vite+); Biome and ESLint would contradict them.
+    oxc:
+      enabled: true
+    biome:
+      enabled: false
+    eslint:
+      enabled: false
+    languagetool:
+      enabled: false
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true
+    gitleaks:
+      enabled: true
+    shellcheck:
+      enabled: true
+    osvScanner:
+      enabled: true
+    swiftlint:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  web_search:
+    enabled: true
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - "docs/rfcs/*.md"
+  # Public repository: never pull in learnings from Freecorps' private repositories.
+  learnings:
+    scope: local

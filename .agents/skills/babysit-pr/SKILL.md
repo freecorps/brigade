@@ -10,8 +10,11 @@ AI reviewers on this repository:
 | Reviewer | Login | What it leaves | Status |
 | --- | --- | --- | --- |
 | **Mira** | `freecorps-review[bot]` | Inline findings marked `<!-- mira:finding:... -->`, a walkthrough comment, the `mira/review` check | Active |
-| **CodeRabbit** | `coderabbitai[bot]` | Walkthrough comment, inline findings with a "Prompt for AI Agents" block | Planned (free for public repos) |
-| **CodeAnt** | `codeant-ai[bot]` | Inline findings with a "Prompt for AI Agent" block, a Nitpicks comment | Planned (open-source plan on request) |
+| **CodeRabbit** | `coderabbitai[bot]` | Walkthrough comment, inline findings with a "Prompt for AI Agents" block, pre-merge checks, the `CodeRabbit` status | Active (config in `.coderabbit.yaml`) |
+
+CodeRabbit answers in the thread when mentioned (`@coderabbitai`). When you dismiss one of its findings with a
+reason that applies to the whole repository, add it to the reply; it learns per repository. Its pre-merge checks
+("RFCs stay in sync", "Strings are translated", "License boundary") are defined in `.coderabbit.yaml`.
 
 Treat any of them that shows up on the PR as a reviewer; when one is enabled or removed, update this table and
 `AGENTS.md`. They help and are not always right. Babysitting means staying with the PR until the bots and the
@@ -59,7 +62,7 @@ while true; do
 done
 ```
 
-The checks that matter: `Check, test and build` (GitHub Actions) and `mira/review`.
+The checks that matter: `Check, test and build` (GitHub Actions), `mira/review` and `CodeRabbit`.
 When Workers deployments are wired up, `Workers Builds` (Cloudflare) joins the list.
 
 ## Only act on what is newer than the latest push

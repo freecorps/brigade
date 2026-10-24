@@ -29,6 +29,18 @@ describe("stack check", () => {
       reason: "http",
       status: 503,
     });
+    const gateway: typeof fetch = () => Promise.resolve(json({ error: "api_unreachable" }, 502));
+    expect(await check(gateway, "/x", parseHealth)).toMatchObject({
+      ok: false,
+      reason: "unreachable",
+    });
+    const otherGateway: typeof fetch = () =>
+      Promise.resolve(new Response("Bad Gateway", { status: 502 }));
+    expect(await check(otherGateway, "/x", parseHealth)).toMatchObject({
+      ok: false,
+      reason: "http",
+      status: 502,
+    });
     const html: typeof fetch = () => Promise.resolve(new Response("<!doctype html>"));
     expect(await check(html, "/x", parseHealth)).toMatchObject({ ok: false, reason: "invalid" });
   });

@@ -3,8 +3,8 @@ import { cn } from "cn";
 import { CheckIcon } from "lucide-react";
 
 // Restyled for Brigade and trimmed to the parts the dashboard uses (shadcn's base-nova dropdown-menu).
-// The popup scales from its trigger and only fades under reduced motion; items are 44px touch targets
-// and the highlighted item draws the opaque focus ring, so keyboard focus reads on every surface.
+// The popup scales from its trigger and only fades under reduced motion; items are 44px touch targets.
+// Pointer hover highlights with the accent fill; keyboard focus adds the opaque ring on top.
 
 function DropdownMenu(props: MenuPrimitive.Root.Props) {
   return <MenuPrimitive.Root data-slot="dropdown-menu" {...props} />;
@@ -70,7 +70,7 @@ function DropdownMenuRadioItem({ className, children, ...props }: MenuPrimitive.
     <MenuPrimitive.RadioItem
       data-slot="dropdown-menu-radio-item"
       className={cn(
-        "relative flex min-h-11 cursor-default items-center gap-2 rounded-md py-2 pr-10 pl-3 text-sm outline-hidden select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-highlighted:ring-2 data-highlighted:ring-ring data-highlighted:ring-inset data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "relative flex min-h-11 cursor-default items-center gap-2 rounded-md py-2 pr-10 pl-3 text-sm outline-hidden select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className,
       )}
       {...props}

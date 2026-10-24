@@ -4,9 +4,10 @@ import { cn } from "cn";
 
 // Restyled for Brigade (packages/ui README): focus is the opaque `ring-ring` (tested at 3:1 on every
 // surface), destructive keeps a full fill on light and draws a tint with red text on dark, and every
-// size is a 44px touch target. Press feedback scales; under reduced motion only the colour changes.
+// size is a 44px touch target (h-11, off the spacing scale on purpose). Press feedback scales to the
+// press-scale motion token, which is 1 under reduced motion, so only the colour changes there.
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center gap-2 rounded-md border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap outline-none select-none transition-[transform,background-color,color,border-color] duration-(--brigade-duration-fast) ease-out focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:not-aria-[haspopup]:scale-[0.97] motion-reduce:active:not-aria-[haspopup]:scale-100 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "group/button inline-flex shrink-0 items-center justify-center gap-2 rounded-md border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap outline-none select-none transition-[transform,background-color,color,border-color] duration-(--brigade-duration-fast) ease-out focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:not-aria-[haspopup]:scale-(--brigade-motion-press-scale) disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {

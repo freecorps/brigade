@@ -39,7 +39,7 @@ export function LegendCard() {
           <ul className="flex flex-wrap gap-2">
             {SEVERITIES.map((severity) => (
               <li key={severity}>
-                <Badge variant={severity} className="h-7 px-2.5 text-sm">
+                <Badge variant={severity}>
                   {severity === "sev1" ? <OctagonAlertIcon aria-hidden /> : null}
                   <span className="font-bold">{severity.toUpperCase()}</span>
                   <span>{severityLabels[severity]()}</span>
@@ -55,7 +55,7 @@ export function LegendCard() {
               const Icon = STATUS_ICONS[status];
               return (
                 <li key={status}>
-                  <Badge variant={status} className="h-7 px-2.5 text-sm">
+                  <Badge variant={status}>
                     <Icon aria-hidden />
                     {incidentStatusLabels[status]()}
                   </Badge>

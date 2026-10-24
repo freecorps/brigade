@@ -5,7 +5,7 @@ export type Stack_Error_NetworkInputs = {};
 /**
 * | output |
 * | --- |
-* | "The request to /api never got an answer." |
+* | "Couldn't connect to /api." |
 *
 * @param {Stack_Error_NetworkInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

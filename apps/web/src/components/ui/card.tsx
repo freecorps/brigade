@@ -21,7 +21,8 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="card-header"
       className={cn(
-        "grid auto-rows-min items-start gap-1 px-4 has-data-[slot=card-action]:grid-cols-[minmax(0,1fr)_auto] has-data-[slot=card-action]:gap-x-4 sm:px-6",
+        // Phones stack the action under the title and description; wider screens put it on the right.
+        "grid auto-rows-min items-start gap-1 px-4 sm:px-6 sm:has-data-[slot=card-action]:grid-cols-[minmax(0,1fr)_auto] sm:has-data-[slot=card-action]:gap-x-4",
         className,
       )}
       {...props}
@@ -53,7 +54,10 @@ function CardAction({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-action"
-      className={cn("col-start-2 row-span-2 row-start-1 self-start justify-self-end", className)}
+      className={cn(
+        "mt-3 justify-self-start sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:self-start sm:justify-self-end",
+        className,
+      )}
       {...props}
     />
   );

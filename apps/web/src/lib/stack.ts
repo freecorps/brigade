@@ -7,6 +7,8 @@ export const CHECK_TIMEOUT_MS = 8000;
 
 export type CheckFailure =
   | { reason: "network" }
+  /** The web Worker answered, but its `API` service binding failed (502 `api_unreachable`). */
+  | { reason: "unreachable" }
   | { reason: "timeout" }
   | { reason: "http"; status: number }
   | { reason: "invalid" };
@@ -62,13 +64,19 @@ export async function check<T>(
   } catch {
     return { ok: false, ms: elapsed(), reason: signal.aborted ? "timeout" : "network" };
   }
-  if (!response.ok) return { ok: false, ms: elapsed(), reason: "http", status: response.status };
   let body: unknown;
   try {
     body = await response.json();
   } catch {
-    return { ok: false, ms: elapsed(), reason: "invalid" };
+    body = undefined;
   }
+  if (!response.ok) {
+    if (response.status === 502 && isRecord(body) && body.error === "api_unreachable") {
+      return { ok: false, ms: elapsed(), reason: "unreachable" };
+    }
+    return { ok: false, ms: elapsed(), reason: "http", status: response.status };
+  }
+  if (body === undefined) return { ok: false, ms: elapsed(), reason: "invalid" };
   const data = parse(body);
   return data === undefined
     ? { ok: false, ms: elapsed(), reason: "invalid" }

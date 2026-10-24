@@ -76,11 +76,11 @@ function LanguageMenu() {
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button variant="outline" className="px-3" />}>
         <LanguagesIcon aria-hidden />
-        {/* The accessible name contains the visible text: "Language: EN" / "Language: English". */}
+        {/* The accessible name contains the visible text: "Language: PT-BR" / "Language: English". */}
         <span className="sr-only">{m.language_label()}: </span>
-        <span className="sm:hidden">{locale.split("-")[0]?.toUpperCase()}</span>
+        <span className="sm:hidden">{locale.toUpperCase()}</span>
         <span className="max-sm:hidden">{LANGUAGE_NAMES[locale]()}</span>
-        <ChevronDownIcon aria-hidden className="text-muted-foreground" />
+        <ChevronDownIcon aria-hidden className="text-muted-foreground max-sm:hidden" />
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuGroup>

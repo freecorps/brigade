@@ -3,6 +3,8 @@ import { cn } from "cn";
 import {
   CircleAlertIcon,
   CircleCheckIcon,
+  CircleDashedIcon,
+  CircleMinusIcon,
   LoaderCircleIcon,
   RefreshCwIcon,
   type LucideIcon,
@@ -31,38 +33,41 @@ import {
 
 const DEV_COMMAND = "vp run dev";
 
+// One spinner per check: the verdict's on the first load (nothing to show yet), the button's on a
+// re-check (the last result stays, dimmed, until the new one lands). Under reduced motion the
+// verdict shows a static icon instead of a frozen spinner; the button keeps its refresh icon.
+
 export function StackCard() {
   const { locale } = usePreferences();
   const { report, checking, recheck } = useStackStatus();
   const state: StackVerdict | "checking" = report ? verdict(report) : "checking";
+  const rechecking = checking && report !== undefined;
+  const onRecheck = checking ? undefined : recheck;
 
   return (
     <Card aria-labelledby="stack-title" aria-busy={checking}>
       <CardHeader>
         <CardTitle id="stack-title">{m.stack_title()}</CardTitle>
         <CardDescription className="tabular-nums">
-          {report ? (
-            m.stack_checked_at({ time: formatClock(report.checkedAt, locale) })
-          ) : (
+          {/* First load: the verdict already says it is checking. A re-check says so here, since
+              the verdict below is the previous result. */}
+          {!report ? (
             <Placeholder className="my-0.5 h-4 w-32" />
+          ) : checking ? (
+            m.stack_checking()
+          ) : (
+            m.stack_checked_at({ time: formatClock(report.checkedAt, locale) })
           )}
         </CardDescription>
         <CardAction>
-          <Button
-            variant="outline"
-            onClick={checking ? undefined : recheck}
-            aria-disabled={checking || undefined}
-          >
-            <RefreshCwIcon
-              aria-hidden
-              className={cn(checking && "animate-spin motion-reduce:animate-none")}
-            />
-            <span className="max-sm:sr-only">{m.stack_check_again()}</span>
-          </Button>
+          <CheckAgainButton onClick={onRecheck} busy={checking} spinning={rechecking} />
         </CardAction>
       </CardHeader>
 
-      <CardContent className="flex flex-col gap-5">
+      <CardContent
+        data-stale={rechecking || undefined}
+        className="flex flex-col gap-5 transition-opacity duration-(--brigade-duration-base) ease-out data-stale:opacity-60"
+      >
         <Verdict state={state} />
 
         <ul className="grid overflow-hidden rounded-md border sm:grid-cols-2">
@@ -73,47 +78,58 @@ export function StackCard() {
             okLabel={m.stack_reachable()}
             failLabel={m.stack_unreachable()}
             locale={locale}
+            figures={[m.stack_round_trip()]}
           >
-            {(health) => (
-              <Figure value={m.stack_latency({ ms: formatNumber(health.ms, locale) })} />
-            )}
+            {(health) => [formatMs(health.ms, locale)]}
           </CheckRow>
           <CheckRow
             label={m.stack_do_label()}
             route={`GET /api/workspaces/${DEMO_WORKSPACE}`}
-            result={report?.workspace}
+            // With the API Worker down this check says nothing new: one fault, one red signal.
+            result={state === "api-down" ? "skipped" : report?.workspace}
             okLabel={m.stack_answered()}
             failLabel={m.stack_no_answer()}
             locale={locale}
+            figures={[m.stack_round_trip(), m.stack_tables(), m.stack_database_size()]}
             className="max-sm:border-t sm:border-l"
           >
-            {(workspace) => (
-              <div className="grid grid-cols-2 gap-4">
-                <Figure
-                  label={m.stack_tables()}
-                  value={formatNumber(workspace.data.tables, locale)}
-                  large
-                />
-                <Figure
-                  label={m.stack_database_size()}
-                  value={formatBytes(workspace.data.databaseSize, locale)}
-                  large
-                />
-              </div>
-            )}
+            {(workspace) => [
+              formatMs(workspace.ms, locale),
+              formatNumber(workspace.data.tables, locale),
+              formatBytes(workspace.data.databaseSize, locale),
+            ]}
           </CheckRow>
         </ul>
 
         {state === "api-down" || state === "do-down" ? (
-          <div className="flex flex-col gap-2 rounded-md bg-muted p-4 text-sm">
+          <div className="flex flex-col items-start gap-3 rounded-md bg-muted p-4 text-sm">
             <p>{state === "api-down" ? m.stack_hint_start() : m.stack_hint_do()}</p>
-            <p>
-              <code className="rounded-sm bg-card px-2 py-1 text-foreground">{DEV_COMMAND}</code>
-            </p>
+            <code className="rounded-sm bg-card px-2 py-1 text-foreground">{DEV_COMMAND}</code>
+            <CheckAgainButton onClick={onRecheck} busy={checking} spinning={false} />
           </div>
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+function CheckAgainButton({
+  onClick,
+  busy,
+  spinning,
+}: {
+  onClick: (() => void) | undefined;
+  busy: boolean;
+  spinning: boolean;
+}) {
+  return (
+    <Button variant="outline" onClick={onClick} aria-disabled={busy || undefined}>
+      <RefreshCwIcon
+        aria-hidden
+        className={cn(spinning && "animate-spin motion-reduce:animate-none")}
+      />
+      {m.stack_check_again()}
+    </Button>
   );
 }
 
@@ -129,16 +145,17 @@ const VERDICTS: Record<
 
 function Verdict({ state }: { state: StackVerdict | "checking" }) {
   const { icon: Icon, text, tone } = VERDICTS[state];
+  const iconClass = cn("mt-0.5 size-6 shrink-0 sm:mt-1", tone);
   return (
     <p role="status" className="flex items-start gap-3 text-xl font-semibold sm:text-2xl">
-      <Icon
-        aria-hidden
-        className={cn(
-          "mt-0.5 size-6 shrink-0 sm:mt-1",
-          tone,
-          state === "checking" && "animate-spin motion-reduce:animate-none",
-        )}
-      />
+      {state === "checking" ? (
+        <>
+          <Icon aria-hidden className={cn(iconClass, "animate-spin motion-reduce:hidden")} />
+          <CircleDashedIcon aria-hidden className={cn(iconClass, "motion-safe:hidden")} />
+        </>
+      ) : (
+        <Icon aria-hidden className={iconClass} />
+      )}
       <span className="min-w-0">{text()}</span>
     </p>
   );
@@ -151,61 +168,81 @@ function CheckRow<T>({
   okLabel,
   failLabel,
   locale,
+  figures,
   className,
   children,
 }: {
   label: string;
   route: string;
-  result: CheckResult<T> | undefined;
+  /** undefined while loading; "skipped" when a check it depends on failed. */
+  result: CheckResult<T> | "skipped" | undefined;
   okLabel: string;
   failLabel: string;
   locale: Locale;
+  /** Figure labels, shown while loading too so nothing moves when the values land. */
+  figures: string[];
   className?: string;
-  children: (ok: Extract<CheckResult<T>, { ok: true }>) => ReactNode;
+  children: (ok: Extract<CheckResult<T>, { ok: true }>) => string[];
 }) {
+  let marker: ReactNode;
+  let body: ReactNode;
+  if (result === undefined) {
+    marker = <Placeholder className="h-5 w-24" />;
+    body = <Figures labels={figures} />;
+  } else if (result === "skipped") {
+    marker = (
+      <Marker icon={CircleMinusIcon} tone="text-muted-foreground" label={m.stack_not_checked()} />
+    );
+    body = <p className="text-sm text-muted-foreground">{m.stack_needs_api()}</p>;
+  } else if (result.ok) {
+    marker = <Marker icon={CircleCheckIcon} tone="text-primary" label={okLabel} />;
+    body = <Figures labels={figures} values={children(result)} />;
+  } else {
+    marker = <Marker icon={CircleAlertIcon} tone="text-destructive" label={failLabel} />;
+    body = <p className="text-sm">{failureText(result, locale)}</p>;
+  }
+
   return (
     <li className={cn("flex min-w-0 flex-col gap-3 p-4", className)}>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
         <h3 className="font-medium">{label}</h3>
-        <p>
-          {result === undefined ? (
-            <Placeholder className="h-5 w-24" />
-          ) : (
-            <span className="inline-flex items-center gap-1.5 font-medium">
-              {result.ok ? (
-                <CircleCheckIcon aria-hidden className="size-4 text-primary" />
-              ) : (
-                <CircleAlertIcon aria-hidden className="size-4 text-destructive" />
-              )}
-              {result.ok ? okLabel : failLabel}
-            </span>
-          )}
-        </p>
+        <p>{marker}</p>
       </div>
       <p className="text-xs text-muted-foreground">
         <code className="break-all">{route}</code>
       </p>
-      <div>
-        {result === undefined ? (
-          <Placeholder className="h-7 w-40" />
-        ) : result.ok ? (
-          children(result)
-        ) : (
-          <p className="text-sm">{failureText(result, locale)}</p>
-        )}
-      </div>
+      {body}
     </li>
   );
 }
 
-function Figure({ label, value, large }: { label?: string; value: string; large?: boolean }) {
+function Marker({ icon: Icon, tone, label }: { icon: LucideIcon; tone: string; label: string }) {
   return (
-    <div className="flex min-w-0 flex-col gap-1">
-      {label ? <span className="text-xs text-muted-foreground">{label}</span> : null}
-      <span className={cn("tabular-nums", large ? "text-xl font-semibold" : "text-sm")}>
-        {value}
-      </span>
-    </div>
+    <span className="inline-flex items-center gap-2 font-medium">
+      <Icon aria-hidden className={cn("size-4", tone)} />
+      {label}
+    </span>
+  );
+}
+
+/**
+ * Labelled figures on the same grid in both cells, so the round trip lines up across them: two
+ * columns until `lg` (a value never splits from its unit), three from there. Labels and values sit on
+ * shared rows (subgrid), so a label that wraps never pushes its value out of line. Without values
+ * each figure is a flat bar at the height of its value (text-xl, h-7).
+ */
+function Figures({ labels, values }: { labels: string[]; values?: string[] }) {
+  return (
+    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 lg:grid-cols-3">
+      {labels.map((label, index) => (
+        <div key={label} className="row-span-2 grid min-w-0 grid-rows-subgrid">
+          <dt className="self-end text-xs text-muted-foreground">{label}</dt>
+          <dd className="text-xl font-semibold whitespace-nowrap tabular-nums">
+            {values ? values[index] : <Placeholder className="h-7 w-16" />}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -214,10 +251,16 @@ function Placeholder({ className }: { className: string }) {
   return <span aria-hidden className={cn("block max-w-full rounded-sm bg-muted", className)} />;
 }
 
+function formatMs(ms: number, locale: Locale): string {
+  return formatNumber(ms, locale, { style: "unit", unit: "millisecond", unitDisplay: "short" });
+}
+
 function failureText(failure: CheckFailure, locale: Locale): string {
   switch (failure.reason) {
     case "network":
       return m.stack_error_network();
+    case "unreachable":
+      return m.stack_error_unreachable();
     case "timeout":
       return m.stack_error_timeout({ seconds: formatNumber(CHECK_TIMEOUT_MS / 1000, locale) });
     case "http":

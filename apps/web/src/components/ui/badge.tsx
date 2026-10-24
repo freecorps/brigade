@@ -6,7 +6,7 @@ import { cn } from "cn";
 // Restyled for Brigade: the severity and status pairs come from packages/ui (tested for AA in both
 // themes; SEV1 is the only solid fill). A badge never shrinks or wraps (it is a label, not prose).
 const badgeVariants = cva(
-  "group/badge inline-flex h-6 w-fit shrink-0 items-center justify-center gap-1.5 rounded-sm border border-transparent px-2 text-xs font-medium whitespace-nowrap focus-visible:ring-3 focus-visible:ring-ring [&>svg]:pointer-events-none [&>svg]:size-3.5 [&>svg]:shrink-0",
+  "group/badge inline-flex h-6 w-fit shrink-0 items-center justify-center gap-1 rounded-sm border border-transparent px-2 text-xs font-medium whitespace-nowrap focus-visible:ring-3 focus-visible:ring-ring [&>svg]:pointer-events-none [&>svg]:size-3 [&>svg]:shrink-0",
   {
     variants: {
       variant: {

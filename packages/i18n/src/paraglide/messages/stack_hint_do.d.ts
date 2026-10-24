@@ -5,7 +5,7 @@ export type Stack_Hint_DoInputs = {};
 /**
 * | output |
 * | --- |
-* | "The API is up, so the error is in the terminal running:" |
+* | "The API is up. Look for the error in the terminal running:" |
 *
 * @param {Stack_Hint_DoInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

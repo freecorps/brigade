@@ -6,7 +6,8 @@ import { can, isRole, type Permission, type Role } from "./access.ts";
 import { lookup, report } from "./mutation.ts";
 import type { Store } from "./store.ts";
 import { TABLES, type BrigadeTables, type SyncedTable } from "./tables.ts";
-import { clip, MAX_ISSUES, type Infer, type Issue, type Validator } from "./validate.ts";
+import { clip } from "./text.ts";
+import { MAX_ISSUES, type Infer, type Issue, type Validator } from "./validate.ts";
 
 export type QueryDef<
   Name extends string = string,
@@ -57,12 +58,21 @@ export type QueryResult<R = unknown> =
   | { ok: true; rows: R[] }
   | { ok: false; error: { code: QueryErrorCode; message: string; issues?: Issue[] } };
 
-/** Runs a query over its table, or reads one row when the query has a `key`. */
+/**
+ * Runs a query over its table, or reads one row when the query has a `key`. Throws for a server-only table, so a
+ * query built without `defineQuery` still cannot read one (`runQuery` turns that into `internal`).
+ */
 export function evaluateQuery<Args, T extends SyncedTable>(
   query: QueryDef<string, Args, T>,
   args: Args,
   store: Store<BrigadeTables>,
 ): BrigadeTables[T][] {
+  if (
+    !Object.prototype.hasOwnProperty.call(TABLES, query.table) ||
+    TABLES[query.table].serverOnly
+  ) {
+    throw new Error(`Query ${query.name} reads a table clients do not hold`);
+  }
   let candidates: BrigadeTables[T][];
   if (query.key) {
     const row = store.get(query.table, query.key(args));
@@ -80,7 +90,7 @@ export function evaluateQuery<Args, T extends SyncedTable>(
  */
 export function runQuery(
   registry: { readonly [name: string]: AnyQuery },
-  name: string,
+  name: unknown,
   rawArgs: unknown,
   store: Store<BrigadeTables>,
   role: Role,

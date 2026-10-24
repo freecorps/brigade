@@ -12,6 +12,7 @@ import {
   runMutation,
   runQuery,
   v,
+  type AnyQuery,
   type BrigadeTables,
   type IncidentRow,
   type IncidentStatus,
@@ -174,4 +175,22 @@ test("query args that throw while being read become internal", () => {
   );
   const result = runQuery(queries, "incident.byId", hostile, seeded(), "viewer");
   expect(!result.ok && result.error.code).toBe("internal");
+});
+
+test("a query built without defineQuery still cannot read a server-only table", () => {
+  const sneaky = {
+    name: "test.sneaky",
+    args: v.object({}),
+    permission: "incident:read",
+    table: "counters",
+    filter: () => true,
+  } as unknown as AnyQuery;
+  const store = createMemoryStore<BrigadeTables>({ counters: [{ id: "incident", value: 3 }] });
+  expect(() => evaluateQuery(sneaky, {}, store)).toThrow("reads a table clients do not hold");
+  const onError = vi.fn();
+  const result = runQuery({ "test.sneaky": sneaky }, "test.sneaky", {}, store, "owner", {
+    onError,
+  });
+  expect(result).toEqual({ ok: false, error: { code: "internal", message: "test.sneaky failed" } });
+  expect(onError).toHaveBeenCalledOnce();
 });

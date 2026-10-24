@@ -68,8 +68,8 @@ runQuery(queries, name, rawArgs, store, role, { onError? }) // → { ok: true, r
   both, `conflict`, which also covers an existing id; it also makes a rebased mutation the server already applied
   fail locally and drop out of the optimistic view.
 - **Transactions are re-entrant.** The server already runs inside its own transaction when it calls
-  `runMutation`, so the SQLite store's `transaction` must nest (savepoints, or flattening into the outer one): an
-  inner rollback undoes only its writes; an outer rollback undoes everything. The in-memory store copies its table
+  `runMutation`, so the SQLite store's `transaction` must nest with savepoints: an inner rollback undoes only its
+  writes; an outer rollback undoes everything. The in-memory store copies its table
   maps per transaction, O(rows): fine for an incident index, not for large tables.
 - **Server-only work** runs when `ctx.server` is true. `INC-n` comes from a `counters` row written in the
   mutation's own transaction, not from an injected callback, so it stays atomic and replayable; the client's
@@ -92,13 +92,22 @@ runQuery(queries, name, rawArgs, store, role, { onError? }) // → { ok: true, r
 - **Validation** is a handful of hand-written validators (`v.object`, `v.string`, `v.picklist`, `v.id`) in
   `packages/schema`: no dependency, nothing engine-specific (runs on Workers, browsers and Hermes). `v.object`
   accepts only plain objects and rejects unknown keys. `v.string` rejects raw input longer than about twice its
-  limit before any work, scans and trims with linear index loops over an explicit whitespace set (not the
-  engine's `trim` or regex Unicode tables), and always rejects unpaired surrogates, control characters,
-  U+2028/2029 and bidi overrides/isolates. Single-line text (the default) also rejects tabs, newlines and
-  invisible format characters (U+200B–U+200F, U+2060–U+2064, U+061C, U+180E, U+FEFF, U+00AD); `min` is checked
-  after all that, so an invisible-only title is rejected. Errors carry at most
-  10 issues, and echoed names and paths are cut to 64 characters. Valibot is the upgrade if the arg shapes outgrow
-  this.
+  limit before any work, then walks the code points once (linear) and trims an explicit whitespace set (not the
+  engine's `trim`). The rule is by Unicode property, not a hand list: reject any code point in `Cc`, `Cf`, `Cs`,
+  `Co`, `Cn`, `Default_Ignorable_Code_Point`, `Zl` or `Zp`, except the joiners, variation selectors and tags of
+  well-formed emoji sequences (ZWJ between pictographs, a selector right after what it selects, a black-flag tag
+  run ending in the cancel tag); multi-line text may also hold `\n` and `\t`. The result must contain at least
+  one letter, number, symbol or punctuation that is not a blank look-alike (Braille blank, Hangul fillers), and
+  `min` is checked after all that. Errors carry at most 10 issues, and echoed names and paths are cut to 64 code
+  units without splitting a pair, with rejected code points shown as U+FFFD. Valibot is the upgrade if the arg
+  shapes outgrow this.
+- **Unicode property escapes** (`\p{…}` with the `u` flag) are in V8 (Workers, Chrome, Node) and in Hermes since
+  2024 (facebook/hermes#1295, behind a build flag that defaults to on). The regexes are built at runtime: on an
+  engine without them, clients fall back to rejecting only controls, separators, bidi overrides/isolates and
+  unpaired surrogates, and leave the rest to the server, which always runs the full rule.
+  `UNICODE_PROPERTY_ESCAPES` tells which path is active; S4 checks it is `true` on device. Unassigned (`Cn`) depends
+  on each engine's Unicode version, so a code point newer than a client's tables can fail there optimistically
+  while the server accepts it; the server's answer wins.
 - **In S3 the `WorkspaceDO` incident index is temporarily authoritative** for status and severity. Once
   `IncidentDO` exists it owns them, and the index becomes a projection fed from `IncidentDO`'s outbox (RFC 0002).
 
@@ -124,6 +133,11 @@ server → client
   every re-apply, so re-applying is deterministic. A pending mutation that fails on local re-apply (the server
   state moved under it) is dropped from the optimistic view silently; only a rejection in the server's
   `mutationResult` is shown to the user.
+- Ordering: on a socket, the shard sends a mutation's `mutationResult` before any `patch` that contains its
+  effects, and the socket delivers in order. The client drops a pending mutation when its result arrives, so the
+  patch is never re-applied on top of its own effects. (Re-applied after them, a mutation can still succeed and
+  show a stale state: Ana's "resolve" applied, Bia reopens, a patch-first client would re-resolve.) A `conflict`
+  on re-apply is only a fallback for a lost result, until the reconnect replays it.
 - The server de-duplicates `mutate` by `(clientId, mutationId)`: a retry after a lost connection gets the stored
   `mutationResult` instead of running the mutation twice.
 - Shards keep a bounded change log (rows changed per version) to serve resumes cheaply.
@@ -136,12 +150,15 @@ server → client
 ```
                        ┌── wss /sync/ws_123            ──▶ WorkspaceDO(ws_123)
 SyncClient (web/mobile)┤
-  connection pool      └── wss /sync/ws_123/inc_456    ──▶ IncidentDO(inc_456)
+  connection pool      └── wss /sync/ws_123/inc_456    ──▶ IncidentDO(ws_123:inc_456)
 ```
 
 - The `api` Worker authenticates the upgrade request (Better Auth session or bearer token), checks membership and
   role in the workspace, then hands the socket to the shard (`stub.fetch(request)`); the DO accepts it with the
   Hibernation API. Auth context travels as a signed header from the Worker to the DO.
+- For an entity shard, the Worker first checks that the entity belongs to the workspace (`inc_456` is in
+  `WorkspaceDO(ws_123)`'s index) and names the shard from both ids (`ws_123:inc_456`), never from the client's id
+  alone.
 - `SyncClient` owns a pool: it opens a shard connection on the first subscription to it and closes it a few
   seconds after the last unsubscribe. Apps only see `useQuery` / `useMutation`.
 - Typical load is small: web dashboard = workspace + 0–3 open incidents; mobile = workspace + current incident.

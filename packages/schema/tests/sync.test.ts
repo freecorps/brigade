@@ -165,3 +165,52 @@ test("rebasing a mutation the server already applied leaves exactly the server's
   // Re-applying them on the server's state fails ("already exists", "no change") and drops them silently.
   expect(rebase(server, pending).dump()).toEqual(serverState(server));
 });
+
+test("a mutation's result arrives before the patch with its effects, so a stale re-apply never shows", () => {
+  const server = createMemoryStore<BrigadeTables>();
+  const declare: Pending = {
+    mutationId: "m0",
+    name: "incident.declare",
+    args: { id: ID, title: "Checkout is down", severity: "sev1" },
+    ctx: ana(T),
+  };
+  expect(send(server, declare, T + 10).ok).toBe(true);
+
+  // Ana resolves the incident; her mutation reaches the server and applies there.
+  const resolve: Pending = {
+    mutationId: "m1",
+    name: "incident.setStatus",
+    args: { id: ID, status: "resolved" },
+    ctx: ana(T + 100),
+  };
+  let pending = [resolve];
+  expect(rebase(server, pending).get("incidents", ID)?.status).toBe("resolved");
+  const result = send(server, resolve, T + 200);
+  expect(result.ok).toBe(true);
+
+  // Bia reopens it right after.
+  const bia: MutationContext = {
+    actor: { kind: "user", id: "usr_bia", role: "responder" },
+    now: T + 300,
+    server: true,
+  };
+  const reopen = runMutation(
+    mutations,
+    "incident.setStatus",
+    { id: ID, status: "investigating" },
+    server,
+    bia,
+  );
+  expect(reopen.ok).toBe(true);
+
+  // Wrong order (patch first, m1 still pending): resolved → investigating → resolved is a valid transition,
+  // so re-applying m1 would show "resolved" although the server says "investigating".
+  expect(rebase(server, pending).get("incidents", ID)?.status).toBe("resolved");
+
+  // Protocol order: m1's mutationResult comes first on the same socket and drops it from pending; the patch
+  // with both changes then rebases nothing, and the view is the server's.
+  pending = pending.filter((mutation) => mutation.mutationId !== "m1");
+  const view = rebase(server, pending);
+  expect(view.get("incidents", ID)?.status).toBe("investigating");
+  expect(view.dump()).toEqual(serverState(server));
+});

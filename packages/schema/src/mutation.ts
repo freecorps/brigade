@@ -4,7 +4,8 @@
 import { can, isRole, type Permission, type Role } from "./access.ts";
 import type { Store } from "./store.ts";
 import type { BrigadeTables } from "./tables.ts";
-import { clip, MAX_ISSUES, type Infer, type Issue, type Validator } from "./validate.ts";
+import { clip } from "./text.ts";
+import { MAX_ISSUES, type Infer, type Issue, type Validator } from "./validate.ts";
 
 export type Actor = { kind: "user" | "system" | "integration"; id: string; role: Role };
 
@@ -128,8 +129,10 @@ export type RunMutationOptions = {
 };
 
 class Rollback extends Error {
-  constructor(readonly result: MutationResult) {
+  readonly result: MutationResult;
+  constructor(result: MutationResult) {
     super("rollback");
+    this.result = result;
   }
 }
 
@@ -140,7 +143,7 @@ class Rollback extends Error {
  */
 export function runMutation(
   registry: { readonly [name: string]: AnyMutation },
-  name: string,
+  name: unknown,
   rawArgs: unknown,
   store: MutationStore,
   ctx: MutationContext,

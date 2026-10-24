@@ -2,57 +2,118 @@
 import { exports } from "cloudflare:workers";
 import { describe, expect, test } from "vite-plus/test";
 import { newId, type IncidentRow } from "@freecorps/brigade-schema";
-import { createSyncClient, type SyncSocket, type Transport } from "@freecorps/brigade-sync";
+import { createSyncClient, type SyncSocket } from "@freecorps/brigade-sync";
 
-/** Opens sockets through the Worker's fetch handler (workerd has no outbound `new WebSocket` to itself). */
-const transport: Transport = (url) => {
-  let ws: WebSocket | undefined;
-  type Handler = ((event: never) => void) | null;
-  const fire = (handler: Handler, event: unknown) =>
-    (handler as ((event: unknown) => void) | null)?.(event);
-  const socket: SyncSocket = {
-    onopen: null,
-    onmessage: null,
-    onclose: null,
-    onerror: null,
-    send: (data) => ws?.send(data),
-    close: (code, reason) => ws?.close(code, reason),
-  };
-  void exports.default
-    .fetch(url.replace(/^wss?:/, "http:"), { headers: { Upgrade: "websocket" } })
-    .then((response) => {
-      ws = response.webSocket ?? undefined;
-      if (!ws) return fire(socket.onclose, {});
-      ws.accept();
-      ws.addEventListener("message", (event) => fire(socket.onmessage, { data: event.data }));
-      ws.addEventListener("close", () => fire(socket.onclose, {}));
-      fire(socket.onopen, {});
-    });
-  return socket;
-};
+type Frame = { type: string; [key: string]: unknown };
 
 let names = 0;
 const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
+const incidentId = () => newId("inc", Date.now(), random);
 
-function client(warnings: string[]) {
-  return createSyncClient({
+/**
+ * A client whose sockets go through the Worker's fetch handler (workerd has no outbound `new WebSocket` to
+ * itself), with every frame it sends and receives recorded. `drop()` loses the connection the way a network
+ * would and refuses new ones until `reconnect()`; `route` maps a shard name to the workspace that serves it, so a test can point a shard at fresh storage
+ * (a new epoch) between connections.
+ */
+function client(route: Map<string, string> = new Map()) {
+  const warnings: string[] = [];
+  const sent: Frame[] = [];
+  const received: Frame[] = [];
+  /** Open connections: losing one closes it and tells the client, once. */
+  const lose: (() => void)[] = [];
+  let connections = 0;
+  let online = true;
+  const sync = createSyncClient({
     url: (shard) => `ws://api.test/sync/${shard}`,
     actor: { kind: "user", id: "usr_dev", role: "responder" },
-    transport,
+    // Fast retries: the test waits for reconnects.
+    backoff: { initialMs: 10, maxMs: 40 },
     onWarning: (message) => warnings.push(message),
+    transport: (url) => {
+      let ws: WebSocket | undefined;
+      let number = 0;
+      let ended = false;
+      type Handler = ((event: never) => void) | null;
+      const fire = (handler: Handler, event: unknown) =>
+        (handler as ((event: unknown) => void) | null)?.(event);
+      const socket: SyncSocket = {
+        onopen: null,
+        onmessage: null,
+        onclose: null,
+        onerror: null,
+        send: (data) => {
+          sent.push({ ...(JSON.parse(data) as Frame), connection: number });
+          ws?.send(data);
+        },
+        close: (code, reason) => ws?.close(code, reason),
+      };
+      if (!online) {
+        queueMicrotask(() => fire(socket.onclose, {}));
+        return socket;
+      }
+      const shard = url.replace(/^.*\/sync\//, "");
+      const target = `http://api.test/sync/${route.get(shard) ?? shard}`;
+      void exports.default.fetch(target, { headers: { Upgrade: "websocket" } }).then((response) => {
+        ws = response.webSocket ?? undefined;
+        if (!ws) return fire(socket.onclose, {});
+        const open = ws;
+        open.accept();
+        number = ++connections;
+        const end = () => {
+          if (ended) return;
+          ended = true;
+          fire(socket.onclose, {});
+        };
+        lose.push(() => {
+          // A lost connection: frames in flight are gone and the client hears of it at once.
+          end();
+          try {
+            open.close(1001, "dropped");
+          } catch {
+            // Already closed.
+          }
+        });
+        open.addEventListener("message", (event) => {
+          if (ended) return;
+          received.push({ ...(JSON.parse(event.data as string) as Frame), connection: number });
+          fire(socket.onmessage, { data: event.data });
+        });
+        open.addEventListener("close", end);
+        fire(socket.onopen, {});
+      });
+      return socket;
+    },
   });
+  return {
+    sync,
+    warnings,
+    sent,
+    received,
+    /** How many sockets have opened so far. */
+    connections: () => connections,
+    /** Closes every open socket from this side, as a lost connection would, and refuses new ones. */
+    drop() {
+      online = false;
+      for (const lost of lose.splice(0)) lost();
+    },
+    /** Lets the client's retries connect again. */
+    reconnect() {
+      online = true;
+    },
+  };
 }
 
 /** Resolves once `handle`'s state satisfies `done`. */
 function until<R>(
   handle: {
     subscribe(listener: () => void): () => void;
-    getSnapshot(): { rows: readonly R[]; status: string };
+    getSnapshot(): { rows: readonly R[]; status: string; pending: boolean };
   },
-  done: (state: { rows: readonly R[]; status: string }) => boolean,
+  done: (state: { rows: readonly R[]; status: string; pending: boolean }) => boolean,
 ) {
   return new Promise<{ rows: readonly R[]; status: string }>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(JSON.stringify(handle.getSnapshot()))), 3000);
+    const timer = setTimeout(() => reject(new Error(JSON.stringify(handle.getSnapshot()))), 5000);
     const check = () => {
       const state = handle.getSnapshot();
       if (!done(state)) return;
@@ -65,58 +126,182 @@ function until<R>(
   });
 }
 
+/** Resolves once `condition` holds, polling. */
+async function eventually(condition: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 500; i++) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+}
+
+const ids = (rows: readonly IncidentRow[]) => rows.map((row) => row.id).sort();
+
 describe("SyncClient against WorkspaceDO", () => {
   test("a mutation's result and a later snapshot reach real clients", async () => {
     const shard = `client-${++names}`;
-    const warnings: string[] = [];
-    const ana = client(warnings);
-    const bia = client(warnings);
-    const id = newId("inc", Date.now(), random);
+    const ana = client();
+    const bia = client();
+    const id = incidentId();
     expect(
-      await ana.mutate(shard, "incident.declare", { id, title: "Checkout down", severity: "sev1" }),
-    ).toEqual({
-      ok: true,
-      version: 1,
-    });
+      await ana.sync.mutate(shard, "incident.declare", {
+        id,
+        title: "Checkout down",
+        severity: "sev1",
+      }),
+    ).toEqual({ ok: true, version: 1 });
     const state = await until<IncidentRow>(
-      bia.query(shard, "incidents.active", {}),
+      bia.sync.query(shard, "incidents.active", {}),
       (s) => s.status === "ready",
     );
     expect(state.rows).toEqual([
       expect.objectContaining({ id, number: 1, title: "Checkout down" }),
     ]);
-    ana.close();
-    bia.close();
-    expect(warnings).toEqual([]);
+    ana.sync.close();
+    bia.sync.close();
+    expect([...ana.warnings, ...bia.warnings]).toEqual([]);
   });
 
-  test("two clients stay in sync through patches", async () => {
+  test("two clients converge through patches: declare, set severity, resolve", async () => {
     const shard = `client-${++names}`;
-    const warnings: string[] = [];
-    const ana = client(warnings);
-    const bia = client(warnings);
-    const anaView = ana.query(shard, "incidents.active", {});
-    const biaView = bia.query(shard, "incidents.active", {});
+    const ana = client();
+    const bia = client();
+    const anaView = ana.sync.query(shard, "incidents.active", {});
+    const biaView = bia.sync.query(shard, "incidents.active", {});
     await until(anaView, (s) => s.status === "ready");
     await until(biaView, (s) => s.status === "ready");
 
-    const id = newId("inc", Date.now(), random);
-    const declared = ana.mutate(shard, "incident.declare", {
-      id,
-      title: "Checkout down",
-      severity: "sev1",
-    });
-    expect(await declared).toEqual({ ok: true, version: 1 });
+    const id = incidentId();
+    expect(
+      await ana.sync.mutate(shard, "incident.declare", {
+        id,
+        title: "Checkout down",
+        severity: "sev1",
+      }),
+    ).toEqual({ ok: true, version: 1 });
     const seen = await until<IncidentRow>(biaView, (s) => s.rows.some((row) => row.id === id));
-    expect(seen.rows[0]).toMatchObject({ id, number: 1 });
+    expect(seen.rows[0]).toMatchObject({ id, number: 1, severity: "sev1" });
 
-    expect(await bia.mutate(shard, "incident.setStatus", { id, status: "resolved" })).toEqual({
+    expect(await bia.sync.mutate(shard, "incident.setSeverity", { id, severity: "sev3" })).toEqual({
       ok: true,
       version: 2,
     });
+    // Both views converge on the same confirmed rows, with nothing left pending on either side.
+    const settled = (s: { rows: readonly IncidentRow[]; pending?: boolean }) =>
+      s.rows[0]?.severity === "sev3" && s.pending === false;
+    const anaRows = (await until<IncidentRow>(anaView, settled)).rows;
+    const biaRows = (await until<IncidentRow>(biaView, settled)).rows;
+    expect(anaRows).toEqual(biaRows);
+    expect(anaRows[0]).toMatchObject({ id, severity: "sev3", status: "triage" });
+
+    expect(await bia.sync.mutate(shard, "incident.setStatus", { id, status: "resolved" })).toEqual({
+      ok: true,
+      version: 3,
+    });
     await until<IncidentRow>(anaView, (s) => s.rows.length === 0);
-    ana.close();
-    bia.close();
-    expect(warnings).toEqual([]);
+    ana.sync.close();
+    bia.sync.close();
+    expect([...ana.warnings, ...bia.warnings]).toEqual([]);
+  });
+
+  test("a reconnect resumes from (version, epoch) with a patch of what changed meanwhile", async () => {
+    const shard = `client-${++names}`;
+    const ana = client();
+    const bia = client();
+    const anaView = ana.sync.query(shard, "incidents.active", {});
+    const first = incidentId();
+    expect(
+      await bia.sync.mutate(shard, "incident.declare", {
+        id: first,
+        title: "Checkout down",
+        severity: "sev1",
+      }),
+    ).toMatchObject({ ok: true, version: 1 });
+    await until<IncidentRow>(anaView, (s) => s.rows.length === 1);
+    const snapshot = ana.received.find((frame) => frame.type === "snapshot")!;
+
+    // Ana loses her connection; Bia declares another incident before Ana is back.
+    ana.drop();
+    const second = incidentId();
+    expect(
+      await bia.sync.mutate(shard, "incident.declare", {
+        id: second,
+        title: "Search slow",
+        severity: "sev3",
+      }),
+    ).toMatchObject({ ok: true, version: 2 });
+    ana.reconnect();
+    const caught = await until<IncidentRow>(anaView, (s) => s.rows.length === 2);
+    expect(ids(caught.rows)).toEqual([first, second].sort());
+
+    // The second connection's subscribe carried the resume point, and the shard answered with a patch, not a
+    // snapshot.
+    expect(ana.connections()).toBe(2);
+    const resume = ana.sent.find((frame) => frame.type === "subscribe" && frame.connection === 2);
+    expect(resume).toMatchObject({ version: 1, epoch: snapshot.epoch });
+    const answer = ana.received.filter((frame) => frame.connection === 2);
+    expect(answer).toEqual([
+      expect.objectContaining({
+        type: "patch",
+        epoch: snapshot.epoch,
+        version: 2,
+        subs: {
+          [resume!.subId as string]: {
+            upserts: [expect.objectContaining({ id: second })],
+            deletes: [],
+          },
+        },
+      }),
+    ]);
+    ana.sync.close();
+    bia.sync.close();
+    expect([...ana.warnings, ...bia.warnings]).toEqual([]);
+  });
+
+  test("a client holding another epoch's data gets a snapshot that replaces it", async () => {
+    const shard = `client-${++names}`;
+    const route = new Map([[shard, `${shard}-old`]]);
+    const ana = client(route);
+    const old = incidentId();
+    expect(
+      await ana.sync.mutate(shard, "incident.declare", {
+        id: old,
+        title: "Lost with the old storage",
+        severity: "sev2",
+      }),
+    ).toMatchObject({ ok: true, version: 1 });
+    const anaView = ana.sync.query(shard, "incidents.active", {});
+    await until<IncidentRow>(anaView, (s) => s.rows.length === 1);
+    const before = ana.received.find((frame) => frame.type === "snapshot")!;
+
+    // The shard's storage is re-created: same name, fresh storage with a new epoch and its own version 1.
+    const fresh = client(new Map([[shard, `${shard}-new`]]));
+    const kept = incidentId();
+    expect(
+      await fresh.sync.mutate(shard, "incident.declare", {
+        id: kept,
+        title: "In the new storage",
+        severity: "sev1",
+      }),
+    ).toMatchObject({ ok: true, version: 1 });
+    route.set(shard, `${shard}-new`);
+    ana.drop();
+    ana.reconnect();
+
+    const replaced = await until<IncidentRow>(anaView, (s) => s.rows[0]?.id === kept);
+    expect(ids(replaced.rows)).toEqual([kept]);
+    const last = ana.connections();
+    const resume = ana.sent.find(
+      (frame) => frame.type === "subscribe" && frame.connection === last,
+    );
+    // Same version, other epoch: only the epoch tells the client's data apart, and the shard sends a snapshot.
+    expect(resume).toMatchObject({ version: 1, epoch: before.epoch });
+    const answer = ana.received.find((frame) => frame.connection === last)!;
+    expect(answer).toMatchObject({ type: "snapshot", version: 1 });
+    expect(answer.epoch).not.toBe(before.epoch);
+    await eventually(() => !anaView.getSnapshot().pending, "no pending mutations");
+    ana.sync.close();
+    fresh.sync.close();
+    expect([...ana.warnings, ...fresh.warnings]).toEqual([]);
   });
 });

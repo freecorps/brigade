@@ -28,21 +28,31 @@ Through the dashboard Worker the endpoint is `/api/sync/:id` (the service bindin
 `src/workspace.ts` speaks the protocol in `@freecorps/brigade-sync/protocol` over the WebSocket Hibernation API;
 `src/shard.ts` keeps the shard's state in SQLite. Everything a socket needs (client id, actor, subscriptions with
 their args and last version) is in its attachment, so the object can hibernate between frames. Handlers are
-synchronous, so frames are handled strictly in arrival order.
+synchronous, so frames are handled strictly in arrival order. The details and the reasons are in RFC 0004,
+"Shard server".
 
 | Table              | Holds                                                                                                                           |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
 | `store_rows`       | Every row of every table in `TABLES` (incidents, counters) as JSON, keyed by (table, id), with the version that last changed it |
-| `shard_meta`       | `version` (one bump per committed mutation), `log_start`, and the workspace id                                                  |
+| `shard_meta`       | `version` (one bump per committed mutation), `log_start`, the workspace id, and the `epoch` created with the storage            |
 | `change_log`       | (version, table, id) of every synced row each version changed; the last 1000 versions                                           |
-| `mutation_results` | The result sent for each (clientId, mutationId), kept 7 days for de-duplication                                                 |
+| `mutation_results` | The result of each (clientId, mutationId) the shard ran, kept 7 days from the run for de-duplication                            |
 | `outbox`           | RFC 0005 event envelopes, written in the mutation's transaction; not drained yet (no Queue)                                     |
 
-Limits: client frames up to 64 KiB of text (binary frames are refused); 32 subscriptions per socket and 8 KiB of
-attachment state. A malformed frame, a frame before `hello`, a second `hello` or another protocol version gets an
-`error` frame with `code: "protocol"` and a close with code 1002; a refused subscription gets an `error` with its
-`subId` and the socket stays open. Unexpected failures are logged as one JSON line (`console.error`) and the
-client only sees `internal`.
+- **Epoch:** created once with the storage and never rewritten; a resume from another epoch, from a version ahead
+  of the shard or from before the change log gets a snapshot, otherwise a patch. A restore that lands on the same
+  version with different contents is not detected.
+- **Patches:** one per version per socket, for the subscriptions it touched; the socket that ran an ok mutation
+  always gets that version's patch, with `subs: {}` if nothing on it changed. A retry answered from
+  `mutation_results` gets the stored result only.
+- **Limits:** client frames up to 64 KiB of text (binary frames are refused); 32 subscriptions per socket and
+  8 KiB of attachment state.
+- **Errors and closes:** any frame before `hello` (a `mutate` too), a second `hello`, another protocol version or a
+  frame with no readable id gets `error { code: "protocol" }` and a close with code 1002. After `hello`, a
+  malformed `subscribe` or `mutate` with a readable id is refused alone with `invalid_args` (an `error` with its
+  `subId`, or a failed `mutationResult`) and the socket stays open, as for any refused subscription. Unexpected
+  failures, and a `send` that throws, are logged as one JSON line (`console.error`), answered with
+  `error { code: "internal" }` when possible, and close the socket with 1011; the client reconnects and replays.
 
 ## Run it
 

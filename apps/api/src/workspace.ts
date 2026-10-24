@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { Actor, AnyQuery, BrigadeTables } from "@freecorps/brigade-schema";
+import type { Actor, BrigadeTables } from "@freecorps/brigade-schema";
 import {
   encode,
   parseClientMessage,
@@ -160,19 +160,9 @@ export class WorkspaceDO extends DurableObject<Env> {
       ws.serializeAttachment(state);
       return;
     }
-    if (state.clientId === null) {
-      // A parseable `mutate` is never a socket-level error: the client fails that mutation instead (RFC 0004).
-      if (message.type === "mutate") {
-        const { mutationId } = message;
-        return this.send(ws, {
-          type: "error",
-          code: "internal",
-          message: "hello first",
-          mutationId,
-        });
-      }
-      return this.refuse(ws, "hello first");
-    }
+    // Any frame before `hello`, a `mutate` included, is about the socket, not that frame (RFC 0004 "Shard
+    // server"): the client always sends `hello` first, and after the close it replays the mutation behind one.
+    if (state.clientId === null) return this.refuse(ws, "hello first");
 
     switch (message.type) {
       case "subscribe":
@@ -205,9 +195,12 @@ export class WorkspaceDO extends DurableObject<Env> {
   /**
    * Answers a `mutate` with its `mutationResult`, then (when ok) the patch for its version: to every socket whose
    * subscriptions it touched, and always to this socket, with `subs: {}` if it touched none of them here, so the
-   * client can settle the mutation (RFC 0004 "Ordering"). A retry gets the stored result and an empty patch at the
-   * current version: every subscription on this socket has received every change that touched it, so it truly
-   * holds that version.
+   * client can settle the mutation (RFC 0004 "Ordering").
+   *
+   * A retry the shard already ran gets the stored result and nothing else: the client re-sends only on a new
+   * socket, before its `subscribe`s, and their answers (at the current version, at or after the result's) settle
+   * it. A storage failure throws out of here: nothing committed, so the socket closes with `internal` and the
+   * client replays the mutation on the next one, instead of failing it for good.
    */
   private mutate(
     ws: WebSocket,
@@ -217,24 +210,19 @@ export class WorkspaceDO extends DurableObject<Env> {
     name: string,
     args: unknown,
   ): void {
-    let outcome;
-    try {
-      const now = Date.now();
-      const stored = this.shard.storedResult(clientId, mutationId, now);
-      outcome = stored
-        ? { result: stored, changes: null }
-        : this.shard.mutate({ clientId, mutationId, actor: state.actor, name, args, now });
-    } catch (error) {
-      // Nothing committed (the mutation is one transaction). Fail this mutation, not the socket.
-      this.log("mutate failed", { mutation: name.slice(0, 64), error });
-      this.send(ws, { type: "error", code: "internal", message: "Internal error", mutationId });
-      return;
-    }
-    const { result, changes } = outcome;
+    const now = Date.now();
+    const stored = this.shard.storedResult(clientId, mutationId, now);
+    if (stored) return this.send(ws, stored);
+    const { result, changes } = this.shard.mutate({
+      clientId,
+      mutationId,
+      actor: state.actor,
+      name,
+      args,
+      now,
+    });
     this.send(ws, result);
-    if (!result.ok) return;
-    if (changes) this.broadcast(result.version, changes, ws);
-    else this.settle(ws, this.shard.version());
+    if (result.ok) this.broadcast(result.version, changes, ws);
   }
 
   private subscribe(
@@ -292,45 +280,45 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (!state?.clientId) continue;
       // No prototype: a subId such as `__proto__` stays an ordinary key.
       const subs = Object.create(null) as { [subId: string]: SubscriptionChanges };
+      const failed: string[] = [];
       let touched = false;
       for (const sub of state.subs) {
-        const query = findQuery(sub.query);
-        const patch = query && this.diff(query, sub.args, changes);
-        if (!patch) continue;
-        subs[sub.subId] = patch;
-        touched = true;
+        const patch = this.diff(sub, changes);
+        if (patch === "failed") failed.push(sub.subId);
+        else if (patch) {
+          subs[sub.subId] = patch;
+          touched = true;
+        }
       }
-      if (!touched && ws !== origin) continue;
-      this.sendPatch(ws, state, version, subs);
+      if (failed.length > 0) {
+        // A patch at `version` says the whole socket holds it, which a subscription that missed this change does
+        // not: refuse it first (the client lets go of its rows), so the patch claims only what it carries.
+        state.subs = state.subs.filter((sub) => !failed.includes(sub.subId));
+        for (const subId of failed) {
+          this.send(ws, { type: "error", subId, code: "internal", message: "Internal error" });
+        }
+      }
+      if (touched || ws === origin) {
+        for (const sub of state.subs) sub.version = version;
+        this.send(ws, { type: "patch", epoch: this.shard.epoch, version, subs });
+      }
+      if (failed.length > 0 || touched || ws === origin) ws.serializeAttachment(state);
     }
   }
 
-  /** An empty patch at `version` for this socket only (see `mutate`). */
-  private settle(ws: WebSocket, version: number): void {
-    const state = ws.deserializeAttachment() as SocketState | null;
-    if (state) this.sendPatch(ws, state, version, Object.create(null));
-  }
-
-  /** Every subscription on a socket that gets a patch holds that version (absent ones were not touched). */
-  private sendPatch(
-    ws: WebSocket,
-    state: SocketState,
-    version: number,
-    subs: { [subId: string]: SubscriptionChanges },
-  ): void {
-    for (const sub of state.subs) sub.version = version;
-    ws.serializeAttachment(state);
-    this.send(ws, { type: "patch", epoch: this.shard.epoch, version, subs });
-  }
-
+  /**
+   * What `changes` do to one subscription's result, undefined if nothing, or "failed" if its query is gone or its
+   * filter threw (logged).
+   */
   private diff(
-    query: AnyQuery,
-    args: unknown,
+    sub: Subscription,
     changes: readonly RowChange[],
-  ): SubscriptionChanges | undefined {
+  ): SubscriptionChanges | undefined | "failed" {
+    const query = findQuery(sub.query);
+    if (!query) return "failed";
     const patch: SubscriptionChanges = { upserts: [], deletes: [] };
     const matches = (row: unknown) =>
-      row !== undefined && query.filter(row as BrigadeTables[typeof query.table], args);
+      row !== undefined && query.filter(row as BrigadeTables[typeof query.table], sub.args);
     try {
       for (const change of changes) {
         if (change.table !== query.table) continue;
@@ -339,21 +327,29 @@ export class WorkspaceDO extends DurableObject<Env> {
       }
     } catch (error) {
       this.log("query filter failed", { query: query.name, error });
-      return undefined;
+      return "failed";
     }
     return patch.upserts.length || patch.deletes.length ? patch : undefined;
   }
 
   /**
-   * A frame `parseClientMessage` refused. A `mutate` whose id can still be read (or, after `hello`, a `subscribe`)
-   * is refused alone with `invalid_args` and the socket stays open: every `subscribe` gets its one answer, and the
-   * client fails that mutation instead of re-sending it (RFC 0004 "Errors"). Anything else is a socket-level
-   * protocol error.
+   * A frame `parseClientMessage` refused. After `hello`, one whose id can still be read is refused alone with
+   * `invalid_args` and the socket stays open (RFC 0004 "Shard server"): a `subscribe` gets its one answer, an
+   * `error` with its `subId`; a `mutate` gets a failed `mutationResult`, as invalid args from `runMutation` would,
+   * but not stored (it never ran). Anything else is a socket-level protocol error.
    */
   private malformed(ws: WebSocket, state: SocketState, data: unknown, reason: string): void {
-    const id = salvage(data);
-    if (!id || ("subId" in id && state.clientId === null)) return this.refuse(ws, reason);
-    this.send(ws, { type: "error", code: "invalid_args", message: reason, ...id });
+    const id = state.clientId === null ? undefined : salvage(data);
+    if (!id) return this.refuse(ws, reason);
+    if ("subId" in id) {
+      return this.send(ws, { type: "error", code: "invalid_args", message: reason, ...id });
+    }
+    this.send(ws, {
+      type: "mutationResult",
+      mutationId: id.mutationId,
+      ok: false,
+      error: { code: "invalid_args", message: reason },
+    });
   }
 
   /**
@@ -369,8 +365,10 @@ export class WorkspaceDO extends DurableObject<Env> {
     try {
       ws.send(encode(frame));
     } catch (error) {
-      // The socket closed meanwhile; the client resumes on reconnect.
+      // A lost frame would make the next patch claim a version this socket never fully got: close it, so the
+      // client reconnects and resumes from what it holds.
       this.log("sync send failed", { type: frame.type, error });
+      close(ws, CLOSE_INTERNAL_ERROR, "send failed");
     }
   }
 

@@ -242,15 +242,16 @@ describe("GET /sync/:workspaceId", () => {
     expect(await a.next()).toEqual(emptyPatch(1));
     a.socket.close(1000, "reconnect");
 
-    // Another mutation moves the shard on; the retry's patch is at the current version.
+    // Another mutation moves the shard on.
     const b = (await connect(ws)).hello();
     b.send(declare(incidentId()));
     expect(await b.next()).toMatchObject({ ok: true, version: 2 });
 
+    // The retry gets the stored result alone: no patch, which would claim a version this new socket has no data
+    // for. The subscribe answer that follows settles it.
     const again = (await connect(ws)).hello("client-dedup");
     again.send(declare(id));
     expect(await again.next()).toEqual(first);
-    expect(await again.next()).toEqual(emptyPatch(2));
     again.send(active("active"));
     const snapshot = await again.next();
     expect(snapshot).toMatchObject({ type: "snapshot", version: 2 });
@@ -380,7 +381,7 @@ describe("GET /sync/:workspaceId", () => {
     expect(await a.next()).toMatchObject({ ok: false, error: { code: "unknown_mutation" } });
   });
 
-  test("a mutate the shard cannot take is an error with its mutationId; the socket stays open", async () => {
+  test("a malformed mutate with a readable id gets a failed result, not stored; the socket stays open", async () => {
     const ws = workspace();
     const a = (await connect(ws)).hello();
     const id = incidentId();
@@ -392,33 +393,76 @@ describe("GET /sync/:workspaceId", () => {
     };
     a.send(huge);
     expect(await a.next()).toEqual({
-      type: "error",
+      type: "mutationResult",
       mutationId: "too-big",
-      code: "invalid_args",
-      message: "frame too large",
+      ok: false,
+      error: { code: "invalid_args", message: "frame too large" },
     });
     a.send({ type: "mutate", mutationId: "extra", name: "incident.declare", args: {}, x: 1 });
-    expect(await a.next()).toMatchObject({ type: "error", mutationId: "extra" });
-    // Nothing ran, and the socket still works.
-    a.send(declare(id));
+    expect(await a.next()).toEqual({
+      type: "mutationResult",
+      mutationId: "extra",
+      ok: false,
+      error: { code: "invalid_args", message: "unexpected field x" },
+    });
+    // Nothing ran, nothing was stored (the same id runs once it is well-formed), and the socket still works.
+    a.send({ ...declare(id), mutationId: "extra" });
     expect(await a.next()).toMatchObject({ type: "mutationResult", ok: true, version: 1 });
     expect(await a.next()).toEqual(emptyPatch(1));
   });
 
-  test("a mutate before hello fails that mutation, not the socket", async () => {
+  test("a mutate before hello is a protocol error and a close, so the client replays it after hello", async () => {
     const a = await connect(workspace());
     a.send({ type: "mutate", mutationId: "early", name: "incident.declare", args: {} });
+    expect(await a.next()).toEqual({ type: "error", code: "protocol", message: "hello first" });
+    expect(await a.closed).toMatchObject({ code: 1002 });
+    const b = await connect(workspace());
+    b.send({ type: "mutate", mutationId: "early-bad", name: "x", args: {}, extra: 1 });
+    expect(await b.next()).toEqual({
+      type: "error",
+      code: "protocol",
+      message: "unexpected field extra",
+    });
+    expect(await b.closed).toMatchObject({ code: 1002 });
+  });
+
+  test("a subscription the shard can no longer diff is refused before the patch that skips it", async () => {
+    const ws = workspace();
+    const a = (await connect(ws)).hello();
+    a.send(active("live"));
+    expect((await a.next()).type).toBe("snapshot");
+    a.send({
+      type: "subscribe",
+      subId: "gone",
+      query: "incident.byId",
+      args: { id: incidentId() },
+    });
+    expect((await a.next()).type).toBe("snapshot");
+    // As after a deploy that removed the query: the attachment names one the shard no longer has.
+    await runInDurableObject(env.WORKSPACE.getByName(ws), (_instance, state) => {
+      const socket = state.getWebSockets()[0]!;
+      const attached = socket.deserializeAttachment() as SocketState;
+      attached.subs = attached.subs.map((sub) =>
+        sub.subId === "gone" ? { ...sub, query: "removed.query" } : sub,
+      );
+      socket.serializeAttachment(attached);
+    });
+    const id = incidentId();
+    a.send(declare(id));
+    expect(await a.next()).toMatchObject({ type: "mutationResult", ok: true, version: 1 });
     expect(await a.next()).toEqual({
       type: "error",
+      subId: "gone",
       code: "internal",
-      message: "hello first",
-      mutationId: "early",
+      message: "Internal error",
     });
-    a.send({ type: "mutate", mutationId: "early-bad", name: "x", args: {}, extra: 1 });
-    expect(await a.next()).toMatchObject({ type: "error", mutationId: "early-bad" });
-    a.hello();
-    a.send(declare(incidentId()));
-    expect(await a.next()).toMatchObject({ type: "mutationResult", ok: true, version: 1 });
+    const patch = await a.next();
+    expect(patch).toMatchObject({ type: "patch", version: 1 });
+    expect(Object.keys(patch.subs as object)).toEqual(["live"]);
+    await runInDurableObject(env.WORKSPACE.getByName(ws), (_instance, state) => {
+      const attached = state.getWebSockets()[0]!.deserializeAttachment() as SocketState;
+      expect(attached.subs.map((sub) => sub.subId)).toEqual(["live"]);
+    });
   });
 
   test("other sockets get nothing for a version that touches none of their subscriptions", async () => {

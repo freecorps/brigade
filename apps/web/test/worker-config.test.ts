@@ -5,6 +5,11 @@
 import { createTestHarness, experimental_readRawConfig } from "wrangler";
 import { afterAll, beforeAll, describe, expect, test } from "vite-plus/test";
 
+// The harness bundles apps/api with wrangler's esbuild, which does not know the `@freecorps/source` condition
+// (RFC 0002): add it to wrangler's defaults so packages/schema and packages/sync resolve to their source, as in
+// `vp dev`, without a build first.
+process.env.WRANGLER_BUILD_CONDITIONS = "@freecorps/source,workerd,worker,browser";
+
 // Relative to apps/web, where `vp test` runs.
 const { rawConfig } = experimental_readRawConfig({ config: "./wrangler.jsonc" });
 const server = createTestHarness({
@@ -15,7 +20,8 @@ const server = createTestHarness({
         assets: { ...rawConfig.assets, directory: "./test/fixtures/assets" },
       },
     },
-    { configPath: "../api/wrangler.jsonc" },
+    // As in `vp dev` (vite.config.ts): the dev sync actor, set only for local runs.
+    { configPath: "../api/wrangler.jsonc", vars: { SYNC_DEV_ACTOR: "1" } },
   ],
 });
 
@@ -37,7 +43,8 @@ describe("web Worker → API Worker → WorkspaceDO, with the real configs", () 
   test("/api/workspaces/demo round-trips through the WorkspaceDO", async () => {
     const response = await get("/api/workspaces/demo");
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ workspace: "demo", tables: 0 });
+    // The shard's sync tables (apps/api/README.md).
+    expect(await response.json()).toMatchObject({ workspace: "demo", tables: 5 });
   });
 
   test("bare /api runs the Worker first too (the API answers its own 404)", async () => {
@@ -57,6 +64,43 @@ describe("web Worker → API Worker → WorkspaceDO, with the real configs", () 
 
   test("a built asset is served as is", async () => {
     expect(await (await get("/app.js")).text()).toContain("built asset");
+  });
+
+  test("/api/sync/demo upgrades to a WebSocket through the service binding", async () => {
+    const response = await get("/api/sync/demo", { headers: { Upgrade: "websocket" } });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    const frame = new Promise<string>((resolve) =>
+      socket.addEventListener("message", (event) => resolve(event.data as string)),
+    );
+    socket.send(JSON.stringify({ type: "hello", protocol: 1, clientId: "web" }));
+    socket.send(
+      JSON.stringify({ type: "subscribe", subId: "s", query: "incidents.active", args: {} }),
+    );
+    expect(JSON.parse(await frame)).toMatchObject({
+      type: "snapshot",
+      subId: "s",
+      version: 0,
+      rows: [],
+    });
+    socket.close(1000, "done");
+  });
+});
+
+describe("apps/api wrangler.jsonc: the dev sync actor", () => {
+  const api = experimental_readRawConfig({ config: "../api/wrangler.jsonc" }).rawConfig;
+  // DEV ONLY until auth exists (apps/api/src/workspace.ts): a deployment with it lets anyone act as a responder.
+  test.each([
+    ["top level (production)", api.vars],
+    ["staging", api.env?.staging?.vars],
+  ])("%s does not set SYNC_DEV_ACTOR", (_name, vars) => {
+    expect(vars?.SYNC_DEV_ACTOR).toBeUndefined();
+  });
+
+  test("only the dev environment sets it", () => {
+    expect(api.env?.dev?.vars).toEqual({ SYNC_DEV_ACTOR: "1" });
+    expect(Object.keys(api.env ?? {}).sort()).toEqual(["dev", "staging"]);
   });
 });
 

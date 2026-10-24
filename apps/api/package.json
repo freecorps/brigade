@@ -21,6 +21,10 @@
     "cf-typegen": "wrangler types",
     "cf-typegen:check": "wrangler types --check"
   },
+  "dependencies": {
+    "@freecorps/brigade-schema": "workspace:*",
+    "@freecorps/brigade-sync": "workspace:*"
+  },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.65.0",
     "@cloudflare/vitest-plugin": "^1.4.7",

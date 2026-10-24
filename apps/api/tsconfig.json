@@ -6,6 +6,8 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "types": ["@cloudflare/vitest-plugin/types"],
+    // Resolve workspace packages to their TS source (the @freecorps/source export condition, RFC 0002).
+    "customConditions": ["@freecorps/source"],
     "strict": true,
     "noUnusedLocals": true,
     "noUncheckedIndexedAccess": true,

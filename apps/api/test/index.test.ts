@@ -3,6 +3,9 @@ import { runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import worker, { WorkspaceDO } from "../src/index.ts";
 
+// store_rows, shard_meta, change_log, mutation_results and outbox, created when the shard starts.
+const SYNC_TABLES = 5;
+
 const api = (path: string, init?: RequestInit) =>
   exports.default.fetch(`http://api.test${path}`, init);
 
@@ -57,7 +60,7 @@ describe("api worker", () => {
       expect(response.status, id).toBe(200);
       expect(await response.json()).toEqual({
         workspace: id,
-        tables: 0,
+        tables: SYNC_TABLES,
         databaseSize: expect.any(Number),
       });
     }
@@ -97,7 +100,7 @@ describe("WorkspaceDO", () => {
     const info = await stub.info();
     await runInDurableObject(stub, (instance, state) => {
       expect(instance).toBeInstanceOf(WorkspaceDO);
-      expect(info).toEqual({ tables: 0, databaseSize: state.storage.sql.databaseSize });
+      expect(info).toEqual({ tables: SYNC_TABLES, databaseSize: state.storage.sql.databaseSize });
     });
   });
 

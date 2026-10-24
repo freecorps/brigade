@@ -8,9 +8,9 @@ Every successful mutation emits one or more events with a CloudEvents-style enve
 
 ```ts
 interface BrigadeEvent<T = unknown> {
-  id: string; // ULID
+  id: string; // ULID, prefixed like every id (RFC 0003): "evt_01JB…"
   type: string; // "incident.declared", "incident.severity_changed", "alert.fired", "page.escalated", ...
-  source: string; // "brigade://<workspace>/<shard>"
+  source: string; // "brigade://<workspace>/<shard>": "brigade://acme/workspace", "brigade://acme/inc_…"
   workspaceId: string;
   time: string; // ISO 8601
   actor: { kind: "user" | "system" | "integration"; id: string };
@@ -26,6 +26,7 @@ Event types are versioned with the schema package and documented in the generate
 
 1. A mutation writes its rows **and** its events to an `outbox` table in the same DO SQLite transaction.
 2. A DO alarm drains the outbox to a Cloudflare Queue (`brigade-events`), deleting rows only after the send succeeds.
+   Spike S3 does step 1 only (`WorkspaceDO`'s `outbox` table); draining comes with the Queue.
 3. Consumers are idempotent by `event.id`.
 
 Result: at-least-once delivery, no event lost if the Worker dies between write and publish.

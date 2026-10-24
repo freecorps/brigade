@@ -31,7 +31,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
       reconnect resumes from the last version.
   - One `WorkspaceDO` with `subscribe` / `mutate` / `resume`; `packages/sync` with `useQuery` / `useMutation`.
 - [ ] **S4 — Expo in the workspace.** Pass: development build runs on the iOS Simulator importing `packages/*`
-      through Metro; `eas build` succeeds (needs Heitor's EAS account).
+      through Metro; `eas build` succeeds (needs Heitor's EAS account); Hermes `Intl.PluralRules`,
+      `RelativeTimeFormat` and `dateStyle`/`timeStyle` checked (polyfill if missing).
 - [ ] **S2 — Probe placement** (RFC 0007). Pass: observed colo per `locationHint` over 48h (deploy needs Heitor's approval).
 - [ ] **S1 — APNs from a Worker and payload encryption** (RFC 0006). Pass: push received on a real iPhone from a
       Worker, decrypted in the Notification Service Extension (needs Apple credentials and a device).

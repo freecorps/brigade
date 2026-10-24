@@ -1,11 +1,16 @@
+// The top-level config is production (`brigade-api`); `dev` and `staging` are the environments below.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "brigade-api",
   "main": "./src/index.ts",
-  "compatibility_date": "2026-10-24",
+  // Matches the installed workerd so local and deployed behaviour agree.
+  "compatibility_date": "2026-10-19",
+  // No public workers.dev or preview URLs until auth exists. Both keys are inherited by environments.
+  "workers_dev": false,
+  "preview_urls": false,
   "observability": {
     "enabled": true,
-    "traces": { "enabled": true },
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 },
   },
   "upload_source_maps": true,
   "durable_objects": {

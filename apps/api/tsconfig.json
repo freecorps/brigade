@@ -5,7 +5,7 @@
     "moduleDetection": "force",
     "module": "esnext",
     "moduleResolution": "bundler",
-    "types": ["./worker-configuration.d.ts", "@cloudflare/vitest-plugin/types"],
+    "types": ["@cloudflare/vitest-plugin/types"],
     "strict": true,
     "noUnusedLocals": true,
     "noUncheckedIndexedAccess": true,

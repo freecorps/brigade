@@ -77,6 +77,9 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
 
 ## Environments
 
-- `dev` — local (`wrangler dev` / Vite dev server), Miniflare for DOs.
-- `staging` and `production` — separate Workers environments; mobile app points at either via build profile.
+- `dev` — local (`vp dev`, Miniflare for DOs), and a deployable `brigade-<app>-dev` Workers environment for shared
+  testing.
+- `staging` — the `brigade-<app>-staging` Workers environment.
+- `production` — the top-level (unsuffixed) Wrangler config, deployed only with owner approval.
+- The mobile app points at staging or production via build profile.
 - Self-hosted — one Cloudflare account, one `deploy` command, guided setup (Slack app manifest, relay registration).

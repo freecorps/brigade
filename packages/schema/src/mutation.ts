@@ -98,8 +98,9 @@ export function defineRegistry<const D extends readonly { name: string }[]>(
   return registry as Registry<D[number]>;
 }
 
-/** Finds `name` among the registry's own entries (never `toString`, `__proto__`, …). */
-export function lookup<D>(registry: { readonly [name: string]: D }, name: string): D | undefined {
+/** Finds `name` among the registry's own entries (never `toString`, `__proto__`, …, nor a non-string). */
+export function lookup<D>(registry: { readonly [name: string]: D }, name: unknown): D | undefined {
+  if (typeof name !== "string") return undefined;
   return Object.prototype.hasOwnProperty.call(registry, name) ? registry[name] : undefined;
 }
 
@@ -145,29 +146,32 @@ export function runMutation(
   ctx: MutationContext,
   options: RunMutationOptions = {},
 ): MutationResult {
+  // `name` comes off the wire: a non-string is just an unknown mutation.
   const def = lookup(registry, name);
   if (!def) return fail("unknown_mutation", `Unknown mutation ${clip(name)}`);
-  const internal = (error: unknown) => {
-    report(options, error, def.name);
-    return fail("internal", `${def.name} failed`);
-  };
-  if (!Number.isSafeInteger(ctx.now) || ctx.now < 0) {
-    return internal(new RangeError("ctx.now must be a safe non-negative integer"));
-  }
-  if (!isRole(ctx.actor.role) || !can(ctx.actor.role, def.permission)) {
-    return fail("forbidden", `Not allowed to run ${def.name}`);
-  }
-  const args = def.args(rawArgs);
-  if (!args.ok) return fail("invalid_args", `Invalid arguments for ${def.name}`, args.issues);
   try {
+    if (!Number.isSafeInteger(ctx.now) || ctx.now < 0) {
+      throw new RangeError("ctx.now must be a safe non-negative integer");
+    }
+    if (!isRole(ctx.actor.role) || !can(ctx.actor.role, def.permission)) {
+      return fail("forbidden", `Not allowed to run ${def.name}`);
+    }
+    // Validators only read `rawArgs`, but a hostile value (a proxy, a throwing getter) must not escape either.
+    const args = def.args(rawArgs);
+    if (!args.ok) return fail("invalid_args", `Invalid arguments for ${def.name}`, args.issues);
     return store.transaction(() => {
       const result = def.apply(store, args.value, ctx);
       if (!result.ok) throw new Rollback(result);
+      // Every successful mutation emits an event (RFC 0005); a silent success is a bug in the mutation.
+      if (!Array.isArray(result.events) || result.events.length === 0) {
+        throw new Error(`${def.name} succeeded without events`);
+      }
       options.commit?.(result.events);
       return result;
     });
   } catch (error) {
     if (error instanceof Rollback) return error.result;
-    return internal(error);
+    report(options, error, def.name);
+    return fail("internal", `${def.name} failed`);
   }
 }

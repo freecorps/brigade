@@ -153,3 +153,25 @@ test("server-only tables cannot be queried", () => {
     }),
   ).toThrow("Query test.counters reads server-only table counters");
 });
+
+test("a non-string query name is an unknown query", () => {
+  for (const name of [null, undefined, [], {}, 42]) {
+    const result = runQuery(queries, name as never, {}, seeded(), "viewer");
+    expect(!result.ok && result.error.code, String(typeof name)).toBe("unknown_query");
+  }
+  const result = runQuery(queries, [] as never, {}, seeded(), "viewer");
+  expect(!result.ok && result.error.message).toBe("Unknown query <object>");
+});
+
+test("query args that throw while being read become internal", () => {
+  const hostile = new Proxy(
+    {},
+    {
+      getPrototypeOf() {
+        throw new Error("trap");
+      },
+    },
+  );
+  const result = runQuery(queries, "incident.byId", hostile, seeded(), "viewer");
+  expect(!result.ok && result.error.code).toBe("internal");
+});

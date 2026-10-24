@@ -13,8 +13,12 @@ export const MAX_ISSUES = 10;
 /** Names and paths echoed back in errors are cut to this many characters. */
 export const MAX_ECHO = 64;
 
-/** `value` cut to `MAX_ECHO` characters, for echoing client input in error messages and paths. */
-export function clip(value: string): string {
+/**
+ * `value` cut to `MAX_ECHO` characters, for echoing client input in error messages and paths. Anything but a
+ * string becomes its type in angle brackets (`<null>`, `<object>`), so echoing never runs client code.
+ */
+export function clip(value: unknown): string {
+  if (typeof value !== "string") return `<${value === null ? "null" : typeof value}>`;
   return value.length > MAX_ECHO ? `${value.slice(0, MAX_ECHO - 1)}…` : value;
 }
 
@@ -24,35 +28,98 @@ const invalid = (path: string, message: string): Validated<never> => ({
   issues: [{ path, message }],
 });
 
+// Strings are scanned with plain index loops over UTF-16 code units: linear time on any input, and no
+// dependence on the engine's regex Unicode tables (Workers, browsers and Hermes differ).
+
+const range = (from: number, to: number) =>
+  Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
 // Trimmed explicitly instead of with String#trim, whose whitespace set depends on the engine's Unicode version.
-// Regexes are built from escaped strings so the source holds no raw control or separator characters.
-const SPACE =
-  "\\t\\n\\v\\f\\r \\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF";
-const EDGE_SPACE = new RegExp(`^[${SPACE}]+|[${SPACE}]+$`, "g");
-// Line/paragraph separators, and bidi embeddings, overrides and isolates (which can make text read
-// differently from what it holds).
-const SEPARATORS_AND_BIDI = "\\u2028\\u2029\\u202A-\\u202E\\u2066-\\u2069";
-// C0 and C1 controls (NUL, newlines and tabs included) and DEL.
-const FORBIDDEN = new RegExp(`[\\u0000-\\u001F\\u007F-\\u009F${SEPARATORS_AND_BIDI}]`);
-// The same, but newlines and tabs are allowed in multi-line text.
-const FORBIDDEN_MULTILINE = new RegExp(
-  `[\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F${SEPARATORS_AND_BIDI}]`,
-);
+const SPACE = new Set([
+  ...range(0x09, 0x0d), // tab, line feed, vertical tab, form feed, carriage return
+  0x20,
+  0xa0,
+  0x1680,
+  ...range(0x2000, 0x200a),
+  0x2028,
+  0x2029,
+  0x202f,
+  0x205f,
+  0x3000,
+  0xfeff,
+]);
+
+// Rejected everywhere: C0 controls (except tab and line feed, allowed in multi-line text), DEL and C1 controls,
+// line/paragraph separators, and bidi embeddings, overrides and isolates (which make text read differently
+// from what it holds).
+const CONTROL_AND_BIDI = new Set([
+  ...range(0x00, 0x08),
+  ...range(0x0b, 0x1f),
+  ...range(0x7f, 0x9f),
+  0x2028,
+  0x2029,
+  ...range(0x202a, 0x202e),
+  ...range(0x2066, 0x2069),
+]);
+// Also rejected in single-line text: tab and line feed, and invisible format characters (zero-width
+// space/joiners, LRM/RLM, word joiner and invisible operators, Arabic letter mark, Mongolian vowel separator,
+// BOM, soft hyphen) that can make a title look empty or like another one.
+const SINGLE_LINE_ONLY = new Set([
+  0x09,
+  0x0a,
+  ...range(0x200b, 0x200f),
+  ...range(0x2060, 0x2064),
+  0x061c,
+  0x180e,
+  0xfeff,
+  0xad,
+]);
+
+/** Why `input` is not acceptable text, or undefined. Unpaired surrogates are never acceptable. */
+function textProblem(input: string, multiline: boolean): string | undefined {
+  for (let i = 0; i < input.length; i++) {
+    const code = input.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = input.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        i++;
+        continue;
+      }
+      return "Contains an unpaired surrogate";
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) return "Contains an unpaired surrogate";
+    if (CONTROL_AND_BIDI.has(code) || (!multiline && SINGLE_LINE_ONLY.has(code))) {
+      return "Contains control, invisible or bidi characters";
+    }
+  }
+  return undefined;
+}
+
+/** `input` without leading and trailing `SPACE`, in linear time. */
+function trimSpace(input: string): string {
+  let start = 0;
+  let end = input.length;
+  while (start < end && SPACE.has(input.charCodeAt(start))) start++;
+  while (end > start && SPACE.has(input.charCodeAt(end - 1))) end--;
+  return input.slice(start, end);
+}
 
 /**
- * A string, trimmed, with a length between `min` and `max` after trimming. Single-line by default: control
- * characters, newlines, U+2028/2029 and bidi overrides/isolates are rejected. Input longer than twice `max`
- * (plus some room for padding) is rejected before any other work.
+ * A string, trimmed, with a length between `min` and `max` after trimming. Input longer than twice `max` (plus
+ * some room for padding) is rejected before any other work. Unpaired surrogates, control characters, U+2028/2029
+ * and bidi overrides/isolates are always rejected; single-line text (the default) also rejects tabs, newlines
+ * and invisible format characters. `min` is checked after all that, so invisible padding cannot satisfy it.
  */
 function string(options: { min?: number; max: number; multiline?: boolean }): Validator<string> {
   const min = options.min ?? 0;
   const raw = options.max * 2 + 64;
-  const forbidden = options.multiline ? FORBIDDEN_MULTILINE : FORBIDDEN;
+  const multiline = options.multiline ?? false;
   return (input, path = "") => {
     if (typeof input !== "string") return invalid(path, "Expected a string");
     if (input.length > raw) return invalid(path, `Expected at most ${options.max} characters`);
-    if (forbidden.test(input)) return invalid(path, "Contains control or bidi characters");
-    const value = input.replace(EDGE_SPACE, "");
+    const problem = textProblem(input, multiline);
+    if (problem) return invalid(path, problem);
+    const value = trimSpace(input);
     if (value.length < min) return invalid(path, `Expected at least ${min} characters`);
     if (value.length > options.max) {
       return invalid(path, `Expected at most ${options.max} characters`);

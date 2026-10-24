@@ -141,3 +141,27 @@ test("a pending mutation that no longer applies drops out of the view; the serve
   expect(!result.ok && result.error.code).toBe("invalid_transition");
   expect(rebase(server, []).dump()).toEqual(serverState(server));
 });
+
+test("rebasing a mutation the server already applied leaves exactly the server's state", () => {
+  const server = createMemoryStore<BrigadeTables>();
+  const pending: Pending[] = [
+    {
+      mutationId: "m1",
+      name: "incident.declare",
+      args: { id: ID, title: "API errors", severity: "sev2" },
+      ctx: ana(T),
+    },
+    {
+      mutationId: "m2",
+      name: "incident.setSeverity",
+      args: { id: ID, severity: "sev1" },
+      ctx: ana(T + 10),
+    },
+  ];
+  // The server applied both, but the client has not received their results yet: the patch arrives first.
+  for (const [i, mutation] of pending.entries()) {
+    expect(send(server, mutation, T + 100 + i).ok).toBe(true);
+  }
+  // Re-applying them on the server's state fails ("already exists", "no change") and drops them silently.
+  expect(rebase(server, pending).dump()).toEqual(serverState(server));
+});

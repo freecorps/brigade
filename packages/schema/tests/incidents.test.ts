@@ -530,3 +530,62 @@ describe("runMutation options and guards", () => {
     expect(store.dump()).toEqual({});
   });
 });
+
+describe("runMutation never throws", () => {
+  test("a non-string name is an unknown mutation", () => {
+    for (const name of [null, undefined, [], {}, 42, Symbol("x")]) {
+      const result = runMutation(mutations, name as never, {}, storeWith(), ctx());
+      expect(result.ok, String(typeof name)).toBe(false);
+      expect(!result.ok && result.error.code).toBe("unknown_mutation");
+    }
+    const result = runMutation(mutations, null as never, {}, storeWith(), ctx());
+    expect(!result.ok && result.error.message).toBe("Unknown mutation <null>");
+  });
+
+  test("args that throw while being read become internal", () => {
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error("trap");
+        },
+      },
+    );
+    const onError = vi.fn();
+    const store = storeWith();
+    const result = runMutation(mutations, "incident.declare", hostile, store, ctx(), { onError });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: "internal", message: "incident.declare failed" },
+    });
+    expect(onError).toHaveBeenCalledOnce();
+    expect(store.dump()).toEqual({});
+  });
+
+  test("a success without events is internal and writes nothing", () => {
+    const silent = defineMutation({
+      name: "test.silent",
+      args: v.object({}),
+      permission: "incident:declare",
+      apply(store) {
+        store.insert("counters", { id: "x", value: 1 });
+        return ok();
+      },
+    });
+    const onError = vi.fn();
+    const commit = vi.fn();
+    const store = storeWith();
+    const result = runMutation(defineRegistry([silent]), "test.silent", {}, store, ctx(), {
+      commit,
+      onError,
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: "internal", message: "test.silent failed" },
+    });
+    expect(onError).toHaveBeenCalledOnce();
+    expect(String(onError.mock.calls[0]![0])).toContain("without events");
+    expect(commit).not.toHaveBeenCalled();
+    expect(store.dump()).toEqual({});
+  });
+});

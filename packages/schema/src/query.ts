@@ -86,20 +86,24 @@ export function runQuery(
   role: Role,
   options: { onError?(error: unknown, name: string): void } = {},
 ): QueryResult {
+  // `name` comes off the wire: a non-string is just an unknown query.
   const query = lookup(registry, name);
   if (!query) {
     return { ok: false, error: { code: "unknown_query", message: `Unknown query ${clip(name)}` } };
   }
-  if (!isRole(role) || !can(role, query.permission)) {
-    return { ok: false, error: { code: "forbidden", message: `Not allowed to run ${query.name}` } };
-  }
-  const args = query.args(rawArgs);
-  if (!args.ok) {
-    const message = `Invalid arguments for ${query.name}`;
-    const issues = args.issues.slice(0, MAX_ISSUES);
-    return { ok: false, error: { code: "invalid_args", message, issues } };
-  }
   try {
+    if (!isRole(role) || !can(role, query.permission)) {
+      return {
+        ok: false,
+        error: { code: "forbidden", message: `Not allowed to run ${query.name}` },
+      };
+    }
+    const args = query.args(rawArgs);
+    if (!args.ok) {
+      const message = `Invalid arguments for ${query.name}`;
+      const issues = args.issues.slice(0, MAX_ISSUES);
+      return { ok: false, error: { code: "invalid_args", message, issues } };
+    }
     return { ok: true, rows: evaluateQuery(query, args.value, store) };
   } catch (error) {
     report(options, error, query.name);

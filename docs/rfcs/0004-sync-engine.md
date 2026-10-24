@@ -59,11 +59,14 @@ runQuery(queries, name, rawArgs, store, role, { onError? }) // → { ok: true, r
   runs `apply` and then `commit` in one `store.transaction`, so any failure writes nothing. Failures are typed
   (`unknown_mutation`, `forbidden`, `invalid_args`, `not_found`, `invalid_transition`, `conflict`); an unexpected
   exception becomes `internal`, whose cause goes only to `onError` (server logs), never over the wire. Neither
-  `runMutation` nor `runQuery` throws. System and integration actors carry a role and pass the same check.
+  `runMutation` nor `runQuery` throws, whatever arrives off the wire (a non-string name is an unknown one; args
+  that throw while being read are `internal`). System and integration actors carry a role and pass the same check.
 - **Events and the outbox**: a successful mutation returns its domain events (`type`, `subject`, `data`). The
   server writes them to the outbox in `commit`, inside the mutation's transaction (RFC 0005); if `commit` throws,
-  the rows roll back too. Clients drop the events. Since every success emits an event, "no change" (setting the
-  current status or severity) is one code for both: `conflict`, which also covers an existing id.
+  the rows roll back too. Clients drop the events. Every success must emit an event: one with none is a bug in
+  the mutation and becomes `internal`. So "no change" (setting the current status or severity) is one code for
+  both, `conflict`, which also covers an existing id; it also makes a rebased mutation the server already applied
+  fail locally and drop out of the optimistic view.
 - **Transactions are re-entrant.** The server already runs inside its own transaction when it calls
   `runMutation`, so the SQLite store's `transaction` must nest (savepoints, or flattening into the outer one): an
   inner rollback undoes only its writes; an outer rollback undoes everything. The in-memory store copies its table
@@ -88,9 +91,12 @@ runQuery(queries, name, rawArgs, store, role, { onError? }) // → { ok: true, r
   the shard maintains in its mutations.
 - **Validation** is a handful of hand-written validators (`v.object`, `v.string`, `v.picklist`, `v.id`) in
   `packages/schema`: no dependency, nothing engine-specific (runs on Workers, browsers and Hermes). `v.object`
-  accepts only plain objects and rejects unknown keys. `v.string` trims an explicit whitespace set (not the
-  engine's `trim`), rejects raw input longer than about twice its limit before any work, and by default rejects
-  control characters (NUL and newlines included), U+2028/2029 and bidi overrides/isolates. Errors carry at most
+  accepts only plain objects and rejects unknown keys. `v.string` rejects raw input longer than about twice its
+  limit before any work, scans and trims with linear index loops over an explicit whitespace set (not the
+  engine's `trim` or regex Unicode tables), and always rejects unpaired surrogates, control characters,
+  U+2028/2029 and bidi overrides/isolates. Single-line text (the default) also rejects tabs, newlines and
+  invisible format characters (U+200B–U+200F, U+2060–U+2064, U+061C, U+180E, U+FEFF, U+00AD); `min` is checked
+  after all that, so an invisible-only title is rejected. Errors carry at most
   10 issues, and echoed names and paths are cut to 64 characters. Valibot is the upgrade if the arg shapes outgrow
   this.
 - **In S3 the `WorkspaceDO` incident index is temporarily authoritative** for status and severity. Once

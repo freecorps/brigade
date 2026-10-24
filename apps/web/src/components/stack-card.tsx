@@ -29,9 +29,9 @@ import { usePreferences } from "@/components/preferences";
 import { useStackStatus } from "@/components/stack-status";
 import { formatBytes, formatClock } from "@/lib/format";
 import {
-  apiAnswered,
   CHECK_TIMEOUT_MS,
   DEMO_WORKSPACE,
+  healthFault,
   verdict,
   type CheckFailure,
   type CheckResult,
@@ -46,40 +46,53 @@ const DEV_COMMAND = "vp run dev";
 // keeps its refresh icon.
 //
 // There is one Check again button at a time: in the header, or in the hint panel when a check failed.
-// When a result swaps one for the other while focus was on the old one (it unmounts, so focus falls to
-// <body>), focus moves to the new one.
+// When a result swaps one for the other and removes the button that had focus (focus falls to
+// <body>), focus moves to the new one. If the user had moved focus elsewhere first, nothing happens.
+
+/** What /health failing means for the card: nothing there, an error answer, or no answer in time. */
+const API_FAULTS = { down: "api-down", erroring: "api-error", stuck: "api-stuck" } as const;
 
 export function StackCard() {
   const { locale } = usePreferences();
   const { report, checking, recheck } = useStackStatus();
-  // "api-error": the API Worker answered /health with an error, so it is up but failing.
-  const state: Shown = !report
-    ? "checking"
-    : verdict(report) === "api-down" && apiAnswered(report.health)
-      ? "api-error"
-      : verdict(report);
+  const fault = report ? healthFault(report.health) : undefined;
+  const state: Shown = !report ? "checking" : fault ? API_FAULTS[fault] : verdict(report);
   const rechecking = checking && report !== undefined;
-  const failed = state === "api-down" || state === "api-error" || state === "do-down";
+  const apiFailed = state === "api-down" || state === "api-error" || state === "api-stuck";
+  const failed = apiFailed || state === "do-down";
   const hint = {
     "api-down": m.stack_hint_start,
     "api-error": m.stack_hint_api_error,
+    "api-stuck": m.stack_hint_api_stuck,
     "do-down": m.stack_hint_do,
-  }[state === "api-down" || state === "api-error" ? state : "do-down"]();
+  }[apiFailed ? state : "do-down"]();
+  const apiFailLabel =
+    state === "api-error"
+      ? m.stack_erroring()
+      : state === "api-stuck"
+        ? m.stack_timed_out()
+        : m.stack_unreachable();
 
-  const buttonFocused = useRef(false);
+  // The Check again button that had focus, until focus moves to something else on the page.
+  const focusedButton = useRef<HTMLElement | null>(null);
   const button = useRef<HTMLButtonElement>(null);
   const focusTracking = {
-    onFocus: () => {
-      buttonFocused.current = true;
+    onFocus: (event: FocusEvent<HTMLButtonElement>) => {
+      focusedButton.current = event.currentTarget;
     },
-    // Only a move to another element clears it; removal from the page blurs with no target.
-    onBlur: (event: FocusEvent) => {
-      if (event.relatedTarget !== null) buttonFocused.current = false;
+    onBlur: (event: FocusEvent<HTMLButtonElement>) => {
+      const element = event.currentTarget;
+      // Still on the page after this task: the user moved focus away (or clicked elsewhere), so it is
+      // theirs. Removed by a swap: keep it, so the layout effect below can hand focus on.
+      queueMicrotask(() => {
+        if (element.isConnected && focusedButton.current === element) focusedButton.current = null;
+      });
     },
   };
   useLayoutEffect(() => {
+    const previous = focusedButton.current;
     const active = document.activeElement;
-    if (buttonFocused.current && (active === null || active === document.body)) {
+    if (previous && !previous.isConnected && (active === null || active === document.body)) {
       button.current?.focus();
     }
   }, [failed]);
@@ -121,7 +134,7 @@ export function StackCard() {
             route="GET /api/health"
             result={report?.health}
             okLabel={m.stack_reachable()}
-            failLabel={state === "api-error" ? m.stack_erroring() : m.stack_unreachable()}
+            failLabel={apiFailLabel}
             locale={locale}
             figures={[m.stack_round_trip()]}
           >
@@ -131,7 +144,7 @@ export function StackCard() {
             label={m.stack_do_label()}
             route={`GET /api/workspaces/${DEMO_WORKSPACE}`}
             // With the API Worker down this check says nothing new: one fault, one red signal.
-            result={state === "api-down" || state === "api-error" ? "skipped" : report?.workspace}
+            result={apiFailed ? "skipped" : report?.workspace}
             okLabel={m.stack_answered()}
             failLabel={m.stack_no_answer()}
             locale={locale}
@@ -181,13 +194,14 @@ function CheckAgainButton({
   );
 }
 
-type Shown = StackVerdict | "api-error" | "checking";
+type Shown = StackVerdict | "api-error" | "api-stuck" | "checking";
 
 const VERDICTS: Record<Shown, { icon: LucideIcon; text: () => string; tone: string }> = {
   checking: { icon: LoaderCircleIcon, text: m.stack_checking, tone: "text-muted-foreground" },
   ok: { icon: CircleCheckIcon, text: m.stack_ok, tone: "text-primary" },
   "api-down": { icon: CircleAlertIcon, text: m.stack_api_down, tone: "text-destructive" },
   "api-error": { icon: CircleAlertIcon, text: m.stack_api_error, tone: "text-destructive" },
+  "api-stuck": { icon: CircleAlertIcon, text: m.stack_api_stuck, tone: "text-destructive" },
   "do-down": { icon: CircleAlertIcon, text: m.stack_do_down, tone: "text-destructive" },
 };
 

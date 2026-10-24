@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vite-plus/test";
 import {
-  apiAnswered,
   check,
   checkStack,
+  healthFault,
   parseHealth,
   parseWorkspace,
   verdict,
@@ -100,12 +100,38 @@ describe("stack check", () => {
     expect(report.health).toMatchObject({ ok: false, reason: "network" });
   });
 
-  test("tells an API that answered with an error from one that is not there", () => {
-    expect(apiAnswered({ ok: true, ms: 1, data: true })).toBe(true);
-    expect(apiAnswered({ ok: false, ms: 1, reason: "http", status: 500 })).toBe(true);
-    expect(apiAnswered({ ok: false, ms: 1, reason: "invalid" })).toBe(true);
-    for (const reason of ["network", "timeout", "unreachable"] as const) {
-      expect(apiAnswered({ ok: false, ms: 1, reason }), reason).toBe(false);
+  test("classifies a failed /health for the hint", () => {
+    expect(healthFault({ ok: true, ms: 1, data: true })).toBeUndefined();
+    expect(healthFault({ ok: false, ms: 1, reason: "http", status: 500 })).toBe("erroring");
+    expect(healthFault({ ok: false, ms: 1, reason: "invalid" })).toBe("erroring");
+    expect(healthFault({ ok: false, ms: 1, reason: "timeout" })).toBe("stuck");
+    for (const reason of ["network", "unreachable"] as const) {
+      expect(healthFault({ ok: false, ms: 1, reason }), reason).toBe("down");
     }
+  });
+
+  test("reports a timeout when the deadline passes while the body streams in", async () => {
+    // Headers arrive at once; the body sends one chunk and never closes.
+    const stalled: typeof fetch = () =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"ok":'));
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    expect(await check(stalled, "/x", parseHealth, { timeoutMs: 20 })).toMatchObject({
+      ok: false,
+      reason: "timeout",
+    });
+    // The same for an error status whose body stalls: still a timeout, not an HTTP error.
+    const stalledError: typeof fetch = () =>
+      Promise.resolve(new Response(new ReadableStream({ start() {} }), { status: 500 }));
+    expect(await check(stalledError, "/x", parseHealth, { timeoutMs: 20 })).toMatchObject({
+      reason: "timeout",
+    });
   });
 });

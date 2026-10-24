@@ -71,5 +71,8 @@
   "stack_error_unreachable": "The web Worker couldn't reach the API Worker.",
   "stack_hint_api_error": "The API answered with an error. Look for it in the terminal running:",
   "stack_api_error": "The API Worker is answering with errors",
-  "stack_erroring": "Erroring"
+  "stack_erroring": "Erroring",
+  "stack_api_stuck": "The API Worker is not answering in time",
+  "stack_timed_out": "Timed out",
+  "stack_hint_api_stuck": "The API looks like it is running but stuck. Look in the terminal running:"
 }

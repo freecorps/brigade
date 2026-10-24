@@ -44,11 +44,17 @@ export function parseWorkspace(body: unknown): WorkspaceInfo | undefined {
 }
 
 /**
- * True when the API Worker itself answered, even with an error (an HTTP status or a body it should not
- * send): the fix is in its logs, not in starting the stack.
+ * Why /health failed, for the hint: `down` (nothing answered: start the stack), `erroring` (the API
+ * Worker answered with an error) or `stuck` (it took longer than the deadline, so it is most likely
+ * running but hung). For the last two the fix is in its logs, not in starting the stack.
  */
-export function apiAnswered(health: CheckResult<unknown>): boolean {
-  return health.ok || health.reason === "http" || health.reason === "invalid";
+export function healthFault(
+  health: CheckResult<unknown>,
+): "down" | "erroring" | "stuck" | undefined {
+  if (health.ok) return undefined;
+  if (health.reason === "http" || health.reason === "invalid") return "erroring";
+  if (health.reason === "timeout") return "stuck";
+  return "down";
 }
 
 /** The API Worker is down when /health fails; the DO is down when only the workspace call fails. */
@@ -80,8 +86,10 @@ export async function check<T>(
   }
   let body: unknown;
   try {
-    body = await response.json();
+    body = await readJson(response, combined);
   } catch {
+    // The deadline can pass while the body streams in; that is a timeout, not a bad answer.
+    if (timeout.aborted) return { ok: false, ms: elapsed(), reason: "timeout" };
     body = undefined;
   }
   if (!response.ok) {
@@ -106,6 +114,21 @@ export async function checkStack(
     check(fetcher, `/api/workspaces/${DEMO_WORKSPACE}`, parseWorkspace, { signal }),
   ]);
   return { health, workspace, checkedAt: new Date() };
+}
+
+/** `response.json()` that also gives up when `signal` aborts (a stub or a proxy may ignore it). */
+function readJson(response: Response, signal: AbortSignal): Promise<unknown> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    // The body is locked by json(), so it cannot be cancelled from here; with a real fetch the
+    // same signal already aborts it. This only stops waiting.
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    response
+      .json()
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

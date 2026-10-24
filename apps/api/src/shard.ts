@@ -5,6 +5,7 @@
 import {
   lookup,
   mutations,
+  newId,
   queries,
   runMutation,
   runQuery,
@@ -18,15 +19,20 @@ import {
 } from "@freecorps/brigade-schema";
 import { OUTBOX_SCHEMA, writeOutbox } from "./outbox.ts";
 import { SqlStore, type RowChange } from "./store.ts";
-import type { MutationResultFrame, SubPatch, WireRow } from "./wire.ts";
+import {
+  MUTATION_RETENTION_MS,
+  type MutationResultMessage,
+  type SubscriptionChanges,
+  type WireRow,
+} from "@freecorps/brigade-sync/protocol";
 
 /** How many versions the change log keeps. A resume from further back gets a snapshot instead of a patch. */
 export const CHANGE_LOG_VERSIONS = 1000;
 /**
- * How long a mutation's result is kept for de-duplication. Clients drop pending mutations older than this, so a
- * retry inside the window gets the stored result and nothing older is retried.
+ * How long a mutation's result is kept for de-duplication, from when the shard ran it (the protocol's
+ * `MUTATION_RETENTION_MS`). Clients never re-send a mutation older than this.
  */
-export const RESULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+export const RESULT_RETENTION_MS = MUTATION_RETENTION_MS;
 
 const SCHEMA = `
   create table if not exists shard_meta (key text primary key, value) without rowid;
@@ -57,7 +63,7 @@ export type MutateInput = {
 };
 
 export type MutateOutcome = {
-  result: MutationResultFrame;
+  result: MutationResultMessage;
   /** Changed rows of synced tables, when the mutation committed; what the patches are built from. */
   changes: RowChange[];
 };
@@ -66,6 +72,11 @@ export type Logger = (message: string, fields: Record<string, unknown>) => void;
 
 export class Shard {
   readonly store: SqlStore;
+  /**
+   * Opaque id created with the storage and kept for its life; versions only compare within one epoch (RFC 0004).
+   * A token (`ep_<ULID>`), as the protocol requires.
+   */
+  readonly epoch: string;
   private readonly sql: SqlStorage;
 
   constructor(
@@ -82,6 +93,7 @@ export class Shard {
     this.sql = storage.sql;
     this.store = new SqlStore(storage);
     this.sql.exec(SCHEMA);
+    this.epoch = this.text("epoch") ?? this.createEpoch();
   }
 
   /** The last committed version; 0 before the first mutation. */
@@ -96,10 +108,7 @@ export class Shard {
 
   /** The workspace this shard serves, recorded on first use. */
   workspace(): string | undefined {
-    const [row] = this.sql
-      .exec<{ value: string }>("select value from shard_meta where key = 'workspace'")
-      .toArray();
-    return row?.value;
+    return this.text("workspace");
   }
 
   /** Records the workspace id, or returns false if the shard already serves another one. */
@@ -113,7 +122,11 @@ export class Shard {
   }
 
   /** A stored result for a retried mutation, if it is still within retention. */
-  storedResult(clientId: string, mutationId: string, now: number): MutationResultFrame | undefined {
+  storedResult(
+    clientId: string,
+    mutationId: string,
+    now: number,
+  ): MutationResultMessage | undefined {
     const [row] = this.sql
       .exec<{ result: string }>(
         "select result from mutation_results where client_id = ? and mutation_id = ? and at >= ?",
@@ -122,7 +135,7 @@ export class Shard {
         now - RESULT_RETENTION_MS,
       )
       .toArray();
-    return row && (JSON.parse(row.result) as MutationResultFrame);
+    return row && (JSON.parse(row.result) as MutationResultMessage);
   }
 
   /**
@@ -136,7 +149,7 @@ export class Shard {
     if (workspaceId === undefined) throw new Error("Shard has no workspace yet");
     const ctx: MutationContext = { actor, now, server: true };
     // Set by `commit`; a box, because TypeScript does not see assignments made inside the callback.
-    const done: { committed?: { changes: RowChange[]; result: MutationResultFrame } } = {};
+    const done: { committed?: { changes: RowChange[]; result: MutationResultMessage } } = {};
 
     this.store.track();
     let outcome;
@@ -164,7 +177,7 @@ export class Shard {
             version,
             randomBytes: this.options.randomBytes,
           });
-          const result: MutationResultFrame = {
+          const result: MutationResultMessage = {
             type: "mutationResult",
             mutationId,
             ok: true,
@@ -181,7 +194,7 @@ export class Shard {
 
     this.prune(now);
     if (outcome.ok && done.committed) return done.committed;
-    const result: MutationResultFrame = outcome.ok
+    const result: MutationResultMessage = outcome.ok
       ? // Unreachable: `commit` runs before every success. Kept so a broken invariant cannot lose the reply.
         {
           type: "mutationResult",
@@ -202,12 +215,20 @@ export class Shard {
   }
 
   /**
-   * A resume patch for `query` from version `since`, or undefined when the change log no longer reaches back (or
-   * `since` is ahead of this shard): rows changed since then that are in the result now, and the changed ids that
-   * are not (they may have left it; a delete for a row the client lacks is a no-op).
+   * A resume patch for `query` from `{ version, epoch }`, or undefined when a snapshot is needed: another epoch,
+   * a version ahead of this shard (a restore) or older than the change log. The patch holds rows changed since
+   * then that are in the result now, and the changed ids that are not (they may have left it; a delete for a row
+   * the client lacks is a no-op).
    */
-  resume(query: AnyQuery, rows: readonly WireRow[], since: number): SubPatch | undefined {
-    if (since < this.logStart() || since > this.version()) return undefined;
+  resume(
+    query: AnyQuery,
+    rows: readonly WireRow[],
+    from: { version: number; epoch: string },
+  ): SubscriptionChanges | undefined {
+    const since = from.version;
+    if (from.epoch !== this.epoch || since < this.logStart() || since > this.version()) {
+      return undefined;
+    }
     const changed = new Set(
       this.sql
         .exec<{ id: string }>(
@@ -240,7 +261,7 @@ export class Shard {
     clientId: string,
     mutationId: string,
     now: number,
-    result: MutationResultFrame,
+    result: MutationResultMessage,
   ): void {
     this.sql.exec(
       `insert into mutation_results (client_id, mutation_id, at, result) values (?, ?, ?, ?)
@@ -250,6 +271,19 @@ export class Shard {
       now,
       JSON.stringify(result),
     );
+  }
+
+  private createEpoch(): string {
+    const epoch = newId("ep", Date.now(), this.options.randomBytes);
+    this.sql.exec("insert into shard_meta (key, value) values ('epoch', ?)", epoch);
+    return epoch;
+  }
+
+  private text(key: string): string | undefined {
+    const [row] = this.sql
+      .exec<{ value: string }>("select value from shard_meta where key = ?", key)
+      .toArray();
+    return row?.value;
   }
 
   private meta(key: string): number | undefined {

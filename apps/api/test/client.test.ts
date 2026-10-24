@@ -3,7 +3,6 @@ import { exports } from "cloudflare:workers";
 import { describe, expect, test } from "vite-plus/test";
 import { newId, type IncidentRow } from "@freecorps/brigade-schema";
 import { createSyncClient, type SyncSocket, type Transport } from "@freecorps/brigade-sync";
-import { parseServerMessage } from "@freecorps/brigade-sync/protocol";
 
 /** Opens sockets through the Worker's fetch handler (workerd has no outbound `new WebSocket` to itself). */
 const transport: Transport = (url) => {
@@ -66,12 +65,6 @@ function until<R>(
   });
 }
 
-// The per-version patch (`{ type: "patch", version, subs }`) lands with the client slice under review; until this
-// branch is rebased on it, the client's parser refuses the server's patches, so only the patch-free test runs.
-const clientReadsPatches = parseServerMessage(
-  JSON.stringify({ type: "patch", version: 1, subs: {} }),
-).ok;
-
 describe("SyncClient against WorkspaceDO", () => {
   test("a mutation's result and a later snapshot reach real clients", async () => {
     const shard = `client-${++names}`;
@@ -97,7 +90,7 @@ describe("SyncClient against WorkspaceDO", () => {
     expect(warnings).toEqual([]);
   });
 
-  test.skipIf(!clientReadsPatches)("two clients stay in sync through patches", async () => {
+  test("two clients stay in sync through patches", async () => {
     const shard = `client-${++names}`;
     const warnings: string[] = [];
     const ana = client(warnings);

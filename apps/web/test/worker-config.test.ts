@@ -73,11 +73,16 @@ describe("web Worker → API Worker → WorkspaceDO, with the real configs", () 
     const frame = new Promise<string>((resolve) =>
       socket.addEventListener("message", (event) => resolve(event.data as string)),
     );
-    socket.send(JSON.stringify({ type: "hello", protocol: 1, clientId: "web", lastVersions: {} }));
+    socket.send(JSON.stringify({ type: "hello", protocol: 1, clientId: "web" }));
     socket.send(
       JSON.stringify({ type: "subscribe", subId: "s", query: "incidents.active", args: {} }),
     );
-    expect(JSON.parse(await frame)).toEqual({ type: "snapshot", subId: "s", version: 0, rows: [] });
+    expect(JSON.parse(await frame)).toMatchObject({
+      type: "snapshot",
+      subId: "s",
+      version: 0,
+      rows: [],
+    });
     socket.close(1000, "done");
   });
 });

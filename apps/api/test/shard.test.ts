@@ -151,11 +151,15 @@ describe("Shard", () => {
         { version: 3 },
         { version: 4 },
       ]);
-      expect(shard.resume(query, [], 1)).toBeUndefined();
-      expect(shard.resume(query, [], 5)).toBeUndefined();
-      expect(shard.resume(query, [], 4)).toEqual({ upserts: [], deletes: [] });
+      expect(shard.resume(query, [], { version: 1, epoch: shard.epoch })).toBeUndefined();
+      expect(shard.resume(query, [], { version: 5, epoch: shard.epoch })).toBeUndefined();
+      expect(shard.resume(query, [], { version: 4, epoch: shard.epoch })).toEqual({
+        upserts: [],
+        deletes: [],
+      });
+      expect(shard.resume(query, [], { version: 4, epoch: "ep_other" })).toBeUndefined();
       const rows = [{ id: ids[3]! }];
-      expect(shard.resume(query, rows, 2)).toEqual({
+      expect(shard.resume(query, rows, { version: 2, epoch: shard.epoch })).toEqual({
         upserts: rows,
         deletes: [ids[2]!],
       });

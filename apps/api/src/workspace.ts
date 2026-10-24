@@ -1,9 +1,15 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Actor, AnyQuery, BrigadeTables } from "@freecorps/brigade-schema";
-import { parseClientMessage, PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
+import {
+  encode,
+  parseClientMessage,
+  PROTOCOL_VERSION,
+  TOKEN,
+  type ServerMessage,
+  type SubscriptionChanges,
+} from "@freecorps/brigade-sync/protocol";
 import { findQuery, Shard } from "./shard.ts";
 import type { RowChange } from "./store.ts";
-import { encodeFrame, type ServerFrame, type SubPatch } from "./wire.ts";
 
 export interface WorkspaceInfo {
   /** User tables in the object's SQLite database, read with SQL. */
@@ -34,6 +40,7 @@ export const CLOSE_PROTOCOL_ERROR = 1002;
 export const CLOSE_INTERNAL_ERROR = 1011;
 
 type Subscription = {
+  subId: string;
   query: string;
   /** Validated args, as the query's validator returned them. */
   args: unknown;
@@ -50,8 +57,12 @@ export type SocketState = {
   actor: Actor;
   /** Set by `hello`; every other frame needs it. */
   clientId: string | null;
-  subs: { [subId: string]: Subscription };
+  /** An array, not an object keyed by subId: `__proto__` is a valid subId. */
+  subs: Subscription[];
 };
+
+/** Largest frame the shard reads at all, to salvage the id of a refused `subscribe` or `mutate`. */
+const MAX_SALVAGE_LENGTH = 1024 * 1024;
 
 /**
  * Shard for one workspace (RFC 0002, RFC 0004): the incident index and the sync endpoint. Sockets use the
@@ -105,7 +116,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server);
-    const state: SocketState = { workspace, actor: DEV_ACTOR, clientId: null, subs: {} };
+    const state: SocketState = { workspace, actor: DEV_ACTOR, clientId: null, subs: [] };
     server.serializeAttachment(state);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -138,7 +149,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
     // Checks size (64 KiB), JSON, shape and ids; never throws. Binary frames are refused as not text.
     const parsed = parseClientMessage(data);
-    if (!parsed.ok) return this.refuse(ws, parsed.reason);
+    if (!parsed.ok) return this.malformed(ws, state, data, parsed.reason);
     const message = parsed.message;
 
     if (message.type === "hello") {
@@ -149,7 +160,19 @@ export class WorkspaceDO extends DurableObject<Env> {
       ws.serializeAttachment(state);
       return;
     }
-    if (state.clientId === null) return this.refuse(ws, "hello first");
+    if (state.clientId === null) {
+      // A parseable `mutate` is never a socket-level error: the client fails that mutation instead (RFC 0004).
+      if (message.type === "mutate") {
+        const { mutationId } = message;
+        return this.send(ws, {
+          type: "error",
+          code: "internal",
+          message: "hello first",
+          mutationId,
+        });
+      }
+      return this.refuse(ws, "hello first");
+    }
 
     switch (message.type) {
       case "subscribe":
@@ -159,34 +182,59 @@ export class WorkspaceDO extends DurableObject<Env> {
           message.subId,
           message.query,
           message.args,
-          message.version,
+          message.version === undefined || message.epoch === undefined
+            ? undefined
+            : { version: message.version, epoch: message.epoch },
         );
       case "unsubscribe":
-        delete state.subs[message.subId];
+        state.subs = state.subs.filter((sub) => sub.subId !== message.subId);
         ws.serializeAttachment(state);
         return;
-      case "mutate": {
-        const now = Date.now();
-        const { clientId } = state;
-        const stored = this.shard.storedResult(clientId, message.mutationId, now);
-        if (stored) {
-          this.send(ws, stored);
-          return;
-        }
-        const { result, changes } = this.shard.mutate({
-          clientId,
-          mutationId: message.mutationId,
-          actor: state.actor,
-          name: message.name,
-          args: message.args,
-          now,
-        });
-        // The result first, then the patch with its effects (RFC 0004 "Ordering").
-        this.send(ws, result);
-        if (result.ok) this.broadcast(result.version, changes);
-        return;
-      }
+      case "mutate":
+        return this.mutate(
+          ws,
+          state,
+          state.clientId,
+          message.mutationId,
+          message.name,
+          message.args,
+        );
     }
+  }
+
+  /**
+   * Answers a `mutate` with its `mutationResult`, then (when ok) the patch for its version: to every socket whose
+   * subscriptions it touched, and always to this socket, with `subs: {}` if it touched none of them here, so the
+   * client can settle the mutation (RFC 0004 "Ordering"). A retry gets the stored result and an empty patch at the
+   * current version: every subscription on this socket has received every change that touched it, so it truly
+   * holds that version.
+   */
+  private mutate(
+    ws: WebSocket,
+    state: SocketState,
+    clientId: string,
+    mutationId: string,
+    name: string,
+    args: unknown,
+  ): void {
+    let outcome;
+    try {
+      const now = Date.now();
+      const stored = this.shard.storedResult(clientId, mutationId, now);
+      outcome = stored
+        ? { result: stored, changes: null }
+        : this.shard.mutate({ clientId, mutationId, actor: state.actor, name, args, now });
+    } catch (error) {
+      // Nothing committed (the mutation is one transaction). Fail this mutation, not the socket.
+      this.log("mutate failed", { mutation: name.slice(0, 64), error });
+      this.send(ws, { type: "error", code: "internal", message: "Internal error", mutationId });
+      return;
+    }
+    const { result, changes } = outcome;
+    this.send(ws, result);
+    if (!result.ok) return;
+    if (changes) this.broadcast(result.version, changes, ws);
+    else this.settle(ws, this.shard.version());
   }
 
   private subscribe(
@@ -195,15 +243,15 @@ export class WorkspaceDO extends DurableObject<Env> {
     subId: string,
     name: string,
     rawArgs: unknown,
-    since: number | undefined,
+    from: { version: number; epoch: string } | undefined,
   ): void {
     // A re-subscribe replaces the old subscription, whatever the outcome.
-    delete state.subs[subId];
+    state.subs = state.subs.filter((sub) => sub.subId !== subId);
     const refuse = (code: string, message: string) => {
       ws.serializeAttachment(state);
       this.send(ws, { type: "error", subId, code, message });
     };
-    if (Object.keys(state.subs).length >= MAX_SUBSCRIPTIONS) {
+    if (state.subs.length >= MAX_SUBSCRIPTIONS) {
       return refuse("limit", `At most ${MAX_SUBSCRIPTIONS} subscriptions per socket`);
     }
     const result = this.shard.query(name, rawArgs, state.actor.role);
@@ -214,54 +262,73 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (!args.ok) return refuse("invalid_args", `Invalid arguments for ${name}`);
 
     const version = this.shard.version();
-    state.subs[subId] = { query: name, args: args.value, version };
+    const { epoch } = this.shard;
+    state.subs.push({ subId, query: name, args: args.value, version });
     if (new TextEncoder().encode(JSON.stringify(state)).length > MAX_ATTACHMENT_BYTES) {
-      delete state.subs[subId];
+      state.subs.pop();
       return refuse("limit", "Too much subscription state on this socket");
     }
     ws.serializeAttachment(state);
 
-    const patch = since === undefined ? undefined : this.shard.resume(query, result.rows, since);
-    this.send(
-      ws,
-      patch
-        ? { type: "patch", version, subs: { [subId]: patch } }
-        : { type: "snapshot", subId, version, rows: result.rows },
-    );
+    // Exactly one answer: a patch holding only this subscription (possibly empty), or a snapshot.
+    const changes = from && this.shard.resume(query, result.rows, from);
+    if (changes) {
+      const subs = Object.create(null) as { [subId: string]: SubscriptionChanges };
+      subs[subId] = changes;
+      this.send(ws, { type: "patch", epoch, version, subs });
+    } else {
+      this.send(ws, { type: "snapshot", subId, epoch, version, rows: result.rows });
+    }
   }
 
   /**
    * Sends one patch for `version` to every socket with a subscription whose result it changed: rows that are in
-   * the result now (entered or changed) and ids that were in it and left. Sockets with nothing to change skip the
-   * version.
+   * the result now (entered or changed) and ids that were in it and left. Other sockets skip the version, except
+   * `origin` (the mutating socket), which always gets it.
    */
-  private broadcast(version: number, changes: readonly RowChange[]): void {
-    if (changes.length === 0) return;
+  private broadcast(version: number, changes: readonly RowChange[], origin: WebSocket): void {
     for (const ws of this.ctx.getWebSockets()) {
       const state = ws.deserializeAttachment() as SocketState | null;
       if (!state?.clientId) continue;
-      const subs: { [subId: string]: SubPatch } = {};
+      // No prototype: a subId such as `__proto__` stays an ordinary key.
+      const subs = Object.create(null) as { [subId: string]: SubscriptionChanges };
       let touched = false;
-      for (const [subId, sub] of Object.entries(state.subs)) {
+      for (const sub of state.subs) {
         const query = findQuery(sub.query);
         const patch = query && this.diff(query, sub.args, changes);
         if (!patch) continue;
-        subs[subId] = patch;
-        sub.version = version;
+        subs[sub.subId] = patch;
         touched = true;
       }
-      if (!touched) continue;
-      ws.serializeAttachment(state);
-      this.send(ws, { type: "patch", version, subs });
+      if (!touched && ws !== origin) continue;
+      this.sendPatch(ws, state, version, subs);
     }
+  }
+
+  /** An empty patch at `version` for this socket only (see `mutate`). */
+  private settle(ws: WebSocket, version: number): void {
+    const state = ws.deserializeAttachment() as SocketState | null;
+    if (state) this.sendPatch(ws, state, version, Object.create(null));
+  }
+
+  /** Every subscription on a socket that gets a patch holds that version (absent ones were not touched). */
+  private sendPatch(
+    ws: WebSocket,
+    state: SocketState,
+    version: number,
+    subs: { [subId: string]: SubscriptionChanges },
+  ): void {
+    for (const sub of state.subs) sub.version = version;
+    ws.serializeAttachment(state);
+    this.send(ws, { type: "patch", epoch: this.shard.epoch, version, subs });
   }
 
   private diff(
     query: AnyQuery,
     args: unknown,
     changes: readonly RowChange[],
-  ): SubPatch | undefined {
-    const patch: SubPatch = { upserts: [], deletes: [] };
+  ): SubscriptionChanges | undefined {
+    const patch: SubscriptionChanges = { upserts: [], deletes: [] };
     const matches = (row: unknown) =>
       row !== undefined && query.filter(row as BrigadeTables[typeof query.table], args);
     try {
@@ -278,6 +345,18 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
+   * A frame `parseClientMessage` refused. A `mutate` whose id can still be read (or, after `hello`, a `subscribe`)
+   * is refused alone with `invalid_args` and the socket stays open: every `subscribe` gets its one answer, and the
+   * client fails that mutation instead of re-sending it (RFC 0004 "Errors"). Anything else is a socket-level
+   * protocol error.
+   */
+  private malformed(ws: WebSocket, state: SocketState, data: unknown, reason: string): void {
+    const id = salvage(data);
+    if (!id || ("subId" in id && state.clientId === null)) return this.refuse(ws, reason);
+    this.send(ws, { type: "error", code: "invalid_args", message: reason, ...id });
+  }
+
+  /**
    * A socket-level protocol error: an `error` frame, then close. A well-behaved client never sends a malformed
    * frame, and the client closes and backs off on one anyway (RFC 0004 "Protocol").
    */
@@ -286,9 +365,9 @@ export class WorkspaceDO extends DurableObject<Env> {
     close(ws, CLOSE_PROTOCOL_ERROR, "protocol error");
   }
 
-  private send(ws: WebSocket, frame: ServerFrame): void {
+  private send(ws: WebSocket, frame: ServerMessage): void {
     try {
-      ws.send(encodeFrame(frame));
+      ws.send(encode(frame));
     } catch (error) {
       // The socket closed meanwhile; the client resumes on reconnect.
       this.log("sync send failed", { type: frame.type, error });
@@ -320,6 +399,24 @@ function describe(error: unknown): { error: string; stack?: string } {
   if (error instanceof Error)
     return { error: `${error.name}: ${error.message}`, stack: error.stack };
   return { error: typeof error === "string" ? error : (JSON.stringify(error) ?? typeof error) };
+}
+
+/** The `subId` of a `subscribe` or the `mutationId` of a `mutate` in a frame the parser refused, if readable. */
+function salvage(data: unknown): { subId: string } | { mutationId: string } | undefined {
+  if (typeof data !== "string" || data.length > MAX_SALVAGE_LENGTH) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(data);
+  } catch {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const { type, subId, mutationId } = value as Record<string, unknown>;
+  if (type === "subscribe" && typeof subId === "string" && TOKEN.test(subId)) return { subId };
+  if (type === "mutate" && typeof mutationId === "string" && TOKEN.test(mutationId)) {
+    return { mutationId };
+  }
+  return undefined;
 }
 
 function close(ws: WebSocket, code: number, reason: string): void {

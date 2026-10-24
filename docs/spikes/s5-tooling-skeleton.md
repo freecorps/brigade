@@ -2,7 +2,8 @@
 
 - Status: Done
 - Roadmap: Phase 0, S5
-- Settles: RFC 0002 "Cloudflare Vite plugin under Vite+ needs validation"; RFC 0008 "the Vite plugin under Vite+"
+- Settles: RFC 0002 "Cloudflare Vite plugin under Vite+ needs validation"; RFC 0008's open item on the Paraglide
+  Vite plugin under Vite+ (closed in #6: the catalog ships precompiled, no plugin)
 
 ## Question
 
@@ -12,13 +13,13 @@ Worker locally, and `vp check`, `vp run -r test` and `vp run -r build` should pa
 
 ## What was built
 
-| Piece | Where | PR |
-| --- | --- | --- |
-| Worker + `WorkspaceDO` (SQLite), `wrangler.jsonc` with `dev`/`staging` | `apps/api` | #3 |
-| Design tokens (TS source, generated CSS for Tailwind v4 and shadcn/ui) | `packages/ui` | #5 |
-| Paraglide catalog in `en` and `pt-BR`, `Intl` helpers | `packages/i18n` | #6 |
-| Workspace packages resolved from source in check, tests and dev | root, `packages/*` | #7 |
-| Dashboard SPA on a Worker, forwarding `/api/*` to the api Worker | `apps/web` | this PR |
+| Piece                                                                  | Where              | PR      |
+| ---------------------------------------------------------------------- | ------------------ | ------- |
+| Worker + `WorkspaceDO` (SQLite), `wrangler.jsonc` with `dev`/`staging` | `apps/api`         | #3      |
+| Design tokens (TS source, generated CSS for Tailwind v4 and shadcn/ui) | `packages/ui`      | #5      |
+| Paraglide catalog in `en` and `pt-BR`, `Intl` helpers                  | `packages/i18n`    | #6      |
+| Workspace packages resolved from source in check, tests and dev        | root, `packages/*` | #7      |
+| Dashboard SPA on a Worker, forwarding `/api/*` to the api Worker       | `apps/web`         | this PR |
 
 Versions: vite-plus 1.4.0 (Vite 8, Rolldown, Vitest 5.0.5, tsgo 7), `@cloudflare/vite-plugin` 1.65.0,
 `@cloudflare/vitest-plugin` 1.4.7, wrangler 4.152.0 / workerd 1.20261019.1, React 19.3, TanStack Router 1.170,

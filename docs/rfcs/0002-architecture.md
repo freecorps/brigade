@@ -95,5 +95,7 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
   testing.
 - `staging` — the `brigade-<app>-staging` Workers environment.
 - `production` — the top-level (unsuffixed) Wrangler config, deployed only with owner approval.
+- With the Cloudflare Vite plugin the environment is picked at build time (`CLOUDFLARE_ENV=staging vp build`);
+  `wrangler deploy` then deploys what was built and takes no `--env`.
 - The mobile app points at staging or production via build profile.
 - Self-hosted — one Cloudflare account, one `deploy` command, guided setup (Slack app manifest, relay registration).

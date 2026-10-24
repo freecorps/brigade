@@ -35,6 +35,7 @@ See [RFC 0002 — Architecture](docs/rfcs/0002-architecture.md).
 - [Monitoring](docs/rfcs/0007-monitoring.md)
 - [Internationalization](docs/rfcs/0008-i18n.md)
 - [Licensing and governance](docs/rfcs/0009-licensing-and-governance.md)
+- [Voice paging](docs/rfcs/0010-voice-paging.md)
 - [Roadmap](docs/roadmap.md) · [Open questions](docs/open-questions.md)
 
 ## Development

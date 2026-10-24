@@ -6,17 +6,18 @@ Rough sizing assumes 1–2 developers. Each phase ends with something usable int
 
 Validate the risky assumptions before writing product code. Each spike produces a short write-up in `docs/spikes/`.
 
-| ID  | Question                                                                                              | Pass criteria                                                      |
-| --- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| S1  | Can a Worker deliver to APNs (HTTP/2)? Which payload encryption works in Workers + iOS NSE + Android? | Push received on a real iPhone from a Worker, decrypted in the NSE |
-| S2  | Do `ProbeDO`s with `locationHint` actually land in the hinted regions?                                | Observed colo per hint over 48h                                    |
-| S3  | Sync engine prototype: one `WorkspaceDO`, `subscribe` + `mutate` + resume, React hook                 | Two browsers + one Expo client stay in sync; reconnect resumes     |
-| S4  | Expo (dev build) in the Bun workspace, importing `packages/*` through Metro                           | `eas build` succeeds with workspace packages                       |
-| S5  | Cloudflare Vite plugin under Vite+ for `apps/api` and `apps/web`                                      | `vp dev` runs Worker + DOs + SPA locally                           |
+| ID  | Question                                                                                                        | Pass criteria                                                                           |
+| --- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| S1  | Can a Worker deliver to APNs (HTTP/2)? Which payload encryption works in Workers + iOS NSE + Android?           | Push received on a real iPhone from a Worker, decrypted in the NSE                      |
+| S2  | Do `ProbeDO`s with `locationHint` actually land in the hinted regions?                                          | Observed colo per hint over 48h                                                         |
+| S3  | Sync engine prototype: one `WorkspaceDO`, `subscribe` + `mutate` + resume, React hook                           | Two browsers + one Expo client stay in sync; reconnect resumes                          |
+| S4  | Expo (dev build) in the Bun workspace, importing `packages/*` through Metro                                     | `eas build` succeeds with workspace packages                                            |
+| S5  | Cloudflare Vite plugin under Vite+ for `apps/api` and `apps/web`                                                | `vp dev` runs Worker + DOs + SPA locally                                                |
+| S6  | VoIP call screen (RFC 0010): PushKit/CallKit + Android ConnectionService in Expo, audio via Cloudflare Realtime | Locked iPhone and Android ring natively; answering plays the incident and accepts "ack" |
 
 ## Phase 1 — Core loop (4–6 weeks)
 
-- Auth (decision Q1), workspaces, members
+- Auth (Better Auth), workspaces, members
 - Monitors (HTTP/TCP/heartbeat) with quorum → alerts → incidents
 - Incidents: declare, severity, status, roles, timeline, updates
 - Brigade Sync in production for web + mobile
@@ -30,7 +31,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
 
 - Schedules, rotations, overrides; escalation policies with timeouts
 - Slack app: `/inc`, incident channels, timeline mirror, ack buttons
-- Email notifier; SMS/voice notifier (provider-agnostic, Twilio first)
+- Email notifier; in-app VoIP call paging (RFC 0010); optional PSTN notifier (provider-agnostic)
 - Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup
 - Delivery receipts and "why wasn't I paged" debugging view
 

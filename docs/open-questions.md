@@ -1,13 +1,7 @@
 # Open questions
 
-Decisions we still need to make. Each one links to the RFC it affects. Move to the RFC once decided.
-
-## Q1 — Authentication (RFC 0002)
-
-Self-hosters need auth that works without external services; the hosted version wants SSO.
-Options: Better Auth (runs on Workers + D1, has Expo support), roll our own (passkeys + email magic link + OIDC),
-Cloudflare Access (simple, but ties identity to Cloudflare Zero Trust and is awkward for mobile).
-Mobile login flow: OAuth/OIDC with PKCE via system browser, plus QR pairing from the web dashboard.
+Decisions we still need to make. Each one links to the RFC it affects. Once decided, the answer moves to the
+"Decided" section below and into the RFC.
 
 ## Q2 — Multi-tenancy (RFC 0002, 0003)
 
@@ -24,35 +18,19 @@ Proposal: nightly export of each DO to R2 (JSON/SQLite dump) + "export workspace
 One WebSocket per shard (simple, more connections) vs a gateway DO per client session multiplexing shards
 (fewer sockets on mobile, extra hop). Decide after spike S3.
 
-## Q5 — Web and mobile UI sharing (RFC 0002)
+## Q7 — PSTN provider in Brazil (RFC 0010)
 
-Share data/hooks only (`schema`, `sync`, `i18n`, design tokens) and build UI natively per platform
-(React + Vite on web, React Native on mobile)? Or Expo for web too? Proposal: share logic, not components.
-Web UI stack to pick: React + TanStack Router/Query? Component library (shadcn/ui, Radix, Ark)?
-
-## Q6 — Slack app distribution (RFC 0005)
-
-Each instance creates its own Slack app from a manifest (fully self-hosted, a few manual steps)
-vs a Freecorps-published Slack app that routes to instances (one-click, but central — same problem as push).
-Proposal: manifest for self-hosters; published app for the hosted version.
-
-## Q7 — SMS/voice in Brazil (RFC 0005)
-
-Twilio works but is expensive for BR numbers; local providers (Zenvia, TotalVoice/Vonage) may be cheaper.
-Keep the `Notifier` interface provider-agnostic and pick the first implementation by cost.
+In-app VoIP covers most voice paging. For the optional PSTN step (phone without data), compare Twilio with local
+providers (Zenvia, others). Keep the `Notifier` interface provider-agnostic.
 
 ## Q8 — Critical Alerts entitlement (RFC 0006)
 
-Apply to Apple early (it can take weeks and may be denied). Who at Freecorps owns the Apple developer account?
+Owner: Freecorps Apple developer account holder. Apply as soon as the bundle ID exists; mention on-call paging
+(PagerDuty/Opsgenie precedent).
 
 ## Q9 — i18n library (RFC 0008)
 
-i18next vs Lingui vs Paraglide — must work in Workers, React web and Hermes (React Native).
-
-## Q10 — Site and docs generator (RFC 0008)
-
-Needs i18n routing and to build with Vite+: VitePress (Vite-native, built-in i18n), Astro (Vite-based, Starlight docs),
-or a hand-rolled Vite SPA. Proposal: Astro + Starlight, if it builds cleanly under Vite+ (otherwise VitePress).
+i18next vs Lingui vs Paraglide — must work in Workers, React web, TanStack Start (site) and Hermes (React Native).
 
 ## Q11 — Task runner (RFC 0002)
 
@@ -62,3 +40,15 @@ We started with Vite+'s built-in task runner (`vp run`) instead of Turborepo bec
 ## Q12 — CLA and legal review (RFC 0009)
 
 Which CLA text, who reviews it, and when. Blocks external contributions and the store release.
+
+---
+
+# Decided
+
+| #   | Question               | Decision                                                                                                      |
+| --- | ---------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Q1  | Authentication         | **Better Auth** (Workers + D1, Expo client). Already used in other Freecorps projects.                        |
+| Q5  | Web/mobile UI sharing  | Share logic (`schema`, `sync`, `i18n`, tokens), not components. Web: **React + TanStack Router + shadcn/ui**. |
+| Q6  | Slack app distribution | App manifest for self-hosters; Freecorps-published Slack app for the hosted version.                          |
+| Q10 | Site and docs          | **Fumadocs on TanStack Start** (Vite-based, i18n support), prerendered and served by Workers static assets.   |
+| Q7a | Voice paging           | In-app VoIP call screen with a real audio session (RFC 0010); PSTN only as optional last step.                |

@@ -66,7 +66,10 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
 - **Task runner: Vite Task (`vp run`), not Turborepo.** Vite+ ships a workspace-aware task runner with caching,
   `dependsOn` and pnpm-style `--filter`. Adding Turborepo on top would duplicate it. Revisit if we need
   remote caching beyond the GitHub Actions cache that Vite+ supports.
-- **No Next.js.** Dashboard is a client-rendered SPA on Workers static assets; the public site is static.
+- **No Next.js.** Dashboard is a client-rendered SPA on Workers static assets; the public site is prerendered.
+- **Web dashboard:** React + TanStack Router + shadcn/ui.
+- **Site and docs:** Fumadocs on TanStack Start (Vite-based), prerendered, i18n per locale (RFC 0008).
+- **Auth:** Better Auth on Workers + D1; Expo client for mobile (OAuth/OIDC with PKCE via system browser, plus QR pairing).
 - **Workers tooling:** `wrangler` per app, invoked through `vp run` tasks. The Cloudflare Vite plugin
   (`@cloudflare/vite-plugin`) runs Workers inside the Vite dev server — needs validation with Vite+ (spike S5).
 - **Mobile:** Expo (development builds, EAS Build/Submit). Metro, not Vite; it only needs to resolve the

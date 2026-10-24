@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- The page ground per theme, filled in from packages/ui by vite.config.ts (themeColor). Right for
+         the system theme without script; the script below and React override both for a chosen theme. -->
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="%BRIGADE_GROUND_LIGHT%"
+    />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="%BRIGADE_GROUND_DARK%" />
+    <title>Brigade</title>
+    <!-- Before first paint: the stored theme (or the system one) and locale, so nothing flashes.
+         Mirrors src/lib/theme.ts and src/lib/locale.ts; test/theme.test.ts runs it against them.
+         A future Content-Security-Policy must allow this script by hash (apps/web/README.md). -->
+    <script id="preferences-script">
+      (function () {
+        var root = document.documentElement;
+        var theme = null;
+        var locale = null;
+        try {
+          theme = localStorage.getItem("brigade-theme");
+          locale = localStorage.getItem("brigade-locale");
+        } catch (error) {}
+        var dark = theme === "dark";
+        if (theme !== "light" && theme !== "dark") {
+          try {
+            dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          } catch (error) {}
+        }
+        root.classList.toggle("dark", dark);
+        var ground = dark ? "%BRIGADE_GROUND_DARK%" : "%BRIGADE_GROUND_LIGHT%";
+        var metas = document.querySelectorAll('meta[name="theme-color"]');
+        for (var i = 0; i < metas.length; i++) metas[i].setAttribute("content", ground);
+        if (locale === "en" || locale === "pt-BR") root.lang = locale;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

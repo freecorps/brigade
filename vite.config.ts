@@ -1,7 +1,8 @@
 import { defineConfig } from "vite-plus";
 
-// Compiled Paraglide output, committed so check and test work on a clean checkout (packages/i18n/README.md).
-const generated = ["packages/i18n/src/paraglide/**"];
+// Compiled Paraglide output, committed so check and test work on a clean checkout (packages/i18n/README.md),
+// and the TanStack Router route tree that apps/web's Vite plugin writes.
+const generated = ["packages/i18n/src/paraglide/**", "apps/web/src/routeTree.gen.ts"];
 
 export default defineConfig({
   // Skills are vendored from upstream (skills-lock.json); formatting them breaks their hashes.

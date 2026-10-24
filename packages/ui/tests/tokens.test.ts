@@ -7,6 +7,7 @@ import {
   STATUS_KEYS,
   contrastRatio,
   destructiveFill,
+  motion,
   themes,
   type ThemeColors,
 } from "../src/index.ts";
@@ -195,5 +196,14 @@ describe("shipped CSS", () => {
       const utility = `color-${v.replace(/-bg$/, "").replace(/-fg$/, "-foreground")}`;
       expect(theme.has(utility), utility).toBe(true);
     }
+  });
+});
+
+describe("motion", () => {
+  test("press feedback is a subtle scale that reduced motion removes", () => {
+    expect(motion.pressScale).toBeGreaterThanOrEqual(0.95);
+    expect(motion.pressScale).toBeLessThan(1);
+    expect(motion.reduced.pressScale).toBe(1);
+    expect(motion.reduced.travel).toBe(0);
   });
 });

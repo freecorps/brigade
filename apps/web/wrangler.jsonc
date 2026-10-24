@@ -1,0 +1,36 @@
+// The dashboard Worker: the SPA on static assets, plus /api/* forwarded to the API Worker.
+// The top-level config is production (`brigade-web`); `dev` and `staging` are the environments below.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "brigade-web",
+  "main": "./worker/index.ts",
+  // Same as apps/api: matches the installed workerd so local and deployed behaviour agree.
+  "compatibility_date": "2026-10-19",
+  // No public workers.dev or preview URLs until auth exists. Both keys are inherited by environments.
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 },
+  },
+  "upload_source_maps": true,
+  // No `directory`: the Cloudflare Vite plugin fills it with the client build output.
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // Only API calls reach the Worker (worker/index.ts strips the prefix); everything else is an
+    // asset or index.html.
+    "run_worker_first": ["/api", "/api/*"],
+  },
+  // In `vp dev` the API Worker runs alongside as an auxiliary worker (vite.config.ts).
+  "services": [{ "binding": "API", "service": "brigade-api" }],
+  // Service bindings are not inherited, so each environment names its own API Worker.
+  "env": {
+    "dev": {
+      "services": [{ "binding": "API", "service": "brigade-api-dev" }],
+    },
+    "staging": {
+      "services": [{ "binding": "API", "service": "brigade-api-staging" }],
+    },
+  },
+}

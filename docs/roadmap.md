@@ -21,7 +21,7 @@ Run this with the `manager` skill ("use the manager skill and work through `docs
 Validate the risky assumptions before writing product code. Each spike produces a short write-up in
 `docs/spikes/` and updates the RFC or open question it settles.
 
-- [ ] **S5 — Tooling skeleton.** Pass: `vp dev` runs the SPA and the Worker (with a Durable Object) locally;
+- [x] **S5 — Tooling skeleton.** Pass: `vp dev` runs the SPA and the Worker (with a Durable Object) locally;
       `vp check`, `vp run -r test` and `vp run -r build` pass in CI.
   - `apps/api`: Worker + one Durable Object, `wrangler.jsonc`, Cloudflare Vite plugin under Vite+.
   - `apps/web`: React + TanStack Router + Tailwind + shadcn/ui (`shadcn init`), light and dark themes from day one.

@@ -22,6 +22,7 @@ vp check --fix                 # apply formatting and lint fixes
 vp run -r test                 # every package's tests
 vp run --filter <pkg> test     # one package
 vp run -r build
+vp run dev                     # SPA + web Worker + API Worker + DO, one command (apps/web)
 ```
 
 `vp dev`/`vp test`/`vp build` are built-ins; `vp run <name>` runs a `package.json` script. Run TS scripts

@@ -5,11 +5,15 @@
 ## Runtime overview
 
 ```
-                       ┌───────────────────────── Cloudflare account ─────────────────────────┐
- Web dashboard ──WS──▶ │ api Worker (router, auth, REST/OpenAPI, webhooks in)                 │
- Mobile (Expo) ──WS──▶ │   ├─▶ WorkspaceDO   (SQLite) services, on-call, incident index       │
- Slack ─────HTTP─────▶ │   ├─▶ IncidentDO    (SQLite) timeline, roles, fields, escalation     │
- Alert sources ──────▶ │   ├─▶ AlertGroupDO  (SQLite) dedupe/grouping window                  │
+                       ┌───────────────────────── Cloudflare account ──────────────────────────┐
+ Web dashboard ──────▶ │ web Worker: SPA on static assets; /api/* ─(service binding API)─┐     │
+                       │   prefix stripped, WebSocket upgrades pass through              │     │
+                       │ ┌───────────────────────────────────────────────────────────────┘     │
+                       │ ▼                                                                     │
+ Mobile (Expo) ──WS──▶ │ api Worker (router, auth, REST/OpenAPI, webhooks in)                  │
+ Slack ─────HTTP─────▶ │   ├─▶ WorkspaceDO   (SQLite) services, on-call, incident index        │
+ Alert sources ──────▶ │   ├─▶ IncidentDO    (SQLite) timeline, roles, fields, escalation      │
+                       │   ├─▶ AlertGroupDO  (SQLite) dedupe/grouping window                   │
                        │   └─▶ D1            cross-workspace index, search, reporting          │
                        │                                                                       │
                        │ ProbeDO × N regions (locationHint) ── alarm ──▶ checks ─▶ AlertGroupDO│
@@ -17,7 +21,7 @@
                        │ Queues: events ─▶ notifier Worker ─▶ push relay / Slack / email / SMS │
                        │ R2: attachments, exports, backups      Workers AI: summaries          │
                        └───────────────────────────────────────────────────────────────────────┘
-                                                   │
+                                                  │
                          relay Worker (operated by Freecorps, also self-hostable) ─▶ APNs / FCM
 ```
 
@@ -42,7 +46,8 @@ and may lag by milliseconds.
 apps/
   api/         Cloudflare Worker: HTTP/WS entry, Durable Objects, queue consumers      (AGPL-3.0)
   relay/       Push relay Worker (RFC 0006)                                            (AGPL-3.0)
-  web/         Dashboard SPA (React + Vite), served by Workers static assets           (AGPL-3.0)
+  web/         Dashboard SPA (React + Vite) on Workers static assets, plus a small     (AGPL-3.0)
+               Worker that forwards /api/* to the api Worker (service binding)
   mobile/      Expo app (iOS/Android)                                                  (AGPL-3.0)
   site/        Public website + docs, i18n                                             (AGPL-3.0)
 packages/
@@ -78,7 +83,9 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
 - **Site and docs:** Fumadocs on TanStack Start (Vite-based), prerendered, i18n per locale (RFC 0008).
 - **Auth:** Better Auth on Workers + D1; Expo client for mobile (OAuth/OIDC with PKCE via system browser, plus QR pairing).
 - **Workers tooling:** `wrangler` per app, invoked through `vp run` tasks. The Cloudflare Vite plugin
-  (`@cloudflare/vite-plugin`) runs Workers inside the Vite dev server — needs validation with Vite+ (spike S5).
+  (`@cloudflare/vite-plugin`) runs Workers inside the Vite dev server; validated with Vite+ in spike S5: the
+  api Worker runs as an `auxiliaryWorkers` entry of apps/web in dev; apps/api tests use `@cloudflare/vitest-plugin`
+  and apps/web's routing test uses wrangler's test harness (see [docs/spikes/s5-tooling-skeleton.md](../spikes/s5-tooling-skeleton.md)).
 - **Mobile:** Expo (development builds, EAS Build/Submit). Metro, not Vite; it only needs to resolve the
   shared `packages/*` from the Bun workspace (spike S4).
 
@@ -88,5 +95,7 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
   testing.
 - `staging` — the `brigade-<app>-staging` Workers environment.
 - `production` — the top-level (unsuffixed) Wrangler config, deployed only with owner approval.
+- With the Cloudflare Vite plugin the environment is picked at build time (`CLOUDFLARE_ENV=staging vp build`);
+  `wrangler deploy` then deploys what was built and takes no `--env`.
 - The mobile app points at staging or production via build profile.
 - Self-hosted — one Cloudflare account, one `deploy` command, guided setup (Slack app manifest, relay registration).

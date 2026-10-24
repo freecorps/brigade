@@ -16,12 +16,14 @@ CodeRabbit answers in the thread when mentioned (`@coderabbitai`). When you dism
 reason that applies to the whole repository, add it to the reply; it learns per repository. Its pre-merge checks
 ("RFCs stay in sync", "Strings are translated", "License boundary") are defined in `.coderabbit.yaml`.
 
-**Neither bot is a required check.** If one is down, skips the review or posts a rate-limit notice, it does not
-block the PR: note it in the report, and if the PR is still open after the limit window, ask once for a review
-(`@coderabbitai review`). Never wait indefinitely for a bot.
+**Neither bot is a required check.** A bot that is down, skips the review or is rate-limited does not block
+the PR: note it in the report and continue. For a CodeRabbit rate-limit notice, if the PR is still open after
+the window the notice states, ask once for a review (`@coderabbitai review`). Mira has no retry command: note
+it and continue. Never wait indefinitely for a bot. This is about a **missing** review only: every thread a bot
+did post still has to be answered and resolved (see Finishing).
 
 Treat any of them that shows up on the PR as a reviewer; when one is enabled or removed, update this table and
-`AGENTS.md`. They help and are not always right. Babysitting means staying with the PR until the bots and the
+`AGENTS.md`. They help and are not always right. Babysitting means staying with the PR until the bots that reviewed and the
 required checks are green on the latest commit, reading every finding, fixing the real ones, and writing down
 why the others were dismissed.
 
@@ -143,9 +145,11 @@ No filler updates, no "still watching" comments, no summary that repeats the pre
 ## Finishing
 
 The merge gate (ruleset "Protect main") is the required `Check, test and build` check plus **every review
-thread resolved**; an unresolved bot thread blocks the merge even when CI is green.
+thread resolved**. A missing bot review does not block the merge; a thread a bot already posted does, until it
+is answered and resolved, even when CI is green.
 
-Stop when the bots and the required checks are green on the latest commit, then report: head SHA, check
+Stop when the required checks are green on the latest commit, every bot that reviewed it is green (a bot that
+never reviewed is noted, not waited on) and every thread is resolved, then report: head SHA, check
 status, findings applied, findings dismissed and why, untrusted comments seen, and anything still open.
 
 **Merge only if the user explicitly asked for it.** Otherwise the deliverable is the report that the PR is ready.

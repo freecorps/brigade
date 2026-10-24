@@ -28,6 +28,52 @@ LiveStore's protocol is a good reference.
 - **Mutations** are named, typed functions in `packages/schema`: `incident.ack`, `incident.setSeverity`, …
   The same code runs optimistically on the client and authoritatively (with RBAC) on the server.
 
+## Shared core (`packages/schema`)
+
+Settled in spike S3. Server and clients run the same pure code; only the store underneath differs.
+
+```ts
+interface Store<S> {                         // SQLite in the DO; createMemoryStore() on clients and in tests
+  get(table, id); insert(table, row); update(table, id, patch); delete(table, id);
+  scan(table);                               // rows ordered by id
+  transaction(fn);                           // undo every write if fn throws; may nest
+}
+
+type MutationContext = { actor: { kind: "user" | "system" | "integration"; id; role }; now: number; server: boolean };
+
+defineMutation({ name: "incident.declare", args: v.object({ … }), permission: "incident:declare",
+  apply(store, args, ctx) { …; return ok(event) /* or fail("not_found", …) */ } });
+defineQuery({ name: "incidents.active", args: v.object({}), permission: "incident:read",
+  table: "incidents", filter: (row, args) => …, sort: (a, b) => … });
+
+runMutation(mutations, name, rawArgs, store, ctx) // → { ok: true, events } | { ok: false, error: { code, … } }
+runQuery(queries, name, rawArgs, store, role)     // → { ok: true, rows }  | { ok: false, error }
+```
+
+- **Mutations** are deterministic and side-effect free: they read and write only the store, and time comes from
+  `ctx.now` (epoch milliseconds, the same unit as ULIDs and SQLite integers; ISO 8601 only in event envelopes and
+  the UI). `runMutation` checks the role against the access-control table (`can(role, permission)`, shaped for
+  Better Auth's `createAccessControl`, RFC 0003), validates args, then runs `apply` in `store.transaction`, so a
+  failure writes nothing. Failures are typed (`unknown_mutation`, `forbidden`, `invalid_args`, `not_found`,
+  `invalid_transition`, `conflict`); an unexpected exception becomes `internal` with no details. System and
+  integration actors carry a role and pass the same check.
+- **Events**: a successful mutation returns its domain events (`type`, `subject`, `data`); the server wraps them in
+  the `BrigadeEvent` envelope and writes them to the outbox in the same transaction (RFC 0005). Clients drop them.
+  Since every success emits an event, a no-op (e.g. setting the current severity) is a `conflict`.
+- **Server-only work** runs when `ctx.server` is true. `INC-n` comes from a `counters` row written in the
+  mutation's own transaction, not from an injected callback, so it stays atomic and replayable; the client's
+  optimistic row has `number: null` until the server's patch arrives.
+- **Client-generated ids**: the client makes the prefixed ULID (`newId("inc", now, randomBytes)`) and passes it in
+  the args, so the optimistic row and the server row share one id; the server checks the format (`isId`) and
+  rejects an existing id with `conflict`.
+- **Queries are data over one table** (`table`, `filter`, `sort`). The server uses `filter` to tell which
+  subscriptions a changed row touches; clients re-run the query over local rows after an optimistic mutation.
+  Limitation: no joins or aggregates; a view that needs them is a projection table the shard maintains in its
+  mutations.
+- **Validation** is a handful of hand-written validators (`v.object`, `v.string`, `v.picklist`, `v.id`) in
+  `packages/schema`: no dependency, nothing engine-specific (runs on Workers, browsers and Hermes), and unknown keys
+  are rejected so the wire stays tight. Valibot is the upgrade if the arg shapes outgrow them.
+
 ## Protocol (WebSocket, JSON; binary later if needed)
 
 ```

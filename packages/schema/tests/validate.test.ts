@@ -63,12 +63,12 @@ test("single-line strings reject control, separator and bidi characters", () => 
     "\u007F",
     "\u0085",
     "\u009F",
-    " ",
-    " ",
-    "‪",
-    "‮",
-    "⁦",
-    "⁩",
+    "\u2028",
+    "\u2029",
+    "\u202A",
+    "\u202E",
+    "\u2066",
+    "\u2069",
   ];
   for (const char of rejected) {
     const code = char.codePointAt(0)!.toString(16);
@@ -88,15 +88,15 @@ test("multi-line strings allow newlines and tabs but nothing else", () => {
   expect(body("a\n\tb")).toEqual({ ok: true, value: "a\n\tb" });
   expect(body("a\r\nb").ok).toBe(false);
   expect(body("a\u0000b").ok).toBe(false);
-  expect(body("a‮b").ok).toBe(false);
+  expect(body("a\u202Eb").ok).toBe(false);
 });
 
 test("strings trim an explicit whitespace set", () => {
   const title = v.string({ min: 1, max: 10 });
-  expect(title(" 　 x  ﻿")).toEqual({ ok: true, value: "x" });
+  expect(title("\u00A0\u3000 x \u2003\uFEFF")).toEqual({ ok: true, value: "x" });
   // Zero-width space is not whitespace, so it is kept (and counts towards the length).
-  expect(title("​x")).toEqual({ ok: true, value: "​x" });
-  expect(title(" 　").ok).toBe(false);
+  expect(title("\u200Bx")).toEqual({ ok: true, value: "\u200Bx" });
+  expect(title("\u00A0\u3000").ok).toBe(false);
 });
 
 test("absurdly long raw input is rejected before trimming", () => {

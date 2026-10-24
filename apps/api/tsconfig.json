@@ -5,6 +5,8 @@
     "moduleDetection": "force",
     "module": "esnext",
     "moduleResolution": "bundler",
+    // Resolve workspace packages to their TS source (the `source` export condition).
+    "customConditions": ["source"],
     "types": ["@cloudflare/vitest-plugin/types"],
     "strict": true,
     "noUnusedLocals": true,

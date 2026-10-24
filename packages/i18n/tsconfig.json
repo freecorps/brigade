@@ -16,7 +16,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    // Test-only: type tests against schema sources so they do not need schema built first.
-    "paths": { "@freecorps/brigade-schema": ["../schema/src/index.ts"] }
+    // Resolve workspace packages to their TS source (the `source` export condition).
+    "customConditions": ["source"]
   }
 }

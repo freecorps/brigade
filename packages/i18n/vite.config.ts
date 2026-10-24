@@ -1,7 +1,8 @@
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite-plus";
+import { workspaceSource } from "../../vite.workspace.ts";
 
 export default defineConfig({
+  plugins: [workspaceSource()],
   pack: {
     entry: ["src/index.ts", "src/messages.ts", "src/labels.ts"],
     // Ship Paraglide's output as is (one module per message, `m` a real ESM namespace) so consumers
@@ -20,14 +21,6 @@ export default defineConfig({
       // src only, without Node types (src/tsconfig.json).
       tsconfig: "src/tsconfig.json",
     },
-    exports: true,
-  },
-  test: {
-    // Tests use schema sources so they run without building schema first (paths in tsconfig.json).
-    alias: {
-      "@freecorps/brigade-schema": fileURLToPath(
-        new URL("../schema/src/index.ts", import.meta.url),
-      ),
-    },
+    exports: { devExports: "source" },
   },
 });

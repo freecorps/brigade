@@ -11,6 +11,7 @@ export default defineConfig({
     dts: {
       generator: "tsgo",
     },
-    exports: true,
+    // `source` condition for workspace consumers; publishConfig.exports keeps the dist-only map (RFC 0002).
+    exports: { devExports: "source" },
   },
 });

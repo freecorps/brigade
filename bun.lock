@@ -29,6 +29,16 @@
         "vite-plus": "catalog:",
       },
     },
+    "packages/ui": {
+      "name": "@freecorps/brigade-ui",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@freecorps/brigade-schema": "workspace:*",
+        "@types/node": "^26.6.5",
+        "typescript": "^7.0.2",
+        "vite-plus": "catalog:",
+      },
+    },
   },
   "overrides": {
     "vite": "catalog:",
@@ -125,6 +135,8 @@
     "@freecorps/brigade-api": ["@freecorps/brigade-api@workspace:apps/api"],
 
     "@freecorps/brigade-schema": ["@freecorps/brigade-schema@workspace:packages/schema"],
+
+    "@freecorps/brigade-ui": ["@freecorps/brigade-ui@workspace:packages/ui"],
 
     "@img/colour": ["@img/colour@1.1.0", "", {}, "sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ=="],
 

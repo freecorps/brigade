@@ -1,0 +1,44 @@
+{
+  "name": "@freecorps/brigade-ui",
+  "version": "0.0.0",
+  "description": "Design tokens for Freecorps Brigade (web and mobile): colour, spacing, type, radius and motion.",
+  "homepage": "https://github.com/freecorps/brigade#readme",
+  "bugs": {
+    "url": "https://github.com/freecorps/brigade/issues"
+  },
+  "license": "MIT",
+  "author": "Freecorps Tecnologia da Informação LTDA",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freecorps/brigade.git",
+    "directory": "packages/ui"
+  },
+  "files": [
+    "dist",
+    "src/tokens.css",
+    "src/theme.css"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json",
+    "./tokens.css": "./src/tokens.css",
+    "./theme.css": "./src/theme.css"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "generate": "vpx ./scripts/generate-css.ts",
+    "test": "vp test",
+    "check": "vp check"
+  },
+  "devDependencies": {
+    "@freecorps/brigade-schema": "workspace:*",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:"
+  }
+}

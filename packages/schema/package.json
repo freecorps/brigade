@@ -1,0 +1,38 @@
+{
+  "name": "@freecorps/brigade-schema",
+  "version": "0.0.0",
+  "description": "Shared domain types and rules for Freecorps Brigade (server, web and mobile).",
+  "homepage": "https://github.com/freecorps/brigade#readme",
+  "bugs": {
+    "url": "https://github.com/freecorps/brigade/issues"
+  },
+  "license": "MIT",
+  "author": "Freecorps Tecnologia da Informação LTDA",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freecorps/brigade.git",
+    "directory": "packages/schema"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "check": "vp check"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:"
+  }
+}

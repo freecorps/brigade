@@ -68,5 +68,8 @@
   "stack_round_trip": "Round trip",
   "stack_not_checked": "Not checked",
   "stack_needs_api": "Needs the API Worker.",
-  "stack_error_unreachable": "The web Worker couldn't reach the API Worker."
+  "stack_error_unreachable": "The web Worker couldn't reach the API Worker.",
+  "stack_hint_api_error": "The API answered with an error. Look for it in the terminal running:",
+  "stack_api_error": "The API Worker is answering with errors",
+  "stack_erroring": "Erroring"
 }

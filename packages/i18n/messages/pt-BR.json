@@ -68,5 +68,8 @@
   "stack_round_trip": "Ida e volta",
   "stack_not_checked": "Não verificado",
   "stack_needs_api": "Depende do Worker da API.",
-  "stack_error_unreachable": "O Worker web não conseguiu acessar o Worker da API."
+  "stack_error_unreachable": "O Worker web não conseguiu acessar o Worker da API.",
+  "stack_hint_api_error": "A API respondeu com erro. Procure o erro no terminal que está rodando:",
+  "stack_api_error": "O Worker da API está respondendo com erro",
+  "stack_erroring": "Com erro"
 }

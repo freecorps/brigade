@@ -9,7 +9,13 @@ import {
   RefreshCwIcon,
   type LucideIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  type ComponentProps,
+  type FocusEvent,
+  type ReactNode,
+} from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -23,6 +29,7 @@ import { usePreferences } from "@/components/preferences";
 import { useStackStatus } from "@/components/stack-status";
 import { formatBytes, formatClock } from "@/lib/format";
 import {
+  apiAnswered,
   CHECK_TIMEOUT_MS,
   DEMO_WORKSPACE,
   verdict,
@@ -34,21 +41,64 @@ import {
 const DEV_COMMAND = "vp run dev";
 
 // One spinner per check: the verdict's on the first load (nothing to show yet), the button's on a
-// re-check (the last result stays, dimmed, until the new one lands). Under reduced motion the
-// verdict shows a static icon instead of a frozen spinner; the button keeps its refresh icon.
+// re-check, where the subtitle says "Checking…" and the previous result stays until the new one
+// lands. Under reduced motion the verdict shows a static icon instead of a frozen spinner; the button
+// keeps its refresh icon.
+//
+// There is one Check again button at a time: in the header, or in the hint panel when a check failed.
+// When a result swaps one for the other while focus was on the old one (it unmounts, so focus falls to
+// <body>), focus moves to the new one.
 
 export function StackCard() {
   const { locale } = usePreferences();
   const { report, checking, recheck } = useStackStatus();
-  const state: StackVerdict | "checking" = report ? verdict(report) : "checking";
+  // "api-error": the API Worker answered /health with an error, so it is up but failing.
+  const state: Shown = !report
+    ? "checking"
+    : verdict(report) === "api-down" && apiAnswered(report.health)
+      ? "api-error"
+      : verdict(report);
   const rechecking = checking && report !== undefined;
-  const onRecheck = checking ? undefined : recheck;
+  const failed = state === "api-down" || state === "api-error" || state === "do-down";
+  const hint = {
+    "api-down": m.stack_hint_start,
+    "api-error": m.stack_hint_api_error,
+    "do-down": m.stack_hint_do,
+  }[state === "api-down" || state === "api-error" ? state : "do-down"]();
+
+  const buttonFocused = useRef(false);
+  const button = useRef<HTMLButtonElement>(null);
+  const focusTracking = {
+    onFocus: () => {
+      buttonFocused.current = true;
+    },
+    // Only a move to another element clears it; removal from the page blurs with no target.
+    onBlur: (event: FocusEvent) => {
+      if (event.relatedTarget !== null) buttonFocused.current = false;
+    },
+  };
+  useLayoutEffect(() => {
+    const active = document.activeElement;
+    if (buttonFocused.current && (active === null || active === document.body)) {
+      button.current?.focus();
+    }
+  }, [failed]);
+
+  const checkAgain = (
+    <CheckAgainButton
+      ref={button}
+      onClick={recheck}
+      busy={checking}
+      spinning={rechecking}
+      {...focusTracking}
+    />
+  );
 
   return (
     <Card aria-labelledby="stack-title" aria-busy={checking}>
       <CardHeader>
         <CardTitle id="stack-title">{m.stack_title()}</CardTitle>
-        <CardDescription className="tabular-nums">
+        <CardDescription className="tabular-nums" aria-live="polite">
           {/* First load: the verdict already says it is checking. A re-check says so here, since
               the verdict below is the previous result. */}
           {!report ? (
@@ -59,15 +109,10 @@ export function StackCard() {
             m.stack_checked_at({ time: formatClock(report.checkedAt, locale) })
           )}
         </CardDescription>
-        <CardAction>
-          <CheckAgainButton onClick={onRecheck} busy={checking} spinning={rechecking} />
-        </CardAction>
+        {failed ? null : <CardAction>{checkAgain}</CardAction>}
       </CardHeader>
 
-      <CardContent
-        data-stale={rechecking || undefined}
-        className="flex flex-col gap-5 transition-opacity duration-(--brigade-duration-base) ease-out data-stale:opacity-60"
-      >
+      <CardContent className="flex flex-col gap-5">
         <Verdict state={state} />
 
         <ul className="grid overflow-hidden rounded-md border sm:grid-cols-2">
@@ -76,7 +121,7 @@ export function StackCard() {
             route="GET /api/health"
             result={report?.health}
             okLabel={m.stack_reachable()}
-            failLabel={m.stack_unreachable()}
+            failLabel={state === "api-error" ? m.stack_erroring() : m.stack_unreachable()}
             locale={locale}
             figures={[m.stack_round_trip()]}
           >
@@ -86,7 +131,7 @@ export function StackCard() {
             label={m.stack_do_label()}
             route={`GET /api/workspaces/${DEMO_WORKSPACE}`}
             // With the API Worker down this check says nothing new: one fault, one red signal.
-            result={state === "api-down" ? "skipped" : report?.workspace}
+            result={state === "api-down" || state === "api-error" ? "skipped" : report?.workspace}
             okLabel={m.stack_answered()}
             failLabel={m.stack_no_answer()}
             locale={locale}
@@ -101,11 +146,11 @@ export function StackCard() {
           </CheckRow>
         </ul>
 
-        {state === "api-down" || state === "do-down" ? (
+        {failed ? (
           <div className="flex flex-col items-start gap-3 rounded-md bg-muted p-4 text-sm">
-            <p>{state === "api-down" ? m.stack_hint_start() : m.stack_hint_do()}</p>
+            <p>{hint}</p>
             <code className="rounded-sm bg-card px-2 py-1 text-foreground">{DEV_COMMAND}</code>
-            <CheckAgainButton onClick={onRecheck} busy={checking} spinning={false} />
+            {checkAgain}
           </div>
         ) : null}
       </CardContent>
@@ -113,17 +158,20 @@ export function StackCard() {
   );
 }
 
+/**
+ * Disabled while a check runs, but still focusable (Base UI `focusableWhenDisabled`), so keyboard focus
+ * stays put through the check and the `disabled` styles apply.
+ */
 function CheckAgainButton({
-  onClick,
   busy,
   spinning,
-}: {
-  onClick: (() => void) | undefined;
+  ...props
+}: Omit<ComponentProps<typeof Button>, "children" | "disabled" | "variant"> & {
   busy: boolean;
   spinning: boolean;
 }) {
   return (
-    <Button variant="outline" onClick={onClick} aria-disabled={busy || undefined}>
+    <Button variant="outline" disabled={busy} focusableWhenDisabled {...props}>
       <RefreshCwIcon
         aria-hidden
         className={cn(spinning && "animate-spin motion-reduce:animate-none")}
@@ -133,17 +181,17 @@ function CheckAgainButton({
   );
 }
 
-const VERDICTS: Record<
-  StackVerdict | "checking",
-  { icon: LucideIcon; text: () => string; tone: string }
-> = {
+type Shown = StackVerdict | "api-error" | "checking";
+
+const VERDICTS: Record<Shown, { icon: LucideIcon; text: () => string; tone: string }> = {
   checking: { icon: LoaderCircleIcon, text: m.stack_checking, tone: "text-muted-foreground" },
   ok: { icon: CircleCheckIcon, text: m.stack_ok, tone: "text-primary" },
   "api-down": { icon: CircleAlertIcon, text: m.stack_api_down, tone: "text-destructive" },
+  "api-error": { icon: CircleAlertIcon, text: m.stack_api_error, tone: "text-destructive" },
   "do-down": { icon: CircleAlertIcon, text: m.stack_do_down, tone: "text-destructive" },
 };
 
-function Verdict({ state }: { state: StackVerdict | "checking" }) {
+function Verdict({ state }: { state: Shown }) {
   const { icon: Icon, text, tone } = VERDICTS[state];
   const iconClass = cn("mt-0.5 size-6 shrink-0 sm:mt-1", tone);
   return (

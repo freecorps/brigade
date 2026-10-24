@@ -36,3 +36,5 @@ jobs:
       - run: vp check
       - run: vp run -r test
       - run: vp run -r build
+      # Fails if a build regenerates a committed file (package.json exports, generated CSS or messages).
+      - run: git diff --exit-code

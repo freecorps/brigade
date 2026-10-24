@@ -14,7 +14,7 @@ export default defineConfig({
       generator: "tsgo",
     },
     exports: {
-      devExports: "source",
+      devExports: "@freecorps/source",
       // The CSS is generated from src/tokens.ts (`vp run generate`), committed and shipped from src
       // so apps can import it without building this package first.
       customExports: {

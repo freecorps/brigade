@@ -21,6 +21,6 @@ export default defineConfig({
       // src only, without Node types (src/tsconfig.json).
       tsconfig: "src/tsconfig.json",
     },
-    exports: { devExports: "source" },
+    exports: { devExports: "@freecorps/source" },
   },
 });

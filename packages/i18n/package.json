@@ -20,15 +20,15 @@
   "sideEffects": false,
   "exports": {
     ".": {
-      "source": "./src/index.ts",
+      "@freecorps/source": "./src/index.ts",
       "default": "./dist/index.mjs"
     },
     "./labels": {
-      "source": "./src/labels.ts",
+      "@freecorps/source": "./src/labels.ts",
       "default": "./dist/labels.mjs"
     },
     "./messages": {
-      "source": "./src/messages.ts",
+      "@freecorps/source": "./src/messages.ts",
       "default": "./dist/messages.mjs"
     },
     "./package.json": "./package.json"

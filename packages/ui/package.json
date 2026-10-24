@@ -21,7 +21,7 @@
   "type": "module",
   "exports": {
     ".": {
-      "source": "./src/index.ts",
+      "@freecorps/source": "./src/index.ts",
       "default": "./dist/index.mjs"
     },
     "./package.json": "./package.json",

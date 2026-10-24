@@ -5,12 +5,18 @@ description: "Monitor a freecorps/brigade pull request through AI review and CI 
 
 # Babysit a PR
 
-Freecorps repositories run three AI reviewers: **CodeAnt** (`codeant-ai[bot]`: inline findings with a
-"Prompt for AI Agent" block, plus a Nitpicks comment), **Mira** (`freecorps-review[bot]`: inline findings
-marked `<!-- mira:finding:... -->`, a walkthrough comment and the `mira/review` check) and **Graphite AI
-Reviews** (a check). They help and are not always right. Babysitting means staying with the PR until the bots
-and the required checks are green on the latest commit, reading every finding, fixing the real ones, and
-writing down why the others were dismissed.
+AI reviewers on this repository:
+
+| Reviewer | Login | What it leaves | Status |
+| --- | --- | --- | --- |
+| **Mira** | `freecorps-review[bot]` | Inline findings marked `<!-- mira:finding:... -->`, a walkthrough comment, the `mira/review` check | Active |
+| **CodeRabbit** | `coderabbitai[bot]` | Walkthrough comment, inline findings with a "Prompt for AI Agents" block | Planned (free for public repos) |
+| **CodeAnt** | `codeant-ai[bot]` | Inline findings with a "Prompt for AI Agent" block, a Nitpicks comment | Planned (open-source plan on request) |
+
+Treat any of them that shows up on the PR as a reviewer; when one is enabled or removed, update this table and
+`AGENTS.md`. They help and are not always right. Babysitting means staying with the PR until the bots and the
+required checks are green on the latest commit, reading every finding, fixing the real ones, and writing down
+why the others were dismissed.
 
 Run `gh` from **Bash**, never PowerShell, and pass bodies with `--input` / `--body-file`.
 
@@ -53,7 +59,7 @@ while true; do
 done
 ```
 
-The checks that matter: `Check, test and build` (GitHub Actions), `mira/review` and `Graphite / AI Reviews`.
+The checks that matter: `Check, test and build` (GitHub Actions) and `mira/review`.
 When Workers deployments are wired up, `Workers Builds` (Cloudflare) joins the list.
 
 ## Only act on what is newer than the latest push

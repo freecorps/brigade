@@ -1,0 +1,40 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+/* shadcn's variants for Base UI state attributes (data-open, data-checked…); no colours. */
+@import "shadcn/tailwind.css";
+/* Brigade's tokens replace shadcn's default theme: light on :root, dark on .dark (packages/ui). */
+@import "@freecorps/brigade-ui/tokens.css";
+@import "@freecorps/brigade-ui/theme.css";
+
+@layer base {
+  * {
+    @apply border-border outline-ring;
+  }
+
+  html {
+    @apply bg-background font-sans text-foreground antialiased;
+    /* Phones: no grey flash on tap (every control has its own :active state) and no font inflation. */
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    @apply min-h-dvh;
+  }
+
+  /* Controls fire on tap without the double-tap delay and never select their label on long press. */
+  button,
+  a,
+  [role="button"],
+  [role="menuitemradio"] {
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Codes and paths read as code; figures that update keep their width. */
+  code {
+    @apply font-mono;
+  }
+}

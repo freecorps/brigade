@@ -47,6 +47,7 @@ vp install          # install dependencies
 vp check            # format, lint, type check
 vp run -r test      # run tests in every package
 vp run -r build     # build every package
+vp run dev          # dashboard + web Worker + API Worker + Durable Object on localhost:5173
 ```
 
 ## License

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- Set from the --background token once the styles load (src/components/preferences.tsx). -->
+    <meta name="theme-color" content="" />
+    <title>Brigade</title>
+    <!-- Before first paint: the stored theme (or the system one) and locale, so nothing flashes.
+         Mirrors src/lib/theme.ts and src/lib/locale.ts; test/theme.test.ts runs it against them. -->
+    <script id="preferences-script">
+      (function () {
+        var root = document.documentElement;
+        var theme = null;
+        var locale = null;
+        try {
+          theme = localStorage.getItem("brigade-theme");
+          locale = localStorage.getItem("brigade-locale");
+        } catch (error) {}
+        var dark = theme === "dark";
+        if (theme !== "light" && theme !== "dark") {
+          try {
+            dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          } catch (error) {}
+        }
+        root.classList.toggle("dark", dark);
+        if (locale === "en" || locale === "pt-BR") root.lang = locale;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

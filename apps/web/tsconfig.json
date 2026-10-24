@@ -1,0 +1,26 @@
+{
+  // The SPA (DOM). The web Worker has its own tsconfig in worker/, because the Workers runtime
+  // types that `wrangler types` generates conflict with lib.dom.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "moduleDetection": "force",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    // Resolve workspace packages to their TS source (the source export condition, RFC 0002).
+    // "source" is the condition's name until the rename to "@freecorps/source" lands on main; drop it then.
+    "customConditions": ["@freecorps/source", "source"],
+    "types": ["vite-plus/client"],
+    "paths": { "@/*": ["./src/*"] },
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "test", "vite.config.ts"]
+}

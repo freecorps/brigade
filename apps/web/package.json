@@ -1,0 +1,50 @@
+{
+  "name": "@freecorps/brigade-web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Freecorps Brigade web dashboard: a React SPA served by a Worker with static assets.",
+  "license": "AGPL-3.0-only",
+  "author": "Freecorps Tecnologia da Informação LTDA",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freecorps/brigade.git",
+    "directory": "apps/web"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "build:dev": "CLOUDFLARE_ENV=dev vp build",
+    "build:staging": "CLOUDFLARE_ENV=staging vp build",
+    "test": "wrangler types worker/worker-configuration.d.ts --check && vp test",
+    "check": "vp check",
+    "cf-typegen": "wrangler types worker/worker-configuration.d.ts",
+    "cf-typegen:check": "wrangler types worker/worker-configuration.d.ts --check"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.9.0",
+    "@freecorps/brigade-i18n": "workspace:*",
+    "@freecorps/brigade-schema": "workspace:*",
+    "@freecorps/brigade-ui": "workspace:*",
+    "@tanstack/react-router": "^1.170.46",
+    "class-variance-authority": "^0.7.1",
+    "cn": "^0.5.0",
+    "lucide-react": "^1.61.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.65.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/router-plugin": "^1.168.48",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "shadcn": "^4.22.1",
+    "tailwindcss": "^4.3.3",
+    "tw-animate-css": "^1.4.0",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:",
+    "wrangler": "^4.152.0"
+  }
+}

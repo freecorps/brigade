@@ -1,0 +1,20 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    // Resolve workspace packages to their TS source (the @freecorps/source export condition, RFC 0002),
+    // as metro.config.js does; keep Expo's react-native condition after it.
+    "customConditions": ["@freecorps/source", "react-native"],
+    // Expo's ambient types (`process.env.EXPO_OS`, asset modules), normally pulled in by the generated
+    // and gitignored expo-env.d.ts, which a clean checkout does not have.
+    "types": ["expo/types"],
+    "paths": { "@/*": ["./src/*"] },
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUncheckedIndexedAccess": true,
+    // Workspace sources import each other with .ts extensions.
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src", "app.config.ts", "vite.config.ts"]
+}

@@ -45,9 +45,10 @@ Messages are shipped one module per message and `m` is a real ESM namespace. Vit
 catalog.
 
 The helpers take the locale (and `formatDateTime` the recipient's IANA time zone) explicitly and use standard
-`Intl` only. Workers and browsers support everything used here. Hermes support for `PluralRules` (which plural
-messages rely on), `RelativeTimeFormat` and `dateStyle`/`timeStyle` is validated in spike S4, with
-`@formatjs/intl-*` polyfills as the fallback.
+`Intl` only. Workers and browsers support everything used here. Hermes (React Native) has no `PluralRules`,
+which every plural message relies on, and no `RelativeTimeFormat` or `Locale`. A plural message then throws
+while rendering, so the mobile app loads `@formatjs` polyfills before importing this package
+(`apps/mobile/src/intl/polyfills.ts`, spike S4).
 
 The helpers never throw, because pushes, emails and Slack messages are rendered with them and a throw could
 stop someone from being paged: an unknown locale formats as `en`, an unknown time zone as `"UTC"` (`toTimeZone`

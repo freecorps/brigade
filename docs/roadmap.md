@@ -34,6 +34,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
       through Metro; `eas build` succeeds (needs Heitor's EAS account); Hermes `Intl.PluralRules`,
       `RelativeTimeFormat` and `dateStyle`/`timeStyle` checked (polyfill if missing); Hermes regex Unicode
       property escapes checked (`UNICODE_PROPERTY_ESCAPES` from `packages/schema` is `true`, RFC 0004).
+  - Done on Android: `apps/mobile` development build on the emulator, `packages/*` from source through Metro,
+    Hermes `Intl` checked and polyfilled, regex Unicode property escapes supported (`UNICODE_PROPERTY_ESCAPES`
+    is `true`; an emoji title is accepted, a zero-width space rejected) ([write-up](spikes/s4-expo-workspace.md)).
+  - iOS verification pending (needs Mac).
+  - eas build pending (needs Heitor's EAS account).
 - [ ] **S2 — Probe placement** (RFC 0007). Pass: observed colo per `locationHint` over 48h (deploy needs Heitor's approval).
 - [ ] **S1 — APNs from a Worker and payload encryption** (RFC 0006). Pass: push received on a real iPhone from a
       Worker, decrypted in the Notification Service Extension (needs Apple credentials and a device).

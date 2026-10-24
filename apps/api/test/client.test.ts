@@ -1,5 +1,6 @@
 // The real `SyncClient` from packages/sync over real WebSockets into WorkspaceDO.
-import { exports } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
+import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, test } from "vite-plus/test";
 import { newId, type IncidentRow } from "@freecorps/brigade-schema";
 import { createSyncClient, type SyncSocket } from "@freecorps/brigade-sync";
@@ -20,6 +21,8 @@ function client(route: Map<string, string> = new Map()) {
   const warnings: string[] = [];
   const sent: Frame[] = [];
   const received: Frame[] = [];
+  /** Close codes the server sent, per connection number. */
+  const closes: { connection: number; code: number }[] = [];
   /** Open connections: losing one closes it and tells the client, once. */
   const lose: (() => void)[] = [];
   let connections = 0;
@@ -79,7 +82,10 @@ function client(route: Map<string, string> = new Map()) {
           received.push({ ...(JSON.parse(event.data as string) as Frame), connection: number });
           fire(socket.onmessage, { data: event.data });
         });
-        open.addEventListener("close", end);
+        open.addEventListener("close", (event) => {
+          closes.push({ connection: number, code: event.code });
+          end();
+        });
         fire(socket.onopen, {});
       });
       return socket;
@@ -90,6 +96,7 @@ function client(route: Map<string, string> = new Map()) {
     warnings,
     sent,
     received,
+    closes,
     /** How many sockets have opened so far. */
     connections: () => connections,
     /** Closes every open socket from this side, as a lost connection would, and refuses new ones. */
@@ -256,6 +263,62 @@ describe("SyncClient against WorkspaceDO", () => {
     ana.sync.close();
     bia.sync.close();
     expect([...ana.warnings, ...bia.warnings]).toEqual([]);
+  });
+
+  test("a mutation whose commit fails is replayed on the next socket and confirmed with its patch", async () => {
+    const shard = `client-${++names}`;
+    const ana = client();
+    const bia = client();
+    const anaView = ana.sync.query(shard, "incidents.active", {});
+    const biaView = bia.sync.query(shard, "incidents.active", {});
+    await until(anaView, (s) => s.status === "ready");
+    await until(biaView, (s) => s.status === "ready");
+    // The outbox write fails, so the mutation's transaction cannot commit.
+    const outbox = (sql: string) =>
+      runInDurableObject(env.WORKSPACE.getByName(shard), (_instance, state) => {
+        state.storage.sql.exec(sql);
+      });
+    await outbox(`create trigger no_outbox before insert on outbox
+                  begin select raise(abort, 'outbox unavailable'); end`);
+
+    const id = incidentId();
+    const declared = ana.sync.mutate(shard, "incident.declare", {
+      id,
+      title: "Checkout down",
+      severity: "sev1",
+    });
+    await eventually(() => ana.closes.length > 0, "the shard to close Ana's socket");
+    // The failure is about the socket: `internal` with no ids, then 1011. Nothing was stored for the mutation.
+    expect(ana.received.filter((frame) => frame.connection === 1).at(-1)).toEqual({
+      type: "error",
+      code: "internal",
+      message: "Internal error",
+      connection: 1,
+    });
+    expect(ana.closes[0]).toEqual({ connection: 1, code: 1011 });
+    await outbox("drop trigger no_outbox");
+
+    // The client replays the same mutation id under the same client id, and this time it runs once.
+    expect(await declared).toEqual({ ok: true, version: 1 });
+    const mutates = ana.sent.filter((frame) => frame.type === "mutate");
+    expect(new Set(mutates.map((frame) => frame.mutationId)).size).toBe(1);
+    expect(mutates.length).toBeGreaterThan(1);
+    const hellos = ana.sent.filter((frame) => frame.type === "hello");
+    expect(new Set(hellos.map((frame) => frame.clientId)).size).toBe(1);
+    const last = ana.connections();
+    const on = () => ana.received.filter((frame) => frame.connection === last);
+    const result = on().findIndex((frame) => frame.type === "mutationResult");
+    await eventually(() => on().length > result + 1, "the patch after the result");
+    const after = on();
+    expect(after[result]).toMatchObject({ ok: true, version: 1 });
+    // The mutation runs before this socket's subscribe arrives: its always-sent patch comes right after the result.
+    expect(after[result + 1]).toMatchObject({ type: "patch", version: 1, subs: {} });
+    await until<IncidentRow>(biaView, (s) => s.rows.some((row) => row.id === id));
+    await eventually(() => !anaView.getSnapshot().pending, "Ana's mutation to settle");
+    expect(anaView.getSnapshot().rows).toEqual([expect.objectContaining({ id, number: 1 })]);
+    ana.sync.close();
+    bia.sync.close();
+    expect(bia.warnings).toEqual([]);
   });
 
   test("a client holding another epoch's data gets a snapshot that replaces it", async () => {

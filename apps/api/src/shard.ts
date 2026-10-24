@@ -20,7 +20,7 @@ import {
   type Role,
 } from "@freecorps/brigade-schema";
 import { OUTBOX_SCHEMA, writeOutbox } from "./outbox.ts";
-import { SqlStore, type RowChange } from "./store.ts";
+import { SqlStore, StorageFailure, type RowChange } from "./store.ts";
 import {
   MUTATION_RETENTION_MS,
   type MutationResultMessage,
@@ -180,9 +180,13 @@ export class Shard {
    * result all commit in one transaction, or none do. The caller checks `storedResult` first.
    *
    * A failed mutation's result is stored too, so a retry gets the same answer, except `unknown_mutation` (a later
-   * deploy may know the name). A failure while committing (storage, the outbox) is not the mutation's answer: it
-   * rolls back, nothing is stored and it is rethrown, so the socket closes and the client replays the mutation.
-   * Only an exception in the mutation's own code becomes a stored `internal`.
+   * deploy may know the name). A storage failure anywhere in the mutation's transaction (a store read or write in
+   * `apply`, the commit hook, the transaction itself) is not the mutation's answer: it rolls back, nothing is
+   * stored and it is rethrown, so the socket closes and the client replays the mutation. Only an exception from the
+   * mutation's own code becomes a stored `internal`.
+   *
+   * Once this returns a committed version nothing else runs before the caller sends the result and the patches:
+   * housekeeping (pruning old results) runs first, and a failure there is only logged.
    */
   mutate(input: MutateInput): MutateOutcome {
     const { clientId, mutationId, actor, now } = input;
@@ -192,6 +196,7 @@ export class Shard {
     // Set by `commit`; a box, because TypeScript does not see assignments made inside the callback.
     const done: { committed?: Committed; failed?: { error: unknown } } = {};
 
+    this.prune(now);
     this.store.track();
     let outcome;
     try {
@@ -206,15 +211,20 @@ export class Shard {
           }
         },
         onError: (error, name) => {
-          if (!done.failed) this.options.log("mutation failed", { mutation: name, error });
+          if (done.failed) return;
+          // From the store under the mutation, not from its code: rethrown below, never stored.
+          if (error instanceof StorageFailure) done.failed = { error };
+          else this.options.log("mutation failed", { mutation: name, error });
         },
       });
     } finally {
       this.store.untrack();
     }
     if (done.failed) throw done.failed.error;
+    // The commit hook ran but the transaction still failed (it could not commit): nothing is stored.
+    if (done.committed && !outcome.ok)
+      throw new StorageFailure("the mutation's transaction failed");
 
-    this.prune(now);
     if (outcome.ok && done.committed) return done.committed;
     const result: MutationResultMessage = outcome.ok
       ? // Unreachable: `commit` runs before every success. Kept so a broken invariant cannot lose the reply.
@@ -324,8 +334,13 @@ export class Shard {
     }
   }
 
+  /** Drops results past retention. Housekeeping: a failure is logged, never fails the mutation. */
   private prune(now: number): void {
-    this.sql.exec("delete from mutation_results where at < ?", now - RESULT_RETENTION_MS);
+    try {
+      this.sql.exec("delete from mutation_results where at < ?", now - RESULT_RETENTION_MS);
+    } catch (error) {
+      this.options.log("pruning mutation results failed", { error });
+    }
   }
 
   private saveResult(

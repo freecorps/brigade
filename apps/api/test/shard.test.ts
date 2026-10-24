@@ -4,7 +4,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, test } from "vite-plus/test";
 import { defineQuery, isId, newId, v, type Actor } from "@freecorps/brigade-schema";
 import { RESULT_RETENTION_MS, Shard, subscriptionChanges } from "../src/shard.ts";
-import type { RowChange } from "../src/store.ts";
+import { StorageFailure, type RowChange } from "../src/store.ts";
 
 const ana: Actor = { kind: "user", id: "usr_ana", role: "responder" };
 const bia: Actor = { kind: "user", id: "usr_bia", role: "responder" };
@@ -156,6 +156,34 @@ describe("Shard", () => {
       ).toBeUndefined();
       // The next mutation prunes them.
       declare(shard, incidentId(), NOW + RESULT_RETENTION_MS + 1);
+      expect(count(sql, "mutation_results")).toBe(1);
+    });
+  });
+
+  test("a store write failing inside the mutation's apply is thrown, never stored as internal", async () => {
+    await withShard((shard, sql, logs) => {
+      // Every write to the row store fails, as a full or broken disk would.
+      sql.exec(`create trigger no_writes before insert on store_rows
+                begin select raise(abort, 'disk full'); end`);
+      const id = incidentId();
+      expect(() => declare(shard, id)).toThrow(StorageFailure);
+      expect(() => declare(shard, id)).toThrow(/disk full/);
+      expect(count(sql, "mutation_results")).toBe(0);
+      expect(shard.version()).toBe(0);
+      expect(count(sql, "outbox")).toBe(0);
+      expect(logs).toEqual([]);
+    });
+  });
+
+  test("an exception that is not a storage failure is a stored internal", async () => {
+    await withShard((shard, sql) => {
+      // SQLite works, but `apply` throws on what it reads (a row that is not JSON): the mutation's answer.
+      const id = incidentId();
+      sql.exec(
+        "insert into store_rows (tbl, id, data) values ('counters', 'incident', 'not json')",
+      );
+      const { result } = declare(shard, id);
+      expect(result).toMatchObject({ ok: false, error: { code: "internal" } });
       expect(count(sql, "mutation_results")).toBe(1);
     });
   });

@@ -8,6 +8,10 @@
 // Transactions: `sql.exec` refuses `SAVEPOINT`, but `transactionSync` nests, and the runtime implements the
 // nested call with a savepoint: an inner rollback undoes only its writes, an outer one undoes everything
 // (test/store.test.ts checks both). So `transaction` is just `transactionSync`.
+//
+// Storage failures: every SQLite error surfaces as a `StorageFailure`, so the shard can tell a failing disk from a
+// bug in a mutation's own code. Both reach `runMutation` as an exception, but only the bug is the mutation's
+// answer (a stored `internal`); a storage failure is rethrown and the client replays the mutation.
 
 import {
   StoreError,
@@ -38,6 +42,25 @@ export type RowChange = {
 
 const byId = (a: Row, b: Row) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
+/** SQLite failed under the store: not something the mutation did wrong. The original error is the `cause`. */
+export class StorageFailure extends Error {
+  override name = "StorageFailure";
+  constructor(cause: unknown) {
+    super(`Storage failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+  }
+}
+
+/** Runs one storage call, turning its errors into `StorageFailure`s (a `StoreError` stays what it is). */
+function guarded<R>(call: () => R): R {
+  try {
+    return call();
+  } catch (error) {
+    throw error instanceof StoreError || error instanceof StorageFailure
+      ? error
+      : new StorageFailure(error);
+  }
+}
+
 export class SqlStore implements Store<BrigadeTables> {
   /** Rows written while tracking, with their value before the first write. */
   private touched: Map<string, { table: TableName; id: string; before: Row | undefined }> | null =
@@ -56,12 +79,7 @@ export class SqlStore implements Store<BrigadeTables> {
     if (this.read(table, row.id)) throw new StoreError(`Duplicate id ${row.id} in ${table}`);
     this.touch(table, row.id, undefined);
     const data = JSON.stringify(row);
-    this.storage.sql.exec(
-      "insert into store_rows (tbl, id, data) values (?, ?, ?)",
-      table,
-      row.id,
-      data,
-    );
+    this.exec("insert into store_rows (tbl, id, data) values (?, ?, ?)", table, row.id, data);
     return JSON.parse(data) as BrigadeTables[T];
   }
 
@@ -75,12 +93,7 @@ export class SqlStore implements Store<BrigadeTables> {
     this.touch(table, id, row);
     // JSON drops keys set to undefined (they keep their value); null clears. The id never changes.
     const data = JSON.stringify({ ...row, ...JSON.parse(JSON.stringify(patch)), id });
-    this.storage.sql.exec(
-      "update store_rows set data = ? where tbl = ? and id = ?",
-      data,
-      table,
-      id,
-    );
+    this.exec("update store_rows set data = ? where tbl = ? and id = ?", data, table, id);
     return JSON.parse(data) as BrigadeTables[T];
   }
 
@@ -88,25 +101,36 @@ export class SqlStore implements Store<BrigadeTables> {
     const row = this.read(checked(table), id);
     if (!row) return false;
     this.touch(table, id, row);
-    this.storage.sql.exec("delete from store_rows where tbl = ? and id = ?", table, id);
+    this.exec("delete from store_rows where tbl = ? and id = ?", table, id);
     return true;
   }
 
   scan<T extends TableName>(table: T): BrigadeTables[T][] {
-    const rows = this.storage.sql
-      .exec<{ data: string }>(
-        "select data from store_rows where tbl = ? order by id",
-        checked(table),
-      )
-      .toArray()
-      .map((row) => JSON.parse(row.data) as BrigadeTables[T]);
+    const rows = this.exec<{ data: string }>(
+      "select data from store_rows where tbl = ? order by id",
+      checked(table),
+    ).map((row) => JSON.parse(row.data) as BrigadeTables[T]);
     // SQLite compares ids as UTF-8 bytes; JavaScript (and the memory store) as UTF-16 code units. They agree on
     // every id in use (ASCII), and this keeps the two stores identical for any other id too.
     return rows.sort(byId);
   }
 
+  /** `transactionSync`; an error `fn` throws passes through as is, one from storage itself is a `StorageFailure`. */
   transaction<R>(fn: () => R): R {
-    return this.storage.transactionSync(fn);
+    let thrown: { error: unknown } | undefined;
+    try {
+      return this.storage.transactionSync(() => {
+        try {
+          return fn();
+        } catch (error) {
+          thrown = { error };
+          throw error;
+        }
+      });
+    } catch (error) {
+      if (thrown && thrown.error === error) throw error;
+      throw error instanceof StorageFailure ? error : new StorageFailure(error);
+    }
   }
 
   /** Starts recording which rows are written, for the change log and the patches. */
@@ -136,21 +160,26 @@ export class SqlStore implements Store<BrigadeTables> {
   stamp(changes: readonly RowChange[], version: number): void {
     for (const { table, id, after } of changes) {
       if (after) {
-        this.storage.sql.exec(
-          "update store_rows set version = ? where tbl = ? and id = ?",
-          version,
-          table,
-          id,
-        );
+        this.exec("update store_rows set version = ? where tbl = ? and id = ?", version, table, id);
       }
     }
   }
 
   private read(table: TableName, id: string): Row | undefined {
-    const [row] = this.storage.sql
-      .exec<{ data: string }>("select data from store_rows where tbl = ? and id = ?", table, id)
-      .toArray();
+    const [row] = this.exec<{ data: string }>(
+      "select data from store_rows where tbl = ? and id = ?",
+      table,
+      id,
+    );
     return row && (JSON.parse(row.data) as Row);
+  }
+
+  /** One statement, read to the end, with SQLite's errors as `StorageFailure`s. */
+  private exec<T extends Record<string, SqlStorageValue>>(
+    query: string,
+    ...bindings: SqlStorageValue[]
+  ): T[] {
+    return guarded(() => this.storage.sql.exec<T>(query, ...bindings).toArray());
   }
 
   private touch(table: TableName, id: string, before: Row | undefined): void {

@@ -288,11 +288,15 @@ server → client
   after a crash between commit and send still gets it. Domain failures, invalid args and an exception in the
   mutation's own code (`internal`) are stored too; `unknown_mutation` is not, since a later deploy may know the
   name. Clients stop re-sending a mutation 7 days after creating it, which is never later than the shard's window.
-  Results older than the window are pruned on the next mutation.
-- **Commit failures are not answers:** if storage fails while committing (the version, the change log, the
-  outbox, the stored result), the transaction rolls back, nothing is stored, and the error is rethrown instead of
-  becoming `runMutation`'s `internal`. The socket closes with 1011 and the client replays the mutation on the next
-  one, so a transient storage failure never turns into a permanent, de-duplicated `internal`.
+  Results older than the window are pruned before the next mutation runs.
+- **Storage failures are not answers:** `SqlStore` turns every SQLite error into a `StorageFailure`. If one
+  happens anywhere in the mutation's transaction (a store read or write inside `apply`, the commit hook's version,
+  change log, outbox or stored result, or the transaction itself), everything rolls back, nothing is stored, and
+  the error is rethrown instead of becoming `runMutation`'s `internal`. The socket closes with 1011 and the client
+  replays the mutation on the next one, so a transient storage failure never turns into a permanent,
+  de-duplicated `internal`. Only an exception from the mutation's own code (a bug, or a row it cannot read) is
+  stored as `internal`. Pruning expired results runs before the mutation and only logs a failure, so once a
+  version commits nothing can throw before its result and patches are sent.
 - **Outbox:** written in the mutation's transaction (RFC 0005) and not drained yet (no Queue). Until it is, the
   shard logs the outbox's row count each time it grows by 1000 (`outbox not drained`).
 - **Sockets:** Hibernation API. The attachment holds the client id, the actor and each subscription's query and
@@ -314,7 +318,7 @@ server → client
     subscriptions or 8 KiB of state) is an error with its `subId`; the socket stays open.
   - The shard sends no `error` with a `mutationId` yet; it is reserved for a final refusal before running (a
     per-client limit).
-  - An unexpected exception (a bug, a storage failure, a commit failure as above) is logged as one JSON line,
+  - An unexpected exception (a bug, a storage failure as above) is logged as one JSON line,
     answered with `error { code: "internal" }` without ids, and the socket closes with 1011. A `send` that throws
     closes the socket with 1011 too: a lost frame would make the next patch claim a version the socket never fully
     got.

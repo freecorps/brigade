@@ -526,6 +526,66 @@ describe("GET /sync/:workspaceId", () => {
     });
   });
 
+  test("a failure pruning old results is only logged: the version's patches still go out", async () => {
+    const ws = workspace();
+    const a = (await connect(ws)).hello();
+    const b = (await connect(ws)).hello();
+    b.send(active("active"));
+    expect((await b.next()).type).toBe("snapshot");
+    // An expired result whose delete fails.
+    await runInDurableObject(env.WORKSPACE.getByName(ws), (_instance, state) => {
+      state.storage.sql.exec(
+        "insert into mutation_results (actor_id, client_id, mutation_id, at, result) values ('usr_old', 'c', 'm', 0, '{}')",
+      );
+      state.storage.sql.exec(`create trigger no_prune before delete on mutation_results
+                              begin select raise(abort, 'prune failed'); end`);
+    });
+    const id = incidentId();
+    a.send(declare(id));
+    expect(await a.next()).toMatchObject({ type: "mutationResult", ok: true, version: 1 });
+    expect(await b.next()).toMatchObject({
+      type: "patch",
+      version: 1,
+      subs: { active: { upserts: [expect.objectContaining({ id })], deletes: [] } },
+    });
+    await runInDurableObject(env.WORKSPACE.getByName(ws), (_instance, state) => {
+      const rows = state.storage.sql
+        .exec<{ n: number }>("select count(*) as n from mutation_results where at = 0")
+        .one().n;
+      expect(rows).toBe(1);
+    });
+  });
+
+  test("a failure patching one socket closes that socket alone; the others get the patch", async () => {
+    const ws = workspace();
+    const a = (await connect(ws)).hello("client-a");
+    const b = (await connect(ws)).hello("client-b");
+    const c = (await connect(ws)).hello("client-c");
+    b.send(active("active"));
+    expect((await b.next()).type).toBe("snapshot");
+    c.send(active("active"));
+    expect((await c.next()).type).toBe("snapshot");
+    // B's attachment is corrupt: reading its subscriptions throws.
+    await runInDurableObject(env.WORKSPACE.getByName(ws), (_instance, state) => {
+      for (const socket of state.getWebSockets()) {
+        const attached = socket.deserializeAttachment() as SocketState;
+        if (attached.clientId === "client-b") {
+          socket.serializeAttachment({ ...attached, subs: 5 });
+        }
+      }
+    });
+    const id = incidentId();
+    a.send(declare(id));
+    expect(await a.next()).toMatchObject({ type: "mutationResult", ok: true, version: 1 });
+    expect(await a.next()).toEqual(emptyPatch(1));
+    expect(await c.next()).toMatchObject({ type: "patch", version: 1 });
+    expect(await b.closed).toMatchObject({ code: 1011 });
+    expect(b.frames.filter((frame) => frame.type === "patch")).toEqual([]);
+    // The others stay open.
+    expect(await c.drain()).toEqual([]);
+    expect(await a.drain()).toEqual([]);
+  });
+
   test("a socket's subscription state is capped at 8 KiB", async () => {
     const ws = workspace();
     const a = (await connect(ws)).hello();

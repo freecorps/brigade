@@ -49,8 +49,10 @@ synchronous, so frames are handled strictly in arrival order. The details and th
   the socket that ran an ok mutation always gets that version's patch, with `subs: {}` if nothing on it changed. A
   retry answered from `mutation_results` gets the stored result only. A resume's `deletes` may name ids the
   subscription never held (fine until row-level access exists).
-- **Results:** keyed by (actor id, clientId, mutationId); `unknown_mutation` is not stored. A storage failure while
-  committing stores nothing and closes the socket with 1011, so the client replays the mutation.
+- **Results:** keyed by (actor id, clientId, mutationId); `unknown_mutation` is not stored. A storage failure
+  anywhere in a mutation's transaction (`StorageFailure` from `src/store.ts`) stores nothing and closes the socket
+  with 1011, so the client replays the mutation; only an exception from the mutation's own code is stored as
+  `internal`. Expired results are pruned before each mutation, and a failure there is only logged.
 - **Outbox:** not drained yet; its row count is logged every 1000 rows (`outbox not drained`).
 - **Limits:** client frames up to 64 KiB of text (binary frames are refused); 32 subscriptions per socket and
   about 8 KiB of attachment state (measured as JSON).

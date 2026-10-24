@@ -6,7 +6,7 @@ Rough sizing assumes 1–2 developers. Each phase ends with something usable int
 
 Run this with the `manager` skill ("use the manager skill and work through `docs/roadmap.md`").
 
-- Work **top to bottom**: take the first unchecked item. Re-read this file before each task; Heitor steers by
+- Work **top to bottom**: take the first unchecked item that is not blocked on Heitor. Re-read this file before each task; Heitor steers by
   editing it (reordering, adding detail, adding items).
 - The PR that completes an item ticks its checkbox (`- [x]`). A partly done item stays unchecked, with a
   sub-bullet saying what is left.

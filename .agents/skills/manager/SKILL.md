@@ -76,7 +76,8 @@ progress tracking, and re-read it before each task, because it can change betwee
 7. **Babysit it** with `babysit-pr`. Fix real bot findings through the same implement → review loop, never
    with an unreviewed quick patch. Reply to every thread with the signature format and resolve it.
 
-8. **Merge it yourself** with `gh pr merge <n> --squash` when **all** of these hold:
+8. **Merge it yourself** (being asked to act as the manager for a goal is the explicit request to merge each of
+   your PRs for that goal) with `gh pr merge <n> --squash` when **all** of these hold:
    - `Check, test and build` is green on the latest commit;
    - every bot that reviewed is green, and every review thread is resolved;
    - your own final read of the full diff passes, including the UI bar for anything visual;

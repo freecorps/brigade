@@ -36,5 +36,5 @@ jobs:
       - run: vp check
       - run: vp run -r test
       - run: vp run -r build
-      # Fails if a build regenerates a committed file (package.json exports, generated CSS or messages).
-      - run: git diff --exit-code
+      # Fails if a build changed a committed file (package.json exports, compiled messages) or left a new one.
+      - run: test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }

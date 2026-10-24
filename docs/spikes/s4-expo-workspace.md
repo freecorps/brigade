@@ -3,13 +3,15 @@
 - Status: Partly done. Android and Metro verified; iOS and `eas build` pending (see the end)
 - Roadmap: Phase 0, S4
 - Settles: RFC 0002 "Metro only needs to resolve the shared `packages/*` from the Bun workspace"; RFC 0008's open
-  item on Hermes `Intl` support
+  item on Hermes `Intl` support; RFC 0004's on-device check of `UNICODE_PROPERTY_ESCAPES` (Android)
 
 ## Question
 
 Can an Expo app live in the Bun workspace next to the Vite+ apps and import `packages/ui`, `packages/i18n` and
 `packages/schema` from source through Metro? Does a development build run, and does Hermes have the `Intl`
 features `packages/i18n` uses (`PluralRules` for plural messages, `RelativeTimeFormat`, `dateStyle`/`timeStyle`)?
+Does it run `packages/schema`'s full text rules, which need regex Unicode property escapes (RFC 0004, "Shared
+core")?
 
 ## What was built
 
@@ -99,14 +101,15 @@ What needed a decision or a workaround:
 Measured by `src/intl/probe.ts`, which uses each feature and compares the output, before and after the polyfills
 load (screenshot `android-intl`):
 
-| Feature                                  | Hermes (Android, RN 0.88) | With polyfills               | Used by                                         |
-| ---------------------------------------- | ------------------------- | ---------------------------- | ----------------------------------------------- |
-| `Intl.PluralRules`                       | **Missing**               | Works (`@formatjs`, en + pt) | every plural message (`incidents_active_count`) |
-| `Intl.RelativeTimeFormat`                | **Missing**               | Works (`@formatjs`, en + pt) | `formatRelativeTime`                            |
-| `Intl.Locale`                            | **Missing**               | Works (`@formatjs`)          | the two polyfills above                         |
-| `DateTimeFormat` `dateStyle`/`timeStyle` | Works                     | native                       | `formatDateTime`                                |
-| `DateTimeFormat` `timeZone` (IANA)       | Works                     | native                       | `formatDateTime`                                |
-| `Intl.NumberFormat` (en, pt-BR)          | Works                     | native                       | `formatNumber`, `{count: number}`               |
+| Feature                                  | Hermes (Android, RN 0.88)                        | With polyfills               | Used by                                         |
+| ---------------------------------------- | ------------------------------------------------ | ---------------------------- | ----------------------------------------------- |
+| `Intl.PluralRules`                       | **Missing**                                      | Works (`@formatjs`, en + pt) | every plural message (`incidents_active_count`) |
+| `Intl.RelativeTimeFormat`                | **Missing**                                      | Works (`@formatjs`, en + pt) | `formatRelativeTime`                            |
+| `Intl.Locale`                            | **Missing**                                      | Works (`@formatjs`)          | the two polyfills above                         |
+| `DateTimeFormat` `dateStyle`/`timeStyle` | Works                                            | native                       | `formatDateTime`                                |
+| `DateTimeFormat` `timeZone` (IANA)       | Works                                            | native                       | `formatDateTime`                                |
+| `Intl.NumberFormat` (en, pt-BR)          | Works                                            | native                       | `formatNumber`, `{count: number}`               |
+| Regex Unicode property escapes (`\p{…}`) | **Works** (`UNICODE_PROPERTY_ESCAPES` is `true`) | not polyfilled               | `v.string` in `packages/schema`                 |
 
 Without the `PluralRules` polyfill a plural message does not fall back. Paraglide's registry throws while
 rendering (`WeakMap key must be an Object`), which takes down the screen. The polyfills load in
@@ -116,6 +119,12 @@ engine lacks the feature. After loading, the helpers render "No active incidents
 active incidents", "Nenhum incidente ativo / 1 incidente ativo / 1.284 incidentes ativos", "Oct 24, 2026, 8:57
 PM" / "24 de out. de 2026, 20:57", "3 hours ago" / "há 3 horas" and "yesterday" / "ontem". CLDR's `pt` data is
 Brazilian Portuguese.
+
+**Regex property escapes.** `UNICODE_PROPERTY_ESCAPES` from `@freecorps/brigade-schema` is `true` on this
+Hermes, so the client runs the same full text rules as the server, not the fallback. The `/intl` screen also runs
+two incident titles through `v.string({ min: 1, max: INCIDENT_TITLE_MAX })`, the validator `incident.declare`
+uses. "Checkout down 🔥" is accepted. "Checkout" + U+200B (zero-width space) + "down" is rejected ("Contains
+control, invisible or bidi characters"). Both match the server and the Node test (`src/lib/text-samples.test.ts`).
 
 iOS runs the same Hermes. These results are expected to hold there, but it was not checked (see below).
 
@@ -152,7 +161,9 @@ Nothing here ran on iOS. On a Mac with Xcode and an iOS Simulator, from `apps/mo
    `CFBundleLocalizations` lists `en` and `pt-BR`.
 5. `/intl`: record the same table for iOS Hermes. Expect PluralRules, RelativeTimeFormat and Locale "Polyfilled"
    and the rest "Native". If DateTimeFormat or NumberFormat fail there, add `@formatjs/intl-datetimeformat` or
-   `-numberformat` with `en`/`pt` data.
+   `-numberformat` with `en`/`pt` data. Check "Regex property escapes" is "Yes" and the two titles are accepted
+   and rejected as on Android. If it is "No", clients fall back to the reduced rules and the server still
+   enforces the full ones; do not polyfill.
 6. The header, the safe areas (notch and home indicator) and that nothing sits under the status bar.
 7. Reduce Motion on (Settings → Accessibility → Motion): pushing `/intl` fades instead of sliding.
 8. Dynamic Type at the largest accessibility size: rows grow and badges wrap.

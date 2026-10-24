@@ -5,6 +5,7 @@ import {
   m,
   type Locale,
 } from "@freecorps/brigade-i18n";
+import { UNICODE_PROPERTY_ESCAPES } from "@freecorps/brigade-schema";
 import { fontFamily, fontSize, spacing } from "@freecorps/brigade-ui";
 import { useState } from "react";
 import { Platform, ScrollView, Text, View } from "react-native";
@@ -17,6 +18,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { nativeIntl } from "@/intl/native";
 import { INTL_FEATURES, type IntlFeature } from "@/intl/probe";
 import { currentIntl } from "@/intl/setup";
+import { checkTitle, TITLE_SAMPLES } from "@/lib/text-samples";
 
 // Feature names are API names, not prose: they stay untranslated, like SEV codes.
 const FEATURE_NAMES: Record<IntlFeature, string> = {
@@ -98,6 +100,57 @@ export function IntlDiagnostics() {
                   ? native.detail
                   : `${native.detail} → ${current.detail}`}
               </Text>
+            </Row>
+          );
+        })}
+      </Section>
+
+      <Section title={m.intl_text_title()} inset={false}>
+        <Row first>
+          <View
+            style={{
+              flexDirection: "row",
+              flexWrap: "wrap",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: spacing[2],
+            }}
+          >
+            <ThemedText style={{ flexShrink: 1 }}>{m.intl_regex_property_escapes()}</ThemedText>
+            {UNICODE_PROPERTY_ESCAPES ? (
+              <Badge colors={colors.status.resolved} label={m.intl_yes()} />
+            ) : (
+              <Badge colors={colors.severity.sev2} label={m.intl_no()} />
+            )}
+          </View>
+        </Row>
+        {TITLE_SAMPLES.map((sample) => {
+          const result = checkTitle(sample.value);
+          return (
+            <Row key={sample.label}>
+              <View
+                style={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: spacing[2],
+                }}
+              >
+                <ThemedText selectable style={{ flexShrink: 1 }}>
+                  {sample.label}
+                </ThemedText>
+                {result.accepted ? (
+                  <Badge colors={colors.status.resolved} label={m.intl_title_accepted()} />
+                ) : (
+                  <Badge colors={colors.status.declined} label={m.intl_title_rejected()} />
+                )}
+              </View>
+              {result.accepted ? null : (
+                <Text selectable style={mono}>
+                  {result.message}
+                </Text>
+              )}
             </Row>
           );
         })}

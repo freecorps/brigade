@@ -88,5 +88,11 @@
   "intl_missing": "Ausente",
   "intl_engine": "Motor: {engine}",
   "intl_rendered": "Exibido pelos helpers compartilhados",
-  "intl_engine_other": "outro motor"
+  "intl_engine_other": "outro motor",
+  "intl_text_title": "Validação de texto",
+  "intl_regex_property_escapes": "Escapes de propriedade Unicode em regex",
+  "intl_yes": "Sim",
+  "intl_no": "Não",
+  "intl_title_accepted": "Aceito",
+  "intl_title_rejected": "Rejeitado"
 }

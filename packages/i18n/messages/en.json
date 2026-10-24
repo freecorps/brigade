@@ -88,5 +88,11 @@
   "intl_missing": "Missing",
   "intl_engine": "Engine: {engine}",
   "intl_rendered": "Rendered by the shared helpers",
-  "intl_engine_other": "another engine"
+  "intl_engine_other": "another engine",
+  "intl_text_title": "Text validation",
+  "intl_regex_property_escapes": "Regex property escapes",
+  "intl_yes": "Yes",
+  "intl_no": "No",
+  "intl_title_accepted": "Accepted",
+  "intl_title_rejected": "Rejected"
 }

@@ -83,7 +83,9 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
 - **Site and docs:** Fumadocs on TanStack Start (Vite-based), prerendered, i18n per locale (RFC 0008).
 - **Auth:** Better Auth on Workers + D1; Expo client for mobile (OAuth/OIDC with PKCE via system browser, plus QR pairing).
 - **Workers tooling:** `wrangler` per app, invoked through `vp run` tasks. The Cloudflare Vite plugin
-  (`@cloudflare/vite-plugin`) runs Workers inside the Vite dev server — needs validation with Vite+ (spike S5).
+  (`@cloudflare/vite-plugin`) runs Workers inside the Vite dev server; validated with Vite+ in spike S5: the
+  api Worker runs as an `auxiliaryWorkers` entry of apps/web in dev; apps/api tests use `@cloudflare/vitest-plugin`
+  and apps/web's routing test uses wrangler's test harness (see [docs/spikes/s5-tooling-skeleton.md](../spikes/s5-tooling-skeleton.md)).
 - **Mobile:** Expo (development builds, EAS Build/Submit). Metro, not Vite; it only needs to resolve the
   shared `packages/*` from the Bun workspace (spike S4).
 

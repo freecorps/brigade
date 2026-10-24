@@ -67,3 +67,15 @@ test("bad prefixes, times and randomness are programming errors", () => {
   expect(() => newId("inc", 2 ** 48, zeros)).toThrow(RangeError);
   expect(() => newId("inc", T, () => new Uint8Array(9))).toThrow(RangeError);
 });
+
+test("idTime only decodes prefixed ULIDs", () => {
+  expect(idTime(newId("svc", 42, zeros))).toBe(42);
+  for (const bad of [
+    "",
+    "inc_123",
+    "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "inc_01arz3ndektsv4rrffq69g5fav",
+  ]) {
+    expect(() => idTime(bad), bad).toThrow(RangeError);
+  }
+});

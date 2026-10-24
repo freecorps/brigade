@@ -31,6 +31,17 @@ test("rows never alias the caller's objects", () => {
   expect(store.get("notes", "a")).toEqual({ id: "a", text: "one", tags: ["x"] });
 });
 
+test("update ignores keys set to undefined and clears keys set to null", () => {
+  type Nullable = { items: { id: string; text: string; note: string | null } };
+  const store = createMemoryStore<Nullable>({ items: [{ id: "a", text: "one", note: "n" }] });
+  expect(store.update("items", "a", { text: undefined, note: null })).toEqual({
+    id: "a",
+    text: "one",
+    note: null,
+  });
+  expect(store.get("items", "a")).toEqual({ id: "a", text: "one", note: null });
+});
+
 test("update cannot change a row's id", () => {
   const store = createMemoryStore<Tables>({ notes: [{ id: "a", text: "", tags: [] }] });
   store.update("notes", "a", { id: "b" } as never);

@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { v } from "../src/index.ts";
+import { clip, MAX_ECHO, MAX_ISSUES, v } from "../src/index.ts";
 
 test("string trims and checks length", () => {
   const title = v.string({ min: 1, max: 5 });
@@ -42,8 +42,83 @@ test("nested paths are dotted", () => {
   });
 });
 
-test("object ignores prototype keys", () => {
+test("object accepts only plain objects and ignores prototype keys", () => {
   const args = v.object({});
   expect(args(JSON.parse('{"__proto__": {"x": 1}}')).ok).toBe(false);
-  expect(args(Object.create({ inherited: 1 })).ok).toBe(true);
+  expect(args(Object.create(null)).ok).toBe(true);
+  expect(args(Object.create({ inherited: 1 })).ok).toBe(false);
+  expect(args(new Date(0)).ok).toBe(false);
+  expect(args(new (class Args {})()).ok).toBe(false);
+});
+
+test("single-line strings reject control, separator and bidi characters", () => {
+  const title = v.string({ min: 1, max: 50 });
+  const rejected = [
+    "\u0000",
+    "\u0007",
+    "\t",
+    "\n",
+    "\r",
+    "\u001B[31m",
+    "\u007F",
+    "\u0085",
+    "\u009F",
+    " ",
+    " ",
+    "‪",
+    "‮",
+    "⁦",
+    "⁩",
+  ];
+  for (const char of rejected) {
+    const code = char.codePointAt(0)!.toString(16);
+    expect(title(`a${char}b`), code).toEqual({
+      ok: false,
+      issues: [{ path: "", message: "Contains control or bidi characters" }],
+    });
+  }
+  // Ordinary non-Latin text, emoji and right-to-left scripts are fine.
+  for (const text of ["Falha no pagamento", "支付失败", "فشل الدفع", "🔥 checkout"]) {
+    expect(title(text)).toEqual({ ok: true, value: text });
+  }
+});
+
+test("multi-line strings allow newlines and tabs but nothing else", () => {
+  const body = v.string({ max: 50, multiline: true });
+  expect(body("a\n\tb")).toEqual({ ok: true, value: "a\n\tb" });
+  expect(body("a\r\nb").ok).toBe(false);
+  expect(body("a\u0000b").ok).toBe(false);
+  expect(body("a‮b").ok).toBe(false);
+});
+
+test("strings trim an explicit whitespace set", () => {
+  const title = v.string({ min: 1, max: 10 });
+  expect(title(" 　 x  ﻿")).toEqual({ ok: true, value: "x" });
+  // Zero-width space is not whitespace, so it is kept (and counts towards the length).
+  expect(title("​x")).toEqual({ ok: true, value: "​x" });
+  expect(title(" 　").ok).toBe(false);
+});
+
+test("absurdly long raw input is rejected before trimming", () => {
+  const title = v.string({ min: 1, max: 10 });
+  // Padding within the raw limit is trimmed away…
+  expect(title(`${" ".repeat(80)}x`)).toEqual({ ok: true, value: "x" });
+  // …but past it the input is rejected whatever it trims to.
+  expect(title(`${" ".repeat(100)}x`)).toEqual({
+    ok: false,
+    issues: [{ path: "", message: "Expected at most 10 characters" }],
+  });
+  expect(title("x".repeat(1_000_000)).ok).toBe(false);
+});
+
+test("issues are capped and echoed paths are clipped", () => {
+  const args = v.object({ name: v.string({ max: 1 }) });
+  const junk = Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`k${i}`, i]));
+  const result = args(junk);
+  expect(!result.ok && result.issues.length).toBe(MAX_ISSUES);
+
+  const long = "k".repeat(10_000);
+  const clipped = args({ [long]: 1, name: "x" });
+  expect(!clipped.ok && clipped.issues[0]!.path.length).toBe(MAX_ECHO);
+  expect(clip("short")).toBe("short");
 });

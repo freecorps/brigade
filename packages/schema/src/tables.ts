@@ -15,10 +15,23 @@ export type IncidentRow = {
   updatedAt: number;
 };
 
-/** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only; never synced to clients. */
+/** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only. */
 export type CounterRow = { id: string; value: number };
 
 export type BrigadeTables = {
   incidents: IncidentRow;
   counters: CounterRow;
 };
+
+export type TableName = Extract<keyof BrigadeTables, string>;
+
+/** Which tables reach clients. Server-only tables are never synced and no query may read them. */
+export const TABLES = {
+  incidents: { serverOnly: false },
+  counters: { serverOnly: true },
+} as const satisfies Record<TableName, { serverOnly: boolean }>;
+
+/** Tables clients may hold and queries may read. */
+export type SyncedTable = {
+  [T in TableName]: (typeof TABLES)[T]["serverOnly"] extends true ? never : T;
+}[TableName];

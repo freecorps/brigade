@@ -1,5 +1,7 @@
-// The first domain slice: WorkspaceDO's incident index (RFC 0002, 0003).
+// The first domain slice: WorkspaceDO's incident index (RFC 0002, 0003). In S3 the index is authoritative for
+// status and severity; once IncidentDO exists it owns them and this becomes an outbox-fed projection (RFC 0004).
 
+import { idTime } from "./id.ts";
 import { canTransition, INCIDENT_STATUSES, isActive, SEVERITIES } from "./lifecycle.ts";
 import type { IncidentStatus, Severity } from "./lifecycle.ts";
 import {
@@ -15,6 +17,8 @@ import type { IncidentRow } from "./tables.ts";
 import { v } from "./validate.ts";
 
 export const INCIDENT_TITLE_MAX = 200;
+/** How far the time in a client-made id may be from the server's clock. */
+export const ID_CLOCK_SKEW_MS = 10 * 60 * 1000;
 
 export type IncidentDeclared = DomainEvent<
   "incident.declared",
@@ -55,6 +59,12 @@ export const declareIncident = defineMutation({
   }),
   permission: "incident:declare",
   apply(store, args, ctx) {
+    // Ids come from clients; the server refuses ones minted far from its clock, so ids keep sorting by time.
+    if (ctx.server && Math.abs(idTime(args.id) - ctx.now) > ID_CLOCK_SKEW_MS) {
+      return fail("invalid_args", "Incident id time is too far from the server clock", [
+        { path: "id", message: "Id time is outside the allowed clock skew" },
+      ]);
+    }
     if (store.get("incidents", args.id)) return fail("conflict", "Incident already exists");
     const row: IncidentRow = {
       id: args.id,
@@ -84,6 +94,9 @@ export const setIncidentStatus = defineMutation({
   apply(store, args, ctx) {
     const incident = store.get("incidents", args.id);
     if (!incident) return fail("not_found", "Incident not found");
+    // No change is a `conflict` (as for severity): every successful mutation emits an event (RFC 0005).
+    if (incident.status === args.status)
+      return fail("conflict", `Status is already ${args.status}`);
     if (!canTransition(incident.status, args.status)) {
       return fail("invalid_transition", `Cannot move from ${incident.status} to ${args.status}`);
     }
@@ -104,7 +117,6 @@ export const setIncidentSeverity = defineMutation({
   apply(store, args, ctx) {
     const incident = store.get("incidents", args.id);
     if (!incident) return fail("not_found", "Incident not found");
-    // Every successful mutation emits an event (RFC 0005); setting the current severity changes nothing.
     if (incident.severity === args.severity) {
       return fail("conflict", `Severity is already ${args.severity}`);
     }
@@ -136,6 +148,8 @@ export const incidentById = defineQuery({
   args: v.object({ id: incidentId }),
   permission: "incident:read",
   table: "incidents",
+  // `key` reads the row directly; `filter` still tells the server whether a changed row belongs here.
+  key: (args) => args.id,
   filter: (row, args) => row.id === args.id,
 });
 

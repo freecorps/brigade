@@ -4,17 +4,20 @@
 import { can, isRole, type Permission, type Role } from "./access.ts";
 import type { Store } from "./store.ts";
 import type { BrigadeTables } from "./tables.ts";
-import type { Infer, Issue, Validator } from "./validate.ts";
+import { clip, MAX_ISSUES, type Infer, type Issue, type Validator } from "./validate.ts";
 
 export type Actor = { kind: "user" | "system" | "integration"; id: string; role: Role };
 
 export type MutationContext = {
   actor: Actor;
-  /** The clock, injected: epoch milliseconds. On the server it is the time the shard ran the mutation. */
+  /**
+   * The clock, injected: epoch milliseconds, a safe non-negative integer. On the server it is the time the shard
+   * ran the mutation; a client keeps the time of the first optimistic run for every re-apply.
+   */
   now: number;
   /**
-   * True only in the authoritative run. Server-only work (allocating `INC-n`) happens only then; clients leave
-   * those fields empty until the server's patch arrives.
+   * True only in the authoritative run. Server-only work (allocating `INC-n`, checking id clocks) happens only
+   * then; clients leave those fields empty until the server's patch arrives.
    */
   server: boolean;
 };
@@ -26,6 +29,10 @@ export type DomainEvent<Type extends string = string, Data = unknown> = {
   data: Data;
 };
 
+/**
+ * `conflict` means a well-formed request cannot apply to the current state: the id already exists, or the
+ * target value already holds (no change — for status and severity alike).
+ */
 export type MutationErrorCode =
   | "unknown_mutation"
   | "invalid_args"
@@ -72,7 +79,7 @@ export const fail = (
   issues?: Issue[],
 ): MutationResult => ({
   ok: false,
-  error: issues ? { code, message, issues } : { code, message },
+  error: issues ? { code, message, issues: issues.slice(0, MAX_ISSUES) } : { code, message },
 });
 
 export type Registry<D extends { name: string }> = { readonly [M in D as M["name"]]: M };
@@ -91,6 +98,34 @@ export function defineRegistry<const D extends readonly { name: string }[]>(
   return registry as Registry<D[number]>;
 }
 
+/** Finds `name` among the registry's own entries (never `toString`, `__proto__`, …). */
+export function lookup<D>(registry: { readonly [name: string]: D }, name: string): D | undefined {
+  return Object.prototype.hasOwnProperty.call(registry, name) ? registry[name] : undefined;
+}
+
+/** Calls the optional error hook; a failing hook must not turn a typed result into an exception. */
+export function report(
+  options: { onError?(error: unknown, name: string): void },
+  error: unknown,
+  name: string,
+): void {
+  try {
+    options.onError?.(error, name);
+  } catch {
+    // Ignored on purpose (see above).
+  }
+}
+
+export type RunMutationOptions = {
+  /**
+   * Runs inside the mutation's transaction after `apply` succeeds, with its events: the server writes them to
+   * the outbox here (RFC 0005). If it throws, every write rolls back and the result is `internal`.
+   */
+  commit?(events: DomainEvent[]): void;
+  /** Receives the cause of an `internal` error, for server logs; the result never carries it. */
+  onError?(error: unknown, name: string): void;
+};
+
 class Rollback extends Error {
   constructor(readonly result: MutationResult) {
     super("rollback");
@@ -98,9 +133,9 @@ class Rollback extends Error {
 }
 
 /**
- * Checks the actor's permission, validates `rawArgs` and runs the mutation inside `store.transaction`.
- * Nothing is written unless it succeeds. Never throws: unexpected exceptions become an `internal` error whose
- * message reveals nothing about them.
+ * Checks the actor's permission, validates `rawArgs` and runs the mutation (and `options.commit`) inside
+ * `store.transaction`. Nothing is written unless everything succeeds. Never throws: unexpected exceptions
+ * become an `internal` error whose message reveals nothing about them.
  */
 export function runMutation(
   registry: { readonly [name: string]: AnyMutation },
@@ -108,22 +143,31 @@ export function runMutation(
   rawArgs: unknown,
   store: MutationStore,
   ctx: MutationContext,
+  options: RunMutationOptions = {},
 ): MutationResult {
-  const def = Object.prototype.hasOwnProperty.call(registry, name) ? registry[name] : undefined;
-  if (!def) return fail("unknown_mutation", `Unknown mutation ${name}`);
+  const def = lookup(registry, name);
+  if (!def) return fail("unknown_mutation", `Unknown mutation ${clip(name)}`);
+  const internal = (error: unknown) => {
+    report(options, error, def.name);
+    return fail("internal", `${def.name} failed`);
+  };
+  if (!Number.isSafeInteger(ctx.now) || ctx.now < 0) {
+    return internal(new RangeError("ctx.now must be a safe non-negative integer"));
+  }
   if (!isRole(ctx.actor.role) || !can(ctx.actor.role, def.permission)) {
-    return fail("forbidden", `Not allowed to run ${name}`);
+    return fail("forbidden", `Not allowed to run ${def.name}`);
   }
   const args = def.args(rawArgs);
-  if (!args.ok) return fail("invalid_args", `Invalid arguments for ${name}`, args.issues);
+  if (!args.ok) return fail("invalid_args", `Invalid arguments for ${def.name}`, args.issues);
   try {
     return store.transaction(() => {
       const result = def.apply(store, args.value, ctx);
       if (!result.ok) throw new Rollback(result);
+      options.commit?.(result.events);
       return result;
     });
   } catch (error) {
     if (error instanceof Rollback) return error.result;
-    return fail("internal", `${name} failed`);
+    return internal(error);
   }
 }

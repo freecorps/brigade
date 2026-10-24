@@ -9,13 +9,20 @@ export interface Store<S extends Tables> {
   get<T extends keyof S & string>(table: T, id: string): S[T] | undefined;
   /** Throws `StoreError` if a row with the same id exists. */
   insert<T extends keyof S & string>(table: T, row: S[T]): S[T];
-  /** Merges `patch` into the row and returns it. Throws `StoreError` if the row does not exist. */
+  /**
+   * Merges `patch` into the row and returns it. Keys set to `undefined` are ignored (the column keeps its
+   * value); `null` clears a column. The id never changes. Throws `StoreError` if the row does not exist.
+   */
   update<T extends keyof S & string>(table: T, id: string, patch: Partial<Omit<S[T], "id">>): S[T];
   /** Returns whether a row was deleted. */
   delete<T extends keyof S & string>(table: T, id: string): boolean;
   /** Every row of the table, ordered by id. */
   scan<T extends keyof S & string>(table: T): S[T][];
-  /** Runs `fn` atomically: if it throws, every write made inside it is undone. Calls may nest. */
+  /**
+   * Runs `fn` atomically: if it throws, every write made inside it is undone and the error is rethrown.
+   * Must be re-entrant: a nested call rolls back only its own writes (SQLite: savepoints), and an outer
+   * rollback also undoes the inner, committed ones.
+   */
   transaction<R>(fn: () => R): R;
 }
 
@@ -31,6 +38,10 @@ export type MemoryStore<S extends Tables> = Store<S> & {
   dump(): { [T in keyof S]?: S[T][] };
 };
 
+/**
+ * An in-memory `Store` for clients and tests. `transaction` copies the table maps (not the rows), so it costs
+ * O(rows) per call: fine for an incident index, not for large tables.
+ */
 export function createMemoryStore<S extends Tables>(
   seed: { [T in keyof S]?: S[T][] } = {},
 ): MemoryStore<S> {
@@ -58,7 +69,8 @@ export function createMemoryStore<S extends Tables>(
       const rows = table(name);
       const row = rows.get(id);
       if (!row) throw new StoreError(`No row ${id} in ${name}`);
-      const next = { ...row, ...copy(patch), id };
+      const changes = Object.entries(patch).filter(([, value]) => value !== undefined);
+      const next = { ...row, ...copy(Object.fromEntries(changes)), id };
       rows.set(id, next);
       return copy(next) as S[typeof name];
     },

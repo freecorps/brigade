@@ -22,20 +22,20 @@ import {
   type BrigadeTables,
 } from "@freecorps/brigade-schema";
 
+const now = Date.now(); // one clock reading for the id and the mutation
 const store = createMemoryStore<BrigadeTables>();
-const id = newId("inc", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n)));
+const id = newId("inc", now, (n) => crypto.getRandomValues(new Uint8Array(n)));
 const result = runMutation(
   mutations,
   "incident.declare",
   { id, title: "Checkout is down", severity: "sev1" },
   store,
-  {
-    actor: { kind: "user", id: "usr_…", role: "responder" },
-    now: Date.now(),
-    server: false,
-  },
+  { actor: { kind: "user", id: "usr_…", role: "responder" }, now, server: false },
 );
 ```
+
+On the server, pass `{ commit(events) { /* write the outbox */ }, onError(error, name) { /* log */ } }` as the
+last argument: `commit` runs inside the mutation's transaction, and `onError` sees the cause of an `internal` error.
 
 Code in `src/` stays deterministic and free of React, DOM and Node APIs: time and randomness are always passed in.
 

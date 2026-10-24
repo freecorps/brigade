@@ -1,10 +1,13 @@
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test, vi } from "vite-plus/test";
 import {
   createMemoryStore,
   defineMutation,
   defineRegistry,
   formatIncidentNumber,
+  ID_CLOCK_SKEW_MS,
   INCIDENT_STATUSES,
+  MAX_ECHO,
+  MAX_ISSUES,
   mutations,
   newId,
   ok,
@@ -189,7 +192,8 @@ describe("incident.setStatus", () => {
         const result = run(store, "incident.setStatus", { id: ID, status: to });
         expect(result.ok, `${from} → ${to}`).toBe(allowed[from].includes(to));
         if (!result.ok) {
-          expect(result.error.code).toBe("invalid_transition");
+          // Staying put is "no change" (conflict), like setting the current severity.
+          expect(result.error.code).toBe(from === to ? "conflict" : "invalid_transition");
           expect(store.get("incidents", ID)).toEqual(incident({ status: from }));
         }
       }
@@ -380,5 +384,136 @@ describe("runMutation", () => {
     expect(() => defineRegistry([declare, declare])).toThrow(
       "Duplicate definition incident.declare",
     );
+  });
+});
+
+describe("runMutation options and guards", () => {
+  const args = { id: ID, title: "t", severity: "sev1" };
+
+  test("commit runs inside the transaction with the events", () => {
+    const store = storeWith();
+    const seen: unknown[] = [];
+    const result = runMutation(mutations, "incident.declare", args, store, ctx(), {
+      commit(events) {
+        // The mutation's rows are visible: the outbox write shares their transaction.
+        seen.push(
+          store.get("incidents", ID)?.number,
+          events.map((event) => event.type),
+        );
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(seen).toEqual([1, ["incident.declared"]]);
+  });
+
+  test("a throwing commit rolls everything back and reports the cause only to onError", () => {
+    const store = storeWith();
+    const onError = vi.fn();
+    const cause = new Error("outbox is full: secret detail");
+    const result = runMutation(mutations, "incident.declare", args, store, ctx(), {
+      commit() {
+        throw cause;
+      },
+      onError,
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: "internal", message: "incident.declare failed" },
+    });
+    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(onError).toHaveBeenCalledExactlyOnceWith(cause, "incident.declare");
+    expect(store.dump()).toEqual({});
+  });
+
+  test("commit is not called when apply fails", () => {
+    const commit = vi.fn();
+    const result = runMutation(mutations, "incident.declare", args, storeWith(incident()), ctx(), {
+      commit,
+    });
+    expect(!result.ok && result.error.code).toBe("conflict");
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  test("a throwing onError does not escape", () => {
+    const result = runMutation(mutations, "incident.declare", args, storeWith(), ctx(), {
+      commit() {
+        throw new Error("commit");
+      },
+      onError() {
+        throw new Error("logger");
+      },
+    });
+    expect(!result.ok && result.error.code).toBe("internal");
+  });
+
+  test("ctx.now must be a safe non-negative integer", () => {
+    for (const now of [-1, 1.5, Number.NaN, Infinity, 2 ** 53, "1" as unknown as number]) {
+      const store = storeWith();
+      const onError = vi.fn();
+      const result = runMutation(mutations, "incident.declare", args, store, ctx({ now }), {
+        onError,
+      });
+      expect(result, String(now)).toEqual({
+        ok: false,
+        error: { code: "internal", message: "incident.declare failed" },
+      });
+      expect(onError.mock.calls[0]![0]).toBeInstanceOf(RangeError);
+      expect(store.dump()).toEqual({});
+    }
+    expect(run(storeWith(), "incident.declare", args, ctx({ now: 0, server: false })).ok).toBe(
+      true,
+    );
+  });
+
+  test("the server rejects ids minted outside the clock skew window", () => {
+    const at = (offset: number) => ({ ...args, id: newId("inc", T + offset, byte(3)) });
+    for (const offset of [-ID_CLOCK_SKEW_MS, 0, ID_CLOCK_SKEW_MS]) {
+      expect(run(storeWith(), "incident.declare", at(offset)).ok, String(offset)).toBe(true);
+    }
+    for (const offset of [-ID_CLOCK_SKEW_MS - 1, ID_CLOCK_SKEW_MS + 1, -T]) {
+      const store = storeWith();
+      const result = run(store, "incident.declare", at(offset));
+      expect(!result.ok && result.error.code, String(offset)).toBe("invalid_args");
+      expect(!result.ok && result.error.issues).toEqual([
+        { path: "id", message: "Id time is outside the allowed clock skew" },
+      ]);
+      expect(store.dump()).toEqual({});
+    }
+    // Clients do not check: the server decides.
+    const offline = run(storeWith(), "incident.declare", at(-T), ctx({ server: false }));
+    expect(offline.ok).toBe(true);
+  });
+
+  test("echoed names are clipped and issues capped", () => {
+    const name = "x".repeat(10_000);
+    const unknown = run(storeWith(), name, {});
+    expect(!unknown.ok && unknown.error.code).toBe("unknown_mutation");
+    expect(!unknown.ok && unknown.error.message.length).toBe("Unknown mutation ".length + MAX_ECHO);
+
+    const junk = Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`k${i}`, i]));
+    const invalid = run(storeWith(), "incident.declare", junk);
+    expect(!invalid.ok && invalid.error.issues?.length).toBe(MAX_ISSUES);
+  });
+
+  test("inside an outer transaction, a rejected mutation undoes only its own writes", () => {
+    const store = storeWith(incident({ status: "declined" }));
+    store.transaction(() => {
+      store.insert("counters", { id: "outer", value: 1 });
+      const result = run(store, "incident.setStatus", { id: ID, status: "fixing" });
+      expect(!result.ok && result.error.code).toBe("invalid_transition");
+    });
+    expect(store.get("counters", "outer")).toEqual({ id: "outer", value: 1 });
+    expect(store.get("incidents", ID)).toEqual(incident({ status: "declined" }));
+  });
+
+  test("an outer rollback also undoes a mutation that succeeded inside it", () => {
+    const store = storeWith();
+    expect(() =>
+      store.transaction(() => {
+        expect(run(store, "incident.declare", args).ok).toBe(true);
+        throw new Error("outer");
+      }),
+    ).toThrow("outer");
+    expect(store.dump()).toEqual({});
   });
 });

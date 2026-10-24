@@ -2,6 +2,8 @@ import { defineConfig } from "vite-plus";
 
 export default defineConfig({
   pack: {
+    // Build from the runtime tsconfig (src only, no Node types); the package one also covers tests.
+    tsconfig: "src/tsconfig.json",
     deps: {
       // tsdown <0.23 compatibility: resolve external dependency subpaths.
       // Remove to preserve subpath imports as written (the new default).

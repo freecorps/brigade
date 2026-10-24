@@ -9,6 +9,8 @@ const RANDOM_BYTES = 10;
 export type RandomBytes = (length: number) => Uint8Array;
 
 const PREFIX = /^[a-z]{2,8}$/;
+const ULID = "[0-7][0-9A-HJKMNP-TV-Z]{25}";
+const ANY_ID = new RegExp(`^[a-z]{2,8}_${ULID}$`);
 
 function checkPrefix(prefix: string): void {
   if (!PREFIX.test(prefix)) throw new RangeError(`Invalid id prefix "${prefix}"`);
@@ -43,18 +45,17 @@ export function newId(prefix: string, now: number, random: RandomBytes): string 
   return `${prefix}_${time}${randomness}`;
 }
 
-const ULID = "[0-7][0-9A-HJKMNP-TV-Z]{25}";
-
 /** True when `value` is a canonical (upper-case) `<prefix>_<ULID>` id. */
 export function isId(prefix: string, value: unknown): value is string {
   checkPrefix(prefix);
   return typeof value === "string" && new RegExp(`^${prefix}_${ULID}$`).test(value);
 }
 
-/** Epoch milliseconds encoded in an id made by `newId`. */
+/** Epoch milliseconds encoded in a prefixed ULID. Throws `RangeError` for anything else. */
 export function idTime(id: string): number {
-  const ulid = id.slice(id.indexOf("_") + 1, id.indexOf("_") + 11);
+  if (!ANY_ID.test(id)) throw new RangeError("Not a prefixed ULID");
+  const start = id.indexOf("_") + 1;
   let time = 0;
-  for (const char of ulid) time = time * 32 + ALPHABET.indexOf(char);
+  for (const char of id.slice(start, start + 10)) time = time * 32 + ALPHABET.indexOf(char);
   return time;
 }

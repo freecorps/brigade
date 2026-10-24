@@ -1,13 +1,17 @@
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 import {
   createMemoryStore,
+  defineQuery,
+  defineRegistry,
   evaluateQuery,
+  MAX_ECHO,
   mutations,
   newId,
   queries,
   ROLES,
   runMutation,
   runQuery,
+  v,
   type BrigadeTables,
   type IncidentRow,
   type IncidentStatus,
@@ -103,4 +107,49 @@ test("filter tells which subscriptions a changed row touches", () => {
   expect(active.filter({ ...NEW, status: "resolved" }, {})).toBe(false);
   expect(queries["incident.byId"].filter(NEW, { id: NEW.id })).toBe(true);
   expect(queries["incident.byId"].filter(NEW, { id: OLD.id })).toBe(false);
+});
+
+test("incident.byId reads one row instead of scanning", () => {
+  const store = seeded();
+  const scan = vi.spyOn(store, "scan");
+  const get = vi.spyOn(store, "get");
+  expect(evaluateQuery(queries["incident.byId"], { id: NEW.id }, store)).toEqual([NEW]);
+  expect(get).toHaveBeenCalledWith("incidents", NEW.id);
+  expect(scan).not.toHaveBeenCalled();
+});
+
+test("runQuery never throws: failures become internal and the cause goes to onError", () => {
+  const broken = defineQuery({
+    name: "test.broken",
+    args: v.object({}),
+    permission: "incident:read",
+    table: "incidents",
+    filter: () => {
+      throw new Error("secret detail");
+    },
+  });
+  const onError = vi.fn();
+  const result = runQuery(defineRegistry([broken]), "test.broken", {}, seeded(), "viewer", {
+    onError,
+  });
+  expect(result).toEqual({ ok: false, error: { code: "internal", message: "test.broken failed" } });
+  expect(onError).toHaveBeenCalledOnce();
+  expect(onError.mock.calls[0]![1]).toBe("test.broken");
+});
+
+test("unknown query names are clipped", () => {
+  const result = runQuery(queries, "q".repeat(5_000), {}, seeded(), "viewer");
+  expect(!result.ok && result.error.message.length).toBe("Unknown query ".length + MAX_ECHO);
+});
+
+test("server-only tables cannot be queried", () => {
+  expect(() =>
+    defineQuery({
+      name: "test.counters",
+      args: v.object({}),
+      permission: "incident:read",
+      table: "counters" as never,
+      filter: () => true,
+    }),
+  ).toThrow("Query test.counters reads server-only table counters");
 });

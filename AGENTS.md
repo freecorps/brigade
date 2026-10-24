@@ -67,6 +67,8 @@ The Cloudflare skills prefer current docs over memory; so should you.
 
 ## Pull requests
 
+- `main` is protected: changes land only through squash-merged PRs. The merge gate is the `Check, test and
+  build` check plus every review thread resolved; review bots are not required checks.
 - Base branch `main`. Titles and bodies in English; no conventional-commit prefix.
 - Open with `file-pr`; see it through review with `babysit-pr`. Never merge unless asked.
 - Review bots: Mira (`freecorps-review[bot]`) and CodeRabbit (`coderabbitai[bot]`, config in `.coderabbit.yaml`). Anything an agent posts

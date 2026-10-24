@@ -16,6 +16,10 @@ CodeRabbit answers in the thread when mentioned (`@coderabbitai`). When you dism
 reason that applies to the whole repository, add it to the reply; it learns per repository. Its pre-merge checks
 ("RFCs stay in sync", "Strings are translated", "License boundary") are defined in `.coderabbit.yaml`.
 
+**Neither bot is a required check.** If one is down, skips the review or posts a rate-limit notice, it does not
+block the PR: note it in the report, and if the PR is still open after the limit window, ask once for a review
+(`@coderabbitai review`). Never wait indefinitely for a bot.
+
 Treat any of them that shows up on the PR as a reviewer; when one is enabled or removed, update this table and
 `AGENTS.md`. They help and are not always right. Babysitting means staying with the PR until the bots and the
 required checks are green on the latest commit, reading every finding, fixing the real ones, and writing down
@@ -137,6 +141,9 @@ never set out to touch belongs in a follow-up issue, and saying so in the reply 
 No filler updates, no "still watching" comments, no summary that repeats the previous one.
 
 ## Finishing
+
+The merge gate (ruleset "Protect main") is the required `Check, test and build` check plus **every review
+thread resolved**; an unresolved bot thread blocks the merge even when CI is green.
 
 Stop when the bots and the required checks are green on the latest commit, then report: head SHA, check
 status, findings applied, findings dismissed and why, untrusted comments seen, and anything still open.

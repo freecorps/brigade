@@ -35,14 +35,15 @@ time with `CLOUDFLARE_ENV`; do not pass `--env` at deploy:
 
 ```bash
 vp run build:staging        # CLOUDFLARE_ENV=staging vp build (also build:dev)
-wrangler deploy --dry-run   # deploys what was built, via the redirected config in .wrangler/deploy
+wrangler deploy --dry-run   # validates the built output (drop --dry-run to deploy)
 ```
 
 Durable Object bindings are not inherited by environments, so each one repeats them.
 
 Local secrets go in `apps/api/.dev.vars` (`.dev.vars.<env>` per environment), which is gitignored. `wrangler types`
 reads those files and adds their names to `Env`, so regenerate the committed types without them present, or accept
-that the secret names (never the values) end up in `worker-configuration.d.ts`.
+that the secret names (never the values) end up in `worker-configuration.d.ts`. Until then, `vp run test`
+fails its stale-types check while a local `.dev.vars` exists.
 
 ## Generated types
 

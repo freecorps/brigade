@@ -38,3 +38,4 @@ test-results/
 # Wrangler and Cloudflare Vite plugin local state and secrets
 .wrangler
 .dev.vars*
+!.dev.vars.example

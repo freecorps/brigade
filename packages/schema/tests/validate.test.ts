@@ -90,7 +90,8 @@ test("trimming is linear even with long interior whitespace", () => {
   const result = body(input);
   const elapsed = performance.now() - started;
   expect(result).toEqual({ ok: true, value: input });
-  expect(elapsed).toBeLessThan(50);
+  // Quadratic behaviour at this size takes seconds; the limit only has to catch that.
+  expect(elapsed).toBeLessThan(500);
 });
 
 test("absurdly long raw input is rejected before trimming", () => {

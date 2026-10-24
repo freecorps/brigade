@@ -323,6 +323,11 @@ server → client
     closes the socket with 1011 too: a lost frame would make the next patch claim a version the socket never fully
     got.
   - `rotateEpoch()` closes every socket with 1012.
+  - Whenever the shard closes a socket, it first marks the socket's attachment closed. Frames the client had
+    already sent still reach the shard after the close; they are dropped unread (also when the socket is no
+    longer open), never run. Otherwise a `mutate` queued behind one that failed on storage would run out of order,
+    and its failure (say `not_found`) would be stored and replayed to the client; instead the client re-sends
+    both, in order, on its next socket.
 - **Dev only, until auth:** every socket acts as `{ kind: "user", id: "usr_dev", role: "responder" }`
   (`DEV_ACTOR`), and only where the `SYNC_DEV_ACTOR` variable is `"1"`: the `dev` environment in
   `apps/api/wrangler.jsonc`, and local runs (`vp dev` and the tests set it in their Vite configs, never in a

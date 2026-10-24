@@ -83,6 +83,8 @@ export type SocketState = {
   clientId: string | null;
   /** An array, not an object keyed by subId: `__proto__` is a valid subId. */
   subs: Subscription[];
+  /** Set when the shard closes the socket: frames already queued behind the close are dropped unread. */
+  closed?: true;
 };
 
 /** Largest frame the shard reads at all, to salvage the id of a refused `subscribe` or `mutate`. */
@@ -181,7 +183,12 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   private receive(ws: WebSocket, data: string | ArrayBuffer): void {
+    // Frames the client sent before the shard closed this socket still arrive here. Handling them would run them
+    // out of order (a mutate that depends on one whose storage failed), so they are dropped unread: the client
+    // replays everything unconfirmed, in order, on its next socket.
+    if (ws.readyState !== WebSocket.OPEN) return;
     const state = ws.deserializeAttachment() as SocketState | null;
+    if (state?.closed) return;
     if (!state) {
       close(ws, CLOSE_INTERNAL_ERROR, "no socket state");
       return;
@@ -457,7 +464,19 @@ function salvage(data: unknown): { subId: string } | { mutationId: string } | un
   return undefined;
 }
 
+/**
+ * Every close the shard makes goes through here: the attachment is marked closed first, so `receive` drops the
+ * frames still queued behind the close (see there), then the socket closes.
+ */
 function close(ws: WebSocket, code: number, reason: string): void {
+  try {
+    const state = ws.deserializeAttachment() as SocketState | null;
+    if (state && typeof state === "object" && !state.closed) {
+      ws.serializeAttachment({ ...state, closed: true });
+    }
+  } catch {
+    // An unreadable attachment or a socket already gone: `readyState` still stops later frames.
+  }
   try {
     ws.close(code, reason);
   } catch {

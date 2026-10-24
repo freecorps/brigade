@@ -62,7 +62,8 @@ synchronous, so frames are handled strictly in arrival order. The details and th
   `subId`, which also drops a subscription with that subId, or a failed `mutationResult`) and the socket stays
   open, as for any refused subscription. Unexpected failures, and a `send` that throws, are logged as one JSON line
   (`console.error`), answered with `error { code: "internal" }` when possible, and close the socket with 1011; the
-  client reconnects and replays.
+  client reconnects and replays. Frames still queued on a socket the shard closed are dropped unread, so nothing runs
+  out of order before the replay.
 
 ## Run it
 

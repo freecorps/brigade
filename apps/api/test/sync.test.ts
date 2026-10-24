@@ -556,6 +556,62 @@ describe("GET /sync/:workspaceId", () => {
     });
   });
 
+  test("frames queued behind a close are dropped: a dependent mutate never runs out of order", async () => {
+    const ws = workspace();
+    const sql = (query: string) =>
+      runInDurableObject(env.WORKSPACE.getByName(ws), (_instance, state) => {
+        state.storage.sql.exec(query);
+      });
+    await sql(`create trigger no_outbox before insert on outbox
+               begin select raise(abort, 'outbox unavailable'); end`);
+    const id = incidentId();
+    const first = declare(id);
+    const second = {
+      type: "mutate",
+      mutationId: `sev-${id}`,
+      name: "incident.setSeverity",
+      args: { id, severity: "sev1" },
+    };
+    // Sent back to back: the second is already queued when the first fails on storage and the shard closes.
+    const a = (await connect(ws)).hello("client-queued");
+    a.send(first);
+    a.send(second);
+    expect(await a.next()).toEqual({ type: "error", code: "internal", message: "Internal error" });
+    expect(await a.closed).toMatchObject({ code: 1011 });
+    expect(a.frames).toHaveLength(1);
+    const results = () =>
+      runInDurableObject(env.WORKSPACE.getByName(ws), (_instance, state) =>
+        state.storage.sql
+          .exec<{ mutation_id: string; result: string }>(
+            "select mutation_id, result from mutation_results order by mutation_id",
+          )
+          .toArray(),
+      );
+    // Neither ran: the dependent one did not fail with not_found and get stored.
+    expect(await results()).toEqual([]);
+
+    await sql("drop trigger no_outbox");
+    const b = (await connect(ws)).hello("client-queued");
+    b.send(first);
+    b.send(second);
+    expect(await b.next()).toMatchObject({ type: "mutationResult", ok: true, version: 1 });
+    expect(await b.next()).toEqual(emptyPatch(1));
+    expect(await b.next()).toMatchObject({ type: "mutationResult", ok: true, version: 2 });
+    expect(await b.next()).toEqual(emptyPatch(2));
+    // The second ran exactly once: one stored result, one status event, version 2.
+    expect((await results()).map((row) => row.mutation_id).sort()).toEqual(
+      [first.mutationId, second.mutationId].sort(),
+    );
+    await runInDurableObject(env.WORKSPACE.getByName(ws), (_instance, state) => {
+      const events = state.storage.sql
+        .exec<{ event: string }>("select event from outbox order by seq")
+        .toArray()
+        .map((row) => (JSON.parse(row.event) as { type: string }).type);
+      expect(events).toEqual(["incident.declared", "incident.severity_changed"]);
+    });
+    expect(await b.drain()).toEqual([]);
+  });
+
   test("a failure patching one socket closes that socket alone; the others get the patch", async () => {
     const ws = workspace();
     const a = (await connect(ws)).hello("client-a");

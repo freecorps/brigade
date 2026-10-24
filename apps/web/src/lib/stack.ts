@@ -43,6 +43,14 @@ export function parseWorkspace(body: unknown): WorkspaceInfo | undefined {
   return { workspace, tables, databaseSize };
 }
 
+/**
+ * True when the API Worker itself answered, even with an error (an HTTP status or a body it should not
+ * send): the fix is in its logs, not in starting the stack.
+ */
+export function apiAnswered(health: CheckResult<unknown>): boolean {
+  return health.ok || health.reason === "http" || health.reason === "invalid";
+}
+
 /** The API Worker is down when /health fails; the DO is down when only the workspace call fails. */
 export function verdict(report: Pick<StackReport, "health" | "workspace">): StackVerdict {
   if (!report.health.ok) return "api-down";
@@ -53,16 +61,22 @@ export async function check<T>(
   fetcher: typeof fetch,
   path: string,
   parse: (body: unknown) => T | undefined,
-  { timeoutMs = CHECK_TIMEOUT_MS, now = () => performance.now() } = {},
+  {
+    timeoutMs = CHECK_TIMEOUT_MS,
+    now = () => performance.now(),
+    signal,
+  }: { timeoutMs?: number; now?: () => number; signal?: AbortSignal } = {},
 ): Promise<CheckResult<T>> {
   const started = now();
   const elapsed = () => Math.round(now() - started);
-  const signal = AbortSignal.timeout(timeoutMs);
+  const timeout = AbortSignal.timeout(timeoutMs);
+  // The caller's signal cancels the request too (the page unmounting, a newer check starting).
+  const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let response: Response;
   try {
-    response = await fetcher(path, { signal, headers: { accept: "application/json" } });
+    response = await fetcher(path, { signal: combined, headers: { accept: "application/json" } });
   } catch {
-    return { ok: false, ms: elapsed(), reason: signal.aborted ? "timeout" : "network" };
+    return { ok: false, ms: elapsed(), reason: timeout.aborted ? "timeout" : "network" };
   }
   let body: unknown;
   try {
@@ -83,10 +97,13 @@ export async function check<T>(
     : { ok: true, data, ms: elapsed() };
 }
 
-export async function checkStack(fetcher: typeof fetch = fetch): Promise<StackReport> {
+export async function checkStack(
+  fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<StackReport> {
   const [health, workspace] = await Promise.all([
-    check(fetcher, "/api/health", parseHealth),
-    check(fetcher, `/api/workspaces/${DEMO_WORKSPACE}`, parseWorkspace),
+    check(fetcher, "/api/health", parseHealth, { signal }),
+    check(fetcher, `/api/workspaces/${DEMO_WORKSPACE}`, parseWorkspace, { signal }),
   ]);
   return { health, workspace, checkedAt: new Date() };
 }

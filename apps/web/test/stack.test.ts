@@ -1,5 +1,12 @@
 import { describe, expect, test } from "vite-plus/test";
-import { check, checkStack, parseHealth, parseWorkspace, verdict } from "../src/lib/stack.ts";
+import {
+  apiAnswered,
+  check,
+  checkStack,
+  parseHealth,
+  parseWorkspace,
+  verdict,
+} from "../src/lib/stack.ts";
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 
@@ -73,5 +80,32 @@ describe("stack check", () => {
     );
     const workspace = { workspace: "demo", tables: 0, databaseSize: 0 };
     expect(verdict({ ...report, workspace: { ok: true, ms: 1, data: workspace } })).toBe("ok");
+  });
+
+  test("an aborted check cancels its requests", async () => {
+    const seen: (AbortSignal | null | undefined)[] = [];
+    const hang: typeof fetch = (_input, init) => {
+      seen.push(init?.signal);
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("", "AbortError")));
+      });
+    };
+    const controller = new AbortController();
+    const pending = checkStack(hang, controller.signal);
+    controller.abort();
+    const report = await pending;
+    expect(seen).toHaveLength(2);
+    expect(seen.every((signal) => signal?.aborted)).toBe(true);
+    // Cancelled, not timed out (the provider drops the result anyway).
+    expect(report.health).toMatchObject({ ok: false, reason: "network" });
+  });
+
+  test("tells an API that answered with an error from one that is not there", () => {
+    expect(apiAnswered({ ok: true, ms: 1, data: true })).toBe(true);
+    expect(apiAnswered({ ok: false, ms: 1, reason: "http", status: 500 })).toBe(true);
+    expect(apiAnswered({ ok: false, ms: 1, reason: "invalid" })).toBe(true);
+    for (const reason of ["network", "timeout", "unreachable"] as const) {
+      expect(apiAnswered({ ok: false, ms: 1, reason }), reason).toBe(false);
+    }
   });
 });

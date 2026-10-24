@@ -34,16 +34,16 @@ export function StackStatusProvider({ children }: { children: ReactNode }) {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    let current = true;
+    // Aborted on cleanup: unmounting (or StrictMode's second run in dev) cancels the requests in
+    // flight, and their results are dropped.
+    const controller = new AbortController();
     setChecking(true);
-    void checkStack().then((next) => {
-      if (!current) return;
+    void checkStack(fetch, controller.signal).then((next) => {
+      if (controller.signal.aborted) return;
       setReport(next);
       setChecking(false);
     });
-    return () => {
-      current = false;
-    };
+    return () => controller.abort();
   }, [run]);
 
   const recheck = useCallback(() => setRun((count) => count + 1), []);

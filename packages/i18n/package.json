@@ -19,12 +19,27 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./dist/index.mjs",
-    "./labels": "./dist/labels.mjs",
-    "./messages": "./dist/messages.mjs",
+    ".": {
+      "@freecorps/source": "./src/index.ts",
+      "default": "./dist/index.mjs"
+    },
+    "./labels": {
+      "@freecorps/source": "./src/labels.ts",
+      "default": "./dist/labels.mjs"
+    },
+    "./messages": {
+      "@freecorps/source": "./src/messages.ts",
+      "default": "./dist/messages.mjs"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
+    "exports": {
+      ".": "./dist/index.mjs",
+      "./labels": "./dist/labels.mjs",
+      "./messages": "./dist/messages.mjs",
+      "./package.json": "./package.json"
+    },
     "access": "public"
   },
   "scripts": {

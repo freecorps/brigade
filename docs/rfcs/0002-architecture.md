@@ -66,6 +66,13 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
 - **Task runner: Vite Task (`vp run`), not Turborepo.** Vite+ ships a workspace-aware task runner with caching,
   `dependsOn` and pnpm-style `--filter`. Adding Turborepo on top would duplicate it. Revisit if we need
   remote caching beyond the GitHub Actions cache that Vite+ supports.
+- **Workspace packages resolve from source.** `vp pack` (`exports.devExports`) writes a `@freecorps/source`
+  condition to the TS entry in each package's `exports` and the `dist`-only map to `publishConfig.exports`.
+  Consumers opt in with `"customConditions": ["@freecorps/source"]` in tsconfig and the `workspaceSource()`
+  plugin from the root `vite.workspace.ts` in `vite.config.ts`, so check, tests and `vp dev` never need a
+  package built. We publish with Bun (it resolves `catalog:` and `workspace:`). Whether or not the
+  publisher applies `publishConfig.exports`, the dev map sits under a condition no outside consumer enables, so
+  it is harmless.
 - **No Next.js.** Dashboard is a client-rendered SPA on Workers static assets; the public site is prerendered.
 - **Web dashboard:** React + TanStack Router + shadcn/ui.
 - **Site and docs:** Fumadocs on TanStack Start (Vite-based), prerendered, i18n per locale (RFC 0008).

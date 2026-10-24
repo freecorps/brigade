@@ -106,5 +106,5 @@ tasks so compilation always runs first; a test recompiles in memory and fails wh
 from the message sources.
 
 `src` is type-checked without Node types (`src/tsconfig.json`, used by `vp check` and the declaration
-build); scripts and tests use `tsconfig.json`. Tests import `@freecorps/brigade-schema` from its sources
-(alias in `vite.config.ts`, paths in `tsconfig.json`), so they do not need schema built first.
+build); scripts and tests use `tsconfig.json`. Tests import `@freecorps/brigade-schema` from its sources through
+the `@freecorps/source` export condition (RFC 0002, Tooling decisions), so they do not need schema built first.

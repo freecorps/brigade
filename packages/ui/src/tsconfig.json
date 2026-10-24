@@ -2,8 +2,7 @@
   // Runtime code: no Node types, so a Node-only API here fails the type check.
   "extends": "../tsconfig.json",
   "compilerOptions": {
-    "types": [],
-    "paths": {}
+    "types": []
   },
   "include": ["."]
 }

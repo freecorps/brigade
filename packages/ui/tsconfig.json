@@ -16,7 +16,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    // Tests read schema from source so they do not need it built (see test.alias in vite.config.ts).
-    "paths": { "@freecorps/brigade-schema": ["../schema/src/index.ts"] }
+    // Resolve workspace packages to their TS source (the `@freecorps/source` export condition).
+    "customConditions": ["@freecorps/source"]
   }
 }

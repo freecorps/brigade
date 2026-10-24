@@ -35,6 +35,7 @@ with `vpx <file>`, not tsx. Docs: `node_modules/vite-plus/docs` or https://vitep
 - **Paging paths have a fallback and a test.** A change that can stop someone from being paged needs both.
 - **English** for code, docs, commits and PRs. User-facing strings go through `packages/i18n` (Paraglide)
   with `en` and `pt-BR` filled in (RFC 0008).
+- **Importing a workspace package** needs `workspaceSource()` (`vite.workspace.ts`) and `customConditions: ["@freecorps/source"]` (RFC 0002).
 - **`packages/*` stay MIT and framework-light**: no app code, no AGPL imports.
 - Changing a decision updates its RFC or `docs/open-questions.md` in the same PR.
 - No secrets, internal hostnames or real incident data in code, fixtures, screenshots or comments.

@@ -74,9 +74,10 @@ runQuery(queries, name, rawArgs, store, role, { onError? }) // → { ok: true, r
   (`TABLES`); they are never synced, and `defineQuery` refuses them.
 - **Client-generated ids**: the client makes the prefixed ULID (`newId("inc", now, randomBytes)`) and passes it in
   the args, so the optimistic row and the server row share one id. The server checks the format (`isId`), rejects
-  an existing id with `conflict`, and rejects an id whose time is more than 10 minutes from its clock
-  (`invalid_args`), so ids keep sorting by creation time. A declare queued offline for longer than that is rejected
-  and must be re-issued with a fresh id; revisit when the offline queue lands.
+  an existing id with `conflict`, and rejects an id dated more than 10 minutes in the future of its clock
+  (`invalid_args`), so a bad clock cannot pin an incident above newer ones. Any past id time is accepted:
+  declaring an incident must never fail because the phone was offline. The row's `declaredAt` is the server's
+  `now`, so an old id only affects id order, never the incident's dates.
 - **Shard names never come from a client-chosen id alone.** A shard is named from the workspace id and the
   entity id (`${workspaceId}:${incidentId}`), and the Worker checks that the entity belongs to the caller's
   workspace (the `WorkspaceDO` index) before routing. Client-generated ids make this mandatory: otherwise a client

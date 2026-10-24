@@ -465,23 +465,36 @@ describe("runMutation options and guards", () => {
     );
   });
 
-  test("the server rejects ids minted outside the clock skew window", () => {
+  test("the server accepts ids from any past time, so an offline declare never fails", () => {
     const at = (offset: number) => ({ ...args, id: newId("inc", T + offset, byte(3)) });
-    for (const offset of [-ID_CLOCK_SKEW_MS, 0, ID_CLOCK_SKEW_MS]) {
-      expect(run(storeWith(), "incident.declare", at(offset)).ok, String(offset)).toBe(true);
+    const DAY = 24 * 60 * 60 * 1000;
+    for (const offset of [-T, -30 * DAY, -DAY, -ID_CLOCK_SKEW_MS - 1, 0, ID_CLOCK_SKEW_MS]) {
+      const store = storeWith();
+      expect(run(store, "incident.declare", at(offset)).ok, String(offset)).toBe(true);
+      // The row is dated by the server's clock, not the id's.
+      expect(store.get("incidents", at(offset).id)?.declaredAt).toBe(T);
     }
-    for (const offset of [-ID_CLOCK_SKEW_MS - 1, ID_CLOCK_SKEW_MS + 1, -T]) {
+  });
+
+  test("the server rejects ids dated more than the skew into its future", () => {
+    const at = (offset: number) => ({ ...args, id: newId("inc", T + offset, byte(3)) });
+    for (const offset of [ID_CLOCK_SKEW_MS + 1, 365 * 24 * 60 * 60 * 1000]) {
       const store = storeWith();
       const result = run(store, "incident.declare", at(offset));
       expect(!result.ok && result.error.code, String(offset)).toBe("invalid_args");
       expect(!result.ok && result.error.issues).toEqual([
-        { path: "id", message: "Id time is outside the allowed clock skew" },
+        { path: "id", message: "Id time is too far in the future" },
       ]);
       expect(store.dump()).toEqual({});
     }
     // Clients do not check: the server decides.
-    const offline = run(storeWith(), "incident.declare", at(-T), ctx({ server: false }));
-    expect(offline.ok).toBe(true);
+    const ahead = run(
+      storeWith(),
+      "incident.declare",
+      at(ID_CLOCK_SKEW_MS + 1),
+      ctx({ server: false }),
+    );
+    expect(ahead.ok).toBe(true);
   });
 
   test("echoed names are clipped and issues capped", () => {

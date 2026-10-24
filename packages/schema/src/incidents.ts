@@ -17,7 +17,7 @@ import type { IncidentRow } from "./tables.ts";
 import { v } from "./validate.ts";
 
 export const INCIDENT_TITLE_MAX = 200;
-/** How far the time in a client-made id may be from the server's clock. */
+/** How far into the future of the server's clock the time in a client-made id may be. */
 export const ID_CLOCK_SKEW_MS = 10 * 60 * 1000;
 
 export type IncidentDeclared = DomainEvent<
@@ -59,10 +59,11 @@ export const declareIncident = defineMutation({
   }),
   permission: "incident:declare",
   apply(store, args, ctx) {
-    // Ids come from clients; the server refuses ones minted far from its clock, so ids keep sorting by time.
-    if (ctx.server && Math.abs(idTime(args.id) - ctx.now) > ID_CLOCK_SKEW_MS) {
-      return fail("invalid_args", "Incident id time is too far from the server clock", [
-        { path: "id", message: "Id time is outside the allowed clock skew" },
+    // Ids come from clients. Any past time is fine: a declare queued on an offline phone must never fail.
+    // Only ids dated well into the future are refused, so a bad clock cannot pin an incident above newer ones.
+    if (ctx.server && idTime(args.id) - ctx.now > ID_CLOCK_SKEW_MS) {
+      return fail("invalid_args", "Incident id time is ahead of the server clock", [
+        { path: "id", message: "Id time is too far in the future" },
       ]);
     }
     if (store.get("incidents", args.id)) return fail("conflict", "Incident already exists");

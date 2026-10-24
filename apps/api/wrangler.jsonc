@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "brigade-api",
+  "main": "./src/index.ts",
+  "compatibility_date": "2026-10-24",
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true },
+  },
+  "upload_source_maps": true,
+  "durable_objects": {
+    "bindings": [{ "name": "WORKSPACE", "class_name": "WorkspaceDO" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WorkspaceDO"] }],
+  // Durable Object bindings are not inherited, so each environment repeats them.
+  "env": {
+    "dev": {
+      "durable_objects": {
+        "bindings": [{ "name": "WORKSPACE", "class_name": "WorkspaceDO" }],
+      },
+    },
+    "staging": {
+      "durable_objects": {
+        "bindings": [{ "name": "WORKSPACE", "class_name": "WorkspaceDO" }],
+      },
+    },
+  },
+}

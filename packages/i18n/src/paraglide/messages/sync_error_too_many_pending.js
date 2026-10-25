@@ -10,7 +10,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 /**
 * | output |
 * | --- |
-* | "Too many changes are waiting to be sent. Try again once you're back online." |
+* | "Wait for the pending changes to be sent, then try again." |
 *
 * @param {Sync_Error_Too_Many_PendingInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options
@@ -19,6 +19,6 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 export const sync_error_too_many_pending = /** @type {((inputs?: Sync_Error_Too_Many_PendingInputs, options?: { locale?: "en" | "pt-BR" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Sync_Error_Too_Many_PendingInputs, { locale?: "en" | "pt-BR" }, {}>} */ ((inputs = {}, options = {}) => {
 	void inputs;
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
-	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("Há alterações demais esperando envio. Tente de novo quando estiver online.")
-	return /** @type {LocalizedString} */ ("Too many changes are waiting to be sent. Try again once you're back online.")
+	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("Espere as alterações pendentes serem enviadas e tente de novo.")
+	return /** @type {LocalizedString} */ ("Wait for the pending changes to be sent, then try again.")
 });

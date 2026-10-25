@@ -5,7 +5,7 @@ export type Sync_Error_Too_Many_PendingInputs = {};
 /**
 * | output |
 * | --- |
-* | "Too many changes are waiting to be sent. Try again once you're back online." |
+* | "Wait for the pending changes to be sent, then try again." |
 *
 * @param {Sync_Error_Too_Many_PendingInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

@@ -19,6 +19,6 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 export const incident_not_sent = /** @type {((inputs?: Incident_Not_SentInputs, options?: { locale?: "en" | "pt-BR" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Incident_Not_SentInputs, { locale?: "en" | "pt-BR" }, {}>} */ ((inputs = {}, options = {}) => {
 	void inputs;
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
-	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("Não enviado")
+	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("Pendente")
 	return /** @type {LocalizedString} */ ("Not sent")
 });

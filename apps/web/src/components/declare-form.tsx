@@ -39,7 +39,8 @@ export function DeclareForm({
   const [expanded, setExpanded] = useState(false);
   const [title, setTitle] = useState("");
   const [severity, setSeverity] = useState<Severity>("sev3");
-  const [invalid, setInvalid] = useState(false);
+  /** Why the title was refused locally, and on which submit (a repeat re-mounts the alert so it is read again). */
+  const [invalid, setInvalid] = useState<{ empty: boolean; attempt: number } | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
@@ -62,18 +63,23 @@ export function DeclareForm({
     event.preventDefault();
     const checked = checkDeclare(client.newId("inc"), title, severity);
     if (!checked.ok) {
-      setInvalid(true);
+      setInvalid((current) => ({ empty: title === "", attempt: (current?.attempt ?? 0) + 1 }));
       titleRef.current?.focus();
       return;
     }
-    setInvalid(false);
+    setInvalid(null);
     const typed = title;
     setTitle("");
+    // Back to the default each time, so a SEV1 chosen once cannot page people again by accident.
+    setSeverity("sev3");
     close();
     void onDeclare(checked.args).then((notice) => {
-      // The shard found the title invalid after all: give the text back, unless something new was typed. Not
-      // for a clock refusal: the title was fine, and the notice says to fix the clock.
-      if (titleRefused(notice)) setTitle((current) => (current === "" ? typed : current));
+      // The shard found the title invalid after all: give the text back (opening the form again on a phone),
+      // unless something new was typed. Not for a clock refusal: the title was fine, and the notice says why.
+      if (titleRefused(notice)) {
+        setExpanded(true);
+        setTitle((current) => (current === "" ? typed : current));
+      }
     });
   };
 
@@ -107,25 +113,26 @@ export function DeclareForm({
           value={title}
           onChange={(event) => {
             setTitle(event.target.value);
-            if (invalid) setInvalid(false);
+            if (invalid) setInvalid(null);
           }}
           maxLength={INCIDENT_TITLE_MAX}
           placeholder={m.declare_title_placeholder()}
           autoComplete="off"
           enterKeyHint="send"
-          aria-invalid={invalid}
+          aria-invalid={invalid !== null}
           aria-describedby={invalid ? errorId : undefined}
           // 16px: iOS zooms into smaller inputs.
           className="h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive/40 md:col-start-1 md:row-start-2"
         />
         {invalid ? (
           <p
+            key={invalid.attempt}
             id={errorId}
             role="alert"
             className="flex items-start gap-1.5 text-sm text-destructive md:col-start-1 md:row-start-3"
           >
             <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
-            {m.declare_title_invalid()}
+            {invalid.empty ? m.declare_title_empty() : m.declare_title_invalid()}
           </p>
         ) : null}
         <span
@@ -163,7 +170,11 @@ export function DeclareForm({
                   className="sr-only"
                 />
                 <span className="flex items-center gap-0.5 font-bold">
-                  {selected ? <CheckIcon aria-hidden className="size-3 shrink-0" /> : null}
+                  {/* Always there, so choosing a segment never changes its width. */}
+                  <CheckIcon
+                    aria-hidden
+                    className={cn("size-3 shrink-0", !selected && "invisible")}
+                  />
                   {option.toUpperCase()}
                 </span>
                 <span className="whitespace-nowrap">{severityLabels[option]()}</span>

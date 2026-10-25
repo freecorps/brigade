@@ -1,10 +1,5 @@
 import { m } from "@freecorps/brigade-i18n";
-import {
-  isActive,
-  type IncidentRow,
-  type IncidentStatus,
-  type Severity,
-} from "@freecorps/brigade-schema";
+import type { IncidentRow, IncidentStatus, Severity } from "@freecorps/brigade-schema";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { useConnectionState, useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { cn } from "cn";
@@ -24,9 +19,8 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type ReactNode,
+  type FocusEvent,
 } from "react";
-import { flushSync } from "react-dom";
 import { DeclareForm } from "@/components/declare-form";
 import { IncidentItem } from "@/components/incident-item";
 import { usePreferences } from "@/components/preferences";
@@ -37,6 +31,7 @@ import {
   adjustBusy,
   nextFailed,
   noticeFor,
+  noticeSubject,
   noticeText,
   queryErrorReason,
   syncView,
@@ -48,8 +43,11 @@ import {
 
 const DEV_COMMAND = "vp run dev";
 
-/** How long an announcement stays in the live region: long enough to be read, then cleared. */
-const ANNOUNCE_MS = 5000;
+/** How long an announcement stays in the live region: long enough to be read, then removed. */
+export const ANNOUNCE_MS = 5000;
+
+/** At most this many refused-change notices are kept; the oldest goes first. */
+const MAX_NOTICES = 5;
 
 /**
  * The workspace's active incidents, live from its shard (`useQuery("incidents.active")`), with declare and the
@@ -72,9 +70,14 @@ export function IncidentsCard() {
   // Kept here, not in the rows: a refused move to Resolved brings back a row that had left the list.
   const [notices, setNotices] = useState<Notice[]>([]);
   const [busy, setBusy] = useState<ReadonlyMap<string, number>>(new Map());
-  // Set only when a notice is added, and cleared once read: a dismiss or a re-render never repeats it, and the
-  // same failure twice is read twice (a new key re-mounts the text).
-  const [announcement, setAnnouncement] = useState<Notice | null>(null);
+  // Each new notice is read once, in the card's wording, and leaves the live region after ANNOUNCE_MS: never
+  // on a dismiss or a re-render, and refusals landing together are all read.
+  const [announcements, setAnnouncements] = useState<Notice[]>([]);
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  useEffect(() => {
+    const pending = timers.current;
+    return () => pending.forEach(clearTimeout);
+  }, []);
   const nextKey = useRef(0);
   const track = useCallback(
     (outcome: Promise<MutationOutcome>, target: NoticeTarget, field?: "status" | "severity") => {
@@ -86,19 +89,19 @@ export function IncidentsCard() {
         setBusy((current) => adjustBusy(current, keys, -1));
         const notice = noticeFor(result, target, `n${nextKey.current++}`);
         if (notice) {
-          setNotices((current) => [...current, notice].slice(-5));
-          setAnnouncement(notice);
+          setNotices((current) => [...current, notice].slice(-MAX_NOTICES));
+          setAnnouncements((current) => [...current, notice]);
+          const timer = setTimeout(() => {
+            timers.current.delete(timer);
+            setAnnouncements((current) => current.filter((item) => item.key !== notice.key));
+          }, ANNOUNCE_MS);
+          timers.current.add(timer);
         }
         return notice;
       });
     },
     [],
   );
-  useEffect(() => {
-    if (!announcement) return;
-    const timer = setTimeout(() => setAnnouncement(null), ANNOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [announcement]);
 
   const target = (row: IncidentRow, kind: "status" | "severity", to: string): NoticeTarget => ({
     kind,
@@ -107,21 +110,14 @@ export function IncidentsCard() {
     title: row.title,
     to: to as IncidentStatus | Severity,
   });
-
-  // A status that takes a row off the list hands focus to the next row's status menu, else the previous one's,
-  // else the heading, instead of dropping it on <body>. It waits for that row to actually leave: a change the
-  // client refuses up front (too many pending, closed) never removes it, and is forgotten when it resolves.
-  const leaving = useRef<{ id: string; next: string | null } | null>(null);
   const onStatus = (row: IncidentRow, next: IncidentStatus) => {
-    if (!isActive(next)) {
-      const index = rows.findIndex((r) => r.id === row.id);
-      leaving.current = { id: row.id, next: (rows[index + 1] ?? rows[index - 1])?.id ?? null };
-    }
-    void track(setStatus({ id: row.id, status: next }), target(row, "status", next), "status").then(
-      () => {
-        if (leaving.current?.id === row.id) leaving.current = null;
-      },
+    // The closing menu gives focus back to this trigger, focused by a click or not (Safari does not focus
+    // buttons on click): if the change takes the row away, its neighbour gets it instead.
+    const trigger = cardRef.current?.querySelector<HTMLElement>(
+      `[data-status-trigger="${row.id}"]`,
     );
+    if (trigger) focused.current = { element: trigger, fallbacks: plan(trigger) };
+    void track(setStatus({ id: row.id, status: next }), target(row, "status", next), "status");
   };
   const onSeverity = (row: IncidentRow, next: Severity) =>
     void track(
@@ -129,37 +125,84 @@ export function IncidentsCard() {
       target(row, "severity", next),
       "severity",
     );
-  const onDeclare = (args: { id: string; title: string; severity: Severity }) =>
-    track(declare(args), { kind: "declare", incidentId: args.id, number: null, title: args.title });
-
-  const cardRef = useRef<HTMLElement>(null);
-  const headingRef = useRef<HTMLHeadingElement>(null);
-  const statusTrigger = (id: string) =>
-    cardRef.current?.querySelector<HTMLElement>(`[data-status-trigger="${id}"]`) ?? null;
-  useLayoutEffect(() => {
-    const pending = leaving.current;
-    if (!pending || rows.some((row) => row.id === pending.id)) return;
-    leaving.current = null;
-    // After the menu has closed and tried to give focus back to its trigger, which is gone.
-    requestAnimationFrame(() => {
-      ((pending.next ? statusTrigger(pending.next) : null) ?? headingRef.current)?.focus();
+  // With the list refused nothing shows the optimistic row, so say the declare went out.
+  const [sent, setSent] = useState<string | null>(null);
+  const onDeclare = (args: { id: string; title: string; severity: Severity }) => {
+    setSent(view === "refused" ? args.title : null);
+    return track(declare(args), {
+      kind: "declare",
+      incidentId: args.id,
+      number: null,
+      title: args.title,
     });
-  }, [rows]);
-
-  // Dismissing a notice moves focus to the next notice's dismiss button, else the previous one, else that
-  // incident's status menu, else the heading. Never the declare title: on a phone that opens the keyboard.
-  const dismiss = (notice: Notice, button: HTMLElement) => {
-    const all = [...(cardRef.current?.querySelectorAll<HTMLElement>("[data-dismiss]") ?? [])];
-    const index = all.indexOf(button);
-    const neighbour = all[index + 1] ?? all[index - 1];
-    flushSync(() => setNotices((current) => current.filter((item) => item.key !== notice.key)));
-    const next =
-      (neighbour?.isConnected ? neighbour : null) ??
-      statusTrigger(notice.incidentId) ??
-      headingRef.current;
-    next?.focus();
   };
 
+  // When the focused control leaves the page (its row resolved here or elsewhere, its notice dismissed or pushed
+  // out by a newer one), focus moves to its neighbour instead of <body>: the next or previous notice, the row's
+  // status menu, the next or previous row's, then the heading. The plan is taken while the control is still
+  // there, and applied a frame later, after a closing menu has tried to give focus back to a trigger now gone.
+  const cardRef = useRef<HTMLElement>(null);
+  const focused = useRef<{ element: HTMLElement; fallbacks: string[] } | null>(null);
+  const plan = (element: HTMLElement): string[] => {
+    const root = cardRef.current;
+    if (!root) return [];
+    const fallbacks: string[] = [];
+    const key = element.dataset.dismiss;
+    if (key) {
+      const keys = [...root.querySelectorAll<HTMLElement>("[data-dismiss]")].map(
+        (button) => button.dataset.dismiss,
+      );
+      const index = keys.indexOf(key);
+      for (const near of [keys[index + 1], keys[index - 1]]) {
+        if (near) fallbacks.push(`[data-dismiss="${near}"]`);
+      }
+    }
+    const row = element.closest<HTMLElement>("li[data-incident]")?.dataset.incident;
+    if (row) {
+      const ids = [...root.querySelectorAll<HTMLElement>("li[data-incident]")].map(
+        (li) => li.dataset.incident,
+      );
+      const index = ids.indexOf(row);
+      for (const near of [row, ids[index + 1], ids[index - 1]]) {
+        if (near) fallbacks.push(`[data-status-trigger="${near}"]`);
+      }
+    }
+    return [...fallbacks, "#incidents-title"];
+  };
+  const onFocus = (event: FocusEvent<HTMLElement>) => {
+    const element = event.target;
+    // React bubbles focus out of the menus' portals too; only controls drawn in the card count.
+    if (element instanceof HTMLElement && cardRef.current?.contains(element)) {
+      focused.current = { element, fallbacks: plan(element) };
+    }
+  };
+  useLayoutEffect(() => {
+    const last = focused.current;
+    if (!last) return;
+    if (last.element.isConnected) {
+      last.fallbacks = plan(last.element);
+      return;
+    }
+    focused.current = null;
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      // Focus already somewhere on the card on purpose: leave it.
+      if (
+        active instanceof HTMLElement &&
+        active.isConnected &&
+        cardRef.current?.contains(active)
+      ) {
+        return;
+      }
+      for (const selector of last.fallbacks) {
+        const next = cardRef.current?.querySelector<HTMLElement>(selector);
+        if (next) return next.focus();
+      }
+    });
+  });
+
+  const dismiss = (key: string) =>
+    setNotices((current) => current.filter((notice) => notice.key !== key));
   const listed = new Set(rows.map((row) => row.id));
   const renderNotices = (items: Notice[], place: NoticePlace) =>
     items.length === 0 ? null : (
@@ -169,38 +212,41 @@ export function IncidentsCard() {
             key={notice.key}
             notice={notice}
             place={place}
-            onDismiss={(button) => dismiss(notice, button)}
+            onDismiss={() => dismiss(notice.key)}
           />
         ))}
       </ul>
     );
 
-  const now = useNow(30_000);
+  const now = useNow(20_000);
   const sev1 = rows.filter((row) => row.severity === "sev1").length;
-  const pill = <ConnectionPill view={view} />;
+  const cardNotices = renderNotices(
+    notices.filter((notice) => !listed.has(notice.incidentId)),
+    "card",
+  );
+  const hasPanel = view === "reconnecting" || view === "unavailable" || view === "refused";
+  const trailing = cardNotices !== null || hasPanel;
 
   return (
     <Card
       ref={cardRef}
+      onFocus={onFocus}
       aria-labelledby="incidents-title"
       // Rows run to the card's edges (the SEV1 rule included), so the card clips them to its corners.
-      className={cn((rows.length > 0 || view === "connecting") && "overflow-hidden pb-0 sm:pb-0")}
+      className={cn(rows.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
     >
+      {/* Two fixed lines: nothing below moves as the connection, the count or the SEV1 badge change. */}
       <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <div className="flex items-start justify-between gap-4">
-          <CardTitle id="incidents-title" ref={headingRef} tabIndex={-1} className="outline-none">
+        <div className="flex h-6 items-center justify-between gap-4">
+          <CardTitle id="incidents-title" tabIndex={-1} className="truncate outline-none">
             {m.incidents_title()}
           </CardTitle>
-          <div className="max-sm:hidden">{pill}</div>
+          <ConnectionPill view={view} />
         </div>
-        {/* A reserved line: nothing above the form moves as the count, the SEV1 badge or (on phones) the
-            connection state change. The count yields first when space runs out. */}
-        <div className="flex h-6 items-center gap-2 text-sm text-muted-foreground tabular-nums">
+        <div className="flex h-6 items-center gap-2 text-sm whitespace-nowrap text-muted-foreground tabular-nums">
           {status === "ready" ? (
             <>
-              <span className="min-w-0 truncate">
-                {m.incidents_active_count({ count: rows.length })}
-              </span>
+              <span>{m.incidents_active_count({ count: rows.length })}</span>
               {sev1 > 0 ? (
                 <Badge variant="sev1">
                   <OctagonAlertIcon aria-hidden />
@@ -210,47 +256,23 @@ export function IncidentsCard() {
             </>
           ) : view === "connecting" ? (
             <span aria-hidden className="block h-4 w-32 rounded-sm bg-muted" />
-          ) : null}
-          <div className="ml-auto shrink-0 sm:hidden">{pill}</div>
+          ) : (
+            <span aria-hidden>—</span>
+          )}
         </div>
       </div>
 
       <CardContent className="flex flex-col gap-5">
         <DeclareForm onDeclare={onDeclare} />
 
-        <StatePanel view={view} errorCode={error?.code} />
-
-        {/* Read out once per new notice, wherever it is drawn. */}
-        <div aria-live="assertive" aria-atomic="true" className="sr-only" data-announcer="">
-          {announcement ? (
-            <span key={announcement.key}>
-              {noticeText(announcement, listed.has(announcement.incidentId) ? "row" : "card")}
-            </span>
-          ) : null}
+        {/* Read out once per new notice, in the card's wording, wherever it is drawn. */}
+        <div aria-live="assertive" className="sr-only" data-announcer="">
+          {announcements.map((notice) => (
+            <p key={notice.key}>{noticeText(notice, "card")}</p>
+          ))}
         </div>
-        {renderNotices(
-          notices.filter((notice) => !listed.has(notice.incidentId)),
-          "card",
-        )}
 
-        {view === "connecting" ? (
-          <ul aria-hidden className="-mx-4 divide-y border-t sm:-mx-6">
-            {[0, 1, 2].map((index) => (
-              <li key={index} className="flex flex-col gap-2 px-4 py-4 sm:px-6">
-                <span className="block h-4 w-16 rounded-sm bg-muted" />
-                <span className="block h-5 w-3/4 max-w-md rounded-sm bg-muted" />
-              </li>
-            ))}
-          </ul>
-        ) : status === "ready" && rows.length === 0 ? (
-          <p className="flex items-center gap-3 rounded-md bg-muted p-4 text-sm font-medium">
-            <CircleCheckIcon
-              aria-hidden
-              className="size-5 shrink-0 text-status-resolved-foreground"
-            />
-            {m.incidents_all_clear()}
-          </p>
-        ) : rows.length > 0 ? (
+        {rows.length > 0 ? (
           <ul aria-labelledby="incidents-title" className="-mx-4 divide-y border-t sm:-mx-6">
             {rows.map((row) => (
               <IncidentItem
@@ -273,15 +295,41 @@ export function IncidentsCard() {
               />
             ))}
           </ul>
+        ) : view === "connecting" ? (
+          <ul aria-hidden className="-mx-4 -mb-5 divide-y border-t sm:-mx-6 sm:-mb-6">
+            {[0, 1, 2].map((index) => (
+              <li key={index} className="flex flex-col gap-2 px-4 py-4 sm:px-6">
+                <span className="block h-4 w-16 rounded-sm bg-muted" />
+                <span className="block h-5 w-3/4 max-w-md rounded-sm bg-muted" />
+              </li>
+            ))}
+          </ul>
+        ) : status === "ready" ? (
+          <p className="flex items-center gap-3 rounded-md bg-muted p-4 text-sm font-medium">
+            <CircleCheckIcon
+              aria-hidden
+              className="size-5 shrink-0 text-status-resolved-foreground"
+            />
+            {m.incidents_all_clear()}
+          </p>
+        ) : null}
+
+        {/* After the list, so a connection flap or a new notice never pushes the rows down. */}
+        {trailing ? (
+          <div className={cn("flex flex-col gap-3", rows.length > 0 && "pb-5 sm:pb-6")}>
+            {cardNotices}
+            <StatePanel view={view} errorCode={error?.code} sent={sent} />
+          </div>
         ) : null}
       </CardContent>
     </Card>
   );
 }
 
-const MARK = /([nt])(.*?)/g;
-
-/** A refused change: its text (number kept on one line, a long title truncated) and a dismiss button. */
+/**
+ * A refused change and its dismiss button. In the card it first says which incident (the number never broken,
+ * the quoted title truncated with the full one on hover), then the change; in a row, only the change.
+ */
 function NoticeItem({
   notice,
   place,
@@ -289,43 +337,33 @@ function NoticeItem({
 }: {
   notice: Notice;
   place: NoticePlace;
-  onDismiss: (button: HTMLElement) => void;
+  onDismiss: () => void;
 }) {
   const textId = useId();
-  const text = noticeText(notice, place, (part, value) =>
-    part === "number" ? `n${value}` : `t${value}`,
-  );
-  const parts: ReactNode[] = [];
-  let last = 0;
-  for (const match of text.matchAll(MARK)) {
-    parts.push(text.slice(last, match.index));
-    parts.push(
-      match[1] === "n" ? (
-        <span key={match.index} className="whitespace-nowrap">
-          {match[2]}
-        </span>
-      ) : (
-        <span key={match.index} className="inline-block max-w-48 truncate align-bottom">
-          {match[2]}
-        </span>
-      ),
-    );
-    last = match.index + match[0].length;
-  }
-  parts.push(text.slice(last));
+  const subject = place === "card" ? noticeSubject(notice) : null;
   return (
     <li className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/10 py-1 pr-1 pl-3 text-sm">
       <CircleAlertIcon aria-hidden className="mt-2.5 size-4 shrink-0 text-destructive" />
-      <p id={textId} className="min-w-0 flex-1 py-2 font-normal [overflow-wrap:anywhere]">
-        {parts}
-      </p>
+      <div id={textId} className="min-w-0 flex-1 py-2">
+        {subject ? (
+          <p className="flex min-w-0 gap-1 font-medium">
+            {subject.number ? (
+              <span className="shrink-0 tabular-nums">{subject.number}</span>
+            ) : null}
+            <span className="truncate" title={notice.title}>
+              {subject.title}
+            </span>
+          </p>
+        ) : null}
+        <p className="[overflow-wrap:anywhere]">{noticeText(notice, "row")}</p>
+      </div>
       <Button
         variant="ghost"
         size="icon"
-        data-dismiss=""
+        data-dismiss={notice.key}
         aria-label={m.dismiss()}
         aria-describedby={textId}
-        onClick={(event) => onDismiss(event.currentTarget)}
+        onClick={onDismiss}
       >
         <XIcon aria-hidden />
       </Button>
@@ -334,10 +372,18 @@ function NoticeItem({
 }
 
 /**
- * Under the form: why the list is stale or missing. A failure gets an alert glyph and a destructive rule, so it
- * never reads like the calm "All clear"; only the passing reconnect hint stays quiet.
+ * Below the list: why it is stale or missing. A failure gets an alert glyph and a destructive rule, so it never
+ * reads like the calm "All clear"; only the passing reconnect hint stays quiet.
  */
-function StatePanel({ view, errorCode }: { view: SyncView; errorCode: string | undefined }) {
+function StatePanel({
+  view,
+  errorCode,
+  sent,
+}: {
+  view: SyncView;
+  errorCode: string | undefined;
+  sent: string | null;
+}) {
   if (view === "reconnecting") {
     return <p className="text-sm text-muted-foreground">{m.sync_reconnecting_hint()}</p>;
   }
@@ -350,6 +396,11 @@ function StatePanel({ view, errorCode }: { view: SyncView; errorCode: string | u
           // The client never asks again for a refused subscription on its own: a reload starts it over.
           <>
             <p>{m.sync_refused_hint({ reason: queryErrorReason(errorCode) })}</p>
+            {sent ? (
+              <p role="status" className="text-muted-foreground [overflow-wrap:anywhere]">
+                {m.declare_sent({ title: sent })}
+              </p>
+            ) : null}
             <Button variant="outline" onClick={() => window.location.reload()}>
               <RefreshCwIcon aria-hidden />
               {m.reload()}
@@ -371,7 +422,7 @@ function StatePanel({ view, errorCode }: { view: SyncView; errorCode: string | u
 
 const PILLS: Record<
   SyncView,
-  { icon: LucideIcon; text: () => string; tone: string; spin?: boolean }
+  { icon: LucideIcon; text: () => string; short?: () => string; tone: string; spin?: boolean }
 > = {
   live: { icon: CircleCheckIcon, text: m.sync_live, tone: "text-primary" },
   connecting: {
@@ -386,17 +437,26 @@ const PILLS: Record<
     tone: "text-muted-foreground",
     spin: true,
   },
-  unavailable: { icon: CircleAlertIcon, text: m.sync_unavailable, tone: "text-destructive" },
+  unavailable: {
+    icon: CircleAlertIcon,
+    text: m.sync_unavailable,
+    short: m.sync_unavailable_short,
+    tone: "text-destructive",
+  },
   refused: { icon: CircleAlertIcon, text: m.sync_refused, tone: "text-destructive" },
 };
 
-/** Calm by design: a word and a small glyph, never a banner, since a reconnect usually fixes itself. */
+/**
+ * Calm by design: a word and a small glyph, never a banner, since a reconnect usually fixes itself. A flex box of
+ * fixed height, so the dot and the icons give the line the same height. Phones get the short word where there is
+ * one, so it fits beside the title at 320px.
+ */
 function ConnectionPill({ view }: { view: SyncView }) {
-  const { icon: Icon, text, tone, spin } = PILLS[view];
+  const { icon: Icon, text, short, tone, spin } = PILLS[view];
   return (
     <p
       role="status"
-      className="inline-flex h-6 items-center gap-2 text-sm font-medium whitespace-nowrap"
+      className="flex h-6 shrink-0 items-center gap-2 text-sm font-medium whitespace-nowrap"
     >
       {view === "live" ? (
         <span aria-hidden className="size-2 rounded-full bg-primary" />
@@ -406,7 +466,16 @@ function ConnectionPill({ view }: { view: SyncView }) {
           className={cn("size-4 shrink-0", tone, spin && "animate-spin motion-reduce:animate-none")}
         />
       )}
-      <span className={view === "live" ? "text-foreground" : tone}>{text()}</span>
+      <span className={view === "live" ? "text-foreground" : tone}>
+        {short ? (
+          <>
+            <span className="sm:hidden">{short()}</span>
+            <span className="max-sm:hidden">{text()}</span>
+          </>
+        ) : (
+          text()
+        )}
+      </span>
     </p>
   );
 }

@@ -5,7 +5,7 @@ export type Declare_Title_InvalidInputs = {};
 /**
 * | output |
 * | --- |
-* | "Enter a title. Invisible characters alone don't count." |
+* | "A title needs visible text: invisible characters alone don't count." |
 *
 * @param {Declare_Title_InvalidInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

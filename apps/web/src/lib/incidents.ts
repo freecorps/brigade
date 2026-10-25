@@ -1,6 +1,6 @@
 // Pure helpers for the live incident list: which status moves to offer, what to say about the connection, how to
 // check a declare before sending it, and how to word a mutation the shard refused.
-import { m } from "@freecorps/brigade-i18n";
+import { formatRelativeTime, m, type Locale } from "@freecorps/brigade-i18n";
 import { incidentStatusLabels } from "@freecorps/brigade-i18n/labels";
 import {
   canTransition,
@@ -74,9 +74,14 @@ export function mutationErrorReason(code: NoticeReason): string {
   return (REASONS[code] ?? m.sync_error_internal)();
 }
 
-/** Why the shard refused the list itself (a query error code, which is a plain string on the wire). */
+/**
+ * Why the shard refused the list itself (a query error code, a plain string on the wire). `closed` is this page's
+ * client having stopped, not a server fault.
+ */
 export function queryErrorReason(code: string | undefined): string {
-  return code === "forbidden" ? m.sync_error_read_forbidden() : m.sync_error_internal();
+  if (code === "forbidden") return m.sync_error_read_forbidden();
+  if (code === "closed") return m.sync_error_closed();
+  return m.sync_error_internal();
 }
 
 /** A refused change, kept as data and worded at render, so it follows a language switch. */
@@ -109,28 +114,21 @@ export function noticeFor(
 }
 
 /**
- * Where a notice is drawn: in its incident's row, which already says which incident it is, or in the card (a
- * declare, or a row no longer listed), where the text names the incident and the change.
+ * How a notice is worded. `card`: one sentence naming the incident and the change, for the live region and
+ * tests. `row`: only the change ("Couldn't move it to Fixing."); the row, or the subject line the card draws
+ * above it (`noticeSubject`), says which incident.
  */
 export type NoticePlace = "row" | "card";
 
-/**
- * The notice's text. `mark` wraps the incident's number and title, so the card can keep the number on one line
- * and truncate a long title; without it the text is plain (for the live region).
- */
-export function noticeText(
-  notice: Notice,
-  place: NoticePlace,
-  mark: (part: "number" | "title", text: string) => string = (_, text) => text,
-): string {
+export function noticeText(notice: Notice, place: NoticePlace): string {
   const reason = mutationErrorReason(notice.reason);
-  // The declare message quotes the title itself.
   if (notice.kind === "declare") {
-    return m.incident_declare_failed({ title: mark("title", notice.title), reason });
+    return place === "row"
+      ? m.incident_declare_failed_here({ reason })
+      : m.incident_declare_failed({ title: notice.title, reason });
   }
-  const title = m.incident_quoted_title({ title: mark("title", notice.title) });
-  const number = formatIncidentNumber(notice.number);
-  const incident = number ? `${mark("number", number)} ${title}` : title;
+  const { number, title } = noticeSubject(notice);
+  const incident = number ? `${number} ${title}` : title;
   if (notice.kind === "status") {
     const status = incidentStatusLabels[notice.to as IncidentStatus]();
     return place === "row"
@@ -141,6 +139,20 @@ export function noticeText(
   return place === "row"
     ? m.incident_severity_failed_here({ severity, reason })
     : m.incident_severity_failed({ incident, severity, reason });
+}
+
+/** Which incident a notice is about, as separate parts: `INC-5` (or null) and the quoted title. */
+export function noticeSubject(notice: Notice): { number: string | null; title: string } {
+  return {
+    number: formatIncidentNumber(notice.number),
+    title: m.incident_quoted_title({ title: notice.title }),
+  };
+}
+
+/** "just now" under a minute, then the shared relative format ("3 minutes ago"); never a future time. */
+export function formatAge(at: number, now: number, locale: Locale): string {
+  if (now - at < 60_000) return m.time_just_now({}, { locale });
+  return formatRelativeTime(at, locale, now);
 }
 
 /**

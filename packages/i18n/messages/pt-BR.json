@@ -121,7 +121,7 @@
   "sync_error_invalid_transition": "O status mudou nesse meio-tempo, então essa mudança não é mais permitida.",
   "sync_error_invalid_args": "Confira o que você digitou e tente de novo.",
   "sync_error_expired": "A alteração esperou demais para ser enviada e foi descartada.",
-  "sync_error_too_many_pending": "Há alterações demais esperando envio. Tente de novo quando estiver online.",
+  "sync_error_too_many_pending": "Espere as alterações pendentes serem enviadas e tente de novo.",
   "sync_error_closed": "Esta página parou de sincronizar. Recarregue para tentar de novo.",
   "sync_error_internal": "Algo deu errado no servidor. Tente de novo.",
   "incident_quoted_title": "“{title}”",
@@ -141,7 +141,7 @@
     }
   ],
   "declare_open": "Declarar incidente",
-  "declare_title_invalid": "Digite um título. Só caracteres invisíveis não contam.",
+  "declare_title_invalid": "O título precisa de texto visível: só caracteres invisíveis não contam.",
   "sync_refused": "Não carregado",
   "sync_refused_hint": "O Brigade não conseguiu carregar esta lista. {reason}",
   "sync_error_read_forbidden": "Você não tem acesso a estes incidentes.",
@@ -153,6 +153,11 @@
   "incident_severity_failed": "Não foi possível mudar {incident} para {severity}. {reason}",
   "incident_severity_failed_here": "Não foi possível mudar para {severity}. {reason}",
   "incident_sending": "Salvando",
-  "incident_not_sent": "Não enviado",
-  "declare_cancel": "Cancelar"
+  "incident_not_sent": "Pendente",
+  "declare_cancel": "Cancelar",
+  "incident_declare_failed_here": "Não foi possível declarar. {reason}",
+  "declare_title_empty": "Digite um título.",
+  "declare_sent": "“{title}” enviado. Ele aparece aqui quando a lista carregar.",
+  "sync_unavailable_short": "Indisponível",
+  "time_just_now": "agora"
 }

@@ -1,4 +1,4 @@
-import { formatDateTime, formatRelativeTime, m, type Locale } from "@freecorps/brigade-i18n";
+import { formatDateTime, m, type Locale } from "@freecorps/brigade-i18n";
 import { incidentStatusLabels } from "@freecorps/brigade-i18n/labels";
 import {
   formatIncidentNumber,
@@ -21,7 +21,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { nextStatuses } from "@/lib/incidents";
+import { formatAge, nextStatuses } from "@/lib/incidents";
 
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -55,15 +55,14 @@ export function IncidentItem({
 }) {
   const number = formatIncidentNumber(row.number);
   // The shard's clock can be a little ahead of the last tick: never say "in 3 seconds".
-  const declared = formatRelativeTime(Math.min(row.declaredAt, now), locale, now);
+  const declared = formatAge(Math.min(row.declaredAt, now), now, locale);
   const PendingIcon = online ? CloudUploadIcon : ClockIcon;
   return (
     <li
       data-incident={row.id}
-      aria-busy={pending.any || number === null}
       className={cn(
         "relative grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:px-6",
-        "md:grid-cols-[--spacing(24)_minmax(0,1fr)_--spacing(40)_--spacing(40)] md:items-start",
+        "md:grid-cols-[--spacing(20)_minmax(0,1fr)_--spacing(40)_--spacing(40)] md:items-start",
         row.severity === "sev1" &&
           "before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-sev1",
       )}
@@ -71,9 +70,7 @@ export function IncidentItem({
       {/* Not numbered until the shard has it: a glyph and a short word, never wrapped. */}
       <div className="whitespace-nowrap md:row-span-2">
         {number ? (
-          <span className="font-mono text-sm font-medium text-muted-foreground tabular-nums">
-            {number}
-          </span>
+          <span className="text-sm font-medium text-muted-foreground tabular-nums">{number}</span>
         ) : (
           <span className="inline-flex items-center gap-1 rounded-sm border border-dashed px-1 text-xs leading-5 text-muted-foreground">
             <PendingIcon aria-hidden className="size-3 shrink-0" />
@@ -104,12 +101,15 @@ export function IncidentItem({
       <div className="col-span-2 -mb-2 -ml-1.5 flex flex-wrap items-center gap-1 md:contents">
         <div className="md:col-start-3 md:row-span-2 md:row-start-1 md:self-center">
           <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant="ghost" className="gap-1 px-1.5" />}>
+            <DropdownMenuTrigger
+              render={<Button variant="ghost" className="gap-1 px-1.5 max-sm:min-w-11" />}
+            >
               <span className="sr-only">{m.incident_severity_label()}: </span>
               <span className={cn("inline-flex", pending.severity && UNSAVED)}>
                 <SeverityBadge severity={row.severity} />
               </span>
-              <ChevronDownIcon aria-hidden className="text-muted-foreground" />
+              {/* Below sm the badge alone is the trigger, so both menus fit one line at 320px. */}
+              <ChevronDownIcon aria-hidden className="text-muted-foreground max-sm:hidden" />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
               <DropdownMenuGroup>
@@ -135,13 +135,14 @@ export function IncidentItem({
           <DropdownMenu>
             <DropdownMenuTrigger
               data-status-trigger={row.id}
-              render={<Button variant="ghost" className="gap-1 px-1.5" />}
+              render={<Button variant="ghost" className="gap-1 px-1.5 max-sm:min-w-11" />}
             >
               <span className="sr-only">{m.incident_status_label()}: </span>
               <span className={cn("inline-flex", pending.status && UNSAVED)}>
                 <StatusBadge status={row.status} />
               </span>
-              <ChevronDownIcon aria-hidden className="text-muted-foreground" />
+              {/* Below sm the badge alone is the trigger, so both menus fit one line at 320px. */}
+              <ChevronDownIcon aria-hidden className="text-muted-foreground max-sm:hidden" />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
               <DropdownMenuGroup>

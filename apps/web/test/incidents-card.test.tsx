@@ -1,12 +1,13 @@
 // @vitest-environment happy-dom
 // IncidentsCard mounted with react-dom against the reference shard server from packages/sync's tests, over its
 // fake network with manual delivery and fake timers: nothing reaches the "server" until a test flushes.
+import { setLocale as setI18nLocale, type Locale } from "@freecorps/brigade-i18n";
 import { newId, type Actor, type IncidentStatus } from "@freecorps/brigade-schema";
 import { createSyncClient, type SyncClient } from "@freecorps/brigade-sync";
 import { SyncProvider } from "@freecorps/brigade-sync/react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 import {
   FakeNetwork,
   FakeServer,
@@ -14,7 +15,7 @@ import {
   type ShardServer,
 } from "../../../packages/sync/tests/fake-server.ts";
 import { IncidentsCard } from "../src/components/incidents-card";
-import { PreferencesProvider } from "../src/components/preferences";
+import { PreferencesProvider, usePreferences } from "../src/components/preferences";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -32,8 +33,11 @@ afterEach(() => {
     client?.close();
   });
   root = client = undefined;
+  switchLocale = undefined;
   document.body.innerHTML = "";
   setWidth(1024);
+  localStorage.clear();
+  void setI18nLocale("en");
 });
 
 function setWidth(width: number) {
@@ -43,11 +47,22 @@ function setWidth(width: number) {
   });
 }
 
-/** `clientAhead`: how far the client's clock runs ahead of the server's, in ms. */
-function mount({ clientAhead = 0 } = {}) {
+/** The provider's `setLocale`, captured from inside the tree. */
+let switchLocale: ((locale: Locale) => void) | undefined;
+function LocaleProbe() {
+  switchLocale = usePreferences().setLocale;
+  return null;
+}
+
+/**
+ * `clientAhead`: how far the client's clock runs ahead of the server's, in ms. `offline`: every socket closes
+ * before it opens, as when the shard cannot be reached.
+ */
+function mount({ clientAhead = 0, offline = false } = {}) {
   const timers = new FakeTimers();
   const server = new FakeServer(() => T0 + timers.now);
   const network = new FakeNetwork(server);
+  network.online = !offline;
   let seed = 0;
   const randomBytes = (length: number) => new Uint8Array(length).fill(++seed % 256);
   client = createSyncClient({
@@ -73,6 +88,7 @@ function mount({ clientAhead = 0 } = {}) {
     root = createRoot(container);
     root.render(
       <PreferencesProvider initialLocale="en">
+        <LocaleProbe />
         <SyncProvider client={syncClient} shard={SHARD}>
           <IncidentsCard />
         </SyncProvider>
@@ -166,11 +182,13 @@ test("refused changes: in the row when listed, in the card otherwise; read once 
   const view = mount({ clientAhead: 11 * 60_000 });
   const id = view.declare("Checkout down", "sev2");
   await view.flush();
+  // Every line the live region gains: each one is read once.
   const added: string[] = [];
-  new MutationObserver(() => added.push(announcer().textContent ?? "")).observe(announcer(), {
-    childList: true,
-    subtree: true,
-  });
+  new MutationObserver((records) => {
+    for (const record of records) {
+      for (const node of record.addedNodes) added.push(node.textContent ?? "");
+    }
+  }).observe(announcer(), { childList: true });
 
   // Someone moves it to Monitoring before our Declined (allowed from Triage, not from there) arrives.
   view.shard.write(ops, "incident.setStatus", { id, status: "monitoring" });
@@ -179,6 +197,10 @@ test("refused changes: in the row when listed, in the card otherwise; read once 
   const inRow = $$("[data-dismiss]", row("Checkout down"));
   expect(inRow).toHaveLength(1);
   expect(row("Checkout down")!.textContent).toContain("Couldn't move it to Declined.");
+  // Read out in the card's wording, which names the incident.
+  expect(added).toEqual([
+    expect.stringMatching(/^Couldn't move INC-1 “Checkout down” to Declined\./),
+  ]);
 
   // A declare refused for the clock: no row to put it in, so it goes in the card, naming the title.
   await act(async () => {
@@ -190,27 +212,32 @@ test("refused changes: in the row when listed, in the card otherwise; read once 
   expect(titles()).toEqual(["Checkout down"]);
   const cardLevel = dismissButtons().filter((b) => !b.closest("li[data-incident]"));
   expect(cardLevel).toHaveLength(1);
-  expect(cardLevel[0]!.closest("li")!.textContent).toContain(
-    "Couldn't declare “Search slow”. Your device clock is ahead of the server.",
-  );
+  // The card names the incident on its own line, then the change.
+  const text = cardLevel[0]!.closest("li")!.textContent;
+  expect(text).toContain("“Search slow”");
+  expect(text).toContain("Couldn't declare it. Your device clock is ahead of the server.");
   // The title was fine: it is not given back.
   expect($<HTMLInputElement>("input")!.value).toBe("");
 
   // Each new notice was read once, and the dismiss buttons say what they dismiss.
-  expect(added.filter(Boolean)).toHaveLength(2);
+  expect(added).toHaveLength(2);
+  expect(added[1]).toMatch(/^Couldn't declare “Search slow”\. Your device clock/);
   for (const button of dismissButtons()) {
     expect($(`#${CSS.escape(button.getAttribute("aria-describedby")!)}`)?.textContent).toBeTruthy();
   }
 
-  // Dismissing the row's notice: the next dismiss button is gone, the previous (card-level) one takes focus.
+  // Dismissing the row's notice: focus moves to the next one (the card's, below the list).
+  inRow[0]!.focus();
   await click(inRow[0]);
+  await frame();
   expect(document.activeElement).toBe(cardLevel[0]);
   // The last one (a declare, no row): the heading. Never the title field.
   await click(cardLevel[0]);
+  await frame();
   expect(document.activeElement?.id).toBe("incidents-title");
   expect(dismissButtons()).toHaveLength(0);
   // Dismissing announced nothing new.
-  expect(added.filter(Boolean)).toHaveLength(2);
+  expect(added).toHaveLength(2);
 });
 
 test("a title the shard refuses is given back if the field is still empty", async () => {
@@ -253,6 +280,108 @@ test("phones: the form opens from one button, and folds back after a declare or 
   expect(document.activeElement).toBe(opener());
   await view.flush();
   expect(titles()).toEqual(["Card reader offline"]);
+});
+
+test("refusals landing in the same tick are all read out", async () => {
+  const view = mount();
+  const first = view.declare("Checkout down", "sev2");
+  const second = view.declare("Search slow", "sev3");
+  await view.flush();
+  // Both move on at the shard before our two Declined (allowed only from Triage) arrive, in one delivery.
+  view.shard.write(ops, "incident.setStatus", { id: first, status: "monitoring" });
+  view.shard.write(ops, "incident.setStatus", { id: second, status: "monitoring" });
+  await choose("Checkout down", "Status", /^Declined$/);
+  await choose("Search slow", "Status", /^Declined$/);
+  await view.flush();
+  const lines = $$("p", announcer()).map((p) => p.textContent);
+  expect(lines).toHaveLength(2);
+  expect(lines[0]).toMatch(/^Couldn't move INC-1 “Checkout down” to Declined\./);
+  expect(lines[1]).toMatch(/^Couldn't move INC-2 “Search slow” to Declined\./);
+});
+
+test("a row removed elsewhere while one of its controls has focus hands focus to its neighbour", async () => {
+  const view = mount();
+  const gone = view.declare("Leaving", "sev1");
+  view.declare("Staying", "sev2");
+  await view.flush();
+  const severity = $$("button", row("Leaving")).find((b) =>
+    b.textContent?.startsWith("Severity:"),
+  )!;
+  act(() => severity.focus());
+  view.shard.write(ops, "incident.setStatus", { id: gone, status: "resolved" });
+  await view.flush();
+  await frame();
+  expect(document.activeElement?.getAttribute("data-status-trigger")).toBe(
+    row("Staying")!.dataset.incident,
+  );
+});
+
+test("the list puts SEV1 first, whatever its age", async () => {
+  const view = mount();
+  view.declare("Newer, SEV3", "sev3");
+  view.declare("Older, SEV1", "sev1");
+  await view.flush();
+  expect(titles()).toEqual(["Older, SEV1", "Newer, SEV3"]);
+  expect($("#incidents-title")!.closest("section")!.textContent).toContain("1 is SEV1");
+});
+
+test("unavailable: a calm count line, the reason and that it keeps trying; the form stays", async () => {
+  const view = mount({ offline: true });
+  await view.flush();
+  const card = $("#incidents-title")!.closest("section")!;
+  expect($('[role="status"]', card)?.textContent).toContain("Sync unavailable");
+  expect(card.textContent).toContain("vp run dev");
+  expect(card.textContent).toContain("This page keeps trying on its own.");
+  expect(card.textContent).toContain("—");
+  expect($$("button").some((b) => b.textContent === "Declare")).toBe(true);
+});
+
+test("refused: the reason and a Reload that reloads; a declare is acknowledged", async () => {
+  const reload = vi.fn();
+  vi.spyOn(window.location, "reload").mockImplementation(reload);
+  const view = mount();
+  await view.flush();
+  view.network.sockets[0]!.deliver(
+    JSON.stringify({ type: "error", subId: "s0", code: "forbidden", message: "No" }),
+  );
+  await view.flush();
+  const card = $("#incidents-title")!.closest("section")!;
+  expect($('[role="status"]', card)?.textContent).toBe("Not loaded");
+  expect(card.textContent).toContain("You don't have access to these incidents.");
+  await act(async () => setValue($<HTMLInputElement>("input")!, "Card reader offline"));
+  await click($$("button").find((b) => b.textContent === "Declare"));
+  expect(card.textContent).toContain("Sent “Card reader offline”.");
+  expect(view.sentMutations()).toHaveLength(1);
+  await click($$("button").find((b) => b.textContent === "Reload"));
+  expect(reload).toHaveBeenCalledOnce();
+  vi.restoreAllMocks();
+});
+
+test("reconnecting: the rows stay put and the hint comes after them", async () => {
+  const view = mount();
+  view.declare("Checkout down", "sev2");
+  await view.flush();
+  act(() => view.network.disconnect());
+  await view.flush();
+  const card = $("#incidents-title")!.closest("section")!;
+  expect($('[role="status"]', card)?.textContent).toBe("Reconnecting…");
+  const list = $("ul[aria-labelledby]", card)!;
+  const hint = $$("p", card).find((p) => p.textContent?.startsWith("Showing the last list"))!;
+  // The hint follows the list in the document, so it can never push the rows down.
+  expect(list.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("a language switch rewords an existing notice and the connection state", async () => {
+  const view = mount();
+  const id = view.declare("Checkout down", "sev2");
+  await view.flush();
+  view.shard.write(ops, "incident.setStatus", { id, status: "monitoring" });
+  await choose("Checkout down", "Status", /^Declined$/);
+  await view.flush();
+  expect(row("Checkout down")!.textContent).toContain("Couldn't move it to Declined.");
+  await act(async () => switchLocale!("pt-BR"));
+  expect(row("Checkout down")!.textContent).toContain("Não foi possível mover para Descartado.");
+  expect($('[role="status"]')?.textContent).toBe("Ao vivo");
 });
 
 /** Types into a controlled input the way React listens for it. */

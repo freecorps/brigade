@@ -5,10 +5,12 @@ import { DEV_ACTOR as API_DEV_ACTOR } from "../../api/src/dev-actor.ts";
 import {
   adjustBusy,
   checkDeclare,
+  formatAge,
   mutationErrorReason,
   nextFailed,
   nextStatuses,
   noticeFor,
+  noticeSubject,
   noticeText,
   queryErrorReason,
   syncView,
@@ -56,6 +58,16 @@ test("after the list loaded, a dropped socket is reconnecting; a refused list is
   expect(syncView("error", "waiting", true)).toBe("refused");
   expect(queryErrorReason("forbidden")).toBe("You don't have access to these incidents.");
   expect(queryErrorReason("internal")).toBe(queryErrorReason(undefined));
+  // The page's own client having stopped is not a server error.
+  expect(queryErrorReason("closed")).toBe("This page stopped syncing. Reload it to try again.");
+});
+
+test("ages read 'just now' under a minute, then the shared relative format", () => {
+  const now = Date.UTC(2026, 9, 24, 12, 0, 0);
+  expect(formatAge(now - 59_000, now, "en")).toBe("just now");
+  expect(formatAge(now - 3 * 60_000, now, "en")).toBe("3 minutes ago");
+  expect(formatAge(now - 59_000, now, "pt-BR")).toBe("agora");
+  expect(formatAge(now - 2 * 3_600_000, now, "pt-BR")).toBe("há 2 horas");
 });
 
 const change: NoticeTarget = {
@@ -96,22 +108,24 @@ test("every refused outcome becomes a notice with a translated reason; a confirm
     expect(noticeText(notice, "card")).not.toContain("English");
   }
   expect(mutationErrorReason("expired")).toMatch(/waited too long/);
-  expect(mutationErrorReason("too_many_pending")).toMatch(/Too many changes/);
+  expect(mutationErrorReason("too_many_pending")).toMatch(/Wait for the pending changes/);
   expect(mutationErrorReason("closed")).toMatch(/stopped syncing/);
   expect(mutationErrorReason("unknown_mutation")).toBe(mutationErrorReason("internal"));
 
   const severity = noticeFor(fail("conflict"), { ...change, kind: "severity", to: "sev1" }, "k")!;
   expect(noticeText(severity, "card")).toMatch(/^Couldn't change INC-12 “Checkout down” to SEV1\./);
-  // Not numbered yet: the title alone names it. The number and title can be marked for layout.
+  // Not numbered yet: the title alone names it. The card draws the subject as separate parts.
   const unnumbered = noticeFor(fail("not_found"), { ...change, number: null }, "k")!;
   expect(noticeText(unnumbered, "card")).toBe(
     "Couldn't move “Checkout down” to Fixing. The incident no longer exists.",
   );
-  expect(noticeText(severity, "card", (part, text) => `[${part}:${text}]`)).toMatch(
-    /^Couldn't change \[number:INC-12\] “\[title:Checkout down\]” to SEV1\./,
-  );
+  expect(noticeSubject(severity)).toEqual({ number: "INC-12", title: "“Checkout down”" });
+  expect(noticeSubject(unnumbered)).toEqual({ number: null, title: "“Checkout down”" });
   // Worded at render, so a locale switch shows.
   const declared = noticeFor(fail("forbidden"), { ...change, kind: "declare", number: null }, "k")!;
+  expect(noticeText(declared, "row")).toBe(
+    "Couldn't declare it. You don't have permission to do that.",
+  );
   await setLocale("pt-BR");
   expect(noticeText(declared, "card")).toBe(
     "Não foi possível declarar “Checkout down”. Você não tem permissão para fazer isso.",

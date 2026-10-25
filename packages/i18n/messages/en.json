@@ -121,7 +121,7 @@
   "sync_error_invalid_transition": "Its status changed in the meantime, so that move is no longer allowed.",
   "sync_error_invalid_args": "Check what you typed and try again.",
   "sync_error_expired": "It waited too long to be sent and was dropped.",
-  "sync_error_too_many_pending": "Too many changes are waiting to be sent. Try again once you're back online.",
+  "sync_error_too_many_pending": "Wait for the pending changes to be sent, then try again.",
   "sync_error_closed": "This page stopped syncing. Reload it to try again.",
   "sync_error_internal": "Something went wrong on the server. Try again.",
   "incident_quoted_title": "“{title}”",
@@ -141,7 +141,7 @@
     }
   ],
   "declare_open": "Declare incident",
-  "declare_title_invalid": "Enter a title. Invisible characters alone don't count.",
+  "declare_title_invalid": "A title needs visible text: invisible characters alone don't count.",
   "sync_refused": "Not loaded",
   "sync_refused_hint": "Brigade couldn't load this list. {reason}",
   "sync_error_read_forbidden": "You don't have access to these incidents.",
@@ -154,5 +154,10 @@
   "incident_severity_failed_here": "Couldn't change it to {severity}. {reason}",
   "incident_sending": "Saving",
   "incident_not_sent": "Not sent",
-  "declare_cancel": "Cancel"
+  "declare_cancel": "Cancel",
+  "incident_declare_failed_here": "Couldn't declare it. {reason}",
+  "declare_title_empty": "Enter a title.",
+  "declare_sent": "Sent “{title}”. It shows here once the list loads.",
+  "sync_unavailable_short": "Unavailable",
+  "time_just_now": "just now"
 }

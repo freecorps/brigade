@@ -2,6 +2,7 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 // By path, not "@freecorps/brigade-ui": Expo's config loader does not use the @freecorps/source
 // condition, so the package name would need packages/ui built first.
 import { themes } from "../../packages/ui/src/tokens.ts";
+import { withIncomingCall } from "./plugins/incoming-call.ts";
 import { withNotificationService } from "./plugins/notification-service.ts";
 import { withSplashGround } from "./plugins/splash-ground.ts";
 
@@ -15,10 +16,12 @@ const APS_ENVIRONMENT = process.env.EAS_BUILD === "true" ? "production" : "devel
 
 export default ({ config }: ConfigContext): ExpoConfig =>
   // iOS: the Notification Service Extension that decrypts pushes (spike S1), and the launch screen pointed at
-  // the splash ground, which expo-splash-screen skips without an image.
-  withNotificationService(
-    withSplashGround(appConfig(config), { fallback: themes.light.background }),
-    { apsEnvironment: APS_ENVIRONMENT },
+  // the splash ground, which expo-splash-screen skips without an image. Both: pages that ring as calls (S6).
+  withIncomingCall(
+    withNotificationService(
+      withSplashGround(appConfig(config), { fallback: themes.light.background }),
+      { apsEnvironment: APS_ENVIRONMENT },
+    ),
   );
 
 const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({

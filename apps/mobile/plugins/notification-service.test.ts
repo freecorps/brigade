@@ -35,6 +35,7 @@ describe("localizableStrings", () => {
     const strings = localizableStrings({
       push_fallback_title: 'Say "hi"\\',
       push_fallback_body: "two\nlines",
+      call_caller: "Brigade",
     });
     expect(strings).toContain('"push_fallback_title" = "Say \\"hi\\"\\\\";');
     expect(strings).toContain('"push_fallback_body" = "two\\nlines";');

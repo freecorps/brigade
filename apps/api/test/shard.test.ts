@@ -228,6 +228,8 @@ describe("Shard", () => {
         status: "triage",
         declaredAt: NOW,
         declaredBy: ana.id,
+        acknowledgedAt: null,
+        acknowledgedBy: null,
         updatedAt: NOW,
       }) as const;
     const mine = incidentId();

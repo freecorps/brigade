@@ -9,6 +9,7 @@ handles, rate limits or FCM yet.
 | ------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `GET /health` | `200 {"ok":true}`                                                                                                |
 | `POST /send`  | `Authorization: Bearer <RELAY_SEND_TOKEN>`; body `{ deviceToken, envelope, urgency?, collapseId?, ttlSeconds? }` |
+|               | A call (RFC 0010): `{ kind: "call", callId, deviceToken: <PushKit token>, envelope }`, see below                 |
 |               | `200 { status, apnsId, apnsUniqueId, ms }` when APNs accepts; `502` with APNs' `reason` when it does not         |
 |               | `502 {"error":"apns_unreachable"}` when `fetch` fails; `400` for a bad body; `401` without the token             |
 |               | `500 {"error":"relay_misconfigured"}` when `APNS_KEY` cannot sign a provider token                               |
@@ -23,6 +24,13 @@ alert is a pair of localization keys, the fallback the app shows when it cannot 
 **APNs needs HTTP/2, which only the deployed Worker has.** Cloudflare's edge speaks HTTP/2 to APNs; local workerd
 (`vp dev`) cannot, and its sends fail with `Network connection lost.` Test sends against the deployed `dev`
 environment.
+
+**Calls** (`kind: "call"`, spike S6, [write-up](../../docs/spikes/s6-voip-call-screen.md)) are PushKit VoIP pushes:
+topic `<APNS_TOPIC>.voip`, `apns-push-type: voip`, body `{ call: { id }, brigade: <envelope> }` and nothing else.
+`callId` is a lowercase UUID shared by repeats of one page; `urgency` must be `page` (the default for a call);
+`ttlSeconds` defaults to 60 and may not exceed 300. iOS terminates an app that gets a VoIP push and reports no
+call, so the relay refuses anything the app could not ring for. The App ID needs the VoIP Services capability; the
+same `.p8` token key signs for the `.voip` topic.
 
 ## Configuration
 

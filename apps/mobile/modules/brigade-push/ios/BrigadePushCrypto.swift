@@ -1,10 +1,11 @@
 // Shared by the app (the BrigadePush module) and the Notification Service Extension, which compiles this same
-// file. The other side is packages/push (HPKE on WebCrypto); the envelope and constants must match it.
+// file, and the BrigadeCall pod imports it to open VoIP pushes. The other side is packages/push (HPKE on
+// WebCrypto); the envelope and constants must match it.
 import CryptoKit
 import Foundation
 import Security
 
-enum BrigadePushCrypto {
+public enum BrigadePushCrypto {
   /// The App Group both targets are in. App Groups double as Keychain access groups, so the extension can read the
   /// key the app created without a Keychain Sharing entitlement or the team id.
   static let appGroup = "group.app.freecorps.brigade"
@@ -15,7 +16,7 @@ enum BrigadePushCrypto {
   private static let service = "app.freecorps.brigade.push"
   private static let account = "device-key-v1"
 
-  enum Failure: Error {
+  public enum Failure: Error {
     case unsupportedOS
     case noKey
     case malformedEnvelope
@@ -23,9 +24,11 @@ enum BrigadePushCrypto {
     case keychain(OSStatus)
   }
 
-  struct Content {
-    let title: String
-    let body: String
+  public struct Content {
+    public let title: String
+    public let body: String
+    /// The incident a call's ack names (packages/push `PushContent.incident`); nil for plain alerts.
+    public let incident: String?
   }
 
   /// The device public key as the instance needs it: uncompressed P-256 (65 bytes), base64url. Creates the key
@@ -35,7 +38,7 @@ enum BrigadePushCrypto {
   }
 
   /// Opens the `brigade` field of a push: `{ v: 1, enc, ct }` (packages/push `PushEnvelope`).
-  static func open(envelope: Any?) throws -> Content {
+  public static func open(envelope: Any?) throws -> Content {
     guard #available(iOS 17.0, *) else { throw Failure.unsupportedOS }
     guard
       let envelope = envelope as? [String: Any],
@@ -55,7 +58,7 @@ enum BrigadePushCrypto {
       let title = json["title"] as? String,
       let body = json["body"] as? String
     else { throw Failure.malformedContent }
-    return Content(title: title, body: body)
+    return Content(title: title, body: body, incident: json["incident"] as? String)
   }
 
   // MARK: - Keychain

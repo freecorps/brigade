@@ -2,8 +2,10 @@ import { parsePushEnvelope } from "@freecorps/brigade-push";
 import {
   ApnsTokenCache,
   buildApnsRequest,
+  CALL_ID,
   type ApnsCredentials,
   type ApnsEnvironment,
+  type PushKind,
   type Urgency,
 } from "./apns.ts";
 
@@ -34,6 +36,13 @@ const DEFAULT_TTL_SECONDS: Record<Urgency, number> = {
   high: 60 * 60,
   low: 4 * 60 * 60,
 };
+/**
+ * A call rings now or not at all: a phone that comes online minutes later should get the stored alert push (step
+ * 1 of the ladder, RFC 0010), not a call for a page that may be acknowledged already.
+ */
+const CALL_TTL_SECONDS = 60;
+const MAX_CALL_TTL_SECONDS = 5 * 60;
+const KINDS: readonly PushKind[] = ["alert", "call"];
 /** APNs keeps an undelivered push for at most about 30 days. */
 const MAX_TTL_SECONDS = 30 * 24 * 60 * 60;
 /** A request body far above any valid send: a device token and a sealed 2 KB plaintext. */
@@ -63,11 +72,22 @@ export async function handle(
   const body = await readJson(request);
   if (!isRecord(body)) return json({ error: "invalid_body" }, 400);
   const envelope = parsePushEnvelope(body.envelope);
-  const urgency = body.urgency ?? "high";
+  const kind = body.kind ?? "alert";
+  const call = kind === "call";
+  // Only a page rings: a call for anything less would be the misuse Apple terminates apps for.
+  const urgency = body.urgency ?? (call ? "page" : "high");
   if (
     typeof body.deviceToken !== "string" ||
     envelope === null ||
+    !KINDS.includes(kind as PushKind) ||
     !URGENCIES.includes(urgency as Urgency) ||
+    (call &&
+      (urgency !== "page" ||
+        typeof body.callId !== "string" ||
+        !CALL_ID.test(body.callId) ||
+        (body.ttlSeconds !== undefined &&
+          (typeof body.ttlSeconds !== "number" || body.ttlSeconds > MAX_CALL_TTL_SECONDS)))) ||
+    (!call && body.callId !== undefined) ||
     (body.collapseId !== undefined && typeof body.collapseId !== "string") ||
     (body.ttlSeconds !== undefined &&
       (typeof body.ttlSeconds !== "number" ||
@@ -95,7 +115,9 @@ export async function handle(
     console.error(JSON.stringify({ message: "APNs token signing failed", error: String(error) }));
     return json({ error: "relay_misconfigured" }, 500);
   }
-  const ttl = (body.ttlSeconds as number | undefined) ?? DEFAULT_TTL_SECONDS[urgency as Urgency];
+  const ttl =
+    (body.ttlSeconds as number | undefined) ??
+    (call ? CALL_TTL_SECONDS : DEFAULT_TTL_SECONDS[urgency as Urgency]);
   let apnsRequest: Request;
   try {
     apnsRequest = buildApnsRequest(
@@ -103,6 +125,8 @@ export async function handle(
         deviceToken: body.deviceToken,
         envelope,
         urgency: urgency as Urgency,
+        kind: kind as PushKind,
+        ...(call ? { callId: body.callId as string } : {}),
         // 0 keeps APNs' "try once"; otherwise an absolute time.
         expiration: ttl === 0 ? 0 : Math.floor(Date.now() / 1000) + ttl,
         ...(body.collapseId === undefined ? {} : { collapseId: body.collapseId as string }),
@@ -134,7 +158,7 @@ export async function handle(
     reason,
     ms: Date.now() - started,
   };
-  console.log(JSON.stringify({ message: "APNs response", environment, ...result }));
+  console.log(JSON.stringify({ message: "APNs response", environment, kind, ...result }));
   return json(result, response.ok ? 200 : 502);
 }
 

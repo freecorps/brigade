@@ -32,7 +32,13 @@ export type IncidentSeverityChanged = DomainEvent<
   "incident.severity_changed",
   { from: Severity; to: Severity }
 >;
-export type IncidentEvent = IncidentDeclared | IncidentStatusChanged | IncidentSeverityChanged;
+/** Someone acknowledged the page: escalation stops (RFC 0003, "Escalation run"). */
+export type IncidentAcknowledged = DomainEvent<"incident.acknowledged", { by: string }>;
+export type IncidentEvent =
+  | IncidentDeclared
+  | IncidentStatusChanged
+  | IncidentSeverityChanged
+  | IncidentAcknowledged;
 
 /** `INC-142`; null while the server has not numbered the incident yet. */
 export function formatIncidentNumber(number: number | null): string | null {
@@ -75,6 +81,8 @@ export const declareIncident = defineMutation({
       status: "triage",
       declaredAt: ctx.now,
       declaredBy: ctx.actor.id,
+      acknowledgedAt: null,
+      acknowledgedBy: null,
       updatedAt: ctx.now,
     };
     store.insert("incidents", row);
@@ -131,6 +139,38 @@ export const setIncidentSeverity = defineMutation({
   },
 });
 
+/**
+ * Acknowledges the incident's page, from the app, a notification or the call screen (RFC 0010). The first ack
+ * wins; a second one is a `conflict` (no change), so a responder who acks twice, or two who ack at once, see
+ * that someone already did. Pages belong to active incidents only. Until escalation runs exist (IncidentDO) the
+ * ack lives on the incident; it moves to the run then (RFC 0003).
+ */
+export const acknowledgeIncident = defineMutation({
+  name: "incident.ack",
+  args: v.object({ id: incidentId }),
+  permission: "incident:ack",
+  apply(store, args, ctx) {
+    const incident = store.get("incidents", args.id);
+    if (!incident) return fail("not_found", "Incident not found");
+    if (!isActive(incident.status)) {
+      return fail("invalid_transition", `Cannot acknowledge a ${incident.status} incident`);
+    }
+    // `!= null`: rows stored before acknowledgements existed have no such field.
+    if (incident.acknowledgedAt != null) return fail("conflict", "Already acknowledged");
+    store.update("incidents", args.id, {
+      acknowledgedAt: ctx.now,
+      acknowledgedBy: ctx.actor.id,
+      updatedAt: ctx.now,
+    });
+    const event: IncidentAcknowledged = {
+      type: "incident.acknowledged",
+      subject: args.id,
+      data: { by: ctx.actor.id },
+    };
+    return ok(event);
+  },
+});
+
 /** Newest first; ids break ties so every replica orders equal timestamps the same way. */
 const newestFirst = (a: IncidentRow, b: IncidentRow) =>
   b.declaredAt - a.declaredAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
@@ -158,5 +198,10 @@ export const incidentById = defineQuery({
   filter: (row, args) => row.id === args.id,
 });
 
-export const mutations = defineRegistry([declareIncident, setIncidentStatus, setIncidentSeverity]);
+export const mutations = defineRegistry([
+  declareIncident,
+  setIncidentStatus,
+  setIncidentSeverity,
+  acknowledgeIncident,
+]);
 export const queries = defineRegistry([activeIncidents, incidentById]);

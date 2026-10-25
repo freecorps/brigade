@@ -44,6 +44,11 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   status update) replaces a stored page. Before production: the app re-syncs open pages when it reconnects or comes
   to the foreground, and the instance holds back lower-urgency pushes to a device while a page to it may be
   undelivered (or re-sends the page after them). This is a paging path: it needs a fallback and a test.
+- **Calls (RFC 0010).** `POST /send` with `kind: "call"` sends a PushKit VoIP push (`apns-push-type: voip`, topic
+  `<bundle id>.voip`, priority 10) whose body is only `{ call: { id }, brigade: <envelope> }`. The relay refuses a call
+  that is not a `page` or has no lowercase UUID id, and keeps it 60 seconds by default (at most 5 minutes), because
+  iOS terminates an app that receives a VoIP push and reports no call. Devices register a separate PushKit token for
+  calls (spike S6, [write-up](../spikes/s6-voip-call-screen.md)).
 - **The relay is part of this repo** (`apps/relay`). Anyone can run their own with their own store credentials.
 
 ## Driver abstraction

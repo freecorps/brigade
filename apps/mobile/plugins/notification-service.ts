@@ -21,8 +21,15 @@ import {
 
 export const NSE_TARGET = "BrigadeNotificationService";
 export const APP_GROUP = "group.app.freecorps.brigade";
-/** The strings both targets need, in every locale packages/i18n has. */
-export const NATIVE_STRING_KEYS = ["push_fallback_title", "push_fallback_body"] as const;
+/**
+ * The strings both targets need, in every locale packages/i18n has. `call_caller` is the app's: CallKit's
+ * handle for a page ringing as a call (modules/brigade-call, spike S6).
+ */
+export const NATIVE_STRING_KEYS = [
+  "push_fallback_title",
+  "push_fallback_body",
+  "call_caller",
+] as const;
 export const NATIVE_LOCALES = ["en", "pt-BR"] as const;
 
 const here = dirname(fileURLToPath(import.meta.url));

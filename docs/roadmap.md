@@ -56,6 +56,16 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Left: verify on a real iPhone (locked, in the background, in `pt-BR`).
 - [ ] **S6 — VoIP call screen** (RFC 0010). Pass: locked iPhone and Android ring natively; answering plays the
       incident and accepts "ack" (needs Apple credentials and devices).
+  - Done on the Android emulator (API 36, PIN-locked): a page rang through a self-managed `ConnectionService`, a
+    `CallStyle` notification and a full-screen ringing screen over the keyguard; answering read the incident with
+    text-to-speech and "1 Acknowledge" sent the new `incident.ack` mutation through Brigade Sync; without
+    full-screen intents it fell back to a page notification ([write-up](spikes/s6-voip-call-screen.md)).
+  - Done on the iOS Simulator up to CallKit's UI: `brigade-relay-dev` sent a VoIP push (`kind: call`) that reached
+    the Simulator, was decrypted in the app and reported to CallKit, which then ended it because the Simulator has
+    no call UI.
+  - Left: on an iPhone (VoIP Services on the App ID), a locked phone rings through CallKit, answering reads the
+    incident and 1 on CallKit's keypad acknowledges; on an Android phone, the same with real audio, Do Not
+    Disturb and, once FCM exists, a high-priority data message.
 
 ## Phase 1 — Core loop (4–6 weeks)
 

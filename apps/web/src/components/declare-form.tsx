@@ -80,15 +80,15 @@ export function DeclareForm({
       // The shard found the title invalid after all: give the text back (opening the form again on a phone),
       // unless something new was typed. Not for a clock refusal: the title was fine, and the notice says why.
       if (titleRefused(notice)) {
-        // On the opener (about to leave the page) or already lost: focus goes to the title. Never away from
-        // something the user moved on to.
-        const active = document.activeElement;
-        const lost = !active || active === document.body || active === openerRef.current;
+        // Still on the opener, which is about to leave the page: focus goes to the title. Not from <body>: the
+        // user may have tapped elsewhere since.
+        const lost =
+          document.activeElement !== null && document.activeElement === openerRef.current;
         flushSync(() => {
           setExpanded(true);
           setTitle((current) => (current === "" ? typed : current));
         });
-        if (lost) titleRef.current?.focus();
+        if (lost) titleRef.current?.focus({ preventScroll: true });
       }
     });
   };

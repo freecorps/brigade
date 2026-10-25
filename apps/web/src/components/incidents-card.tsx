@@ -70,13 +70,20 @@ export function IncidentsCard() {
   // Kept here, not in the rows: a refused move to Resolved brings back a row that had left the list.
   const [notices, setNotices] = useState<Notice[]>([]);
   const [busy, setBusy] = useState<ReadonlyMap<string, number>>(new Map());
-  // Each new notice is read once, in the card's wording, and leaves the live region after ANNOUNCE_MS, oldest
-  // first: never on a dismiss or a re-render, and refusals landing together are all read. The one timer is
-  // cleared with the effect, so none outlives the card.
-  const [announcements, setAnnouncements] = useState<Notice[]>([]);
+  // Each new notice is read once, in the card's wording, and leaves the live region ANNOUNCE_MS after it
+  // arrived, however many follow: never on a dismiss or a re-render, and refusals landing together are all
+  // read. One timer, for the oldest; it is cleared with the effect, so none outlives the card.
+  const [announcements, setAnnouncements] = useState<{ notice: Notice; at: number }[]>([]);
   useEffect(() => {
-    if (announcements.length === 0) return;
-    const timer = setTimeout(() => setAnnouncements((current) => current.slice(1)), ANNOUNCE_MS);
+    const oldest = announcements[0];
+    if (!oldest) return;
+    const timer = setTimeout(
+      () => {
+        const now = Date.now();
+        setAnnouncements((current) => current.filter((item) => item.at + ANNOUNCE_MS > now));
+      },
+      Math.max(0, oldest.at + ANNOUNCE_MS - Date.now()),
+    );
     return () => clearTimeout(timer);
   }, [announcements]);
   const nextKey = useRef(0);
@@ -92,7 +99,9 @@ export function IncidentsCard() {
         // After an unmount these updates are dropped, and no effect runs to start a timer.
         if (notice) {
           setNotices((current) => [...current, notice].slice(-MAX_NOTICES));
-          setAnnouncements((current) => [...current, notice]);
+          setAnnouncements((current) =>
+            [...current, { notice, at: Date.now() }].slice(-MAX_NOTICES),
+          );
         }
         return notice;
       });
@@ -123,9 +132,9 @@ export function IncidentsCard() {
       "severity",
     );
   // With the list refused nothing shows the optimistic row, so say the declare went out.
-  const [sent, setSent] = useState<string | null>(null);
+  const [sent, setSent] = useState<{ id: string; title: string } | null>(null);
   const onDeclare = (args: { id: string; title: string; severity: Severity }) => {
-    setSent(view === "refused" ? args.title : null);
+    setSent(view === "refused" ? { id: args.id, title: args.title } : null);
     return track(declare(args), {
       kind: "declare",
       incidentId: args.id,
@@ -133,7 +142,7 @@ export function IncidentsCard() {
       title: args.title,
     }).then((notice) => {
       // Refused after all: "Sent" must not stand next to the failure, unless a newer declare replaced it.
-      if (notice) setSent((current) => (current === args.title ? null : current));
+      if (notice) setSent((current) => (current?.id === args.id ? null : current));
       return notice;
     });
   };
@@ -193,10 +202,6 @@ export function IncidentsCard() {
     if (!last) return;
     if (last.element.isConnected) {
       last.fallbacks = plan(last.element);
-      // Defensive: a browser can drop focus to <body> when React moves a keyed row (a new severity reorders
-      // the list). The control is still there, so it gets focus back.
-      const active = document.activeElement;
-      if (!active || active === document.body) last.element.focus({ preventScroll: true });
       return;
     }
     focused.current = null;
@@ -284,7 +289,7 @@ export function IncidentsCard() {
 
         {/* Read out once per new notice, in the card's wording, wherever it is drawn. */}
         <div aria-live="assertive" className="sr-only" data-announcer="">
-          {announcements.map((notice) => (
+          {announcements.map(({ notice }) => (
             <p key={notice.key}>{noticeText(notice, "card")}</p>
           ))}
         </div>
@@ -398,7 +403,7 @@ function StatePanel({
 }: {
   view: SyncView;
   errorCode: string | undefined;
-  sent: string | null;
+  sent: { title: string } | null;
 }) {
   if (view === "reconnecting") {
     return <p className="text-sm text-muted-foreground">{m.sync_reconnecting_hint()}</p>;
@@ -412,12 +417,13 @@ function StatePanel({
           // The client never asks again for a refused subscription on its own: a reload starts it over.
           <>
             <p>{m.sync_refused_hint({ reason: queryErrorReason(errorCode) })}</p>
-            {/* Mounted empty with the panel, so the acknowledgement is an update screen readers announce. */}
+            {/* Mounted with the panel and kept in the accessibility tree while empty (sr-only, not hidden), so the
+                acknowledgement is an update screen readers announce. */}
             <p
               role="status"
-              className="text-muted-foreground [overflow-wrap:anywhere] empty:hidden"
+              className="text-muted-foreground [overflow-wrap:anywhere] empty:sr-only"
             >
-              {sent ? m.declare_sent({ title: sent }) : null}
+              {sent ? m.declare_sent({ title: sent.title }) : null}
             </p>
             <Button variant="outline" onClick={() => window.location.reload()}>
               <RefreshCwIcon aria-hidden />

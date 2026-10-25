@@ -16,7 +16,7 @@ import {
   FakeTimers,
   type ShardServer,
 } from "../../../packages/sync/tests/fake-server.ts";
-import { IncidentsCard } from "../src/components/incidents-card";
+import { ANNOUNCE_MS, IncidentsCard } from "../src/components/incidents-card";
 import { StackStatusProvider } from "../src/components/stack-status";
 import { routeTree } from "../src/routeTree.gen";
 import { PreferencesProvider, usePreferences } from "../src/components/preferences";
@@ -39,6 +39,7 @@ afterEach(() => {
   root = client = undefined;
   switchLocale = undefined;
   vi.restoreAllMocks();
+  vi.useRealTimers();
   document.body.innerHTML = "";
   setWidth(1024);
   localStorage.clear();
@@ -332,6 +333,40 @@ test("refusals landing in the same tick are all read out", async () => {
   expect(lines[1]).toMatch(/^Couldn't move INC-2 “Search slow” to Declined\./);
 });
 
+test("each announcement leaves the live region ANNOUNCE_MS after it arrived, however many follow", async () => {
+  // too_many_pending: the client's cap is 0, so every declare is refused at once, with a notice.
+  const view = mount({ maxPending: 0 });
+  await view.flush();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const refuse = async (title: string) => {
+    await act(async () => setValue($<HTMLInputElement>("input")!, title));
+    await click($$("button").find((b) => b.textContent?.startsWith("Declare SEV")));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  };
+  const lines = () => $$("p", announcer()).map((p) => p.textContent);
+  const advance = (ms: number) => act(() => vi.advanceTimersByTime(ms));
+
+  await refuse("First");
+  expect(lines()).toEqual([expect.stringContaining("“First”")]);
+  await advance(4000);
+  await refuse("Second");
+  expect(lines()).toHaveLength(2);
+  // A newer arrival does not push the oldest's removal back.
+  await advance(ANNOUNCE_MS - 4000 - 1);
+  expect(lines()).toHaveLength(2);
+  await advance(1);
+  expect(lines()).toEqual([expect.stringContaining("“Second”")]);
+  await advance(3000);
+  await refuse("Third");
+  await advance(1000);
+  expect(lines()).toEqual([expect.stringContaining("“Third”")]);
+  await advance(4000);
+  expect(lines()).toEqual([]);
+});
+
 test("a row removed elsewhere while one of its controls has focus hands focus to its neighbour", async () => {
   const view = mount();
   const gone = view.declare("Leaving", "sev1");
@@ -347,37 +382,6 @@ test("a row removed elsewhere while one of its controls has focus hands focus to
   expect(document.activeElement?.getAttribute("data-status-trigger")).toBe(
     row("Staying")!.dataset.incident,
   );
-});
-
-test("a row moved above the focused one keeps focus where it was", async () => {
-  const view = mount();
-  view.declare("Lower", "sev3");
-  const upper = view.declare("Upper", "sev2");
-  await view.flush();
-  expect(titles()).toEqual(["Upper", "Lower"]);
-  const trigger = $(`[data-status-trigger="${upper}"]`)!;
-  act(() => trigger.focus());
-  // Some browsers drop focus to <body> when a node holding it is moved; happy-dom does not, so do it here.
-  // React's commit and the card's layout effect both put it back.
-  for (const method of ["insertBefore", "appendChild"] as const) {
-    const original = Node.prototype[method] as (this: Node, ...args: Node[]) => Node;
-    vi.spyOn(Node.prototype, method).mockImplementation(function (this: Node, ...args: Node[]) {
-      const active = document.activeElement;
-      if (args[0]!.isConnected && active instanceof HTMLElement && args[0]!.contains(active)) {
-        active.blur();
-      }
-      return original.apply(this, args);
-    } as never);
-  }
-  // Raised to SEV1 elsewhere: the lower row moves to the top.
-  view.shard.write(ops, "incident.setSeverity", {
-    id: row("Lower")!.dataset.incident!,
-    severity: "sev1",
-  });
-  await view.flush();
-  await frame();
-  expect(titles()).toEqual(["Lower", "Upper"]);
-  expect(document.activeElement).toBe(trigger);
 });
 
 test("the list puts SEV1 first, whatever its age", async () => {
@@ -396,7 +400,9 @@ test("unavailable: a calm count line, the reason and that it keeps trying; the f
   expect($('[role="status"]', card)?.textContent).toContain("Sync unavailable");
   expect(card.textContent).toContain("vp run dev");
   expect(card.textContent).toContain("This page keeps trying on its own.");
-  expect(card.textContent).not.toContain("—");
+  // The count line keeps its height, empty: no placeholder glyph.
+  const count = $("#incidents-title")!.parentElement!.nextElementSibling!;
+  expect(count.textContent).toBe("");
   expect($$("button").some((b) => b.textContent?.startsWith("Declare SEV"))).toBe(true);
 });
 

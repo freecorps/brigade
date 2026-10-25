@@ -102,7 +102,7 @@ export function IncidentItem({
       </h3>
       {/* Phones: both menus on one line, and -mb-2 trims the space under the 44px triggers without shrinking
           them. From md the wrapper dissolves and each menu takes its own column, centred on the row. */}
-      <div className="col-span-2 -mb-2 -ml-1.5 flex flex-wrap max-[374px]:-ml-1 items-center gap-1 md:contents">
+      <div className="col-span-2 -mb-2 -ml-1.5 flex flex-wrap items-center gap-1 max-[374px]:-ml-1 md:contents">
         <div className="md:col-start-3 md:row-span-2 md:row-start-1 md:self-center">
           <DropdownMenu>
             <DropdownMenuTrigger

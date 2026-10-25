@@ -141,7 +141,7 @@ heartbeat token's SHA-256); `monitor.*` mutations need `monitor:manage` (owners 
   Recovery resolves the alert and leaves the incident to people. With too few fresh regions it is `unknown` ("No
   data"), which keeps a firing alert and pages nobody (RFC 0007). An unchanged verdict's 5-minute refresh writes no
   outbox event.
-- **Heartbeats:** `POST /heartbeat/:token` checks the workspace in D1 (no Durable Object for a made-up one), hashes
+- **Heartbeats:** `POST /heartbeat/:token` checks the workspace in D1 (no Durable Object for a made-up one; if D1 fails it asks the shard anyway), hashes
   the secret, and the shard compares it with the stored hash in constant time. The shard's alarm (at least every minute while monitors exist) marks a heartbeat that missed its
   interval plus grace as down, re-pushes probe configs every 10 minutes or when a region stops reporting (which
   re-arms a probe whose alarm was lost), turns monitors whose results went stale `unknown` (`monitor.evaluate`), and

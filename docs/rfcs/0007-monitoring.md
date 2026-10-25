@@ -50,8 +50,8 @@
   Built: `POST /heartbeat/<workspace id>.<monitor id>.<secret>` (also under the dashboard's `/api`). The secret is
   32 random bytes made by the client, which shows the URL once and sends only its SHA-256; the shard stores the hash
   in a server-only table and compares in constant time. The Worker first checks that the workspace exists in D1
-  (cached per isolate for 10 minutes), so a made-up workspace creates no Durable Object (Q16). Every refusal is the
-  same 404. A ping turns the monitor up;
+  (cached per isolate for 10 minutes), so a made-up workspace creates no Durable Object (Q16); if the D1 read fails, the ping goes to the shard
+  anyway (fail open: a D1 outage must not page anyone for a missed beat). Every refusal is the same 404. A ping turns the monitor up;
   no ping within interval + grace (0 s to 24 h) is a failure, found by the workspace shard's alarm (at least once a
   minute), and with one source that is the quorum.
 - No ICMP. Internal networks only via heartbeat or Cloudflare Tunnel.

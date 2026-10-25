@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { Actor } from "@freecorps/brigade-schema";
+import type { Actor, ProbeRegion } from "@freecorps/brigade-schema";
 import {
   encode,
   parseClientMessage,
@@ -9,6 +9,8 @@ import {
   type SubscriptionChanges,
 } from "@freecorps/brigade-sync/protocol";
 import { readActor } from "./actor.ts";
+import { isProbeRegion, Monitoring } from "./monitors.ts";
+import type { ProbeReport } from "./probe.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
 import type { RowChange } from "./store.ts";
 
@@ -74,14 +76,24 @@ const MAX_SALVAGE_LENGTH = 1024 * 1024;
  */
 export class WorkspaceDO extends DurableObject<Env> {
   private readonly shard: Shard;
+  private readonly monitoring: Monitoring;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    const randomBytes = (length: number) => crypto.getRandomValues(new Uint8Array(length));
     // Runs on every wake from hibernation: only `create … if not exists`.
     this.shard = new Shard(ctx.storage, {
       shard: "workspace",
-      randomBytes: (length) => crypto.getRandomValues(new Uint8Array(length)),
+      randomBytes,
       log: (message, fields) => this.log(message, fields),
+    });
+    this.monitoring = new Monitoring({
+      storage: ctx.storage,
+      shard: this.shard,
+      probes: env.PROBE,
+      randomBytes,
+      log: (message, fields) => this.log(message, fields),
+      committed: (version, changes) => this.broadcast(version, changes, undefined),
     });
   }
 
@@ -146,6 +158,44 @@ export class WorkspaceDO extends DurableObject<Env> {
     // Already provisioned (a retry): fine.
     if (result.error.code === "conflict") return { ok: true };
     return { ok: false, code: result.error.code };
+  }
+
+  /**
+   * A probe's verdicts for its region (RPC from `ProbeDO`), each run as `monitor.report` by the monitors' system
+   * actor and de-duplicated by its report id. Returns, per report, whether the probe may stop sending it: true
+   * when it committed or can never apply (a stale, paused or deleted monitor), false when it should be sent
+   * again. A storage failure throws, and the probe sends them all again.
+   */
+  report(region: ProbeRegion, reports: ProbeReport[]): boolean[] {
+    if (!isProbeRegion(region) || this.shard.workspace() === undefined)
+      return reports.map(() => true);
+    return reports.map(({ reportId, ...report }) => {
+      const result = this.monitoring.report(`probe:${region}`, reportId, {
+        ...report,
+        source: region,
+      });
+      return result.ok || ["conflict", "not_found", "invalid_args"].includes(result.error.code);
+    });
+  }
+
+  /**
+   * A heartbeat ping (RPC from the Worker's `POST /heartbeat/:token`) with the SHA-256 of the token's secret.
+   * False for an unknown monitor or a wrong token, alike; a shard that serves no workspace yet answers false
+   * without claiming one.
+   */
+  heartbeat(monitorId: string, digest: ArrayBuffer): boolean {
+    if (this.shard.workspace() === undefined) return false;
+    return this.monitoring.ping(monitorId, digest);
+  }
+
+  /** Monitor upkeep (`Monitoring.tick`): probe pushes, heartbeat deadlines, stalled probes. */
+  override async alarm(): Promise<void> {
+    try {
+      await this.monitoring.tick(Date.now());
+    } catch (error) {
+      // `tick` set the next alarm before anything that can fail.
+      this.log("monitor tick failed", { error });
+    }
   }
 
   /** Accepts a sync socket the Worker forwarded (`GET /sync/:workspaceId`). */
@@ -279,7 +329,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       now,
     });
     this.send(ws, result);
-    if (result.ok) this.broadcast(result.version, changes, ws);
+    if (result.ok) {
+      this.broadcast(result.version, changes, ws);
+      // A monitor changed: the alarm pushes it to its probes (and keeps watching its heartbeats) right away.
+      if (changes.some((change) => change.table === "monitors")) {
+        void this.ctx.storage.setAlarm(Date.now());
+      }
+    }
   }
 
   private subscribe(

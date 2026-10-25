@@ -1,9 +1,17 @@
 import { m } from "@freecorps/brigade-i18n";
-import { isRole } from "@freecorps/brigade-schema";
+import { isRole, type Role } from "@freecorps/brigade-schema";
 import { SyncProvider } from "@freecorps/brigade-sync/react";
 import { Navigate } from "@tanstack/react-router";
 import { LoaderCircleIcon, RefreshCwIcon } from "lucide-react";
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { AuthPage } from "@/components/auth-page";
 import { usePreferences } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
@@ -26,6 +34,18 @@ export function RequireWorkspace({ children }: { children: ReactNode }) {
   return <ActiveWorkspace userId={session.data.user.id}>{children}</ActiveWorkspace>;
 }
 
+/** The signed-in member's workspace and role, for what the dashboard shows or hides (RFC 0003). */
+export type Member = { workspaceId: string; role: Role };
+
+const MemberContext = createContext<Member | null>(null);
+
+/** The member `RequireWorkspace` signed in; only below it. */
+export function useMember(): Member {
+  const member = useContext(MemberContext);
+  if (!member) throw new Error("useMember needs <RequireWorkspace> above it");
+  return member;
+}
+
 /** Mounted only with a session and an active workspace, so its queries never run signed out. */
 function ActiveWorkspace({ userId, children }: { userId: string; children: ReactNode }) {
   const workspace = authClient.useActiveOrganization();
@@ -44,14 +64,21 @@ function ActiveWorkspace({ userId, children }: { userId: string; children: React
     return <Loading />;
   }
 
-  const role = member.data.role;
   // Brigade gives every member one of its roles; anything else reads nothing, like the shard would answer.
-  setSyncActor({ kind: "user", id: userId, role: isRole(role) ? role : "viewer" });
+  const role = isRole(member.data.role) ? member.data.role : "viewer";
+  setSyncActor({ kind: "user", id: userId, role });
   return (
     <SyncProvider client={syncClient} shard={workspace.data.id}>
-      {children}
+      <MemberProvider workspaceId={workspace.data.id} role={role}>
+        {children}
+      </MemberProvider>
     </SyncProvider>
   );
+}
+
+function MemberProvider({ workspaceId, role, children }: Member & { children: ReactNode }) {
+  const value = useMemo(() => ({ workspaceId, role }), [workspaceId, role]);
+  return <MemberContext.Provider value={value}>{children}</MemberContext.Provider>;
 }
 
 function Loading() {

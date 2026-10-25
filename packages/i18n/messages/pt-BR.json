@@ -246,5 +246,111 @@
   "call_route_notify": "Uma notificação de acionamento (sem tela de chamada)",
   "call_route_blocked": "Nada: as notificações estão desligadas",
   "call_voip_token": "Token de push VoIP",
-  "call_allow_full_screen": "Permitir alertas em tela cheia"
+  "call_allow_full_screen": "Permitir alertas em tela cheia",
+  "monitor_incident_title": "{name} está fora do ar",
+  "monitors_title": "Monitores",
+  "monitors_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countExact = count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countExact", "countPlural"],
+      "match": {
+        "countExact=0, countPlural=*": "Nenhum monitor",
+        "countExact=*, countPlural=one": "{countFormatted} monitor",
+        "countExact=*, countPlural=*": "{countFormatted} monitores"
+      }
+    }
+  ],
+  "monitors_down_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} fora do ar",
+        "countPlural=*": "{countFormatted} fora do ar"
+      }
+    }
+  ],
+  "monitors_empty": "Nada é monitorado ainda. Adicione uma verificação HTTP, ou um heartbeat para tarefas que devem dar sinal de vida.",
+  "monitor_add": "Adicionar monitor",
+  "monitor_kind": [
+    {
+      "declarations": ["input kind"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=http": "Verificação HTTP",
+        "kind=*": "Heartbeat"
+      }
+    }
+  ],
+  "monitor_status": [
+    {
+      "declarations": ["input status"],
+      "selectors": ["status"],
+      "match": {
+        "status=up": "No ar",
+        "status=down": "Fora do ar",
+        "status=paused": "Pausado",
+        "status=*": "Aguardando"
+      }
+    }
+  ],
+  "monitor_region": [
+    {
+      "declarations": ["input region"],
+      "selectors": ["region"],
+      "match": {
+        "region=wnam": "EUA Oeste",
+        "region=enam": "EUA Leste",
+        "region=weur": "Europa Ocidental",
+        "region=eeur": "Europa Oriental",
+        "region=apac": "Ásia-Pacífico",
+        "region=*": "Oceania"
+      }
+    }
+  ],
+  "monitor_pause_action": [
+    {
+      "declarations": ["input action"],
+      "selectors": ["action"],
+      "match": {
+        "action=pause": "Pausar",
+        "action=*": "Retomar"
+      }
+    }
+  ],
+  "monitor_last_result": [
+    {
+      "declarations": ["input kind"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=http": "Verificado {when}",
+        "kind=*": "Último sinal {when}"
+      }
+    }
+  ],
+  "monitor_heartbeat_every": "Espera um sinal a cada {interval}",
+  "monitor_name_label": "Nome",
+  "monitor_url_label": "URL",
+  "monitor_method_label": "Método",
+  "monitor_expected_status_label": "Status esperado",
+  "monitor_expected_status_hint": "Vazio: qualquer 2xx ou 3xx. Redirecionamentos não são seguidos.",
+  "monitor_keyword_label": "Texto que a página deve conter",
+  "monitor_interval_label": "A cada (segundos)",
+  "monitor_timeout_label": "Tempo limite (segundos)",
+  "monitor_grace_label": "Tolerância (segundos)",
+  "monitor_regions_label": "Verificar de",
+  "monitor_create": "Criar monitor",
+  "monitor_field_invalid": "Confira este valor.",
+  "monitor_url_invalid": "Use um endereço http ou https público.",
+  "monitor_heartbeat_ready": "Envie um POST para esta URL pelo menos a cada {interval}. Ela só aparece agora: copie antes de fechar.",
+  "monitor_change_failed": "Não foi possível alterar {name}: {reason}"
 }

@@ -9,6 +9,7 @@ export type Role = (typeof ROLES)[number];
 export const statement = {
   incident: ["read", "declare", "update", "ack"],
   workspace: ["create"],
+  monitor: ["read", "manage"],
 } as const;
 
 type Statement = typeof statement;
@@ -21,10 +22,15 @@ type Grants = { readonly [R in Resource]?: readonly Statement[R][number][] };
 
 /** What each role may do. New resources get a row here together with the mutations that need them. */
 export const roles = {
-  owner: { incident: ["read", "declare", "update", "ack"], workspace: ["create"] },
-  admin: { incident: ["read", "declare", "update", "ack"] },
-  responder: { incident: ["read", "declare", "update", "ack"] },
-  viewer: { incident: ["read"] },
+  owner: {
+    incident: ["read", "declare", "update", "ack"],
+    workspace: ["create"],
+    monitor: ["read", "manage"],
+  },
+  admin: { incident: ["read", "declare", "update", "ack"], monitor: ["read", "manage"] },
+  // Responders see what monitors say (they run the incidents monitors open) but do not change what is watched.
+  responder: { incident: ["read", "declare", "update", "ack"], monitor: ["read"] },
+  viewer: { incident: ["read"], monitor: ["read"] },
 } as const satisfies Record<Role, Grants>;
 
 export const PERMISSIONS: readonly Permission[] = (Object.keys(statement) as Resource[]).flatMap(

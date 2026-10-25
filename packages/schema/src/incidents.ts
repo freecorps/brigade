@@ -4,14 +4,7 @@
 import { idTime } from "./id.ts";
 import { canTransition, INCIDENT_STATUSES, isActive, SEVERITIES } from "./lifecycle.ts";
 import type { IncidentStatus, Severity } from "./lifecycle.ts";
-import {
-  defineMutation,
-  defineRegistry,
-  fail,
-  ok,
-  type DomainEvent,
-  type MutationStore,
-} from "./mutation.ts";
+import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
 import type { IncidentRow } from "./tables.ts";
 import { v } from "./validate.ts";
@@ -203,11 +196,3 @@ export const incidentById = defineQuery({
   key: (args) => args.id,
   filter: (row, args) => row.id === args.id,
 });
-
-export const mutations = defineRegistry([
-  declareIncident,
-  setIncidentStatus,
-  setIncidentSeverity,
-  acknowledgeIncident,
-]);
-export const queries = defineRegistry([activeIncidents, incidentById]);

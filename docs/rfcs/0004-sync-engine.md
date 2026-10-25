@@ -409,3 +409,14 @@ extra hop and more moving parts, so we start without it.
 
 Alarms, alert ingestion, Slack commands and monitors call the same mutations through DO RPC with a system actor.
 One code path for every write → one audit trail.
+
+- A system actor is `{ kind: "system", id: "sys_<name>", role }`: it carries one of the member roles and passes the
+  same `can()` check. The first is `sys_monitors` (`MONITOR_ACTOR`, role `admin`): probe reports and heartbeats run
+  `monitor.report` as it (RFC 0007), and a nested `runMutation` of `incident.declare` inside that mutation opens the
+  incident with the same RBAC and validation, in the same transaction.
+- Server-only mutations sit in `serverMutations` (`packages/schema/src/registry.ts`), never in `mutations`, so a
+  socket gets `unknown_mutation` for them. The shard runs them with `internal: true` and de-duplicates them like a
+  socket's: client id `probe:<region>` or `heartbeat`, mutation id the probe's report id.
+- Ids and text a server mutation needs (a new incident's and alert's ids, the incident title rendered with
+  `packages/i18n`) are made by the shard before it runs the mutation and passed in its args, so `apply` stays
+  deterministic.

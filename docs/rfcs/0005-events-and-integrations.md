@@ -20,7 +20,10 @@ interface BrigadeEvent<T = unknown> {
 }
 ```
 
-Event types are versioned with the schema package and documented in the generated API reference.
+Event types are versioned with the schema package and documented in the generated API reference. Monitors (RFC 0007)
+emit `monitor.created`, `monitor.updated`, `monitor.paused`, `monitor.resumed`, `monitor.deleted`, `monitor.checked`
+(one per probe report), `monitor.status_changed`, `alert.fired` and `alert.resolved`, with actor `sys_monitors` for
+what the probes and heartbeats cause.
 
 Users, sessions and membership live in D1, written by Better Auth (RFC 0002), not by a shard. A change there that
 integrations care about is announced by the workspace shard: creating a workspace runs `workspace.create` in its

@@ -4,8 +4,9 @@ The Brigade API: a Cloudflare Worker (HTTP entry) and its Durable Objects. See
 [RFC 0002](../../docs/rfcs/0002-architecture.md) for the runtime map and [RFC 0004](../../docs/rfcs/0004-sync-engine.md)
 for the shards.
 
-It has one SQLite-backed Durable Object, `WorkspaceDO`: the workspace's shard and its sync endpoint (Brigade
-Sync, RFC 0004). Every write is a named mutation from `@freecorps/brigade-schema`, run in the shard.
+It has two SQLite-backed Durable Objects: `WorkspaceDO`, the workspace's shard and its sync endpoint (Brigade
+Sync, RFC 0004), and `ProbeDO`, one per workspace and region, which runs HTTP monitors (RFC 0007). Every write is a
+named mutation from `@freecorps/brigade-schema`, run in the shard.
 
 | Route                 | Response                                                                            |
 | --------------------- | ----------------------------------------------------------------------------------- |
@@ -22,6 +23,8 @@ Sync, RFC 0004). Every write is a named mutation from `@freecorps/brigade-schema
 | `GET /sync/:id`       | `101`: a Brigade Sync WebSocket to the workspace's shard, as the signed-in member   |
 |                       | `401` without a session, `403` for a non-member or a cross-site `Origin`            |
 |                       | `426` without `Upgrade: websocket`, `400` for a bad id, `405` for other methods     |
+| `POST /heartbeat/:t`  | `202 {"ok":true}`: a heartbeat monitor's ping; the token names workspace, monitor   |
+|                       | and secret (`404` for any wrong or unknown token, alike; `405` for other methods)   |
 | other methods         | `405` with `Allow: GET, HEAD`                                                       |
 | anything else         | `404`                                                                               |
 
@@ -96,6 +99,7 @@ synchronous, so frames are handled strictly in arrival order. The details and th
 | `change_log`       | (version, table, id) of every synced row each version changed; the last 1000 versions                                           |
 | `mutation_results` | The result of each (clientId, mutationId) the shard ran, kept 7 days from the run for de-duplication                            |
 | `outbox`           | RFC 0005 event envelopes, written in the mutation's transaction; not drained yet (no Queue)                                     |
+| `probe_pushes`     | Per region, the checks last pushed to its `ProbeDO` and when (monitoring, below)                                                |
 
 - **Epoch:** created with the storage and rotated by `WorkspaceDO.rotateEpoch()`, which every restore must call
   before the shard is reachable again (it also closes every socket with 1012). A resume from another epoch, from a
@@ -119,6 +123,26 @@ synchronous, so frames are handled strictly in arrival order. The details and th
   (`console.error`), answered with `error { code: "internal" }` when possible, and close the socket with 1011; the
   client reconnects and replays. Frames still queued on a socket the shard closed are dropped unread, so nothing runs
   out of order before the replay.
+
+## Monitoring
+
+RFC 0007. Monitors live in the workspace shard (`monitors`, `alerts`, and the server-only `heartbeats` with each
+heartbeat token's SHA-256); `monitor.*` mutations need `monitor:manage` (owners and admins).
+
+- **Probes** (`src/probe.ts`): one `ProbeDO` per workspace and region (`<workspace>:<region>`, created with that
+  `locationHint`; only regions where objects spawn are offered, spike S2). The shard pushes each region's HTTP
+  checks (`configure`); `alarm()` sets the next alarm first, then runs the due checks (`src/check.ts`: the target
+  rules again, no redirects followed, at most 64 KiB of body read, a timeout) and fetches
+  `/cdn-cgi/trace` once to record the colo it really ran from. A region's verdict flips after 2 alike checks; the
+  probe reports it to `WorkspaceDO.report()` on a change and otherwise every 5 minutes, de-duplicated by report id.
+- **Quorum → alert → incident:** each report is `monitor.report`, a server-only mutation run as the system actor
+  `sys_monitors` (role `admin`). A monitor is down when a majority of its regions is down (1 of 1, 2 of 3); that
+  fires one alert per monitor and opens an incident through `incident.declare` in the same transaction. Recovery
+  resolves the alert and leaves the incident to people.
+- **Heartbeats:** `POST /heartbeat/:token` hashes the secret and the shard compares it with the stored hash in
+  constant time. The shard's alarm (at least every minute while monitors exist) marks a heartbeat that missed its
+  interval plus grace as down, re-pushes probe configs every 10 minutes or when a region stops reporting (which
+  re-arms a probe whose alarm was lost), and retries failed pushes.
 
 ## Run it
 

@@ -92,6 +92,18 @@ Validate the risky assumptions before writing product code. Each spike produces 
     announce a workspace D1 no longer has: tombstone it with a compensating event); and sign-in limits keyed by
     account as well as IP, since 3 tries per 10 s per IP can briefly lock out a team behind one NAT.
 - [ ] Monitors (HTTP/TCP/heartbeat) with quorum → alerts → incidents
+  - Done: HTTP and heartbeat monitors as mutations in `packages/schema` (owners and admins manage, everyone reads),
+    one `ProbeDO` per workspace and region with `locationHint` (only the six regions where objects spawn, S2), each
+    result with the colo it ran from; SSRF rules on save and before every request, no redirects followed, bounded
+    body and timeout; `POST /heartbeat/:token` with a hashed secret; majority quorum and 2 consecutive checks per
+    region; one alert per monitor opening an incident through `incident.declare` as the system actor `sys_monitors`,
+    resolved on recovery; alarm chains that reschedule first, and a shard alarm that re-pushes configs and catches
+    missed heartbeats; a Monitors card in the dashboard (create, pause and resume) (RFC 0007).
+  - Left: TCP checks (`connect()`); editing and deleting monitors in the dashboard (the mutations exist); regex,
+    headers and TLS expiry; configurable quorum and severity; alerting on a stalled probe (RFC 0007 "Watching the
+    watcher"; today it is logged and re-pushed); `AlertGroupDO` and alert routes, moving monitor alerts out of the
+    workspace shard; a timeline note on the incident when its monitor recovers (needs the incident timeline);
+    revisiting the regions with S2's 48-hour result; the workspace default locale for the incident title (Q15).
 - [ ] Incidents: declare, severity, status, roles, timeline, updates
 - [ ] Brigade Sync in production for web + mobile
 - [ ] Web dashboard: incident list/detail, monitors

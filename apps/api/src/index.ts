@@ -1,4 +1,4 @@
-import { workspaceName } from "@freecorps/brigade-schema";
+import { parseHeartbeatToken, workspaceName } from "@freecorps/brigade-schema";
 import { ACTOR_HEADER, resolveActor } from "./actor.ts";
 import {
   AUTH_BASE_PATH,
@@ -9,10 +9,12 @@ import {
 } from "./auth.ts";
 import { WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
 
+export { ProbeDO } from "./probe.ts";
 export { WorkspaceDO } from "./workspace.ts";
 
 const WORKSPACE_PATH = /^\/workspaces\/([^/]+)$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
+const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
 const READ_METHODS = ["GET", "HEAD"];
 /** Largest `POST /workspaces` body read, in bytes. */
 const MAX_BODY_LENGTH = 4096;
@@ -46,6 +48,8 @@ export default {
     const sync = SYNC_PATH.exec(pathname)?.[1];
     if (sync !== undefined) return openSync(request, env, auth, sync);
     if (pathname === "/workspaces") return createWorkspace(request, auth);
+    const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
+    if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
 
     const workspace = WORKSPACE_PATH.exec(pathname)?.[1];
     if (pathname !== "/health" && workspace === undefined) return json({ error: "not_found" }, 404);
@@ -175,6 +179,33 @@ async function openSync(
     return await env.WORKSPACE.getByName(workspace).fetch(request.url, { headers });
   } catch (error) {
     return failed("WorkspaceDO sync upgrade failed", workspace, error);
+  }
+}
+
+/**
+ * `POST /heartbeat/:token`: a heartbeat monitor's ping (RFC 0007). The token names the workspace and the monitor
+ * and carries the secret; the shard compares the secret's SHA-256 with the stored one in constant time. Every
+ * refusal is the same 404, so a caller cannot tell a wrong secret from a missing monitor. The body is never read.
+ */
+export async function receiveHeartbeat(
+  request: Request,
+  env: Env,
+  token: string,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return json({ error: "method_not_allowed" }, 405, { Allow: "POST" });
+  }
+  const parsed = parseHeartbeatToken(token);
+  if (!parsed || !WORKSPACE_ID.test(parsed.workspaceId)) return json({ error: "not_found" }, 404);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(parsed.secret));
+  try {
+    const accepted = await env.WORKSPACE.getByName(parsed.workspaceId).heartbeat(
+      parsed.monitorId,
+      digest,
+    );
+    return accepted ? json({ ok: true }, 202) : json({ error: "not_found" }, 404);
+  } catch (error) {
+    return failed("WorkspaceDO.heartbeat failed", parsed.workspaceId, error);
   }
 }
 

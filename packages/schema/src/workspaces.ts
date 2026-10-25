@@ -2,13 +2,7 @@
 // RFC 0002); the workspace shard keeps one `workspace` row and announces the workspace with `workspace.created`
 // through its outbox (RFC 0005), run by the API Worker right after Better Auth creates the organization.
 
-import {
-  acknowledgeIncident,
-  declareIncident,
-  setIncidentSeverity,
-  setIncidentStatus,
-} from "./incidents.ts";
-import { defineMutation, defineRegistry, fail, ok, type DomainEvent } from "./mutation.ts";
+import { defineMutation, fail, ok, type DomainEvent } from "./mutation.ts";
 import type { WorkspaceRow } from "./tables.ts";
 import { v } from "./validate.ts";
 
@@ -24,7 +18,7 @@ export type WorkspaceCreated = DomainEvent<
 
 /**
  * Server only: run by the API Worker when it provisions a shard, never from a socket, so it is not in `mutations`
- * (the registry clients send names from) but only in `serverMutations`.
+ * (the registry clients send names from) but only in `serverMutations` (registry.ts).
  */
 export const createWorkspace = defineMutation({
   name: "workspace.create",
@@ -49,12 +43,3 @@ export const createWorkspace = defineMutation({
     return ok(event);
   },
 });
-
-/** Every mutation the shard runs: what clients may send (`mutations`) plus the server-only ones. */
-export const serverMutations = defineRegistry([
-  declareIncident,
-  setIncidentStatus,
-  setIncidentSeverity,
-  acknowledgeIncident,
-  createWorkspace,
-]);

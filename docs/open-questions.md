@@ -20,6 +20,18 @@ app now records an unanswered end within 2 seconds of ringing as `failed`, so a 
 also post the time-sensitive fallback notification at once? Check on devices which real cases look like this
 (spike S6 write-up).
 
+## Q15 — Locale of text the server writes into shared data (RFC 0008)
+
+An incident a monitor opens is titled "<name> is down" in English: data is not translated, and workspaces have no
+default locale yet. Add a workspace locale (set at sign-up, editable by owners) and render server-written titles in
+it?
+
+## Q16 — Heartbeat tokens for workspaces that do not exist (RFC 0007)
+
+`POST /heartbeat/:token` routes by the workspace id in the token, so a well-formed token for a made-up workspace
+wakes (and creates) an empty `WorkspaceDO` before it answers 404. Harmless so far (it claims nothing), but it costs a
+storage write per new name. Check the id against D1 first, or keep a signed routing hint in the token?
+
 ---
 
 # Decided

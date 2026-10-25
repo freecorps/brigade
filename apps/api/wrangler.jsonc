@@ -14,10 +14,17 @@
     "traces": { "enabled": true, "head_sampling_rate": 0.1 },
   },
   "upload_source_maps": true,
+  // ProbeDO: one per workspace and region, created with a `locationHint` (RFC 0007, src/probe.ts).
   "durable_objects": {
-    "bindings": [{ "name": "WORKSPACE", "class_name": "WorkspaceDO" }],
+    "bindings": [
+      { "name": "WORKSPACE", "class_name": "WorkspaceDO" },
+      { "name": "PROBE", "class_name": "ProbeDO" },
+    ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WorkspaceDO"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["WorkspaceDO"] },
+    { "tag": "v2", "new_sqlite_classes": ["ProbeDO"] },
+  ],
   // Better Auth's tables (src/auth.ts); migrations/ holds their schema. No `database_id` for production and
   // staging yet: those databases do not exist, and the first deploy (owner approval) creates and pins them.
   "d1_databases": [
@@ -31,7 +38,10 @@
   "env": {
     "dev": {
       "durable_objects": {
-        "bindings": [{ "name": "WORKSPACE", "class_name": "WorkspaceDO" }],
+        "bindings": [
+          { "name": "WORKSPACE", "class_name": "WorkspaceDO" },
+          { "name": "PROBE", "class_name": "ProbeDO" },
+        ],
       },
       "d1_databases": [
         {
@@ -45,7 +55,10 @@
     },
     "staging": {
       "durable_objects": {
-        "bindings": [{ "name": "WORKSPACE", "class_name": "WorkspaceDO" }],
+        "bindings": [
+          { "name": "WORKSPACE", "class_name": "WorkspaceDO" },
+          { "name": "PROBE", "class_name": "ProbeDO" },
+        ],
       },
       "d1_databases": [
         { "binding": "DB", "database_name": "brigade-db-staging", "migrations_dir": "migrations" },

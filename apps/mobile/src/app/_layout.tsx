@@ -49,6 +49,7 @@ export default function RootLayout() {
           <Stack.Screen name="index" options={{ title: m.incidents_title() }} />
           <Stack.Screen name="legend" options={{ title: m.legend_title() }} />
           <Stack.Screen name="intl" options={{ title: m.intl_title() }} />
+          <Stack.Screen name="push" options={{ title: m.push_title() }} />
         </Stack>
       </LocaleContext>
     </SyncProvider>

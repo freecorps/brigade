@@ -164,5 +164,14 @@
   "declare_submit_severity": "Declarar {severity}",
   "mobile_sync_retrying": "O app continua tentando sozinho.",
   "mobile_sync_offline_hint": "Não foi possível conectar ao Brigade agora. Suas alterações são enviadas quando a conexão voltar, desde que o app continue aberto.",
-  "mobile_change_hint": "Abre as opções"
+  "mobile_change_hint": "Abre as opções",
+  "push_fallback_title": "Novo alerta",
+  "push_fallback_body": "Abra o Brigade para ver.",
+  "push_title": "Push",
+  "push_permission": "Notificações",
+  "push_device_token": "Token do dispositivo (APNs)",
+  "push_public_key": "Chave pública do dispositivo",
+  "push_waiting": "Aguardando…",
+  "push_unavailable": "Ainda não disponível nesta plataforma.",
+  "push_error": "Falhou: {error}"
 }

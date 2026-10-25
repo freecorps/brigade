@@ -56,6 +56,7 @@ packages/
   sync/        Sync protocol client + React hooks (RFC 0004)                           (MIT)
   sdk/         Typed API client + provider interfaces for integrations                 (MIT)
   i18n/        Message catalogs and formatting helpers (RFC 0008)                      (MIT)
+  push/        Push payload encryption (HPKE on WebCrypto) and envelope (RFC 0006)     (MIT)
   ui/          Shared design tokens (web + mobile)                                     (MIT)
 integrations/
   slack/       ChatProvider implementation (Worker, bound via service binding)        (AGPL-3.0)

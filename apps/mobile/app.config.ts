@@ -2,15 +2,24 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 // By path, not "@freecorps/brigade-ui": Expo's config loader does not use the @freecorps/source
 // condition, so the package name would need packages/ui built first.
 import { themes } from "../../packages/ui/src/tokens.ts";
+import { withNotificationService } from "./plugins/notification-service.ts";
 import { withSplashGround } from "./plugins/splash-ground.ts";
 
 // One id on both stores, registered under the Freecorps Apple team. Same `app.freecorps.*` prefix as
 // Freecorps' other apps.
 const APP_ID = "app.freecorps.brigade";
 
+// APNs environment the build's signing matches. Local Xcode builds use a development profile (sandbox device
+// tokens); every EAS build is ad hoc or App Store signed, whose profiles carry `production`.
+const APS_ENVIRONMENT = process.env.EAS_BUILD === "true" ? "production" : "development";
+
 export default ({ config }: ConfigContext): ExpoConfig =>
-  // iOS: point the launch screen at the splash ground, which expo-splash-screen skips without an image.
-  withSplashGround(appConfig(config), { fallback: themes.light.background });
+  // iOS: the Notification Service Extension that decrypts pushes (spike S1), and the launch screen pointed at
+  // the splash ground, which expo-splash-screen skips without an image.
+  withNotificationService(
+    withSplashGround(appConfig(config), { fallback: themes.light.background }),
+    { apsEnvironment: APS_ENVIRONMENT },
+  );
 
 const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
   ...config,
@@ -29,6 +38,9 @@ const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
   backgroundColor: themes.light.background,
   ios: {
     bundleIdentifier: APP_ID,
+    // Local builds only, for automatic signing (`xcodebuild -allowProvisioningUpdates`); EAS signs with its own
+    // credentials. Read from the environment so the team id stays out of the repository.
+    ...(process.env.APPLE_TEAM_ID ? { appleTeamId: process.env.APPLE_TEAM_ID } : {}),
     // Phone-first. On iPad the app runs in iPhone compatibility mode until a tablet layout exists.
     supportsTablet: false,
     // Only standard encryption (HTTPS, CryptoKit for push payloads): exempt from export documentation.
@@ -43,6 +55,8 @@ const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
   },
   plugins: [
     "expo-router",
+    // Native device tokens for the relay (`getDevicePushTokenAsync`), not Expo push tokens (RFC 0006).
+    ["expo-notifications", { mode: APS_ENVIRONMENT }],
     [
       "expo-localization",
       {

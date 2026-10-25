@@ -164,5 +164,14 @@
   "declare_submit_severity": "Declare {severity}",
   "mobile_sync_retrying": "The app keeps trying on its own.",
   "mobile_sync_offline_hint": "Can't reach Brigade right now. Changes you make are sent when the connection is back, as long as the app stays open.",
-  "mobile_change_hint": "Opens the choices"
+  "mobile_change_hint": "Opens the choices",
+  "push_fallback_title": "New alert",
+  "push_fallback_body": "Open Brigade to see it.",
+  "push_title": "Push",
+  "push_permission": "Notifications",
+  "push_device_token": "APNs device token",
+  "push_public_key": "Device public key",
+  "push_waiting": "Waiting…",
+  "push_unavailable": "Not available on this platform yet.",
+  "push_error": "Failed: {error}"
 }

@@ -47,6 +47,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
 - [ ] **S2 — Probe placement** (RFC 0007). Pass: observed colo per `locationHint` over 48h (deploy needs Heitor's approval).
 - [ ] **S1 — APNs from a Worker and payload encryption** (RFC 0006). Pass: push received on a real iPhone from a
       Worker, decrypted in the Notification Service Extension (needs Apple credentials and a device).
+  - Done on the iOS Simulator: a deployed Worker reaches APNs over HTTP/2 (local workerd cannot); HPKE (P-256,
+    AES-128-GCM) chosen and shared in `packages/push`; a push sent by `brigade-relay-dev` through the APNs sandbox
+    was decrypted by the Notification Service Extension and shown as a time-sensitive banner, and a push it could
+    not decrypt showed the fallback ([write-up](spikes/s1-apns-encryption.md)).
+  - Left: verify on a real iPhone (locked, in the background, in `pt-BR`).
 - [ ] **S6 — VoIP call screen** (RFC 0010). Pass: locked iPhone and Android ring natively; answering plays the
       incident and accepts "ack" (needs Apple credentials and devices).
 

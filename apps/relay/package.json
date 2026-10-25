@@ -1,0 +1,33 @@
+{
+  "name": "@freecorps/brigade-relay",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Freecorps Brigade push relay: the Cloudflare Worker that forwards encrypted pushes to APNs (RFC 0006).",
+  "license": "AGPL-3.0-only",
+  "author": "Freecorps Tecnologia da Informação LTDA",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freecorps/brigade.git",
+    "directory": "apps/relay"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "CLOUDFLARE_ENV=dev vp dev",
+    "build": "vp build",
+    "build:dev": "CLOUDFLARE_ENV=dev vp build",
+    "test": "wrangler types --check && vp test",
+    "check": "vp check",
+    "cf-typegen": "wrangler types",
+    "send-test-push": "NODE_OPTIONS=--conditions=@freecorps/source vpx scripts/send-test-push.ts"
+  },
+  "dependencies": {
+    "@freecorps/brigade-push": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.65.0",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:",
+    "wrangler": "^4.152.0"
+  }
+}

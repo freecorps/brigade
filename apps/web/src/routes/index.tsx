@@ -2,6 +2,7 @@ import { m } from "@freecorps/brigade-i18n";
 import { createFileRoute } from "@tanstack/react-router";
 import { IncidentsCard } from "@/components/incidents-card";
 import { LegendCard } from "@/components/legend-card";
+import { MonitorsCard } from "@/components/monitors-card";
 import { usePreferences } from "@/components/preferences";
 import { RequireWorkspace } from "@/components/session";
 import { StackCard } from "@/components/stack-card";
@@ -30,6 +31,7 @@ function Overview() {
         <p className="max-w-prose text-sm text-muted-foreground">{m.overview_description()}</p>
       </div>
       <IncidentsCard />
+      <MonitorsCard />
       <StackCard />
       <LegendCard />
     </div>

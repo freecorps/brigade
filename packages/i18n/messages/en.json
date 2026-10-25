@@ -246,5 +246,192 @@
   "call_route_notify": "A page notification (no call screen)",
   "call_route_blocked": "Nothing: notifications are off",
   "call_voip_token": "VoIP push token",
-  "call_allow_full_screen": "Allow full-screen alerts"
+  "call_allow_full_screen": "Allow full-screen alerts",
+  "monitor_incident_title": "{name} is down",
+  "monitors_title": "Monitors",
+  "monitors_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countExact = count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countExact", "countPlural"],
+      "match": {
+        "countExact=0, countPlural=*": "No monitors",
+        "countExact=*, countPlural=one": "{countFormatted} monitor",
+        "countExact=*, countPlural=*": "{countFormatted} monitors"
+      }
+    }
+  ],
+  "monitors_down_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} down",
+        "countPlural=*": "{countFormatted} down"
+      }
+    }
+  ],
+  "monitors_empty": "Nothing is watched yet. Add an HTTP check, or a heartbeat for jobs that should check in.",
+  "monitor_add": "Add monitor",
+  "monitor_kind": [
+    {
+      "declarations": ["input kind"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=http": "HTTP check",
+        "kind=*": "Heartbeat"
+      }
+    }
+  ],
+  "monitor_status": [
+    {
+      "declarations": ["input status"],
+      "selectors": ["status"],
+      "match": {
+        "status=up": "Up",
+        "status=down": "Down",
+        "status=paused": "Paused",
+        "status=unknown": "No data",
+        "status=*": "Waiting"
+      }
+    }
+  ],
+  "monitor_region": [
+    {
+      "declarations": ["input region"],
+      "selectors": ["region"],
+      "match": {
+        "region=wnam": "US West",
+        "region=enam": "US East",
+        "region=weur": "Western Europe",
+        "region=eeur": "Eastern Europe",
+        "region=apac": "Asia-Pacific",
+        "region=*": "Oceania"
+      }
+    }
+  ],
+  "monitor_pause_action": [
+    {
+      "declarations": ["input action"],
+      "selectors": ["action"],
+      "match": {
+        "action=pause": "Pause",
+        "action=prompt": "Pause checks? A firing alert resolves.",
+        "action=*": "Resume"
+      }
+    }
+  ],
+  "monitor_last_result": [
+    {
+      "declarations": ["input state", "input when"],
+      "selectors": ["state"],
+      "match": {
+        "state=paused_you": "Paused by you {when}",
+        "state=paused_other": "Paused by a teammate {when}",
+        "state=*": "Last report {when}"
+      }
+    }
+  ],
+  "monitor_heartbeat_every": "Expects a ping every {interval}",
+  "monitor_create": "Create monitor",
+  "monitor_field_invalid": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=name": "Give the monitor a name.",
+        "field=url": "Use a public http or https address, on a web port such as 80, 443, 8080 or 8443.",
+        "field=expected_status": "Use a status from 100 to 599, or leave it empty.",
+        "field=keyword": "Use at most 200 characters.",
+        "field=interval": "Use whole seconds, from 30 to 86,400 (24 hours).",
+        "field=timeout": "Use 1 to 30 seconds, and no more than the interval.",
+        "field=grace": "Use whole seconds, from 0 to 86,400 (24 hours).",
+        "field=regions": "Pick at least one region.",
+        "field=*": "Check this value."
+      }
+    }
+  ],
+  "monitor_change_failed": "Couldn't change {name}: {reason}",
+  "monitor_field_label": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=kind": "Monitor type",
+        "field=name": "Name",
+        "field=url": "URL",
+        "field=method": "Method",
+        "field=expected_status": "Expected status",
+        "field=keyword": "Text the page must contain",
+        "field=interval": "Every (seconds)",
+        "field=timeout": "Timeout (seconds)",
+        "field=grace": "Grace (seconds)",
+        "field=*": "Check from"
+      }
+    }
+  ],
+  "monitor_field_hint": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=url": "Everyone in the workspace, viewers too, can see this URL: keep tokens and passwords out of it.",
+        "field=expected_status": "Empty: any 2xx or 3xx. Redirects are not followed.",
+        "field=timeout": "How long one check may take.",
+        "field=*": "How late a ping may be before it counts as missed."
+      }
+    }
+  ],
+  "monitor_check_error": [
+    {
+      "declarations": ["input reason", "input got", "input expected"],
+      "selectors": ["reason"],
+      "match": {
+        "reason=timeout": "Timed out",
+        "reason=network": "Couldn't connect",
+        "reason=blocked": "Address not allowed",
+        "reason=status": "Got {got}, expected {expected}",
+        "reason=status_any": "Got {got}, expected 2xx or 3xx",
+        "reason=keyword": "Text not found",
+        "reason=missed": "No ping in time",
+        "reason=*": "Check failed"
+      }
+    }
+  ],
+  "monitor_heartbeat": [
+    {
+      "declarations": ["input part", "input interval"],
+      "selectors": ["part"],
+      "match": {
+        "part=once": "Shown only once",
+        "part=send": "Send a POST to this URL at least every {interval}. Brigade keeps only a hash of it, so it can't be shown again.",
+        "part=try": "Try it from a terminal:",
+        "part=copy": "Copy URL",
+        "part=copied": "Copied",
+        "part=copy_key": "Press Ctrl+C to copy it.",
+        "part=copy_key_apple": "Press ⌘C to copy it.",
+        "part=close_prompt": "Close without copying? The URL can't be shown again.",
+        "part=close": "Close anyway",
+        "part=*": "Keep it open"
+      }
+    }
+  ],
+  "monitor_incident_link": [
+    {
+      "declarations": ["input has", "input number"],
+      "selectors": ["has"],
+      "match": {
+        "has=yes": "Open {number}",
+        "has=*": "Open incident"
+      }
+    }
+  ]
 }

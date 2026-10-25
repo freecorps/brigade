@@ -1,4 +1,4 @@
-import { workspaceName } from "@freecorps/brigade-schema";
+import { parseHeartbeatToken, workspaceName } from "@freecorps/brigade-schema";
 import { ACTOR_HEADER, resolveActor } from "./actor.ts";
 import {
   AUTH_BASE_PATH,
@@ -9,10 +9,12 @@ import {
 } from "./auth.ts";
 import { WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
 
+export { ProbeDO } from "./probe.ts";
 export { WorkspaceDO } from "./workspace.ts";
 
 const WORKSPACE_PATH = /^\/workspaces\/([^/]+)$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
+const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
 const READ_METHODS = ["GET", "HEAD"];
 /** Largest `POST /workspaces` body read, in bytes. */
 const MAX_BODY_LENGTH = 4096;
@@ -46,6 +48,8 @@ export default {
     const sync = SYNC_PATH.exec(pathname)?.[1];
     if (sync !== undefined) return openSync(request, env, auth, sync);
     if (pathname === "/workspaces") return createWorkspace(request, auth);
+    const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
+    if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
 
     const workspace = WORKSPACE_PATH.exec(pathname)?.[1];
     if (pathname !== "/health" && workspace === undefined) return json({ error: "not_found" }, 404);
@@ -176,6 +180,83 @@ async function openSync(
   } catch (error) {
     return failed("WorkspaceDO sync upgrade failed", workspace, error);
   }
+}
+
+/**
+ * `POST /heartbeat/:token`: a heartbeat monitor's ping (RFC 0007). The token names the workspace and the monitor
+ * and carries the secret; the shard compares the secret's SHA-256 with the stored one in constant time. The
+ * workspace is looked up in D1 first (`workspaceExists`), so a token for a made-up workspace never wakes, let alone
+ * creates, a shard (open question Q16); if D1 itself fails, the ping goes to the shard anyway. Every refusal is the same 404, so a caller cannot tell a wrong secret from a
+ * missing monitor or workspace. The body is never read.
+ */
+export async function receiveHeartbeat(
+  request: Request,
+  env: Env,
+  token: string,
+): Promise<Response> {
+  if (request.method !== "POST") {
+    return json({ error: "method_not_allowed" }, 405, { Allow: "POST" });
+  }
+  const parsed = parseHeartbeatToken(token);
+  if (!parsed || !WORKSPACE_ID.test(parsed.workspaceId)) return json({ error: "not_found" }, 404);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(parsed.secret));
+  try {
+    if (!(await workspaceExists(env.DB, parsed.workspaceId))) {
+      return json({ error: "not_found" }, 404);
+    }
+  } catch (error) {
+    // Fail open: a D1 outage must not drop a real ping and page someone for a missed beat. The shard still
+    // checks the secret, so the worst a made-up workspace costs meanwhile is one empty shard.
+    console.error(
+      JSON.stringify({
+        message: "workspace lookup failed; asking the shard",
+        workspace: parsed.workspaceId,
+        error: String(error),
+      }),
+    );
+  }
+  try {
+    const accepted = await env.WORKSPACE.getByName(parsed.workspaceId).heartbeat(
+      parsed.monitorId,
+      digest,
+    );
+    return accepted ? json({ ok: true }, 202) : json({ error: "not_found" }, 404);
+  } catch (error) {
+    return failed("WorkspaceDO.heartbeat failed", parsed.workspaceId, error);
+  }
+}
+
+/** Workspaces seen in D1, per isolate, until the time they expire: a ping a minute is not a D1 read a minute. */
+const knownWorkspaces = new Map<string, number>();
+const KNOWN_WORKSPACE_MS = 10 * 60 * 1000;
+const KNOWN_WORKSPACES_MAX = 10_000;
+
+/**
+ * Whether a Better Auth organization (a workspace) has this id. Only a hit is cached: a made-up id costs one
+ * indexed D1 read, and no Durable Object.
+ */
+export async function workspaceExists(
+  db: D1Database,
+  id: string,
+  now = Date.now(),
+): Promise<boolean> {
+  const expires = knownWorkspaces.get(id);
+  if (expires !== undefined && expires > now) return true;
+  const row = await db
+    .prepare('select 1 as found from "organization" where "id" = ?')
+    .bind(id)
+    .first();
+  if (!row) {
+    knownWorkspaces.delete(id);
+    return false;
+  }
+  // Oldest first: a Map iterates in insertion order.
+  if (knownWorkspaces.size >= KNOWN_WORKSPACES_MAX) {
+    knownWorkspaces.delete(knownWorkspaces.keys().next().value!);
+  }
+  knownWorkspaces.delete(id);
+  knownWorkspaces.set(id, now + KNOWN_WORKSPACE_MS);
+  return true;
 }
 
 /**

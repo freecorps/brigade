@@ -13,6 +13,7 @@
       "name": "@freecorps/brigade-api",
       "version": "0.0.0",
       "dependencies": {
+        "@freecorps/brigade-i18n": "workspace:*",
         "@freecorps/brigade-schema": "workspace:*",
         "@freecorps/brigade-sync": "workspace:*",
         "better-auth": "1.7.13",

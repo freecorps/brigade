@@ -20,20 +20,44 @@ app now records an unanswered end within 2 seconds of ringing as `failed`, so a 
 also post the time-sensitive fallback notification at once? Check on devices which real cases look like this
 (spike S6 write-up).
 
+## Q15 — Locale of text the server writes into shared data (RFC 0008)
+
+An incident a monitor opens is titled "<name> is down" in English: data is not translated, and workspaces have no
+default locale yet. Add a workspace locale (set at sign-up, editable by owners) and render server-written titles in
+it?
+
+## Q17 — Should "no data" page? (RFC 0007)
+
+A monitor whose probes stop reporting turns `unknown` ("No data"): it is never shown as up, a firing alert stays
+firing, and `monitor.status_changed` goes to the outbox, but it opens no incident, since the failure is Brigade's
+probes, not the customer's service. Should a monitor that stays without data (say 15 minutes) page the workspace, or
+page Brigade's own operators through the external dead-man switch ("Watching the watcher") instead?
+
+The current rule has a blind spot: a monitor that goes down _after_ most of its probes died is `unknown` too, and
+pages nobody, even when every probe still reporting sees it down (three regions, two silent, the third reports
+down: below the fresh floor, so "No data"; pinned by a test in `packages/schema/tests/monitors.test.ts`). Options:
+
+- Keep the rule: `unknown` never pages; the dashboard and `monitor.status_changed` are the only signal.
+- Page the workspace after a monitor stays `unknown` for a while (say 15 minutes).
+- Page when every fresh result is down, even below the fresh floor: one surviving region can then open an
+  incident, at the price of a single bad probe paging on its own.
+- Page Brigade's operators (not the workspace) on `unknown`, through the external dead-man switch.
+
 ---
 
 # Decided
 
-| #   | Question               | Decision                                                                                                                                                                                                               |
-| --- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Q1  | Authentication         | **Better Auth** (Workers + D1, Expo client). Already used in other Freecorps projects.                                                                                                                                 |
-| Q2  | Multi-tenancy          | Multi-workspace from day one: workspace = Better Auth organization, with teams and roles (RFC 0003).                                                                                                                   |
-| Q3  | Backups                | Nightly export of every DO to R2 + "export workspace" in the UI. A restore rotates the shard epoch (RFC 0004).                                                                                                         |
-| Q4  | Socket topology        | One WebSocket per shard behind a client connection pool; `SessionDO` gateway as upgrade path (RFC 0004).                                                                                                               |
-| Q5  | Web/mobile UI sharing  | Share logic (`schema`, `sync`, `i18n`, tokens), not components. Web: React + TanStack Router + shadcn/ui. S3: `syncView`/`nextFailed` shared via `packages/sync`; refusal wording still duplicated in both apps (#20). |
-| Q6  | Slack app distribution | App manifest for self-hosters; Freecorps-published Slack app for the hosted version.                                                                                                                                   |
-| Q7  | Voice paging           | In-app VoIP call screen with real audio; PSTN as optional last step via provider-agnostic `VoiceProvider` (RFC 0010).                                                                                                  |
-| Q9  | i18n library           | **Paraglide JS** (RFC 0008).                                                                                                                                                                                           |
-| Q10 | Site and docs          | **Fumadocs on TanStack Start**, prerendered, served by Workers static assets.                                                                                                                                          |
-| Q11 | Task runner            | Vite+ `vp run`, no Turborepo.                                                                                                                                                                                          |
-| Q12 | CLA                    | Handled by Freecorps; CLA Assistant + standard CLA text reviewed by counsel.                                                                                                                                           |
+| #   | Question                       | Decision                                                                                                                                                                                                                                                            |
+| --- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q1  | Authentication                 | **Better Auth** (Workers + D1, Expo client). Already used in other Freecorps projects.                                                                                                                                                                              |
+| Q2  | Multi-tenancy                  | Multi-workspace from day one: workspace = Better Auth organization, with teams and roles (RFC 0003).                                                                                                                                                                |
+| Q3  | Backups                        | Nightly export of every DO to R2 + "export workspace" in the UI. A restore rotates the shard epoch (RFC 0004).                                                                                                                                                      |
+| Q4  | Socket topology                | One WebSocket per shard behind a client connection pool; `SessionDO` gateway as upgrade path (RFC 0004).                                                                                                                                                            |
+| Q5  | Web/mobile UI sharing          | Share logic (`schema`, `sync`, `i18n`, tokens), not components. Web: React + TanStack Router + shadcn/ui. S3: `syncView`/`nextFailed` shared via `packages/sync`; refusal wording still duplicated in both apps (#20).                                              |
+| Q6  | Slack app distribution         | App manifest for self-hosters; Freecorps-published Slack app for the hosted version.                                                                                                                                                                                |
+| Q7  | Voice paging                   | In-app VoIP call screen with real audio; PSTN as optional last step via provider-agnostic `VoiceProvider` (RFC 0010).                                                                                                                                               |
+| Q9  | i18n library                   | **Paraglide JS** (RFC 0008).                                                                                                                                                                                                                                        |
+| Q10 | Site and docs                  | **Fumadocs on TanStack Start**, prerendered, served by Workers static assets.                                                                                                                                                                                       |
+| Q11 | Task runner                    | Vite+ `vp run`, no Turborepo.                                                                                                                                                                                                                                       |
+| Q12 | CLA                            | Handled by Freecorps; CLA Assistant + standard CLA text reviewed by counsel.                                                                                                                                                                                        |
+| Q16 | Heartbeats, made-up workspaces | The Worker looks the workspace id up in D1 (`organization`, cached per isolate) before it routes a ping, so a token for a workspace that does not exist gets the same 404 and creates no Durable Object (RFC 0007). If D1 fails, the ping goes to the shard anyway. |

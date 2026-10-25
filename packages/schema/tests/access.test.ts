@@ -18,6 +18,8 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "incident:update": true,
     "incident:ack": true,
     "workspace:create": true,
+    "monitor:read": true,
+    "monitor:manage": true,
   },
   admin: {
     "incident:read": true,
@@ -25,6 +27,8 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "incident:update": true,
     "incident:ack": true,
     "workspace:create": false,
+    "monitor:read": true,
+    "monitor:manage": true,
   },
   responder: {
     "incident:read": true,
@@ -32,6 +36,8 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "incident:update": true,
     "incident:ack": true,
     "workspace:create": false,
+    "monitor:read": true,
+    "monitor:manage": false,
   },
   viewer: {
     "incident:read": true,
@@ -39,6 +45,8 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "incident:update": false,
     "incident:ack": false,
     "workspace:create": false,
+    "monitor:read": true,
+    "monitor:manage": false,
   },
 };
 
@@ -49,6 +57,8 @@ test("every permission comes from the statement", () => {
     "incident:update",
     "incident:ack",
     "workspace:create",
+    "monitor:read",
+    "monitor:manage",
   ]);
 });
 

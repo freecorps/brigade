@@ -36,6 +36,8 @@ Implemented in `packages/schema` (`canTransition`). Severity is independent of s
 ## Alert → incident flow
 
 1. Alert arrives (monitor or webhook) → normalized to `AlertEvent { source, fingerprint, status: firing|resolved, labels, payload }`.
+   First slice (RFC 0007): monitor alerts live in `WorkspaceDO` (`alerts`, deduplicated per monitor) and open an
+   incident directly until `AlertGroupDO` and alert routes exist.
 2. `AlertGroupDO(fingerprint)` deduplicates within a window.
 3. `AlertRoute` rules (evaluated in order) decide: ignore, attach to an open incident, or create a new incident with a type/severity and an escalation policy.
 4. Creating a page starts an escalation run on the `IncidentDO` (alarm per level timeout).
@@ -68,6 +70,13 @@ Implemented in `packages/schema` (`canTransition`). Severity is independent of s
   refused on the sync upgrade.
 - A new account creates its first workspace right away (sign-up asks for its name) and is its `owner`. A session
   starts in the user's oldest workspace (`activeOrganizationId`).
+- Monitors (`monitor:read`, `monitor:manage`): owners and admins manage them (create, edit, pause, delete);
+  responders and viewers read them. Responders run the incidents monitors open, but changing what is watched is an
+  admin's call.
+- **System actors** (RFC 0004 "Server-side writes") carry a role like members and pass the same check. Monitors run
+  as `{ kind: "system", id: "sys_monitors", role: "admin" }` (`MONITOR_ACTOR`); incidents they open are declared by
+  `sys_monitors`. Their server-only mutations (`monitor.report`) are never reachable from a socket, so the role
+  grants no member anything.
 - Workspace-defined custom roles can come later via Better Auth dynamic access control.
 - Every DO key is prefixed by the organization id; a shard never serves data of another workspace.
 

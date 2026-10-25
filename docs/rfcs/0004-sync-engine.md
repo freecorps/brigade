@@ -64,7 +64,8 @@ runQuery(queries, name, rawArgs, store, role, { onError? }) // → { ok: true, r
 - **Events and the outbox**: a successful mutation returns its domain events (`type`, `subject`, `data`). The
   server writes them to the outbox in `commit`, inside the mutation's transaction (RFC 0005); if `commit` throws,
   the rows roll back too. Clients drop the events. Every success must emit an event: one with none is a bug in
-  the mutation and becomes `internal`. So "no change" (setting the current status or severity) is one code for
+  the mutation and becomes `internal`, unless the mutation is declared `silent` (see "Server-side writes"; today only
+  `monitor.report`, whose routine refreshes change synced fields that are not domain facts). So "no change" (setting the current status or severity) is one code for
   both, `conflict`, which also covers an existing id; it also makes a rebased mutation the server already applied
   fail locally and drop out of the optimistic view.
 - **Transactions are re-entrant.** The server already runs inside its own transaction when it calls
@@ -409,3 +410,23 @@ extra hop and more moving parts, so we start without it.
 
 Alarms, alert ingestion, Slack commands and monitors call the same mutations through DO RPC with a system actor.
 One code path for every write → one audit trail.
+
+- A system actor is `{ kind: "system", id: "sys_<name>", role }`: it carries one of the member roles and passes the
+  same `can()` check. The first is `sys_monitors` (`MONITOR_ACTOR`, role `admin`): probe reports and heartbeats run
+  `monitor.report` as it (RFC 0007), and a nested `runMutation` of `incident.declare` inside that mutation opens the
+  incident with the same RBAC and validation, in the same transaction.
+- Server-only mutations sit in `serverMutations` (`packages/schema/src/registry.ts`), never in `mutations`, so a
+  socket gets `unknown_mutation` for them. The shard runs them with `internal: true` and de-duplicates them like a
+  socket's: client id `probe:<region>` or `heartbeat`, mutation id the probe's report id. A probe stores a new
+  report id with every check result. It sends a report again only after its next check, so a retry carries the
+  newer result under a new id: the de-duplication catches a report delivered twice with one id, not a retry, and a
+  retried report whose first delivery did land is just a newer result for `monitor.report` (an unchanged verdict
+  only refreshes the row). The shard's alarm runs `monitor.evaluate` (client id `monitor`) when results went
+  stale.
+- A storage failure inside the nested `incident.declare` is caught and thrown again, so the shard rolls the whole
+  report back and the probe retries, instead of storing `internal` as the report's answer.
+- A mutation may be declared `silent`: it may then succeed without events. Only for writes that refresh observed
+  values (a monitor's latency, colo and check time), which are synced but are no domain events (RFC 0005).
+- Ids and text a server mutation needs (a new incident's and alert's ids, the incident title rendered with
+  `packages/i18n`) are made by the shard before it runs the mutation and passed in its args, so `apply` stays
+  deterministic.

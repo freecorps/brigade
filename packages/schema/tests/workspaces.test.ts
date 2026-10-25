@@ -24,7 +24,12 @@ const ctx = (role: Role = "owner"): MutationContext => ({
 describe("workspace.create", () => {
   test("is server only: not among the mutations a socket may send", () => {
     expect(Object.keys(mutations)).not.toContain("workspace.create");
-    expect(Object.keys(serverMutations)).toEqual([...Object.keys(mutations), "workspace.create"]);
+    expect(Object.keys(serverMutations)).toEqual([
+      ...Object.keys(mutations),
+      "workspace.create",
+      "monitor.report",
+      "monitor.evaluate",
+    ]);
     const result = runMutation(
       mutations,
       "workspace.create" as never,

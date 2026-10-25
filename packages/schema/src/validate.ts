@@ -60,6 +60,54 @@ function id(prefix: string): Validator<string> {
     isId(prefix, input) ? valid(input) : invalid(path, `Expected a ${prefix}_ id`);
 }
 
+/** A safe integer between `min` and `max`, inclusive. */
+function integer(options: { min: number; max: number }): Validator<number> {
+  return (input, path = "") =>
+    typeof input === "number" &&
+    Number.isSafeInteger(input) &&
+    input >= options.min &&
+    input <= options.max
+      ? valid(input)
+      : invalid(path, `Expected a whole number from ${options.min} to ${options.max}`);
+}
+
+function boolean(): Validator<boolean> {
+  return (input, path = "") =>
+    typeof input === "boolean" ? valid(input) : invalid(path, "Expected true or false");
+}
+
+/** `null`, or what `inner` accepts. The key itself is still required. */
+function nullable<T>(inner: Validator<T>): Validator<T | null> {
+  return (input, path = "") => (input === null ? valid(null) : inner(input, path));
+}
+
+/**
+ * An array of `min` to `max` items, each checked by `item`; with `unique`, no item twice. Longer input is refused
+ * before any item is read.
+ */
+function array<T>(
+  item: Validator<T>,
+  options: { min?: number; max: number; unique?: boolean },
+): Validator<T[]> {
+  const min = options.min ?? 0;
+  return (input, path = "") => {
+    if (!Array.isArray(input)) return invalid(path, "Expected a list");
+    if (input.length < min || input.length > options.max) {
+      return invalid(path, `Expected ${min} to ${options.max} items`);
+    }
+    const issues: Issue[] = [];
+    const value: T[] = [];
+    for (let index = 0; index < input.length && issues.length < MAX_ISSUES; index++) {
+      const result = item(input[index], clip(`${path}[${index}]`));
+      if (!result.ok) issues.push(...result.issues);
+      else if (options.unique && value.includes(result.value)) {
+        issues.push({ path: clip(`${path}[${index}]`), message: "Listed twice" });
+      } else value.push(result.value);
+    }
+    return issues.length ? { ok: false, issues: issues.slice(0, MAX_ISSUES) } : valid(value);
+  };
+}
+
 function isPlainObject(input: unknown): input is Record<string, unknown> {
   if (typeof input !== "object" || input === null) return false;
   const proto: unknown = Object.getPrototypeOf(input);
@@ -92,4 +140,4 @@ function object<const S extends Record<string, Validator<unknown>>>(
   };
 }
 
-export const v = { string, picklist, id, object };
+export const v = { string, picklist, id, object, integer, boolean, nullable, array };

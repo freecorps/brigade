@@ -4,7 +4,8 @@
 
 ## Domain events
 
-Every successful mutation emits one or more events with a CloudEvents-style envelope:
+Every successful mutation emits one or more events with a CloudEvents-style envelope (the one exception is a
+mutation declared `silent`, today only `monitor.report`'s routine refreshes; RFC 0004):
 
 ```ts
 interface BrigadeEvent<T = unknown> {
@@ -20,7 +21,11 @@ interface BrigadeEvent<T = unknown> {
 }
 ```
 
-Event types are versioned with the schema package and documented in the generated API reference.
+Event types are versioned with the schema package and documented in the generated API reference. Monitors (RFC 0007)
+emit `monitor.created`, `monitor.updated`, `monitor.paused`, `monitor.resumed`, `monitor.deleted`, `monitor.checked`
+(when a source's verdict or failure reason changes; the 5-minute refreshes of an unchanged verdict are synced but
+emit nothing), `monitor.status_changed` (to `unknown` too, when probes stop reporting), `alert.fired` and
+`alert.resolved`, with actor `sys_monitors` for what the probes and heartbeats cause.
 
 Users, sessions and membership live in D1, written by Better Auth (RFC 0002), not by a shard. A change there that
 integrations care about is announced by the workspace shard: creating a workspace runs `workspace.create` in its

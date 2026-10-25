@@ -55,6 +55,11 @@ export type MutationDef<Name extends string = string, Args = unknown> = {
   name: Name;
   args: Validator<Args>;
   permission: Permission;
+  /**
+   * May succeed without events. Only for a write that refreshes observed values (a monitor's latency, colo and
+   * check time) and is no domain event: it is synced like any change but writes nothing to the outbox (RFC 0005).
+   */
+  silent?: boolean;
   /** Deterministic and side-effect free: reads and writes only `store`, time only from `ctx.now`. */
   apply(store: MutationStore, args: Args, ctx: MutationContext): MutationResult;
 };
@@ -68,6 +73,7 @@ export function defineMutation<const Name extends string, V extends Validator<an
   name: Name;
   args: V;
   permission: Permission;
+  silent?: boolean;
   apply(store: MutationStore, args: Infer<V>, ctx: MutationContext): MutationResult;
 }): MutationDef<Name, Infer<V>> {
   return def;
@@ -165,8 +171,9 @@ export function runMutation(
     return store.transaction(() => {
       const result = def.apply(store, args.value, ctx);
       if (!result.ok) throw new Rollback(result);
-      // Every successful mutation emits an event (RFC 0005); a silent success is a bug in the mutation.
-      if (!Array.isArray(result.events) || result.events.length === 0) {
+      // Every successful mutation emits an event (RFC 0005); a silent success is a bug in the mutation, unless it
+      // is declared `silent`.
+      if (!Array.isArray(result.events) || (result.events.length === 0 && !def.silent)) {
         throw new Error(`${def.name} succeeded without events`);
       }
       options.commit?.(result.events);

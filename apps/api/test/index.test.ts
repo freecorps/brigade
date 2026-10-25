@@ -3,8 +3,8 @@ import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import worker, { WorkspaceDO } from "../src/index.ts";
 
-// store_rows, shard_meta, change_log, mutation_results and outbox, created when the shard starts.
-const SYNC_TABLES = 5;
+// store_rows, shard_meta, change_log, mutation_results, outbox and probe_pushes, created when the shard starts.
+const SYNC_TABLES = 6;
 
 const api = (path: string, init?: RequestInit) =>
   exports.default.fetch(`http://api.test${path}`, init);

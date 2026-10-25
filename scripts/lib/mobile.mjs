@@ -67,6 +67,7 @@ export async function choose(interactive, question, choices, fallback) {
 
 /** Runs a command with inherited output, or into `log` with the errors printed on failure. */
 export function run(command, args, { cwd = root, env = process.env, log } = {}) {
+  const name = `${command} ${args[0] ?? ""}`.trim();
   // Node refuses to spawn .bat/.cmd files without a shell. Quote every part ourselves and pass the line verbatim:
   // `/s` strips only the outer pair, so arguments with spaces (Gradle's jvmargs, paths) survive. Not yet run on
   // Windows.
@@ -101,7 +102,7 @@ export function run(command, args, { cwd = root, env = process.env, log } = {}) 
           .slice(-20);
         console.error((errors.length ? errors : lines.slice(-40)).join("\n"));
       }
-      reject(new Error(`${command} ${args[0]} exited ${code}${log ? `; full log: ${log}` : ""}`));
+      reject(new Error(`${name} exited ${code}${log ? `; full log: ${log}` : ""}`));
     });
   });
 }

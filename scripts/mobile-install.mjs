@@ -121,6 +121,30 @@ function iosTeam() {
   return ids[0];
 }
 
+/**
+ * One `devicectl list devices` entry. devicectl marks `hardwareProperties`, `deviceProperties` and
+ * `connectionProperties` deprecated in favour of `properties`, so read that first and fall back to the old fields.
+ */
+function iosDevice(item) {
+  const hardware = item.properties?.hardware ?? item.hardwareProperties ?? {};
+  const connection = item.properties?.connection ?? item.connectionProperties ?? {};
+  const device = item.properties?.device ?? item.deviceProperties ?? {};
+  const mode = item.properties?.state?.developerModeStatus ?? device.developerModeStatus;
+  return {
+    physical: hardware.reality === "physical" && hardware.platform === "iOS",
+    paired: connection.pairingState === "paired",
+    // `state` replaces `tunnelState` with the same values; a USB phone with no tunnel yet is "disconnected".
+    reachable: (connection.state ?? connection.tunnelState) !== "unavailable",
+    id: hardware.udid,
+    name: device.name ?? "iPhone",
+    model: hardware.marketingName,
+    os: `iOS ${device.osVersionNumber ?? "?"}`,
+    // "enabled" in the old shape, `{ enabled: { … } }` in the new one.
+    developerMode:
+      mode === "enabled" || (typeof mode === "object" && mode !== null && "enabled" in mode),
+  };
+}
+
 async function installIos(variant) {
   const { name: xcodeName, developerDir } = xcode();
   const env = { ...process.env, DEVELOPER_DIR: developerDir };
@@ -129,32 +153,19 @@ async function installIos(variant) {
   if (!options["build-only"]) {
     const file = join(tmpdir(), `brigade-devices-${process.pid}.json`);
     capture("xcrun", ["devicectl", "list", "devices", "--json-output", file], { env });
-    const paired = JSON.parse(readFileSync(file, "utf8")).result.devices.filter(
-      (item) =>
-        item.hardwareProperties?.reality === "physical" &&
-        item.hardwareProperties?.platform === "iOS" &&
-        item.connectionProperties?.pairingState === "paired",
-    );
-    // A phone paired over Wi-Fi stays paired when it is away; only reachable ones can take an install.
-    const reachable = paired.filter(
-      (item) => item.connectionProperties?.tunnelState !== "unavailable",
-    );
-    if (!reachable.length && paired.length) {
-      console.warn(
-        `Paired but not reachable now: ${paired.map((item) => item.deviceProperties.name).join(", ")}. Plug it in or bring it onto this Wi-Fi, unlocked.`,
-      );
-    }
-    const phones = reachable.map((item) => ({
-      id: item.hardwareProperties.udid,
-      name: item.deviceProperties.name,
-      model: item.hardwareProperties.marketingName,
-      os: `iOS ${item.deviceProperties.osVersionNumber}`,
-      developerMode: item.deviceProperties.developerModeStatus,
-    }));
+    const paired = JSON.parse(readFileSync(file, "utf8"))
+      .result.devices.map(iosDevice)
+      .filter((item) => item.physical && item.paired);
     await rm(file, { force: true });
+    // A phone paired over Wi-Fi stays paired when it is away; only reachable ones can take an install.
+    const phones = paired.filter((item) => item.reachable);
+    assert.ok(
+      phones.length || !paired.length,
+      `No reachable iPhone. Paired but away: ${paired.map((item) => item.name).join(", ")}. Plug it in or bring it onto this Wi-Fi, unlocked.`,
+    );
     device = await chooseDevice(phones, "ios");
     assert.ok(
-      device.developerMode === "enabled",
+      device.developerMode,
       `Turn on Developer Mode on ${device.name}: Settings > Privacy & Security > Developer Mode.`,
     );
     console.log(`\nPhone: ${device.name} (${device.model}, ${device.os})`);
@@ -204,15 +215,19 @@ async function installIos(variant) {
 
   console.log(`\nInstalling on ${device.name}.`);
   // devicectl installs an app bundle (.app): unpack an .ipa from `mobile:build` first.
-  let unpacked;
-  if (extname(app).toLowerCase() === ".ipa") {
-    unpacked = await mkdtemp(join(tmpdir(), "brigade-ipa-"));
-    await run("ditto", ["-x", "-k", app, unpacked]);
-    const bundle = readdirSync(join(unpacked, "Payload")).find((name) => name.endsWith(".app"));
-    assert.ok(bundle, `${app} has no Payload/*.app inside.`);
-    app = join(unpacked, "Payload", bundle);
-  }
+  const unpacked =
+    extname(app).toLowerCase() === ".ipa"
+      ? await mkdtemp(join(tmpdir(), "brigade-ipa-"))
+      : undefined;
   try {
+    if (unpacked) {
+      await run("ditto", ["-x", "-k", app, unpacked]);
+      const payload = join(unpacked, "Payload");
+      const bundle =
+        existsSync(payload) && readdirSync(payload).find((name) => name.endsWith(".app"));
+      assert.ok(bundle, `${app} has no Payload/*.app inside.`);
+      app = join(payload, bundle);
+    }
     await run("xcrun", ["devicectl", "device", "install", "app", "--device", device.id, app], {
       env,
     });

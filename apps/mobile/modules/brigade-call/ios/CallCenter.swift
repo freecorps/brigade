@@ -49,7 +49,17 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
 {
   static let shared = CallCenter()
   /// An unanswered call stops ringing after this; the instance escalates on its own timeout.
-  static let ringTimeout: TimeInterval = 60
+  static var ringTimeout: TimeInterval {
+    #if DEBUG
+      // Development: `-BrigadeTestCallRingTimeout <seconds>`, because the Simulator ends a ringing call itself
+      // within a second of CallKit accepting it.
+      let defaults = UserDefaults.standard
+      if defaults.object(forKey: "BrigadeTestCallRingTimeout") != nil {
+        return defaults.double(forKey: "BrigadeTestCallRingTimeout")
+      }
+    #endif
+    return 60
+  }
   /// An answered call hangs up this long after answering, ack or not. Mirrors `ANSWERED_CALL_MAX_MS` in
   /// apps/mobile/src/lib/call-route.ts.
   static let answeredMaxLength: TimeInterval = 180
@@ -264,14 +274,6 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
     /// Development: a repeat of the page with call `id`, through the same decision a VoIP push takes (no envelope).
     func simulateRepeat(_ id: UUID) {
       DispatchQueue.main.async { self.receive(id, envelope: nil) {} }
-    }
-
-    /// Development: what the ring timeout does, now (the Simulator ends a ringing call itself within a second).
-    func simulateMissed(_ id: UUID) {
-      DispatchQueue.main.async {
-        guard let call = self.calls[id], !call.answered else { return }
-        self.finish(id, reason: .unanswered, event: "missed")
-      }
     }
   #endif
 

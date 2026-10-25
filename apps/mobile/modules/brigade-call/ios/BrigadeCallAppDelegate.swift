@@ -17,9 +17,9 @@ public class BrigadeCallAppDelegate: ExpoAppDelegateSubscriber {
     /// Development: `xcrun simctl launch booted app.freecorps.brigade -BrigadeTestCall "SEV1 · Checkout down"`
     /// rings a test call. `-BrigadeTestCallAnswer YES` then answers it, and `-BrigadeTestCallAck YES` presses 1,
     /// as CallKit transactions (the same path as tapping): this beta Simulator cannot be tapped.
-    /// For the repeat rule: `-BrigadeTestCallId <uuid>` fixes the call id, `-BrigadeTestCallEndAs missed|declined`
-    /// ends the call that way half a second after it rings, and `-BrigadeTestCallRepeatAfter <seconds>` then sends
-    /// a repeat of the page through the VoIP push decision.
+    /// For the repeat rule: `-BrigadeTestCallId <uuid>` fixes the call id, `-BrigadeTestCallRingTimeout 0.2` makes
+    /// it a missed call (CallCenter), `-BrigadeTestCallDecline YES` declines it instead, and
+    /// `-BrigadeTestCallRepeatAfter <seconds>` then sends a repeat of the page through the VoIP push decision.
     private func ringTestCallFromLaunchArguments() {
       let defaults = UserDefaults.standard
       guard let title = defaults.string(forKey: "BrigadeTestCall") else { return }
@@ -34,12 +34,8 @@ public class BrigadeCallAppDelegate: ExpoAppDelegateSubscriber {
       if defaults.bool(forKey: "BrigadeTestCallAnswer") {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay + 4) { center.requestAnswer(call.id) }
       }
-      switch defaults.string(forKey: "BrigadeTestCallEndAs") {
-      case "missed":
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay + 0.5) { center.simulateMissed(call.id) }
-      case "declined":
+      if defaults.bool(forKey: "BrigadeTestCallDecline") {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay + 0.5) { center.requestEnd(call.id) }
-      default: break
       }
       // `double(forKey:)`: launch arguments arrive as strings.
       if defaults.object(forKey: "BrigadeTestCallRepeatAfter") != nil {

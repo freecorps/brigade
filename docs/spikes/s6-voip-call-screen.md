@@ -73,8 +73,8 @@ device steps that are left.
     build type, has no receiver at all, the safe direction); on iOS, launch
     arguments (`-BrigadeTestCall <title>`, `-BrigadeTestCallAnswer YES`, `-BrigadeTestCallAck YES`) that ring,
     then answer and press 1 as CallKit transactions, because this Simulator cannot be tapped
-    (`-BrigadeTestCallId`, `-BrigadeTestCallEndAs missed|declined` and `-BrigadeTestCallRepeatAfter <s>` exercise
-    the repeat rule below).
+    (`-BrigadeTestCallId`, `-BrigadeTestCallRingTimeout <s>`, `-BrigadeTestCallDecline YES` and
+    `-BrigadeTestCallRepeatAfter <s>` exercise the repeat rule below).
 
 Versions: Expo SDK 58, React Native 0.88, Android emulator API 36 (Google APIs, arm64), Xcode 27.0 beta 6, iPhone 17
 Simulator on iOS 27.0, macOS 27.2 on Apple silicon, Wrangler 4.152.
@@ -248,6 +248,29 @@ late JavaScript):
   (`callUUIDAlreadyExists`). The app was never terminated. Those pushes carried a dummy envelope: `voip push not
   decrypted` each time, and each was still reported, so a push that cannot be decrypted still rings.
 
+### Second review: the repeat rule, timers, threads, fallback channel
+
+On 2026-10-25, after a second review (a repeat after a missed call was silenced; Android timers could end a
+later call with the same id; native state read off the main thread; fallbacks hard-wired to `brigade_pages`):
+
+- **Android emulator** (API 36, debug build, the debug broadcast with a fixed `callId`): a call left ringing ended
+  `missed` after 60 s, and its repeat rang again (`ring`, Telecom `RINGING`). That call declined from the ringing
+  screen, its repeat did not ring (`repeat of an ended call: not ringing again`, no Telecom call). A new id
+  answered, then hung up with the headset end-call key (`KEYCODE_ENDCALL`, Telecom's `onDisconnect`, `hung_up`):
+  its repeat did not ring either. With a temporary local build (3-minute limit cut to 40 s, the ended memory to
+  10 s, not committed) so one id could ring again while its first call's timers were pending: call 1 answered at
+  :03 and hung up, call 2 with the same id answered at :22 and hung up natively at 40.0 s after **its** answer
+  (`timed_out`), not at :43 when call 1's timer was due; a declined call's id rung again 15 s later was `missed` 60 s
+  after the second ring, not 45 s. The three Telecom and notification fallbacks still cannot be triggered from
+  outside the app; `fallbackChannel` is tested in TypeScript and JVM tests, and the three call sites in
+  `Calls.kt` are checked by text.
+- **iOS Simulator** (Xcode 27 beta 6, builds without warnings in the module), with the development launch
+  arguments: a call with `-BrigadeTestCallRingTimeout 0` ended `missed`, and its repeat (`simulateRepeat`, the
+  push handler's decision) gave `call reported`, a new ring. A call declined through a `CXEndCallAction` (or
+  ended by the Simulator itself within 60 ms, which reaches the app the same way) gave `repeat of an ended call
+  reported and ended`. A 0.2 s ring timeout lost the race to the Simulator's own end, so that call counted as
+  declined: on this Simulator a missed call can only be produced with a zero timeout.
+
 ### Tests
 
 - `packages/schema`: `incident.ack` (event, first ack wins, legacy rows, inactive incidents, not found, invalid args,
@@ -257,6 +280,12 @@ late JavaScript):
   on an alert, an unknown kind) is a `400` that never reaches APNs.
 - `packages/push`: the incident id round-trips through the envelope.
 - `packages/schema` also: reopening clears the ack, client and server agree on it.
+- `apps/mobile` (second review): `knownCall` for every end reason inside and outside the memory, the memory equal
+  to the relay's maximum call TTL, `fallbackChannel` against `decideRoute` for every combination that rings, the
+  Kotlin and Swift copies of the reasons, memory and branches, the three Kotlin fallbacks going through
+  `notifyFallback`, the Android timers keyed and checked by call instance, and the Swift handler reporting before
+  any return in each `report*` function, completing once from the `defer` in CallKit's callback (a check of the
+  source, not of behaviour). The JVM tests gained the same rules (12 tests, run by hand).
 - `apps/mobile`: the call session (the script in both languages, one ack for two presses, conflict as success,
   retry after failure, no ack without an incident, hang up once, a key pressed before JavaScript listened), the
   paging decisions (`call-route.test.ts`: the Android route table, every VoIP push reported, the maximum call

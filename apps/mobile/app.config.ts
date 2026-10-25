@@ -31,6 +31,8 @@ const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
     bundleIdentifier: APP_ID,
     // Phone-first. On iPad the app runs in iPhone compatibility mode until a tablet layout exists.
     supportsTablet: false,
+    // Only standard encryption (HTTPS, CryptoKit for push payloads): exempt from export documentation.
+    config: { usesNonExemptEncryption: false },
   },
   android: {
     package: APP_ID,

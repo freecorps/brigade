@@ -26,7 +26,7 @@ test("people are named from the member list; the signed-in member is you; nobody
   expect(personName("usr_gone", who)).toBe("A teammate");
 });
 
-test("every kind of entry reads as a sentence, in English and Portuguese", () => {
+test("every kind of entry reads as a sentence, in English and Portuguese", async () => {
   const entries = [
     entry({ kind: "declared", title: "t", severity: "sev1" }),
     entry({ kind: "status_changed", from: "triage", to: "fixing" }),
@@ -72,7 +72,7 @@ test("every kind of entry reads as a sentence, in English and Portuguese", () =>
     "Bia Lima paused Checkout API, so its alert resolved",
     "Bia Lima deleted Checkout API, so its alert resolved",
   ]);
-  setLocale("pt-BR");
+  await setLocale("pt-BR");
   const portuguese = entries.map((item) => entryText(item, who));
   expect(portuguese[0]).toBe("Bia Lima declarou o incidente como SEV1 Crítica");
   expect(portuguese[4]).toBe("Bia Lima definiu você como Comandante do incidente");

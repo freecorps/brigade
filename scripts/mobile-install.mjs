@@ -151,12 +151,18 @@ async function installIos(variant) {
 
   let device;
   if (!options["build-only"]) {
-    const file = join(tmpdir(), `brigade-devices-${process.pid}.json`);
-    capture("xcrun", ["devicectl", "list", "devices", "--json-output", file], { env });
-    const paired = JSON.parse(readFileSync(file, "utf8"))
-      .result.devices.map(iosDevice)
-      .filter((item) => item.physical && item.paired);
-    await rm(file, { force: true });
+    // A private temp folder, removed even when devicectl or the JSON fails.
+    const dir = await mkdtemp(join(tmpdir(), "brigade-devices-"));
+    let paired;
+    try {
+      const file = join(dir, "devices.json");
+      capture("xcrun", ["devicectl", "list", "devices", "--json-output", file], { env });
+      paired = JSON.parse(readFileSync(file, "utf8"))
+        .result.devices.map(iosDevice)
+        .filter((item) => item.physical && item.paired);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
     // A phone paired over Wi-Fi stays paired when it is away; only reachable ones can take an install.
     const phones = paired.filter((item) => item.reachable);
     assert.ok(

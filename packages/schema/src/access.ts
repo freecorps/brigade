@@ -8,7 +8,8 @@ export type Role = (typeof ROLES)[number];
 /** Every resource and the actions on it. */
 export const statement = {
   incident: ["read", "declare", "update", "ack"],
-  workspace: ["create"],
+  // `read`: who is in the workspace (the shard's member list, RFC 0003); `create` only provisions a shard.
+  workspace: ["create", "read"],
   monitor: ["read", "manage"],
 } as const;
 
@@ -24,13 +25,21 @@ type Grants = { readonly [R in Resource]?: readonly Statement[R][number][] };
 export const roles = {
   owner: {
     incident: ["read", "declare", "update", "ack"],
-    workspace: ["create"],
+    workspace: ["create", "read"],
     monitor: ["read", "manage"],
   },
-  admin: { incident: ["read", "declare", "update", "ack"], monitor: ["read", "manage"] },
+  admin: {
+    incident: ["read", "declare", "update", "ack"],
+    workspace: ["read"],
+    monitor: ["read", "manage"],
+  },
   // Responders see what monitors say (they run the incidents monitors open) but do not change what is watched.
-  responder: { incident: ["read", "declare", "update", "ack"], monitor: ["read"] },
-  viewer: { incident: ["read"], monitor: ["read"] },
+  responder: {
+    incident: ["read", "declare", "update", "ack"],
+    workspace: ["read"],
+    monitor: ["read"],
+  },
+  viewer: { incident: ["read"], workspace: ["read"], monitor: ["read"] },
 } as const satisfies Record<Role, Grants>;
 
 export const PERMISSIONS: readonly Permission[] = (Object.keys(statement) as Resource[]).flatMap(

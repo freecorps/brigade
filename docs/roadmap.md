@@ -104,14 +104,20 @@ Validate the risky assumptions before writing product code. Each spike produces 
     reasons, waiting and no-data chips, a confirmed pause with who paused it, the down row's incident link, and a
     one-time heartbeat URL with Copy and a `curl` example.
   - Left: TCP checks (`connect()`); editing and deleting monitors in the dashboard (the mutations exist); regenerating
-    a heartbeat URL; whether "No data" pages (Q17); member names for "Paused by" (today "you" or "a teammate"); regex,
+    a heartbeat URL; whether "No data" pages (Q17); member names for "Paused by" (today "you" or "a teammate"; the shard's member list now has them); regex,
     headers and TLS expiry; configurable quorum and severity; alerting on a stalled probe (RFC 0007 "Watching the
     watcher"; today it is logged and re-pushed); `AlertGroupDO` and alert routes, moving monitor alerts out of the
-    workspace shard; a timeline note on the incident when its monitor recovers (needs the incident timeline);
+    workspace shard;
     revisiting the regions with S2's 48-hour result; the workspace default locale for the incident title (Q15).
-- [ ] Incidents: declare, severity, status, roles, timeline, updates
+- [x] Incidents: declare, severity, status, roles, timeline, updates
+  - Timeline as its own synced table written by every incident mutation (and the monitor recovery note), written
+    updates, three incident roles checked against the shard's member list, and an incident page in the dashboard
+    (`/incidents/<number>`) to change status and severity, assign roles and post updates (RFC 0003).
+  - Left for later items: publishing an update to a status page (Phase 3), role definitions (Phase 3), editing an
+    update, member names from invitations (members appear once they open Brigade), and the mobile incident detail.
 - [ ] Brigade Sync in production for web + mobile
 - [ ] Web dashboard: incident list/detail, monitors
+  - Done so far: the incident list, the incident page (`/incidents/<number>`) and the Monitors card.
 - [ ] Mobile: login, incident list/detail, push via relay, ack from notification
 - [ ] Event outbox + queue + push notifier
 - [ ] External dead-man switch

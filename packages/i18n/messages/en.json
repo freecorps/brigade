@@ -433,5 +433,75 @@
         "has=*": "Open incident"
       }
     }
+  ],
+  "incident_page": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=back": "All incidents",
+        "part=loading": "Loading the incident…",
+        "part=not_found": "There is no incident with this number in this workspace.",
+        "part=roles": "Roles",
+        "part=timeline": "Timeline",
+        "part=timeline_empty": "Nothing on the timeline yet.",
+        "part=update_label": "Post an update",
+        "part=update_placeholder": "What do you know now? What happens next?",
+        "part=update_hint": "Everyone in the workspace sees it on the timeline.",
+        "part=update_empty": "Write the update first.",
+        "part=update_invalid": "Remove invisible, control or bidi characters and try again.",
+        "part=post": "Post update",
+        "part=nobody": "Unassigned",
+        "part=unassign": "Unassign",
+        "part=no_members": "Teammates show up here once they have opened Brigade.",
+        "part=you": "You",
+        "part=you_object": "you",
+        "part=monitors": "Monitors",
+        "part=teammate": "A teammate",
+        "part=read_only": "Viewers follow the incident; responders and admins change it.",
+        "part=*": "Incident"
+      }
+    }
+  ],
+  "incident_role": [
+    {
+      "declarations": ["input role"],
+      "selectors": ["role"],
+      "match": {
+        "role=commander": "Incident commander",
+        "role=communications": "Communications lead",
+        "role=*": "Operations lead"
+      }
+    }
+  ],
+  "timeline_entry": [
+    {
+      "declarations": ["input kind", "input actor", "input a", "input b"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=declared": "{actor} declared the incident as {a}",
+        "kind=status_changed": "{actor} moved it from {a} to {b}",
+        "kind=severity_changed": "{actor} changed the severity from {a} to {b}",
+        "kind=acknowledged": "{actor} acknowledged the page",
+        "kind=role_assigned": "{actor} made {b} {a}",
+        "kind=role_unassigned": "{actor} removed {b} as {a}",
+        "kind=role_taken": "{actor} took the {a} role",
+        "kind=role_left": "{actor} stepped down as {a}",
+        "kind=update": "{actor} posted an update",
+        "kind=alert_recovered": "{a} recovered, so its alert resolved",
+        "kind=alert_paused": "{actor} paused {a}, so its alert resolved",
+        "kind=*": "{actor} deleted {a}, so its alert resolved"
+      }
+    }
+  ],
+  "incident_change_failed": [
+    {
+      "declarations": ["input kind", "input role", "input reason"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=update": "Couldn't post the update. {reason}",
+        "kind=*": "Couldn't change the {role}. {reason}"
+      }
+    }
   ]
 }

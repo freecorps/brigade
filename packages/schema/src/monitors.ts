@@ -20,6 +20,7 @@ import {
 } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
 import type { MonitorCheck, MonitorRow } from "./tables.ts";
+import { appendTimeline } from "./timeline.ts";
 import { v, type Issue, type Validator } from "./validate.ts";
 
 /**
@@ -513,17 +514,30 @@ export const updateHeartbeatMonitor = defineMutation({
   },
 });
 
-/** Resolves the monitor's firing alert, if any; the incident it opened stays for people to close. */
+/**
+ * Resolves the monitor's firing alert, if any. The incident it opened stays for people to close; its timeline
+ * says why the alert ended (the monitor recovered, or someone paused or deleted it).
+ */
 function resolveAlert(
   store: MutationStore,
   monitor: MonitorRow,
   reason: AlertResolved["data"]["reason"],
-  now: number,
+  ctx: MutationContext,
 ): AlertResolved[] {
   if (monitor.alertId === null) return [];
   const alert = store.get("alerts", monitor.alertId);
   if (!alert || alert.status !== "firing") return [];
-  store.update("alerts", alert.id, { status: "resolved", resolvedAt: now });
+  store.update("alerts", alert.id, { status: "resolved", resolvedAt: ctx.now });
+  const incident = alert.incidentId === null ? undefined : store.get("incidents", alert.incidentId);
+  if (incident) {
+    store.update("incidents", incident.id, { updatedAt: ctx.now });
+    appendTimeline(
+      store,
+      incident,
+      { kind: "alert_resolved", monitorId: monitor.id, monitor: monitor.name, reason },
+      ctx,
+    );
+  }
   return [
     {
       type: "alert.resolved",
@@ -547,7 +561,7 @@ export const setMonitorPaused = defineMutation({
     if (monitor.paused === args.paused) {
       return fail("conflict", args.paused ? "Already paused" : "Not paused");
     }
-    const resolved = args.paused ? resolveAlert(store, monitor, "paused", ctx.now) : [];
+    const resolved = args.paused ? resolveAlert(store, monitor, "paused", ctx) : [];
     store.update("monitors", args.id, {
       paused: args.paused,
       pausedBy: args.paused ? ctx.actor.id : null,
@@ -573,7 +587,7 @@ export const deleteMonitor = defineMutation({
   apply(store, args, ctx) {
     const monitor = store.get("monitors", args.id);
     if (!monitor) return fail("not_found", "Monitor not found");
-    const resolved = resolveAlert(store, monitor, "deleted", ctx.now);
+    const resolved = resolveAlert(store, monitor, "deleted", ctx);
     store.delete("monitors", args.id);
     store.delete("heartbeats", args.id);
     const event: MonitorDeleted = {
@@ -658,7 +672,7 @@ function moveTo(
       },
     } satisfies AlertFired);
   } else if (status === "up") {
-    events.push(...resolveAlert(store, monitor, "recovered", ctx.now));
+    events.push(...resolveAlert(store, monitor, "recovered", ctx));
     patch.alertId = null;
     patch.incidentId = null;
   }
@@ -668,8 +682,8 @@ function moveTo(
 /**
  * Server only: one source's verdict, from a probe or the heartbeat endpoint, run as `MONITOR_ACTOR`; the status
  * follows `monitorStatus` and `moveTo` raises or resolves the alert. The ids and the title come from the shard in
- * `open`, since mutations make no randomness and render no text. The incident is left for people to resolve (the
- * incident model has no timeline yet).
+ * `open`, since mutations make no randomness and render no text. The incident is left for people to resolve, with
+ * a note on its timeline when the monitor recovers.
  *
  * `monitor.checked` is emitted only when the source's verdict or failure reason changed: the probe re-sends an
  * unchanged verdict every `REPORT_EVERY_MS` so latency, colo and the check time stay fresh on the dashboard, and

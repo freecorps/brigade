@@ -572,6 +572,28 @@ describe("GET /sync/:workspaceId: the actor", () => {
     });
   });
 
+  test("the member's socket copies them into the shard's member list, name and role", async () => {
+    // A name a header cannot hold as-is (not Latin-1), so it travels URI-encoded.
+    const ana = await signUp("Ana Conceição 🚒", email("ana"));
+    const workspace = await createWorkspace(ana.cookie);
+    const socket = await connect(workspace.id, ana.cookie);
+    socket.send({ type: "subscribe", subId: "m", query: "members.all", args: {} });
+    expect(await socket.next()).toMatchObject({
+      type: "snapshot",
+      rows: [{ id: ana.user.id, name: "Ana Conceição 🚒", role: "owner" }],
+    });
+    // A second socket finds the copy current and writes nothing.
+    const version = await runInDurableObject(env.WORKSPACE.getByName(workspace.id), (instance) =>
+      (instance as unknown as { shard: { version(): number } }).shard.version(),
+    );
+    await connect(workspace.id, ana.cookie);
+    expect(
+      await runInDurableObject(env.WORKSPACE.getByName(workspace.id), (instance) =>
+        (instance as unknown as { shard: { version(): number } }).shard.version(),
+      ),
+    ).toBe(version);
+  });
+
   test("without a session and without the dev actor: 401", async () => {
     const ana = await signUp("Ana");
     const workspace = await createWorkspace(ana.cookie);
@@ -654,8 +676,10 @@ describe("RBAC in the shard", () => {
     });
 
     const responder = await connect(workspace.id, rui.cookie);
-    responder.send(declare("Checkout down"));
+    const declared = declare("Checkout down");
+    responder.send(declared);
     expect(await responder.next()).toMatchObject({ type: "mutationResult", ok: true });
+    await responder.next(); // its patch
 
     // Even the owner cannot run the server-only workspace.create from a socket.
     const owner = await connect(workspace.id, ana.cookie);
@@ -670,6 +694,25 @@ describe("RBAC in the shard", () => {
       ok: false,
       error: { code: "unknown_mutation" },
     });
+
+    // Roles go to members the shard knows (they opened a socket) who may run incidents: not to viewers.
+    const assign = (userId: string) => ({
+      type: "mutate",
+      mutationId: `assign-${userId}`,
+      name: "incident.assignRole",
+      args: { id: (declared.args as { id: string }).id, role: "commander", userId },
+    });
+    responder.send(assign(rui.user.id));
+    expect(await responder.next()).toMatchObject({ type: "mutationResult", ok: true });
+    await responder.next(); // its patch
+    responder.send(assign(vic.user.id));
+    expect(await responder.next()).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args", issues: [{ path: "userId" }] },
+    });
+    const stranger = await signUp("Stranger");
+    responder.send(assign(stranger.user.id));
+    expect(await responder.next()).toMatchObject({ ok: false, error: { code: "invalid_args" } });
 
     // A viewer still reads: the incident the responder declared.
     viewer.send({ type: "subscribe", subId: "s", query: "incidents.active", args: {} });

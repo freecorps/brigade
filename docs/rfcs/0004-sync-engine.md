@@ -426,7 +426,10 @@ One code path for every write → one audit trail.
 - A storage failure inside the nested `incident.declare` is caught and thrown again, so the shard rolls the whole
   report back and the probe retries, instead of storing `internal` as the report's answer.
 - A mutation may be declared `silent`: it may then succeed without events. Only for writes that refresh observed
-  values (a monitor's latency, colo and check time), which are synced but are no domain events (RFC 0005).
+  values (a monitor's latency, colo and check time), which are synced but are no domain events (RFC 0005), and
+  for `member.sync`, which copies the socket's own member (name and role, as the Worker read them in D1) into the
+  shard's `members` table on an upgrade whose copy is missing or stale (RFC 0003 "Members in the shard"): a cache
+  of D1, not a change to the workspace. It runs as that member, client id `api`, and refuses any other id or role.
 - Ids and text a server mutation needs (a new incident's and alert's ids, the incident title rendered with
   `packages/i18n`) are made by the shard before it runs the mutation and passed in its args, so `apply` stays
   deterministic.

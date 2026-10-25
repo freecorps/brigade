@@ -508,7 +508,7 @@ function ConnectionPill({ view }: { view: SyncView }) {
 }
 
 /** Epoch ms, refreshed every `ms`, so relative times move on their own. */
-function useNow(ms: number): number {
+export function useNow(ms: number): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), ms);

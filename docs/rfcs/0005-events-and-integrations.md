@@ -27,13 +27,20 @@ emit `monitor.created`, `monitor.updated`, `monitor.paused`, `monitor.resumed`, 
 emit nothing), `monitor.status_changed` (to `unknown` too, when probes stop reporting), `alert.fired` and
 `alert.resolved`, with actor `sys_monitors` for what the probes and heartbeats cause.
 
+Incidents emit `incident.declared`, `incident.status_changed`, `incident.severity_changed`,
+`incident.acknowledged`, `incident.update_posted` (`entryId`, `body`) and `incident.role_assigned` (`role`,
+`from`, `to`; `to` null when unassigned). Each of those mutations also appends the incident's timeline entry in
+the same transaction (RFC 0003 "Timeline, updates and roles"); the monitor recovery note rides with
+`alert.resolved`.
+
 Users, sessions and membership live in D1, written by Better Auth (RFC 0002), not by a shard. A change there that
 integrations care about is announced by the workspace shard: creating a workspace runs `workspace.create` in its
 new `WorkspaceDO` (`workspace.created`, subject the workspace id). Membership changes (`member.added`,
 `member.role_changed`, `member.removed`) follow the same path when invitations land; until then the creator's
 membership is part of `workspace.created` (`createdBy`). Until then the API refuses Better Auth's routes that
 would change a workspace or its members without an event (update, delete, member roles, removing or adding
-members, invitations, teams, leaving); see RFC 0002 "Auth".
+members, invitations, teams, leaving); see RFC 0002 "Auth". The shard's own copy of a member (`members`, written
+by `member.sync` when they open a socket) is a cache of D1 and emits nothing.
 
 ## Delivery: transactional outbox
 

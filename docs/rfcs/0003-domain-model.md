@@ -33,6 +33,33 @@ Workspace ─┬─ Member (User + role: owner | admin | responder | viewer)
 Implemented in `packages/schema` (`canTransition`). Severity is independent of status and can change any time
 (every change is a timeline entry).
 
+## Timeline, updates and roles
+
+First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with the incident then):
+
+- **Timeline** (`timeline` table, query `incident.timeline`): its own synced, append-only table, not a view of the
+  outbox. Every mutation that changes an incident appends one entry in its own transaction, next to its event
+  (RFC 0005): `declared`, `status_changed`, `severity_changed`, `acknowledged`, `role_assigned`, `update`, and
+  `alert_resolved` when the alert of the monitor that opened it resolves (recovered, or the monitor paused or
+  deleted), by `sys_monitors` or the member who did it. The outbox is server-only and drained, while clients need
+  entries live and optimistic, so deriving the timeline from events would need a projection anyway. Entries are
+  numbered per incident (`<incident id>:<seq>`, from the incident's `timelineSeq`), so a client's optimistic entry
+  and the server's share an id; nothing edits or deletes one. "Edit timeline" for responders means adding to it.
+- **Updates** (`incident.postUpdate`, `incident:update`, event `incident.update_posted`): a timeline entry of
+  kind `update` with a multi-line body of 1 to 4000 characters (the text rules of RFC 0004), allowed in every
+  status so a resolved incident can get closing notes. No visibility flag yet: every update is internal, and
+  publishing one to a status page (Phase 3) will be its own action with its own event.
+- **Roles** (`incident.assignRole`, `incident:update`, event `incident.role_assigned`): a fixed set until role
+  definitions exist (Phase 3), `commander`, `communications` and `operations`, at most one member each, stored on
+  the incident (`roles`). `userId: null` unassigns. The assignee must be in the shard's member list and not a
+  viewer (`invalid_args` on `userId` otherwise).
+- **Members in the shard** (`members` table, query `members.all`, `workspace:read` for every role): a copy of
+  D1's membership, so a shard can check an assignee without leaving its synchronous mutation and the dashboard can
+  show names. The Worker already reads the member in D1 when it authenticates a sync upgrade; it passes their
+  name along, and the shard runs the server-only `member.sync` (RFC 0004 "Server-side writes") when its copy is
+  missing or stale. So a member appears once they have opened a socket, and a role change shows on their next
+  one. When invitations and member management land, their `member.*` mutations write this table as well.
+
 ## Alert → incident flow
 
 1. Alert arrives (monitor or webhook) → normalized to `AlertEvent { source, fingerprint, status: firing|resolved, labels, payload }`.

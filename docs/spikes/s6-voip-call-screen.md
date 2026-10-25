@@ -37,9 +37,11 @@ device steps that are left.
     notification) sets the connection active and opens the React Native call screen; while the call lasts, the
     app's activity may show over the lock screen (`setShowWhenLocked`), and that is cleared when it ends.
     Unanswered calls end after 60 seconds; answered ones hang up natively 3 minutes after answering, ack or not
-    (`ANSWERED_CALL_MAX_MS`), which also bounds the time the app is shown over the lock screen. If Telecom gives
-    the call no connection, or the ringing notification cannot be posted, the call ends and the page is posted on
-    `brigade_pages` instead. `CallSpeech` speaks through `TextToSpeech` on the voice-call stream.
+    (`ANSWERED_CALL_MAX_MS`), which also bounds the time the app is shown over the lock screen. Both timers carry
+    the call's state as their token: `end` cancels them, and they act only on the call that started them, never on
+    a later call with the same id. If Telecom throws, gives the call no connection, or the ringing notification
+    cannot be posted, the call ends and the page is posted on `fallbackChannel` instead (`brigade_pages`, or
+    `brigade_calls` if the user muted pages). `CallSpeech` speaks through `TextToSpeech` on the voice-call stream.
     The ringing screen's and the channels' strings are resources the plugin generates from `packages/i18n`.
   - **iOS:** `CallCenter` registers PushKit from an `ExpoAppDelegateSubscriber` at launch (a VoIP push can launch
     the app in the background). Every VoIP push is reported to CallKit at once, as "Brigade on-call"; a missing or
@@ -59,11 +61,20 @@ device steps that are left.
     retry, says `call_script_acked` and hangs up. `/call` is the call screen ("1 Acknowledge", "Hang up"; Back
     disabled while the call lasts). The development-only `/call-test` screen shows the route a page would take,
     the PushKit token, and rings a test call for the first unacknowledged incident after 10 seconds.
+  - **Threads:** Expo's sync functions run on the JavaScript thread (`@JavaScriptActor` in expo-modules-core 58),
+    never the main thread, and the call state lives on the main thread. The modules read only an immutable
+    snapshot of the answered call (a `@Volatile` value on Android, an `OSAllocatedUnfairLock` on iOS, both replaced
+    on the main thread) and post everything else to the main thread without waiting. `DispatchQueue.main.sync` was
+    rejected: React Native's renderer can block the main thread on the JavaScript thread, and the two would
+    deadlock.
   - **Test hooks, development builds only:** on Android, an `adb shell am broadcast` to `DebugCallReceiver` (in
     the module's `src/debug` source set, so release builds do not contain it; only senders holding `DUMP`, which
-    adb's shell does, and ignored unless the app is debuggable); on iOS, launch
+    adb's shell does, and ignored unless the app is debuggable; a `debugOptimized` build, which is not the `debug`
+    build type, has no receiver at all, the safe direction); on iOS, launch
     arguments (`-BrigadeTestCall <title>`, `-BrigadeTestCallAnswer YES`, `-BrigadeTestCallAck YES`) that ring,
-    then answer and press 1 as CallKit transactions, because this Simulator cannot be tapped.
+    then answer and press 1 as CallKit transactions, because this Simulator cannot be tapped
+    (`-BrigadeTestCallId`, `-BrigadeTestCallEndAs missed|declined` and `-BrigadeTestCallRepeatAfter <s>` exercise
+    the repeat rule below).
 
 Versions: Expo SDK 58, React Native 0.88, Android emulator API 36 (Google APIs, arm64), Xcode 27.0 beta 6, iPhone 17
 Simulator on iOS 27.0, macOS 27.2 on Apple silicon, Wrangler 4.152.
@@ -137,9 +148,18 @@ and stops delivering VoIP pushes after repeated failures. So:
   fallback text; a push without a valid call id rings under a new UUID.
 - Repeats of one page share the call id, and **every push is reported**, repeats included (`voipPushPlan` in
   `src/lib/call-route.ts`, tested in CI; `CallCenter` mirrors it). A repeat while the call rings or is answered
-  gets CallKit's `callUUIDAlreadyExists`, treated as success, so it never rings twice. A repeat after the call
-  ended (remembered for 5 minutes, the longest a call push lives) is reported and ended at once
-  (`answeredElsewhere`). Only the development `simulate` path skips CallKit for a known id.
+  gets CallKit's `callUUIDAlreadyExists`, treated as success, so it never rings twice. Only the development
+  `simulate` path skips CallKit for a known id.
+- **After a call ends, its end reason decides whether a repeat rings** (`knownCall`, the same rule on Android). A
+  repeat after a decline, or after the call was answered (hung up, acknowledged, or ended at 3 minutes), is
+  reported and ended at once (`answeredElsewhere`): the responder saw the call. A repeat after a **missed** call
+  (60 s unanswered) or a **failed** one (no ringing UI, CallKit reset) **rings again**: nobody was reached, and
+  silencing it would turn one unanswered ring into a silent phone. The end is remembered for 5 minutes: the relay
+  never repeats by itself, the instance re-sends, and each send expires at most 5 minutes (`MAX_CALL_TTL_SECONDS`)
+  after it was sent, so a copy sent before the end arrives within 5 minutes of it; a later send is a new attempt
+  and rings. The memory is in RAM, so a killed app treats a repeat as new and rings. On iOS, a call the system ends
+  before it is answered reaches the app as a `CXEndCallAction`, indistinguishable from a decline (see the open
+  question on calls the system ends at once).
 - A call lives 60 seconds by default. A phone that comes online later should get the stored alert push, not a call
   for a page that may already be acknowledged.
 

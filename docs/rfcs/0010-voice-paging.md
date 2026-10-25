@@ -65,19 +65,33 @@ the fallback the bot keeps when the audio session cannot start.
 
 ### Fallbacks (paging paths need one)
 
-| Situation                                                                     | What the phone does                                         |
-| ----------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Android: full-screen intents not allowed, Telecom refuses, call channel muted | Page notification on the `brigade_pages` channel (alarm)    |
-| Android: notifications off                                                    | Nothing can show; the route is `blocked` (report it, below) |
-| iOS: CallKit refuses the call                                                 | Time-sensitive notification with the decrypted page         |
-| iOS: the VoIP push cannot be decrypted                                        | Still rings, as "Brigade on-call" with the fallback text    |
-| Android: Telecom creates no connection, or the ringing notification fails     | The call ends; page notification on `brigade_pages`         |
-| Nobody answers in 60 s, or the call is declined                               | The call ends; escalation continues on its own timeout      |
+| Situation                                                                         | What the phone does                                                                           |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Android: full-screen intents not allowed, Telecom refuses, call channel muted     | Page notification on `brigade_pages` (alarm), or on `brigade_calls` if pages are muted        |
+| Android: notifications off                                                        | Nothing can show; the route is `blocked` (report it, below)                                   |
+| iOS: CallKit refuses the call                                                     | Time-sensitive notification with the decrypted page                                           |
+| iOS: the VoIP push cannot be decrypted                                            | Still rings, as "Brigade on-call" with the fallback text                                      |
+| Android: Telecom throws, creates no connection, or the ringing notification fails | The call ends; page notification on `brigade_pages`, or on `brigade_calls` if pages are muted |
+| Nobody answers in 60 s, or the call is declined                                   | The call ends; escalation continues on its own timeout                                        |
 
-The Android decision and the iOS handling of repeated pushes are pure functions in
+The Android decision, the fallback channel and the handling of repeated pushes are pure functions in
 `apps/mobile/src/lib/call-route.ts`, tested in CI; the Kotlin and Swift copies mirror them. Every VoIP push is
-reported to CallKit, repeats of a page included (a repeat after its call ended is reported and ended at once). An
-answered call hangs up natively after 3 minutes. The step-1 alert push (RFC 0006) is
+reported to CallKit, repeats of a page included. An answered call hangs up natively after 3 minutes; each native
+timer acts only on the call that started it, never on a later call that reuses its id.
+
+**Repeats of a page** share its call id. While the call rings or is answered, a repeat changes nothing. After the
+call ended, the end reason decides, on both platforms (`knownCall`):
+
+| How the call ended                                                                      | A repeat of the same page                                     |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Declined; answered and hung up (acknowledged included); answered and ended at 3 minutes | Does not ring (iOS reports it to CallKit and ends it at once) |
+| Missed (rang 60 s unanswered); failed (no ringing UI, CallKit reset)                    | Rings again: nobody was reached                               |
+
+The phone remembers an end for 5 minutes. The relay does not repeat; the instance re-sends, and each send expires
+at most 5 minutes after it was sent, so a copy sent before the call ended arrives within 5 minutes of the end. A
+page sent later is a deliberate new attempt and rings. The memory is in RAM: a killed app treats a repeat as new
+and rings, the safe direction. On iOS a call the system ends before it is answered (a Focus, the Simulator) looks
+like a decline to the app; whether that should post the fallback is an open question in the write-up. The step-1 alert push (RFC 0006) is
 always sent before the call, so a phone whose call cannot ring has already been notified.
 
 ### Payload: nothing the app could ignore

@@ -919,12 +919,14 @@ describe("a heartbeat in the same batch as a page", () => {
     const phone = await ws.device(bia);
     const { event } = await ws.declare(MONITOR_ACTOR);
     // The real watchdog, pinging a check that hangs until its timeout aborts it.
-    const ping = vi.spyOn(globalThis, "fetch").mockImplementation(
-      (_input, init) =>
-        new Promise((_resolve, reject) =>
-          init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)),
-        ),
-    );
+    const ping = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        (_input, init) =>
+          new Promise((_resolve, reject) =>
+            init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)),
+          ),
+      );
     const stub = env.WATCHDOG.getByName(`notify-test-${++names}`);
     const watchdog = { getByName: () => stub };
     const fake = relayWithTokenCheck();

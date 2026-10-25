@@ -373,10 +373,10 @@ describe("the heartbeat, end to end", () => {
     expect(health.status).toBe("ok");
     expect(pings()).toEqual([PING_URL]);
     // Recorded as failed once the timeout gives up on it.
-    await vi.waitFor(
-      async () => expect((await stub.health()).external.lastPingOk).toBe(false),
-      { timeout: PING_TIMEOUT_MS + 2000, interval: 200 },
-    );
+    await vi.waitFor(async () => expect((await stub.health()).external.lastPingOk).toBe(false), {
+      timeout: PING_TIMEOUT_MS + 2000,
+      interval: 200,
+    });
   }, 15_000);
 
   test("an older heartbeat after a newer one changes nothing", async () => {

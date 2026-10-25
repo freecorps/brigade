@@ -51,7 +51,12 @@ describe("parsePagingHealth", () => {
   });
 
   test("anything else is not an answer", () => {
-    for (const body of [null, "ok", { status: "fine", reasons: [] }, { status: "ok", reasons: 1 }]) {
+    for (const body of [
+      null,
+      "ok",
+      { status: "fine", reasons: [] },
+      { status: "ok", reasons: 1 },
+    ]) {
       expect(parsePagingHealth(body), JSON.stringify(body)).toBeUndefined();
     }
   });

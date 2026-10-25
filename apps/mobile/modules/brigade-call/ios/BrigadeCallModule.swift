@@ -18,6 +18,11 @@ public class BrigadeCallModule: Module {
       CallCenter.shared.emit = nil
     }
 
+    // Sync functions run on the JS thread (`@JavaScriptActor` in expo-modules-core 58), never the main thread, and
+    // `CallCenter` lives on the main queue. So reads use its locked snapshot and writes are dispatched to main
+    // asynchronously. Not `DispatchQueue.main.sync`: React Native's renderer can block the main thread on the JS
+    // thread (RuntimeExecutor's "executeSynchronouslyOnSameThread_CAN_DEADLOCK"), and the two would wait forever.
+
     /// CallKit always rings; if it refuses a call, the page becomes a time-sensitive notification.
     Function("getRingStatus") { () -> [String: Any] in
       return ["route": "ring"]
@@ -39,11 +44,11 @@ public class BrigadeCallModule: Module {
     }
 
     Function("speak") { (text: String, language: String) in
-      CallCenter.shared.speak(text, language: language)
+      DispatchQueue.main.async { CallCenter.shared.speak(text, language: language) }
     }
 
     Function("stopSpeaking") {
-      CallCenter.shared.stopSpeaking()
+      DispatchQueue.main.async { CallCenter.shared.stopSpeaking() }
     }
 
     Function("openFullScreenIntentSettings") {}
@@ -51,6 +56,6 @@ public class BrigadeCallModule: Module {
     /// The PushKit token the relay sends calls to (hex), or null until PushKit has one.
     AsyncFunction("getVoipToken") { () -> String? in
       return CallCenter.shared.voipToken
-    }
+    }.runOnQueue(.main)
   }
 }

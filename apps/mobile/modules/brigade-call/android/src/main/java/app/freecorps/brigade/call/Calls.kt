@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.telecom.DisconnectCause
 import android.telecom.PhoneAccount
 import android.telecom.PhoneAccountHandle
@@ -23,6 +24,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
+import androidx.core.os.HandlerCompat
 import java.lang.ref.WeakReference
 import java.util.UUID
 
@@ -33,8 +35,8 @@ data class IncomingCall(val id: String, val title: String, val body: String, val
 
 /**
  * The calls this process knows about, and the paths that ring, answer and end them. Everything runs on the main
- * thread. FCM (a high-priority data message, decrypted with the device key) and the debug receiver both call
- * [ring]; nothing else starts a call.
+ * thread (the Expo module posts there; only [answered] may be read from another thread). FCM (a high-priority data
+ * message, decrypted with the device key) and the debug receiver both call [ring]; nothing else starts a call.
  */
 object Calls {
   private const val TAG = "BrigadeCall"
@@ -60,13 +62,23 @@ object Calls {
 
   private val main = Handler(Looper.getMainLooper())
   private val calls = LinkedHashMap<String, State>()
+  /** Ended calls by id, so a late repeat of a page the responder handled does not ring again (`knownCall`). */
+  private val ended = HashMap<String, EndedCall>()
   var listener: Listener? = null
   /** The React activity, so an answered call can show it over the lock screen (see [CallActivityListener]). */
   internal var mainActivity: WeakReference<Activity>? = null
 
-  /** The call the user answered and has not ended, for the JS call screen after a cold start. */
-  val answered: IncomingCall?
-    get() = calls.values.firstOrNull { it.answered }?.call
+  /**
+   * The call the user answered and has not ended, for the JS call screen after a cold start. An immutable value
+   * replaced on the main thread whenever a call is answered or ends, so the JS thread can read it without a lock.
+   */
+  @Volatile
+  var answered: IncomingCall? = null
+    private set
+
+  private fun refreshAnswered() {
+    answered = calls.values.firstOrNull { it.answered }?.call
+  }
 
   fun get(id: String): IncomingCall? = calls[id]?.call
 
@@ -95,28 +107,44 @@ object Calls {
     )
   }
 
-  /** Rings, or falls back to a page notification. Returns the route taken. */
-  fun ring(context: Context, call: IncomingCall): CallRoute {
+  /**
+   * Rings, or falls back to a page notification. Returns the route taken, or null for a repeat of a page that is
+   * still ringing or answered, or that ended in a way that keeps it from ringing again (`knownCall`).
+   */
+  fun ring(context: Context, call: IncomingCall): CallRoute? {
     val app = context.applicationContext
-    // A repeated push for the same page (same call id) never rings twice.
-    if (calls.containsKey(call.id)) return CallRoute.Ring
+    val now = SystemClock.elapsedRealtime()
+    ended.entries.removeAll { now - it.value.atMs >= ENDED_MEMORY_MS }
+    when (knownCall(calls.containsKey(call.id), ended[call.id], now)) {
+      KnownCall.Active -> {
+        Log.i(TAG, "repeat of a ringing or answered call: ignored")
+        return null
+      }
+      KnownCall.Ended -> {
+        Log.i(TAG, "repeat of an ended call: not ringing again")
+        return null
+      }
+      KnownCall.New -> ended.remove(call.id)
+    }
     val route = decideRoute(conditions(app))
     Log.i(TAG, "incoming page: route ${route.name}")
     when (route) {
       CallRoute.Ring -> {
-        calls[call.id] = State(call)
+        val state = State(call)
+        calls[call.id] = state
         try {
           val extras = Bundle().apply { putString(EXTRA_CALL_ID, call.id) }
           app.getSystemService(TelecomManager::class.java).addNewIncomingCall(
             registerAccount(app),
             Bundle().apply { putBundle(TelecomManager.EXTRA_INCOMING_CALL_EXTRAS, extras) },
           )
-          main.postDelayed({ timeOut(app, call.id) }, RING_TIMEOUT_MS)
+          // The state is the token: `end` removes the timer, and it only acts on this call, not a later one
+          // with the same id.
+          HandlerCompat.postDelayed(main, { timeOut(app, state) }, state, RING_TIMEOUT_MS)
         } catch (error: Exception) {
           Log.w(TAG, "addNewIncomingCall failed: $error")
           calls.remove(call.id)
-          notifyPage(app, call, PAGE_CHANNEL)
-          return CallRoute.Notify(PAGE_CHANNEL)
+          return notifyFallback(app, call)
         }
       }
       is CallRoute.Notify -> notifyPage(app, call, route.channel)
@@ -134,8 +162,9 @@ object Calls {
   /** Telecom could not create the connection (another call in progress, a policy): notify instead. */
   internal fun connectionFailed(context: Context, id: String) {
     val state = calls.remove(id) ?: return
+    main.removeCallbacksAndMessages(state)
     Log.w(TAG, "incoming connection failed: page notification instead")
-    notifyPage(context, state.call, PAGE_CHANNEL)
+    notifyFallback(context, state.call)
   }
 
   internal fun showRinging(context: Context, id: String) {
@@ -165,7 +194,7 @@ object Calls {
       // Without the notification nothing rings or shows the ringing screen: end the call, post the page instead.
       Log.w(TAG, "ringing notification refused: $error")
       end(context, id, "failed")
-      notifyPage(context, call, PAGE_CHANNEL)
+      notifyFallback(context, call)
     }
   }
 
@@ -177,7 +206,13 @@ object Calls {
       state.connection?.setActive()
       cancelNotification(context, id)
       Log.i(TAG, "call answered")
-      main.postDelayed({ if (calls[id]?.answered == true) end(context, id, "timed_out") }, ANSWERED_MAX_MS)
+      refreshAnswered()
+      HandlerCompat.postDelayed(
+        main,
+        { if (timerApplies(state, calls[id])) end(context, id, "timed_out") },
+        state,
+        ANSWERED_MAX_MS,
+      )
       listener?.onAnswer(state.call)
     }
     // The call screen is the React app, over the lock screen while the call lasts.
@@ -193,11 +228,13 @@ object Calls {
   /** Ends a call: declined, hung up from the call screen, ended by Telecom, missed, timed out or failed. */
   fun end(context: Context, id: String, reason: String) {
     val state = calls.remove(id) ?: return
+    main.removeCallbacksAndMessages(state)
+    ended[id] = EndedCall(reason, SystemClock.elapsedRealtime())
+    refreshAnswered()
     state.connection?.let {
       val cause = when (reason) {
         "declined" -> DisconnectCause.REJECTED
         "missed" -> DisconnectCause.MISSED
-        "remote" -> DisconnectCause.REMOTE
         "failed" -> DisconnectCause.ERROR
         else -> DisconnectCause.LOCAL
       }
@@ -212,8 +249,8 @@ object Calls {
     IncomingCallActivity.finishFor(id)
   }
 
-  private fun timeOut(context: Context, id: String) {
-    if (calls[id]?.answered == false) end(context, id, "missed")
+  private fun timeOut(context: Context, state: State) {
+    if (timerApplies(state, calls[state.call.id]) && !state.answered) end(context, state.call.id, "missed")
   }
 
   internal fun showOverLockScreen(activity: Activity) {
@@ -233,6 +270,13 @@ object Calls {
   }
 
   // Fallback: a page notification on a high-importance channel (RFC 0006 "Paging semantics").
+
+  /** A call that was going to ring could not: the page notification, on `fallbackChannel` (CallRoute.kt). */
+  private fun notifyFallback(context: Context, call: IncomingCall): CallRoute {
+    val channel = fallbackChannel(conditions(context))
+    notifyPage(context, call, channel)
+    return CallRoute.Notify(channel)
+  }
 
   internal fun notifyPage(context: Context, call: IncomingCall, channel: String) {
     ensureChannels(context)

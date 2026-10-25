@@ -25,7 +25,9 @@ class DebugCallReceiver : BroadcastReceiver() {
       incident = intent.getStringExtra("incident"),
     )
     val route = Calls.ring(context, call)
-    Log.i("BrigadeCall", "debug ring: ${route.name}")
-    resultData = route.name
+    // Null: a repeat of a call that rings, is answered, or ended in a way that keeps it from ringing again.
+    val result = route?.name ?: "repeat"
+    Log.i("BrigadeCall", "debug ring: $result")
+    resultData = result
   }
 }

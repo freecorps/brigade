@@ -2,8 +2,9 @@ package app.freecorps.brigade.call
 
 /**
  * How an incoming page reaches the responder (RFC 0010; paging paths need a fallback, AGENTS.md). Mirrors
- * `decideRoute` in apps/mobile/src/lib/call-route.ts, the source of truth that CI tests (its test also checks the
- * branches below); change both together. The JVM tests (CallRouteTest.kt) run only by hand.
+ * `decideRoute`, `fallbackChannel` and `knownCall` in apps/mobile/src/lib/call-route.ts, the source of truth that CI
+ * tests (its test also checks the code below); change both together. The JVM tests (CallRouteTest.kt) run only by
+ * hand.
  */
 sealed class CallRoute {
   /** Telecom call, CallStyle notification and full-screen ringing screen. */
@@ -45,3 +46,28 @@ fun decideRoute(c: RingConditions): CallRoute = when {
   c.callChannelEnabled -> CallRoute.Notify(CALL_CHANNEL)
   else -> CallRoute.Blocked
 }
+
+/** A page notification after a call that was going to ring could not: the page channel unless it is muted. */
+fun fallbackChannel(c: RingConditions): String = if (c.pageChannelEnabled) PAGE_CHANNEL else CALL_CHANNEL
+
+/** What the phone knows about an incoming page's call id. Repeats of one page share it. */
+enum class KnownCall { New, Active, Ended }
+
+/** How and when a call ended (`SystemClock.elapsedRealtime()`), kept for [ENDED_MEMORY_MS] in RAM only. */
+data class EndedCall(val reason: String, val atMs: Long)
+
+/** The longest a call push lives after it was sent (the relay's 5-minute cap): see `ENDED_CALL_MEMORY_MS`. */
+const val ENDED_MEMORY_MS = 300_000L
+
+/** Declined or answered: a repeat does not ring again. Missed and failed (and anything else) ring again. */
+val REPEAT_SUPPRESSING_END_REASONS = setOf("declined", "hung_up", "timed_out")
+
+fun knownCall(active: Boolean, ended: EndedCall?, nowMs: Long): KnownCall = when {
+  active -> KnownCall.Active
+  ended != null && nowMs - ended.atMs < ENDED_MEMORY_MS && ended.reason in REPEAT_SUPPRESSING_END_REASONS ->
+    KnownCall.Ended
+  else -> KnownCall.New
+}
+
+/** A timer acts only on the call instance that scheduled it, not on a later call that reuses its id. */
+fun <T : Any> timerApplies(scheduledFor: T, current: T?): Boolean = current === scheduledFor

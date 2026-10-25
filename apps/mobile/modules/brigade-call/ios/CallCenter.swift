@@ -1,4 +1,5 @@
-// PushKit → CallKit → audio session → speech (spike S6, RFC 0010). Everything runs on the main queue.
+// PushKit → CallKit → audio session → speech (spike S6, RFC 0010). Everything runs on the main queue; the Expo
+// module (whose sync functions run on the JS thread) hops there, and reads only `answeredCall`, a locked snapshot.
 //
 // Apple's rule: every VoIP push must end in `reportNewIncomingCall` before its completion handler returns, or iOS
 // terminates the app and, after repeated violations, stops delivering VoIP pushes. So the push handler reports
@@ -19,6 +20,8 @@ struct IncomingCall {
   var incident: String?
   var answered = false
   /// 1 was pressed on CallKit's keypad, maybe before JavaScript was listening (a cold launch from a VoIP push).
+  /// It stays set for the rest of the call: JavaScript that reads it again acknowledges again, which is harmless
+  /// (a second `incident.ack` is a `conflict`, and the call session treats that as acknowledged).
   var ackKeyPressed = false
 
   var dictionary: [String: Any?] {
@@ -29,10 +32,16 @@ struct IncomingCall {
   }
 }
 
-/// What the app knows about a VoIP push's call id. Mirrors `KnownCall` and `voipPushPlan` in
+/// What the app knows about a VoIP push's call id. Mirrors `KnownCall`, `knownCall` and `voipPushPlan` in
 /// apps/mobile/src/lib/call-route.ts, the tested source of truth: every case reports to CallKit.
 enum KnownCall {
   case new, active, ended
+}
+
+/// How and when a call ended (`event` is the `onEnd` reason), kept in RAM only for `CallCenter.endedMemory`.
+struct EndedCall {
+  let reason: String
+  let at: Date
 }
 
 final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AVSpeechSynthesizerDelegate,
@@ -44,9 +53,21 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   /// An answered call hangs up this long after answering, ack or not. Mirrors `ANSWERED_CALL_MAX_MS` in
   /// apps/mobile/src/lib/call-route.ts.
   static let answeredMaxLength: TimeInterval = 180
-  /// How long an ended call's id is remembered, so a late repeat of its page does not ring again: the relay's
-  /// longest call expiry (apps/relay/src/apns.ts).
-  static let endedMemory: TimeInterval = 5 * 60
+  /// How long an ended call's id is remembered, so a late repeat of its page does not ring again: a push expires
+  /// at most 5 minutes after it was sent (apps/relay/src/index.ts). Mirrors `ENDED_CALL_MEMORY_MS`.
+  static let endedMemory: TimeInterval = 300
+  /// Declined or answered: a repeat does not ring again; after `missed` or `failed` it does. Mirrors
+  /// `REPEAT_SUPPRESSING_END_REASONS` in apps/mobile/src/lib/call-route.ts.
+  static let repeatSuppressingReasons: Set<String> = ["declined", "hung_up", "timed_out"]
+
+  /// Mirrors `knownCall` in apps/mobile/src/lib/call-route.ts.
+  static func known(active: Bool, ended: EndedCall?, now: Date) -> KnownCall {
+    if active { return .active }
+    if let ended, now.timeIntervalSince(ended.at) < endedMemory, repeatSuppressingReasons.contains(ended.reason) {
+      return .ended
+    }
+    return .new
+  }
 
   private let log = Logger(subsystem: "app.freecorps.brigade", category: "call")
   private var registry: PKPushRegistry?
@@ -63,8 +84,14 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   }()
   private let controller = CXCallController()
   private let synthesizer = AVSpeechSynthesizer()
-  private var calls: [UUID: IncomingCall] = [:]
-  private var ended: [UUID: Date] = [:]
+  private var calls: [UUID: IncomingCall] = [:] {
+    didSet {
+      let answered = calls.values.first { $0.answered }
+      answeredSnapshot.withLock { $0 = answered }
+    }
+  }
+  private var ended: [UUID: EndedCall] = [:]
+  private let answeredSnapshot = OSAllocatedUnfairLock<IncomingCall?>(initialState: nil)
   private var pendingSpeech: (text: String, language: String)?
   private var audioActive = false
 
@@ -72,7 +99,8 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   /// Set by the Expo module: `onAnswer`, `onEnd`, `onAcknowledgeKey`, `onSpoken`.
   var emit: ((String, [String: Any?]) -> Void)?
 
-  var answeredCall: IncomingCall? { calls.values.first { $0.answered } }
+  /// The answered call, from any thread: a copy of the value the main queue last stored.
+  var answeredCall: IncomingCall? { answeredSnapshot.withLock { $0 } }
 
   /// From `didFinishLaunching`, so a VoIP push that launches the app in the background finds its delegate.
   func start() {
@@ -106,6 +134,11 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
     let payload = payload.dictionaryPayload
     // A missing or malformed id still rings, under a new one: never return without reporting.
     let id = ((payload["call"] as? [String: Any])?["id"] as? String).flatMap(UUID.init(uuidString:)) ?? UUID()
+    receive(id, envelope: payload["brigade"], completion: completion)
+  }
+
+  /// A VoIP push's call (or, in development, a simulated repeat of one).
+  private func receive(_ id: UUID, envelope: Any?, completion: @escaping () -> Void) {
     let call = IncomingCall(id: id, title: Self.fallbackTitle, body: Self.fallbackBody)
     // Repeats of one page share its id. Every branch reports to CallKit before anything else.
     switch known(id) {
@@ -114,7 +147,7 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
     case .ended: reportEnded(call, completion: completion)
     }
     do {
-      let content = try BrigadePushCrypto.open(envelope: payload["brigade"])
+      let content = try BrigadePushCrypto.open(envelope: envelope)
       update(id, title: content.title, body: content.body, incident: content.incident)
       log.info("voip push decrypted")
     } catch {
@@ -125,14 +158,13 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   // MARK: - Calls
 
   private func known(_ id: UUID) -> KnownCall {
-    if calls[id] != nil { return .active }
     let now = Date()
-    ended = ended.filter { now.timeIntervalSince($0.value) < Self.endedMemory }
-    return ended[id] != nil ? .ended : .new
+    ended = ended.filter { now.timeIntervalSince($0.value.at) < Self.endedMemory }
+    return Self.known(active: calls[id] != nil, ended: ended[id], now: now)
   }
 
-  private func rememberEnded(_ id: UUID) {
-    ended[id] = Date()
+  private func rememberEnded(_ id: UUID, reason: String) {
+    ended[id] = EndedCall(reason: reason, at: Date())
   }
 
   private func callUpdate(_ call: IncomingCall) -> CXCallUpdate {
@@ -213,7 +245,7 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   /// Ends a call from this side: CallKit is told, and no `CXEndCallAction` follows.
   private func finish(_ id: UUID, reason: CXCallEndedReason, event: String) {
     calls[id] = nil
-    rememberEnded(id)
+    rememberEnded(id, reason: event)
     stopSpeaking()
     provider.reportCall(with: id, endedAt: nil, reason: reason)
     log.info("call ended: \(event, privacy: .public)")
@@ -228,6 +260,21 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
     }
   }
 
+  #if DEBUG
+    /// Development: a repeat of the page with call `id`, through the same decision a VoIP push takes (no envelope).
+    func simulateRepeat(_ id: UUID) {
+      DispatchQueue.main.async { self.receive(id, envelope: nil) {} }
+    }
+
+    /// Development: what the ring timeout does, now (the Simulator ends a ringing call itself within a second).
+    func simulateMissed(_ id: UUID) {
+      DispatchQueue.main.async {
+        guard let call = self.calls[id], !call.answered else { return }
+        self.finish(id, reason: .unanswered, event: "missed")
+      }
+    }
+  #endif
+
   /// What a tap on Answer does, as a CallKit transaction (the Simulator cannot be tapped; see the write-up).
   func requestAnswer(_ id: UUID) { request(CXAnswerCallAction(call: id)) }
 
@@ -239,9 +286,11 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   func requestEnd(_ id: UUID) { request(CXEndCallAction(call: id)) }
 
   private func request(_ action: CXCallAction) {
-    controller.request(CXTransaction(action: action)) { [weak self] error in
-      if let error {
-        self?.log.error("call action failed: \(String(describing: error), privacy: .public)")
+    DispatchQueue.main.async {
+      self.controller.request(CXTransaction(action: action)) { [weak self] error in
+        if let error {
+          self?.log.error("call action failed: \(String(describing: error), privacy: .public)")
+        }
       }
     }
   }
@@ -249,7 +298,8 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   // MARK: - CXProviderDelegate
 
   func providerDidReset(_ provider: CXProvider) {
-    calls.keys.forEach(rememberEnded)
+    // Nobody chose to end these: a repeat rings again.
+    calls.keys.forEach { rememberEnded($0, reason: "failed") }
     calls.removeAll()
     stopSpeaking()
   }
@@ -276,13 +326,15 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   }
 
   func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
-    let call = calls.removeValue(forKey: action.callUUID)
-    rememberEnded(action.callUUID)
+    guard let call = calls.removeValue(forKey: action.callUUID) else {
+      // Already ended here (timed out, or a repeat reported and ended): keep the reason it ended with.
+      return action.fulfill()
+    }
+    let reason = call.answered ? "hung_up" : "declined"
+    rememberEnded(action.callUUID, reason: reason)
     stopSpeaking()
-    log.info("call ended")
-    emit?(
-      "onEnd",
-      ["id": action.callUUID.uuidString.lowercased(), "reason": call?.answered == true ? "hung_up" : "declined"])
+    log.info("call ended: \(reason, privacy: .public)")
+    emit?("onEnd", ["id": action.callUUID.uuidString.lowercased(), "reason": reason])
     action.fulfill()
   }
 

@@ -36,6 +36,7 @@ class BrigadeCallModule : Module() {
 
     /** Which way a page would reach this phone now, and why: for the dev screen and, later, device registration. */
     Function("getRingStatus") {
+      // System services only (no call state): safe on the JS thread.
       val conditions = Calls.conditions(context)
       mapOf(
         "route" to decideRoute(conditions).name,
@@ -46,6 +47,9 @@ class BrigadeCallModule : Module() {
         "pageChannelEnabled" to conditions.pageChannelEnabled,
       )
     }
+
+    // Sync functions run on the JS thread; `Calls` lives on the main thread. Reads take its immutable, volatile
+    // snapshot; everything else is posted to the main thread (never waited on, so it cannot deadlock).
 
     /** The answered call, if any: the call screen reads it after a cold start. */
     Function("getAnsweredCall") { Calls.answered?.toMap() }
@@ -60,9 +64,12 @@ class BrigadeCallModule : Module() {
 
     Function("endCall") { id: String -> main.post { Calls.end(context.applicationContext, id, "hung_up") } }
 
-    Function("speak") { text: String, language: String -> CallSpeech.speak(context, text, language) }
+    Function("speak") { text: String, language: String ->
+      val app = context.applicationContext
+      main.post { CallSpeech.speak(app, text, language) }
+    }
 
-    Function("stopSpeaking") { CallSpeech.stop() }
+    Function("stopSpeaking") { main.post { CallSpeech.stop() } }
 
     /** Android 14+: where the user allows full-screen intents, which a page needs to ring over the lock screen. */
     Function("openFullScreenIntentSettings") {

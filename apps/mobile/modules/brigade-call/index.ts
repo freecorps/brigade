@@ -20,8 +20,8 @@ export type RingStatus = {
   pageChannelEnabled?: boolean;
 };
 
-/** `timed_out`: hung up natively `ANSWERED_CALL_MAX_MS` after answering; `failed`: the ringing UI could not show. */
-export type CallEndReason = "declined" | "hung_up" | "missed" | "remote" | "timed_out" | "failed";
+/** Each reason is described, with which ones keep a repeat of the page from ringing, in src/lib/call-route.ts. */
+export type CallEndReason = "declined" | "hung_up" | "timed_out" | "missed" | "failed";
 
 type Events = {
   onAnswer(call: IncomingCall): void;

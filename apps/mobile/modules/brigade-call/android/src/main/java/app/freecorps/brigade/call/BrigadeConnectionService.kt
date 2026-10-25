@@ -18,9 +18,9 @@ class BrigadeConnectionService : ConnectionService() {
     val id = callId(request)
     val call = id?.let(Calls::get)
     if (id == null || call == null) {
-      // Never null: Telecom would show nothing. A failed connection, and the page as a notification if we know it.
+      // Never null: Telecom would show nothing. A failed connection only: this process does not know the call (it
+      // ended, or the process restarted), so it has no page to post. The step-1 alert push has notified already.
       Log.w("BrigadeCall", "no call for the incoming connection")
-      id?.let { Calls.connectionFailed(applicationContext, it) }
       return Connection.createFailedConnection(DisconnectCause(DisconnectCause.ERROR))
     }
     return BrigadeConnection(applicationContext, id).apply {

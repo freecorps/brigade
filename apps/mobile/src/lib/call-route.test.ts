@@ -3,8 +3,13 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   ANSWERED_CALL_MAX_MS,
   CALL_CHANNEL,
+  type CallEndReason,
   decideRoute,
+  ENDED_CALL_MEMORY_MS,
+  fallbackChannel,
+  knownCall,
   PAGE_CHANNEL,
+  REPEAT_SUPPRESSING_END_REASONS,
   voipPushPlan,
   type RingConditions,
 } from "./call-route";
@@ -19,6 +24,27 @@ const all: RingConditions = {
 
 const native = (path: string) =>
   readFileSync(new URL(`../../modules/brigade-call/${path}`, import.meta.url), "utf8");
+const kotlinFile = (name: string) =>
+  native(`android/src/main/java/app/freecorps/brigade/call/${name}`);
+
+const combinations = () =>
+  Array.from({ length: 32 }, (_, bits): RingConditions => ({
+    notificationsEnabled: (bits & 1) !== 0,
+    callChannelEnabled: (bits & 2) !== 0,
+    pageChannelEnabled: (bits & 4) !== 0,
+    fullScreenAllowed: (bits & 8) !== 0,
+    telecomPermitted: (bits & 16) !== 0,
+  }));
+
+/**
+ * The body of a Swift or Kotlin member function, without `//` comments: from its declaration to the first closing
+ * brace at `indent`.
+ */
+const body = (source: string, declaration: string, indent = "  ") => {
+  const start = source.indexOf(declaration);
+  expect(start, declaration).toBeGreaterThanOrEqual(0);
+  return source.slice(start, source.indexOf(`\n${indent}}\n`, start)).replaceAll(/\/\/.*$/gm, "");
+};
 
 describe("decideRoute (Android)", () => {
   test("rings when everything is allowed", () => {
@@ -71,9 +97,12 @@ describe("decideRoute (Android)", () => {
   });
 
   test("CallRoute.kt mirrors it branch for branch", () => {
-    const kotlin = native("android/src/main/java/app/freecorps/brigade/call/CallRoute.kt");
-    const body = kotlin.slice(kotlin.indexOf("fun decideRoute"));
-    const branches = [...body.matchAll(/^\s*(.+?) -> (CallRoute\.\w+(?:\(\w+\))?)$/gm)].map(
+    const kotlin = kotlinFile("CallRoute.kt");
+    const decide = kotlin.slice(
+      kotlin.indexOf("fun decideRoute"),
+      kotlin.indexOf("fun fallbackChannel"),
+    );
+    const branches = [...decide.matchAll(/^\s*(.+?) -> (CallRoute\.\w+(?:\(\w+\))?)$/gm)].map(
       ([, when, route]) => `${when} -> ${route}`,
     );
     expect(branches).toEqual([
@@ -88,6 +117,140 @@ describe("decideRoute (Android)", () => {
   });
 });
 
+describe("fallbackChannel (Android)", () => {
+  test("the page channel unless it is muted", () => {
+    expect(fallbackChannel({ pageChannelEnabled: true })).toBe(PAGE_CHANNEL);
+    expect(fallbackChannel({ pageChannelEnabled: false })).toBe(CALL_CHANNEL);
+  });
+
+  test("whenever a call would ring, it picks the channel decideRoute would notify on without ringing", () => {
+    for (const c of combinations().filter((c) => decideRoute(c).kind === "ring")) {
+      expect(decideRoute({ ...c, fullScreenAllowed: false }), JSON.stringify(c)).toEqual({
+        kind: "notify",
+        channel: fallbackChannel(c),
+      });
+    }
+  });
+
+  test("CallRoute.kt mirrors it, and every fallback in Calls.kt goes through it", () => {
+    expect(kotlinFile("CallRoute.kt")).toContain(
+      "fun fallbackChannel(c: RingConditions): String = if (c.pageChannelEnabled) PAGE_CHANNEL else CALL_CHANNEL",
+    );
+    const calls = kotlinFile("Calls.kt");
+    // Telecom throws, Telecom creates no connection, the ringing notification is refused.
+    expect(calls.match(/notifyFallback\((?:app|context), (?:call|state\.call)\)/g)).toHaveLength(3);
+    expect(calls).toContain("val channel = fallbackChannel(conditions(context))");
+    // The bug this guards against: a fallback hard-wired to a channel the user may have muted.
+    expect(calls).not.toMatch(/notifyPage\([^)]*PAGE_CHANNEL\)/);
+  });
+});
+
+describe("knownCall: a repeat of an ended page", () => {
+  const at = 1_000_000;
+  const allReasons: CallEndReason[] = ["declined", "hung_up", "timed_out", "missed", "failed"];
+
+  test("declined, hung up (acknowledged included) and timed out after answering do not ring again", () => {
+    for (const reason of ["declined", "hung_up", "timed_out"] as const) {
+      expect(knownCall(false, { reason, atMs: at }, at + 1), reason).toBe("ended");
+      expect(knownCall(false, { reason, atMs: at }, at + ENDED_CALL_MEMORY_MS - 1), reason).toBe(
+        "ended",
+      );
+    }
+  });
+
+  test("missed and failed ring again: nobody was reached", () => {
+    for (const reason of ["missed", "failed"] as const) {
+      expect(knownCall(false, { reason, atMs: at }, at + 1), reason).toBe("new");
+    }
+  });
+
+  test("an end is forgotten after the memory, and an unknown id is new", () => {
+    for (const reason of allReasons) {
+      expect(knownCall(false, { reason, atMs: at }, at + ENDED_CALL_MEMORY_MS), reason).toBe("new");
+    }
+    expect(knownCall(false, undefined, at)).toBe("new");
+  });
+
+  test("a call still ringing or answered is active, whatever ended before", () => {
+    expect(knownCall(true, undefined, at)).toBe("active");
+    expect(knownCall(true, { reason: "declined", atMs: at }, at + 1)).toBe("active");
+  });
+
+  test("the memory covers the relay's longest call expiry, counted from each send", () => {
+    // A push sent just before the call ended can arrive up to the relay's maximum TTL later.
+    const relay = readFileSync(new URL("../../../relay/src/index.ts", import.meta.url), "utf8");
+    const maxTtl = /const MAX_CALL_TTL_SECONDS = ([\d* ]+);/.exec(relay)?.[1];
+    const maxTtlMs =
+      (maxTtl ?? "0").split("*").reduce((product, factor) => product * Number(factor.trim()), 1) *
+      1000;
+    expect(ENDED_CALL_MEMORY_MS).toBe(maxTtlMs);
+  });
+
+  test("CallRoute.kt and CallCenter.swift use the same reasons, memory and branches", () => {
+    const expected = [...REPEAT_SUPPRESSING_END_REASONS].sort();
+    const kotlin = kotlinFile("CallRoute.kt");
+    const kotlinReasons = /val REPEAT_SUPPRESSING_END_REASONS = setOf\(([^)]*)\)/.exec(kotlin)?.[1];
+    expect([...(kotlinReasons ?? "").matchAll(/"(\w+)"/g)].map((m) => m[1]).sort()).toEqual(
+      expected,
+    );
+    const kotlinMs = /const val ENDED_MEMORY_MS = ([\d_]+)L/.exec(kotlin)?.[1]?.replaceAll("_", "");
+    expect(Number(kotlinMs)).toBe(ENDED_CALL_MEMORY_MS);
+    expect(kotlin).toMatch(
+      /active -> KnownCall\.Active\s+ended != null && nowMs - ended\.atMs < ENDED_MEMORY_MS && ended\.reason in REPEAT_SUPPRESSING_END_REASONS ->\s+KnownCall\.Ended\s+else -> KnownCall\.New/,
+    );
+    const swift = native("ios/CallCenter.swift");
+    const swiftReasons = /static let repeatSuppressingReasons: Set<String> = \[([^\]]*)\]/.exec(
+      swift,
+    )?.[1];
+    expect([...(swiftReasons ?? "").matchAll(/"(\w+)"/g)].map((m) => m[1]).sort()).toEqual(
+      expected,
+    );
+    expect(swift).toContain(
+      `static let endedMemory: TimeInterval = ${ENDED_CALL_MEMORY_MS / 1000}`,
+    );
+    expect(swift).toMatch(
+      /if active \{ return \.active \}\s+if let ended, now\.timeIntervalSince\(ended\.at\) < endedMemory, repeatSuppressingReasons\.contains\(ended\.reason\) \{\s+return \.ended\s+\}\s+return \.new/,
+    );
+  });
+
+  test("both platforms remember every end with its reason, and Android consults the rule before ringing", () => {
+    const calls = kotlinFile("Calls.kt");
+    expect(body(calls, "fun end(")).toContain(
+      "ended[id] = EndedCall(reason, SystemClock.elapsedRealtime())",
+    );
+    expect(body(calls, "fun ring(")).toMatch(
+      /when \(knownCall\(calls\.containsKey\(call\.id\), ended\[call\.id\], now\)\)/,
+    );
+    const swift = native("ios/CallCenter.swift");
+    expect(body(swift, "private func finish(")).toContain("rememberEnded(id, reason: event)");
+    expect(
+      body(swift, "func provider(_ provider: CXProvider, perform action: CXEndCallAction)"),
+    ).toContain("rememberEnded(action.callUUID, reason: reason)");
+  });
+});
+
+describe("Android timers", () => {
+  test("act only on the call instance that scheduled them, and end() cancels them", () => {
+    const calls = kotlinFile("Calls.kt");
+    // The ring timeout and the answered maximum each take the call's State as the token and check identity.
+    expect(calls).toContain(
+      "HandlerCompat.postDelayed(main, { timeOut(app, state) }, state, RING_TIMEOUT_MS)",
+    );
+    expect(body(calls, "private fun timeOut(")).toContain(
+      "timerApplies(state, calls[state.call.id])",
+    );
+    expect(body(calls, "fun answer(")).toMatch(
+      /\{ if \(timerApplies\(state, calls\[id\]\)\) end\(context, id, "timed_out"\) \},\s+state,\s+ANSWERED_MAX_MS/,
+    );
+    expect(body(calls, "fun end(")).toContain("main.removeCallbacksAndMessages(state)");
+    // The bug this guards against: a timer that looked the call up by id alone.
+    expect(calls).not.toMatch(/calls\[id\]\?\.answered/);
+    expect(kotlinFile("CallRoute.kt")).toContain(
+      "fun <T : Any> timerApplies(scheduledFor: T, current: T?): Boolean = current === scheduledFor",
+    );
+  });
+});
+
 describe("voipPushPlan (iOS)", () => {
   test("every VoIP push is reported to CallKit, whatever the app knows about its call id", () => {
     expect(voipPushPlan("new")).toEqual({ report: true, next: "ring" });
@@ -97,14 +260,37 @@ describe("voipPushPlan (iOS)", () => {
     expect(voipPushPlan("ended")).toEqual({ report: true, next: "end" });
   });
 
-  test("CallCenter.swift handles every case and never returns from the handler without reporting", () => {
+  test("CallCenter.swift reports every push before returning, and completes only from CallKit's callback", () => {
+    // A check of the source, not of behaviour (no Swift tests in CI): it pins the structure that keeps iOS
+    // from terminating the app.
     const swift = native("ios/CallCenter.swift");
-    expect(swift).toMatch(/case \.new: report\(call, completion: completion\)/);
-    expect(swift).toMatch(/case \.active: reportRepeat\(call, completion: completion\)/);
-    expect(swift).toMatch(/case \.ended: reportEnded\(call, completion: completion\)/);
-    // The bug this guards against: an early `return completion()` that skipped reportNewIncomingCall.
-    expect(swift).not.toMatch(/return completion\(\)/);
-    expect(swift).toMatch(
+    const handler = body(swift, "didReceiveIncomingPushWith payload");
+    expect(handler).not.toMatch(/\breturn\b/);
+    expect(handler).toMatch(
+      /receive\(id, envelope: payload\["brigade"\], completion: completion\)/,
+    );
+    const receive = body(swift, "private func receive(");
+    const dispatch = receive.indexOf("switch known(id)");
+    expect(receive.slice(0, dispatch)).not.toMatch(/\breturn\b/);
+    expect(receive).toMatch(/case \.new: report\(call, completion: completion\)/);
+    expect(receive).toMatch(/case \.active: reportRepeat\(call, completion: completion\)/);
+    expect(receive).toMatch(/case \.ended: reportEnded\(call, completion: completion\)/);
+    for (const name of [
+      "func report(",
+      "private func reportRepeat(",
+      "private func reportEnded(",
+    ]) {
+      const fn = body(swift, name);
+      const reported = fn.indexOf("provider.reportNewIncomingCall(");
+      expect(reported, name).toBeGreaterThan(0);
+      // Nothing returns before the call is reported.
+      expect(fn.slice(0, reported), name).not.toMatch(/\breturn\b/);
+      // The handler completes once, from the defer inside CallKit's callback, after the report.
+      expect(fn.match(/completion\(\)/g), name).toHaveLength(1);
+      const completed = fn.indexOf("defer { completion() }");
+      expect(completed, name).toBeGreaterThan(reported);
+    }
+    expect(body(swift, "private func reportEnded(")).toMatch(
       /reportCall\(with: call\.id, endedAt: nil, reason: \.answeredElsewhere\)/,
     );
   });

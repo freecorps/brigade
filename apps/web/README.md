@@ -3,13 +3,25 @@
 The Brigade web dashboard: a React SPA (TanStack Router, Tailwind v4, shadcn/ui on Base UI) served by a small
 Worker with static assets. See [RFC 0002](../../docs/rfcs/0002-architecture.md) for the runtime map.
 
-So far it has one route, `/`: the dashboard shell with a "Local stack" check (the API Worker and a
+Routes: `/sign-up` (an account and its first workspace), `/sign-in`, and `/`, the dashboard, for signed-in
+members only: `components/session.tsx` sends everyone else to `/sign-in`, asks a user without a workspace to
+create one, and opens the workspace's shard as the member (their role is the optimistic actor's). The header shows
+the workspace and an account menu with Sign out. Better Auth's client (`src/lib/auth.ts`) talks to `/api/auth/*`
+on the same origin. The dashboard has the incidents card, a "Local stack" check (the API Worker and a
 `WorkspaceDO` round trip) and the severity and status legend.
 
 ## Run it
 
 ```bash
 vp run dev    # from the repository root (or `vp dev` in apps/web)
+```
+
+Before the first run, give the API a local Better Auth secret and create the local D1 tables (again after a new
+migration):
+
+```bash
+printf 'BETTER_AUTH_SECRET=%s\n' "$(openssl rand -base64 32)" > apps/api/.dev.vars   # gitignored
+vp run --filter @freecorps/brigade-web db:migrate
 ```
 
 One command serves the SPA, this Worker, the API Worker and its `WorkspaceDO` on http://localhost:5173. The
@@ -41,8 +53,8 @@ caches it.
 | any other path   | `index.html` (`not_found_handling: "single-page-application"`)                    |
 
 Method, headers and body are forwarded unchanged, so WebSocket upgrades pass through too. If the API Worker
-binding throws, the Worker answers `502 {"error":"api_unreachable"}`. There is no auth yet:
-`workers_dev` and `preview_urls` are off, so a deployed Worker has no public URL. Keep it dev-only.
+binding throws, the Worker answers `502 {"error":"api_unreachable"}`. Auth exists, but the API still has an open
+dev route (`/workspaces/:id`), so `workers_dev` and `preview_urls` stay off and a deployed Worker has no public URL.
 
 ## Environments
 

@@ -13,6 +13,7 @@
   "type": "module",
   "scripts": {
     "dev": "vp dev",
+    "db:migrate": "wrangler d1 migrations apply DB --local --config ../api/wrangler.jsonc --persist-to .wrangler/state",
     "build:dev": "CLOUDFLARE_ENV=dev vp build",
     "build:staging": "CLOUDFLARE_ENV=staging vp build",
     "test": "wrangler types worker/worker-configuration.d.ts --check && vp test",
@@ -27,6 +28,7 @@
     "@freecorps/brigade-sync": "workspace:*",
     "@freecorps/brigade-ui": "workspace:*",
     "@tanstack/react-router": "^1.170.46",
+    "better-auth": "1.7.13",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.0",
     "lucide-react": "^1.61.0",

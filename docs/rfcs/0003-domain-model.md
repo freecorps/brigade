@@ -61,6 +61,13 @@ Implemented in `packages/schema` (`canTransition`). Severity is independent of s
 | `responder` | Declare/run incidents, ack/escalate pages, edit timeline, manage own on-call overrides |
 | `viewer`    | Read-only (stakeholders)                                                               |
 
+- How it is wired (auth slice): `packages/schema` keeps the table framework-free (`statement`, `roles`, `can`), and
+  `apps/api/src/auth.ts` builds Better Auth's `createAccessControl` from it, merged with the plugin's own
+  `organization`/`member`/`invitation` grants for `owner` and `admin`. Each member holds exactly one Brigade role;
+  a member whose role is anything else (Better Auth's default `member`, or several comma-separated roles) is
+  refused on the sync upgrade.
+- A new account creates its first workspace right away (sign-up asks for its name) and is its `owner`. A session
+  starts in the user's oldest workspace (`activeOrganizationId`).
 - Workspace-defined custom roles can come later via Better Auth dynamic access control.
 - Every DO key is prefixed by the organization id; a shard never serves data of another workspace.
 
@@ -74,5 +81,7 @@ Exact columns are defined in code (`packages/schema`) rather than duplicated her
 
 ## Identifiers
 
-ULIDs, prefixed by type (`inc_…`, `svc_…`, `usr_…`) for readable logs and URLs. Incidents also get a short
+ULIDs, prefixed by type (`inc_…`, `svc_…`, `usr_…`) for readable logs and URLs. Better Auth's rows use them too
+(`advanced.database.generateId`): `usr_` users, `ses_` sessions, `acc_` accounts, `ver_` verifications, `ws_`
+workspaces (organizations), `mem_` members, `inv_` invitations. A workspace id names its shard. Incidents also get a short
 human number per workspace (`INC-142`), assigned by `WorkspaceDO`.

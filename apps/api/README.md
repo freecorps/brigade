@@ -7,24 +7,79 @@ for the shards.
 It has one SQLite-backed Durable Object, `WorkspaceDO`: the workspace's shard and its sync endpoint (Brigade
 Sync, RFC 0004). Every write is a named mutation from `@freecorps/brigade-schema`, run in the shard.
 
-| Route                 | Response                                                                        |
-| --------------------- | ------------------------------------------------------------------------------- |
-| `GET /health`         | `200 {"ok":true}` (`HEAD` too)                                                  |
-| `GET /workspaces/:id` | `200` with the `WorkspaceDO` info read from its SQLite storage                  |
-|                       | `400` if `:id` is not 1-63 chars of `a-z`, `0-9`, `-`, `_` (starting `a-z0-9`)  |
-|                       | `503` if the object is overloaded or the error is retryable, `500` otherwise    |
-| `GET /sync/:id`       | `101`: a Brigade Sync WebSocket to the workspace's shard (`Upgrade: websocket`) |
-|                       | `426` without `Upgrade: websocket`, `400` for a bad id, `405` for other methods |
-|                       | `501` where `SYNC_DEV_ACTOR` is not `"1"` (production, staging: no auth yet)    |
-| other methods         | `405` with `Allow: GET, HEAD`                                                   |
-| anything else         | `404`                                                                           |
+| Route                 | Response                                                                            |
+| --------------------- | ----------------------------------------------------------------------------------- |
+| `GET /health`         | `200 {"ok":true}` (`HEAD` too)                                                      |
+| `/auth/*`             | Better Auth (`src/auth.ts`): `POST /auth/sign-up/email`, `/auth/sign-in/email`,     |
+|                       | `/auth/sign-out`, `GET /auth/get-session`, the dashboard's organization routes, …   |
+|                       | `429` past the rate limit; `404` for organization routes that are refused (below)   |
+| `POST /workspaces`    | `201 {"id","name"}`: a workspace owned by the signed-in user, active in the session |
+|                       | `401` without a session, `400` for a bad name or a body over 4 KiB, `403` from      |
+|                       | another site, `405`; `500` if the shard could not be provisioned (nothing is kept)  |
+| `GET /workspaces/:id` | `200` with the `WorkspaceDO` info read from its SQLite storage                      |
+|                       | `400` if `:id` is not a workspace id (see `WORKSPACE_ID` in `src/workspace.ts`)     |
+|                       | `503` if the object is overloaded or the error is retryable, `500` otherwise        |
+| `GET /sync/:id`       | `101`: a Brigade Sync WebSocket to the workspace's shard, as the signed-in member   |
+|                       | `401` without a session, `403` for a non-member or a cross-site `Origin`            |
+|                       | `426` without `Upgrade: websocket`, `400` for a bad id, `405` for other methods     |
+| other methods         | `405` with `Allow: GET, HEAD`                                                       |
+| anything else         | `404`                                                                               |
 
-`/workspaces/:id` and `/sync/:id` are dev-only placeholders with no auth. Every sync socket acts as the dev actor
-`{ kind: "user", id: "usr_dev", role: "responder" }` (`DEV_ACTOR` in `src/workspace.ts`), and `hello.token` is
-ignored. That needs `SYNC_DEV_ACTOR=1`: set in the `dev` environment (`wrangler.jsonc`) and by `vp dev` and the
-tests (`vite.config.ts` here and in apps/web, only when serving, never in a build). Production and staging leave it
-unset, and there `/sync/:id` answers `501`. Until auth exists, `workers_dev` and `preview_urls` are off, so a deployed Worker has no public URL.
-Through the dashboard Worker the endpoint is `/api/sync/:id` (the service binding forwards the upgrade).
+## Auth and workspaces
+
+Better Auth on D1 (`DB`), with email and password and the organization plugin: a workspace is an organization,
+and its roles are Brigade's (`owner`, `admin`, `responder`, `viewer`) from `@freecorps/brigade-schema`. Ids are
+prefixed ULIDs (`usr_…`, `ws_…`, RFC 0003). `POST /workspaces` creates a workspace with Better Auth; its
+`afterCreateOrganization` hook calls `WorkspaceDO.provision()`, which runs `workspace.create` in the new shard so
+`workspace.created` lands in its outbox. If that fails, the hook deletes the workspace and its membership again
+before Better Auth makes it active, and the request answers `500`. `workspace.create` is server-only
+(`serverMutations` in the schema): a socket cannot run it.
+
+Workers never set `NODE_ENV`, so `src/auth.ts` sets what Better Auth would derive from it: cookies are `Secure` and
+`__Secure-` prefixed when the request came over HTTPS, and rate limiting is on, counted per client IP
+(`cf-connecting-ip`) and path in D1's `rateLimit` table so every isolate shares the counts: 3 per 10 s for sign-in
+and sign-up, 100 per minute for the rest, `/get-session` exempt. The organization plugin's routes are refused
+(`404`) except `get-full-organization`, `get-active-member`, `list` and `set-active`, until the others (update,
+member roles and removal, invitations, …) emit their `workspace.*` / `member.*` events through the outbox
+(RFC 0005); deleting a workspace is off.
+
+A sync upgrade is authenticated by the Worker (`src/actor.ts`): it checks `Origin`, reads the session, looks up the
+member's role in D1, and forwards a request it builds itself carrying the actor (`Brigade-Actor`) and the workspace
+(`Brigade-Workspace`). The shard trusts those headers: it is only reachable through this Worker. RBAC runs in the
+shard on every mutation and query (`runMutation`, `runQuery`).
+
+`/workspaces/:id` is still an unauthenticated dev placeholder (the dashboard's stack check), so `workers_dev` and
+`preview_urls` stay off. **Dev actor:** where `SYNC_DEV_ACTOR` is `"1"` and the request is for `localhost`,
+`127.0.0.1`, `[::1]` or a private LAN address (a phone on the same Wi-Fi), an upgrade without a session acts as
+`{ kind: "user", id: "usr_dev", role: "responder" }` (`src/dev-actor.ts`). Only `vp dev` and the tests set it (in
+`vite.config.ts` here and in apps/web), never a build or an environment in `wrangler.jsonc`; the mobile app relies
+on it until it can sign in. Through the dashboard Worker the endpoints are under `/api` (`/api/auth/*`,
+`/api/sync/:id`).
+
+### D1
+
+Schema changes are SQL files in `migrations/`, applied with wrangler. `test/migrations.test.ts` applies them to the
+test database and asks Better Auth what is missing; when an upgrade or a plugin needs more, it fails and prints the
+SQL for the next migration.
+
+```bash
+vp run --filter @freecorps/brigade-web db:migrate      # the local database `vp run dev` uses
+wrangler d1 migrations apply DB --remote --env dev     # brigade-db-dev (in apps/api)
+```
+
+| Environment | Database             | Status                                                     |
+| ----------- | -------------------- | ---------------------------------------------------------- |
+| local       | Miniflare's local D1 | `db:migrate` above                                         |
+| `dev`       | `brigade-db-dev`     | created on the Freecorps account, migrations applied       |
+| `staging`   | `brigade-db-staging` | not created; the first deploy provisions it (owner's call) |
+| production  | `brigade-db`         | not created; same                                          |
+
+`BETTER_AUTH_SECRET` is required in every environment (`secrets.required`): `wrangler secret put
+BETTER_AUTH_SECRET --env dev` for a deployed Worker, and for local runs a gitignored `apps/api/.dev.vars`:
+
+```bash
+printf 'BETTER_AUTH_SECRET=%s\n' "$(openssl rand -base64 32)" > apps/api/.dev.vars
+```
 
 ## Sync server
 
@@ -86,10 +141,9 @@ wrangler deploy --dry-run   # validates the built output (drop --dry-run to depl
 
 Durable Object bindings are not inherited by environments, so each one repeats them.
 
-Local secrets go in `apps/api/.dev.vars` (`.dev.vars.<env>` per environment), which is gitignored. `wrangler types`
-reads those files and adds their names to `Env`, so regenerate the committed types without them present, or accept
-that the secret names (never the values) end up in `worker-configuration.d.ts`. Until then, `vp run test`
-fails its stale-types check while a local `.dev.vars` exists.
+Local secrets go in `apps/api/.dev.vars` (`.dev.vars.<env>` per environment), which is gitignored. Their names
+come from `secrets.required` in `wrangler.jsonc`, so `wrangler types` no longer reads `.dev.vars` and the committed
+types stay the same with or without one.
 
 ## Generated types
 

@@ -1,6 +1,6 @@
 // The sync endpoint end to end: real WebSockets through the Worker into WorkspaceDO.
 import { env, exports } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
+import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { isId, newId } from "@freecorps/brigade-schema";
 import { MAX_CLIENT_MESSAGE_LENGTH, PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
@@ -36,7 +36,7 @@ const epochOf = (ws: string) =>
 
 /** Opens a sync socket and collects what the shard sends. */
 async function connect(ws: string) {
-  const response = await exports.default.fetch(`http://api.test/sync/${ws}`, {
+  const response = await exports.default.fetch(`http://localhost/sync/${ws}`, {
     headers: { Upgrade: "websocket" },
   });
   expect(response.status).toBe(101);
@@ -121,17 +121,17 @@ const active = (subId: string, resume?: { version: number; epoch: string }) => (
 
 describe("GET /sync/:workspaceId", () => {
   test("refuses a request that is not a WebSocket upgrade, a bad id or another method", async () => {
-    const plain = await exports.default.fetch("http://api.test/sync/acme");
+    const plain = await exports.default.fetch("http://localhost/sync/acme");
     expect(plain.status).toBe(426);
     expect(plain.headers.get("Upgrade")).toBe("websocket");
-    const bad = await exports.default.fetch("http://api.test/sync/ACME", {
+    const bad = await exports.default.fetch("http://localhost/sync/ACME", {
       headers: { Upgrade: "websocket" },
     });
     expect(bad.status).toBe(400);
-    const post = await exports.default.fetch("http://api.test/sync/acme", { method: "POST" });
+    const post = await exports.default.fetch("http://localhost/sync/acme", { method: "POST" });
     expect(post.status).toBe(405);
     expect(post.headers.get("Allow")).toBe("GET");
-    expect((await exports.default.fetch("http://api.test/sync/acme/x")).status).toBe(404);
+    expect((await exports.default.fetch("http://localhost/sync/acme/x")).status).toBe(404);
   });
 
   test("a client subscribes and gets a snapshot at the shard's epoch and version", async () => {
@@ -466,19 +466,52 @@ describe("GET /sync/:workspaceId", () => {
     });
   });
 
-  test("without SYNC_DEV_ACTOR the upgrade is refused with 501, before the shard", async () => {
-    // As in production and staging: the variable is unset (test/wrangler-config and apps/web's config test).
+  test("without SYNC_DEV_ACTOR an upgrade without a session is refused with 401, before the shard", async () => {
+    // As in every deployed environment: the variable is unset (apps/web's config test checks wrangler.jsonc).
     // A plain object: setting a key on one whose prototype is `env` would write through to the real env.
-    const bare: Env = { WORKSPACE: env.WORKSPACE };
-    const request = new Request(`http://api.test/sync/${workspace()}`, {
+    const bare: Env = {
+      WORKSPACE: env.WORKSPACE,
+      DB: env.DB,
+      BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
+    };
+    const request = new Request(`http://localhost/sync/${workspace()}`, {
       headers: { Upgrade: "websocket" },
     }) as Parameters<typeof worker.fetch>[0];
-    const response = await worker.fetch(request, bare);
-    expect(response.status).toBe(501);
-    expect(await response.json()).toMatchObject({
-      error: "not_implemented",
-      message: expect.stringContaining("SYNC_DEV_ACTOR"),
-    });
+    const response = await worker.fetch(request, bare, createExecutionContext());
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "unauthenticated" });
+  });
+
+  test("with SYNC_DEV_ACTOR, an upgrade without a session for a host that is not local is still refused", async () => {
+    // A deployment that set the variable by mistake: its requests are for its own hostname, never localhost.
+    for (const host of [
+      "http://api.test",
+      "https://brigade.example.com",
+      "http://8.8.8.8",
+      "http://172.32.0.1",
+      "http://192.168.0.10.example.com",
+    ]) {
+      const response = await exports.default.fetch(`${host}/sync/${workspace()}`, {
+        headers: { Upgrade: "websocket" },
+      });
+      expect(response.status, host).toBe(401);
+    }
+    // Local, or a private LAN address: a phone on the same Wi-Fi reaching `vp dev`.
+    for (const host of [
+      "http://localhost",
+      "http://127.0.0.1:5173",
+      "http://[::1]:8787",
+      "http://192.168.0.10:5173",
+      "http://10.0.2.2:5173",
+      "http://172.20.1.5",
+    ]) {
+      const response = await exports.default.fetch(`${host}/sync/${workspace()}`, {
+        headers: { Upgrade: "websocket" },
+      });
+      expect(response.status, host).toBe(101);
+      response.webSocket!.accept();
+      response.webSocket!.close(1000, "done");
+    }
   });
 
   test(`a socket holds at most ${MAX_SUBSCRIPTIONS} subscriptions; re-subscribing one replaces it`, async () => {

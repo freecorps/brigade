@@ -328,14 +328,27 @@ server → client
     longer open), never run. Otherwise a `mutate` queued behind one that failed on storage would run out of order,
     and its failure (say `not_found`) would be stored and replayed to the client; instead the client re-sends
     both, in order, on its next socket.
-- **Dev only, until auth:** every socket acts as `{ kind: "user", id: "usr_dev", role: "responder" }`
-  (`DEV_ACTOR`), and only where the `SYNC_DEV_ACTOR` variable is `"1"`: the `dev` environment in
-  `apps/api/wrangler.jsonc`, and local runs (`vp dev` and the tests set it in their Vite configs, never in a
-  build). Production and staging do not set it (`apps/web/test/worker-config.test.ts` checks), so there the sync
-  upgrade gets `501`. `hello.token` is ignored, and the Worker passes the workspace id to the shard in a header on
-  the upgrade, which the shard records on first use and checks on every later one. When auth comes, the Worker
-  also checks `Origin` on the upgrade: browsers send cookies on a cross-site WebSocket upgrade and CORS does not
-  apply to it.
+- **Actor:** the Worker authenticates the upgrade and the shard trusts only what the Worker sets (see "Socket
+  topology"). It reads the actor from a `Brigade-Actor` header and the workspace id from `Brigade-Workspace`, on a
+  request the Worker builds itself with only those two headers and `Upgrade`, so nothing the client sent reaches
+  the shard; it records the workspace on first use and checks it on every later upgrade. `hello.token` is ignored.
+- **Dev actor (local only):** where `SYNC_DEV_ACTOR` is `"1"` and the request is for `localhost`, `127.0.0.1` or
+  `[::1]`, an upgrade **without a session** acts as `{ kind: "user", id: "usr_dev", role: "responder" }`
+  (`DEV_ACTOR`) on any shard; for any other host it gets `401`, so a deployment that set the variable by mistake
+  still refuses it. A private LAN address (10/8, 172.16/12, 192.168/16) counts as local, so a phone on the
+  same Wi-Fi can use `vp dev`; Cloudflare's edge never serves a deployed Worker under such a host.
+  Only `vp dev` and the tests set
+  it, in their Vite configs; no environment in `apps/api/wrangler.jsonc` does (`apps/web/test/worker-config.test.ts`
+  checks each one), so every deployed Worker answers such an upgrade with `401`. The mobile app relies on it until
+  it can sign in. A request with a session always acts as its member, flag or not.
+- **Provisioning:** when Better Auth creates a workspace (D1), the Worker calls `WorkspaceDO.provision()` over RPC.
+  It claims the shard for the workspace and runs `workspace.create` as the new owner, so `workspace.created` goes
+  through the outbox like any mutation (RFC 0005). It is de-duplicated like a socket's mutation and idempotent.
+  `workspace.create` is server-only: it is in `serverMutations`, which only `provision()` runs from, never in the
+  `mutations` a socket's `mutate` is looked up in (a socket sending it gets `unknown_mutation`). If provisioning
+  fails, the Worker deletes the workspace and its membership from D1 again before Better Auth makes it active, and
+  `POST /workspaces` answers `500`, so a workspace never exists without its shard. A Worker that dies between the
+  D1 write and the RPC can still leave one behind (roadmap).
 
 ## Socket topology
 
@@ -347,9 +360,14 @@ SyncClient (web/mobile)┤
   connection pool      └── wss /sync/ws_123/inc_456    ──▶ IncidentDO(ws_123:inc_456)
 ```
 
-- The `api` Worker authenticates the upgrade request (Better Auth session or bearer token), checks membership and
-  role in the workspace, then hands the socket to the shard (`stub.fetch(request)`); the DO accepts it with the
-  Hibernation API. Auth context travels as a signed header from the Worker to the DO.
+- The `api` Worker authenticates the upgrade request (`apps/api/src/actor.ts`): a cross-site `Origin` gets `403`
+  (browsers send cookies on a cross-site WebSocket upgrade and CORS does not apply to it; native clients send no
+  `Origin`), no Better Auth session gets `401`, and a user who is not a member of the workspace with a Brigade
+  role gets `403`. Then it hands the socket to the shard (`stub.fetch`); the DO accepts it with the Hibernation
+  API. The actor travels in a header on a request the Worker builds from scratch. **Not signed:** a Durable Object
+  is reachable only through this Worker's binding, and the Worker never copies client headers onto that request, so
+  a signature would protect nothing (decided in the auth slice; it replaces the "signed header" of the first
+  draft). Bearer tokens for mobile come with mobile sign-in.
 - For an entity shard, the Worker first checks that the entity belongs to the workspace (`inc_456` is in
   `WorkspaceDO(ws_123)`'s index) and names the shard from both ids (`ws_123:inc_456`), never from the client's id
   alone.
@@ -366,8 +384,9 @@ SyncClient (web/mobile)┤
   `patch` or `mutationResult`) closes, unless it ended with a `protocol` error. An upgrade refused for auth,
   or a shard answering `protocol` errors, keeps backing off. On reconnect the client replays as described under
   "Protocol".
-- Session revocation: the Worker records active sockets per session in the shard; revoking a session (Better Auth
-  hook) broadcasts a close to those sockets.
+- Session revocation (not built yet): the Worker records active sockets per session in the shard; revoking a
+  session (Better Auth hook) broadcasts a close to those sockets. Until then, signing out or a role change takes
+  effect on the next upgrade, not on an open socket.
 
 **Upgrade path (only if spike S3 or production metrics show a need):** a `SessionDO` per client session holding the
 single client socket and fanning out to shards over DO RPC, with shards pushing patches back via RPC. It costs an

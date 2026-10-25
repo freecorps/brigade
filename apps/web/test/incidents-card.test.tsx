@@ -23,6 +23,34 @@ import { PreferencesProvider, usePreferences } from "../src/components/preferenc
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The real root's dashboard route needs a signed-in member of a workspace (components/session.tsx): a fixed one
+// here, on the test's shard, whose socket goes to the test's sync client.
+vi.mock("../src/lib/auth", async (original) => {
+  const done = (data: unknown) => () => ({
+    data,
+    error: null,
+    isPending: false,
+    refetch: async () => {},
+  });
+  const actual = await original<typeof import("../src/lib/auth")>();
+  return {
+    ...actual,
+    authClient: {
+      useSession: done({
+        user: { id: "usr_dev", name: "Dev", email: "dev@example.com" },
+        session: { activeOrganizationId: "demo" },
+      }),
+      useActiveOrganization: done({ id: "demo", name: "Demo" }),
+      useActiveMember: done({ role: "responder" }),
+    },
+  };
+});
+vi.mock("../src/sync-client", () => ({
+  get syncClient() {
+    return client;
+  },
+}));
+
 const T0 = Date.UTC(2026, 9, 24, 12, 0, 0);
 const SHARD = "demo";
 const dev: Actor = { kind: "user", id: "usr_dev", role: "responder" };

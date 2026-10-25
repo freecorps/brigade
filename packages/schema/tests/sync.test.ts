@@ -23,9 +23,11 @@ type Store = MemoryStore<BrigadeTables>;
 
 const SYNCED = (Object.keys(TABLES) as TableName[]).filter((table) => !TABLES[table].serverOnly);
 
-/** What the server sends clients: the synced tables only. */
+/** What the server sends clients: the synced tables only (empty ones left out, as `dump` does). */
 const serverState = (server: Store) =>
-  Object.fromEntries(SYNCED.map((table) => [table, server.scan(table)]));
+  Object.fromEntries(
+    SYNCED.map((table) => [table, server.scan(table)]).filter(([, rows]) => rows.length > 0),
+  );
 
 /**
  * The client's optimistic view: the last server state plus every pending mutation re-applied with its original

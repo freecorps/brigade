@@ -60,6 +60,27 @@ Validate the risky assumptions before writing product code. Each spike produces 
 ## Phase 1 — Core loop (4–6 weeks)
 
 - [ ] Auth (Better Auth), workspaces, members
+  - Done: Better Auth on Workers + D1 (email and password, cookie sessions), a workspace created at sign-up with
+    its creator as `owner`, sign-up, sign-in and sign-out in the dashboard, and the sync upgrade authenticated:
+    the Worker resolves the session and the member's role and hands the shard a verified actor (401 without a
+    session, 403 for a non-member or a cross-site page); the dev actor is local-only (variable and a local host).
+    Secure cookies over HTTPS, rate limiting in D1 (sign-in and sign-up 3 per 10 s per IP), organization routes
+    that would skip events refused, and a failed shard provision undone. D1 `brigade-db-dev` exists with the
+    migrations applied.
+  - Left: invitations and member management (roles, removal, with `member.*` events), switching workspaces in the
+    UI, closing open sockets on sign-out or role change (RFC 0004 "Session revocation"), mobile sign-in (PKCE via
+    the system browser, QR pairing, bearer tokens on the upgrade), password reset (needs the email notifier),
+    putting `/workspaces/:id` (the stack check) behind auth before `workers_dev` is turned on, and the production
+    and staging D1 databases and secrets (owner approval). Also: email verification (needs the email notifier), then
+    a uniform sign-up response (the same answer whether or not the email is taken, so sign-up cannot enumerate
+    accounts; until then only rate limiting slows it); invitations, which need verified emails and Brigade's
+    prefixed ids on the invitation rows they create, and which re-open the organization routes refused now, each
+    with its `member.*` event; a `baseURL` per environment (`BETTER_AUTH_URL`, the dashboard's `/api/auth` origin)
+    once deployed hostnames exist, so email links point at the dashboard rather than the API Worker; repairing a
+    workspace whose shard was never provisioned because the Worker died between the D1 write and the RPC, or whose
+    undo failed, and a shard that committed `workspace.create` before its RPC failed and was undone (it would
+    announce a workspace D1 no longer has: tombstone it with a compensating event); and sign-in limits keyed by
+    account as well as IP, since 3 tries per 10 s per IP can briefly lock out a team behind one NAT.
 - [ ] Monitors (HTTP/TCP/heartbeat) with quorum → alerts → incidents
 - [ ] Incidents: declare, severity, status, roles, timeline, updates
 - [ ] Brigade Sync in production for web + mobile

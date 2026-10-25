@@ -12,14 +12,39 @@ import {
 
 // The intended table, written out so a change to `roles` has to change this test too.
 const expected: Record<Role, Record<Permission, boolean>> = {
-  owner: { "incident:read": true, "incident:declare": true, "incident:update": true },
-  admin: { "incident:read": true, "incident:declare": true, "incident:update": true },
-  responder: { "incident:read": true, "incident:declare": true, "incident:update": true },
-  viewer: { "incident:read": true, "incident:declare": false, "incident:update": false },
+  owner: {
+    "incident:read": true,
+    "incident:declare": true,
+    "incident:update": true,
+    "workspace:create": true,
+  },
+  admin: {
+    "incident:read": true,
+    "incident:declare": true,
+    "incident:update": true,
+    "workspace:create": false,
+  },
+  responder: {
+    "incident:read": true,
+    "incident:declare": true,
+    "incident:update": true,
+    "workspace:create": false,
+  },
+  viewer: {
+    "incident:read": true,
+    "incident:declare": false,
+    "incident:update": false,
+    "workspace:create": false,
+  },
 };
 
 test("every permission comes from the statement", () => {
-  expect(PERMISSIONS).toEqual(["incident:read", "incident:declare", "incident:update"]);
+  expect(PERMISSIONS).toEqual([
+    "incident:read",
+    "incident:declare",
+    "incident:update",
+    "workspace:create",
+  ]);
 });
 
 for (const role of ROLES) {

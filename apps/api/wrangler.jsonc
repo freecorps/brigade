@@ -5,7 +5,8 @@
   "main": "./src/index.ts",
   // Matches the installed workerd so local and deployed behaviour agree.
   "compatibility_date": "2026-10-19",
-  // No public workers.dev or preview URLs until auth exists. Both keys are inherited by environments.
+  // No public workers.dev or preview URLs yet: auth exists, but `/workspaces/:id` is still an open dev
+  // placeholder (src/index.ts). Both keys are inherited by environments.
   "workers_dev": false,
   "preview_urls": false,
   "observability": {
@@ -17,21 +18,39 @@
     "bindings": [{ "name": "WORKSPACE", "class_name": "WorkspaceDO" }],
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WorkspaceDO"] }],
-  // Durable Object bindings are not inherited, so each environment repeats them.
-  // No `vars` here: production (and staging) must never set SYNC_DEV_ACTOR (src/workspace.ts).
+  // Better Auth's tables (src/auth.ts); migrations/ holds their schema. No `database_id` for production and
+  // staging yet: those databases do not exist, and the first deploy (owner approval) creates and pins them.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "brigade-db", "migrations_dir": "migrations" },
+  ],
+  // Set with `wrangler secret put` (deployed) or apps/api/.dev.vars (local, gitignored); never in this file.
+  "secrets": { "required": ["BETTER_AUTH_SECRET"] },
+  // Durable Object, D1 and secrets settings are not inherited, so each environment repeats them.
+  // No `vars` anywhere: no deployed environment may set SYNC_DEV_ACTOR (src/actor.ts); only local runs and the
+  // tests do, in their Vite configs.
   "env": {
     "dev": {
       "durable_objects": {
         "bindings": [{ "name": "WORKSPACE", "class_name": "WorkspaceDO" }],
       },
-      // DEV ONLY until auth exists: every sync socket acts as a dev responder. `vars` are not inherited; local
-      // runs set it in vite.config.ts (apps/api, apps/web) and the tests' configs.
-      "vars": { "SYNC_DEV_ACTOR": "1" },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "brigade-db-dev",
+          "database_id": "97362d14-04ad-4204-a77c-4f488035db25",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "secrets": { "required": ["BETTER_AUTH_SECRET"] },
     },
     "staging": {
       "durable_objects": {
         "bindings": [{ "name": "WORKSPACE", "class_name": "WorkspaceDO" }],
       },
+      "d1_databases": [
+        { "binding": "DB", "database_name": "brigade-db-staging", "migrations_dir": "migrations" },
+      ],
+      "secrets": { "required": ["BETTER_AUTH_SECRET"] },
     },
   },
 }

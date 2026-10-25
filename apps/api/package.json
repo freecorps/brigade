@@ -23,7 +23,8 @@
   },
   "dependencies": {
     "@freecorps/brigade-schema": "workspace:*",
-    "@freecorps/brigade-sync": "workspace:*"
+    "@freecorps/brigade-sync": "workspace:*",
+    "better-auth": "1.7.13"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.65.0",

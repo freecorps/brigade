@@ -8,6 +8,7 @@ export type Role = (typeof ROLES)[number];
 /** Every resource and the actions on it. */
 export const statement = {
   incident: ["read", "declare", "update"],
+  workspace: ["create"],
 } as const;
 
 type Statement = typeof statement;
@@ -20,7 +21,7 @@ type Grants = { readonly [R in Resource]?: readonly Statement[R][number][] };
 
 /** What each role may do. New resources get a row here together with the mutations that need them. */
 export const roles = {
-  owner: { incident: ["read", "declare", "update"] },
+  owner: { incident: ["read", "declare", "update"], workspace: ["create"] },
   admin: { incident: ["read", "declare", "update"] },
   responder: { incident: ["read", "declare", "update"] },
   viewer: { incident: ["read"] },

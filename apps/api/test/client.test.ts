@@ -28,7 +28,7 @@ function client(route: Map<string, string> = new Map()) {
   let connections = 0;
   let online = true;
   const sync = createSyncClient({
-    url: (shard) => `ws://api.test/sync/${shard}`,
+    url: (shard) => `ws://localhost/sync/${shard}`,
     actor: { kind: "user", id: "usr_dev", role: "responder" },
     // Fast retries: the test waits for reconnects.
     backoff: { initialMs: 10, maxMs: 40 },
@@ -56,7 +56,7 @@ function client(route: Map<string, string> = new Map()) {
         return socket;
       }
       const shard = url.replace(/^.*\/sync\//, "");
-      const target = `http://api.test/sync/${route.get(shard) ?? shard}`;
+      const target = `http://localhost/sync/${route.get(shard) ?? shard}`;
       void exports.default.fetch(target, { headers: { Upgrade: "websocket" } }).then((response) => {
         ws = response.webSocket ?? undefined;
         if (!ws) return fire(socket.onclose, {});

@@ -2,7 +2,9 @@ import { isLocale, locales, m, type Locale } from "@freecorps/brigade-i18n";
 import { Link } from "@tanstack/react-router";
 import {
   ChevronDownIcon,
+  CircleUserRoundIcon,
   LanguagesIcon,
+  LogOutIcon,
   MonitorIcon,
   MoonIcon,
   SunIcon,
@@ -14,11 +16,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { authClient } from "@/lib/auth";
 import { isThemePreference, themePreferences, type ThemePreference } from "@/lib/theme";
 
 const LANGUAGE_NAMES: Record<Locale, () => string> = {
@@ -33,25 +37,96 @@ const THEMES: Record<ThemePreference, { icon: LucideIcon; name: () => string }> 
 };
 
 export function SiteHeader() {
+  const session = authClient.useSession();
   return (
     <header className="border-b bg-background">
       <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
         <Link
           to="/"
-          className="-mx-2 flex h-11 items-center gap-2 rounded-md px-2 text-lg font-semibold outline-none focus-visible:ring-3 focus-visible:ring-ring"
+          className="-mx-2 flex h-11 shrink-0 items-center gap-2 rounded-md px-2 text-lg font-semibold outline-none focus-visible:ring-3 focus-visible:ring-ring"
         >
           <BrigadeMark />
-          {m.app_name()}
+          {/* On phones the workspace name takes the room; the mark still says which app this is. Signed in without a
+              workspace (the create-workspace form), there is no name, so the app's stays. */}
+          <span
+            className={session.data?.session.activeOrganizationId ? "max-sm:sr-only" : undefined}
+          >
+            {m.app_name()}
+          </span>
         </Link>
-        <span className="hidden h-6 items-center rounded-sm bg-muted px-2 text-xs font-medium text-muted-foreground sm:inline-flex">
+        {session.data ? <WorkspaceName /> : null}
+        <span className="hidden h-6 shrink-0 items-center rounded-sm bg-muted px-2 text-xs font-medium text-muted-foreground lg:inline-flex">
           {m.environment_local()}
         </span>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           <LanguageMenu />
           <ThemeMenu />
+          {session.data ? (
+            <AccountMenu name={session.data.user.name} email={session.data.user.email} />
+          ) : null}
         </div>
       </div>
     </header>
+  );
+}
+
+/**
+ * The active workspace, after a slash, as in a breadcrumb. Truncated; the full name is in its title and in the
+ * account menu, which is where a phone shows it.
+ */
+function WorkspaceName() {
+  const workspace = authClient.useActiveOrganization();
+  const name = workspace.data?.name;
+  if (!name) return null;
+  return (
+    <p className="flex min-w-0 items-center gap-3 text-sm font-medium">
+      <span aria-hidden className="text-lg font-light text-border max-sm:hidden">
+        /
+      </span>
+      <span className="sr-only">{m.workspace_label()}: </span>
+      <span className="truncate" title={name}>
+        {name}
+      </span>
+    </p>
+  );
+}
+
+function AccountMenu({ name, email }: { name: string; email: string }) {
+  const workspace = authClient.useActiveOrganization().data?.name;
+  const signOut = async () => {
+    try {
+      await authClient.signOut();
+    } finally {
+      // A full load: it drops the tab's sync client, its socket and every row it held for this member.
+      window.location.assign("/sign-in");
+    }
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button variant="outline" size="icon" />}>
+        <CircleUserRoundIcon aria-hidden />
+        <span className="sr-only">{m.account_menu_label({ name })}</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="max-w-72">
+        <DropdownMenuGroup>
+          {/* Wrapped, never truncated: on a phone this is the only place the full email and workspace show. */}
+          <DropdownMenuLabel className="flex flex-col gap-0.5 pb-2 [overflow-wrap:anywhere]">
+            <span className="text-sm text-foreground">{name}</span>
+            <span className="font-normal">{email}</span>
+            {workspace ? (
+              <span className="mt-2 flex flex-col gap-0.5 border-t pt-2">
+                <span>{m.workspace_label()}</span>
+                <span className="text-sm font-normal text-foreground">{workspace}</span>
+              </span>
+            ) : null}
+          </DropdownMenuLabel>
+          <DropdownMenuItem onClick={() => void signOut()}>
+            <LogOutIcon aria-hidden className="text-muted-foreground" />
+            {m.sign_out()}
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -74,12 +149,14 @@ function LanguageMenu() {
   const { locale, setLocale } = usePreferences();
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="outline" className="px-3" />}>
+      <DropdownMenuTrigger
+        render={<Button variant="outline" className="max-sm:w-11 max-sm:px-0 sm:px-3" />}
+      >
         <LanguagesIcon aria-hidden />
-        {/* The accessible name contains the visible text: "Language: PT-BR" / "Language: English". */}
+        {/* Icon-only on phones, like the theme menu, so the workspace name keeps the room; the accessible name
+            still says which language is on: "Language: English" / "Idioma: Português (Brasil)". */}
         <span className="sr-only">{m.language_label()}: </span>
-        <span className="sm:hidden">{locale.toUpperCase()}</span>
-        <span className="max-sm:hidden">{LANGUAGE_NAMES[locale]()}</span>
+        <span className="max-sm:sr-only">{LANGUAGE_NAMES[locale]()}</span>
         <ChevronDownIcon aria-hidden className="text-muted-foreground max-sm:hidden" />
       </DropdownMenuTrigger>
       <DropdownMenuContent>

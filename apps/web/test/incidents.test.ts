@@ -1,7 +1,6 @@
 import { setLocale } from "@freecorps/brigade-i18n";
 import type { SyncErrorCode } from "@freecorps/brigade-sync";
 import { afterEach, expect, test } from "vite-plus/test";
-import { DEV_ACTOR as API_DEV_ACTOR } from "../../api/src/dev-actor.ts";
 import {
   adjustBusy,
   checkDeclare,
@@ -15,7 +14,7 @@ import {
   titleRefused,
   type NoticeTarget,
 } from "../src/lib/incidents";
-import { CLIENT_ID_STORAGE_KEY, DEV_ACTOR, syncUrl, tabClientId } from "../src/lib/sync";
+import { CLIENT_ID_STORAGE_KEY, syncUrl, tabClientId } from "../src/lib/sync";
 import { memoryStorage, throwingStorage } from "./storage";
 
 afterEach(() => setLocale("en"));
@@ -151,10 +150,6 @@ test("a declare is checked with the mutation's own validator before it is sent",
   for (const title of ["", "   ", "​​", "‮‭"]) {
     expect(checkDeclare(ID, title, "sev3")).toEqual({ ok: false });
   }
-});
-
-test("the dashboard's optimistic actor is the one the API's dev sockets act as", () => {
-  expect(DEV_ACTOR).toEqual(API_DEV_ACTOR);
 });
 
 test("the socket URL follows the page's origin and scheme", () => {

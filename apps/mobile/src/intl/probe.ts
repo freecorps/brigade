@@ -54,7 +54,9 @@ export function probeIntl(intl: typeof Intl = Intl): IntlReport {
         ].join("; "),
       (output) => output === "yesterday; há 3 horas",
     ),
-    // formatDateTime's default. An engine that ignores dateStyle prints "3/5/2026".
+    // formatDateTime's default. An engine that ignores dateStyle prints "3/5/2026". The joiner
+    // between date and time is locale data, not support: Android's Hermes and Node print ", ",
+    // iOS's Hermes (Apple's ICU) prints " at ".
     dateTimeStyle: check(
       () =>
         spaces(
@@ -64,7 +66,7 @@ export function probeIntl(intl: typeof Intl = Intl): IntlReport {
             timeZone: "UTC",
           }).format(SAMPLE),
         ),
-      (output) => output === "Mar 5, 2026, 2:30 PM",
+      (output) => /^Mar 5, 2026(,| at) 2:30 PM$/.test(output),
     ),
     // formatDateTime always passes the recipient's IANA zone.
     timeZone: check(

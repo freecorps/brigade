@@ -75,9 +75,9 @@ export function entryText(entry: TimelineRow, who: People): string {
       return say(`alert_${entry.reason}`, entry.monitor);
     case "page_failed":
       // Written by the notifier: the sentence is about who was not paged, not who wrote it.
-      if (entry.userId === null) {
-        return say(entry.reason === "dead_lettered" ? "page_dead_lettered" : "page_nobody");
-      }
+      // A dead-lettered page is about the page, whoever it was for.
+      if (entry.reason === "dead_lettered") return say("page_dead_lettered");
+      if (entry.userId === null) return say("page_nobody");
       return say(`page_failed_${entry.reason}`, personName(entry.userId, who, "object"));
   }
 }

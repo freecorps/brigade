@@ -253,11 +253,14 @@ async function pushOne(
   ) {
     return failed("undelivered", { expired: true, retry: true });
   }
-  // A request the relay or APNs will refuse again (bad body, bad credentials on our side) is not retried; the
-  // relay being unreachable, APNs throttling or failing, or anything unknown is.
+  // A request the relay or APNs will refuse again (bad body, bad credentials, a wrong relay URL) is not retried, so
+  // the failure reaches the timeline at once; the relay being unreachable, APNs throttling or failing, or anything
+  // unknown is.
   const permanent =
     response.status === 400 ||
     response.status === 401 ||
+    response.status === 403 ||
+    response.status === 404 ||
     (answer.status !== undefined &&
       answer.status >= 400 &&
       answer.status < 500 &&

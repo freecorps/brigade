@@ -543,6 +543,22 @@ describe("when paging fails (the paging path's fallback)", () => {
     );
   });
 
+  test("a relay that refuses the request (403, 404: wrong token or URL) is not retried", async () => {
+    for (const status of [403, 404]) {
+      const ws = await workspace();
+      await ws.device(bia);
+      const { incident, event } = await ws.declare(MONITOR_ACTOR);
+      const fake = relay(() => Response.json({ error: "nope" }, { status }));
+      expect(await deliver(event, fake.send), String(status)).toEqual({
+        acked: ["msg-0"],
+        retried: [],
+      });
+      expect(await ws.timeline(incident)).toContainEqual(
+        expect.objectContaining({ kind: "page_failed", userId: "usr_bia", reason: "undelivered" }),
+      );
+    }
+  });
+
   test("Android devices are not reachable yet (no FCM): recorded as unsupported", async () => {
     const ws = await workspace();
     await ws.device(bia, { platform: "android", environment: "production" });

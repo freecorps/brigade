@@ -284,7 +284,15 @@ export class WorkspaceDO extends DurableObject<Env> {
    */
   private armDrain(): void {
     if (this.drainPaused) return;
-    const at = Math.max(Date.now(), this.drain.retryAt() ?? 0);
+    // Runs after a committed mutation (`onOutbox` must not throw): a storage error reading the backoff only logs;
+    // the fallback alarm drains later anyway.
+    let at: number;
+    try {
+      at = Math.max(Date.now(), this.drain.retryAt() ?? 0);
+    } catch (error) {
+      this.log("arming the outbox drain failed", { error: String(error) });
+      return;
+    }
     const { storage } = this.ctx;
     storage
       .getAlarm()

@@ -40,6 +40,48 @@ On macOS, the selected Xcode must have a Simulator runtime for its own iOS SDK. 
 one per command with `DEVELOPER_DIR=/Applications/<Xcode>.app/Contents/Developer bunx expo run:ios`, or install
 the missing runtime for the selected Xcode with `xcodebuild -downloadPlatform iOS`.
 
+## On a phone, and builds for distribution
+
+Builds run on your own computer. EAS keeps the signing credentials and will submit to the stores, but its cloud
+builders are only for (re)generating credentials, since each cloud build spends build credits. From the
+repository root:
+
+```bash
+vp run mobile:install                    # build and install on a phone over USB or Wi-Fi (asks platform, variant, phone)
+vp run mobile:install --platform android --variant release --device Pixel
+vp run mobile:build                      # eas build --local: a signed .ipa / .apk / .aab in ~/brigade-builds
+vp run mobile:install --from ~/brigade-builds/brigade-ios-preview-<commit>.ipa
+```
+
+- **`mobile:install`** (`scripts/mobile-install.mjs`) runs `expo prebuild`, then `xcodebuild` or Gradle, then
+  installs with `xcrun devicectl` (iPhone) or `adb` (Android device or emulator) and opens the app. The
+  `development` variant is the dev client: start Metro (`vp run start` here) and `vp run dev` at the root; on
+  Android the script runs `adb reverse` for both ports. The `release` variant embeds the JavaScript and needs
+  `EXPO_PUBLIC_BRIGADE_SYNC_URL` at build time to sync. Flags: `--device <name or id>`, `--clean`, `--no-build`,
+  `--build-only`, `--no-launch`, `--from <artifact>`, `--yes`.
+  - iOS signs with Xcode automatic signing, from an Apple account signed into Xcode with the Freecorps team (or
+    `--team` / `IOS_TEAM_ID`); xcodebuild registers the iPhone and makes the development profile. The phone needs
+    Developer Mode on. The newest installed Xcode builds and installs (`IOS_XCODE` overrides): SDK 58's template
+    has a UIScene delegate, so the iOS 27 SDK does not crash it at launch.
+  - Android signs with the debug key, so a local build cannot update an EAS-signed install (or the other way
+    round): uninstall first.
+- **`mobile:build`** (`scripts/mobile-build.mjs`) runs `eas build --local` for an `eas.json` profile: EAS's build
+  steps on this machine, with the credentials EAS keeps. `development` and `preview` are internal: an ad hoc .ipa
+  (only iPhones registered with `bunx eas-cli@latest device:create` before the build) or an APK. `production` is
+  an .ipa or AAB for the stores, built with the newest released Xcode. Artifacts are named
+  `brigade-<platform>-<profile>-<commit>.<ext>` and go to `~/brigade-builds` (`--out` or `BRIGADE_BUILDS_DIR`
+  overrides): outside the repository, so they survive `git clean` and worktree removal and cannot be committed.
+  iOS needs fastlane and CocoaPods. On a Mac whose login keychain holds another Apple Distribution certificate
+  of the same team, the iOS archive can fail with "Provisioning profile … doesn't include signing certificate"
+  (see spike S4).
+- **Submitting** waits for roadmap Phase 4 (after the CLA). It will be `bunx eas-cli@latest submit --platform
+  <ios|android> --profile production --path <artifact>` from this directory, once `eas.json`'s `submit.production`
+  has the App Store Connect app and the Play service account.
+- **A cloud build** (`bunx eas-cli@latest build --platform <platform> --profile <profile>`) is only for when EAS
+  must create or regenerate credentials, such as a new distribution certificate or keystore. A newly registered
+  iPhone should not need one: a local build goes through the same credentials step, which updates the ad hoc
+  profile (not tried yet).
+
 `android/` and `ios/` are generated from `app.config.ts` and gitignored; change native settings there, never in
 the generated folders.
 

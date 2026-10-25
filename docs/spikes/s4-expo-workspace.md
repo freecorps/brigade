@@ -1,6 +1,6 @@
 # Spike S4 — Expo in the workspace
 
-- Status: Done. Metro, Android, the iOS Simulator and `eas build` for both platforms verified
+- Status: Done. Metro, Android, the iOS Simulator, an iPhone and `eas build` for both platforms verified
 - Roadmap: Phase 0, S4
 - Settles: RFC 0002 "Metro only needs to resolve the shared `packages/*` from the Bun workspace"; RFC 0008's open
   item on Hermes `Intl` support; RFC 0004's on-device check of `UNICODE_PROPERTY_ESCAPES` (Android and iOS)
@@ -253,7 +253,9 @@ Both `development` builds succeeded on EAS from the same commit (Expo SDK 58, bu
   `app.freecorps.brigade`, reused the team's existing distribution certificate and created an ad hoc
   provisioning profile. `ios.config.usesNonExemptEncryption: false` is now in `app.config.ts`: the app only
   uses standard encryption (HTTPS, and Apple's CryptoKit for push payloads in spike S1), so EAS and App Store
-  Connect stop asking on every build. The build was not installed on a device yet; that is the first step of S1.
+  Connect stop asking on every build. The build (build number 1) was then installed on the project owner's
+  iPhone. The dev client loaded the bundle from the local dev
+  server over the LAN and the incident list was live; the owner confirmed it works on the phone.
 
 EAS syncs the App ID's capabilities with the entitlements the config declares. The config declares none yet, so
 the iOS build turned Push Notifications, Time Sensitive Notifications and App Groups off on the App ID; they come
@@ -261,4 +263,42 @@ back when S1 adds the notification entitlements.
 
 Registering a test iPhone uses `bunx eas-cli@latest device:create`, followed by a new iOS build.
 
-Store submission (`eas submit`) waits for Phase 4 (after the CLA).
+**Local builds are the default.** Each cloud build spends EAS build credits, so builds run on our own machines
+and EAS is used for the credentials it keeps and, later, for submission. Cloud builds are only for when EAS
+must create or regenerate credentials. Two root tasks (details in `apps/mobile/README.md`):
+
+- `vp run mobile:install`: `expo prebuild`, then `xcodebuild` or Gradle, then install on a phone with
+  `xcrun devicectl` or `adb`. The development variant is the dev client; the release variant embeds the
+  JavaScript. iOS signs with Xcode automatic signing through the Freecorps team's account in Xcode, and Android
+  with the debug key. It uses the newest installed Xcode: Expo SDK 58's template already has a UIScene
+  delegate, so the iOS 27 SDK does not trap at launch.
+- `vp run mobile:build`: `eas build --local` for an `eas.json` profile, with EAS's remote credentials. Artifacts
+  go to `~/brigade-builds`, outside the repository. `preview` now builds an APK on Android (internal
+  distribution), and `production` builds use the newest released Xcode, because App Store Connect rejects beta
+  builds.
+
+Both tasks are declared in the root `vite.config.ts` with `cache: false`. A cached `vp run` task runs under
+Vite+'s file-access tracking, and under it Gradle cannot start the shebang-less `prefab_command` scripts AGP 9
+writes for CMake ("error=8, Exec format error"). The same build from a plain shell works. `eas build --local`
+also needs its build plugin installed with Bun, because eas-cli starts it with `npx` and npm refuses to run under
+the root `devEngines`; `scripts/mobile-build.mjs` does that (under `~/brigade-builds/.eas-build-plugin`, and
+points eas-cli at it with the undocumented `EAS_LOCAL_BUILD_PLUGIN_PATH`). EAS's own `expo doctor` step still fails on npm for
+the same reason, and EAS carries on past it.
+
+Verified on macOS 27.2 with the Android emulator (API 36): `mobile:build --profile preview` made an APK signed
+with EAS's keystore, which `mobile:install --from` installed and opened. `mobile:install` built and installed the
+release variant (sync unavailable, as expected without `EXPO_PUBLIC_BRIGADE_SYNC_URL`) and the development
+variant, which went `Live` against Metro and the local dev server. On iOS, the Release build compiles with Xcode
+27 beta 6 (unsigned, JavaScript embedded). Not done yet:
+
+- **Signing with Xcode's account.** Xcode 27 beta reported "No Accounts" although Xcode 26.6 has the team's
+  account, and Xcode 26.6 cannot build here without its iOS 26.5 platform. Signing in to Xcode 27 should fix it.
+- **`mobile:build` for iOS.** The archive failed: the EAS ad hoc profile "doesn't include signing certificate
+  Apple Distribution: …". EAS's credential check had passed. Most likely, xcodebuild picked the Apple Distribution
+  certificate in the login keychain, a different one from EAS's, over the one in EAS's temporary keychain.
+  Compare the two (`bunx eas-cli@latest credentials -p ios`) before the next iOS build.
+- **A physical iPhone or Android phone** through the scripts, including `--from` with an `.ipa`: devicectl installs
+  only app bundles, so the script unpacks `Payload/*.app` from the `.ipa` first. Untried on a phone.
+- **Windows.** The `.bat` launch for Gradle quotes each argument for `cmd.exe`; not run on Windows yet.
+
+Store submission (`eas submit --path <artifact>`) waits for Phase 4 (after the CLA).

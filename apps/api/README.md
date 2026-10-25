@@ -24,7 +24,7 @@ named mutation from `@freecorps/brigade-schema`, run in the shard.
 |                       | `401` without a session, `403` for a non-member or a cross-site `Origin`            |
 |                       | `426` without `Upgrade: websocket`, `400` for a bad id, `405` for other methods     |
 | `POST /heartbeat/:t`  | `202 {"ok":true}`: a heartbeat monitor's ping; the token names workspace, monitor   |
-|                       | and secret (`404` for any wrong or unknown token, alike; `405` for other methods)   |
+|                       | and secret (`404` for any wrong or unknown token or workspace, alike; `405` other)  |
 | other methods         | `405` with `Allow: GET, HEAD`                                                       |
 | anything else         | `404`                                                                               |
 
@@ -136,13 +136,16 @@ heartbeat token's SHA-256); `monitor.*` mutations need `monitor:manage` (owners 
   `/cdn-cgi/trace` once to record the colo it really ran from. A region's verdict flips after 2 alike checks; the
   probe reports it to `WorkspaceDO.report()` on a change and otherwise every 5 minutes, de-duplicated by report id.
 - **Quorum → alert → incident:** each report is `monitor.report`, a server-only mutation run as the system actor
-  `sys_monitors` (role `admin`). A monitor is down when a majority of its regions is down (1 of 1, 2 of 3); that
-  fires one alert per monitor and opens an incident through `incident.declare` in the same transaction. Recovery
-  resolves the alert and leaves the incident to people.
-- **Heartbeats:** `POST /heartbeat/:token` hashes the secret and the shard compares it with the stored hash in
-  constant time. The shard's alarm (at least every minute while monitors exist) marks a heartbeat that missed its
+  `sys_monitors` (role `admin`). A monitor is down when a majority of its fresh regions is down (1 of 1, 2 of 3);
+  that fires one alert per monitor and opens an incident through `incident.declare` in the same transaction.
+  Recovery resolves the alert and leaves the incident to people. With too few fresh regions it is `unknown` ("No
+  data"), which keeps a firing alert and pages nobody (RFC 0007). An unchanged verdict's 5-minute refresh writes no
+  outbox event.
+- **Heartbeats:** `POST /heartbeat/:token` checks the workspace in D1 (no Durable Object for a made-up one), hashes
+  the secret, and the shard compares it with the stored hash in constant time. The shard's alarm (at least every minute while monitors exist) marks a heartbeat that missed its
   interval plus grace as down, re-pushes probe configs every 10 minutes or when a region stops reporting (which
-  re-arms a probe whose alarm was lost), and retries failed pushes.
+  re-arms a probe whose alarm was lost), turns monitors whose results went stale `unknown` (`monitor.evaluate`), and
+  retries failed pushes.
 
 ## Run it
 

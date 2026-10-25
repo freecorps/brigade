@@ -23,6 +23,8 @@ const row = (changes: Partial<IncidentRow>): IncidentRow => ({
   status: "triage",
   declaredAt: 0,
   declaredBy: "usr_dev",
+  acknowledgedAt: null,
+  acknowledgedBy: null,
   updatedAt: 0,
   ...changes,
 });

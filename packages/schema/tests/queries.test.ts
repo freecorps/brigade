@@ -30,6 +30,8 @@ const row = (id: string, declaredAt: number, status: IncidentStatus = "triage"):
   status,
   declaredAt,
   declaredBy: "usr_ana",
+  acknowledgedAt: null,
+  acknowledgedBy: null,
   updatedAt: declaredAt,
 });
 

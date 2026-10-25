@@ -1,0 +1,32 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- A self-managed calling app: its own call UI, registered with Telecom so the system treats it as a call. -->
+  <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+  <!-- Ring over the lock screen. Android 14+ lets Play grant it only to calling and alarm apps; the app checks
+       canUseFullScreenIntent() and falls back to a page notification without it. -->
+  <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+  <application>
+    <service
+      android:name=".BrigadeConnectionService"
+      android:exported="true"
+      android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE">
+      <intent-filter>
+        <action android:name="android.telecom.ConnectionService" />
+      </intent-filter>
+    </service>
+
+    <!-- The ringing screen, shown over the lock screen by the full-screen intent. -->
+    <activity
+      android:name=".IncomingCallActivity"
+      android:exported="false"
+      android:excludeFromRecents="true"
+      android:launchMode="singleTop"
+      android:showWhenLocked="true"
+      android:taskAffinity="app.freecorps.brigade.call"
+      android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+      android:turnScreenOn="true" />
+
+    <receiver android:name=".CallActionReceiver" android:exported="false" />
+  </application>
+</manifest>

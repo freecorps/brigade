@@ -12,6 +12,9 @@ export type IncidentRow = {
   status: IncidentStatus;
   declaredAt: number;
   declaredBy: string;
+  /** The first acknowledgement, which stops paging (RFC 0003); null until someone acknowledges. */
+  acknowledgedAt: number | null;
+  acknowledgedBy: string | null;
   updatedAt: number;
 };
 

@@ -9,6 +9,7 @@ import {
   buildApnsRequest,
   FALLBACK_ALERT,
   signApnsJwt,
+  voipTopic,
 } from "../src/apns.ts";
 
 // A throwaway P-256 key in the `.p8` form Apple issues (PKCS #8 PEM); never a real one.
@@ -177,5 +178,52 @@ describe("buildApnsRequest", () => {
         options,
       ),
     ).toThrow(/collapse id/);
+  });
+});
+
+describe("calls", () => {
+  const callId = "6f1c2a4e-9b3d-4c5e-8f70-1a2b3c4d5e6f";
+  const options = { environment: "sandbox" as const, topic: "app.freecorps.brigade", jwt: "x" };
+
+  test("a call is a voip push to the .voip topic carrying only the call id and the envelope", async () => {
+    const sealed = await envelope();
+    const request = buildApnsRequest(
+      {
+        deviceToken: DEVICE_TOKEN,
+        envelope: sealed,
+        urgency: "page",
+        kind: "call",
+        callId,
+        expiration: 1,
+      },
+      options,
+    );
+    expect(request.headers.get("apns-topic")).toBe(voipTopic("app.freecorps.brigade"));
+    expect(request.headers.get("apns-push-type")).toBe("voip");
+    expect(await request.json()).toEqual({ call: { id: callId }, brigade: sealed });
+  });
+
+  test("a call without a UUID, or for less than a page, is refused", async () => {
+    const sealed = await envelope();
+    const push = {
+      deviceToken: DEVICE_TOKEN,
+      envelope: sealed,
+      kind: "call" as const,
+      expiration: 1,
+    };
+    expect(() => buildApnsRequest({ ...push, urgency: "page" }, options)).toThrow("call id");
+    expect(() => buildApnsRequest({ ...push, urgency: "page", callId: "x" }, options)).toThrow(
+      "call id",
+    );
+    expect(() => buildApnsRequest({ ...push, urgency: "high", callId }, options)).toThrow(
+      "only a page rings",
+    );
+  });
+
+  test("an alert payload is unchanged", async () => {
+    const sealed = await envelope();
+    expect(apnsPayload({ envelope: sealed, urgency: "page" })).toMatchObject({
+      aps: { alert: FALLBACK_ALERT, "interruption-level": "time-sensitive" },
+    });
   });
 });

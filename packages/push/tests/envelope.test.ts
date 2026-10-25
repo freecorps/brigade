@@ -22,6 +22,17 @@ describe("sealPush and openPush", () => {
     expect(await openPush(recipient, envelope)).toEqual(content);
   });
 
+  test("a page carries the incident its ack names", async () => {
+    const recipient = await generateRecipient();
+    const content = {
+      title: "SEV1",
+      body: "Checkout down",
+      incident: "inc_01JB8Z0000000000000000000",
+    };
+    const envelope = await sealPush(toBase64url(recipient.publicKey), content);
+    expect(await openPush(recipient, envelope)).toEqual(content);
+  });
+
   test("another device cannot open it", async () => {
     const a = await generateRecipient();
     const b = await generateRecipient();

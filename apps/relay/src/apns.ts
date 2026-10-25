@@ -15,6 +15,14 @@ export const APNS_HOSTS: Record<ApnsEnvironment, string> = {
 
 export type Urgency = "low" | "high" | "page";
 
+/**
+ * `alert`: a regular push, decrypted by the Notification Service Extension. `call`: a PushKit VoIP push that
+ * rings the phone through CallKit (RFC 0010). Apple terminates an app that receives a VoIP push and does not
+ * report a call, so a call push carries nothing the app could decide to ignore: only a call id and the sealed
+ * envelope, and the app reports the call before it decrypts.
+ */
+export type PushKind = "alert" | "call";
+
 export interface ApnsCredentials {
   /** The `.p8` file's PEM text (PKCS #8, P-256). */
   key: string;
@@ -23,8 +31,12 @@ export interface ApnsCredentials {
 }
 
 export interface ApnsPush {
-  /** The device token from `getDevicePushTokenAsync()`, hex. */
+  /** The device token from `getDevicePushTokenAsync()`, hex; for a call, the PushKit token. */
   deviceToken: string;
+  /** Defaults to `alert`. */
+  kind?: PushKind;
+  /** For a call: the CallKit call UUID, lowercase. Repeats of one page share it, so they ring once. */
+  callId?: string;
   envelope: PushEnvelope;
   urgency: Urgency;
   /** `apns-collapse-id`: a repeat replaces the notification on screen (64 bytes at most). */
@@ -45,6 +57,14 @@ export const FALLBACK_ALERT = {
   "loc-key": "push_fallback_body",
 } as const;
 
+/** CallKit identifies a call by UUID; the relay only checks the form. */
+export const CALL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** VoIP pushes go to the app's `.voip` topic, which needs the VoIP Services capability on the App ID. */
+export function voipTopic(topic: string): string {
+  return `${topic}.voip`;
+}
+
 /** Device tokens are 32 bytes today; Apple says to treat the length as variable. */
 const DEVICE_TOKEN = /^[0-9a-f]{64,200}$/i;
 const COLLAPSE_ID_MAX_BYTES = 64;
@@ -55,11 +75,16 @@ export function buildApnsRequest(
   options: { environment: ApnsEnvironment; topic: string; jwt: string },
 ): Request {
   if (!DEVICE_TOKEN.test(push.deviceToken)) throw new Error("invalid device token");
+  const call = push.kind === "call";
+  if (call && (push.callId === undefined || !CALL_ID.test(push.callId))) {
+    throw new Error("a call needs a lowercase UUID call id");
+  }
+  if (call && push.urgency !== "page") throw new Error("only a page rings");
   const headers = new Headers({
     authorization: `bearer ${options.jwt}`,
-    "apns-topic": options.topic,
-    "apns-push-type": "alert",
-    // 10: deliver now (alerts). 5: may be delayed to save power.
+    "apns-topic": call ? voipTopic(options.topic) : options.topic,
+    "apns-push-type": call ? "voip" : "alert",
+    // 10: deliver now (alerts, calls). 5: may be delayed to save power.
     "apns-priority": push.urgency === "low" ? "5" : "10",
     "apns-expiration": String(push.expiration),
     "content-type": "application/json",
@@ -78,8 +103,15 @@ export function buildApnsRequest(
   });
 }
 
-/** The JSON body: a localized fallback alert, `mutable-content` so the extension runs, and the envelope. */
-export function apnsPayload(push: Pick<ApnsPush, "envelope" | "urgency">): Record<string, unknown> {
+/**
+ * The JSON body. An alert: a localized fallback alert, `mutable-content` so the extension runs, and the envelope.
+ * A call: the call id and the envelope, no `aps` (PushKit hands the whole payload to the app, which reports the
+ * call to CallKit at once and decrypts afterwards).
+ */
+export function apnsPayload(
+  push: Pick<ApnsPush, "envelope" | "urgency" | "kind" | "callId">,
+): Record<string, unknown> {
+  if (push.kind === "call") return { call: { id: push.callId }, brigade: push.envelope };
   const aps: Record<string, unknown> = {
     alert: FALLBACK_ALERT,
     "mutable-content": 1,

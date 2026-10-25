@@ -111,6 +111,15 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
   fallback. `aps-environment` is `development` locally and `production` on EAS. For local builds signed for a
   device, set `APPLE_TEAM_ID` (never committed) and build with `xcodebuild -allowProvisioningUpdates`; the commands
   are in the S1 write-up.
+- **Pages as calls (spike S6):** the local module `modules/brigade-call` rings a page natively (Android: a
+  self-managed `ConnectionService`, a `CallStyle` notification and a full-screen ringing screen; iOS: PushKit and
+  CallKit), reads it aloud and takes the ack ("press 1"), and `plugins/incoming-call.ts` adds the `voip` background
+  mode and the Android strings from `packages/i18n`. The development-only `/call-test` screen rings a test call;
+  on Android, `adb shell am broadcast -a app.freecorps.brigade.call.DEBUG_RING -n
+  app.freecorps.brigade/app.freecorps.brigade.call.DebugCallReceiver --es title … --es body … --es incident <id>`
+  does the same from a shell. The paging decisions live in `src/lib/call-route.ts`, tested in CI, and the native code
+  mirrors them; the Kotlin copy also has JVM tests: `./gradlew :brigade-call:testDebugUnitTest` in the prebuilt
+  `android/` (with `ANDROID_HOME` set). See the S6 write-up.
 - **Autolinking:** `expo-router`'s optional peers (Reanimated, Worklets, Gesture Handler) are installed by Bun
   but excluded from autolinking until the app uses them.
 

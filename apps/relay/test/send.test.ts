@@ -152,6 +152,56 @@ describe("POST /send", () => {
     expect(await expiration({ urgency: "high", ttlSeconds: 0 })).toBe(0);
   });
 
+  test("a call goes to the VoIP topic as a voip push that only rings for a minute", async () => {
+    const apns = fakeApns();
+    const callId = "6f1c2a4e-9b3d-4c5e-8f70-1a2b3c4d5e6f";
+    const now = Math.floor(Date.now() / 1000);
+    const response = await handle(
+      post(await sendBody({ kind: "call", callId, urgency: undefined })),
+      env,
+      apns.send,
+    );
+    expect(response.status).toBe(200);
+    const sent = apns.sent[0];
+    expect(sent?.headers.get("apns-topic")).toBe("app.freecorps.brigade.voip");
+    expect(sent?.headers.get("apns-push-type")).toBe("voip");
+    expect(sent?.headers.get("apns-priority")).toBe("10");
+    const expiration = Number(sent?.headers.get("apns-expiration"));
+    expect(expiration).toBeGreaterThanOrEqual(now + 60);
+    expect(expiration).toBeLessThan(now + 65);
+    const payload = (await sent?.json()) as Record<string, unknown>;
+    expect(payload).toMatchObject({ call: { id: callId }, brigade: { v: 1 } });
+    // No alert: nothing in a call push lets the app skip reporting the call.
+    expect(payload.aps).toBeUndefined();
+  });
+
+  test("never sends a call the app could not ring for", async () => {
+    const apns = fakeApns();
+    const callId = "6f1c2a4e-9b3d-4c5e-8f70-1a2b3c4d5e6f";
+    const bodies = [
+      await sendBody({ kind: "call" }),
+      await sendBody({ kind: "call", callId: "not-a-uuid" }),
+      await sendBody({ kind: "call", callId: callId.toUpperCase() }),
+      await sendBody({ kind: "call", callId, urgency: "high" }),
+      await sendBody({ kind: "call", callId, urgency: "low" }),
+      await sendBody({ kind: "call", callId, ttlSeconds: 0 }),
+      await sendBody({ kind: "call", callId, ttlSeconds: 301 }),
+      await sendBody({ kind: "alert", callId }),
+      await sendBody({ kind: "voip", callId }),
+    ];
+    for (const body of bodies) {
+      expect((await handle(post(body), env, apns.send)).status, JSON.stringify(body)).toBe(400);
+    }
+    expect(apns.sent).toHaveLength(0);
+  });
+
+  test("an alert is still the default", async () => {
+    const apns = fakeApns();
+    await handle(post(await sendBody()), env, apns.send);
+    expect(apns.sent[0]?.headers.get("apns-topic")).toBe("app.freecorps.brigade");
+    expect(apns.sent[0]?.headers.get("apns-push-type")).toBe("alert");
+  });
+
   test("a broken APNs key is the relay's error, not the caller's", async () => {
     const apns = fakeApns();
     const response = await handle(post(await sendBody()), { ...env, APNS_KEY: "nope" }, apns.send);

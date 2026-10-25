@@ -44,6 +44,8 @@ const incident = (overrides: Partial<IncidentRow> = {}): IncidentRow => ({
   status: "triage",
   declaredAt: T - 60_000,
   declaredBy: "usr_bia",
+  acknowledgedAt: null,
+  acknowledgedBy: null,
   updatedAt: T - 60_000,
   ...overrides,
 });
@@ -86,6 +88,8 @@ describe("incident.declare", () => {
       status: "triage",
       declaredAt: T,
       declaredBy: "usr_ana",
+      acknowledgedAt: null,
+      acknowledgedBy: null,
       updatedAt: T,
     });
     expect(formatIncidentNumber(store.get("incidents", ID)!.number)).toBe("INC-1");
@@ -268,6 +272,104 @@ describe("incident.setSeverity", () => {
   });
 });
 
+describe("incident.ack", () => {
+  test("records who acknowledged and when, and emits incident.acknowledged", () => {
+    const store = storeWith(incident({ status: "investigating" }));
+    const result = run(store, "incident.ack", { id: ID });
+    expect(result).toEqual({
+      ok: true,
+      events: [{ type: "incident.acknowledged", subject: ID, data: { by: "usr_ana" } }],
+    });
+    expect(store.get("incidents", ID)).toEqual(
+      incident({
+        status: "investigating",
+        acknowledgedAt: T,
+        acknowledgedBy: "usr_ana",
+        updatedAt: T,
+      }),
+    );
+  });
+
+  test("the first ack wins; a second is a conflict and changes nothing", () => {
+    const store = storeWith(incident());
+    expect(run(store, "incident.ack", { id: ID }).ok).toBe(true);
+    const before = store.dump();
+    const second = run(
+      store,
+      "incident.ack",
+      { id: ID },
+      ctx({ actor: { kind: "user", id: "usr_bia", role: "responder" }, now: T + 5 }),
+    );
+    expect(!second.ok && second.error.code).toBe("conflict");
+    expect(store.dump()).toEqual(before);
+  });
+
+  test("a row stored before acknowledgements existed can be acknowledged", () => {
+    const { acknowledgedAt: _, acknowledgedBy: __, ...legacy } = incident();
+    const store = storeWith(legacy as IncidentRow);
+    expect(run(store, "incident.ack", { id: ID }).ok).toBe(true);
+    expect(store.get("incidents", ID)?.acknowledgedBy).toBe("usr_ana");
+  });
+
+  test("resolved and declined incidents cannot be acknowledged", () => {
+    for (const status of ["resolved", "declined"] as const) {
+      const store = storeWith(incident({ status }));
+      const result = run(store, "incident.ack", { id: ID });
+      expect(!result.ok && result.error.code, status).toBe("invalid_transition");
+      expect(store.get("incidents", ID)).toEqual(incident({ status }));
+    }
+  });
+
+  test("not found, invalid args and forbidden", () => {
+    const store = storeWith(incident());
+    const missing = run(store, "incident.ack", { id: OTHER });
+    expect(!missing.ok && missing.error.code).toBe("not_found");
+    for (const bad of [{}, { id: "inc_1" }, null]) {
+      const invalid = run(store, "incident.ack", bad);
+      expect(!invalid.ok && invalid.error.code).toBe("invalid_args");
+    }
+    const viewer = run(store, "incident.ack", { id: ID }, ctx({ role: "viewer" }));
+    expect(!viewer.ok && viewer.error.code).toBe("forbidden");
+    expect(store.get("incidents", ID)).toEqual(incident());
+  });
+
+  test("reopening clears the ack, so the next page can be acknowledged", () => {
+    const acked = { acknowledgedAt: T - 1, acknowledgedBy: "usr_bia" };
+    const store = storeWith(incident({ status: "resolved", ...acked }));
+    expect(run(store, "incident.setStatus", { id: ID, status: "investigating" }).ok).toBe(true);
+    expect(store.get("incidents", ID)).toEqual(
+      incident({
+        status: "investigating",
+        acknowledgedAt: null,
+        acknowledgedBy: null,
+        updatedAt: T,
+      }),
+    );
+    expect(run(store, "incident.ack", { id: ID }).ok).toBe(true);
+    // Moving between open statuses keeps it.
+    expect(run(store, "incident.setStatus", { id: ID, status: "fixing" }).ok).toBe(true);
+    expect(store.get("incidents", ID)?.acknowledgedBy).toBe("usr_ana");
+  });
+
+  test("a client's optimistic reopen matches the server's", () => {
+    const row = incident({ status: "resolved", acknowledgedAt: T - 1, acknowledgedBy: "usr_bia" });
+    const client = storeWith(row);
+    const server = storeWith(row);
+    const args = { id: ID, status: "investigating" };
+    run(client, "incident.setStatus", args, ctx({ server: false }));
+    run(server, "incident.setStatus", args);
+    expect(client.dump()).toEqual(server.dump());
+  });
+
+  test("a client's optimistic ack matches the server's", () => {
+    const client = storeWith(incident());
+    const server = storeWith(incident());
+    run(client, "incident.ack", { id: ID }, ctx({ server: false }));
+    run(server, "incident.ack", { id: ID });
+    expect(client.dump()).toEqual(server.dump());
+  });
+});
+
 describe("runMutation", () => {
   test("every role except viewer may run every incident mutation", () => {
     for (const role of ROLES) {
@@ -276,6 +378,7 @@ describe("runMutation", () => {
         run(store, "incident.declare", { id: ID, title: "t", severity: "sev3" }, ctx({ role })),
         run(store, "incident.setStatus", { id: ID, status: "fixing" }, ctx({ role })),
         run(store, "incident.setSeverity", { id: ID, severity: "sev1" }, ctx({ role })),
+        run(store, "incident.ack", { id: ID }, ctx({ role })),
       ];
       for (const result of results) {
         if (role === "viewer") expect(!result.ok && result.error.code).toBe("forbidden");

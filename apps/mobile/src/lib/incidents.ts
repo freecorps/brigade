@@ -57,6 +57,11 @@ const REASONS: Record<SyncErrorCode, () => string> = {
   unknown_mutation: m.sync_error_internal,
 };
 
+/** Why the shard refused a change, in the current language. */
+export function reasonText(code: SyncErrorCode): string {
+  return REASONS[code]();
+}
+
 /** Which incident a status or severity change was for, as the row showed it then. */
 type Subject = { incidentId: string; number: number | null; title: string };
 

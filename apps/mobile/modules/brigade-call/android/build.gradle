@@ -1,0 +1,24 @@
+// The Android side of the call screen (spike S6, RFC 0010): a self-managed ConnectionService and a CallStyle
+// notification with a full-screen intent.
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'app.freecorps.brigade'
+version = '0.0.0'
+
+android {
+  namespace "app.freecorps.brigade.call"
+  defaultConfig {
+    versionCode 1
+    versionName "0.0.0"
+  }
+}
+
+dependencies {
+  implementation "androidx.core:core:1.16.0"
+  // The route decision (CallRoute.kt, mirroring src/lib/call-route.ts, which CI tests) is plain Kotlin:
+  // `./gradlew :brigade-call:testDebugUnitTest`.
+  testImplementation 'junit:junit:4.13.2'
+}

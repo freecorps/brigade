@@ -43,7 +43,7 @@ Implemented in `packages/schema` (`canTransition`). Severity is independent of s
 ## Escalation run
 
 - Level N notifies its targets (resolving schedules to the on-call user _at that moment_).
-- Any target acks → run stops. Timeout → level N+1. Last level exhausted → repeat policy (configurable) and flag "unacknowledged".
+- Any target acks (`incident.ack`; until escalation runs exist the ack is stored on the incident and reopening clears it, spike S6) → run stops. Timeout → level N+1. Last level exhausted → repeat policy (configurable) and flag "unacknowledged".
 - Every notification attempt and delivery receipt is recorded (debuggable: "why didn't I get paged?").
 
 ## Tenancy and access control

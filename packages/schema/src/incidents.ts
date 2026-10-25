@@ -32,7 +32,13 @@ export type IncidentSeverityChanged = DomainEvent<
   "incident.severity_changed",
   { from: Severity; to: Severity }
 >;
-export type IncidentEvent = IncidentDeclared | IncidentStatusChanged | IncidentSeverityChanged;
+/** Someone acknowledged the page: escalation stops (RFC 0003, "Escalation run"). */
+export type IncidentAcknowledged = DomainEvent<"incident.acknowledged", { by: string }>;
+export type IncidentEvent =
+  | IncidentDeclared
+  | IncidentStatusChanged
+  | IncidentSeverityChanged
+  | IncidentAcknowledged;
 
 /** `INC-142`; null while the server has not numbered the incident yet. */
 export function formatIncidentNumber(number: number | null): string | null {
@@ -75,6 +81,8 @@ export const declareIncident = defineMutation({
       status: "triage",
       declaredAt: ctx.now,
       declaredBy: ctx.actor.id,
+      acknowledgedAt: null,
+      acknowledgedBy: null,
       updatedAt: ctx.now,
     };
     store.insert("incidents", row);
@@ -101,7 +109,13 @@ export const setIncidentStatus = defineMutation({
     if (!canTransition(incident.status, args.status)) {
       return fail("invalid_transition", `Cannot move from ${incident.status} to ${args.status}`);
     }
-    store.update("incidents", args.id, { status: args.status, updatedAt: ctx.now });
+    // A reopened incident pages again: the ack that stopped the last page must not stop the next one.
+    const reopened = !isActive(incident.status) && isActive(args.status);
+    store.update("incidents", args.id, {
+      status: args.status,
+      updatedAt: ctx.now,
+      ...(reopened && { acknowledgedAt: null, acknowledgedBy: null }),
+    });
     const event: IncidentStatusChanged = {
       type: "incident.status_changed",
       subject: args.id,
@@ -126,6 +140,38 @@ export const setIncidentSeverity = defineMutation({
       type: "incident.severity_changed",
       subject: args.id,
       data: { from: incident.severity, to: args.severity },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * Acknowledges the incident's page, from the app, a notification or the call screen (RFC 0010). The first ack
+ * wins; a second one is a `conflict` (no change), so a responder who acks twice, or two who ack at once, see
+ * that someone already did. Pages belong to active incidents only. Until escalation runs exist (IncidentDO) the
+ * ack lives on the incident; it moves to the run then (RFC 0003).
+ */
+export const acknowledgeIncident = defineMutation({
+  name: "incident.ack",
+  args: v.object({ id: incidentId }),
+  permission: "incident:ack",
+  apply(store, args, ctx) {
+    const incident = store.get("incidents", args.id);
+    if (!incident) return fail("not_found", "Incident not found");
+    if (!isActive(incident.status)) {
+      return fail("invalid_transition", `Cannot acknowledge a ${incident.status} incident`);
+    }
+    // `!= null`: rows stored before acknowledgements existed have no such field.
+    if (incident.acknowledgedAt != null) return fail("conflict", "Already acknowledged");
+    store.update("incidents", args.id, {
+      acknowledgedAt: ctx.now,
+      acknowledgedBy: ctx.actor.id,
+      updatedAt: ctx.now,
+    });
+    const event: IncidentAcknowledged = {
+      type: "incident.acknowledged",
+      subject: args.id,
+      data: { by: ctx.actor.id },
     };
     return ok(event);
   },
@@ -158,5 +204,10 @@ export const incidentById = defineQuery({
   filter: (row, args) => row.id === args.id,
 });
 
-export const mutations = defineRegistry([declareIncident, setIncidentStatus, setIncidentSeverity]);
+export const mutations = defineRegistry([
+  declareIncident,
+  setIncidentStatus,
+  setIncidentSeverity,
+  acknowledgeIncident,
+]);
 export const queries = defineRegistry([activeIncidents, incidentById]);

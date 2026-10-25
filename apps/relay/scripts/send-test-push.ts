@@ -4,13 +4,17 @@
  *   RELAY_URL=https://brigade-relay-dev.<subdomain>.workers.dev \
  *   RELAY_TOKEN_FILE=~/.config/brigade/relay-dev-token \
  *   NODE_OPTIONS=--conditions=@freecorps/source vpx scripts/send-test-push.ts \
- *   <device token hex> <device public key base64url> [title] [body] [urgency]
+ *   <device token hex> <device public key base64url> [title] [body] [urgency] [incident id]
+ *
+ * `call` as the urgency sends a VoIP call (spike S6) instead: pass the PushKit token from the app's
+ * development-only `/call-test` screen as the device token.
  *
  * Run it directly: `vp run` does not pass RELAY_URL and RELAY_TOKEN_FILE through to the task.
  *
  * The device token and public key are what the app's dev screen shows. The token is read from a file so it
  * never lands in shell history.
  */
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { sealPush } from "@freecorps/brigade-push";
@@ -21,24 +25,29 @@ const [
   title = "SEV1 · Checkout down",
   body = "502s from payments",
   urgency = "page",
+  incident,
 ] = process.argv.slice(2);
 const url = process.env.RELAY_URL;
 const tokenFile = process.env.RELAY_TOKEN_FILE?.replace(/^~(?=\/)/, homedir());
 if (!deviceToken || !publicKey || !url || !tokenFile) {
   console.error(
-    "usage: RELAY_URL=… RELAY_TOKEN_FILE=… send-test-push <device token> <public key> [title] [body] [urgency]",
+    "usage: RELAY_URL=… RELAY_TOKEN_FILE=… send-test-push <device token> <public key> [title] [body] [urgency|call] [incident]",
   );
   process.exit(2);
 }
 
-const envelope = await sealPush(publicKey, { title, body });
+const envelope = await sealPush(publicKey, incident ? { title, body, incident } : { title, body });
+const send =
+  urgency === "call"
+    ? { deviceToken, envelope, kind: "call", callId: randomUUID() }
+    : { deviceToken, envelope, urgency };
 const response = await fetch(new URL("/send", url), {
   method: "POST",
   headers: {
     Authorization: `Bearer ${readFileSync(tokenFile, "utf8").trim()}`,
     "Content-Type": "application/json",
   },
-  body: JSON.stringify({ deviceToken, envelope, urgency }),
+  body: JSON.stringify(send),
 });
 console.log(response.status, await response.text());
 process.exitCode = response.ok ? 0 : 1;

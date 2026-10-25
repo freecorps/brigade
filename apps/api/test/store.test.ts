@@ -20,6 +20,8 @@ const incident = (id: string, title = "Checkout down"): IncidentRow => ({
   status: "triage",
   declaredAt: 1,
   declaredBy: "usr_ana",
+  acknowledgedAt: null,
+  acknowledgedBy: null,
   updatedAt: 1,
 });
 

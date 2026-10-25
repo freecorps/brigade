@@ -8,6 +8,8 @@ import { open, P256_PUBLIC_KEY_LENGTH, seal, type HpkeRecipient } from "./hpke.t
 export interface PushContent {
   title: string;
   body: string;
+  /** The incident a page is about, so a call's ack can name it (RFC 0010). Sealed like the rest. */
+  incident?: string;
 }
 
 /** The encrypted push as it travels: HPKE's encapsulated key and ciphertext, base64url. */
@@ -36,7 +38,10 @@ export async function sealPush(
   devicePublicKey: string,
   content: PushContent,
 ): Promise<PushEnvelope> {
-  const plaintext = encoder.encode(JSON.stringify({ title: content.title, body: content.body }));
+  const { title, body, incident } = content;
+  const plaintext = encoder.encode(
+    JSON.stringify(incident === undefined ? { title, body } : { title, body, incident }),
+  );
   if (plaintext.length > PUSH_PLAINTEXT_MAX_BYTES) {
     throw new Error(`push content is ${plaintext.length} bytes, over ${PUSH_PLAINTEXT_MAX_BYTES}`);
   }
@@ -55,10 +60,17 @@ export async function openPush(
     { info },
   );
   const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plaintext));
-  if (!isRecord(value) || typeof value.title !== "string" || typeof value.body !== "string") {
-    throw new Error("push content is not { title, body }");
+  if (
+    !isRecord(value) ||
+    typeof value.title !== "string" ||
+    typeof value.body !== "string" ||
+    (value.incident !== undefined && typeof value.incident !== "string")
+  ) {
+    throw new Error("push content is not { title, body, incident? }");
   }
-  return { title: value.title, body: value.body };
+  return typeof value.incident === "string"
+    ? { title: value.title, body: value.body, incident: value.incident }
+    : { title: value.title, body: value.body };
 }
 
 /** Accepts an envelope from untrusted JSON (a relay request), or returns null. */

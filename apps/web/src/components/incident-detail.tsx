@@ -714,30 +714,33 @@ function UpdateBody({ body }: { body: string }) {
   }, [body, expanded]);
   return (
     <div className="flex flex-col items-start gap-1">
-      <p
-        ref={ref}
-        id={id}
-        className={cn(
-          "self-stretch rounded-md bg-muted px-3 py-2 whitespace-pre-wrap [overflow-wrap:anywhere]",
-          !expanded && "line-clamp-12",
-        )}
-      >
-        {bodyParts(body).map((part, index) =>
-          "url" in part ? (
-            <a
-              key={index}
-              href={part.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-sm text-primary underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring"
-            >
-              {part.url}
-            </a>
-          ) : (
-            <Fragment key={index}>{part.text}</Fragment>
-          ),
-        )}
-      </p>
+      {/* The padding sits outside the clamped text, so no part of line 13 shows under line 12. */}
+      <div className="self-stretch rounded-md bg-muted px-3 py-2">
+        <p
+          ref={ref}
+          id={id}
+          className={cn(
+            "whitespace-pre-wrap [overflow-wrap:anywhere]",
+            !expanded && "line-clamp-12",
+          )}
+        >
+          {bodyParts(body).map((part, index) =>
+            "url" in part ? (
+              <a
+                key={index}
+                href={part.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-sm text-primary underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring"
+              >
+                {part.url}
+              </a>
+            ) : (
+              <Fragment key={index}>{part.text}</Fragment>
+            ),
+          )}
+        </p>
+      </div>
       {clamped || expanded ? (
         <Button
           variant="link"

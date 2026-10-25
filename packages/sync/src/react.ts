@@ -1,5 +1,5 @@
-// React bindings for the sync client: `SyncProvider`, `useQuery`, `useMutation`. React DOM and React Native
-// alike: no DOM APIs, only `useSyncExternalStore` over `SyncClient.query` handles.
+// React bindings for the sync client: `SyncProvider`, `useQuery`, `useMutation`, `useConnectionState` and
+// `useSyncClient`. React DOM and React Native alike: no DOM APIs, only `useSyncExternalStore` over the client.
 
 import {
   createContext,
@@ -17,7 +17,7 @@ import type {
   QueryArgsOf,
   QueryRowOf,
 } from "@freecorps/brigade-schema";
-import type { MutationOutcome, QueryState, SyncClient } from "./client.ts";
+import type { ConnectionState, MutationOutcome, QueryState, SyncClient } from "./client.ts";
 
 type Queries = typeof queries;
 type Mutations = typeof mutations;
@@ -41,8 +41,13 @@ export function SyncProvider({ client, shard, children }: SyncProviderProps) {
 
 function useSync(): SyncContextValue {
   const value = useContext(SyncContext);
-  if (!value) throw new Error("useQuery and useMutation need a <SyncProvider> above them");
+  if (!value) throw new Error("Brigade Sync hooks need a <SyncProvider> above them");
   return value;
+}
+
+/** The provider's client, for what the hooks do not cover (`client.newId("inc")` for a declare). */
+export function useSyncClient(): SyncClient {
+  return useSync().client;
 }
 
 export type HookOptions = {
@@ -85,3 +90,20 @@ export function useMutation<N extends keyof Mutations>(
     [sync.client, shard, name],
   );
 }
+
+/**
+ * The socket state of the provider's shard (`idle`, `connecting`, `open`, `waiting` for a retry), for a "live" or
+ * "reconnecting" indicator. Only reads: the shard's queries and mutations open and close the socket.
+ */
+export function useConnectionState(options: HookOptions = {}): ConnectionState {
+  const sync = useSync();
+  const shard = options.shard ?? sync.shard;
+  const subscribe = useCallback(
+    (listener: () => void) => sync.client.onConnectionChange(shard, listener),
+    [sync.client, shard],
+  );
+  const getSnapshot = useCallback(() => sync.client.connectionState(shard), [sync.client, shard]);
+  return useSyncExternalStore(subscribe, getSnapshot, idle);
+}
+
+const idle = (): ConnectionState => "idle";

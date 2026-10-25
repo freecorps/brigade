@@ -1251,3 +1251,131 @@ test("an empty patch carries the new epoch, so a later socket does not drop a mu
   while (network.step()) expect(idsOf(b.get())).toContain(id);
   expect(b.get()).toMatchObject({ pending: false, rows: [{ id, number: 2 }, { id: other }] });
 });
+
+test("onConnectionChange reports each socket state once, without opening a socket itself", async () => {
+  const { client, settle, network, timers } = setup();
+  const a = client(ana);
+  const seen: string[] = [];
+  const stop = a.onConnectionChange(SHARD, () => seen.push(a.connectionState(SHARD)));
+  await settle();
+  expect(network.sockets).toHaveLength(0); // Listening alone connects nothing.
+
+  const stopQuery = a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+  await settle();
+  expect(seen).toEqual(["connecting", "open"]);
+
+  network.disconnect();
+  await settle();
+  expect(seen.at(-1)).toBe("waiting");
+  network.reconnect();
+  timers.advance(500);
+  await settle();
+  expect(seen.slice(2)).toEqual(["waiting", "connecting", "open"]);
+
+  // The idle close after the last subscription leaves.
+  stopQuery();
+  timers.advance(1000 + 5000);
+  await settle();
+  expect(seen.at(-1)).toBe("idle");
+
+  stop();
+  a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+  await settle();
+  expect(seen.at(-1)).toBe("idle"); // Unsubscribed: no more calls.
+  a.close();
+});
+
+test("closing the client tells connection listeners the shard is idle", async () => {
+  const { client, settle } = setup();
+  const a = client(ana);
+  const seen: string[] = [];
+  a.onConnectionChange(SHARD, () => seen.push(a.connectionState(SHARD)));
+  a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+  await settle();
+  a.close();
+  expect(seen).toEqual(["connecting", "open", "idle"]);
+});
+
+test("a failed send or a protocol error goes from open straight to waiting, with no passing idle", async () => {
+  const { client, settle, network, incidentId } = setup();
+  for (const fault of ["send", "protocol"] as const) {
+    const a = client(ana);
+    const seen: string[] = [];
+    a.onConnectionChange(SHARD, () => seen.push(a.connectionState(SHARD)));
+    a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+    await settle();
+    const socket = network.sockets.at(-1)!;
+    if (fault === "send") {
+      socket.send = () => {
+        throw new Error("socket gone");
+      };
+      void a.mutate(SHARD, "incident.declare", {
+        id: incidentId(),
+        title: "Lost",
+        severity: "sev3",
+      });
+    } else {
+      socket.deliver(JSON.stringify({ type: "error", code: "protocol", message: "Unsupported" }));
+      await settle();
+    }
+    expect(seen).toEqual(["connecting", "open", "waiting"]);
+    a.close();
+  }
+});
+
+test("a transport that throws goes from idle to waiting, never connecting", async () => {
+  const { client, settle } = setup();
+  const a = client(ana, ana, {
+    transport: () => {
+      throw new Error("no network stack");
+    },
+  });
+  const seen: string[] = [];
+  a.onConnectionChange(SHARD, () => seen.push(a.connectionState(SHARD)));
+  a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+  await settle();
+  expect(seen).toEqual(["waiting"]);
+  a.close();
+});
+
+test("connection listeners are independent: one leaving or throwing does not stop the others", async () => {
+  const { client, settle, network, warnings } = setup();
+  const a = client(ana);
+  const first: string[] = [];
+  const second: string[] = [];
+  const stopFirst = a.onConnectionChange(SHARD, () => first.push(a.connectionState(SHARD)));
+  a.onConnectionChange(SHARD, () => {
+    throw new Error("listener bug");
+  });
+  a.onConnectionChange(SHARD, () => second.push(a.connectionState(SHARD)));
+  a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+  await settle();
+  stopFirst();
+  network.disconnect();
+  await settle();
+  expect(first).toEqual(["connecting", "open"]);
+  expect(second).toEqual(["connecting", "open", "waiting"]);
+  expect(warnings.filter((w) => w === "A connection listener threw")).toHaveLength(3);
+  a.close();
+});
+
+test("waiting ends in idle once nothing needs the shard: by the retry timer or by the idle timer", async () => {
+  // (a) The retry (3 s) fires after the last subscription left (1 s linger): nothing to reconnect for.
+  // (b) The idle close (1 s linger + 5 s) fires while the retry (15 s) is still pending.
+  for (const initialMs of [4000, 20_000]) {
+    const { client, settle, network, timers } = setup();
+    const a = client(ana, ana, { backoff: { initialMs } });
+    const seen: string[] = [];
+    a.onConnectionChange(SHARD, () => seen.push(a.connectionState(SHARD)));
+    const stop = a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+    await settle();
+    network.disconnect();
+    await settle();
+    stop();
+    timers.advance(30_000);
+    await settle();
+    expect(seen).toEqual(["connecting", "open", "waiting", "idle"]);
+    expect(network.sockets).toHaveLength(1);
+    a.close();
+  }
+});

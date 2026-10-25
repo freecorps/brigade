@@ -33,29 +33,32 @@ function withDrain<R>(
   ) => Promise<R>,
   jitter = () => 1,
 ) {
-  return runInDurableObject(env.WORKSPACE.getByName(`outbox-${++names}`), async (instance: WorkspaceDO, state) => {
-    const logs: { message: string }[] = [];
-    const log = (message: string, fields: Record<string, unknown>) =>
-      logs.push({ message, ...fields });
-    const shard = new Shard(state.storage, { shard: "workspace", randomBytes: random, log });
-    shard.claim("acme");
-    for (let i = 0; i < events; i++) {
-      shard.mutate({
-        clientId: "c1",
-        mutationId: `m${i}`,
-        actor: ana,
-        name: "incident.declare",
-        args: { id: newId("inc", NOW, random), title: `Incident ${i}`, severity: "sev3" },
-        now: NOW + i,
-      });
-    }
-    return fn(
-      new OutboxDrain(state.storage.sql, send, log, jitter),
-      state.storage.sql,
-      logs,
-      instance,
-    );
-  });
+  return runInDurableObject(
+    env.WORKSPACE.getByName(`outbox-${++names}`),
+    async (instance: WorkspaceDO, state) => {
+      const logs: { message: string }[] = [];
+      const log = (message: string, fields: Record<string, unknown>) =>
+        logs.push({ message, ...fields });
+      const shard = new Shard(state.storage, { shard: "workspace", randomBytes: random, log });
+      shard.claim("acme");
+      for (let i = 0; i < events; i++) {
+        shard.mutate({
+          clientId: "c1",
+          mutationId: `m${i}`,
+          actor: ana,
+          name: "incident.declare",
+          args: { id: newId("inc", NOW, random), title: `Incident ${i}`, severity: "sev3" },
+          now: NOW + i,
+        });
+      }
+      return fn(
+        new OutboxDrain(state.storage.sql, send, log, jitter),
+        state.storage.sql,
+        logs,
+        instance,
+      );
+    },
+  );
 }
 
 const ids = (sql: SqlStorage) =>

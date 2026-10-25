@@ -48,7 +48,8 @@ const caio = user("usr_caio", "viewer");
 let logged: () => Record<string, unknown>[];
 beforeEach(() => {
   const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-  logged = () => spy.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>);
+  logged = () =>
+    spy.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>);
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -637,9 +638,9 @@ describe("when paging fails (the paging path's fallback)", () => {
     // The keys are not real points: sealing fails, which is not retried, and each member sent to is `undelivered`.
     await deliver(event, relay().send);
     const failed = (await ws.timeline(incident)).filter((row) => row.kind === "page_failed");
-    expect(failed.filter((row) => row.kind === "page_failed" && row.reason === "over_limit")).toEqual([
-      expect.objectContaining({ userId: "usr_m20" }),
-    ]);
+    expect(
+      failed.filter((row) => row.kind === "page_failed" && row.reason === "over_limit"),
+    ).toEqual([expect.objectContaining({ userId: "usr_m20" })]);
     expect(failed).toHaveLength(21);
     expect(logged()).toContainEqual(
       expect.objectContaining({ message: "page has too many devices, some skipped", limit: 200 }),
@@ -726,7 +727,9 @@ describe("the dead-letter consumer", () => {
     await ws.run(bia, "incident.ack", { id: acked.incident });
     await deadLetter(acked.event);
     for (const { incident } of [settled, acked]) {
-      const reasons = (await ws.timeline(incident)).map((row) => row.kind === "page_failed" && row.reason);
+      const reasons = (await ws.timeline(incident)).map(
+        (row) => row.kind === "page_failed" && row.reason,
+      );
       expect(reasons).not.toContain("dead_lettered");
     }
   });
@@ -735,11 +738,16 @@ describe("the dead-letter consumer", () => {
     const ws = await workspace();
     const { incident, event } = await ws.declare(MONITOR_ACTOR);
     const broken = {
-      WORKSPACE: { getByName: () => ({ recordDeadLetter: () => Promise.reject(new Error("reset")) }) },
+      WORKSPACE: {
+        getByName: () => ({ recordDeadLetter: () => Promise.reject(new Error("reset")) }),
+      },
     } as unknown as { WORKSPACE: typeof env.WORKSPACE };
     expect(await deadLetter(event, broken)).toEqual({ acked: ["dlq-0"], retried: [] });
     expect(logged()).toContainEqual(
-      expect.objectContaining({ message: "dead-lettered page could not be recorded", event: event.id }),
+      expect.objectContaining({
+        message: "dead-lettered page could not be recorded",
+        event: event.id,
+      }),
     );
     expect(await deadLetter({ nope: true })).toEqual({ acked: ["dlq-0"], retried: [] });
     await ws.run(ana, "incident.postUpdate", { id: incident, body: "Rolling back" });

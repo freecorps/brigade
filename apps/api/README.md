@@ -132,8 +132,7 @@ both secrets, both optional) and reports back (`WorkspaceDO.recordPage`). A rela
 5xx is retried (5, 10, 20, 40 s); after 5 attempts, or at once when retrying cannot help (no relay configured,
 Android, a refused request), each member reached on none of their devices gets a `page_failed` timeline entry and a
 `notification.failed` event, written by `sys_notifier`; so does each member the page was for without a device
-(`no_devices`) or past the 200-device cap (`over_limit`). A token APNs calls gone (`BadDeviceToken`, `Unregistered`,
-410) drops the device (`device.expire`, unless it was registered again with another token meanwhile). Devices are a
+(`no_devices`) or past the 200-device cap (`over_limit`). A token APNs calls gone (`BadDeviceToken`, `Unregistered`, 410) drops the device (`device.expire`, unless it was registered again with another token meanwhile). Devices are a
 server-only table (`devices`), written by `device.register` and `device.unregister` (any member, their own devices
 only).
 

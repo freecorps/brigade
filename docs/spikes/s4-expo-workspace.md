@@ -1,6 +1,6 @@
 # Spike S4 — Expo in the workspace
 
-- Status: Partly done. Metro, Android and the iOS Simulator verified; `eas build` pending (see the end)
+- Status: Done. Metro, Android, the iOS Simulator and `eas build` for both platforms verified
 - Roadmap: Phase 0, S4
 - Settles: RFC 0002 "Metro only needs to resolve the shared `packages/*` from the Bun workspace"; RFC 0008's open
   item on Hermes `Intl` support; RFC 0004's on-device check of `UNICODE_PROPERTY_ESCAPES` (Android and iOS)
@@ -235,25 +235,30 @@ Keep Expo with Metro for mobile (RFC 0002 unchanged in substance): no custom res
 anything formats. Add locale data for each new locale. Revisit when Hermes ships `PluralRules` and
 `RelativeTimeFormat`: the polyfills step aside on their own, so the only cost of keeping them is bundle size.
 
-## What EAS needs (Heitor's account)
+## EAS Build
 
 `eas.json` has `development` (dev client, internal distribution), `preview` (internal) and `production`
 (auto-incremented build numbers, versions kept remotely). Each sets `EXPO_PUBLIC_BRIGADE_ENV` as a placeholder
 until the app talks to an API, and pins Bun 1.4.4 like `devEngines`. The EAS project is
-`@freecorps/brigade`, owned by the Freecorps organisation; `owner` and `extra.eas.projectId` are set in
-`app.config.ts`.
+`@freecorps/brigade`, owned by the Freecorps organisation. `eas init` cannot write to a dynamic config, so
+`owner` and `extra.eas.projectId` are set by hand in `app.config.ts`; the project id is not a secret.
 
-From `apps/mobile`:
+Both `development` builds succeeded on EAS from the same commit (Expo SDK 58, build number 1):
 
-1. `bunx eas-cli@latest login`
-2. `bunx eas-cli@latest init` (done). With `app.config.ts`, EAS cannot write the config and prints the project
-   id instead; it is committed in `app.config.ts` with `owner: "freecorps"`. It is not a secret.
-3. `bunx eas-cli@latest build --profile development --platform android`. Needs no store credentials; EAS
-   generates a keystore.
-4. `bunx eas-cli@latest build --profile development --platform ios`. Needs an Apple Developer account. EAS
-   creates the certificate and provisioning profile, and registering test devices uses `eas device:create`. For
-   the Simulator only, a `development` build with `"ios": { "simulator": true }` needs no Apple account.
-5. Check that EAS installs with Bun 1.4.4 from `bun.lock` at the repository root and that the build finds
-   `apps/mobile` as the project.
+- **Android** (`--platform android --non-interactive`): EAS generated and keeps the upload keystore. EAS
+  installed Bun 1.4.4 over its image's 1.4.2, detected `apps/mobile` as a Bun workspace member and installed
+  from `bun.lock` at the repository root. The APK installed on the Android emulator (API 36), loaded the bundle
+  from Metro, and the incident list connected (`Live`), importing `packages/*` from source.
+- **iOS** (interactive, Freecorps Apple team): EAS found the App ID
+  `app.freecorps.brigade`, reused the team's existing distribution certificate and created an ad hoc
+  provisioning profile. `ios.config.usesNonExemptEncryption: false` is now in `app.config.ts`: the app only
+  uses standard encryption (HTTPS, and Apple's CryptoKit for push payloads in spike S1), so EAS and App Store
+  Connect stop asking on every build. The build was not installed on a device yet; that is the first step of S1.
+
+EAS syncs the App ID's capabilities with the entitlements the config declares. The config declares none yet, so
+the iOS build turned Push Notifications, Time Sensitive Notifications and App Groups off on the App ID; they come
+back when S1 adds the notification entitlements.
+
+Registering a test iPhone uses `bunx eas-cli@latest device:create`, followed by a new iOS build.
 
 Store submission (`eas submit`) waits for Phase 4 (after the CLA).

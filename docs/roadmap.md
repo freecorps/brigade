@@ -32,7 +32,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - One `WorkspaceDO` with `subscribe` / `mutate` / `resume`; `packages/sync` with `useQuery` / `useMutation`.
   - Two dashboard tabs, the iOS Simulator and the Android emulator stayed in sync on one shard, and dropped iOS
     and Android sockets resumed from their last version with a patch ([write-up](spikes/s3-sync-engine.md)).
-- [ ] **S4 — Expo in the workspace.** Pass: development build runs on the iOS Simulator importing `packages/*`
+- [x] **S4 — Expo in the workspace.** Pass: development build runs on the iOS Simulator importing `packages/*`
       through Metro; `eas build` succeeds (needs Heitor's EAS account); Hermes `Intl.PluralRules`,
       `RelativeTimeFormat` and `dateStyle`/`timeStyle` checked (polyfill if missing); Hermes regex Unicode
       property escapes checked (`UNICODE_PROPERTY_ESCAPES` from `packages/schema` is `true`, RFC 0004).
@@ -42,7 +42,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Done on iOS: development build on the iPhone 17 Simulator (iOS 27), the same `Intl` results and regex
     property escapes as Android, except that a medium date and time are joined with " at " instead of ", "; the
     launch screen now uses the splash ground ([write-up](spikes/s4-expo-workspace.md)).
-  - eas build pending (needs Heitor's EAS account).
+  - `eas build` succeeded for Android and iOS under the Freecorps EAS organisation; the Android build ran on the
+    emulator ([write-up](spikes/s4-expo-workspace.md#eas-build)).
 - [ ] **S2 — Probe placement** (RFC 0007). Pass: observed colo per `locationHint` over 48h (deploy needs Heitor's approval).
 - [ ] **S1 — APNs from a Worker and payload encryption** (RFC 0006). Pass: push received on a real iPhone from a
       Worker, decrypted in the Notification Service Extension (needs Apple credentials and a device).

@@ -1,0 +1,46 @@
+{
+  "name": "@freecorps/brigade-push",
+  "version": "0.0.0",
+  "description": "End-to-end encrypted push payloads for Freecorps Brigade: HPKE (RFC 9180) on WebCrypto and the envelope the apps decrypt.",
+  "homepage": "https://github.com/freecorps/brigade#readme",
+  "bugs": {
+    "url": "https://github.com/freecorps/brigade/issues"
+  },
+  "license": "MIT",
+  "author": "Freecorps Tecnologia da Informação LTDA",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freecorps/brigade.git",
+    "directory": "packages/push"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "@freecorps/source": "./src/index.ts",
+      "default": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": "./dist/index.mjs",
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "check": "vp check"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:"
+  }
+}

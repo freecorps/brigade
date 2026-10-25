@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "lib": ["esnext"],
+    "moduleDetection": "force",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    // Resolve workspace packages to their TS source (the @freecorps/source export condition, RFC 0002).
+    "customConditions": ["@freecorps/source"],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "test", "scripts", "worker-configuration.d.ts", "vite.config.ts"]
+}

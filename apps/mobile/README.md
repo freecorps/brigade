@@ -3,8 +3,10 @@
 The Brigade app for iOS and Android: Expo SDK 58, Expo Router, React Native 0.88 on Hermes. It is bundled by Metro,
 not Vite (RFC 0002). The home screen is the workspace's live incident list (Brigade Sync, RFC 0004): declare, and
 change an incident's status or severity. From it, `/legend` shows the severity and status legend, and a
-development-only `/intl` route reports Hermes `Intl` support. Spike write-ups:
-[S4](../../docs/spikes/s4-expo-workspace.md), [S3](../../docs/spikes/s3-sync-engine.md).
+development-only `/intl` route reports Hermes `Intl` support. Another development-only route, `/push`, shows the
+APNs device token and the device public key that encrypted pushes are sealed to. Spike write-ups:
+[S4](../../docs/spikes/s4-expo-workspace.md), [S3](../../docs/spikes/s3-sync-engine.md),
+[S1](../../docs/spikes/s1-apns-encryption.md).
 
 ## Live data in development
 
@@ -42,7 +44,7 @@ the missing runtime for the selected Xcode with `xcodebuild -downloadPlatform iO
 the generated folders.
 
 ```bash
-vp test                 # locale, theme, Intl-probe, sync URL and incident wording logic (Node, no emulator)
+vp test                 # locale, theme, Intl-probe, sync URL, incident wording and config plugin logic (Node, no emulator)
 vp run build            # cached expo export of the Android and iOS JS bundles into dist/: proves Metro resolves everything
 ```
 
@@ -59,6 +61,14 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
   (`src/components/glyphs.ts`), never one family on both.
 - **Splash ground on iOS:** `plugins/splash-ground.ts` points the launch screen at the light/dark ground, which
   `expo-splash-screen` only does when there is a splash image. Drop it once the app has one.
+- **Encrypted pushes (iOS):** `plugins/notification-service.ts` adds the `BrigadeNotificationService` extension
+  target, the push, App Group and time-sensitive entitlements, and fallback strings generated from
+  `packages/i18n` (`push_fallback_*`). The local module `modules/brigade-push` creates the device key in the
+  Keychain shared through the App Group `group.app.freecorps.brigade`; the extension
+  (`modules/brigade-push/extension`) decrypts with it (HPKE, `packages/push` on the server side) or shows the
+  fallback. `aps-environment` is `development` locally and `production` on EAS. For local builds signed for a
+  device, set `APPLE_TEAM_ID` (never committed) and build with `xcodebuild -allowProvisioningUpdates`; the commands
+  are in the S1 write-up.
 - **Autolinking:** `expo-router`'s optional peers (Reanimated, Worklets, Gesture Handler) are installed by Bun
   but excluded from autolinking until the app uses them.
 

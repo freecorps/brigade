@@ -13,7 +13,8 @@ regional endpoints. Question, method and results: [docs/spikes/s2-probe-placemen
 | `POST /probes/reset[?hint=H]`          | token | Stops and deletes the samples                              |
 | `GET /probes/samples?hint=H[&hours=N]` | token | Raw samples of one probe                                   |
 
-The token is the `PROBE_ADMIN_TOKEN` secret, sent as `Authorization: Bearer <token>`.
+The token is the `PROBE_ADMIN_TOKEN` secret, sent as `Authorization: Bearer <token>`. `hours` is at most 192
+(the retention window).
 
 ```bash
 vp run --filter @freecorps/brigade-spike-s2 test

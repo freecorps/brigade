@@ -41,8 +41,9 @@ not meant to become product code; it sits in the workspace (`spikes/*`) only so 
   rows). Every route needs `Authorization: Bearer <PROBE_ADMIN_TOKEN>`, a Wrangler secret compared by SHA-256
   digest with `crypto.subtle.timingSafeEqual`; `/summary` too, since each call wakes all eleven objects and
   reads days of rows.
-- **Report.** `PROBE_ADMIN_TOKEN=<token> vpx scripts/report.ts <worker url> [--hours 48]` prints the summary as three tables
-  (placement, alarms, latency), plus the colo runs of any probe that moved.
+- **Report.** `PROBE_ADMIN_TOKEN=<token> vpx scripts/report.ts <worker url> [--hours 48]` prints the summary as
+  three tables (placement, alarms, latency), plus the colo runs of any probe that moved. `hours` is at most 192,
+  the retention window.
 - **Tests** (`@cloudflare/vitest-plugin`, as in apps/api): the summary logic (percentiles, colo runs and moves,
   instances, failures, retries), trace parsing, every route refusing a missing or wrong token, an alarm
   storing a sample from a stubbed fetch and scheduling the next one, stop, reset, and `/summary` listing every
@@ -57,7 +58,7 @@ vp run --filter @freecorps/brigade-spike-s2 build
 cd spikes/s2-probe-placement
 bunx wrangler deploy --secrets-file <file outside the repo with PROBE_ADMIN_TOKEN=<random>>
 curl -X POST -H "Authorization: Bearer <token>" https://brigade-probe-dev.<subdomain>.workers.dev/probes/start
-vpx scripts/report.ts https://brigade-probe-dev.<subdomain>.workers.dev
+PROBE_ADMIN_TOKEN=<token> vpx scripts/report.ts https://brigade-probe-dev.<subdomain>.workers.dev
 ```
 
 Deployed 2026-10-25 from a developer machine with wrangler 4.152.0 (compatibility date 2026-10-19). Every object was
@@ -65,7 +66,9 @@ first reached by that `start` call, so its hint, not the caller's location, deci
 
 ## First results
 
-Read at 2026-10-25 14:42 UTC, one to two samples per hint. Timings are milliseconds to response headers, for the
+From the first deployment (sampling from 14:41 UTC), read at 2026-10-25 14:42 UTC, one to two samples
+per hint. At 14:51 the reviewed version (the code in this folder) was deployed and every probe reset and restarted; its first
+samples landed in the same colo for all eleven hints, but the 48-hour window counts only from 14:51. Timings are milliseconds to response headers, for the
 first samples only.
 
 | Hint      | Colo | Trace | us-east-1 | eu-central-1 | ap-southeast-1 |
@@ -105,7 +108,8 @@ What these first samples already show:
 
 ## What remains to observe (pending)
 
-The 48-hour window ends 2026-10-27 14:51 UTC (the samples were reset when the reviewed version was deployed). Then, from `PROBE_ADMIN_TOKEN=<token> vpx scripts/report.ts <url> --hours 48`:
+The 48-hour window ends 2026-10-27 14:51 UTC (samples reset when the reviewed version was deployed). Then, from
+`PROBE_ADMIN_TOKEN=<token> vpx scripts/report.ts <url> --hours 48`:
 
 - [ ] Colo histogram per hint: still one colo each, or did any probe move (`moves`, and the colo runs)?
 - [ ] Alarm cadence: gaps between samples (p95, max), lateness, retries, and any hole longer than a few minutes.

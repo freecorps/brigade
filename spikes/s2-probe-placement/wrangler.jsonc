@@ -5,7 +5,7 @@
   "main": "./src/index.ts",
   // Matches the installed workerd so local and deployed behaviour agree (as in apps/api).
   "compatibility_date": "2026-10-19",
-  // The read endpoint is public on workers.dev; start, stop, reset and raw samples need PROBE_ADMIN_TOKEN.
+  // On workers.dev only; every route needs PROBE_ADMIN_TOKEN.
   "workers_dev": true,
   "preview_urls": false,
   "observability": {

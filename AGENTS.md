@@ -9,7 +9,8 @@ Design lives in `docs/rfcs/` (read the RFC for the area before changing it); pen
 ## Layout
 
 `apps/` (api, relay, web, mobile, site — AGPL-3.0), `packages/` (schema, sync, sdk, i18n, ui — MIT),
-`integrations/` (Slack and other providers — AGPL-3.0). Target layout and runtime map: RFC 0002.
+`integrations/` (Slack and other providers — AGPL-3.0), `spikes/` (throwaway spike code, deleted when the result
+lands). Target layout and runtime map: RFC 0002.
 
 ## Commands
 

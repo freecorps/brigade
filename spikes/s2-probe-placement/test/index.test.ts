@@ -51,13 +51,18 @@ describe("trace parsing", () => {
 
 describe("routes", () => {
   test("refuse requests without the token", async () => {
-    expect((await call("/summary")).status).toBe(401);
-    for (const path of ["/probes/start", "/probes/stop", "/probes/reset"]) {
-      expect((await call(path, { method: "POST" })).status, path).toBe(401);
-      const wrong = await call(path, { method: "POST", headers: { Authorization: "Bearer nope" } });
+    const routes = [
+      ["/summary", "GET"],
+      ["/probes/samples?hint=weur", "GET"],
+      ["/probes/start", "POST"],
+      ["/probes/stop", "POST"],
+      ["/probes/reset", "POST"],
+    ] as const;
+    for (const [path, method] of routes) {
+      expect((await call(path, { method })).status, path).toBe(401);
+      const wrong = await call(path, { method, headers: { Authorization: "Bearer nope" } });
       expect(wrong.status, path).toBe(401);
     }
-    expect((await call("/probes/samples?hint=weur")).status).toBe(401);
   });
 
   test("validate the hint and the method", async () => {

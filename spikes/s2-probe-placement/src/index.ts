@@ -94,8 +94,8 @@ function probe(env: Env, hint: Hint) {
 }
 
 /**
- * `?hours=N` as a lower bound in ms since epoch: 0 without it, undefined when invalid. Capped at the retention
- * window, which is everything stored anyway (and keeps the bound inside `Date`'s range).
+ * `?hours=N` as a lower bound in ms since epoch: 0 without it, undefined when invalid. N is at most the retention
+ * window (192 h), which is everything stored anyway, so the bound stays inside `Date`'s range.
  */
 function sinceParam(url: URL): number | undefined {
   const hours = url.searchParams.get("hours");

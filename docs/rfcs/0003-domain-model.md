@@ -45,6 +45,11 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   entries live and optimistic, so deriving the timeline from events would need a projection anyway. Entries are
   numbered per incident (`<incident id>:<seq>`, from the incident's `timelineSeq`), so a client's optimistic entry
   and the server's share an id; nothing edits or deletes one. "Edit timeline" for responders means adding to it.
+  A client numbers from the highest of `timelineSeq` and the entries it holds, since its subscriptions resume one
+  by one; when another change landed first, its entry is re-applied under the next number. The query reads one
+  incident's entries as an id range (`<id>:` up to `<id>;`) off the store's `(tbl, id)` key, not a scan of every
+  incident's. `incident.byNumber` still scans the workspace's incidents (bounded while they live in
+  `WorkspaceDO`); it gets a number index when `IncidentDO` takes them over.
 - **Updates** (`incident.postUpdate`, `incident:update`, event `incident.update_posted`): a timeline entry of
   kind `update` with a multi-line body of 1 to 4000 characters (the text rules of RFC 0004), allowed in every
   status so a resolved incident can get closing notes. No visibility flag yet: every update is internal, and
@@ -58,7 +63,14 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   show names. The Worker already reads the member in D1 when it authenticates a sync upgrade; it passes their
   name along, and the shard runs the server-only `member.sync` (RFC 0004 "Server-side writes") when its copy is
   missing or stale. So a member appears once they have opened a socket, and a role change shows on their next
-  one. When invitations and member management land, their `member.*` mutations write this table as well.
+  one. When invitations and member management land, their `member.*` mutations write this table as well, and
+  removing a member must delete their `members` row in the same transaction (or they stay assignable).
+- **Member names** (`memberName`): the title rules of RFC 0004, except that ZWNJ and ZWJ may stand between two
+  letters (Persian, Arabic and Indic names need them); bidi controls and every other invisible character are still
+  refused, and a name is 1 to 100 characters after trimming. The API applies it before Better Auth stores a name
+  (sign-up, `update-user`: `INVALID_NAME`). A name already in D1 that predates the rule is trimmed and cut to the
+  cap at a grapheme by the Worker; if that still fails, the shard stores `name: null` and the dashboard shows the
+  member as unnamed, so they stay listed and assignable instead of being refused on every socket.
 
 ## Alert → incident flow
 

@@ -629,6 +629,24 @@ describe("monitor.report: restarts, refreshes and stale probes", () => {
     expect(report(db, args.id, "weur", true, T + 2001).ok).toBe(true);
   });
 
+  test("down seen only by a surviving region, after most probes died, is no data and pages nobody (Q17)", () => {
+    // The rule as it stands, pinned until Q17 is decided: below the fresh floor the verdict is `unknown`, even
+    // when every fresh result is down. No alert, no incident.
+    const db = store();
+    const id = createHttp(db, ["wnam", "enam", "weur"]);
+    for (const region of ["wnam", "enam", "weur"] as const) report(db, id, region, true, T + 1000);
+    expect(db.get("monitors", id)?.status).toBe("up");
+    // enam and weur go silent; wnam alone sees the service fail.
+    const later = T + 1000 + staleAfterMs(db.get("monitors", id)!) + 1;
+    expect(types(report(db, id, "wnam", false, later))).toEqual([
+      "monitor.checked",
+      "monitor.status_changed",
+    ]);
+    expect(db.get("monitors", id)).toMatchObject({ status: "unknown", alertId: null });
+    expect(db.scan("alerts")).toEqual([]);
+    expect(db.scan("incidents")).toEqual([]);
+  });
+
   test("a monitor whose probes stop reporting turns unknown, never up, and keeps its alert", () => {
     const db = store();
     const id = createHttp(db, ["wnam", "enam", "weur"]);

@@ -33,6 +33,16 @@ firing, and `monitor.status_changed` goes to the outbox, but it opens no inciden
 probes, not the customer's service. Should a monitor that stays without data (say 15 minutes) page the workspace, or
 page Brigade's own operators through the external dead-man switch ("Watching the watcher") instead?
 
+The current rule has a blind spot: a monitor that goes down *after* most of its probes died is `unknown` too, and
+pages nobody, even when every probe still reporting sees it down (three regions, two silent, the third reports
+down: below the fresh floor, so "No data"; pinned by a test in `packages/schema/tests/monitors.test.ts`). Options:
+
+- Keep the rule: `unknown` never pages; the dashboard and `monitor.status_changed` are the only signal.
+- Page the workspace after a monitor stays `unknown` for a while (say 15 minutes).
+- Page when every fresh result is down, even below the fresh floor: one surviving region can then open an
+  incident, at the price of a single bad probe paging on its own.
+- Page Brigade's operators (not the workspace) on `unknown`, through the external dead-man switch.
+
 ---
 
 # Decided

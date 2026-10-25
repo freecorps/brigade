@@ -285,15 +285,18 @@ describe("Better Auth routes", () => {
     const ana = await signUp("Reader");
     await createWorkspace(ana.cookie);
     const ip = "203.0.113.11";
-    for (let i = 0; i < RATE_LIMIT.max + 5; i++) {
-      for (const path of UNLIMITED_READS.filter((p) => p !== "/get-session")) {
-        const response = await api(`/auth${path}`, {
-          headers: { Cookie: ana.cookie, "cf-connecting-ip": ip },
-        });
-        expect(response.status, path).toBe(200);
-      }
+    // Past the limit on each path; in parallel per path, so a slow CI runner stays within the timeout.
+    for (const path of UNLIMITED_READS.filter((p) => p !== "/get-session")) {
+      const statuses = await Promise.all(
+        Array.from({ length: RATE_LIMIT.max + 5 }, () =>
+          api(`/auth${path}`, { headers: { Cookie: ana.cookie, "cf-connecting-ip": ip } }).then(
+            (response) => response.status,
+          ),
+        ),
+      );
+      expect(new Set(statuses), path).toEqual(new Set([200]));
     }
-  });
+  }, 30_000);
 
   test("a POST from another site is refused", async () => {
     const response = await api("/auth/sign-up/email", {

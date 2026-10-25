@@ -25,9 +25,16 @@ import {
   type Role,
   type TimelineRow,
 } from "@freecorps/brigade-schema";
-import { consumeEvents, MAX_PAGE_ATTEMPTS, retryDelay, type Fetch } from "../src/notify.ts";
+import {
+  consumeDeadLetters,
+  consumeEvents,
+  MAX_PAGE_ATTEMPTS,
+  QUEUE_MAX_RETRIES,
+  retryDelay,
+  type Fetch,
+} from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
-import { asksForPage, pageTargets } from "../src/paging.ts";
+import { asksForPage, MAX_PAGE_DEVICES, pageTargets } from "../src/paging.ts";
 import { Shard } from "../src/shard.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
 
@@ -37,8 +44,11 @@ const ana = user("usr_ana", "owner");
 const bia = user("usr_bia", "responder");
 const caio = user("usr_caio", "viewer");
 
+/** What the code logged (`console.error`, one JSON line each), parsed. */
+let logged: () => Record<string, unknown>[];
 beforeEach(() => {
-  vi.spyOn(console, "error").mockImplementation(() => {});
+  const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+  logged = () => spy.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>);
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -250,7 +260,8 @@ describe("who is paged", () => {
     }
     return s;
   };
-  const users = (targets: { userId: string }[]) => targets.map((target) => target.userId);
+  const users = ({ targets }: { targets: { userId: string }[] }) =>
+    targets.map((target) => target.userId);
 
   test("without a commander: every member who can respond, except who caused it; never viewers", () => {
     expect(users(pageTargets(store(), { roles: {} }, "usr_ana"))).toEqual(["usr_bia", "usr_duda"]);
@@ -271,11 +282,36 @@ describe("who is paged", () => {
     ]);
   });
 
-  test("members without a device are not targets; a device of someone no longer a member is ignored", () => {
+  test("a commander without a device: everyone who can respond instead, and the commander is listed as unreachable", () => {
+    const s = store();
+    s.delete("devices", "dev_usr_bia");
+    const result = pageTargets(s, { roles: { commander: "usr_bia" } }, MONITOR_ACTOR.id);
+    expect(users(result)).toEqual(["usr_ana", "usr_duda"]);
+    expect(result.noDevices).toEqual(["usr_bia"]);
+    // With nobody else to page, the commander is still listed.
+    s.delete("devices", "dev_usr_ana");
+    s.delete("devices", "dev_usr_duda");
+    expect(pageTargets(s, { roles: { commander: "usr_bia" } }, MONITOR_ACTOR.id)).toEqual({
+      targets: [],
+      noDevices: ["usr_bia", "usr_ana", "usr_duda"],
+    });
+  });
+
+  test("a commander who is now a viewer is not paged; everyone who can respond is", () => {
+    const s = store();
+    s.update("members", "usr_bia", { role: "viewer" });
+    expect(users(pageTargets(s, { roles: { commander: "usr_bia" } }, "usr_ana"))).toEqual([
+      "usr_duda",
+    ]);
+  });
+
+  test("members without a device are listed, not targeted; a device of someone no longer a member is ignored", () => {
     const s = store();
     s.delete("devices", "dev_usr_bia");
     s.delete("members", "usr_duda");
-    expect(users(pageTargets(s, { roles: {} }, MONITOR_ACTOR.id))).toEqual(["usr_ana"]);
+    const result = pageTargets(s, { roles: {} }, MONITOR_ACTOR.id);
+    expect(users(result)).toEqual(["usr_ana"]);
+    expect(result.noDevices).toEqual(["usr_bia"]);
   });
 });
 
@@ -394,7 +430,9 @@ describe("when paging fails (the paging path's fallback)", () => {
         reason: "undelivered",
       }),
     );
-    expect((await ws.events(incident)).filter((e) => e.type === "notification.failed")).toEqual([
+    // Ana has no device: recorded too (`no_devices`), apart from Bia's.
+    const failed = (await ws.events(incident)).filter((e) => e.type === "notification.failed");
+    expect(failed.filter((e) => (e.data as { userId: string }).userId === phone.userId)).toEqual([
       expect.objectContaining({
         actor: { kind: "system", id: "sys_notifier" },
         data: {
@@ -407,10 +445,9 @@ describe("when paging fails (the paging path's fallback)", () => {
       }),
     ]);
     // A later redelivery changes nothing: the page is closed.
+    const before = await ws.timeline(incident);
     await deliver(event, down, { attempts: MAX_PAGE_ATTEMPTS + 1 });
-    expect((await ws.timeline(incident)).filter((row) => row.kind === "page_failed")).toHaveLength(
-      1,
-    );
+    expect(await ws.timeline(incident)).toEqual(before);
   });
 
   test("relay errors (apns_unreachable, APNs 5xx) retry; a device delivered on an earlier try is not sent again", async () => {
@@ -457,6 +494,31 @@ describe("when paging fails (the paging path's fallback)", () => {
     );
   });
 
+  test("a device registered again with a new token while its push was out is kept", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    const fresh = "f".repeat(64);
+    const fake = relay(async () => {
+      // The app rotated its token before APNs answered that the old one is gone.
+      await ws.run(bia, "device.register", {
+        id: phone.deviceId,
+        platform: "ios",
+        environment: "sandbox",
+        pushToken: fresh,
+        voipToken: null,
+        publicKey: toBase64url(phone.recipient.publicKey),
+      });
+      return Response.json({ status: 410, reason: "Unregistered" }, { status: 502 });
+    });
+    await deliver(event, fake.send);
+    expect(fake.requests.map((r) => r.body.deviceToken)).toEqual([phone.pushToken]);
+    expect(
+      await ws.withShard((shard) => shard.store.get("devices", phone.deviceId)?.pushToken),
+    ).toBe(fresh);
+    expect((await ws.events()).map((e) => e.type)).not.toContain("device.unregistered");
+  });
+
   test("an instance without a relay records the failure at once, without retrying", async () => {
     const ws = await workspace();
     await ws.device(bia);
@@ -485,16 +547,103 @@ describe("when paging fails (the paging path's fallback)", () => {
   });
 
   test("a monitor's incident with nobody to page says so; a member's own declaration does not", async () => {
-    const ws = await workspace();
+    // Only a viewer: nobody the page is for.
+    const ws = await workspace([caio]);
     const fake = relay();
     const byMonitor = await ws.declare(MONITOR_ACTOR);
     await deliver(byMonitor.event, fake.send);
-    expect(await ws.timeline(byMonitor.incident)).toContainEqual(
-      expect.objectContaining({ kind: "page_failed", userId: null, reason: "no_devices" }),
-    );
+    expect(
+      (await ws.timeline(byMonitor.incident)).filter((row) => row.kind === "page_failed"),
+    ).toEqual([expect.objectContaining({ userId: null, reason: "no_devices" })]);
     const byAna = await ws.declare(ana);
     await deliver(byAna.event, fake.send);
     expect((await ws.timeline(byAna.incident)).map((row) => row.kind)).toEqual(["declared"]);
+  });
+
+  test("each member the page is for without a device is recorded by name, even when others were paged", async () => {
+    const ws = await workspace([ana, bia, caio, user("usr_duda", "admin")]);
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    const fake = relay();
+    expect(await deliver(event, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
+    expect(fake.requests).toHaveLength(1);
+    const failed = (await ws.timeline(incident)).filter((row) => row.kind === "page_failed");
+    // Duda has no device; Bia was paged; Ana declared it; Caio only reads.
+    expect(failed).toEqual([
+      expect.objectContaining({ userId: "usr_duda", reason: "no_devices", actor: "sys_notifier" }),
+    ]);
+    // Nobody with a device: still by name, at once.
+    const second = await ws.declare(bia);
+    await deliver(second.event, fake.send);
+    expect(
+      (await ws.timeline(second.incident))
+        .filter((row) => row.kind === "page_failed")
+        .map((row) => row.kind === "page_failed" && [row.userId, row.reason]),
+    ).toEqual([
+      ["usr_ana", "no_devices"],
+      ["usr_duda", "no_devices"],
+    ]);
+  });
+
+  test("a commander without a device: the responders are paged and the commander is recorded as not paged", async () => {
+    const ws = await workspace();
+    const anaPhone = await ws.device(ana);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    await ws.run(ana, "incident.assignRole", { id: incident, role: "commander", userId: bia.id });
+    const fake = relay();
+    expect(await deliver(event, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
+    expect(fake.requests.map((r) => r.body.deviceToken)).toEqual([anaPhone.pushToken]);
+    expect(await ws.timeline(incident)).toContainEqual(
+      expect.objectContaining({ kind: "page_failed", userId: bia.id, reason: "no_devices" }),
+    );
+  });
+
+  test("a commander with a device is the only one paged", async () => {
+    const ws = await workspace();
+    await ws.device(ana);
+    const biaPhone = await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    await ws.run(ana, "incident.assignRole", { id: incident, role: "commander", userId: bia.id });
+    const fake = relay();
+    await deliver(event, fake.send);
+    expect(fake.requests.map((r) => r.body.deviceToken)).toEqual([biaPhone.pushToken]);
+    expect((await ws.timeline(incident)).filter((row) => row.kind === "page_failed")).toEqual([]);
+  });
+
+  test(`past ${MAX_PAGE_DEVICES} devices, members none of whose devices were sent to are recorded (over_limit)`, async () => {
+    const team = Array.from({ length: 21 }, (_, i) =>
+      user(`usr_m${String(i).padStart(2, "0")}`, "responder"),
+    );
+    const ws = await workspace([ana, ...team]);
+    // Ten phones each, written straight to the table: 210 devices, 10 past the limit.
+    await ws.withShard((shard) => {
+      for (const member of team) {
+        for (let i = 0; i < 10; i++) {
+          shard.store.insert("devices", {
+            id: newId("dev", Date.now(), random),
+            userId: member.id,
+            platform: "ios",
+            environment: "sandbox",
+            pushToken: `${member.id}-${i}`.padEnd(32, "x"),
+            voipToken: null,
+            publicKey: "B",
+            registeredAt: 0,
+            updatedAt: 0,
+          });
+        }
+      }
+    });
+    const { incident, event } = await ws.declare(ana);
+    // The keys are not real points: sealing fails, which is not retried, and each member sent to is `undelivered`.
+    await deliver(event, relay().send);
+    const failed = (await ws.timeline(incident)).filter((row) => row.kind === "page_failed");
+    expect(failed.filter((row) => row.kind === "page_failed" && row.reason === "over_limit")).toEqual([
+      expect.objectContaining({ userId: "usr_m20" }),
+    ]);
+    expect(failed).toHaveLength(21);
+    expect(logged()).toContainEqual(
+      expect.objectContaining({ message: "page has too many devices, some skipped", limit: 200 }),
+    );
   });
 
   test("an unreachable shard retries the whole message", async () => {
@@ -512,8 +661,91 @@ describe("when paging fails (the paging path's fallback)", () => {
     ]);
   });
 
+  test("the last delivery before the dead-letter queue logs `page dead-lettered` with the event and incident", async () => {
+    const ws = await workspace();
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    const broken = {
+      WORKSPACE: { getByName: () => ({ planPage: () => Promise.reject(new Error("reset")) }) },
+    } as unknown as Parameters<typeof consumeEvents>[1];
+    const dead = () => logged().filter((line) => line.message === "page dead-lettered");
+    await deliver(event, relay().send, { environment: broken, attempts: QUEUE_MAX_RETRIES });
+    expect(dead()).toEqual([]);
+    expect(
+      (await deliver(event, relay().send, { environment: broken, attempts: QUEUE_MAX_RETRIES + 1 }))
+        .retried,
+    ).toHaveLength(1);
+    expect(dead()).toEqual([
+      expect.objectContaining({ event: event.id, incident, attempts: QUEUE_MAX_RETRIES + 1 }),
+    ]);
+  });
+
   test("retry delays double from 5 s and stop at a minute", () => {
     expect([1, 2, 3, 4, 5, 6, 9].map(retryDelay)).toEqual([5, 10, 20, 40, 60, 60, 60]);
+  });
+});
+
+describe("the dead-letter consumer", () => {
+  async function deadLetter(event: unknown, environment = { WORKSPACE: env.WORKSPACE }) {
+    const batch = createMessageBatch("brigade-events-dlq", [
+      { id: "dlq-0", timestamp: new Date(), attempts: 1, body: event },
+    ]);
+    const ctx = createExecutionContext();
+    await consumeDeadLetters(batch, environment);
+    const result = await getQueueResult(batch, ctx);
+    return { acked: result.explicitAcks, retried: result.retryMessages.map((m) => m.msgId) };
+  }
+
+  test("records a page the Queue gave up on, once, and acks", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    expect(await deadLetter(event)).toEqual({ acked: ["dlq-0"], retried: [] });
+    expect(await deadLetter(event)).toEqual({ acked: ["dlq-0"], retried: [] });
+    const failed = (await ws.timeline(incident)).filter((row) => row.kind === "page_failed");
+    expect(failed).toEqual([
+      expect.objectContaining({ userId: null, reason: "dead_lettered", actor: "sys_notifier" }),
+    ]);
+    expect((await ws.events(incident)).filter((e) => e.type === "notification.failed")).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({ eventId: event.id, reason: "dead_lettered", userId: null }),
+      }),
+    ]);
+    // The page is closed: a late redelivery of the original sends nothing.
+    const fake = relay();
+    await deliver(event, fake.send);
+    expect(fake.requests).toHaveLength(0);
+  });
+
+  test("a page already settled, or for an acknowledged incident, adds nothing", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const settled = await ws.declare(MONITOR_ACTOR);
+    await deliver(settled.event, relay().send);
+    await deadLetter(settled.event);
+    const acked = await ws.declare(MONITOR_ACTOR);
+    await ws.run(bia, "incident.ack", { id: acked.incident });
+    await deadLetter(acked.event);
+    for (const { incident } of [settled, acked]) {
+      const reasons = (await ws.timeline(incident)).map((row) => row.kind === "page_failed" && row.reason);
+      expect(reasons).not.toContain("dead_lettered");
+    }
+  });
+
+  test("never retries: an unreachable shard, a malformed message or an event that does not page is acked", async () => {
+    const ws = await workspace();
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    const broken = {
+      WORKSPACE: { getByName: () => ({ recordDeadLetter: () => Promise.reject(new Error("reset")) }) },
+    } as unknown as { WORKSPACE: typeof env.WORKSPACE };
+    expect(await deadLetter(event, broken)).toEqual({ acked: ["dlq-0"], retried: [] });
+    expect(logged()).toContainEqual(
+      expect.objectContaining({ message: "dead-lettered page could not be recorded", event: event.id }),
+    );
+    expect(await deadLetter({ nope: true })).toEqual({ acked: ["dlq-0"], retried: [] });
+    await ws.run(ana, "incident.postUpdate", { id: incident, body: "Rolling back" });
+    const update = (await ws.events(incident)).find((e) => e.type === "incident.update_posted")!;
+    expect(await deadLetter(update)).toEqual({ acked: ["dlq-0"], retried: [] });
+    expect((await ws.timeline(incident)).filter((row) => row.kind === "page_failed")).toEqual([]);
   });
 });
 

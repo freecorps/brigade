@@ -117,8 +117,20 @@ async function connect(workspaceId: string, cookie: string) {
   let read = 0;
   return {
     send: (frame: unknown) => socket.send(JSON.stringify(frame)),
+    /** The next frame; fails with a clear message after 2 s instead of hanging until the test times out. */
     async next() {
-      while (frames.length <= read) await new Promise<void>((wake) => waiting.push(wake));
+      while (frames.length <= read) {
+        await new Promise<void>((wake, fail) => {
+          const timer = setTimeout(
+            () => fail(new Error(`no frame after ${read} within 2 s`)),
+            2_000,
+          );
+          waiting.push(() => {
+            clearTimeout(timer);
+            wake();
+          });
+        });
+      }
       return frames[read++]!;
     },
   };

@@ -64,8 +64,9 @@ runQuery(queries, name, rawArgs, store, role, { onError? }) // → { ok: true, r
 - **Events and the outbox**: a successful mutation returns its domain events (`type`, `subject`, `data`). The
   server writes them to the outbox in `commit`, inside the mutation's transaction (RFC 0005); if `commit` throws,
   the rows roll back too. Clients drop the events. Every success must emit an event: one with none is a bug in
-  the mutation and becomes `internal`, unless the mutation is declared `silent` (see "Server-side writes"; today only
-  `monitor.report`, whose routine refreshes change synced fields that are not domain facts). So "no change" (setting the current status or severity) is one code for
+  the mutation and becomes `internal`, unless the mutation is declared `silent` (see "Server-side writes"; today
+  `monitor.report`, whose routine refreshes change synced fields that are not domain facts, and `member.sync`,
+  the shard's cache of the members in D1). So "no change" (setting the current status or severity) is one code for
   both, `conflict`, which also covers an existing id; it also makes a rebased mutation the server already applied
   fail locally and drop out of the optimistic view.
 - **Transactions are re-entrant.** The server already runs inside its own transaction when it calls

@@ -5,7 +5,8 @@
 ## Domain events
 
 Every successful mutation emits one or more events with a CloudEvents-style envelope (the one exception is a
-mutation declared `silent`, today only `monitor.report`'s routine refreshes; RFC 0004):
+mutation declared `silent`: today `monitor.report`'s routine refreshes and `member.sync`, the shard's cache of the
+members in D1; RFC 0004):
 
 ```ts
 interface BrigadeEvent<T = unknown> {

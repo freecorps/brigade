@@ -190,7 +190,7 @@ body: `400 invalid_body` is accepted, `401` refused) and reports to `WatchdogDO.
 operators when the pings stop.
 
 `GET /health/paging` answers `{ status }` without a session (or to a user in no workspace); `{ status, reasons,
-lastBeatAt, lastProvedAt, lastOkAt }` to a member; and `external` too to an owner or admin of any workspace.
+lastBeatAt, lastProvedAt, lastOkAt }` to a member; never `external` (operators read the logs).
 `degraded` after 3 minutes with no beat (`no_beat`), with the newest proved beat older than 3 minutes
 (`pipeline_stalled`), with the last proof over 2 minutes late (`pipeline_slow`), or with the relay
 `relay_unauthorized`, `relay_unreachable` or `relay_not_configured` on the last proof; `unknown` before the first

@@ -481,7 +481,7 @@ describe("GET /health/paging", () => {
     expect(Object.keys(await paging(lone.cookie))).toEqual(["status"]);
   });
 
-  test("a member sees why and since when; only an owner or admin sees the external check", async () => {
+  test("a member sees why and since when; nobody sees the external check", async () => {
     const owner = await signUp("owner");
     const created = await api("/workspaces", {
       method: "POST",
@@ -491,7 +491,6 @@ describe("GET /health/paging", () => {
     expect(created.status).toBe(201);
     const { id: workspaceId } = (await created.json()) as { id: string };
     expect(Object.keys(await paging(owner.cookie)).sort()).toEqual([
-      "external",
       "lastBeatAt",
       "lastOkAt",
       "lastProvedAt",

@@ -123,9 +123,9 @@ verdict or failure reason changes.
   Inside Brigade the same state is `GET /health/paging` (never a URL or an id): without a session, or for a user in
   no workspace, only `{ status }` (`ok`, `degraded` or `unknown`), since why and since when would tell an outsider when
   pages stop going out; for any member of a workspace also the reasons and the times, since a responder needs to know
-  they may not be paged; for an owner or admin of any workspace also `external` (whether the check is configured and
-  the last ping), which is the operator's business. The pipeline is one per instance and there is no instance-operator
-  role yet (Q19). The dashboard asks with the session's cookie and shows a notice above the incidents while it is not
+  they may not be paged. `external` (whether the check is configured and the last ping) is never sent: it is the
+  instance operator's business, and with open sign-up any user can own a workspace, so no workspace role stands in for
+  that operator (Q19); operators read it in the logs. The dashboard asks with the session's cookie and shows a notice above the incidents while it is not
   `ok` (nothing while it is), checking every minute while the tab is visible. `degraded` means: no beat for 3 minutes
   (`no_beat`); the newest proved beat, by when the cron wrote it, older than 3 minutes (`pipeline_stalled`: beats
   stopped coming through, or come through late from a backed-up Queue); the last proof took over 2 minutes

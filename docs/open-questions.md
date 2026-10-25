@@ -76,11 +76,9 @@ notifier exists?), and whether Q17's "page Brigade's operators on `unknown`" sho
 workspace data today).
 
 Decided for now: `GET /health/paging` says only `{ status }` without a session or to a user in no workspace; the
-reasons and times to any member of a workspace; `external` (whether the check is set up and answering) to an owner or
-admin of any workspace. Open: the pipeline is one per instance, and "owner of some workspace" is not "operator of the
-instance": with open sign-up anyone can create a workspace and own it, so `external` is effectively visible to any
-signed-up user. It says only whether a check is configured and when it was last pinged, never the URL; an
-instance-operator role (or an allowlist in configuration) would close that.
+reasons and times to any member of a workspace; `external` (whether the check is set up and answering) to nobody,
+since with open sign-up anyone can own a workspace and no workspace role stands in for the instance's operator, who
+reads it in the logs. Open: an instance-operator role (or an allowlist in configuration) to show it in the dashboard.
 
 ---
 

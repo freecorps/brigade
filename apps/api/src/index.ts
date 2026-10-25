@@ -127,16 +127,16 @@ export async function pagingHealth(
  * single workspace owns it:
  * - no session, or no workspace: `{ status }` only, like `/health`; why and since when would tell an outsider when
  *   pages stop going out;
- * - any member: the reasons and times too, since a responder needs to know they may not be paged;
- * - an owner or admin of some workspace: also `external` (whether the dead-man check is set up and answering), the
- *   operator's business. There is no instance-operator role yet (Q19).
+ * - any member: the reasons and times too, since a responder needs to know they may not be paged.
+ * `external` (whether the dead-man check is set up and answering) is never sent: it is the instance operator's
+ * business, and with open sign-up any user can own a workspace, so no workspace role can stand in for that operator
+ * (Q19). Operators read it in the logs.
  */
 export function pagingHealthFor(
   health: PagingHealth,
   roles: readonly Role[],
 ): Pick<PagingHealth, "status"> & Partial<PagingHealth> {
   if (roles.length === 0) return { status: health.status };
-  if (roles.some((role) => role === "owner" || role === "admin")) return health;
   const { external: _external, ...rest } = health;
   return rest;
 }

@@ -26,35 +26,33 @@
 // one bundled with Android Studio). Local builds are signed with the debug key, so they cannot update an install
 // signed by EAS (and the other way round): uninstall first.
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { parseArgs } from "node:util";
+import { extname, join } from "node:path";
 import {
   androidToolchain,
   appId,
   capture,
   choose,
   mobile,
+  parseOptions,
   root,
   run,
   xcode,
 } from "./lib/mobile.mjs";
 
-const { values: options } = parseArgs({
-  options: {
-    platform: { type: "string" },
-    variant: { type: "string" },
-    device: { type: "string" },
-    team: { type: "string", default: process.env.IOS_TEAM_ID },
-    from: { type: "string" },
-    yes: { type: "boolean", short: "y", default: false },
-    clean: { type: "boolean", default: false },
-    "no-build": { type: "boolean", default: false },
-    "build-only": { type: "boolean", default: false },
-    "no-launch": { type: "boolean", default: false },
-  },
+const options = parseOptions(import.meta.url, {
+  platform: { type: "string" },
+  variant: { type: "string" },
+  device: { type: "string" },
+  team: { type: "string", default: process.env.IOS_TEAM_ID },
+  from: { type: "string" },
+  yes: { type: "boolean", short: "y", default: false },
+  clean: { type: "boolean", default: false },
+  "no-build": { type: "boolean", default: false },
+  "build-only": { type: "boolean", default: false },
+  "no-launch": { type: "boolean", default: false },
 });
 const interactive = process.stdin.isTTY && !options.yes;
 const building = !options["no-build"] && !options.from;
@@ -64,9 +62,13 @@ async function chooseDevice(devices, kind) {
   const list = devices.map((item) => `  ${label(item)}`).join("\n");
   if (options.device) {
     const wanted = options.device.toLowerCase();
-    const match = devices.filter(
-      (item) => item.id.toLowerCase() === wanted || item.name.toLowerCase().includes(wanted),
+    // An exact id or name wins over a partial name, so "Pixel" can pick "Pixel" next to "Pixel 9".
+    const exact = devices.filter(
+      (item) => item.id.toLowerCase() === wanted || item.name.toLowerCase() === wanted,
     );
+    const match = exact.length
+      ? exact
+      : devices.filter((item) => item.name.toLowerCase().includes(wanted));
     assert.ok(
       match.length === 1,
       `--device ${options.device} matches ${match.length} of these:\n${list || "  (none)"}`,
@@ -127,20 +129,28 @@ async function installIos(variant) {
   if (!options["build-only"]) {
     const file = join(tmpdir(), `brigade-devices-${process.pid}.json`);
     capture("xcrun", ["devicectl", "list", "devices", "--json-output", file], { env });
-    const phones = JSON.parse(readFileSync(file, "utf8"))
-      .result.devices.filter(
-        (item) =>
-          item.hardwareProperties?.reality === "physical" &&
-          item.hardwareProperties?.platform === "iOS" &&
-          item.connectionProperties?.pairingState === "paired",
-      )
-      .map((item) => ({
-        id: item.hardwareProperties.udid,
-        name: item.deviceProperties.name,
-        model: item.hardwareProperties.marketingName,
-        os: `iOS ${item.deviceProperties.osVersionNumber}`,
-        developerMode: item.deviceProperties.developerModeStatus,
-      }));
+    const paired = JSON.parse(readFileSync(file, "utf8")).result.devices.filter(
+      (item) =>
+        item.hardwareProperties?.reality === "physical" &&
+        item.hardwareProperties?.platform === "iOS" &&
+        item.connectionProperties?.pairingState === "paired",
+    );
+    // A phone paired over Wi-Fi stays paired when it is away; only reachable ones can take an install.
+    const reachable = paired.filter(
+      (item) => item.connectionProperties?.tunnelState !== "unavailable",
+    );
+    if (!reachable.length && paired.length) {
+      console.warn(
+        `Paired but not reachable now: ${paired.map((item) => item.deviceProperties.name).join(", ")}. Plug it in or bring it onto this Wi-Fi, unlocked.`,
+      );
+    }
+    const phones = reachable.map((item) => ({
+      id: item.hardwareProperties.udid,
+      name: item.deviceProperties.name,
+      model: item.hardwareProperties.marketingName,
+      os: `iOS ${item.deviceProperties.osVersionNumber}`,
+      developerMode: item.deviceProperties.developerModeStatus,
+    }));
     await rm(file, { force: true });
     device = await chooseDevice(phones, "ios");
     assert.ok(
@@ -193,10 +203,22 @@ async function installIos(variant) {
   if (!device) return console.log(`\nBuilt ${app}`);
 
   console.log(`\nInstalling on ${device.name}.`);
-  // devicectl takes the .app from a build or an .ipa from `mobile:build` alike.
-  await run("xcrun", ["devicectl", "device", "install", "app", "--device", device.id, app], {
-    env,
-  });
+  // devicectl installs an app bundle (.app): unpack an .ipa from `mobile:build` first.
+  let unpacked;
+  if (extname(app).toLowerCase() === ".ipa") {
+    unpacked = await mkdtemp(join(tmpdir(), "brigade-ipa-"));
+    await run("ditto", ["-x", "-k", app, unpacked]);
+    const bundle = readdirSync(join(unpacked, "Payload")).find((name) => name.endsWith(".app"));
+    assert.ok(bundle, `${app} has no Payload/*.app inside.`);
+    app = join(unpacked, "Payload", bundle);
+  }
+  try {
+    await run("xcrun", ["devicectl", "device", "install", "app", "--device", device.id, app], {
+      env,
+    });
+  } finally {
+    if (unpacked) await rm(unpacked, { recursive: true, force: true });
+  }
   if (!options["no-launch"]) {
     await run(
       "xcrun",
@@ -284,30 +306,37 @@ async function installAndroid(variant) {
   });
   if (variant !== "release") {
     // Metro (8081) and the dashboard's dev server (5173) on this computer, as `localhost` on the phone.
-    for (const port of ["8081", "5173"])
-      await run(adb, ["-s", device.id, "reverse", `tcp:${port}`, `tcp:${port}`]);
+    for (const port of ["8081", "5173"]) {
+      await run(adb, ["-s", device.id, "reverse", `tcp:${port}`, `tcp:${port}`]).catch(() =>
+        console.warn(
+          `Installed, but could not forward port ${port}: run adb reverse tcp:${port} tcp:${port}.`,
+        ),
+      );
+    }
   }
   if (!options["no-launch"]) {
     // `monkey` exits with an error on Android 16 emulators, so start the launcher activity by name.
     const shell = ["-s", device.id, "shell"];
-    const activity = capture(adb, [
-      ...shell,
-      "cmd",
-      "package",
-      "resolve-activity",
-      "--brief",
-      "-c",
-      "android.intent.category.LAUNCHER",
-      appId,
-    ])
-      .trim()
-      .split(/\r?\n/)
-      .pop();
-    await run(adb, [...shell, "am", "start", "-n", activity], {
-      log: join(tmpdir(), "brigade-launch.log"),
-    }).catch(() =>
-      console.warn("Installed, but could not open it: unlock the phone and tap Brigade."),
-    );
+    try {
+      const activity = capture(adb, [
+        ...shell,
+        "cmd",
+        "package",
+        "resolve-activity",
+        "--brief",
+        "-c",
+        "android.intent.category.LAUNCHER",
+        appId,
+      ])
+        .trim()
+        .split(/\r?\n/)
+        .pop();
+      await run(adb, [...shell, "am", "start", "-n", activity], {
+        log: join(tmpdir(), "brigade-launch.log"),
+      });
+    } catch {
+      console.warn("Installed, but could not open it: unlock the phone and tap Brigade.");
+    }
   }
 }
 
@@ -325,7 +354,16 @@ async function prebuild(platform, env) {
 }
 
 try {
-  const fromPlatform = options.from && (options.from.endsWith(".apk") ? "android" : "ios");
+  const fromPlatform =
+    options.from &&
+    { ".apk": "android", ".ipa": "ios", ".app": "ios" }[extname(options.from).toLowerCase()];
+  if (options.from) {
+    assert.ok(fromPlatform, `--from takes an .apk, .ipa or .app, not ${options.from}.`);
+    assert.ok(
+      !options.variant,
+      "--variant does not apply to --from: the artifact is already built.",
+    );
+  }
   const platform =
     options.platform ??
     fromPlatform ??

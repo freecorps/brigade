@@ -281,7 +281,8 @@ Both tasks are declared in the root `vite.config.ts` with `cache: false`. A cach
 Vite+'s file-access tracking, and under it Gradle cannot start the shebang-less `prefab_command` scripts AGP 9
 writes for CMake ("error=8, Exec format error"). The same build from a plain shell works. `eas build --local`
 also needs its build plugin installed with Bun, because eas-cli starts it with `npx` and npm refuses to run under
-the root `devEngines`; `scripts/mobile-build.mjs` does that. EAS's own `expo doctor` step still fails on npm for
+the root `devEngines`; `scripts/mobile-build.mjs` does that (under `~/brigade-builds/.eas-build-plugin`, and
+points eas-cli at it with the undocumented `EAS_LOCAL_BUILD_PLUGIN_PATH`). EAS's own `expo doctor` step still fails on npm for
 the same reason, and EAS carries on past it.
 
 Verified on macOS 27.2 with the Android emulator (API 36): `mobile:build --profile preview` made an APK signed
@@ -296,6 +297,8 @@ variant, which went `Live` against Metro and the local dev server. On iOS, the R
   Apple Distribution: …". EAS's credential check had passed. Most likely, xcodebuild picked the Apple Distribution
   certificate in the login keychain, a different one from EAS's, over the one in EAS's temporary keychain.
   Compare the two (`bunx eas-cli@latest credentials -p ios`) before the next iOS build.
-- **A physical iPhone or Android phone** through the scripts.
+- **A physical iPhone or Android phone** through the scripts, including `--from` with an `.ipa`: devicectl installs
+  only app bundles, so the script unpacks `Payload/*.app` from the `.ipa` first. Untried on a phone.
+- **Windows.** The `.bat` launch for Gradle quotes each argument for `cmd.exe`; not run on Windows yet.
 
 Store submission (`eas submit --path <artifact>`) waits for Phase 4 (after the CLA).

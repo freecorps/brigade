@@ -23,21 +23,26 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { parseArgs } from "node:util";
-import { androidToolchain, capture, choose, mobile, run, xcode } from "./lib/mobile.mjs";
+import {
+  androidToolchain,
+  capture,
+  choose,
+  mobile,
+  parseOptions,
+  run,
+  xcode,
+} from "./lib/mobile.mjs";
 
-const { values: options } = parseArgs({
-  options: {
-    platform: { type: "string" },
-    profile: { type: "string" },
-    out: {
-      type: "string",
-      default: process.env.BRIGADE_BUILDS_DIR || join(homedir(), "brigade-builds"),
-    },
-    yes: { type: "boolean", short: "y", default: false },
+const options = parseOptions(import.meta.url, {
+  platform: { type: "string" },
+  profile: { type: "string" },
+  out: {
+    type: "string",
+    default: process.env.BRIGADE_BUILDS_DIR || join(homedir(), "brigade-builds"),
   },
+  yes: { type: "boolean", short: "y", default: false },
 });
 const interactive = process.stdin.isTTY && !options.yes;
 const eas = JSON.parse(readFileSync(join(mobile, "eas.json"), "utf8"));
@@ -67,12 +72,16 @@ function revision() {
 
 /**
  * EAS's local build plugin, installed with Bun outside the repository. eas-cli otherwise starts it with `npx` from
- * apps/mobile, and npm refuses to run under the root `devEngines`, which names Bun. Its version follows eas-cli's.
+ * apps/mobile, and npm refuses to run under the root `devEngines`, which names Bun. `EAS_LOCAL_BUILD_PLUGIN_PATH`
+ * is an undocumented eas-cli hook (build/local.js uses it in place of the npx command). eas-cli pins the plugin to
+ * its `@expo/eas-build-job` version, which today is always eas-cli's own version; if that ever diverges, read it
+ * from eas-cli's package.json instead. Kept under the builds folder: macOS clears unused temp folders.
  */
-async function localBuildPlugin(version) {
-  const dir = join(tmpdir(), "brigade-eas-build-plugin", version);
+async function localBuildPlugin(version, out) {
+  const dir = join(out, ".eas-build-plugin", version);
   const bin = join(dir, "node_modules/.bin/eas-cli-local-build-plugin");
-  if (!existsSync(bin)) {
+  const installed = join(dir, "node_modules/eas-cli-local-build-plugin/package.json");
+  if (!existsSync(bin) || !existsSync(installed)) {
     await mkdir(dir, { recursive: true });
     writeFileSync(join(dir, "package.json"), '{ "private": true }\n');
     await run("bun", ["add", `eas-cli-local-build-plugin@${version}`], { cwd: dir });
@@ -122,10 +131,9 @@ try {
   // One eas-cli version for the build and its plugin.
   const easVersion = /eas-cli\/(\S+)/.exec(capture("bunx", ["eas-cli@latest", "--version"]))?.[1];
   assert.ok(easVersion, "Could not read eas-cli's version from `bunx eas-cli@latest --version`.");
-  env.EAS_LOCAL_BUILD_PLUGIN_PATH = await localBuildPlugin(easVersion);
-
   const out = resolve(options.out);
   await mkdir(out, { recursive: true });
+  env.EAS_LOCAL_BUILD_PLUGIN_PATH = await localBuildPlugin(easVersion, out);
   const artifact = join(
     out,
     `brigade-${platform}-${profile}-${revision()}.${extension(platform, profile)}`,

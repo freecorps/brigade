@@ -2,17 +2,45 @@
 // the Android SDK and a JDK on this machine.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { createWriteStream, existsSync, readdirSync } from "node:fs";
+import { createWriteStream, existsSync, readFileSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const mobile = join(root, "apps/mobile");
 export const appId = "app.freecorps.brigade";
 const windows = process.platform === "win32";
+
+/**
+ * The script's options. `--help` prints the usage at the top of the script (its leading `//` comment); an unknown
+ * option prints a one-line error instead of a stack trace.
+ */
+export function parseOptions(scriptUrl, options) {
+  const usage = () =>
+    readFileSync(fileURLToPath(scriptUrl), "utf8")
+      .split(/\r?\n/)
+      .slice(1)
+      .filter((line, index, lines) => lines.slice(0, index + 1).every((l) => l.startsWith("//")))
+      .map((line) => line.replace(/^\/\/ ?/, ""))
+      .join("\n");
+  try {
+    const { values } = parseArgs({
+      options: { ...options, help: { type: "boolean", short: "h", default: false } },
+    });
+    if (values.help) {
+      console.log(usage());
+      process.exit(0);
+    }
+    return values;
+  } catch (error) {
+    console.error(`${error.message}\n\n${usage()}`);
+    process.exit(2);
+  }
+}
 
 /** Asks on a terminal; without one (or with --yes) takes the default. */
 export async function choose(interactive, question, choices, fallback) {
@@ -39,14 +67,23 @@ export async function choose(interactive, question, choices, fallback) {
 
 /** Runs a command with inherited output, or into `log` with the errors printed on failure. */
 export function run(command, args, { cwd = root, env = process.env, log } = {}) {
-  // Node refuses to spawn .bat/.cmd files without a shell.
+  // Node refuses to spawn .bat/.cmd files without a shell. Quote every part ourselves and pass the line verbatim:
+  // `/s` strips only the outer pair, so arguments with spaces (Gradle's jvmargs, paths) survive. Not yet run on
+  // Windows.
+  let verbatim = false;
   if (windows && /\.(bat|cmd)$/i.test(command)) {
-    [command, args] = ["cmd.exe", ["/d", "/s", "/c", command, ...args]];
+    const quote = (part) => `"${String(part).replace(/"/g, '""')}"`;
+    [command, args] = [
+      "cmd.exe",
+      ["/d", "/s", "/c", `"${[command, ...args].map(quote).join(" ")}"`],
+    ];
+    verbatim = true;
   }
   return new Promise((done, reject) => {
     const child = spawn(command, args, {
       cwd,
       env,
+      windowsVerbatimArguments: verbatim,
       stdio: ["inherit", log ? "pipe" : "inherit", log ? "pipe" : "inherit"],
     });
     const output = log ? createWriteStream(log) : null;
@@ -107,17 +144,24 @@ export function xcode({ release = false } = {}) {
     };
   const xcodes = readdirSync("/Applications")
     .filter((name) => /^Xcode.*\.app$/.test(name))
-    .map((name) => {
+    .flatMap((name) => {
       const path = join("/Applications", name);
       const plist = join(path, "Contents/version.plist");
       const read = (key) => capture("plutil", ["-extract", key, "raw", "-o", "-", plist]).trim();
-      // Beta builds end in a letter (27A5252f); releases do not (17F42).
-      return {
-        path,
-        name,
-        version: read("CFBundleShortVersionString"),
-        beta: /[a-z]$/.test(read("ProductBuildVersion")),
-      };
+      try {
+        // Beta builds end in a letter (27A5252f); releases do not (17F42).
+        return [
+          {
+            path,
+            name,
+            version: read("CFBundleShortVersionString"),
+            beta: /[a-z]$/.test(read("ProductBuildVersion")),
+          },
+        ];
+      } catch {
+        // Half-installed (no version.plist yet): skip it rather than stop.
+        return [];
+      }
     })
     .sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }));
   assert.ok(xcodes.length, "Install Xcode from the App Store (or set IOS_XCODE).");

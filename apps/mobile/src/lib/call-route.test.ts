@@ -187,10 +187,10 @@ describe("knownCall: a repeat of an ended page", () => {
   });
 
   test("CallRoute.kt and CallCenter.swift use the same reasons, memory and branches", () => {
-    const expected = [...REPEAT_SUPPRESSING_END_REASONS].sort();
+    const expected = new Set(REPEAT_SUPPRESSING_END_REASONS);
     const kotlin = kotlinFile("CallRoute.kt");
     const kotlinReasons = /val REPEAT_SUPPRESSING_END_REASONS = setOf\(([^)]*)\)/.exec(kotlin)?.[1];
-    expect([...(kotlinReasons ?? "").matchAll(/"(\w+)"/g)].map((m) => m[1]).sort()).toEqual(
+    expect(new Set([...(kotlinReasons ?? "").matchAll(/"(\w+)"/g)].map((m) => m[1]))).toEqual(
       expected,
     );
     const kotlinMs = /const val ENDED_MEMORY_MS = ([\d_]+)L/.exec(kotlin)?.[1]?.replaceAll("_", "");
@@ -202,7 +202,7 @@ describe("knownCall: a repeat of an ended page", () => {
     const swiftReasons = /static let repeatSuppressingReasons: Set<String> = \[([^\]]*)\]/.exec(
       swift,
     )?.[1];
-    expect([...(swiftReasons ?? "").matchAll(/"(\w+)"/g)].map((m) => m[1]).sort()).toEqual(
+    expect(new Set([...(swiftReasons ?? "").matchAll(/"(\w+)"/g)].map((m) => m[1]))).toEqual(
       expected,
     );
     expect(swift).toContain(

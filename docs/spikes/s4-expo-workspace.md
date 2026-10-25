@@ -1,9 +1,9 @@
 # Spike S4 — Expo in the workspace
 
-- Status: Partly done. Android and Metro verified; iOS and `eas build` pending (see the end)
+- Status: Partly done. Metro, Android and the iOS Simulator verified; `eas build` pending (see the end)
 - Roadmap: Phase 0, S4
 - Settles: RFC 0002 "Metro only needs to resolve the shared `packages/*` from the Bun workspace"; RFC 0008's open
-  item on Hermes `Intl` support; RFC 0004's on-device check of `UNICODE_PROPERTY_ESCAPES` (Android)
+  item on Hermes `Intl` support; RFC 0004's on-device check of `UNICODE_PROPERTY_ESCAPES` (Android and iOS)
 
 ## Question
 
@@ -26,7 +26,8 @@ one accessibility element labelled with its text. A dev-only `/intl` route repor
 Versions: Expo SDK 58 (`expo` 58.0.19, Expo CLI 58.1.15, `expo-router` 58.0.26), React Native 0.88.0, React
 19.3.0, Static Hermes 260318099.0.4, Metro 0.87.1, `@formatjs/intl-pluralrules` 6.3.16,
 `@formatjs/intl-relativetimeformat` 12.3.16, `@formatjs/intl-locale` 5.3.12,
-`@formatjs/intl-getcanonicallocales` 3.2.12, `expo-symbols` 58.0.4. Verified on the Android emulator (API 36, x86_64) from Windows 11.
+`@formatjs/intl-getcanonicallocales` 3.2.12, `expo-symbols` 58.0.4. Verified on the Android emulator (API 36, x86_64)
+from Windows 11, and on the iOS Simulator (iPhone 17, iOS 27.0) from macOS 27.2 (see "iOS Simulator").
 
 Decisions taken here:
 
@@ -126,7 +127,7 @@ two incident titles through `v.string({ min: 1, max: INCIDENT_TITLE_MAX })`, the
 uses. "Checkout down 🔥" is accepted. "Checkout" + U+200B (zero-width space) + "down" is rejected ("Contains
 control, invisible or bidi characters"). Both match the server and the Node test (`src/lib/text-samples.test.ts`).
 
-iOS runs the same Hermes. These results are expected to hold there, but it was not checked (see below).
+iOS gives the same results (see "iOS Simulator").
 
 ### Screens
 
@@ -141,32 +142,84 @@ The locale was switched with Android's per-app language (`adb shell cmd locale s
 br.com.freecorps.brigade --locales pt-BR`), which `expo-localization`'s `supportedLocales` enables. The theme was
 switched with `adb shell cmd uimode night yes|no`.
 
+### iOS Simulator
+
+Run on an iPhone 17 Simulator (iOS 27.0, 24A5423a) from macOS 27.2 with Xcode 27.0 beta 6 (27A5252f), CocoaPods
+1.17.0 and Ruby 4.0.7. Same app, versions and Hermes (260318099.0.4) as on Android.
+
+What it took:
+
+- **`bunx expo run:ios` works with no workaround in the repository.** Prebuild generates `ios/` with bundle id
+  `br.com.freecorps.brigade`. CocoaPods resolves every pod through Bun's `node_modules/.bun` symlinks.
+  `react-native-safe-area-context`, `react-native-screens` and `RNCMaskedView` autolink and build from source.
+  Reanimated, Worklets and Gesture Handler stay out (`expo.autolinking.exclude`). Prebuild prints "Updating
+  package.json", then "no changes": `package.json` is not rewritten. The development build takes about 2 minutes
+  from a clean `ios/`, pod install included, because React Native core and Hermes come prebuilt.
+- **The Xcode must have a Simulator runtime for its own iOS SDK.** This Mac also had Xcode 26.6 (iOS 26.5 SDK)
+  selected, with only the iOS 27.0 runtime installed. `xcodebuild` then finds no destination ("Unable to find a
+  destination matching the provided destination specifier"). `DEVELOPER_DIR=<Xcode 27>/Contents/Developer bunx
+  expo run:ios` builds with the matching Xcode without changing `xcode-select`.
+- **Fixed: the launch screen ignored the splash ground.** Without a splash image, `expo-splash-screen` 58.0.11
+  writes the light and dark ground into the `SplashScreenBackground` colour set but leaves `SplashScreen.storyboard`
+  on the template's `systemBackgroundColor`. The cold start was pure white or black, then the app drew `#f7f7f5` or
+  `#121211`. `plugins/splash-ground.ts`, a config plugin applied from `app.config.ts`, points the launch view at
+  the colour set as `expo-splash-screen` does when there is an image. Remove it once the app has a splash image.
+  Checked by recording cold starts: the ground stays the same colour from launch to the first frame in both themes
+  (`ios-splash-dark`). Android was not affected.
+- **Fixed: the `/intl` probe reported `dateStyle`/`timeStyle` as missing.** iOS's Hermes formats them correctly
+  but joins medium date and short time with " at " ("Mar 5, 2026 at 2:30 PM"), where Android and Node print ", ".
+  That is locale data, not support, so `src/intl/probe.ts` accepts both joiners. No `@formatjs` date or number
+  polyfill is needed.
+
+Hermes `Intl` on iOS, measured by the same probe (screenshot `ios-intl`):
+
+| Feature                                  | Hermes (iOS 27 Simulator, RN 0.88)               | With polyfills               |
+| ---------------------------------------- | ------------------------------------------------ | ---------------------------- |
+| `Intl.PluralRules`                       | **Missing**                                      | Works (`@formatjs`, en + pt) |
+| `Intl.RelativeTimeFormat`                | **Missing**                                      | Works (`@formatjs`, en + pt) |
+| `Intl.Locale`                            | **Missing**                                      | Works (`@formatjs`)          |
+| `DateTimeFormat` `dateStyle`/`timeStyle` | Works (joins with " at ")                        | native                       |
+| `DateTimeFormat` `timeZone` (IANA)       | Works                                            | native                       |
+| `Intl.NumberFormat` (en, pt-BR)          | Works                                            | native                       |
+| Regex Unicode property escapes (`\p{…}`) | **Works** (`UNICODE_PROPERTY_ESCAPES` is `true`) | not polyfilled               |
+
+"Checkout down 🔥" is accepted and "Checkout" + U+200B + "down" rejected, as on Android. The helpers render the same
+strings as on Android except the date: "Oct 24, 2026 at 11:39 PM" in `en`; `pt-BR` is "24 de out. de 2026, 23:40"
+on both (`ios-intl-rendered`, `ios-intl-rendered-pt-BR`). `/intl` never hung; the app sat idle once drawn.
+
+The checklist, each item passed:
+
+1. Build and launch: as above.
+2. The overview renders the workspace packages from source: badges with glyphs, plural rows, date and relative
+   time (`ios-light-en`).
+3. Light and dark follow the system while the app runs (`xcrun simctl ui booted appearance dark|light`), and the
+   splash ground matches each theme after the fix above (`ios-dark-en`, `ios-splash-dark`).
+4. `pt-BR` (`ios-light-pt-BR`, `ios-dark-pt-BR`). The built `Info.plist` has `CFBundleLocalizations` `en` and
+   `pt-BR`. The language was set per launch with `xcrun simctl launch booted br.com.freecorps.brigade
+   -AppleLanguages "(pt-BR)" -AppleLocale pt_BR`, not through Settings → Apps → Brigade → Language.
+5. `/intl`: the table above.
+6. Safe areas: the header sits below the Dynamic Island, content never scrolls under the status bar, and the last
+   card clears the home indicator (`ios-safe-area-bottom`).
+7. Reduce Motion (`xcrun simctl spawn booted defaults write com.apple.Accessibility ReduceMotionEnabled -bool
+   true`, then relaunch): pushing `/intl` cross-fades in about 350 ms instead of sliding (`ios-reduce-motion-fade`
+   against `ios-push-slide`, recordings `ios-reduce-motion-push.mp4` and `ios-default-push.mp4`).
+8. Dynamic Type at `accessibility-extra-extra-extra-large`: text grows, rows grow and badges wrap one per line,
+   nothing clips (`ios-dynamic-type-xxxl-pt-BR`). Set with `xcrun simctl ui booted content_size`, it applied on
+   the next launch, not to the running app; a live change from Settings was not tried. The badge glyphs keep their
+   fixed size (`fontSize.sm`); scaling them with the text is left for when the badges get real use.
+
+How it was driven: on this beta runtime, XCTest-based input (taps, swipes, the "Open in Brigade?" prompt that
+`xcrun simctl openurl brigade://intl` raises) timed out, so no screen was reached by tapping. `/intl` and the
+bottom of the overview were reached with a temporary `router.push("/intl")` and `scrollToEnd` in a development
+build, not committed. Screenshots come from `xcrun simctl io booted screenshot` once the app was drawn in the
+foreground, and each was checked by eye.
+
 ## Decision
 
 Keep Expo with Metro for mobile (RFC 0002 unchanged in substance): no custom resolver, only the
 `@freecorps/source` condition. Ship the four `@formatjs` polyfills with `en` and `pt` data, loaded before
 anything formats. Add locale data for each new locale. Revisit when Hermes ships `PluralRules` and
 `RelativeTimeFormat`: the polyfills step aside on their own, so the only cost of keeping them is bundle size.
-
-## Not verified on iOS (needs a Mac)
-
-Nothing here ran on iOS. On a Mac with Xcode and an iOS Simulator, from `apps/mobile`:
-
-1. `vp install` at the root, then `bunx expo run:ios`. Prebuild must generate `ios/` with bundle id
-   `br.com.freecorps.brigade`, pods must install (CocoaPods resolving through `node_modules/.bun` symlinks), and
-   the development build must launch on the Simulator.
-2. The overview renders with the workspace packages from source: badges, plural rows, date and relative time.
-3. Light and dark (Simulator: Features → Toggle Appearance); the splash ground matches the theme.
-4. `pt-BR`: Settings → Apps → Brigade → Language → Português (Brasil). The app follows it, and
-   `CFBundleLocalizations` lists `en` and `pt-BR`.
-5. `/intl`: record the same table for iOS Hermes. Expect PluralRules, RelativeTimeFormat and Locale "Polyfilled"
-   and the rest "Native". If DateTimeFormat or NumberFormat fail there, add `@formatjs/intl-datetimeformat` or
-   `-numberformat` with `en`/`pt` data. Check "Regex property escapes" is "Yes" and the two titles are accepted
-   and rejected as on Android. If it is "No", clients fall back to the reduced rules and the server still
-   enforces the full ones; do not polyfill.
-6. The header, the safe areas (notch and home indicator) and that nothing sits under the status bar.
-7. Reduce Motion on (Settings → Accessibility → Motion): pushing `/intl` fades instead of sliding.
-8. Dynamic Type at the largest accessibility size: rows grow and badges wrap.
 
 ## What EAS needs (Heitor's account)
 

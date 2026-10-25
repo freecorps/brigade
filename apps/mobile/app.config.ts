@@ -2,11 +2,16 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 // By path, not "@freecorps/brigade-ui": Expo's config loader does not use the @freecorps/source
 // condition, so the package name would need packages/ui built first.
 import { themes } from "../../packages/ui/src/tokens.ts";
+import { withSplashGround } from "./plugins/splash-ground.ts";
 
 // One id on both stores. Freecorps owns freecorps.com.br, so reverse-DNS from it.
 const APP_ID = "br.com.freecorps.brigade";
 
-export default ({ config }: ConfigContext): ExpoConfig => ({
+export default ({ config }: ConfigContext): ExpoConfig =>
+  // iOS: point the launch screen at the splash ground, which expo-splash-screen skips without an image.
+  withSplashGround(appConfig(config), { fallback: themes.light.background });
+
+const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
   ...config,
   name: "Brigade",
   slug: "brigade",

@@ -1,8 +1,8 @@
 import { defineConfig } from "vite-plus";
 import { workspaceSource } from "../../vite.workspace.ts";
 
-// Only unit tests run under Vite+ (pure logic in src/lib and src/intl, no React Native): Metro bundles
-// the app. They run in Node on CI, without an emulator.
+// Only unit tests run under Vite+ (pure logic in src/lib, src/intl and plugins/, no React Native): Metro
+// bundles the app. They run in Node on CI, without an emulator.
 export default defineConfig({
   plugins: [workspaceSource()],
   resolve: { tsconfigPaths: true },
@@ -18,6 +18,6 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "plugins/**/*.test.ts"],
   },
 });

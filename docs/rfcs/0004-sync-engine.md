@@ -108,8 +108,8 @@ runQuery(queries, name, rawArgs, store, role, { onError? }) // → { ok: true, r
   engine without them, clients fall back to rejecting only controls, separators, bidi overrides/isolates, tag
   characters, U+FE00–U+FE0D and unpaired surrogates, and leave the rest to the server, which always runs the full
   rule.
-  `UNICODE_PROPERTY_ESCAPES` tells which path is active; S4 checks it is `true` on device: it is on Android
-  (Hermes in React Native 0.88), and iOS is pending. Unassigned (`Cn`) depends on each engine's
+  `UNICODE_PROPERTY_ESCAPES` tells which path is active; S4 checked it is `true` on device: it is on Android
+  and on iOS (Hermes in React Native 0.88). Unassigned (`Cn`) depends on each engine's
   Unicode version, so a code point newer than a client's tables can fail there optimistically while the server
   accepts it; the server's answer wins.
 - **In S3 the `WorkspaceDO` incident index is temporarily authoritative** for status and severity. Once

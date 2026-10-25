@@ -18,6 +18,9 @@ vp run start            # Metro only, for an already installed development build
 
 Use `bunx`, not `npx`: npm refuses to run in this repository because the root `devEngines` names Bun.
 
+On macOS, the selected Xcode must have a Simulator runtime for its own iOS SDK. With several Xcodes installed, pick
+one per command with `DEVELOPER_DIR=/Applications/<Xcode>.app/Contents/Developer bunx expo run:ios`.
+
 `android/` and `ios/` are generated from `app.config.ts` and gitignored; change native settings there, never in
 the generated folders.
 
@@ -37,6 +40,8 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
   (or Android 13+/iOS per-app language) pick `en` or `pt-BR` through `resolveLocale`.
 - **Icons:** `expo-symbols`, with an SF Symbol for iOS and a Material Symbol for Android and web for every glyph
   (`src/components/glyphs.ts`), never one family on both.
+- **Splash ground on iOS:** `plugins/splash-ground.ts` points the launch screen at the light/dark ground, which
+  `expo-splash-screen` only does when there is a splash image. Drop it once the app has one.
 - **Autolinking:** `expo-router`'s optional peers (Reanimated, Worklets, Gesture Handler) are installed by Bun
   but excluded from autolinking until the app uses them.
 

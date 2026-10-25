@@ -29,4 +29,15 @@ describe("probeIntl", () => {
     const report = probeIntl(intlWith({ DateTimeFormat: IgnoresStyle }));
     expect(report.dateTimeStyle).toMatchObject({ works: false, detail: "3/5/2026" });
   });
+
+  test("accepts the date-time joiner iOS's Hermes uses", () => {
+    // Apple's ICU joins medium date and short time with " at " (iOS 27 Simulator, RN 0.88).
+    class JoinsWithAt extends Intl.DateTimeFormat {
+      override format(date?: Date | number): string {
+        return super.format(date).replace(", 2:30", " at 2:30");
+      }
+    }
+    const report = probeIntl(intlWith({ DateTimeFormat: JoinsWithAt }));
+    expect(report.dateTimeStyle).toMatchObject({ works: true, detail: "Mar 5, 2026 at 2:30 PM" });
+  });
 });

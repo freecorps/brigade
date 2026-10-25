@@ -7,8 +7,14 @@ import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, test } from "vite-plus/test";
 import { newId, type Actor, type IncidentStatus } from "@freecorps/brigade-schema";
-import { createSyncClient, type MutationOutcome } from "../src/client.ts";
-import { SyncProvider, useConnectionState, useMutation, useQuery } from "../src/react.ts";
+import { createSyncClient, type MutationOutcome, type SyncClient } from "../src/client.ts";
+import {
+  SyncProvider,
+  useConnectionState,
+  useMutation,
+  useQuery,
+  useSyncClient,
+} from "../src/react.ts";
 import { FakeNetwork, FakeServer, FakeTimers } from "./fake-server.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -19,10 +25,16 @@ const ana: Actor = { kind: "user", id: "usr_ana", role: "responder" };
 const ops: Actor = { kind: "system", id: "sys_alerts", role: "admin" };
 
 let root: Root | undefined;
+let current: SyncClient | undefined;
 
+// Unmount and close inside act, even after a failed assertion, so nothing leaks into the next test.
 afterEach(() => {
-  act(() => root?.unmount());
+  act(() => {
+    root?.unmount();
+    current?.close();
+  });
   root = undefined;
+  current = undefined;
   document.body.innerHTML = "";
 });
 
@@ -42,6 +54,7 @@ function setup() {
     random: () => 0.5,
     randomBytes,
   });
+  current = client;
   const incidentId = () => newId("inc", clock(), randomBytes);
   return { client, network, server, shard: server.shard(SHARD), incidentId };
 }
@@ -80,6 +93,7 @@ function mount(node: ReactNode) {
     root.render(node);
   });
   return {
+    container,
     items: () => [...container.querySelectorAll("li")].map((li) => li.textContent),
     section: () => container.querySelector("section")!,
   };
@@ -119,7 +133,6 @@ test("mounted hooks render rows, show an optimistic declare at once and settle i
   });
   expect(view.items()).toEqual(["2 Search slow triage", "1 Checkout down triage"]);
   expect(view.section().dataset.pending).toBe("false");
-  client.close();
 });
 
 test("a mutation the server rejects rolls back in the mounted list", async () => {
@@ -153,5 +166,28 @@ test("a mutation the server rejects rolls back in the mounted list", async () =>
   act(() => network.disconnect());
   act(() => network.flush());
   expect(view.section().dataset.connection).toBe("waiting");
-  client.close();
+});
+
+test("useConnectionState follows a new shard option; useSyncClient returns the provider's client", () => {
+  const { client, network } = setup();
+  const actions: Actions = {};
+  let seen: SyncClient | undefined;
+  function Other({ shard }: { shard: string }) {
+    seen = useSyncClient();
+    return createElement("output", null, useConnectionState({ shard }));
+  }
+  const tree = (shard: string) =>
+    createElement(
+      SyncProvider,
+      { client, shard: SHARD },
+      createElement(Incidents, { actions }),
+      createElement(Other, { shard }),
+    );
+  const view = mount(tree("ws_2"));
+  act(() => network.flush());
+  const output = () => view.container.querySelector("output")!.textContent;
+  expect(output()).toBe("idle"); // Nothing opened ws_2.
+  act(() => root!.render(tree(SHARD)));
+  expect(output()).toBe("open");
+  expect(seen).toBe(client);
 });

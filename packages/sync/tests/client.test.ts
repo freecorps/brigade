@@ -1295,3 +1295,66 @@ test("closing the client tells connection listeners the shard is idle", async ()
   a.close();
   expect(seen).toEqual(["connecting", "open", "idle"]);
 });
+
+test("a failed send or a protocol error goes from open straight to waiting, with no passing idle", async () => {
+  const { client, settle, network, incidentId } = setup();
+  for (const fault of ["send", "protocol"] as const) {
+    const a = client(ana);
+    const seen: string[] = [];
+    a.onConnectionChange(SHARD, () => seen.push(a.connectionState(SHARD)));
+    a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+    await settle();
+    const socket = network.sockets.at(-1)!;
+    if (fault === "send") {
+      socket.send = () => {
+        throw new Error("socket gone");
+      };
+      void a.mutate(SHARD, "incident.declare", {
+        id: incidentId(),
+        title: "Lost",
+        severity: "sev3",
+      });
+    } else {
+      socket.deliver(JSON.stringify({ type: "error", code: "protocol", message: "Unsupported" }));
+      await settle();
+    }
+    expect(seen).toEqual(["connecting", "open", "waiting"]);
+    a.close();
+  }
+});
+
+test("a transport that throws goes from idle to waiting, never connecting", async () => {
+  const { client, settle } = setup();
+  const a = client(ana, ana, {
+    transport: () => {
+      throw new Error("no network stack");
+    },
+  });
+  const seen: string[] = [];
+  a.onConnectionChange(SHARD, () => seen.push(a.connectionState(SHARD)));
+  a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+  await settle();
+  expect(seen).toEqual(["waiting"]);
+  a.close();
+});
+
+test("connection listeners are independent: one leaving or throwing does not stop the others", async () => {
+  const { client, settle, network, warnings } = setup();
+  const a = client(ana);
+  const first: string[] = [];
+  const second: string[] = [];
+  const stopFirst = a.onConnectionChange(SHARD, () => first.push(a.connectionState(SHARD)));
+  a.onConnectionChange(SHARD, () => {
+    throw new Error("listener bug");
+  });
+  a.onConnectionChange(SHARD, () => second.push(a.connectionState(SHARD)));
+  a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+  await settle();
+  stopFirst();
+  network.disconnect();
+  await settle();
+  expect(first).toEqual(["connecting", "open"]);
+  expect(second).toEqual(["connecting", "open", "waiting"]);
+  expect(warnings.filter((w) => w === "A connection listener threw")).toHaveLength(3);
+  a.close();
+});

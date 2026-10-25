@@ -690,7 +690,10 @@ export class SyncClient<
     this.connectionChanged(shard.id);
   }
 
-  /** Closes the shard's socket, if any, without reconnecting. */
+  /**
+   * Closes the shard's socket, if any, without reconnecting. It does not notify connection listeners: each caller
+   * does once it has settled the next state (a retry, or idle), so they never see a passing `idle`.
+   */
   private closeSocket(shard: Shard, reason: string): void {
     const socket = shard.socket;
     shard.socket = null;
@@ -701,7 +704,6 @@ export class SyncClient<
     } catch (error) {
       this.warn(`Could not close the socket for ${shard.id}`, error);
     }
-    this.connectionChanged(shard.id);
   }
 
   private disconnect(shard: Shard): void {
@@ -806,6 +808,7 @@ export class SyncClient<
       this.warn(`Could not send to ${shard.id}`, error);
       this.closeSocket(shard, "send failed");
       if (!this.closed && this.refs(shard) > 0) this.retry(shard);
+      this.connectionChanged(shard.id);
     }
   }
 
@@ -1003,6 +1006,7 @@ export class SyncClient<
       shard.healthy = false;
       this.closeSocket(shard, "protocol");
       if (!this.closed && this.refs(shard) > 0) this.retry(shard);
+      this.connectionChanged(shard.id);
     }
   }
 

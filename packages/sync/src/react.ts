@@ -41,11 +41,13 @@ export function SyncProvider({ client, shard, children }: SyncProviderProps) {
 
 function useSync(): SyncContextValue {
   const value = useContext(SyncContext);
-  if (!value)
-    throw new Error(
-      "useQuery, useMutation and useConnectionState need a <SyncProvider> above them",
-    );
+  if (!value) throw new Error("Brigade Sync hooks need a <SyncProvider> above them");
   return value;
+}
+
+/** The provider's client, for what the hooks do not cover (`client.newId("inc")` for a declare). */
+export function useSyncClient(): SyncClient {
+  return useSync().client;
 }
 
 export type HookOptions = {

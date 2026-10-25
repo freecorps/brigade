@@ -4,11 +4,11 @@ The Brigade Sync client for the web dashboard and the mobile app: the wire proto
 `SyncClient` and React hooks. Design: [RFC 0004](../../docs/rfcs/0004-sync-engine.md). Mutations, queries and the
 row store come from [`@freecorps/brigade-schema`](../schema/README.md); the same code runs on the server.
 
-| Import                             | What                                                                          |
-| ---------------------------------- | ----------------------------------------------------------------------------- |
-| `@freecorps/brigade-sync`          | `createSyncClient`, `SyncClient`, the protocol (re-exported)                  |
-| `@freecorps/brigade-sync/protocol` | Message types, `PROTOCOL_VERSION`, `parseServerMessage`, `parseClientMessage` |
-| `@freecorps/brigade-sync/react`    | `SyncProvider`, `useQuery`, `useMutation`, `useConnectionState` (React peer)  |
+| Import                             | What                                                                             |
+| ---------------------------------- | -------------------------------------------------------------------------------- |
+| `@freecorps/brigade-sync`          | `createSyncClient`, `SyncClient`, the protocol (re-exported)                     |
+| `@freecorps/brigade-sync/protocol` | Message types, `PROTOCOL_VERSION`, `parseServerMessage`, `parseClientMessage`    |
+| `@freecorps/brigade-sync/react`    | `SyncProvider`, `useQuery`, `useMutation`, `useConnectionState`, `useSyncClient` |
 
 ## Web and mobile
 
@@ -67,6 +67,7 @@ function ActiveIncidents() {
 - `useConnectionState({ shard? })` returns the shard's socket state: `idle`, `connecting`, `open` or `waiting` (for
   a retry). It only reads; queries and mutations open the socket. A failed upgrade reaches a browser only as a
   close, so "never loaded and `waiting`" is the only sign the shard is unreachable.
+- `useSyncClient()` returns the provider's client, for what the hooks do not cover (`newId("inc")` for a declare).
 - Without React: `client.query(shard, name, args)` returns a handle with `subscribe(listener)` and
   `getSnapshot()` (the `useSyncExternalStore` contract); `client.mutate(shard, name, args)`;
   `client.newId(prefix)`; `client.connectionState(shard)` and `client.onConnectionChange(shard, listener)` for an offline indicator; `client.close()`, after

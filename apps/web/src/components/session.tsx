@@ -1,13 +1,15 @@
 import { m } from "@freecorps/brigade-i18n";
-import { isRole, WORKSPACE_NAME_MAX } from "@freecorps/brigade-schema";
+import { isRole } from "@freecorps/brigade-schema";
 import { SyncProvider } from "@freecorps/brigade-sync/react";
 import { Navigate } from "@tanstack/react-router";
 import { LoaderCircleIcon, RefreshCwIcon } from "lucide-react";
 import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AuthPage } from "@/components/auth-page";
+import { usePreferences } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
 import { Field, FormError } from "@/components/ui/field";
 import { authClient, checkWorkspaceName, createWorkspace } from "@/lib/auth";
+import { usePageTitle } from "@/lib/page-title";
 import { setSyncActor } from "@/lib/sync";
 import { syncClient } from "@/sync-client";
 
@@ -78,6 +80,10 @@ function Unavailable({ retry }: { retry: () => void }) {
 
 /** Signed in without a workspace: sign-up's second step failed, or the user left their last one. */
 function CreateWorkspace() {
+  // Read so a language switch rewords the form (RequireWorkspace's route does not read it).
+  usePreferences();
+  usePageTitle(m.page_title_create_workspace());
+  const session = authClient.useSession();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | undefined>();
   const [failure, setFailure] = useState<string | null>(null);
@@ -100,8 +106,8 @@ function CreateWorkspace() {
       setBusy(false);
       return;
     }
-    // Refreshes the session and the active workspace, which re-renders the gate into the dashboard.
-    await authClient.organization.setActive({ organizationId: created.workspace.id });
+    // `POST /workspaces` made it active; reloading the session re-renders the gate into the dashboard.
+    await session.refetch();
   };
 
   return (
@@ -110,13 +116,13 @@ function CreateWorkspace() {
         <Field
           ref={input}
           label={m.workspace_name_label()}
-          placeholder={m.workspace_name_placeholder()}
+          hint={error ? undefined : m.workspace_name_hint()}
           autoComplete="organization"
-          maxLength={WORKSPACE_NAME_MAX}
           value={name}
           onChange={(event) => {
             setName(event.target.value);
             setError(undefined);
+            setFailure(null);
           }}
           error={error}
         />

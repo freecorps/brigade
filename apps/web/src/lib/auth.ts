@@ -2,7 +2,7 @@
 // forwards `/api/auth/*` to the API Worker), the dashboard's own `POST /api/workspaces`, and the pure checks and
 // error wording the forms use (tested in test/auth.test.ts).
 import { m } from "@freecorps/brigade-i18n";
-import { workspaceName } from "@freecorps/brigade-schema";
+import { WORKSPACE_NAME_MAX, workspaceName } from "@freecorps/brigade-schema";
 import { organizationClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 
@@ -43,14 +43,19 @@ export function checkWorkspaceName(
 ): { ok: true; name: string } | { ok: false; error: string } {
   if (name.trim() === "") return { ok: false, error: m.auth_error_required() };
   const result = workspaceName(name);
-  return result.ok
-    ? { ok: true, name: result.value }
-    : { ok: false, error: m.workspace_name_invalid() };
+  if (result.ok) return { ok: true, name: result.value };
+  // The inputs have no `maxLength`, which would cut a pasted name short without a word; this says it instead.
+  if (name.trim().length > WORKSPACE_NAME_MAX) {
+    return { ok: false, error: m.auth_error_too_long({ max: WORKSPACE_NAME_MAX }) };
+  }
+  return { ok: false, error: m.workspace_name_invalid() };
 }
 
 export function checkSignUp(values: Record<SignUpField, string>): FieldErrors<SignUpField> {
   const errors: FieldErrors<SignUpField> = {};
   if (values.name.trim() === "") errors.name = m.auth_error_required();
+  else if (values.name.trim().length > NAME_MAX)
+    errors.name = m.auth_error_too_long({ max: NAME_MAX });
   const email = checkEmail(values.email);
   if (email) errors.email = email;
   const password = checkPassword(values.password);

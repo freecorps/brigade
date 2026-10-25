@@ -9,6 +9,7 @@ import {
   queries,
   runMutation,
   runQuery,
+  serverMutations,
   TABLES,
   type Actor,
   type AnyQuery,
@@ -65,6 +66,11 @@ export type MutateInput = {
   name: unknown;
   args: unknown;
   now: number;
+  /**
+   * Set only for the Worker's own calls (provisioning): it may also run server-only mutations such as
+   * `workspace.create`. A socket's mutations are looked up among the client-facing ones alone.
+   */
+  internal?: boolean;
 };
 
 export type MutateOutcome = {
@@ -200,23 +206,30 @@ export class Shard {
     this.store.track();
     let outcome;
     try {
-      outcome = runMutation(mutations, input.name, input.args, this.store, ctx, {
-        commit: (events) => {
-          try {
-            done.committed = this.commit(events, { ...input, workspaceId });
-          } catch (error) {
-            // `runMutation` would answer it with `internal`; it is rethrown below instead.
-            done.failed = { error };
-            throw error;
-          }
+      outcome = runMutation(
+        input.internal ? serverMutations : mutations,
+        input.name,
+        input.args,
+        this.store,
+        ctx,
+        {
+          commit: (events) => {
+            try {
+              done.committed = this.commit(events, { ...input, workspaceId });
+            } catch (error) {
+              // `runMutation` would answer it with `internal`; it is rethrown below instead.
+              done.failed = { error };
+              throw error;
+            }
+          },
+          onError: (error, name) => {
+            if (done.failed) return;
+            // From the store under the mutation, not from its code: rethrown below, never stored.
+            if (error instanceof StorageFailure) done.failed = { error };
+            else this.options.log("mutation failed", { mutation: name, error });
+          },
         },
-        onError: (error, name) => {
-          if (done.failed) return;
-          // From the store under the mutation, not from its code: rethrown below, never stored.
-          if (error instanceof StorageFailure) done.failed = { error };
-          else this.options.log("mutation failed", { mutation: name, error });
-        },
-      });
+      );
     } finally {
       this.store.untrack();
     }

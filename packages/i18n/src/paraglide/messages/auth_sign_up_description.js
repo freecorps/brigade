@@ -19,6 +19,6 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 export const auth_sign_up_description = /** @type {((inputs?: Auth_Sign_Up_DescriptionInputs, options?: { locale?: "en" | "pt-BR" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Auth_Sign_Up_DescriptionInputs, { locale?: "en" | "pt-BR" }, {}>} */ ((inputs = {}, options = {}) => {
 	void inputs;
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
-	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("Você será o dono de um novo espaço de trabalho. Convide seu time depois de configurar.")
+	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("O novo espaço de trabalho será seu. Convide seu time depois de configurar.")
 	return /** @type {LocalizedString} */ ("You will own a new workspace. Invite your team once it is set up.")
 });

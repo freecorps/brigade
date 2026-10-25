@@ -1,6 +1,6 @@
 import { workspaceName } from "@freecorps/brigade-schema";
 import { ACTOR_HEADER, resolveActor } from "./actor.ts";
-import { AUTH_BASE_PATH, createAuth, type Auth } from "./auth.ts";
+import { AUTH_BASE_PATH, createAuth, type Auth, type AuthBindings } from "./auth.ts";
 import { WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
 
 export { WorkspaceDO } from "./workspace.ts";
@@ -8,16 +8,33 @@ export { WorkspaceDO } from "./workspace.ts";
 const WORKSPACE_PATH = /^\/workspaces\/([^/]+)$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const READ_METHODS = ["GET", "HEAD"];
-/** Largest `POST /workspaces` body read. */
+/** Largest `POST /workspaces` body read, in bytes. */
 const MAX_BODY_LENGTH = 4096;
+
+/**
+ * The organization plugin's routes the dashboard calls. Every other `/auth/organization/*` route (update, delete,
+ * member roles, removing or adding members, invitations, teams, leaving) is refused until it emits its
+ * `workspace.*` / `member.*` event through the shard's outbox (RFC 0005); creating goes through `POST /workspaces`.
+ */
+const ORGANIZATION_ROUTES = new Set([
+  "/organization/get-full-organization",
+  "/organization/get-active-member",
+  "/organization/set-active",
+  "/organization/list",
+]);
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const { pathname } = new URL(request.url);
-    // One Better Auth instance per request, made only once the request needs it: creating one starts its
-    // initialisation, and a request that ends before awaiting it leaves that work behind (see workerAuth).
-    const auth = () => workerAuth(env, ctx);
+    // One Better Auth instance per request (its cookies depend on the request's protocol), made only once the
+    // request needs it, so other routes skip its initialisation. test/auth.test.ts checks that a later request
+    // never waits on an earlier one's instance.
+    const auth = () => workerAuth(env, ctx, request);
     if (pathname === AUTH_BASE_PATH || pathname.startsWith(`${AUTH_BASE_PATH}/`)) {
+      const route = pathname.slice(AUTH_BASE_PATH.length);
+      if (route.startsWith("/organization/") && !ORGANIZATION_ROUTES.has(route)) {
+        return json({ error: "not_found" }, 404);
+      }
       return auth().handler(request);
     }
     const sync = SYNC_PATH.exec(pathname)?.[1];
@@ -44,28 +61,43 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-/** Better Auth on this Worker's D1; a new workspace gets its shard provisioned right away. */
-export function workerAuth(env: Env, ctx: Pick<ExecutionContext, "waitUntil">): Auth {
+/**
+ * Better Auth on this Worker's D1 for one request; a new workspace gets its shard provisioned right away.
+ * `onWorkspaceCreated` replaces the provisioning (the tests make it fail).
+ */
+export function workerAuth(
+  env: Env,
+  ctx: Pick<ExecutionContext, "waitUntil">,
+  request: Request,
+  onWorkspaceCreated?: AuthBindings["onWorkspaceCreated"],
+): Auth {
   return createAuth({
     database: env.DB,
     secret: env.BETTER_AUTH_SECRET,
     waitUntil: (promise) => ctx.waitUntil(promise),
-    onWorkspaceCreated: async ({ id, name, ownerId }) => {
-      const result = await env.WORKSPACE.getByName(id).provision(
-        { id, name },
-        { kind: "user", id: ownerId, role: "owner" },
-      );
-      if (!result.ok) throw new Error(`Provisioning workspace ${id} failed: ${result.code}`);
-    },
+    // The web Worker forwards with the browser's URL, so this is the protocol the browser used.
+    secureCookies: new URL(request.url).protocol === "https:",
+    onWorkspaceCreated: onWorkspaceCreated ?? provisionWith(env),
   });
+}
+
+function provisionWith(env: Env): NonNullable<AuthBindings["onWorkspaceCreated"]> {
+  return async ({ id, name, ownerId }) => {
+    const result = await env.WORKSPACE.getByName(id).provision(
+      { id, name },
+      { kind: "user", id: ownerId, role: "owner" },
+    );
+    if (!result.ok) throw new Error(`Provisioning workspace ${id} failed: ${result.code}`);
+  };
 }
 
 /**
  * `POST /workspaces` `{ name }`: creates a workspace for the signed-in user, who becomes its owner, and makes
  * it the session's active workspace. Better Auth writes the organization and the membership to D1; its
- * `afterCreateOrganization` hook provisions the shard (`workspace.created` in its outbox).
+ * `afterCreateOrganization` hook provisions the shard (`workspace.created` in its outbox); if that fails, the
+ * workspace is deleted again and this answers 500.
  */
-async function createWorkspace(request: Request, lazyAuth: () => Auth): Promise<Response> {
+export async function createWorkspace(request: Request, lazyAuth: () => Auth): Promise<Response> {
   if (request.method !== "POST")
     return json({ error: "method_not_allowed" }, 405, { Allow: "POST" });
   const origin = request.headers.get("Origin");
@@ -77,8 +109,8 @@ async function createWorkspace(request: Request, lazyAuth: () => Auth): Promise<
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session) return json({ error: "unauthenticated" }, 401);
 
-  const text = await request.text();
-  if (text.length > MAX_BODY_LENGTH) return json({ error: "invalid_args" }, 400);
+  const text = await readBounded(request, MAX_BODY_LENGTH);
+  if (text === undefined) return json({ error: "invalid_args" }, 400);
   let body: unknown;
   try {
     body = JSON.parse(text);
@@ -135,6 +167,36 @@ async function openSync(
   } catch (error) {
     return failed("WorkspaceDO sync upgrade failed", workspace, error);
   }
+}
+
+/**
+ * The body as text, or undefined once it passes `max` bytes: a declared `Content-Length` over the limit is refused
+ * unread, and a stream (no length, or a wrong one) is read only up to the limit.
+ */
+async function readBounded(request: Request, max: number): Promise<string | undefined> {
+  const declared = Number(request.headers.get("Content-Length") ?? "0");
+  if (!Number.isFinite(declared) || declared > max) return undefined;
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.byteLength;
+    if (length > max) {
+      await reader.cancel();
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 function failed(message: string, workspace: string, error: unknown): Response {

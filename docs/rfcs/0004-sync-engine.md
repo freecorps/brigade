@@ -332,14 +332,22 @@ server → client
   topology"). It reads the actor from a `Brigade-Actor` header and the workspace id from `Brigade-Workspace`, on a
   request the Worker builds itself with only those two headers and `Upgrade`, so nothing the client sent reaches
   the shard; it records the workspace on first use and checks it on every later upgrade. `hello.token` is ignored.
-- **Dev actor (local only):** where `SYNC_DEV_ACTOR` is `"1"`, an upgrade **without a session** acts as
-  `{ kind: "user", id: "usr_dev", role: "responder" }` (`DEV_ACTOR`) on any shard. Only `vp dev` and the tests set
+- **Dev actor (local only):** where `SYNC_DEV_ACTOR` is `"1"` and the request is for `localhost`, `127.0.0.1` or
+  `[::1]`, an upgrade **without a session** acts as `{ kind: "user", id: "usr_dev", role: "responder" }`
+  (`DEV_ACTOR`) on any shard; for any other host it gets `401`, so a deployment that set the variable by mistake
+  still refuses it (a phone reaching `vp dev` over the LAN therefore gets no dev actor; use Metro's `--localhost`).
+  Only `vp dev` and the tests set
   it, in their Vite configs; no environment in `apps/api/wrangler.jsonc` does (`apps/web/test/worker-config.test.ts`
   checks each one), so every deployed Worker answers such an upgrade with `401`. The mobile app relies on it until
   it can sign in. A request with a session always acts as its member, flag or not.
 - **Provisioning:** when Better Auth creates a workspace (D1), the Worker calls `WorkspaceDO.provision()` over RPC.
   It claims the shard for the workspace and runs `workspace.create` as the new owner, so `workspace.created` goes
   through the outbox like any mutation (RFC 0005). It is de-duplicated like a socket's mutation and idempotent.
+  `workspace.create` is server-only: it is in `serverMutations`, which only `provision()` runs from, never in the
+  `mutations` a socket's `mutate` is looked up in (a socket sending it gets `unknown_mutation`). If provisioning
+  fails, the Worker deletes the workspace and its membership from D1 again before Better Auth makes it active, and
+  `POST /workspaces` answers `500`, so a workspace never exists without its shard. A Worker that dies between the
+  D1 write and the RPC can still leave one behind (roadmap).
 
 ## Socket topology
 

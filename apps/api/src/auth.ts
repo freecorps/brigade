@@ -5,8 +5,15 @@
 // Kept free of Workers imports: bindings come in as arguments. test/migrations.test.ts checks that migrations/
 // creates exactly what these options need, and prints the SQL for anything missing.
 
-import { newId, roles, statement, type RandomBytes } from "@freecorps/brigade-schema";
+import {
+  newId,
+  roles,
+  statement,
+  workspaceName,
+  type RandomBytes,
+} from "@freecorps/brigade-schema";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
+import { APIError } from "better-auth/api";
 import { organization } from "better-auth/plugins";
 import { createAccessControl } from "better-auth/plugins/access";
 import { adminAc, defaultStatements, ownerAc } from "better-auth/plugins/organization/access";
@@ -49,6 +56,7 @@ const ID_PREFIXES: Record<string, string> = {
   team: "team",
   teamMember: "tmm",
   organizationRole: "role",
+  rateLimit: "rl",
 };
 
 export function authId(model: string, now: number, random: RandomBytes): string {
@@ -68,11 +76,26 @@ export type AuthBindings = {
   secret: string;
   /** Runs promises after the response (`ctx.waitUntil`). */
   waitUntil?: (promise: Promise<unknown>) => void;
-  /** Called once Better Auth has created a workspace (provisions its shard). */
+  /**
+   * Whether the request came over HTTPS: cookies then get the `Secure` attribute and the `__Secure-` prefix.
+   * Better Auth would otherwise decide from `NODE_ENV === "production"`, which Workers never set.
+   */
+  secureCookies?: boolean;
+  /**
+   * Called once Better Auth has created a workspace (provisions its shard). If it throws, the workspace is
+   * deleted again (see createAuth) and the request fails, so no workspace exists without its shard.
+   */
   onWorkspaceCreated?: (workspace: { id: string; name: string; ownerId: string }) => Promise<void>;
 };
 
-export function authOptions(bindings: AuthBindings) {
+/**
+ * Requests per window for Better Auth's routes, counted per client IP and path in D1 (the `rateLimit` table), so
+ * every isolate sees the same counts. Better Auth's own stricter rules still apply on top: 3 per 10 s for
+ * `/sign-in/*`, `/sign-up/*`, `/change-password` and `/change-email`.
+ */
+export const RATE_LIMIT = { window: 60, max: 100 };
+
+export function authOptions(bindings: AuthBindings, undo?: WorkspaceUndo) {
   const random: RandomBytes = (length) => crypto.getRandomValues(new Uint8Array(length));
   return {
     appName: "Brigade",
@@ -80,6 +103,15 @@ export function authOptions(bindings: AuthBindings) {
     secret: bindings.secret,
     database: bindings.database,
     emailAndPassword: { enabled: true },
+    // Off by default on Workers (Better Auth enables it only when NODE_ENV is "production"). The in-memory store
+    // would count per isolate, so the counts live in D1.
+    rateLimit: {
+      enabled: true,
+      storage: "database",
+      ...RATE_LIMIT,
+      // Every page load reads the session; it needs no limit and should not cost a D1 write.
+      customRules: { "/get-session": false },
+    },
     databaseHooks: {
       session: {
         create: {
@@ -106,6 +138,10 @@ export function authOptions(bindings: AuthBindings) {
         // checks the schema once instead.
         validateSchema: false,
       },
+      useSecureCookies: bindings.secureCookies ?? false,
+      // Set by Cloudflare on every request (a client cannot forge it) and passed on by the web Worker's service
+      // binding; Better Auth's default, `x-forwarded-for`, is whatever the client sends.
+      ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
       ...(bindings.waitUntil ? { backgroundTasks: { handler: bindings.waitUntil } } : {}),
     },
     plugins: [
@@ -113,13 +149,32 @@ export function authOptions(bindings: AuthBindings) {
         ac,
         roles: authRoles,
         creatorRole: "owner",
+        // A workspace outlives its D1 row (its shard, its incidents); deleting one is not designed yet.
+        disableOrganizationDeletion: true,
         organizationHooks: {
+          // The same check as `POST /workspaces`, for any path that reaches Better Auth's create.
+          beforeCreateOrganization: async ({ organization: workspace }) => {
+            const name = workspaceName(workspace.name, "name");
+            if (!name.ok) {
+              throw APIError.from("BAD_REQUEST", {
+                code: "INVALID_WORKSPACE_NAME",
+                message: "Invalid workspace name",
+              });
+            }
+            return { data: { ...workspace, name: name.value } };
+          },
+          // Runs before Better Auth makes the workspace active in the session, so undoing it here leaves nothing.
           afterCreateOrganization: async ({ organization: workspace, user }) => {
-            await bindings.onWorkspaceCreated?.({
-              id: workspace.id,
-              name: workspace.name,
-              ownerId: user.id,
-            });
+            try {
+              await bindings.onWorkspaceCreated?.({
+                id: workspace.id,
+                name: workspace.name,
+                ownerId: user.id,
+              });
+            } catch (error) {
+              await undo?.(workspace.id);
+              throw error;
+            }
           },
         },
       }),
@@ -127,8 +182,22 @@ export function authOptions(bindings: AuthBindings) {
   } satisfies BetterAuthOptions;
 }
 
+/** Deletes a workspace Better Auth just created, with its memberships. */
+type WorkspaceUndo = (workspaceId: string) => Promise<void>;
+
 export function createAuth(bindings: AuthBindings) {
-  return betterAuth(authOptions(bindings));
+  // The hook runs inside a request to this instance, so its context (and adapter) exists by then.
+  const auth = betterAuth(
+    authOptions(bindings, async (workspaceId) => {
+      const { adapter } = await auth.$context;
+      await adapter.deleteMany({
+        model: "member",
+        where: [{ field: "organizationId", value: workspaceId }],
+      });
+      await adapter.delete({ model: "organization", where: [{ field: "id", value: workspaceId }] });
+    }),
+  );
+  return auth;
 }
 
 export type Auth = ReturnType<typeof createAuth>;

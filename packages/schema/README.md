@@ -15,6 +15,8 @@ See [RFC 0003](../../docs/rfcs/0003-domain-model.md) and [RFC 0004](../../docs/r
   `incidents.active`, `incident.byId` — and the `mutations` / `queries` registries.
 - `workspaces.ts`: the shard's `workspace` row and `workspace.create` (run by the API when Better Auth creates a
   workspace; emits `workspace.created`), and `workspaceName`, the name validator the API and the web forms share.
+  `workspace.create` is server only: it is in `serverMutations` (what the shard runs for the Worker), not in
+  `mutations` (what a socket may send).
 
 ```ts
 import {

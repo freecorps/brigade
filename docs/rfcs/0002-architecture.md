@@ -91,7 +91,13 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
 - **Auth:** Better Auth on Workers + D1; Expo client for mobile (OAuth/OIDC with PKCE via system browser, plus QR pairing).
   Built so far: email and password with cookie sessions for the web, and the organization plugin for workspaces
   (`apps/api/src/auth.ts`, served at `/auth/*`, `/api/auth/*` through the dashboard). One Better Auth instance per
-  request, created only when the request needs it. D1 schema changes are checked-in SQL in `apps/api/migrations/`
+  request, created only when the request needs it. Workers never set `NODE_ENV`, so what Better Auth would derive
+  from it is set explicitly: cookies are `Secure` (with the `__Secure-` prefix) when the request came over HTTPS,
+  and rate limiting is on, counted in D1 (the `rateLimit` table, so every isolate sees the same counts) per client
+  IP from `cf-connecting-ip`: 3 per 10 s for sign-in and sign-up, 100 per minute for the other routes,
+  `/get-session` exempt. The organization plugin's routes are refused except the ones the dashboard reads
+  (`get-full-organization`, `get-active-member`, `list`) and `set-active`, until the others emit their events
+  (RFC 0005); deleting a workspace is off. D1 schema changes are checked-in SQL in `apps/api/migrations/`
   (`wrangler d1 migrations apply`); `apps/api/test/migrations.test.ts` fails, printing the SQL, when Better Auth
   needs more than they create. The secret `BETTER_AUTH_SECRET` comes from `wrangler secret put` or a local
   `apps/api/.dev.vars`.

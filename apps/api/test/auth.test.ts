@@ -5,7 +5,8 @@ import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { isId, newId, type Actor } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, describe, expect, test } from "vite-plus/test";
-import worker from "../src/index.ts";
+import { RATE_LIMIT } from "../src/auth.ts";
+import worker, { createWorkspace as postWorkspace, workerAuth } from "../src/index.ts";
 import type { SocketState } from "../src/workspace.ts";
 
 const ORIGIN = "http://api.test";
@@ -20,13 +21,26 @@ let people = 0;
 /** A unique example.com address per call: every test signs up its own people. */
 const email = (name: string) => `${name.toLowerCase()}-${++people}@example.com`;
 
+let clients = 0;
+/**
+ * A new client IP (TEST-NET-2, RFC 5737) per call: sign-in and sign-up are rate-limited per IP, and every test
+ * signs up its own people. A test about the limit passes its own `cf-connecting-ip`.
+ */
+const clientIp = () => `198.51.${Math.floor(++clients / 250) % 250}.${(clients % 250) + 1}`;
+
 const api = (
   path: string,
   init: { method?: string; body?: string; headers?: Record<string, string> } = {},
+  origin = ORIGIN,
 ) =>
-  exports.default.fetch(`${ORIGIN}${path}`, {
+  exports.default.fetch(`${origin}${path}`, {
     ...init,
-    headers: { Origin: ORIGIN, "Content-Type": "application/json", ...init.headers },
+    headers: {
+      Origin: origin,
+      "Content-Type": "application/json",
+      "cf-connecting-ip": clientIp(),
+      ...init.headers,
+    },
   });
 
 /** The `name=value` pairs of a response's cookies, as a browser would send them back. */
@@ -173,6 +187,100 @@ describe("Better Auth routes", () => {
     expect(again.status).toBe(422);
   });
 
+  test("over HTTPS the cookie is Secure and __Secure- prefixed; over HTTP it is neither", async () => {
+    const secure = await api(
+      "/auth/sign-up/email",
+      {
+        method: "POST",
+        body: JSON.stringify({ name: "Ana", email: email("ana"), password: PASSWORD }),
+      },
+      "https://api.test",
+    );
+    expect(secure.status).toBe(200);
+    const [cookie] = secure.headers.getSetCookie();
+    expect(cookie).toMatch(/^__Secure-better-auth\.session_token=/);
+    expect(cookie).toMatch(/; Secure/i);
+    // The session reads back under the prefixed name.
+    const me = await api(
+      "/auth/get-session",
+      { headers: { Cookie: cookies(secure) } },
+      "https://api.test",
+    );
+    expect(((await me.json()) as { user?: unknown } | null)?.user).toBeDefined();
+
+    const plain = await signUp("Bia");
+    expect(plain.cookie).toMatch(/^better-auth\.session_token=/);
+  });
+
+  test("sign-in is rate-limited per client IP: 429 after 3 tries in 10 s", async () => {
+    const ana = await signUp("Ana");
+    const ip = "203.0.113.7";
+    const attempt = (headers: Record<string, string> = { "cf-connecting-ip": ip }) =>
+      api("/auth/sign-in/email", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ email: ana.email, password: "not the password" }),
+      });
+    for (let i = 0; i < 3; i++) expect((await attempt()).status).toBe(401);
+    const limited = await attempt();
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("X-Retry-After"))).toBeGreaterThan(0);
+    // Even the right password waits.
+    const right = await api("/auth/sign-in/email", {
+      method: "POST",
+      headers: { "cf-connecting-ip": ip },
+      body: JSON.stringify({ email: ana.email, password: PASSWORD }),
+    });
+    expect(right.status).toBe(429);
+    // Counted per IP: another client is not affected.
+    expect((await attempt({ "cf-connecting-ip": "203.0.113.8" })).status).toBe(401);
+    // The counts live in D1, so every isolate shares them.
+    const row = await env.DB.prepare(`select count from "rateLimit" where key = ?`)
+      .bind(`${ip}|/sign-in/email`)
+      .first<{ count: number }>();
+    expect(row?.count).toBe(3);
+  });
+
+  test("sign-up is rate-limited too, so it cannot probe many emails quickly", async () => {
+    const ip = "203.0.113.9";
+    const statuses: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const response = await api("/auth/sign-up/email", {
+        method: "POST",
+        headers: { "cf-connecting-ip": ip },
+        body: JSON.stringify({ name: "Eve", email: email("eve"), password: PASSWORD }),
+      });
+      statuses.push(response.status);
+    }
+    expect(statuses).toEqual([200, 200, 200, 429]);
+  });
+
+  test(`other routes allow ${RATE_LIMIT.max} requests per ${RATE_LIMIT.window} s; reading the session is not limited`, async () => {
+    const ip = "203.0.113.10";
+    for (let i = 0; i < RATE_LIMIT.max + 5; i++) {
+      const response = await api("/auth/get-session", { headers: { "cf-connecting-ip": ip } });
+      expect(response.status).toBe(200);
+    }
+    const counted = await env.DB.prepare(`select count(*) as n from "rateLimit" where key like ?`)
+      .bind(`${ip}|%`)
+      .first<{ n: number }>();
+    expect(counted?.n).toBe(0);
+  });
+
+  test("a later request never waits on an earlier request's Better Auth instance", async () => {
+    // One isolate: a request that makes no Better Auth instance, then one that does, then the reverse.
+    const timeout = <T>(promise: Promise<T>) =>
+      Promise.race([
+        promise,
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 5000)),
+      ]);
+    for (const first of ["/health", "/auth/get-session", "/nowhere"]) {
+      await api(first);
+      const response = await timeout(api("/auth/get-session"));
+      expect(response === "timeout" ? response : response.status, first).toBe(200);
+    }
+  });
+
   test("a POST from another site is refused", async () => {
     const response = await api("/auth/sign-up/email", {
       method: "POST",
@@ -220,6 +328,59 @@ describe("POST /workspaces", () => {
     });
   });
 
+  test("a shard that fails to provision leaves no workspace behind", async () => {
+    const ana = await signUp("Ana");
+    const request = new Request(`${ORIGIN}/workspaces`, {
+      method: "POST",
+      headers: { Cookie: ana.cookie, Origin: ORIGIN, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Doomed" }),
+    });
+    let called = 0;
+    const response = await postWorkspace(request, () =>
+      workerAuth(env, createExecutionContext(), request, async () => {
+        called++;
+        throw new Error("provision failed");
+      }),
+    );
+    expect(called).toBe(1);
+    expect(response.status).toBe(500);
+    const rows = await env.DB.prepare(
+      `select (select count(*) from organization where name = 'Doomed') as workspaces,
+              (select count(*) from member where "userId" = ?) as memberships`,
+    )
+      .bind(ana.user.id)
+      .first<{ workspaces: number; memberships: number }>();
+    expect(rows).toEqual({ workspaces: 0, memberships: 0 });
+    // Never made active either: the dashboard asks for a workspace again.
+    expect((await session(ana.cookie))?.session.activeOrganizationId).toBeNull();
+    // And trying again works.
+    expect((await createWorkspace(ana.cookie, "Doomed")).name).toBe("Doomed");
+  });
+
+  test("a body over 4 KiB is refused, whether or not it declares its length", async () => {
+    const ana = await signUp("Ana");
+    const big = JSON.stringify({ name: "Acme", padding: "x".repeat(5000) });
+    const declared = await api("/workspaces", {
+      method: "POST",
+      headers: { Cookie: ana.cookie },
+      body: big,
+    });
+    expect(declared.status).toBe(400);
+    const encoder = new TextEncoder();
+    const streamed = await exports.default.fetch(`${ORIGIN}/workspaces`, {
+      method: "POST",
+      headers: { Cookie: ana.cookie, Origin: ORIGIN, "Content-Type": "application/json" },
+      body: new ReadableStream({
+        start(controller) {
+          for (let i = 0; i < 5; i++) controller.enqueue(encoder.encode("x".repeat(1024)));
+          controller.close();
+        },
+      }),
+      duplex: "half",
+    } as RequestInit);
+    expect(streamed.status).toBe(400);
+  });
+
   test("a new session starts in the user's first workspace", async () => {
     const ana = await signUp("Ana");
     const workspace = await createWorkspace(ana.cookie);
@@ -256,6 +417,83 @@ describe("POST /workspaces", () => {
     });
     expect(crossSite.status).toBe(403);
     expect((await api("/workspaces", { headers: { Cookie: ana.cookie } })).status).toBe(405);
+  });
+});
+
+describe("Better Auth's organization routes", () => {
+  test("the ones that would change a workspace or its members without an event are refused", async () => {
+    const ana = await signUp("Ana");
+    const workspace = await createWorkspace(ana.cookie);
+    for (const route of [
+      "create",
+      "update",
+      "delete",
+      "leave",
+      "invite-member",
+      "accept-invitation",
+      "cancel-invitation",
+      "reject-invitation",
+      "update-member-role",
+      "remove-member",
+      "add-member",
+      "create-team",
+      "create-role",
+      "list-members",
+    ]) {
+      const response = await api(`/auth/organization/${route}`, {
+        method: "POST",
+        headers: { Cookie: ana.cookie },
+        body: JSON.stringify({ organizationId: workspace.id, name: "Renamed", role: "viewer" }),
+      });
+      expect(response.status, route).toBe(404);
+    }
+    const name = await env.DB.prepare(`select name from organization where id = ?`)
+      .bind(workspace.id)
+      .first<{ name: string }>();
+    expect(name).toEqual({ name: "Acme" });
+  });
+
+  test("the dashboard's reads and set-active still work", async () => {
+    const ana = await signUp("Ana");
+    const workspace = await createWorkspace(ana.cookie);
+    const headers = { Cookie: ana.cookie };
+    const full = await api("/auth/organization/get-full-organization", { headers });
+    expect(full.status).toBe(200);
+    expect(await full.json()).toMatchObject({ id: workspace.id, name: "Acme" });
+    expect((await api("/auth/organization/get-active-member", { headers })).status).toBe(200);
+    expect((await api("/auth/organization/list", { headers })).status).toBe(200);
+    const active = await api("/auth/organization/set-active", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ organizationId: workspace.id }),
+    });
+    expect(active.status).toBe(200);
+  });
+
+  test("Better Auth itself checks the name and never deletes a workspace", async () => {
+    const ana = await signUp("Ana");
+    const workspace = await createWorkspace(ana.cookie);
+    const request = new Request(`${ORIGIN}/`);
+    const auth = workerAuth(env, createExecutionContext(), request);
+    const headers = new Headers({ Cookie: ana.cookie });
+    // Better Auth's own schema refuses "" before the hook runs; these reach the hook.
+    for (const name of ["   ", "x".repeat(81)]) {
+      await expect(
+        auth.api.createOrganization({ body: { name, slug: `ws-${crypto.randomUUID()}` }, headers }),
+        JSON.stringify(name),
+      ).rejects.toMatchObject({ status: "BAD_REQUEST" });
+    }
+    const created = await env.DB.prepare(`select count(*) as n from member where "userId" = ?`)
+      .bind(ana.user.id)
+      .first<{ n: number }>();
+    expect(created).toEqual({ n: 1 });
+    await expect(
+      auth.api.deleteOrganization({ body: { organizationId: workspace.id }, headers }),
+    ).rejects.toMatchObject({ status: "NOT_FOUND" });
+    const left = await env.DB.prepare(`select count(*) as n from organization where id = ?`)
+      .bind(workspace.id)
+      .first<{ n: number }>();
+    expect(left).toEqual({ n: 1 });
   });
 });
 
@@ -356,6 +594,20 @@ describe("RBAC in the shard", () => {
     const responder = await connect(workspace.id, rui.cookie);
     responder.send(declare("Checkout down"));
     expect(await responder.next()).toMatchObject({ type: "mutationResult", ok: true });
+
+    // Even the owner cannot run the server-only workspace.create from a socket.
+    const owner = await connect(workspace.id, ana.cookie);
+    owner.send({
+      type: "mutate",
+      mutationId: "ws-again",
+      name: "workspace.create",
+      args: { id: workspace.id, name: "Hijacked" },
+    });
+    expect(await owner.next()).toMatchObject({
+      type: "mutationResult",
+      ok: false,
+      error: { code: "unknown_mutation" },
+    });
 
     // A viewer still reads: the incident the responder declared.
     viewer.send({ type: "subscribe", subId: "s", query: "incidents.active", args: {} });

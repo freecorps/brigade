@@ -137,6 +137,7 @@ export class WorkspaceDO extends DurableObject<Env> {
           name: "workspace.create",
           args: workspace,
           now,
+          internal: true,
         });
     if (result.ok) {
       if (!stored) this.broadcast(result.version, changes, undefined);

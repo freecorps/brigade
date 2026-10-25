@@ -201,13 +201,18 @@
   "auth_error_generic": "Something went wrong. Try again.",
   "workspace_label": "Workspace",
   "workspace_name_label": "Workspace name",
-  "workspace_name_placeholder": "Platform team",
   "workspace_name_invalid": "A name needs visible text: invisible characters alone don't count.",
   "workspace_create_title": "Create your workspace",
   "workspace_create_description": "Incidents and the people who handle them live in a workspace.",
   "workspace_create_submit": "Create workspace",
   "workspace_creating": "Creating workspace…",
-  "account_menu_label": "Account",
+  "account_menu_label": "Account: {name}",
   "sign_out": "Sign out",
-  "session_loading": "Loading your workspace…"
+  "session_loading": "Loading your workspace…",
+  "auth_error_too_long": "Use at most {max} characters.",
+  "workspace_name_hint": "For example, Platform team.",
+  "page_title": "{page} · Brigade",
+  "page_title_sign_in": "Sign in",
+  "page_title_sign_up": "Create your account",
+  "page_title_create_workspace": "Create your workspace"
 }

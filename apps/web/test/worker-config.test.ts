@@ -34,8 +34,9 @@ const server = createTestHarness({
 
 // A browser navigation: with SPA fallback, only run_worker_first keeps these away from index.html.
 const navigate = { headers: { "Sec-Fetch-Mode": "navigate", Accept: "text/html" } };
+// On localhost, as `vp dev` serves it: the dev actor only answers requests for a local host (apps/api src/actor.ts).
 const get = (path: string, init?: { headers: Record<string, string> }) =>
-  server.fetch(`http://web.test${path}`, init);
+  server.fetch(`http://localhost${path}`, init);
 
 beforeAll(() => server.listen(), 60_000);
 afterAll(() => server.close());

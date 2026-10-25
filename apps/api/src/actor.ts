@@ -14,14 +14,17 @@ export const ACTOR_HEADER = "Brigade-Actor";
 
 export type ActorResult = { ok: true; actor: Actor } | { ok: false; response: Response };
 
+/** Hosts a local run serves on: the dev actor never applies to a request for any other host. */
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
 /**
- * DEV ONLY: whether this deployment lets an upgrade without a session act as `DEV_ACTOR`. Only local runs and
- * the tests set the variable (their Vite configs), never a deployed environment (apps/web
- * test/worker-config.test.ts checks every environment in wrangler.jsonc). The mobile app relies on it until it
- * can sign in.
+ * DEV ONLY: whether an upgrade without a session may act as `DEV_ACTOR`. Both must hold: the variable is set (only
+ * local runs and the tests set it, in their Vite configs, never a deployed environment; apps/web
+ * test/worker-config.test.ts checks every environment in wrangler.jsonc), and the request is for a local host, so a
+ * deployment that sets the variable by mistake still refuses it. The mobile app relies on it until it can sign in.
  */
-export function devActorEnabled(env: object): boolean {
-  return Reflect.get(env, DEV_ACTOR_VAR) === "1";
+export function devActorEnabled(env: object, request: Request): boolean {
+  return Reflect.get(env, DEV_ACTOR_VAR) === "1" && LOCAL_HOSTS.has(new URL(request.url).hostname);
 }
 
 /**
@@ -42,11 +45,9 @@ export async function resolveActor(
     return refuse(403, "forbidden_origin");
   }
 
-  // Made only now: a Better Auth instance that is created and never used leaves its initialisation running
-  // past the request, and the next request that waits on it hangs.
   const session = await auth().api.getSession({ headers: request.headers });
   if (!session) {
-    if (devActorEnabled(env)) return { ok: true, actor: DEV_ACTOR };
+    if (devActorEnabled(env, request)) return { ok: true, actor: DEV_ACTOR };
     return refuse(401, "unauthenticated");
   }
 

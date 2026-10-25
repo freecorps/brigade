@@ -7,8 +7,11 @@ import {
   checkSignUp,
   checkWorkspaceName,
   createWorkspace,
+  NAME_MAX,
+  PASSWORD_MAX,
   PASSWORD_MIN,
 } from "../src/lib/auth";
+import { pageTitle } from "../src/lib/page-title";
 
 beforeEach(() => {
   void setLocale("en");
@@ -57,12 +60,41 @@ describe("sign-up and sign-in checks", () => {
       ok: false,
       error: "A name needs visible text: invisible characters alone don't count.",
     });
-    expect(checkWorkspaceName("x".repeat(WORKSPACE_NAME_MAX + 1)).ok).toBe(false);
+    expect(checkWorkspaceName("x".repeat(WORKSPACE_NAME_MAX)).ok).toBe(true);
+  });
+
+  test("too-long names and passwords get their own error (the inputs do not cut them short)", () => {
+    const long = checkSignUp({
+      ...valid,
+      name: "N".repeat(NAME_MAX + 1),
+      password: "p".repeat(PASSWORD_MAX + 1),
+      workspace: "W".repeat(WORKSPACE_NAME_MAX + 1),
+    });
+    expect(long).toEqual({
+      name: "Use at most 80 characters.",
+      password: "Use at most 128 characters.",
+      workspace: "Use at most 80 characters.",
+    });
+    // Surrounding spaces do not count, as the server trims them.
+    expect(checkSignUp({ ...valid, name: ` ${"N".repeat(NAME_MAX)} ` }).name).toBeUndefined();
+    expect(checkWorkspaceName(` ${"W".repeat(WORKSPACE_NAME_MAX)}  `).ok).toBe(true);
   });
 
   test("messages follow the locale", async () => {
     await setLocale("pt-BR");
     expect(checkSignIn({ email: "", password: "" }).email).toBe("Preencha este campo.");
+    expect(checkSignUp({ ...valid, name: "N".repeat(NAME_MAX + 1) }).name).toBe(
+      "Use no máximo 80 caracteres.",
+    );
+  });
+});
+
+describe("page titles", () => {
+  test("name the screen, then the app, in the current locale", async () => {
+    expect(pageTitle("Sign in")).toBe("Sign in · Brigade");
+    expect(pageTitle()).toBe("Brigade");
+    await setLocale("pt-BR");
+    expect(pageTitle("Entrar")).toBe("Entrar · Brigade");
   });
 });
 

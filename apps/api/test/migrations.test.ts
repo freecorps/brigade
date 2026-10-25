@@ -24,9 +24,11 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
     "invitation",
     "member",
     "organization",
+    "rateLimit",
     "session",
     "user",
     "verification",
   ]);
   expect(results.map((row) => row.name)).toContain("member_organizationId_idx");
+  expect(results.map((row) => row.name)).toContain("rateLimit_lastRequest_idx");
 });

@@ -10,15 +10,16 @@ import {
   authClient,
   authErrorMessage,
   checkSignIn,
-  PASSWORD_MAX,
   type FieldErrors,
   type SignInField,
 } from "@/lib/auth";
+import { usePageTitle } from "@/lib/page-title";
 
 export const Route = createFileRoute("/sign-in")({ component: SignIn });
 
 function SignIn() {
   usePreferences();
+  usePageTitle(m.page_title_sign_in());
   const navigate = useNavigate();
   const session = authClient.useSession();
   const [values, setValues] = useState<Record<SignInField, string>>({ email: "", password: "" });
@@ -33,6 +34,8 @@ function SignIn() {
   const set = (field: SignInField) => (value: string) => {
     setValues((current) => ({ ...current, [field]: value }));
     if (errors[field]) setErrors((current) => ({ ...current, [field]: undefined }));
+    // The server's answer was about what was there before; an edit is a new attempt.
+    setFailure(null);
   };
 
   const submit = async (event: FormEvent) => {
@@ -94,7 +97,6 @@ function SignIn() {
           label={m.auth_password_label()}
           type="password"
           autoComplete="current-password"
-          maxLength={PASSWORD_MAX}
           value={values.password}
           onChange={(event) => set("password")(event.target.value)}
           error={errors.password}

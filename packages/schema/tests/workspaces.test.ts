@@ -2,6 +2,7 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   createMemoryStore,
   mutations,
+  serverMutations,
   newId,
   ROLES,
   runMutation,
@@ -21,10 +22,23 @@ const ctx = (role: Role = "owner"): MutationContext => ({
 });
 
 describe("workspace.create", () => {
+  test("is server only: not among the mutations a socket may send", () => {
+    expect(Object.keys(mutations)).not.toContain("workspace.create");
+    expect(Object.keys(serverMutations)).toEqual([...Object.keys(mutations), "workspace.create"]);
+    const result = runMutation(
+      mutations,
+      "workspace.create" as never,
+      { id: WS, name: "Acme" },
+      createMemoryStore<BrigadeTables>(),
+      ctx(),
+    );
+    expect(result).toMatchObject({ ok: false, error: { code: "unknown_mutation" } });
+  });
+
   test("writes the workspace row and emits workspace.created", () => {
     const store = createMemoryStore<BrigadeTables>();
     const result = runMutation(
-      mutations,
+      serverMutations,
       "workspace.create",
       { id: WS, name: " Acme " },
       store,
@@ -47,9 +61,9 @@ describe("workspace.create", () => {
 
   test("runs once per shard", () => {
     const store = createMemoryStore<BrigadeTables>();
-    runMutation(mutations, "workspace.create", { id: WS, name: "Acme" }, store, ctx());
+    runMutation(serverMutations, "workspace.create", { id: WS, name: "Acme" }, store, ctx());
     const again = runMutation(
-      mutations,
+      serverMutations,
       "workspace.create",
       { id: WS, name: "Other" },
       store,
@@ -62,7 +76,7 @@ describe("workspace.create", () => {
   test.each(ROLES.filter((role) => role !== "owner"))("%s cannot create it", (role) => {
     const store = createMemoryStore<BrigadeTables>();
     const result = runMutation(
-      mutations,
+      serverMutations,
       "workspace.create",
       { id: WS, name: "Acme" },
       store,
@@ -81,7 +95,7 @@ describe("workspace.create", () => {
     ],
   ])("refuses %s", (_name, args) => {
     const store = createMemoryStore<BrigadeTables>();
-    const result = runMutation(mutations, "workspace.create", args, store, ctx());
+    const result = runMutation(serverMutations, "workspace.create", args, store, ctx());
     expect(result).toMatchObject({ ok: false, error: { code: "invalid_args" } });
   });
 });

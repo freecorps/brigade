@@ -11,9 +11,11 @@ Sync, RFC 0004). Every write is a named mutation from `@freecorps/brigade-schema
 | --------------------- | ----------------------------------------------------------------------------------- |
 | `GET /health`         | `200 {"ok":true}` (`HEAD` too)                                                      |
 | `/auth/*`             | Better Auth (`src/auth.ts`): `POST /auth/sign-up/email`, `/auth/sign-in/email`,     |
-|                       | `/auth/sign-out`, `GET /auth/get-session`, the organization plugin's routes, …      |
+|                       | `/auth/sign-out`, `GET /auth/get-session`, the dashboard's organization routes, …   |
+|                       | `429` past the rate limit; `404` for organization routes that are refused (below)   |
 | `POST /workspaces`    | `201 {"id","name"}`: a workspace owned by the signed-in user, active in the session |
-|                       | `401` without a session, `400` for a bad name, `403` from another site, `405`       |
+|                       | `401` without a session, `400` for a bad name or a body over 4 KiB, `403` from      |
+|                       | another site, `405`; `500` if the shard could not be provisioned (nothing is kept)  |
 | `GET /workspaces/:id` | `200` with the `WorkspaceDO` info read from its SQLite storage                      |
 |                       | `400` if `:id` is not a workspace id (see `WORKSPACE_ID` in `src/workspace.ts`)     |
 |                       | `503` if the object is overloaded or the error is retryable, `500` otherwise        |
@@ -29,7 +31,17 @@ Better Auth on D1 (`DB`), with email and password and the organization plugin: a
 and its roles are Brigade's (`owner`, `admin`, `responder`, `viewer`) from `@freecorps/brigade-schema`. Ids are
 prefixed ULIDs (`usr_…`, `ws_…`, RFC 0003). `POST /workspaces` creates a workspace with Better Auth; its
 `afterCreateOrganization` hook calls `WorkspaceDO.provision()`, which runs `workspace.create` in the new shard so
-`workspace.created` lands in its outbox.
+`workspace.created` lands in its outbox. If that fails, the hook deletes the workspace and its membership again
+before Better Auth makes it active, and the request answers `500`. `workspace.create` is server-only
+(`serverMutations` in the schema): a socket cannot run it.
+
+Workers never set `NODE_ENV`, so `src/auth.ts` sets what Better Auth would derive from it: cookies are `Secure` and
+`__Secure-` prefixed when the request came over HTTPS, and rate limiting is on, counted per client IP
+(`cf-connecting-ip`) and path in D1's `rateLimit` table so every isolate shares the counts: 3 per 10 s for sign-in
+and sign-up, 100 per minute for the rest, `/get-session` exempt. The organization plugin's routes are refused
+(`404`) except `get-full-organization`, `get-active-member`, `list` and `set-active`, until the others (update,
+member roles and removal, invitations, …) emit their `workspace.*` / `member.*` events through the outbox
+(RFC 0005); deleting a workspace is off.
 
 A sync upgrade is authenticated by the Worker (`src/actor.ts`): it checks `Origin`, reads the session, looks up the
 member's role in D1, and forwards a request it builds itself carrying the actor (`Brigade-Actor`) and the workspace
@@ -37,7 +49,8 @@ member's role in D1, and forwards a request it builds itself carrying the actor 
 shard on every mutation and query (`runMutation`, `runQuery`).
 
 `/workspaces/:id` is still an unauthenticated dev placeholder (the dashboard's stack check), so `workers_dev` and
-`preview_urls` stay off. **Dev actor:** where `SYNC_DEV_ACTOR` is `"1"`, an upgrade without a session acts as
+`preview_urls` stay off. **Dev actor:** where `SYNC_DEV_ACTOR` is `"1"` and the request is for `localhost`,
+`127.0.0.1` or `[::1]`, an upgrade without a session acts as
 `{ kind: "user", id: "usr_dev", role: "responder" }` (`src/dev-actor.ts`). Only `vp dev` and the tests set it (in
 `vite.config.ts` here and in apps/web), never a build or an environment in `wrangler.jsonc`; the mobile app relies
 on it until it can sign in. Through the dashboard Worker the endpoints are under `/api` (`/api/auth/*`,

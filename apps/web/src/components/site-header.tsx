@@ -46,8 +46,13 @@ export function SiteHeader() {
           className="-mx-2 flex h-11 shrink-0 items-center gap-2 rounded-md px-2 text-lg font-semibold outline-none focus-visible:ring-3 focus-visible:ring-ring"
         >
           <BrigadeMark />
-          {/* On phones the workspace name takes the room; the mark still says which app this is. */}
-          <span className={session.data ? "max-sm:sr-only" : undefined}>{m.app_name()}</span>
+          {/* On phones the workspace name takes the room; the mark still says which app this is. Signed in without a
+              workspace (the create-workspace form), there is no name, so the app's stays. */}
+          <span
+            className={session.data?.session.activeOrganizationId ? "max-sm:sr-only" : undefined}
+          >
+            {m.app_name()}
+          </span>
         </Link>
         {session.data ? <WorkspaceName /> : null}
         <span className="hidden h-6 shrink-0 items-center rounded-sm bg-muted px-2 text-xs font-medium text-muted-foreground lg:inline-flex">
@@ -65,7 +70,10 @@ export function SiteHeader() {
   );
 }
 
-/** The active workspace, after a slash, as in a breadcrumb. Truncated; the full name is in its title. */
+/**
+ * The active workspace, after a slash, as in a breadcrumb. Truncated; the full name is in its title and in the
+ * account menu, which is where a phone shows it.
+ */
 function WorkspaceName() {
   const workspace = authClient.useActiveOrganization();
   const name = workspace.data?.name;
@@ -84,6 +92,7 @@ function WorkspaceName() {
 }
 
 function AccountMenu({ name, email }: { name: string; email: string }) {
+  const workspace = authClient.useActiveOrganization().data?.name;
   const signOut = async () => {
     try {
       await authClient.signOut();
@@ -96,17 +105,20 @@ function AccountMenu({ name, email }: { name: string; email: string }) {
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button variant="outline" size="icon" />}>
         <CircleUserRoundIcon aria-hidden />
-        <span className="sr-only">{m.account_menu_label()}</span>
+        <span className="sr-only">{m.account_menu_label({ name })}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="max-w-72">
         <DropdownMenuGroup>
-          <DropdownMenuLabel className="flex flex-col gap-0.5 pb-2">
-            <span className="truncate text-sm text-foreground" title={name}>
-              {name}
-            </span>
-            <span className="truncate font-normal" title={email}>
-              {email}
-            </span>
+          {/* Wrapped, never truncated: on a phone this is the only place the full email and workspace show. */}
+          <DropdownMenuLabel className="flex flex-col gap-0.5 pb-2 [overflow-wrap:anywhere]">
+            <span className="text-sm text-foreground">{name}</span>
+            <span className="font-normal">{email}</span>
+            {workspace ? (
+              <span className="mt-2 flex flex-col gap-0.5 border-t pt-2">
+                <span>{m.workspace_label()}</span>
+                <span className="text-sm font-normal text-foreground">{workspace}</span>
+              </span>
+            ) : null}
           </DropdownMenuLabel>
           <DropdownMenuItem onClick={() => void signOut()}>
             <LogOutIcon aria-hidden className="text-muted-foreground" />

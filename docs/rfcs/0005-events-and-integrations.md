@@ -26,7 +26,9 @@ Users, sessions and membership live in D1, written by Better Auth (RFC 0002), no
 integrations care about is announced by the workspace shard: creating a workspace runs `workspace.create` in its
 new `WorkspaceDO` (`workspace.created`, subject the workspace id). Membership changes (`member.added`,
 `member.role_changed`, `member.removed`) follow the same path when invitations land; until then the creator's
-membership is part of `workspace.created` (`createdBy`).
+membership is part of `workspace.created` (`createdBy`). Until then the API refuses Better Auth's routes that
+would change a workspace or its members without an event (update, delete, member roles, removing or adding
+members, invitations, teams, leaving); see RFC 0002 "Auth".
 
 ## Delivery: transactional outbox
 

@@ -1,5 +1,4 @@
 import { m } from "@freecorps/brigade-i18n";
-import { WORKSPACE_NAME_MAX } from "@freecorps/brigade-schema";
 import { createFileRoute, Link, Navigate, useNavigate } from "@tanstack/react-router";
 import { LoaderCircleIcon } from "lucide-react";
 import { useRef, useState, type FormEvent } from "react";
@@ -13,11 +12,10 @@ import {
   checkSignUp,
   checkWorkspaceName,
   createWorkspace,
-  NAME_MAX,
-  PASSWORD_MAX,
   type FieldErrors,
   type SignUpField,
 } from "@/lib/auth";
+import { usePageTitle } from "@/lib/page-title";
 
 export const Route = createFileRoute("/sign-up")({ component: SignUp });
 
@@ -30,6 +28,7 @@ const FIELDS = ["name", "email", "password", "workspace"] as const;
  */
 function SignUp() {
   usePreferences();
+  usePageTitle(m.page_title_sign_up());
   const navigate = useNavigate();
   const session = authClient.useSession();
   const [values, setValues] = useState<Record<SignUpField, string>>({
@@ -53,6 +52,7 @@ function SignUp() {
   const set = (field: SignUpField) => (value: string) => {
     setValues((current) => ({ ...current, [field]: value }));
     if (errors[field]) setErrors((current) => ({ ...current, [field]: undefined }));
+    setFailure(null);
   };
 
   const submit = async (event: FormEvent) => {
@@ -80,11 +80,10 @@ function SignUp() {
       return;
     }
     const name = checkWorkspaceName(values.workspace);
-    const created = name.ok ? await createWorkspace(name.name) : undefined;
-    // Refresh the session (now with its active workspace) before the dashboard reads it.
-    if (created?.ok)
-      await authClient.organization.setActive({ organizationId: created.workspace.id });
-    else await authClient.getSession();
+    if (name.ok) await createWorkspace(name.name);
+    // `POST /workspaces` already made the workspace active in the session; reload the session the dashboard reads
+    // (and wait for it), so it opens on the workspace, or asks for one again if creating it failed.
+    await session.refetch();
     await navigate({ to: "/", replace: true });
   };
 
@@ -109,7 +108,6 @@ function SignUp() {
           ref={refs.name}
           label={m.auth_name_label()}
           autoComplete="name"
-          maxLength={NAME_MAX}
           value={values.name}
           onChange={(event) => set("name")(event.target.value)}
           error={errors.name}
@@ -131,7 +129,6 @@ function SignUp() {
           label={m.auth_password_label()}
           type="password"
           autoComplete="new-password"
-          maxLength={PASSWORD_MAX}
           hint={errors.password ? undefined : m.auth_password_hint()}
           value={values.password}
           onChange={(event) => set("password")(event.target.value)}
@@ -140,9 +137,8 @@ function SignUp() {
         <Field
           ref={refs.workspace}
           label={m.workspace_name_label()}
-          placeholder={m.workspace_name_placeholder()}
+          hint={errors.workspace ? undefined : m.workspace_name_hint()}
           autoComplete="organization"
-          maxLength={WORKSPACE_NAME_MAX}
           value={values.workspace}
           onChange={(event) => set("workspace")(event.target.value)}
           error={errors.workspace}

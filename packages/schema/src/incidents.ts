@@ -135,13 +135,17 @@ export const setIncidentSeverity = defineMutation({
 const newestFirst = (a: IncidentRow, b: IncidentRow) =>
   b.declaredAt - a.declaredAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
+/** Most severe first (SEV1 on top), then newest first: defined here so every client lists them alike. */
+const mostSevereFirst = (a: IncidentRow, b: IncidentRow) =>
+  SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity) || newestFirst(a, b);
+
 export const activeIncidents = defineQuery({
   name: "incidents.active",
   args: v.object({}),
   permission: "incident:read",
   table: "incidents",
   filter: (row) => isActive(row.status),
-  sort: newestFirst,
+  sort: mostSevereFirst,
 });
 
 export const incidentById = defineQuery({

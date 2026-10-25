@@ -44,9 +44,26 @@ const seeded = () =>
   createMemoryStore<BrigadeTables>({ incidents: [OLD, NEW, RESOLVED, DECLINED, TIE] });
 const ids = (rows: unknown[]) => (rows as IncidentRow[]).map((r) => r.id);
 
-test("incidents.active lists unresolved, undeclined incidents newest first", () => {
+test("incidents.active lists unresolved, undeclined incidents newest first within a severity", () => {
   const result = runQuery(queries, "incidents.active", {}, seeded(), "viewer");
   expect(result.ok && ids(result.rows)).toEqual([TIE.id, NEW.id, OLD.id]);
+});
+
+test("incidents.active puts the most severe first, whatever their age", () => {
+  const OLD_SEV1 = { ...row(id(T - 9000, 5), T - 9000), severity: "sev1" as const };
+  const SEV2 = { ...row(id(T - 8000, 6), T - 8000), severity: "sev2" as const };
+  const NEW_SEV4 = { ...row(id(T - 100, 7), T - 100), severity: "sev4" as const };
+  const store = createMemoryStore<BrigadeTables>({
+    incidents: [NEW_SEV4, OLD, SEV2, NEW, OLD_SEV1],
+  });
+  const result = runQuery(queries, "incidents.active", {}, store, "viewer");
+  expect(result.ok && ids(result.rows)).toEqual([
+    OLD_SEV1.id,
+    SEV2.id,
+    NEW.id,
+    OLD.id,
+    NEW_SEV4.id,
+  ]);
 });
 
 test("incident.byId returns the incident whatever its status", () => {

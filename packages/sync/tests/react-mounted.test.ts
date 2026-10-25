@@ -104,7 +104,7 @@ test("mounted hooks render rows, show an optimistic declare at once and settle i
   shard.write(ops, "incident.declare", {
     id: incidentId(),
     title: "Checkout down",
-    severity: "sev1",
+    severity: "sev2", // The same as the declare below, so the list orders them by age.
   });
   const actions: Actions = {};
   const view = mount(

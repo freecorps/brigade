@@ -5,7 +5,7 @@ export type Incidents_TitleInputs = {};
 /**
 * | output |
 * | --- |
-* | "Active incidents" |
+* | "Incidents" |
 *
 * @param {Incidents_TitleInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

@@ -5,7 +5,7 @@ export type Sync_Offline_HintInputs = {};
 /**
 * | output |
 * | --- |
-* | "Can't reach Brigade right now. Changes are kept and sent when the connection is back." |
+* | "Can't reach Brigade right now. Changes you make are sent when the connection is back, as long as this page stays open." |
 *
 * @param {Sync_Offline_HintInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

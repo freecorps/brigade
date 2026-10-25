@@ -1,6 +1,7 @@
 // Pure helpers for the live incident list: which status moves to offer, what to say about the connection, how to
 // check a declare before sending it, and how to word a mutation the shard refused.
 import { m } from "@freecorps/brigade-i18n";
+import { incidentStatusLabels } from "@freecorps/brigade-i18n/labels";
 import {
   canTransition,
   formatIncidentNumber,
@@ -50,7 +51,10 @@ export function syncView(
   return connection === "open" ? "live" : "reconnecting";
 }
 
-const REASONS: Record<SyncErrorCode, () => string> = {
+/** Why a change was refused: the client's and server's codes, plus a declare refused for the device's clock. */
+export type NoticeReason = SyncErrorCode | "clock_skew";
+
+const REASONS: Record<NoticeReason, () => string> = {
   forbidden: m.sync_error_forbidden,
   not_found: m.sync_error_not_found,
   conflict: m.sync_error_conflict,
@@ -62,10 +66,11 @@ const REASONS: Record<SyncErrorCode, () => string> = {
   internal: m.sync_error_internal,
   // A mutation this dashboard knows but the deployed API does not: a version skew, worded as a server problem.
   unknown_mutation: m.sync_error_internal,
+  clock_skew: m.sync_error_clock_skew,
 };
 
 /** A translated reason for a refused mutation; never the server's English message. */
-export function mutationErrorReason(code: SyncErrorCode): string {
+export function mutationErrorReason(code: NoticeReason): string {
   return (REASONS[code] ?? m.sync_error_internal)();
 }
 
@@ -77,42 +82,82 @@ export function queryErrorReason(code: string | undefined): string {
 /** A refused change, kept as data and worded at render, so it follows a language switch. */
 export type Notice = {
   key: string;
-  kind: "declare" | "change";
-  code: SyncErrorCode;
+  kind: "declare" | "status" | "severity";
+  reason: NoticeReason;
   incidentId: string;
   number: number | null;
   title: string;
+  /** The status or severity it tried to set. */
+  to?: IncidentStatus | Severity;
 };
 
-export type NoticeTarget = Omit<Notice, "key" | "code">;
+export type NoticeTarget = Omit<Notice, "key" | "reason">;
 
-/** The notice a mutation's outcome leaves, if it failed. */
+/**
+ * The notice a mutation's outcome leaves, if it failed. An `invalid_args` naming the `id` means the id's time
+ * (the device clock) is more than 10 minutes ahead of the shard's: the title itself was fine.
+ */
 export function noticeFor(
   outcome: MutationOutcome,
   target: NoticeTarget,
   key: string,
 ): Notice | undefined {
-  return outcome.ok ? undefined : { ...target, key, code: outcome.error.code };
+  if (outcome.ok) return undefined;
+  const { code, issues } = outcome.error;
+  const skew = code === "invalid_args" && issues?.some((issue) => issue.path === "id") === true;
+  return { ...target, key, reason: skew ? "clock_skew" : code };
 }
 
-export function noticeText(notice: Notice): string {
-  const reason = mutationErrorReason(notice.code);
-  if (notice.kind === "declare") return m.incident_declare_failed({ title: notice.title, reason });
-  const incident =
-    formatIncidentNumber(notice.number) ?? m.incident_quoted_title({ title: notice.title });
-  return m.incident_change_failed({ incident, reason });
+/**
+ * Where a notice is drawn: in its incident's row, which already says which incident it is, or in the card (a
+ * declare, or a row no longer listed), where the text names the incident and the change.
+ */
+export type NoticePlace = "row" | "card";
+
+/**
+ * The notice's text. `mark` wraps the incident's number and title, so the card can keep the number on one line
+ * and truncate a long title; without it the text is plain (for the live region).
+ */
+export function noticeText(
+  notice: Notice,
+  place: NoticePlace,
+  mark: (part: "number" | "title", text: string) => string = (_, text) => text,
+): string {
+  const reason = mutationErrorReason(notice.reason);
+  // The declare message quotes the title itself.
+  if (notice.kind === "declare") {
+    return m.incident_declare_failed({ title: mark("title", notice.title), reason });
+  }
+  const title = m.incident_quoted_title({ title: mark("title", notice.title) });
+  const number = formatIncidentNumber(notice.number);
+  const incident = number ? `${mark("number", number)} ${title}` : title;
+  if (notice.kind === "status") {
+    const status = incidentStatusLabels[notice.to as IncidentStatus]();
+    return place === "row"
+      ? m.incident_move_failed_here({ status, reason })
+      : m.incident_move_failed({ incident, status, reason });
+  }
+  const severity = String(notice.to).toUpperCase();
+  return place === "row"
+    ? m.incident_severity_failed_here({ severity, reason })
+    : m.incident_severity_failed({ incident, severity, reason });
 }
 
-/** In-flight mutations per incident; an incident with none has no key. */
+/**
+ * In-flight mutations by key: the incident id, plus `id/status` or `id/severity` for the field being changed. A
+ * key with none left is removed.
+ */
 export function adjustBusy(
   busy: ReadonlyMap<string, number>,
-  id: string,
+  keys: readonly string[],
   by: number,
 ): ReadonlyMap<string, number> {
   const next = new Map(busy);
-  const count = (busy.get(id) ?? 0) + by;
-  if (count > 0) next.set(id, count);
-  else next.delete(id);
+  for (const key of keys) {
+    const count = (next.get(key) ?? 0) + by;
+    if (count > 0) next.set(key, count);
+    else next.delete(key);
+  }
   return next;
 }
 
@@ -131,4 +176,9 @@ export function checkDeclare(
   return result.ok
     ? { ok: true, args: result.value as { id: string; title: string; severity: Severity } }
     : { ok: false };
+}
+
+/** Whether the shard refused a declare for its title (give the text back), not for the clock. */
+export function titleRefused(notice: Notice | undefined): boolean {
+  return notice?.kind === "declare" && notice.reason === "invalid_args";
 }

@@ -66,7 +66,7 @@ export default defineConfig(({ command, mode }) => ({
     },
   },
   test: {
-    include: ["test/**/*.test.ts", "worker/**/*.test.ts"],
+    include: ["test/**/*.test.ts", "test/**/*.test.tsx", "worker/**/*.test.ts"],
     // test/worker-config.test.ts starts workerd with both Workers.
     hookTimeout: 60_000,
   },

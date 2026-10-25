@@ -12,6 +12,7 @@ import {
   noticeText,
   queryErrorReason,
   syncView,
+  titleRefused,
   type NoticeTarget,
 } from "../src/lib/incidents";
 import { CLIENT_ID_STORAGE_KEY, DEV_ACTOR, syncUrl, tabClientId } from "../src/lib/sync";
@@ -57,8 +58,17 @@ test("after the list loaded, a dropped socket is reconnecting; a refused list is
   expect(queryErrorReason("internal")).toBe(queryErrorReason(undefined));
 });
 
-const change: NoticeTarget = { kind: "change", incidentId: ID, number: 12, title: "Checkout down" };
-const fail = (code: SyncErrorCode) => ({ ok: false as const, error: { code, message: "English" } });
+const change: NoticeTarget = {
+  kind: "status",
+  incidentId: ID,
+  number: 12,
+  title: "Checkout down",
+  to: "fixing",
+};
+const fail = (code: SyncErrorCode, issues?: { path: string; message: string }[]) => ({
+  ok: false as const,
+  error: { code, message: "English", ...(issues ? { issues } : {}) },
+});
 
 test("every refused outcome becomes a notice with a translated reason; a confirmed one none", async () => {
   expect(noticeFor({ ok: true, version: 3 }, change, "k")).toBeUndefined();
@@ -76,42 +86,62 @@ test("every refused outcome becomes a notice with a translated reason; a confirm
   ];
   for (const code of codes) {
     const notice = noticeFor(fail(code), change, "k")!;
-    expect(notice).toEqual({ ...change, key: "k", code });
-    const text = noticeText(notice);
-    expect(text).toBe(`Couldn't update INC-12. ${mutationErrorReason(code)}`);
-    expect(text).not.toContain("English");
+    expect(notice).toEqual({ ...change, key: "k", reason: code });
+    const reason = mutationErrorReason(code);
+    // In the card the text names the incident and the change; in its row it does not need to.
+    expect(noticeText(notice, "card")).toBe(
+      `Couldn't move INC-12 “Checkout down” to Fixing. ${reason}`,
+    );
+    expect(noticeText(notice, "row")).toBe(`Couldn't move it to Fixing. ${reason}`);
+    expect(noticeText(notice, "card")).not.toContain("English");
   }
   expect(mutationErrorReason("expired")).toMatch(/waited too long/);
   expect(mutationErrorReason("too_many_pending")).toMatch(/Too many changes/);
   expect(mutationErrorReason("closed")).toMatch(/stopped syncing/);
   expect(mutationErrorReason("unknown_mutation")).toBe(mutationErrorReason("internal"));
 
-  // Not numbered yet: the title stands in; a declare names its title. Worded at render, so a locale switch shows.
+  const severity = noticeFor(fail("conflict"), { ...change, kind: "severity", to: "sev1" }, "k")!;
+  expect(noticeText(severity, "card")).toMatch(/^Couldn't change INC-12 “Checkout down” to SEV1\./);
+  // Not numbered yet: the title alone names it. The number and title can be marked for layout.
   const unnumbered = noticeFor(fail("not_found"), { ...change, number: null }, "k")!;
-  expect(noticeText(unnumbered)).toBe(
-    "Couldn't update “Checkout down”. The incident no longer exists.",
+  expect(noticeText(unnumbered, "card")).toBe(
+    "Couldn't move “Checkout down” to Fixing. The incident no longer exists.",
   );
+  expect(noticeText(severity, "card", (part, text) => `[${part}:${text}]`)).toMatch(
+    /^Couldn't change \[number:INC-12\] “\[title:Checkout down\]” to SEV1\./,
+  );
+  // Worded at render, so a locale switch shows.
   const declared = noticeFor(fail("forbidden"), { ...change, kind: "declare", number: null }, "k")!;
   await setLocale("pt-BR");
-  expect(noticeText(declared)).toBe(
+  expect(noticeText(declared, "card")).toBe(
     "Não foi possível declarar “Checkout down”. Você não tem permissão para fazer isso.",
   );
   expect(mutationErrorReason("conflict")).toBe("Alguém alterou isso antes de você.");
 });
 
-test("busy counts in-flight changes per incident and forgets an incident at zero", () => {
+test("an invalid_args naming the id is the device clock, not the title", () => {
+  const declare: NoticeTarget = { kind: "declare", incidentId: ID, number: null, title: "Up" };
+  const skew = noticeFor(fail("invalid_args", [{ path: "id", message: "ahead" }]), declare, "k")!;
+  expect(skew.reason).toBe("clock_skew");
+  expect(noticeText(skew, "card")).toBe(
+    "Couldn't declare “Up”. Your device clock is ahead of the server. Fix the date and time and try again.",
+  );
+  expect(titleRefused(skew)).toBe(false);
+  const title = noticeFor(fail("invalid_args", [{ path: "title", message: "x" }]), declare, "k");
+  expect(title?.reason).toBe("invalid_args");
+  expect(titleRefused(title)).toBe(true);
+  expect(titleRefused(noticeFor(fail("invalid_args"), change, "k"))).toBe(false); // Not a declare.
+});
+
+test("busy counts in-flight changes per key and forgets a key at zero", () => {
   let busy: ReadonlyMap<string, number> = new Map();
-  busy = adjustBusy(busy, "a", 1);
-  busy = adjustBusy(busy, "a", 1);
-  busy = adjustBusy(busy, "b", 1);
-  expect([...busy]).toEqual([
-    ["a", 2],
-    ["b", 1],
-  ]);
-  busy = adjustBusy(busy, "a", -1);
-  busy = adjustBusy(busy, "b", -1);
-  expect([...busy]).toEqual([["a", 1]]);
-  expect(busy.has("b")).toBe(false);
+  busy = adjustBusy(busy, ["a", "a/status"], 1);
+  busy = adjustBusy(busy, ["a", "a/severity"], 1);
+  busy = adjustBusy(busy, ["b"], 1);
+  expect(Object.fromEntries(busy)).toEqual({ a: 2, "a/status": 1, "a/severity": 1, b: 1 });
+  busy = adjustBusy(busy, ["a", "a/status"], -1);
+  busy = adjustBusy(busy, ["b"], -1);
+  expect(Object.fromEntries(busy)).toEqual({ a: 1, "a/severity": 1 });
 });
 
 test("a declare is checked with the mutation's own validator before it is sent", () => {

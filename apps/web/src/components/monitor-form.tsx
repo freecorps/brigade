@@ -14,8 +14,8 @@ import {
 } from "@freecorps/brigade-schema";
 import { useSyncClient } from "@freecorps/brigade-sync/react";
 import { cn } from "cn";
-import { CheckIcon } from "lucide-react";
-import { useId, useRef, useState, type FormEvent } from "react";
+import { CheckIcon, CircleAlertIcon } from "lucide-react";
+import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import {
@@ -32,9 +32,22 @@ const SEGMENT =
 const SELECTED = "bg-primary text-primary-foreground";
 const UNSELECTED = "text-muted-foreground hover:bg-muted";
 
+/** The `monitor_field_invalid` / `monitor_field_hint` key for a draft field. */
+const FIELD_KEYS: Record<DraftField, string> = {
+  name: "name",
+  url: "url",
+  expectedStatus: "expected_status",
+  keyword: "keyword",
+  intervalSeconds: "interval",
+  timeoutSeconds: "timeout",
+  graceSeconds: "grace",
+  regions: "regions",
+};
+
 /**
  * A new HTTP check or heartbeat. Checked on submit with the mutation's own validator, so a value the shard would
- * refuse is marked in its field and the draft stays. `onCreate` sends it; the form closes when it resolves true.
+ * refuse is marked in its field, with what to fix, and the draft stays. `onCreate` sends it; the form closes when
+ * it resolves true. The name field takes focus when the form opens; Escape cancels.
  */
 export function MonitorForm({
   onCreate,
@@ -52,6 +65,8 @@ export function MonitorForm({
   const regionsId = useId();
   const methodId = useId();
   const regionsErrorId = useId();
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => nameRef.current?.focus(), []);
 
   const set = <K extends keyof MonitorDraft>(key: K, value: MonitorDraft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -60,11 +75,7 @@ export function MonitorForm({
     }
   };
   const error = (field: DraftField) =>
-    invalid.has(field)
-      ? field === "url"
-        ? m.monitor_url_invalid()
-        : m.monitor_field_invalid()
-      : undefined;
+    invalid.has(field) ? m.monitor_field_invalid({ field: FIELD_KEYS[field] }) : undefined;
   const text = (field: DraftField & keyof MonitorDraft) => ({
     value: draft[field] as string,
     error: error(field),
@@ -90,18 +101,27 @@ export function MonitorForm({
     });
   };
 
+  const onKeyDown = (event: KeyboardEvent) => {
+    // A native <select> handles its own Escape while open.
+    if (event.key === "Escape" && !event.defaultPrevented) {
+      event.preventDefault();
+      onCancel();
+    }
+  };
+
   const http = draft.kind === "http";
   return (
     <form
       ref={formRef}
       onSubmit={submit}
+      onKeyDown={onKeyDown}
       noValidate
       aria-label={m.monitor_add()}
       className="flex flex-col gap-4 rounded-md border bg-muted/40 p-4"
     >
       <div className="flex flex-col gap-1.5">
         <span id={kindId} className="sr-only">
-          {m.monitor_add()}
+          {m.monitor_field_label({ field: "kind" })}
         </span>
         <div
           role="radiogroup"
@@ -125,7 +145,8 @@ export function MonitorForm({
       </div>
 
       <Field
-        label={m.monitor_name_label()}
+        ref={nameRef}
+        label={m.monitor_field_label({ field: "name" })}
         maxLength={MONITOR_NAME_MAX}
         autoComplete="off"
         {...text("name")}
@@ -135,7 +156,8 @@ export function MonitorForm({
         <>
           <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
             <Field
-              label={m.monitor_url_label()}
+              label={m.monitor_field_label({ field: "url" })}
+              hint={m.monitor_field_hint({ field: "url" })}
               type="url"
               inputMode="url"
               placeholder="https://example.com/health"
@@ -146,7 +168,7 @@ export function MonitorForm({
             />
             <div className="flex flex-col gap-1.5">
               <label htmlFor={methodId} className="text-sm font-medium">
-                {m.monitor_method_label()}
+                {m.monitor_field_label({ field: "method" })}
               </label>
               <select
                 id={methodId}
@@ -162,17 +184,17 @@ export function MonitorForm({
               </select>
             </div>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid items-start gap-4 sm:grid-cols-2">
             <Field
-              label={m.monitor_expected_status_label()}
-              hint={m.monitor_expected_status_hint()}
+              label={m.monitor_field_label({ field: "expected_status" })}
+              hint={m.monitor_field_hint({ field: "expected_status" })}
               inputMode="numeric"
               maxLength={3}
               {...text("expectedStatus")}
             />
             {draft.method === "GET" ? (
               <Field
-                label={m.monitor_keyword_label()}
+                label={m.monitor_field_label({ field: "keyword" })}
                 maxLength={MONITOR_KEYWORD_MAX}
                 autoComplete="off"
                 {...text("keyword")}
@@ -184,7 +206,7 @@ export function MonitorForm({
             aria-describedby={invalid.has("regions") ? regionsErrorId : undefined}
           >
             <legend id={regionsId} className="mb-1.5 text-sm font-medium">
-              {m.monitor_regions_label()}
+              {m.monitor_field_label({ field: "regions" })}
             </legend>
             <div
               className={cn(
@@ -207,6 +229,7 @@ export function MonitorForm({
                       type="checkbox"
                       checked={checked}
                       aria-invalid={invalid.has("regions") || undefined}
+                      aria-describedby={invalid.has("regions") ? regionsErrorId : undefined}
                       onChange={() =>
                         set(
                           "regions",
@@ -235,17 +258,18 @@ export function MonitorForm({
               })}
             </div>
             {invalid.has("regions") ? (
-              <p id={regionsErrorId} className="text-sm text-destructive">
-                {m.monitor_field_invalid()}
+              <p id={regionsErrorId} className="flex items-start gap-1.5 text-sm text-destructive">
+                <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+                <span className="min-w-0">{m.monitor_field_invalid({ field: "regions" })}</span>
               </p>
             ) : null}
           </fieldset>
         </>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+      <div className="grid items-start gap-4 sm:grid-cols-2">
         <Field
-          label={m.monitor_interval_label()}
+          label={m.monitor_field_label({ field: "interval" })}
           inputMode="numeric"
           maxLength={String(MAX_INTERVAL_SECONDS).length}
           placeholder={String(MIN_INTERVAL_SECONDS)}
@@ -253,14 +277,16 @@ export function MonitorForm({
         />
         {http ? (
           <Field
-            label={m.monitor_timeout_label()}
+            label={m.monitor_field_label({ field: "timeout" })}
+            hint={m.monitor_field_hint({ field: "timeout" })}
             inputMode="numeric"
             maxLength={String(MAX_TIMEOUT_SECONDS).length}
             {...text("timeoutSeconds")}
           />
         ) : (
           <Field
-            label={m.monitor_grace_label()}
+            label={m.monitor_field_label({ field: "grace" })}
+            hint={m.monitor_field_hint({ field: "grace" })}
             inputMode="numeric"
             maxLength={String(MAX_GRACE_SECONDS).length}
             {...text("graceSeconds")}

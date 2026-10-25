@@ -435,7 +435,9 @@ export const createHeartbeatMonitor = defineMutation({
  * A change to what is checked: the old results were about another check, so the monitor starts over. Results
  * from before `restartedAt` are refused from then on; `since` moves with every status change and is no guard.
  */
-const restart = (ctx: MutationContext): Pick<MonitorRow, "status" | "checks" | "since" | "restartedAt"> => ({
+const restart = (
+  ctx: MutationContext,
+): Pick<MonitorRow, "status" | "checks" | "since" | "restartedAt"> => ({
   status: "pending",
   checks: [],
   since: ctx.now,

@@ -5,15 +5,19 @@ import {
   createHeartbeatMonitor,
   createHttpMonitor,
   heartbeatToken,
+  isFresh,
+  monitorSources,
   newHeartbeatSecret,
   type ArgsOf,
+  type CheckSource,
   type HttpMethod,
+  type MonitorCheck,
   type MonitorRow,
   type ProbeRegion,
 } from "@freecorps/brigade-schema";
 
 /** What the status badge says: a paused monitor is paused, whatever its last status. */
-export type MonitorBadge = "up" | "down" | "pending" | "paused";
+export type MonitorBadge = MonitorRow["status"] | "paused";
 
 export function monitorBadge(row: Pick<MonitorRow, "paused" | "status">): MonitorBadge {
   return row.paused ? "paused" : row.status;
@@ -31,6 +35,34 @@ const UNITS = [
   ["hour", 3_600],
   ["minute", 60],
 ] as const;
+
+/**
+ * One chip per source the monitor checks from, in its order: the last result if it is still fresh, `stale` if it
+ * is too old to count (`isFresh`), or `waiting` if the source never reported since the monitor (re)started.
+ */
+export type SourceChip =
+  | { source: CheckSource; state: "fresh" | "stale"; check: MonitorCheck }
+  | { source: CheckSource; state: "waiting" };
+
+export function sourceChips(
+  row: Pick<MonitorRow, "kind" | "regions" | "intervalSeconds" | "checks">,
+  now: number,
+): SourceChip[] {
+  return monitorSources(row).map((source) => {
+    const check = row.checks.find((c) => c.source === source);
+    if (!check) return { source, state: "waiting" };
+    return { source, state: isFresh(row, check, now) ? "fresh" : "stale", check };
+  });
+}
+
+/** The `monitor_check_error` reason for a failed check (`status_any` when any 2xx or 3xx would do). */
+export function checkErrorReason(
+  check: Pick<MonitorCheck, "error">,
+  expectedStatus: number | null,
+): string {
+  if (check.error === "status" && expectedStatus === null) return "status_any";
+  return check.error ?? "unknown";
+}
 
 /** `142 ms`, `1,284 ms`. */
 export function formatLatency(ms: number, locale: Locale): string {
@@ -108,7 +140,15 @@ export function checkDraft(draft: MonitorDraft, id: string): CheckedDraft {
     timeoutSeconds: wholeNumber(draft.timeoutSeconds),
     regions: draft.regions,
   });
-  if (!result.ok) return refused(result.issues);
+  if (!result.ok) {
+    const fields = refused(result.issues);
+    // The cross-field rule too, when both numbers are fine on their own.
+    const timeout = wholeNumber(draft.timeoutSeconds);
+    if (!fields.ok && timeout > wholeNumber(draft.intervalSeconds)) {
+      fields.fields = [...new Set([...fields.fields, "timeoutSeconds" as const])];
+    }
+    return fields;
+  }
   if (result.value.timeoutSeconds > result.value.intervalSeconds) {
     return { ok: false, fields: ["timeoutSeconds"] };
   }
@@ -116,7 +156,7 @@ export function checkDraft(draft: MonitorDraft, id: string): CheckedDraft {
 }
 
 /** The draft fields an issue list names (`regions[2]` is `regions`). */
-function refused(issues: readonly { path: string }[]): CheckedDraft {
+function refused(issues: readonly { path: string }[]): Extract<CheckedDraft, { ok: false }> {
   const fields = new Set<DraftField>();
   for (const issue of issues) {
     const field = issue.path.split(/[.[]/)[0];

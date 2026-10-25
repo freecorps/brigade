@@ -1,11 +1,7 @@
 // Monitoring end to end (RFC 0007), a paging path: the HTTP check and its target rules, ProbeDO's alarm chain,
 // probe reports turning into an alert and an incident on the workspace shard, and heartbeats.
 import { env, exports } from "cloudflare:workers";
-import {
-  listDurableObjectIds,
-  runDurableObjectAlarm,
-  runInDurableObject,
-} from "cloudflare:test";
+import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, test, vi } from "vite-plus/test";
 import {
   heartbeatToken,
@@ -263,9 +259,14 @@ describe("monitor down → alert → incident", () => {
     // refreshes the row (its check time) without an outbox event.
     const events = await ws.withShard((_shard, _instance, sql) => outbox(sql).length);
     await runInDurableObject(weur, (_instance, state) => {
-      state.storage.sql.exec("update probe_checks set reported_at = ?", Date.now() - REPORT_EVERY_MS);
+      state.storage.sql.exec(
+        "update probe_checks set reported_at = ?",
+        Date.now() - REPORT_EVERY_MS,
+      );
     });
-    const before = await ws.withShard((shard) => shard.store.get("monitors", monitorId)!.checks[0]!.at);
+    const before = await ws.withShard(
+      (shard) => shard.store.get("monitors", monitorId)!.checks[0]!.at,
+    );
     await new Promise((resolve) => setTimeout(resolve, 5));
     await runProbe(weur);
     await ws.withShard((shard, _instance, sql) => {
@@ -527,7 +528,9 @@ describe("heartbeats", () => {
     await runInDurableObject(ws.stub, (_instance, state) => state.storage.deleteAlarm());
     const accepted = await ping(heartbeatToken(ws.id, monitorId, secret));
     expect(accepted.status).toBe(202);
-    expect(await runInDurableObject(ws.stub, (_i, state) => state.storage.getAlarm())).not.toBeNull();
+    expect(
+      await runInDurableObject(ws.stub, (_i, state) => state.storage.getAlarm()),
+    ).not.toBeNull();
     await ws.withShard((shard) => {
       expect(shard.store.get("monitors", monitorId)).toMatchObject({
         status: "up",

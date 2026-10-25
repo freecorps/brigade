@@ -11,6 +11,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | action | output |
 * | --- | --- |
 * | "pause" | "Pause" |
+* | "prompt" | "Pause checks? A firing alert resolves." |
 * | * | "Resume" |
 *
 * @param {Monitor_Pause_ActionInputs} inputs
@@ -21,10 +22,12 @@ export const monitor_pause_action = /** @type {((inputs: Monitor_Pause_ActionInp
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.action === "pause") return /** @type {LocalizedString} */ (`Pausar`);
+		if (i?.action === "prompt") return /** @type {LocalizedString} */ (`Pausar as verificações? Um alerta ativo é resolvido.`);
 		return /** @type {LocalizedString} */ (`Retomar`)
 	}
 	{
 		if (i?.action === "pause") return /** @type {LocalizedString} */ (`Pause`);
+		if (i?.action === "prompt") return /** @type {LocalizedString} */ (`Pause checks? A firing alert resolves.`);
 		return /** @type {LocalizedString} */ (`Resume`)
 	}
 });

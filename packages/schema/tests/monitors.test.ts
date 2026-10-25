@@ -250,7 +250,11 @@ describe("quorum and freshness", () => {
     const old = T - window - 1;
     // Two fresh downs and a stale up: down.
     expect(
-      monitorStatus(three, [check("wnam", false), check("weur", false), check("apac", true, old)], T),
+      monitorStatus(
+        three,
+        [check("wnam", false), check("weur", false), check("apac", true, old)],
+        T,
+      ),
     ).toBe("down");
     // One fresh up and two stale downs: one region cannot speak for three.
     expect(
@@ -261,9 +265,9 @@ describe("quorum and freshness", () => {
       ),
     ).toBe("unknown");
     // Every probe silent: never "up".
-    expect(
-      monitorStatus(three, [check("wnam", true, old), check("weur", true, old)], T),
-    ).toBe("unknown");
+    expect(monitorStatus(three, [check("wnam", true, old), check("weur", true, old)], T)).toBe(
+      "unknown",
+    );
     // Just created and nothing reported yet: still pending, until the window passes.
     const created = { ...three, status: "pending" as const, restartedAt: T };
     expect(monitorStatus(created, [], T + window)).toBe("pending");

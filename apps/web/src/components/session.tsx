@@ -34,8 +34,8 @@ export function RequireWorkspace({ children }: { children: ReactNode }) {
   return <ActiveWorkspace userId={session.data.user.id}>{children}</ActiveWorkspace>;
 }
 
-/** The signed-in member's workspace and role, for what the dashboard shows or hides (RFC 0003). */
-export type Member = { workspaceId: string; role: Role };
+/** The signed-in member's workspace, user id and role, for what the dashboard shows or hides (RFC 0003). */
+export type Member = { workspaceId: string; userId: string; role: Role };
 
 const MemberContext = createContext<Member | null>(null);
 
@@ -69,15 +69,15 @@ function ActiveWorkspace({ userId, children }: { userId: string; children: React
   setSyncActor({ kind: "user", id: userId, role });
   return (
     <SyncProvider client={syncClient} shard={workspace.data.id}>
-      <MemberProvider workspaceId={workspace.data.id} role={role}>
+      <MemberProvider workspaceId={workspace.data.id} userId={userId} role={role}>
         {children}
       </MemberProvider>
     </SyncProvider>
   );
 }
 
-function MemberProvider({ workspaceId, role, children }: Member & { children: ReactNode }) {
-  const value = useMemo(() => ({ workspaceId, role }), [workspaceId, role]);
+function MemberProvider({ workspaceId, userId, role, children }: Member & { children: ReactNode }) {
+  const value = useMemo(() => ({ workspaceId, userId, role }), [workspaceId, userId, role]);
   return <MemberContext.Provider value={value}>{children}</MemberContext.Provider>;
 }
 

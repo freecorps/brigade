@@ -10,6 +10,7 @@ export type Monitor_StatusInputs = {
 * | "up" | "Up" |
 * | "down" | "Down" |
 * | "paused" | "Paused" |
+* | "unknown" | "No data" |
 * | * | "Waiting" |
 *
 * @param {Monitor_StatusInputs} inputs

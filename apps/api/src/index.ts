@@ -234,7 +234,10 @@ export async function workspaceExists(
 ): Promise<boolean> {
   const expires = knownWorkspaces.get(id);
   if (expires !== undefined && expires > now) return true;
-  const row = await db.prepare('select 1 as found from "organization" where "id" = ?').bind(id).first();
+  const row = await db
+    .prepare('select 1 as found from "organization" where "id" = ?')
+    .bind(id)
+    .first();
   if (!row) {
     knownWorkspaces.delete(id);
     return false;

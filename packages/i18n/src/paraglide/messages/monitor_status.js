@@ -13,6 +13,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "up" | "Up" |
 * | "down" | "Down" |
 * | "paused" | "Paused" |
+* | "unknown" | "No data" |
 * | * | "Waiting" |
 *
 * @param {Monitor_StatusInputs} inputs
@@ -25,12 +26,14 @@ export const monitor_status = /** @type {((inputs: Monitor_StatusInputs, options
 		if (i?.status === "up") return /** @type {LocalizedString} */ (`No ar`);
 		if (i?.status === "down") return /** @type {LocalizedString} */ (`Fora do ar`);
 		if (i?.status === "paused") return /** @type {LocalizedString} */ (`Pausado`);
+		if (i?.status === "unknown") return /** @type {LocalizedString} */ (`Sem dados`);
 		return /** @type {LocalizedString} */ (`Aguardando`)
 	}
 	{
 		if (i?.status === "up") return /** @type {LocalizedString} */ (`Up`);
 		if (i?.status === "down") return /** @type {LocalizedString} */ (`Down`);
 		if (i?.status === "paused") return /** @type {LocalizedString} */ (`Paused`);
+		if (i?.status === "unknown") return /** @type {LocalizedString} */ (`No data`);
 		return /** @type {LocalizedString} */ (`Waiting`)
 	}
 });

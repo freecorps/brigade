@@ -299,6 +299,7 @@
         "status=up": "No ar",
         "status=down": "Fora do ar",
         "status=paused": "Pausado",
+        "status=unknown": "Sem dados",
         "status=*": "Aguardando"
       }
     }
@@ -323,34 +324,112 @@
       "selectors": ["action"],
       "match": {
         "action=pause": "Pausar",
+        "action=prompt": "Pausar as verificações? Um alerta ativo é resolvido.",
         "action=*": "Retomar"
       }
     }
   ],
   "monitor_last_result": [
     {
-      "declarations": ["input kind"],
-      "selectors": ["kind"],
+      "declarations": ["input state", "input when"],
+      "selectors": ["state"],
       "match": {
-        "kind=http": "Verificado {when}",
-        "kind=*": "Último sinal {when}"
+        "state=paused_you": "Pausado por você {when}",
+        "state=paused_other": "Pausado por outra pessoa {when}",
+        "state=*": "Último relatório {when}"
       }
     }
   ],
   "monitor_heartbeat_every": "Espera um sinal a cada {interval}",
-  "monitor_name_label": "Nome",
-  "monitor_url_label": "URL",
-  "monitor_method_label": "Método",
-  "monitor_expected_status_label": "Status esperado",
-  "monitor_expected_status_hint": "Vazio: qualquer 2xx ou 3xx. Redirecionamentos não são seguidos.",
-  "monitor_keyword_label": "Texto que a página deve conter",
-  "monitor_interval_label": "A cada (segundos)",
-  "monitor_timeout_label": "Tempo limite (segundos)",
-  "monitor_grace_label": "Tolerância (segundos)",
-  "monitor_regions_label": "Verificar de",
   "monitor_create": "Criar monitor",
-  "monitor_field_invalid": "Confira este valor.",
-  "monitor_url_invalid": "Use um endereço http ou https público.",
-  "monitor_heartbeat_ready": "Envie um POST para esta URL pelo menos a cada {interval}. Ela só aparece agora: copie antes de fechar.",
-  "monitor_change_failed": "Não foi possível alterar {name}: {reason}"
+  "monitor_field_invalid": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=name": "Dê um nome ao monitor.",
+        "field=url": "Use um endereço http ou https público, numa porta web como 80, 443, 8080 ou 8443.",
+        "field=expected_status": "Use um status de 100 a 599, ou deixe vazio.",
+        "field=keyword": "Use no máximo 200 caracteres.",
+        "field=interval": "Use segundos inteiros, de 30 a 86.400 (24 horas).",
+        "field=timeout": "Use de 1 a 30 segundos, e não mais que o intervalo.",
+        "field=grace": "Use segundos inteiros, de 0 a 86.400 (24 horas).",
+        "field=regions": "Escolha pelo menos uma região.",
+        "field=*": "Confira este valor."
+      }
+    }
+  ],
+  "monitor_change_failed": "Não foi possível alterar {name}: {reason}",
+  "monitor_field_label": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=kind": "Tipo de monitor",
+        "field=name": "Nome",
+        "field=url": "URL",
+        "field=method": "Método",
+        "field=expected_status": "Status esperado",
+        "field=keyword": "Texto que a página deve conter",
+        "field=interval": "A cada (segundos)",
+        "field=timeout": "Tempo limite (segundos)",
+        "field=grace": "Tolerância (segundos)",
+        "field=*": "Verificar de"
+      }
+    }
+  ],
+  "monitor_field_hint": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=url": "Todos no workspace, inclusive leitores, veem esta URL: não coloque tokens nem senhas nela.",
+        "field=expected_status": "Vazio: qualquer 2xx ou 3xx. Redirecionamentos não são seguidos.",
+        "field=timeout": "Quanto tempo uma verificação pode levar.",
+        "field=*": "Quanto um sinal pode atrasar antes de contar como perdido."
+      }
+    }
+  ],
+  "monitor_check_error": [
+    {
+      "declarations": ["input reason", "input got", "input expected"],
+      "selectors": ["reason"],
+      "match": {
+        "reason=timeout": "Tempo esgotado",
+        "reason=network": "Não conectou",
+        "reason=blocked": "Endereço não permitido",
+        "reason=status": "Recebeu {got}, esperava {expected}",
+        "reason=status_any": "Recebeu {got}, esperava 2xx ou 3xx",
+        "reason=keyword": "Texto não encontrado",
+        "reason=missed": "Nenhum sinal a tempo",
+        "reason=*": "A verificação falhou"
+      }
+    }
+  ],
+  "monitor_heartbeat": [
+    {
+      "declarations": ["input part", "input interval"],
+      "selectors": ["part"],
+      "match": {
+        "part=once": "Mostrada só uma vez",
+        "part=send": "Envie um POST para esta URL pelo menos a cada {interval}. O Brigade guarda só um hash dela, então ela não pode ser mostrada de novo.",
+        "part=try": "Teste no terminal:",
+        "part=copy": "Copiar URL",
+        "part=copied": "Copiada",
+        "part=close_prompt": "Fechar sem copiar? A URL não pode ser mostrada de novo.",
+        "part=close": "Fechar mesmo assim",
+        "part=*": "Manter aberta"
+      }
+    }
+  ],
+  "monitor_incident_link": [
+    {
+      "declarations": ["input has", "input number"],
+      "selectors": ["has"],
+      "match": {
+        "has=yes": "Abrir {number}",
+        "has=*": "Abrir incidente"
+      }
+    }
+  ]
 }

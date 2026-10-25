@@ -58,10 +58,13 @@ export function IncidentItem({
   const declared = formatAge(Math.min(row.declaredAt, now), now, locale);
   const PendingIcon = online ? CloudUploadIcon : ClockIcon;
   return (
+    // `id` and `tabIndex`: a monitor's "Open INC-n" link scrolls here and focuses the row.
     <li
+      id={`incident-${row.id}`}
+      tabIndex={-1}
       data-incident={row.id}
       className={cn(
-        "relative grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:px-6",
+        "relative scroll-mt-4 outline-none focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-inset grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:px-6",
         "md:grid-cols-[--spacing(20)_minmax(0,1fr)_--spacing(40)_--spacing(40)] md:items-start",
         row.severity === "sev1" &&
           "before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-sev1",

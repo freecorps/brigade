@@ -34,8 +34,11 @@ export type CheckSource = ProbeRegion | "heartbeat";
 
 export const MONITOR_KINDS = ["http", "heartbeat"] as const;
 export type MonitorKind = (typeof MONITOR_KINDS)[number];
-/** `pending` until a quorum of sources agrees, after creation, a resume or a change of target. */
-export const MONITOR_STATUSES = ["pending", "up", "down"] as const;
+/**
+ * `pending` until a quorum of sources agrees, after creation, a resume or a change of target. `unknown` ("no
+ * data") when too few sources reported recently to tell (`monitorStatus`): never shown as up.
+ */
+export const MONITOR_STATUSES = ["pending", "up", "down", "unknown"] as const;
 export type MonitorStatus = (typeof MONITOR_STATUSES)[number];
 export const HTTP_METHODS = ["GET", "HEAD"] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -72,25 +75,62 @@ export function quorum(sources: number): number {
   return Math.floor(sources / 2) + 1;
 }
 
+/**
+ * At least this many of a monitor's sources must have reported recently for its status to be known: half of
+ * them, rounded up. Below that, a majority of the fresh ones could be a single region speaking for three.
+ */
+export function freshFloor(sources: number): number {
+  return Math.ceil(sources / 2);
+}
+
 /** The sources a monitor's results come from. */
 export function monitorSources(monitor: Pick<MonitorRow, "kind" | "regions">): CheckSource[] {
   return monitor.kind === "heartbeat" ? ["heartbeat"] : [...monitor.regions];
 }
 
 /**
- * The monitor's status from its sources' verdicts: down when a quorum is down, up when a quorum is up (recovery
- * uses the same rule), otherwise unchanged.
+ * How old a source's result may be and still count (RFC 0007 "Quorum and flapping"): three intervals, and never
+ * less than two refresh periods, since an unchanged verdict is reported only every `REPORT_EVERY_MS`. A
+ * heartbeat's result never goes stale: the shard itself reports a missed ping once its deadline passes.
  */
-export function quorumStatus(
-  sources: readonly CheckSource[],
+export function staleAfterMs(monitor: Pick<MonitorRow, "kind" | "intervalSeconds">): number {
+  if (monitor.kind === "heartbeat") return Number.POSITIVE_INFINITY;
+  return Math.max(3 * monitor.intervalSeconds * 1000, 2 * REPORT_EVERY_MS);
+}
+
+/** Whether `check` still counts at `now`. */
+export function isFresh(
+  monitor: Pick<MonitorRow, "kind" | "intervalSeconds">,
+  check: Pick<MonitorCheck, "at">,
+  now: number,
+): boolean {
+  return now - check.at <= staleAfterMs(monitor);
+}
+
+/**
+ * The monitor's status at `now` from its sources' results. Only fresh results count (`isFresh`), and at least
+ * `freshFloor` sources must have one; otherwise the status is `unknown` (or still `pending`, within the stale
+ * window after a restart). Among the fresh results it is down when a majority of them is down, up when a majority
+ * is up (recovery uses the same rule), and otherwise unchanged.
+ */
+export function monitorStatus(
+  monitor: Pick<MonitorRow, "kind" | "regions" | "intervalSeconds" | "status" | "restartedAt">,
   checks: readonly MonitorCheck[],
-  current: MonitorStatus,
+  now: number,
 ): MonitorStatus {
-  const needed = quorum(sources.length);
-  const counted = checks.filter((check) => sources.includes(check.source));
-  if (counted.filter((check) => !check.up).length >= needed) return "down";
-  if (counted.filter((check) => check.up).length >= needed) return "up";
-  return current;
+  const sources = monitorSources(monitor);
+  const fresh = checks.filter(
+    (check) => sources.includes(check.source) && isFresh(monitor, check, now),
+  );
+  if (fresh.length < freshFloor(sources.length)) {
+    const starting =
+      monitor.status === "pending" && now - monitor.restartedAt <= staleAfterMs(monitor);
+    return starting ? "pending" : "unknown";
+  }
+  const needed = quorum(fresh.length);
+  if (fresh.filter((check) => !check.up).length >= needed) return "down";
+  if (fresh.filter((check) => check.up).length >= needed) return "up";
+  return monitor.status;
 }
 
 // ---- Targets (SSRF) --------------------------------------------------------------------------------------------
@@ -105,6 +145,7 @@ const BLOCKED_IPV4: readonly [string, number][] = [
   ["172.16.0.0", 12],
   ["192.0.0.0", 24],
   ["192.0.2.0", 24],
+  ["192.88.99.0", 24],
   ["192.168.0.0", 16],
   ["198.18.0.0", 15],
   ["198.51.100.0", 24],
@@ -126,18 +167,43 @@ function blockedIpv4(address: string): boolean {
 }
 
 /**
- * Only global unicast (2000::/3), minus documentation (2001:db8::/32), Teredo (2001::/32) and 6to4 (2002::/16),
- * which can carry a private IPv4 address. Everything else (loopback, mapped IPv4, unique local, link-local,
- * multicast) is refused.
+ * Only global unicast (2000::/3), minus documentation (2001:db8::/32), Teredo (2001::/32), benchmarking
+ * (2001:2::/48), ORCHID (2001:10::/28) and 6to4 (2002::/16), which can carry a private IPv4 address. Everything
+ * else (loopback, mapped IPv4, unique local, link-local, multicast) is refused. The URL parser has already
+ * expanded `::`, so the first groups are in place.
  */
 function blockedIpv6(address: string): boolean {
-  const groups = address.split(":");
-  const first = Number.parseInt(groups[0] || "0", 16);
-  const second = Number.parseInt(groups[1] || "0", 16);
+  const groups = expandIpv6(address);
+  const [first = 0, second = 0, third = 0] = groups;
   if (first < 0x2000 || first > 0x3fff) return true;
   if (first === 0x2002) return true;
-  return first === 0x2001 && (second === 0 || second === 0xdb8);
+  if (first !== 0x2001) return false;
+  return (
+    second === 0 ||
+    second === 0xdb8 ||
+    (second === 0x2 && third === 0) ||
+    (second & 0xfff0) === 0x10
+  );
 }
+
+/** The eight 16-bit groups of an IPv6 address (`::` filled with zeros). */
+function expandIpv6(address: string): number[] {
+  const [head = "", tail] = address.split("::");
+  const parse = (part: string) =>
+    part === "" ? [] : part.split(":").map((group) => Number.parseInt(group, 16) || 0);
+  const start = parse(head);
+  const end = tail === undefined ? [] : parse(tail);
+  return [...start, ...Array<number>(Math.max(0, 8 - start.length - end.length)).fill(0), ...end];
+}
+
+/**
+ * The ports a check may use (RFC 0007 "Targets"): the defaults, the common alternates 8080 and 8443, and the other
+ * ports Cloudflare proxies HTTP(S) on. Not any port, so a monitor cannot be pointed at a mail, database or cache
+ * port to learn from its error whether something listens there.
+ */
+export const MONITOR_PORTS: readonly number[] = [
+  80, 443, 2052, 2053, 2082, 2083, 2086, 2087, 2095, 2096, 8080, 8443, 8880,
+];
 
 /** The WHATWG URL parser, as far as it is used here (src has no DOM or Node types). */
 type ParsedUrl = {
@@ -145,13 +211,15 @@ type ParsedUrl = {
   username: string;
   password: string;
   hostname: string;
+  /** Empty for the scheme's default port. */
+  port: string;
   href: string;
 };
 const URL_PARSER = (globalThis as unknown as { URL: new (input: string) => ParsedUrl }).URL;
 
 /**
- * Why a check may not target `input`, or null if it may: only `http:`/`https:`, no credentials, and no host that
- * is private, loopback, link-local or local-only by name. The URL parser has already turned every IPv4 spelling
+ * Why a check may not target `input`, or null if it may: only `http:`/`https:`, no credentials, a port from
+ * `MONITOR_PORTS`, and no host that is private, loopback, link-local or local-only by name. The URL parser has already turned every IPv4 spelling
  * (`0x7f.1`, `2130706433`) into dotted decimal. A public name that resolves to a private address is not caught
  * here (Workers cannot resolve names); deployed Workers cannot reach private networks, and the probe checks the
  * URL again before every fetch and never follows redirects (RFC 0007).
@@ -165,6 +233,9 @@ export function targetProblem(input: string): string | null {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return "Expected an http or https URL";
   if (url.username || url.password) return "A URL with credentials cannot be checked";
+  if (url.port !== "" && !MONITOR_PORTS.includes(Number(url.port))) {
+    return `Expected port 80, 443 or one of ${MONITOR_PORTS.filter((p) => p !== 80 && p !== 443).join(", ")}`;
+  }
   const host = url.hostname.toLowerCase().replace(/\.$/, "");
   if (host.startsWith("[")) {
     return blockedIpv6(host.slice(1, -1)) ? "Expected a public address" : null;
@@ -282,8 +353,11 @@ function created(row: MonitorRow): MonitorCreated {
 
 const fresh = (ctx: MutationContext) => ({
   paused: false,
+  pausedBy: null,
+  pausedAt: null,
   status: "pending" as const,
   since: ctx.now,
+  restartedAt: ctx.now,
   checks: [],
   alertId: null,
   incidentId: null,
@@ -357,8 +431,16 @@ export const createHeartbeatMonitor = defineMutation({
   },
 });
 
-/** A change to what is checked: the old results were about another check, so the monitor starts over. */
-const RESTART: Pick<MonitorRow, "status" | "checks"> = { status: "pending", checks: [] };
+/**
+ * A change to what is checked: the old results were about another check, so the monitor starts over. Results
+ * from before `restartedAt` are refused from then on; `since` moves with every status change and is no guard.
+ */
+const restart = (ctx: MutationContext): Pick<MonitorRow, "status" | "checks" | "since" | "restartedAt"> => ({
+  status: "pending",
+  checks: [],
+  since: ctx.now,
+  restartedAt: ctx.now,
+});
 
 export const updateHttpMonitor = defineMutation({
   name: "monitor.updateHttp",
@@ -386,8 +468,8 @@ export const updateHttpMonitor = defineMutation({
     );
     if (changed.length === 0) return fail("conflict", "Nothing to change");
     const retarget = changed.some((key) => key !== "name" && key !== "intervalSeconds");
-    const restart = retarget && !monitor.paused ? { ...RESTART, since: ctx.now } : {};
-    store.update("monitors", args.id, { ...next, ...restart, updatedAt: ctx.now });
+    const restarted = retarget && !monitor.paused ? restart(ctx) : {};
+    store.update("monitors", args.id, { ...next, ...restarted, updatedAt: ctx.now });
     const event: MonitorUpdated = {
       type: "monitor.updated",
       subject: args.id,
@@ -448,8 +530,8 @@ function resolveAlert(
 }
 
 /**
- * Pausing stops the checks and resolves a firing alert (nobody should stay paged for a monitor turned off);
- * resuming starts over from `pending`.
+ * Pausing stops the checks and resolves a firing alert (nobody should stay paged for a monitor turned off), and
+ * records who paused it and when; resuming starts over from `pending`.
  */
 export const setMonitorPaused = defineMutation({
   name: "monitor.setPaused",
@@ -464,8 +546,9 @@ export const setMonitorPaused = defineMutation({
     const resolved = args.paused ? resolveAlert(store, monitor, "paused", ctx.now) : [];
     store.update("monitors", args.id, {
       paused: args.paused,
-      ...RESTART,
-      since: ctx.now,
+      pausedBy: args.paused ? ctx.actor.id : null,
+      pausedAt: args.paused ? ctx.now : null,
+      ...restart(ctx),
       alertId: null,
       incidentId: null,
       updatedAt: ctx.now,
@@ -500,12 +583,93 @@ export const deleteMonitor = defineMutation({
 
 const declaring = defineRegistry([declareIncident]);
 
+/** What the shard makes for a monitor that may open an incident: ids and the title (mutations make neither). */
+const openArgs = v.object({
+  alertId: v.id("alt"),
+  incidentId: v.id("inc"),
+  title: v.string({ min: 1, max: INCIDENT_TITLE_MAX }),
+});
+type OpenArgs = { alertId: string; incidentId: string; title: string };
+
 /**
- * Server only: one source's verdict, from a probe or the heartbeat endpoint, run as `MONITOR_ACTOR`. When the
- * monitor turns down it fires one alert (none while one is firing: deduplicated per monitor) and opens an incident
- * through `incident.declare`, with RBAC, in this same transaction: the ids and the title come from the shard in
- * `open`, since mutations make no randomness and render no text. When it turns up again the alert resolves; the
- * incident is left for people to resolve (the incident model has no timeline yet).
+ * Moves `monitor` to `status` (a no-op when it already holds): `monitor.status_changed`, and the alert that goes
+ * with it. Turning down fires one alert (none while one fires: deduplicated per monitor) and opens its incident
+ * through `incident.declare`, with RBAC, in this same transaction. Turning up resolves it. `unknown` leaves a
+ * firing alert alone: no data is no recovery. Returns the events, or the failure that must roll everything back.
+ */
+function moveTo(
+  store: MutationStore,
+  monitor: MonitorRow,
+  status: MonitorStatus,
+  open: OpenArgs,
+  ctx: MutationContext,
+  patch: Partial<Omit<MonitorRow, "id">>,
+): { events: DomainEvent[] } | { failed: MutationResult } {
+  if (status === monitor.status) return { events: [] };
+  const { id } = monitor;
+  patch.status = status;
+  patch.since = ctx.now;
+  const events: DomainEvent[] = [
+    {
+      type: "monitor.status_changed",
+      subject: id,
+      data: { from: monitor.status, to: status },
+    } satisfies MonitorStatusChanged,
+  ];
+  if (status === "down" && monitor.alertId === null) {
+    // `runMutation` turns any exception into `internal`; a storage failure must reach the shard as one instead
+    // (it rolls back and the probe retries), so it is caught here and thrown again.
+    let thrown: { error: unknown } | undefined;
+    const declared = runMutation(
+      declaring,
+      "incident.declare",
+      { id: open.incidentId, title: open.title, severity: MONITOR_INCIDENT_SEVERITY },
+      store,
+      ctx,
+      { onError: (error) => (thrown = { error }) },
+    );
+    if (thrown) throw thrown.error;
+    // Without its incident the alert would page nobody: fail the report, and the probe sends it again.
+    if (!declared.ok) return { failed: declared };
+    store.insert("alerts", {
+      id: open.alertId,
+      fingerprint: `monitor:${id}`,
+      monitorId: id,
+      status: "firing",
+      firedAt: ctx.now,
+      resolvedAt: null,
+      incidentId: open.incidentId,
+    });
+    patch.alertId = open.alertId;
+    patch.incidentId = open.incidentId;
+    // The incident first: a consumer that sees the alert can already find what it points at.
+    events.push(...declared.events, {
+      type: "alert.fired",
+      subject: open.alertId,
+      data: {
+        id: open.alertId,
+        fingerprint: `monitor:${id}`,
+        monitorId: id,
+        incidentId: open.incidentId,
+      },
+    } satisfies AlertFired);
+  } else if (status === "up") {
+    events.push(...resolveAlert(store, monitor, "recovered", ctx.now));
+    patch.alertId = null;
+    patch.incidentId = null;
+  }
+  return { events };
+}
+
+/**
+ * Server only: one source's verdict, from a probe or the heartbeat endpoint, run as `MONITOR_ACTOR`; the status
+ * follows `monitorStatus` and `moveTo` raises or resolves the alert. The ids and the title come from the shard in
+ * `open`, since mutations make no randomness and render no text. The incident is left for people to resolve (the
+ * incident model has no timeline yet).
+ *
+ * `monitor.checked` is emitted only when the source's verdict or failure reason changed: the probe re-sends an
+ * unchanged verdict every `REPORT_EVERY_MS` so latency, colo and the check time stay fresh on the dashboard, and
+ * those refreshes are synced but are not domain events (`silent`), so they never reach the outbox.
  */
 export const reportMonitorCheck = defineMutation({
   name: "monitor.report",
@@ -518,13 +682,10 @@ export const reportMonitorCheck = defineMutation({
     colo: v.nullable(v.string({ min: 1, max: 8 })),
     httpStatus: v.nullable(v.integer({ min: 100, max: 599 })),
     error: v.nullable(v.string({ min: 1, max: 32 })),
-    open: v.object({
-      alertId: v.id("alt"),
-      incidentId: v.id("inc"),
-      title: v.string({ min: 1, max: INCIDENT_TITLE_MAX }),
-    }),
+    open: openArgs,
   }),
   permission: "monitor:manage",
+  silent: true,
   apply(store, args, ctx) {
     const monitor = store.get("monitors", args.id);
     if (!monitor) return fail("not_found", "Monitor not found");
@@ -534,68 +695,49 @@ export const reportMonitorCheck = defineMutation({
     const previous = monitor.checks.find((check) => check.source === args.source);
     // A late report (a retry overtaken by a newer one) must not undo what the newer one said.
     if (previous && previous.at > args.at) return fail("conflict", "A newer result is recorded");
-    if (args.at < monitor.since) return fail("conflict", "Reported before the monitor restarted");
+    // Only a restart (create, a new target, resume) cuts results off: a report computed before another region
+    // flipped the status, and delivered after, still counts.
+    if (args.at < monitor.restartedAt) {
+      return fail("conflict", "Reported before the monitor restarted");
+    }
 
     const { open, id, ...result } = args;
     const check: MonitorCheck = result;
     const checks = [...monitor.checks.filter((c) => c.source !== args.source), check].sort(
       (a, b) => sources.indexOf(a.source) - sources.indexOf(b.source),
     );
-    const status = quorumStatus(sources, checks, monitor.status);
-    const events: DomainEvent[] = [
-      { type: "monitor.checked", subject: id, data: check } satisfies MonitorChecked,
-    ];
-    const patch: Partial<Omit<MonitorRow, "id">> = { checks };
-    if (status !== monitor.status) {
-      patch.status = status;
-      patch.since = ctx.now;
-      events.push({
-        type: "monitor.status_changed",
-        subject: id,
-        data: { from: monitor.status, to: status },
-      } satisfies MonitorStatusChanged);
-      if (status === "down" && monitor.alertId === null) {
-        const declared = runMutation(
-          declaring,
-          "incident.declare",
-          { id: open.incidentId, title: open.title, severity: MONITOR_INCIDENT_SEVERITY },
-          store,
-          ctx,
-        );
-        // Without its incident the alert would page nobody: fail the report, and the probe sends it again.
-        if (!declared.ok) return declared;
-        store.insert("alerts", {
-          id: open.alertId,
-          fingerprint: `monitor:${id}`,
-          monitorId: id,
-          status: "firing",
-          firedAt: ctx.now,
-          resolvedAt: null,
-          incidentId: open.incidentId,
-        });
-        patch.alertId = open.alertId;
-        patch.incidentId = open.incidentId;
-        events.push(
-          {
-            type: "alert.fired",
-            subject: open.alertId,
-            data: {
-              id: open.alertId,
-              fingerprint: `monitor:${id}`,
-              monitorId: id,
-              incidentId: open.incidentId,
-            },
-          } satisfies AlertFired,
-          ...declared.events,
-        );
-      } else if (status === "up") {
-        events.push(...resolveAlert(store, monitor, "recovered", ctx.now));
-        patch.alertId = null;
-        patch.incidentId = null;
-      }
+    const events: DomainEvent[] = [];
+    if (!previous || previous.up !== check.up || previous.error !== check.error) {
+      events.push({ type: "monitor.checked", subject: id, data: check } satisfies MonitorChecked);
     }
+    const patch: Partial<Omit<MonitorRow, "id">> = { checks };
+    const moved = moveTo(store, monitor, monitorStatus(monitor, checks, ctx.now), open, ctx, patch);
+    if ("failed" in moved) return moved.failed;
     store.update("monitors", id, patch);
-    return ok(...events);
+    return ok(...events, ...moved.events);
+  },
+});
+
+/**
+ * Server only: the status again at `ctx.now` with no new result, run by the shard's alarm when results went
+ * stale (`monitorStatus`): a monitor whose probes stopped reporting turns `unknown` instead of staying up. A
+ * `conflict` when the status holds, so nothing is written.
+ */
+export const evaluateMonitor = defineMutation({
+  name: "monitor.evaluate",
+  args: v.object({ id: monitorId, open: openArgs }),
+  permission: "monitor:manage",
+  apply(store, args, ctx) {
+    const monitor = store.get("monitors", args.id);
+    if (!monitor) return fail("not_found", "Monitor not found");
+    if (monitor.paused) return fail("conflict", "Monitor is paused");
+    const status = monitorStatus(monitor, monitor.checks, ctx.now);
+    if (status === monitor.status) return fail("conflict", "The status holds");
+    const patch: Partial<Omit<MonitorRow, "id">> = {};
+    const moved = moveTo(store, monitor, status, args.open, ctx, patch);
+    if ("failed" in moved) return moved.failed;
+    store.update("monitors", args.id, patch);
+    return ok(...moved.events);
   },
 });
 

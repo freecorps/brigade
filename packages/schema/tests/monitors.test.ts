@@ -1,22 +1,29 @@
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test, vi } from "vite-plus/test";
 import {
   activeIncidents,
   createMemoryStore,
+  defineMutation,
+  defineRegistry,
   evaluateQuery,
+  freshFloor,
   MONITOR_ACTOR,
   monitorSources,
+  monitorStatus,
   mutations,
   newId,
+  ok,
   queries,
   quorum,
-  quorumStatus,
+  REPORT_EVERY_MS,
   runMutation,
   serverMutations,
+  staleAfterMs,
   targetProblem,
   v,
   type BrigadeTables,
   type MemoryStore,
   type MonitorCheck,
+  type MonitorRow,
   type MutationContext,
   type MutationResult,
   type ProbeRegion,
@@ -57,12 +64,20 @@ function createHttp(db: MemoryStore<BrigadeTables>, regions: ProbeRegion[], name
   return args.id;
 }
 
+const open = () => ({
+  alertId: newId("alt", T, random),
+  incidentId: newId("inc", T, random),
+  title: "Checkout is down",
+});
+
+/** One source's verdict, computed at `at` and delivered at `deliveredAt` (by default at once). */
 function report(
   db: MemoryStore<BrigadeTables>,
   id: string,
   source: string,
   up: boolean,
   at = T + 1000,
+  deliveredAt = at,
 ) {
   return runMutation(
     serverMutations,
@@ -76,16 +91,15 @@ function report(
       colo: "CDG",
       httpStatus: up ? 200 : 503,
       error: up ? null : "status",
-      open: {
-        alertId: newId("alt", T, random),
-        incidentId: newId("inc", T, random),
-        title: "Checkout is down",
-      },
+      open: open(),
     },
     db,
-    system(at),
+    system(deliveredAt),
   );
 }
+
+const evaluate = (db: MemoryStore<BrigadeTables>, id: string, now: number) =>
+  runMutation(serverMutations, "monitor.evaluate", { id, open: open() }, db, system(now));
 
 const types = (result: MutationResult) =>
   result.ok ? result.events.map((event) => event.type) : result.error.code;
@@ -111,8 +125,9 @@ describe("targets (SSRF)", () => {
   test("accepts public http and https URLs", () => {
     for (const url of [
       "https://example.com/health",
+      "https://1.1.1.1/",
+      "https://example.com:8443/health",
       "http://example.com:8080/",
-      "https://93.184.215.14/",
       "https://[2606:4700::1111]/",
       "http://172.32.0.1/",
     ]) {
@@ -152,6 +167,15 @@ describe("targets (SSRF)", () => {
       "http://[fd00::1]/",
       "http://[2001:db8::1]/",
       "http://[2002:a00:1::]/",
+      "http://192.88.99.1/",
+      "http://[2001:2::1]/",
+      "http://[2001:10::1]/",
+      "http://[2001:1f:ffff::1]/",
+      // Ports other than MONITOR_PORTS: a monitor is no port scanner.
+      "http://example.com:22/",
+      "http://example.com:25/",
+      "http://example.com:6379/",
+      "https://example.com:3000/",
     ]) {
       expect(targetProblem(url), url).not.toBeNull();
     }
@@ -173,35 +197,90 @@ describe("targets (SSRF)", () => {
   });
 });
 
-describe("quorum", () => {
-  const check = (source: ProbeRegion, up: boolean): MonitorCheck => ({
+describe("quorum and freshness", () => {
+  const check = (source: ProbeRegion, up: boolean, at = T): MonitorCheck => ({
     source,
-    at: T,
+    at,
     up,
     latencyMs: null,
     colo: null,
     httpStatus: null,
     error: null,
   });
+  const monitor = (
+    regions: ProbeRegion[],
+    status: MonitorRow["status"] = "up",
+  ): Pick<MonitorRow, "kind" | "regions" | "intervalSeconds" | "status" | "restartedAt"> => ({
+    kind: "http",
+    regions,
+    intervalSeconds: 60,
+    status,
+    restartedAt: T - 60 * 60_000,
+  });
 
-  test("one region is its own quorum; N regions need a majority", () => {
+  test("one region is its own quorum; N regions need a majority, and half of them fresh", () => {
     expect([1, 2, 3, 4, 5, 6].map(quorum)).toEqual([1, 2, 2, 3, 3, 4]);
+    expect([1, 2, 3, 4, 5, 6].map(freshFloor)).toEqual([1, 1, 2, 2, 3, 3]);
   });
 
-  test("down or up takes a quorum; otherwise the status holds", () => {
-    const sources: ProbeRegion[] = ["wnam", "weur", "apac"];
-    expect(quorumStatus(sources, [check("wnam", false)], "up")).toBe("up");
-    expect(quorumStatus(sources, [check("wnam", false), check("weur", false)], "up")).toBe("down");
-    expect(quorumStatus(sources, [check("wnam", true), check("weur", false)], "down")).toBe("down");
-    expect(quorumStatus(sources, [check("wnam", true), check("weur", true)], "down")).toBe("up");
-    expect(quorumStatus(sources, [], "pending")).toBe("pending");
+  test("down or up takes a majority of the fresh results; otherwise the status holds", () => {
+    const three = monitor(["wnam", "weur", "apac"]);
+    const status = (checks: MonitorCheck[], current = three) => monitorStatus(current, checks, T);
+    expect(status([check("wnam", false), check("weur", true)])).toBe("up");
+    expect(status([check("wnam", false), check("weur", false)])).toBe("down");
+    expect(status([check("wnam", true), check("weur", false)], { ...three, status: "down" })).toBe(
+      "down",
+    );
+    expect(status([check("wnam", true), check("weur", true)], { ...three, status: "down" })).toBe(
+      "up",
+    );
     // A result from a region the monitor no longer uses does not count.
-    expect(quorumStatus(["wnam"], [check("weur", false)], "up")).toBe("up");
+    expect(monitorStatus(monitor(["wnam"]), [check("weur", false), check("wnam", true)], T)).toBe(
+      "up",
+    );
   });
 
-  test("a heartbeat monitor has one source", () => {
+  test("results older than the stale window stop voting; too few fresh ones is no data", () => {
+    const three = monitor(["wnam", "weur", "apac"]);
+    const window = staleAfterMs(three);
+    // Two refresh periods at least, since an unchanged verdict is only re-sent that often.
+    expect(window).toBe(2 * REPORT_EVERY_MS);
+    expect(staleAfterMs({ kind: "http", intervalSeconds: 3600 })).toBe(3 * 3600_000);
+    expect(staleAfterMs({ kind: "heartbeat", intervalSeconds: 60 })).toBe(Infinity);
+    const old = T - window - 1;
+    // Two fresh downs and a stale up: down.
+    expect(
+      monitorStatus(three, [check("wnam", false), check("weur", false), check("apac", true, old)], T),
+    ).toBe("down");
+    // One fresh up and two stale downs: one region cannot speak for three.
+    expect(
+      monitorStatus(
+        { ...three, status: "down" },
+        [check("wnam", true), check("weur", false, old), check("apac", false, old)],
+        T,
+      ),
+    ).toBe("unknown");
+    // Every probe silent: never "up".
+    expect(
+      monitorStatus(three, [check("wnam", true, old), check("weur", true, old)], T),
+    ).toBe("unknown");
+    // Just created and nothing reported yet: still pending, until the window passes.
+    const created = { ...three, status: "pending" as const, restartedAt: T };
+    expect(monitorStatus(created, [], T + window)).toBe("pending");
+    expect(monitorStatus(created, [], T + window + 1)).toBe("unknown");
+  });
+
+  test("a heartbeat monitor has one source, which never goes stale", () => {
     expect(monitorSources({ kind: "heartbeat", regions: [] })).toEqual(["heartbeat"]);
     expect(monitorSources({ kind: "http", regions: ["enam", "oc"] })).toEqual(["enam", "oc"]);
+    const beat: MonitorCheck = { ...check("wnam", true, 0), source: "heartbeat" };
+    expect(
+      monitorStatus(
+        { kind: "heartbeat", regions: [], intervalSeconds: 60, status: "up", restartedAt: 0 },
+        [beat],
+        T,
+      ),
+    ).toBe("up");
   });
 });
 
@@ -236,6 +315,9 @@ describe("managing monitors", () => {
       regions: ["wnam", "weur"],
       status: "pending",
       paused: false,
+      pausedBy: null,
+      pausedAt: null,
+      restartedAt: T,
       createdBy: "usr_ana",
     });
 
@@ -247,14 +329,20 @@ describe("managing monitors", () => {
     ]);
 
     const pause = { id: args.id, paused: true };
-    expect(types(runMutation(mutations, "monitor.setPaused", pause, db, as("admin")))).toEqual([
-      "monitor.paused",
-    ]);
+    expect(
+      types(runMutation(mutations, "monitor.setPaused", pause, db, as("admin", T + 500))),
+    ).toEqual(["monitor.paused"]);
+    expect(db.get("monitors", args.id)).toMatchObject({ pausedBy: "usr_ana", pausedAt: T + 500 });
     expect(runMutation(mutations, "monitor.setPaused", pause, db, as("admin")).ok).toBe(false);
     const resume = { id: args.id, paused: false };
-    expect(types(runMutation(mutations, "monitor.setPaused", resume, db, as("admin")))).toEqual([
-      "monitor.resumed",
-    ]);
+    expect(
+      types(runMutation(mutations, "monitor.setPaused", resume, db, as("admin", T + 900))),
+    ).toEqual(["monitor.resumed"]);
+    expect(db.get("monitors", args.id)).toMatchObject({
+      pausedBy: null,
+      pausedAt: null,
+      restartedAt: T + 900,
+    });
     const remove = { id: args.id };
     expect(types(runMutation(mutations, "monitor.delete", remove, db, as("admin")))).toEqual([
       "monitor.deleted",
@@ -312,8 +400,10 @@ describe("monitor.report: quorum → alert → incident", () => {
   test("is server only", () => {
     const db = store();
     const id = createHttp(db, ["weur"]);
-    const result = runMutation(mutations, "monitor.report" as never, { id }, db, as("owner"));
-    expect(result).toMatchObject({ ok: false, error: { code: "unknown_mutation" } });
+    for (const name of ["monitor.report", "monitor.evaluate"]) {
+      const result = runMutation(mutations, name as never, { id }, db, as("owner"));
+      expect(result).toMatchObject({ ok: false, error: { code: "unknown_mutation" } });
+    }
   });
 
   test("one region: down fires one alert and declares one incident as the system actor", () => {
@@ -326,11 +416,12 @@ describe("monitor.report: quorum → alert → incident", () => {
     expect(db.get("monitors", id)?.status).toBe("up");
 
     const down = report(db, id, "weur", false, T + 2000);
+    // The incident's event before the alert's, so a consumer of alert.fired can find its incident.
     expect(types(down)).toEqual([
       "monitor.checked",
       "monitor.status_changed",
-      "alert.fired",
       "incident.declared",
+      "alert.fired",
     ]);
     const monitor = db.get("monitors", id)!;
     expect(monitor).toMatchObject({ status: "down", alertId: expect.any(String) });
@@ -360,8 +451,10 @@ describe("monitor.report: quorum → alert → incident", () => {
       incidentId: incident.id,
     });
 
-    // Still down: deduplicated, no second alert or incident.
-    expect(types(report(db, id, "weur", false, T + 3000))).toEqual(["monitor.checked"]);
+    // Still down: deduplicated, no second alert or incident. The unchanged verdict refreshes the row only, with
+    // no event for the outbox.
+    expect(types(report(db, id, "weur", false, T + 3000))).toEqual([]);
+    expect(db.get("monitors", id)?.checks[0]?.at).toBe(T + 3000);
     expect(db.scan("alerts")).toHaveLength(1);
     expect(db.scan("incidents")).toHaveLength(1);
 
@@ -482,5 +575,150 @@ describe("monitor.report: quorum → alert → incident", () => {
     const c = createHttp(db, ["weur"], "C");
     report(db, c, "weur", false);
     expect(evaluateQuery(queries["monitors.all"], {}, db).map((row) => row.id)).toEqual([c, a, b]);
+  });
+});
+
+describe("monitor.report: restarts, refreshes and stale probes", () => {
+  test("a report computed before another region flipped the status still counts", () => {
+    // The reviewer's case: wnam and enam down → down; weur's down, computed before the flip, arrives after it;
+    // wnam recovers. Two of three regions are still down: no recovery and no second incident.
+    const db = store();
+    const id = createHttp(db, ["wnam", "enam", "weur"]);
+    report(db, id, "wnam", false, T + 1000);
+    expect(types(report(db, id, "enam", false, T + 2000))).toContain("incident.declared");
+    expect(db.get("monitors", id)).toMatchObject({ status: "down", since: T + 2000 });
+
+    const late = report(db, id, "weur", false, T + 1500, T + 2500);
+    expect(types(late)).toEqual(["monitor.checked"]);
+    expect(types(report(db, id, "wnam", true, T + 3000))).toEqual(["monitor.checked"]);
+    expect(db.get("monitors", id)?.status).toBe("down");
+
+    // Five minutes on: the probes re-send their unchanged verdicts, still down, still one incident.
+    const later = T + 3000 + REPORT_EVERY_MS;
+    for (const [region, up] of [
+      ["wnam", true],
+      ["enam", false],
+      ["weur", false],
+    ] as const) {
+      expect(types(report(db, id, region, up, later))).toEqual([]);
+    }
+    expect(db.get("monitors", id)?.status).toBe("down");
+    expect(db.scan("incidents")).toHaveLength(1);
+    expect(db.scan("alerts")).toEqual([expect.objectContaining({ status: "firing" })]);
+  });
+
+  test("only a restart cuts results off", () => {
+    const db = store();
+    const args = httpArgs(["weur"]);
+    runMutation(mutations, "monitor.createHttp", args, db, as("admin"));
+    expect(report(db, args.id, "weur", true, T - 1)).toMatchObject({
+      error: { code: "conflict" },
+    });
+    report(db, args.id, "weur", true, T + 1000);
+    const moved = { ...args, url: "https://example.com/other" };
+    runMutation(mutations, "monitor.updateHttp", moved, db, as("admin", T + 2000));
+    expect(db.get("monitors", args.id)).toMatchObject({ restartedAt: T + 2000, status: "pending" });
+    // Checked the old URL before the change: refused.
+    expect(report(db, args.id, "weur", false, T + 1999, T + 2100)).toMatchObject({
+      error: { code: "conflict" },
+    });
+    expect(report(db, args.id, "weur", true, T + 2001).ok).toBe(true);
+  });
+
+  test("a monitor whose probes stop reporting turns unknown, never up, and keeps its alert", () => {
+    const db = store();
+    const id = createHttp(db, ["wnam", "enam", "weur"]);
+    for (const region of ["wnam", "enam", "weur"] as const) report(db, id, region, false, T + 1000);
+    const monitor = db.get("monitors", id)!;
+    expect(monitor.status).toBe("down");
+    const window = staleAfterMs(monitor);
+
+    // Within the window nothing changes.
+    expect(evaluate(db, id, T + 1000 + window)).toMatchObject({ error: { code: "conflict" } });
+    // Then the probes have been silent too long: no data, the alert stays firing, nothing resolves.
+    expect(types(evaluate(db, id, T + 1001 + window))).toEqual(["monitor.status_changed"]);
+    expect(db.get("monitors", id)).toMatchObject({
+      status: "unknown",
+      alertId: monitor.alertId,
+      incidentId: monitor.incidentId,
+    });
+    expect(db.get("alerts", monitor.alertId!)?.status).toBe("firing");
+
+    // Fresh results come back up: that is the recovery, and it resolves the alert.
+    const back = T + 2 * window;
+    report(db, id, "wnam", true, back);
+    expect(types(report(db, id, "enam", true, back))).toEqual([
+      "monitor.checked",
+      "monitor.status_changed",
+      "alert.resolved",
+    ]);
+    expect(db.scan("incidents")).toHaveLength(1);
+  });
+
+  test("a monitor whose probes never report leaves pending for unknown", () => {
+    const db = store();
+    const id = createHttp(db, ["weur", "wnam"]);
+    const window = staleAfterMs(db.get("monitors", id)!);
+    expect(evaluate(db, id, T + window)).toMatchObject({ error: { code: "conflict" } });
+    expect(types(evaluate(db, id, T + window + 1))).toEqual(["monitor.status_changed"]);
+    expect(db.get("monitors", id)?.status).toBe("unknown");
+    expect(db.scan("alerts")).toEqual([]);
+  });
+
+  test("a storage failure while declaring the incident is thrown, not stored as the report's answer", () => {
+    const db = store();
+    const id = createHttp(db, ["weur"]);
+    const failure = new Error("storage is down");
+    const insert = db.insert.bind(db);
+    const broken = Object.assign(Object.create(db) as typeof db, {
+      insert: ((table, row) => {
+        if (table === "incidents") throw failure;
+        return insert(table, row);
+      }) as typeof db.insert,
+    });
+    const onError = vi.fn();
+    const result = runMutation(
+      serverMutations,
+      "monitor.report",
+      {
+        id,
+        source: "weur",
+        at: T + 1000,
+        up: false,
+        latencyMs: null,
+        colo: null,
+        httpStatus: null,
+        error: "timeout",
+        open: open(),
+      },
+      broken,
+      system(T + 1000),
+      { onError },
+    );
+    expect(result).toMatchObject({ ok: false, error: { code: "internal" } });
+    // The shard sees the store's own error (a StorageFailure there), so it rolls back and the probe retries.
+    expect(onError).toHaveBeenCalledWith(failure, "monitor.report");
+    expect(db.get("monitors", id)?.status).toBe("pending");
+  });
+
+  test("only a mutation declared silent may succeed without events", () => {
+    const refresh = defineMutation({
+      name: "test.refresh",
+      args: v.object({}),
+      permission: "monitor:manage",
+      silent: true,
+      apply(db) {
+        db.insert("counters", { id: "x", value: 1 });
+        return ok();
+      },
+    });
+    const db = store();
+    const commit = vi.fn();
+    const result = runMutation(defineRegistry([refresh]), "test.refresh", {}, db, as("admin"), {
+      commit,
+    });
+    expect(result).toEqual({ ok: true, events: [] });
+    expect(commit).toHaveBeenCalledWith([]);
+    expect(db.get("counters", "x")).toEqual({ id: "x", value: 1 });
   });
 });

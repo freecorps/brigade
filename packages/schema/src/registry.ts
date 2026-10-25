@@ -8,7 +8,7 @@ import {
   setIncidentSeverity,
   setIncidentStatus,
 } from "./incidents.ts";
-import { allMonitors, monitorMutations, reportMonitorCheck } from "./monitors.ts";
+import { allMonitors, evaluateMonitor, monitorMutations, reportMonitorCheck } from "./monitors.ts";
 import { defineRegistry } from "./mutation.ts";
 import { createWorkspace } from "./workspaces.ts";
 
@@ -35,4 +35,5 @@ export const serverMutations = defineRegistry([
   ...monitorMutations,
   createWorkspace,
   reportMonitorCheck,
+  evaluateMonitor,
 ]);

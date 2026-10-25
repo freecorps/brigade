@@ -37,7 +37,7 @@ export type WorkspaceRow = {
 /** The last result one source reported for a monitor: a probe region, or the heartbeat endpoint. */
 export type MonitorCheck = {
   source: CheckSource;
-  /** When the check ran (or the heartbeat arrived, or its deadline passed). */
+  /** When the source last checked (or the heartbeat last arrived, or its deadline passed). */
   at: number;
   /** The source's verdict after `CONSECUTIVE_CHECKS` alike results (RFC 0007), not this one check alone. */
   up: boolean;
@@ -71,9 +71,17 @@ export type MonitorRow = {
   intervalSeconds: number;
   graceSeconds: number | null;
   paused: boolean;
+  /** Who paused it and when; null while it runs. */
+  pausedBy: string | null;
+  pausedAt: number | null;
   status: MonitorStatus;
   /** Since when `status` holds (or since the monitor was created or resumed, while pending). */
   since: number;
+  /**
+   * When the monitor last started over (created, its target changed, resumed): results from before are refused.
+   * Unlike `since`, a status change does not move it.
+   */
+  restartedAt: number;
   /** One entry per source that reported, in report order. */
   checks: MonitorCheck[];
   /** The firing alert, at most one per monitor (deduplication), and the incident it opened. */

@@ -28,6 +28,7 @@ describe("workspace.create", () => {
       ...Object.keys(mutations),
       "workspace.create",
       "monitor.report",
+      "monitor.evaluate",
     ]);
     const result = runMutation(
       mutations,

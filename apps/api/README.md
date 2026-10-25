@@ -98,7 +98,10 @@ synchronous, so frames are handled strictly in arrival order. The details and th
 | `shard_meta`       | `version` (one bump per committed mutation), `log_start`, the workspace id, and the `epoch` created with the storage            |
 | `change_log`       | (version, table, id) of every synced row each version changed; the last 1000 versions                                           |
 | `mutation_results` | The result of each (clientId, mutationId) the shard ran, kept 7 days from the run for de-duplication                            |
-| `outbox`           | RFC 0005 event envelopes, written in the mutation's transaction; not drained yet (no Queue)                                     |
+| `outbox`           | RFC 0005 event envelopes, written in the mutation's transaction; drained to the `brigade-events` Queue by the shard alarm       |
+| `outbox_drain`     | The drain's backoff after a failed send: failures in a row and when to retry                                                    |
+| `page_deliveries`  | Per event, the devices a page reached (the push notifier's ledger; a redelivery skips them), kept 15 days                       |
+| `page_events`      | Events whose page is settled (sent everywhere, or recorded as failed): a redelivery does nothing, kept 15 days                  |
 | `probe_pushes`     | Per region, the checks last pushed to its `ProbeDO` and when (monitoring, below)                                                |
 
 - **Epoch:** created with the storage and rotated by `WorkspaceDO.rotateEpoch()`, which every restore must call
@@ -112,7 +115,25 @@ synchronous, so frames are handled strictly in arrival order. The details and th
   anywhere in a mutation's transaction (`StorageFailure` from `src/store.ts`) stores nothing and closes the socket
   with 1011, so the client replays the mutation; only an exception from the mutation's own code is stored as
   `internal`. Expired results are pruned before each mutation, and a failure there is only logged.
-- **Outbox:** not drained yet; its row count is logged every 1000 rows (`outbox not drained`).
+- **Outbox:** every mutation that wrote events arms the shard alarm, which drains the outbox to the `EVENTS` Queue
+  (`src/outbox.ts`): oldest first, at most 100 events or 200 KB per `sendBatch`, 10 batches per run, rows deleted
+  only after a send resolves. A failed send backs off from 1 s, doubling to 5 minutes, with jitter; the backlog is
+  logged on every failure (`outbox send failed`, then `outbox backlog growing` past 1000 rows). The alarm is shared
+  with monitoring: it runs the monitor tick, then the drain, and moves to the earliest either needs. The API's tests
+  pause the drain (`OUTBOX_DRAIN=paused`, test-only) to read events from the table; `test/outbox.test.ts` drives it.
+
+## Paging
+
+RFC 0005 "Notifiers", RFC 0006 "Who is paged". The Worker's `queue` handler consumes `brigade-events`
+(`src/notify.ts`). For an event that pages (`incident.declared`, a severity raised into SEV1 or SEV2) it asks the
+shard for a plan (`WorkspaceDO.planPage`: the incident, the urgency and the devices still to reach), seals one push
+per device with its key (`packages/push`), posts it to the relay's `POST /send` (`RELAY_URL`, `RELAY_SEND_TOKEN`,
+both secrets, both optional) and reports back (`WorkspaceDO.recordPage`). A relay that is unreachable or answers
+5xx is retried (5, 10, 20, 40 s); after 5 attempts, or at once when retrying cannot help (no relay configured,
+Android, a refused request), each member reached on none of their devices gets a `page_failed` timeline entry and a
+`notification.failed` event, written by `sys_notifier`. A token APNs calls gone (`BadDeviceToken`, `Unregistered`, 410) drops the device (`device.expire`). Devices are a server-only table (`devices`), written by `device.register`
+and `device.unregister` (any member, their own devices only).
+
 - **Limits:** client frames up to 64 KiB of text (binary frames are refused); 32 subscriptions per socket and
   about 8 KiB of attachment state (measured as JSON).
 - **Errors and closes:** any frame before `hello` (a `mutate` too), a second `hello`, another protocol version or a

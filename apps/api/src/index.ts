@@ -7,6 +7,7 @@ import {
   type Auth,
   type AuthBindings,
 } from "./auth.ts";
+import { consumeEvents } from "./notify.ts";
 import { WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
 
 export { ProbeDO } from "./probe.ts";
@@ -68,6 +69,11 @@ export default {
     } catch (error) {
       return failed("WorkspaceDO.info failed", workspace, error);
     }
+  },
+
+  /** `brigade-events` (RFC 0005): the shards' drained outboxes, routed to notifiers (src/notify.ts). */
+  async queue(batch, env): Promise<void> {
+    await consumeEvents(batch, env);
   },
 } satisfies ExportedHandler<Env>;
 

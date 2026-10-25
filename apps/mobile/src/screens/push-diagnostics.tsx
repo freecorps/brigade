@@ -1,15 +1,19 @@
 import { m } from "@freecorps/brigade-i18n";
 import { fontFamily, fontSize, spacing } from "@freecorps/brigade-ui";
 import * as Notifications from "expo-notifications";
+import Constants from "expo-constants";
 import { useEffect, useState } from "react";
 import { Platform, ScrollView, Text } from "react-native";
 import { Row, Section } from "@/components/section";
 import { ThemedText } from "@/components/themed-text";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
+import { deviceRegistration } from "@/lib/device";
+import { SHARD } from "@/lib/sync";
+import { syncClient } from "@/lib/sync-client";
 import { BrigadePush } from "../../modules/brigade-push";
 
-type Field = "permission" | "deviceToken" | "publicKey";
+type Field = "permission" | "deviceToken" | "publicKey" | "registration";
 type PushInfo = Partial<Record<Field, string>>;
 
 /**
@@ -24,17 +28,33 @@ function loadPushInfo(set: (field: Field, value: string) => void): void {
     );
   const keys = BrigadePush;
   if (!keys) return;
-  void load("publicKey", () => keys.getPublicKey());
+  const publicKey = keys.getPublicKey();
+  void load("publicKey", () => publicKey);
   void load("permission", async () => {
     const { status } = await Notifications.requestPermissionsAsync({
       ios: { allowAlert: true, allowSound: true, allowBadge: false },
     });
     // The token does not need the permission, but asking first matches what the app will do.
-    void load("deviceToken", async () =>
-      String((await Notifications.getDevicePushTokenAsync()).data),
-    );
+    const token = Notifications.getDevicePushTokenAsync().then((token) => String(token.data));
+    void load("deviceToken", () => token);
+    // With permission, a token and a key, register this phone so the shard pages it (RFC 0006). Through Brigade
+    // Sync, like every write; as the dev actor until the app can sign in.
+    if (status === "granted") void load("registration", () => register(publicKey, token));
     return status;
   });
+}
+
+async function register(publicKey: Promise<string>, token: Promise<string>): Promise<string> {
+  const args = deviceRegistration({
+    publicKey: await publicKey,
+    pushToken: await token,
+    platform: "ios",
+    apsEnvironment: Constants.expoConfig?.extra?.apsEnvironment,
+  });
+  const result = await syncClient.mutate(SHARD, "device.register", args);
+  // `conflict`: already registered with these values.
+  if (result.ok || result.error.code === "conflict") return m.push_registered({ shard: SHARD });
+  throw new Error(`${result.error.code}: ${result.error.message}`);
 }
 
 export function PushDiagnostics() {
@@ -74,6 +94,7 @@ export function PushDiagnostics() {
     [m.push_permission(), info.permission],
     [m.push_device_token(), info.deviceToken],
     [m.push_public_key(), info.publicKey],
+    [m.push_paging(), info.registration],
   ];
 
   return (

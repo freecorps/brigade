@@ -5,18 +5,22 @@ a device token, an envelope sealed with [`@freecorps/brigade-push`](../../packag
 For now it is spike S1's relay ([write-up](../../docs/spikes/s1-apns-encryption.md)): no instance registration,
 handles, rate limits or FCM yet.
 
-| Route         | Response                                                                                                         |
-| ------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `GET /health` | `200 {"ok":true}`                                                                                                |
-| `POST /send`  | `Authorization: Bearer <RELAY_SEND_TOKEN>`; body `{ deviceToken, envelope, urgency?, collapseId?, ttlSeconds? }` |
-|               | A call (RFC 0010): `{ kind: "call", callId, deviceToken: <PushKit token>, envelope }`, see below                 |
-|               | `200 { status, apnsId, apnsUniqueId, ms }` when APNs accepts; `502` with APNs' `reason` when it does not         |
-|               | `502 {"error":"apns_unreachable"}` when `fetch` fails; `400` for a bad body; `401` without the token             |
-|               | `500 {"error":"relay_misconfigured"}` when `APNS_KEY` cannot sign a provider token                               |
+| Route         | Response                                                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /health` | `200 {"ok":true}`                                                                                                              |
+| `POST /send`  | `Authorization: Bearer <RELAY_SEND_TOKEN>`; body `{ deviceToken, envelope, urgency?, collapseId?, ttlSeconds?, environment? }` |
+|               | A call (RFC 0010): `{ kind: "call", callId, deviceToken: <PushKit token>, envelope }`, see below                               |
+|               | `200 { status, apnsId, apnsUniqueId, ms }` when APNs accepts; `502` with APNs' `reason` when it does not                       |
+|               | `502 {"error":"apns_unreachable"}` when `fetch` fails; `400` for a bad body; `401` without the token                           |
+|               | `500 {"error":"relay_misconfigured"}` when `APNS_KEY` cannot sign a provider token                                             |
 
 `ttlSeconds` is how long APNs keeps trying an offline phone: by default 15 minutes for `page`, 1 hour for `high`,
 4 hours for `low`; at most 30 days; 0 means try once, which `page` refuses. A wrong `APNS_KEY_ID` or `APNS_TEAM_ID`
 signs fine and comes back as `502` with APNs' `InvalidProviderToken`: check the secrets.
+
+`environment` (`sandbox` or `production`) is the device token's APNs environment, which the instance records when
+the device registers (Xcode builds get sandbox tokens, EAS builds production ones); without it the relay uses its
+`APNS_ENVIRONMENT`. The API's push notifier always sends it.
 
 `urgency` is `low` (APNs priority 5), `high` or `page` (priority 10; `page` is `time-sensitive`). The payload's
 alert is a pair of localization keys, the fallback the app shows when it cannot decrypt.

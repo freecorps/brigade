@@ -25,6 +25,7 @@ import {
   HeartPulseIcon,
   LoaderCircleIcon,
   MessageSquareTextIcon,
+  PhoneMissedIcon,
   SendIcon,
   UserRoundIcon,
   XIcon,
@@ -569,6 +570,7 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
   role_assigned: UserRoundIcon,
   update: MessageSquareTextIcon,
   alert_resolved: HeartPulseIcon,
+  page_failed: PhoneMissedIcon,
 };
 
 /**
@@ -618,6 +620,7 @@ function Timeline({
                   className={cn(
                     "flex size-8 shrink-0 items-center justify-center rounded-full border bg-card",
                     entry.kind === "update" && "border-primary/40 text-primary",
+                    entry.kind === "page_failed" && "border-destructive/50 text-destructive",
                   )}
                 >
                   <Icon aria-hidden className="size-4" />

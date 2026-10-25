@@ -56,6 +56,20 @@ describe("POST /send", () => {
     expect(apns.sent[0]?.headers.get("authorization")).toMatch(/^bearer ey/);
   });
 
+  test("a push may name its device's APNs environment; anything but sandbox or production is refused", async () => {
+    const apns = fakeApns();
+    const response = await handle(
+      post(await sendBody({ environment: "production" })),
+      env,
+      apns.send,
+    );
+    expect(response.status).toBe(200);
+    expect(apns.sent[0]?.url).toBe(`https://api.push.apple.com/3/device/${DEVICE_TOKEN}`);
+    const refused = await handle(post(await sendBody({ environment: "staging" })), env, apns.send);
+    expect(refused.status).toBe(400);
+    expect(apns.sent).toHaveLength(1);
+  });
+
   test("an APNs rejection is a 502 with its reason", async () => {
     const response = await handle(
       post(await sendBody()),

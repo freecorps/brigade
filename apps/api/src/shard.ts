@@ -36,8 +36,6 @@ export const CHANGE_LOG_VERSIONS = 1000;
  * `MUTATION_RETENTION_MS`). Clients never re-send a mutation older than this.
  */
 export const RESULT_RETENTION_MS = MUTATION_RETENTION_MS;
-/** While nothing drains the outbox, its size is logged each time it grows by this many rows. */
-export const OUTBOX_LOG_EVERY = 1000;
 
 const SCHEMA = `
   create table if not exists shard_meta (key text primary key, value) without rowid;
@@ -97,6 +95,11 @@ export class Shard {
       log: Logger;
       /** Default `CHANGE_LOG_VERSIONS`; tests lower it. */
       changeLogVersions?: number;
+      /**
+       * Called after a mutation that wrote events commits (outside its transaction), so the owner can arm the
+       * outbox drain. Must not throw.
+       */
+      onOutbox?: () => void;
     },
   ) {
     this.sql = storage.sql;
@@ -238,7 +241,10 @@ export class Shard {
     if (done.committed && !outcome.ok)
       throw new StorageFailure("the mutation's transaction failed");
 
-    if (outcome.ok && done.committed) return done.committed;
+    if (outcome.ok && done.committed) {
+      if (outcome.events.length > 0) this.options.onOutbox?.();
+      return done.committed;
+    }
     const result: MutationResultMessage = outcome.ok
       ? // Unreachable: `commit` runs before every success. Kept so a broken invariant cannot lose the reply.
         {
@@ -281,7 +287,6 @@ export class Shard {
       version,
       randomBytes: this.options.randomBytes,
     });
-    this.watchOutbox();
     const result: MutationResultMessage = { type: "mutationResult", mutationId, ok: true, version };
     this.saveResult(actor.id, clientId, mutationId, now, result);
     return { changes, result };
@@ -331,20 +336,6 @@ export class Shard {
     if (start <= this.logStart()) return;
     this.sql.exec("delete from change_log where version <= ?", start);
     this.setMeta("log_start", start);
-  }
-
-  /**
-   * TODO(RFC 0005): drain the outbox to the `brigade-events` Queue from an alarm, deleting rows only after the send
-   * succeeds. Until then rows only accumulate, so the count is logged each time it grows by `OUTBOX_LOG_EVERY`.
-   * Nothing deletes yet, so `max(seq) - min(seq) + 1` is the row count without a scan.
-   */
-  private watchOutbox(): void {
-    const { rows } = this.sql
-      .exec<{ rows: number | null }>("select max(seq) - min(seq) + 1 as rows from outbox")
-      .one();
-    if (rows !== null && rows > 0 && rows % OUTBOX_LOG_EVERY === 0) {
-      this.options.log("outbox not drained", { rows });
-    }
   }
 
   /** Drops results past retention. Housekeeping: a failure is logged, never fails the mutation. */

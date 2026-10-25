@@ -11,6 +11,8 @@ export const statement = {
   // `read`: who is in the workspace (the shard's member list, RFC 0003); `create` only provisions a shard.
   workspace: ["create", "read"],
   monitor: ["read", "manage"],
+  // `register`: a member's own devices for paging (RFC 0006); every role, so anyone can be reached.
+  device: ["register"],
 } as const;
 
 type Statement = typeof statement;
@@ -27,19 +29,27 @@ export const roles = {
     incident: ["read", "declare", "update", "ack"],
     workspace: ["create", "read"],
     monitor: ["read", "manage"],
+    device: ["register"],
   },
   admin: {
     incident: ["read", "declare", "update", "ack"],
     workspace: ["read"],
     monitor: ["read", "manage"],
+    device: ["register"],
   },
   // Responders see what monitors say (they run the incidents monitors open) but do not change what is watched.
   responder: {
     incident: ["read", "declare", "update", "ack"],
     workspace: ["read"],
     monitor: ["read"],
+    device: ["register"],
   },
-  viewer: { incident: ["read"], workspace: ["read"], monitor: ["read"] },
+  viewer: {
+    incident: ["read"],
+    workspace: ["read"],
+    monitor: ["read"],
+    device: ["register"],
+  },
 } as const satisfies Record<Role, Grants>;
 
 export const PERMISSIONS: readonly Permission[] = (Object.keys(statement) as Resource[]).flatMap(

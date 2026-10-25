@@ -22,6 +22,10 @@ export type Timeline_EntryInputs = {
 * | "alert_recovered" | "{a} recovered, so its alert resolved" |
 * | "alert_paused" | "{actor} paused {a}, so its alert resolved" |
 * | "alert_deleted" | "{actor} deleted {a}, so its alert resolved" |
+* | "page_failed_undelivered" | "Couldn't page {a}: the push didn't go through" |
+* | "page_failed_unsupported" | "Couldn't page {a}: Brigade can't push to Android phones yet" |
+* | "page_failed_not_configured" | "Couldn't page {a}: push notifications aren't set up on this server" |
+* | "page_nobody" | "Nobody was paged: no one who can respond has Brigade on their phone" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs

@@ -236,7 +236,8 @@ Left for the real iPhone (needs the device):
   may answer `TooManyProviderTokenUpdates`; the production relay should share one token (a Durable Object or KV).
 - **APNs environment per device, not per relay.** Ad hoc and store builds (every EAS build, including
   `development`) get production device tokens, so the sandbox `dev` relay answers `BadDeviceToken` for them; Xcode
-  debug builds get sandbox tokens. Device registration should record the token's environment.
+  debug builds get sandbox tokens. Device registration should record the token's environment. Done: devices register
+  their `environment` and the relay takes it per push (RFC 0006 "Device registration").
 - **Extension build number on EAS.** The plugin writes the extension's `CFBundleVersion` from
   `ios.buildNumber` at prebuild; with `appVersionSource: remote` and `autoIncrement`, check on the first EAS
   production build that it matches the app's, which App Store Connect requires.

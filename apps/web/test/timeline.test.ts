@@ -71,6 +71,15 @@ test("every kind of entry reads as a sentence, in English and Portuguese", async
       monitor: "Checkout API",
       reason: "deleted",
     }),
+    entry({ kind: "page_failed", actor: "sys_notifier", userId: "usr_bia", reason: "undelivered" }),
+    entry({ kind: "page_failed", actor: "sys_notifier", userId: "usr_me", reason: "unsupported" }),
+    entry({
+      kind: "page_failed",
+      actor: "sys_notifier",
+      userId: "usr_bia",
+      reason: "not_configured",
+    }),
+    entry({ kind: "page_failed", actor: "sys_notifier", userId: null, reason: "no_devices" }),
   ];
   const english = entries.map((item) => entryText(item, who));
   expect(english).toEqual([
@@ -86,6 +95,10 @@ test("every kind of entry reads as a sentence, in English and Portuguese", async
     "Checkout API recovered, so its alert resolved",
     "Bia Lima paused Checkout API, so its alert resolved",
     "Bia Lima deleted Checkout API, so its alert resolved",
+    "Couldn't page Bia Lima: the push didn't go through",
+    "Couldn't page you: Brigade can't push to Android phones yet",
+    "Couldn't page Bia Lima: push notifications aren't set up on this server",
+    "Nobody was paged: no one who can respond has Brigade on their phone",
   ]);
   await setLocale("pt-BR");
   const portuguese = entries.map((item) => entryText(item, who));

@@ -51,6 +51,36 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   calls (spike S6, [write-up](../spikes/s6-voip-call-screen.md)).
 - **The relay is part of this repo** (`apps/relay`). Anyone can run their own with their own store credentials.
 
+## Device registration
+
+Built before instance registration and handles exist (the instance still holds raw device tokens and sends with the
+relay's bearer token):
+
+- **`device.register`** (`packages/schema`, permission `device:register`, every role): the app sends its device id
+  (`dev_<ULID>`), `platform` (`ios`, `android`), the token's APNs `environment` (`sandbox` for Xcode builds,
+  `production` for EAS builds; S1 found the sandbox relay refuses production tokens), the push token, the PushKit
+  token for calls (or null) and the HPKE public key. A member registers only their own devices (another member's id
+  is `forbidden`), at most 10 per workspace; the same token under a new id (a reinstall) replaces the old device.
+  `device.unregister` removes one's own device; `device.expire` (server only) drops one APNs said is gone.
+- **Server-only.** Devices live in the workspace shard's `devices` table, which is never synced: no member sees
+  another's tokens or key, and the `device.*` events carry neither.
+- **The app** registers from the development `/push` screen once it has permission, a token and a key, through
+  Brigade Sync (as the dev actor until mobile sign-in exists). Its device id is derived from the device key, so a
+  relaunch registers the same id (a no-op). Registration from sign-in, and unregistering on sign-out, come with
+  mobile sign-in.
+- **The relay** takes the device's `environment` with each push and picks the APNs host from it (one provider token
+  signs for both).
+
+## Who is paged
+
+There are no on-call schedules until Phase 2. Until then a page goes to the incident commander if one is assigned
+and did not cause the event; otherwise to every member who can respond (owners, admins, responders; viewers only
+read), except whoever caused it. Each of them on every registered device. Members are the shard's member list
+(RFC 0003), so someone who never opened Brigade, or a device left by someone no longer listed, is not paged.
+Content: title `SEV1 · INC-142` (codes, so no locale is needed), body the incident's title, and the incident id,
+sealed per device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id, so a repeat replaces
+the notification. What happens when a page fails is RFC 0005 "Notifiers".
+
 ## Driver abstraction
 
 ```ts

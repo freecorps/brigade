@@ -81,5 +81,7 @@ const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
   // secret.
   extra: {
     eas: { projectId: "67e9e504-0692-4883-88d5-8e17863f661d" },
+    // Which APNs environment this build's device tokens belong to, for device registration (src/lib/device.ts).
+    apsEnvironment: APS_ENVIRONMENT,
   },
 });

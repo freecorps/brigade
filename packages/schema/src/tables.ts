@@ -1,5 +1,7 @@
 import type { Role } from "./access.ts";
+import type { DevicePlatform, PushEnvironment } from "./devices.ts";
 import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
+import type { PageFailure } from "./notifications.ts";
 import type {
   AlertStatus,
   CheckSource,
@@ -47,7 +49,9 @@ export type TimelineEntry =
       monitorId: string;
       monitor: string;
       reason: "recovered" | "paused" | "deleted";
-    };
+    }
+  /** A page reached nobody, or not `userId` on any of their devices (`notification.fail`, RFC 0005). */
+  | { kind: "page_failed"; userId: string | null; reason: PageFailure };
 
 /**
  * One entry of an incident's timeline: append-only, written by the mutation that made the change, in its
@@ -158,6 +162,26 @@ export type AlertRow = {
  */
 export type HeartbeatRow = { id: string; tokenHash: string; lastPingAt: number | null };
 
+/**
+ * A member's device that pages reach (RFC 0006): server-only, so no other member ever sees its tokens or key.
+ * Written by `device.register`, removed by `device.unregister` and `device.expire`.
+ */
+export type DeviceRow = {
+  id: string; // dev_<ULID>, made by the app
+  /** The member who registered it; only they can change or remove it. */
+  userId: string;
+  platform: DevicePlatform;
+  environment: PushEnvironment;
+  /** APNs device token (hex) or FCM registration token. */
+  pushToken: string;
+  /** PushKit token for calls (RFC 0010); null without one. */
+  voipToken: string | null;
+  /** HPKE public key, uncompressed P-256, base64url (`packages/push`). */
+  publicKey: string;
+  registeredAt: number;
+  updatedAt: number;
+};
+
 /** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only. */
 export type CounterRow = { id: string; value: number };
 
@@ -170,6 +194,7 @@ export type BrigadeTables = {
   heartbeats: HeartbeatRow;
   timeline: TimelineRow;
   members: MemberRow;
+  devices: DeviceRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -184,6 +209,7 @@ export const TABLES = {
   heartbeats: { serverOnly: true },
   timeline: { serverOnly: false },
   members: { serverOnly: false },
+  devices: { serverOnly: true },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

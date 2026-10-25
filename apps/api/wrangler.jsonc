@@ -30,9 +30,27 @@
   "d1_databases": [
     { "binding": "DB", "database_name": "brigade-db", "migrations_dir": "migrations" },
   ],
+  // The outbox drain's Queue and its consumer (RFC 0005; src/outbox.ts, src/notify.ts). Pages are urgent, so a
+  // batch waits at most 1 s. The consumer gives up on a page after 5 attempts (`MAX_PAGE_ATTEMPTS`) and records it
+  // as failed; `max_retries` is above that so the Queue never drops a page first. Whatever still fails (a bug)
+  // lands in the dead-letter queue. Production and staging queues do not exist yet: the first deploy (owner
+  // approval) creates them with `wrangler queues create`.
+  "queues": {
+    "producers": [{ "binding": "EVENTS", "queue": "brigade-events" }],
+    "consumers": [
+      {
+        "queue": "brigade-events",
+        "max_batch_size": 10,
+        "max_batch_timeout": 1,
+        "max_retries": 10,
+        "dead_letter_queue": "brigade-events-dlq",
+      },
+    ],
+  },
   // Set with `wrangler secret put` (deployed) or apps/api/.dev.vars (local, gitignored); never in this file.
+  // RELAY_URL and RELAY_SEND_TOKEN (src/notify.ts) are optional: without them every page is recorded as failed.
   "secrets": { "required": ["BETTER_AUTH_SECRET"] },
-  // Durable Object, D1 and secrets settings are not inherited, so each environment repeats them.
+  // Durable Object, D1, Queue and secrets settings are not inherited, so each environment repeats them.
   // No `vars` anywhere: no deployed environment may set SYNC_DEV_ACTOR (src/actor.ts); only local runs and the
   // tests do, in their Vite configs.
   "env": {
@@ -51,6 +69,18 @@
           "migrations_dir": "migrations",
         },
       ],
+      "queues": {
+        "producers": [{ "binding": "EVENTS", "queue": "brigade-events-dev" }],
+        "consumers": [
+          {
+            "queue": "brigade-events-dev",
+            "max_batch_size": 10,
+            "max_batch_timeout": 1,
+            "max_retries": 10,
+            "dead_letter_queue": "brigade-events-dlq-dev",
+          },
+        ],
+      },
       "secrets": { "required": ["BETTER_AUTH_SECRET"] },
     },
     "staging": {
@@ -63,6 +93,18 @@
       "d1_databases": [
         { "binding": "DB", "database_name": "brigade-db-staging", "migrations_dir": "migrations" },
       ],
+      "queues": {
+        "producers": [{ "binding": "EVENTS", "queue": "brigade-events-staging" }],
+        "consumers": [
+          {
+            "queue": "brigade-events-staging",
+            "max_batch_size": 10,
+            "max_batch_timeout": 1,
+            "max_retries": 10,
+            "dead_letter_queue": "brigade-events-dlq-staging",
+          },
+        ],
+      },
       "secrets": { "required": ["BETTER_AUTH_SECRET"] },
     },
   },

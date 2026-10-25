@@ -134,12 +134,12 @@ export class Monitoring {
   }
 
   /**
-   * The shard alarm's monitor work. Sets a fallback alarm before anything else, so a failure below never ends the
-   * chain; once the work is done the alarm moves to the next deadline, or goes once no monitor or probe needs it.
+   * The shard alarm's monitor work. Returns when it wants the alarm next: the next tick or heartbeat deadline, a
+   * tick from now while a region still waits for its final push, or null once no monitor or probe needs it. The
+   * caller (`WorkspaceDO.alarm`) sets a fallback alarm before calling, so a failure here never ends the chain.
    */
-  async tick(now: number): Promise<void> {
+  async tick(now: number): Promise<number | null> {
     const { storage, log } = this.options;
-    await storage.setAlarm(now + MONITOR_TICK_MS);
     const monitors = this.options.shard.store.scan("monitors");
     try {
       this.missedHeartbeats(monitors, now);
@@ -153,15 +153,14 @@ export class Monitoring {
     }
     try {
       await this.pushProbes(monitors, now);
-    } finally {
-      const latest = this.options.shard.store.scan("monitors");
-      const pushed = storage.sql
-        .exec<{ n: number }>("select count(*) as n from probe_pushes")
-        .one().n;
-      const next = this.nextWake(latest, now);
-      if (next !== null) await storage.setAlarm(next);
-      else if (pushed === 0) await storage.deleteAlarm();
+    } catch (error) {
+      log("probe pushes failed", { error });
     }
+    const latest = this.options.shard.store.scan("monitors");
+    const pushed = storage.sql
+      .exec<{ n: number }>("select count(*) as n from probe_pushes")
+      .one().n;
+    return this.nextWake(latest, now) ?? (pushed === 0 ? null : now + MONITOR_TICK_MS);
   }
 
   /** The earliest of a tick from now and the next heartbeat deadline; null without active monitors. */

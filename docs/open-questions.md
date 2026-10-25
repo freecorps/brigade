@@ -61,3 +61,12 @@ down: below the fresh floor, so "No data"; pinned by a test in `packages/schema/
 | Q11 | Task runner                    | Vite+ `vp run`, no Turborepo.                                                                                                                                                                                                                                       |
 | Q12 | CLA                            | Handled by Freecorps; CLA Assistant + standard CLA text reviewed by counsel.                                                                                                                                                                                        |
 | Q16 | Heartbeats, made-up workspaces | The Worker looks the workspace id up in D1 (`organization`, cached per isolate) before it routes a ping, so a token for a workspace that does not exist gets the same 404 and creates no Durable Object (RFC 0007). If D1 fails, the ping goes to the shard anyway. |
+
+## Q18 — Who is paged before on-call schedules (RFC 0005, RFC 0006)
+
+Until Phase 2's schedules, a page goes to the incident commander if assigned, otherwise to every owner, admin and
+responder with a registered device (except whoever caused it), and every declared incident notifies, SEV3 and SEV4
+at `high` urgency. For a small team that is what we want; for a larger one it wakes everybody. Should SEV3 and SEV4
+notify at all, and should a workspace be able to narrow the interim rule (owners and admins only) before schedules
+land? Also: a failed page is surfaced only on the incident's timeline and in logs; should it also reach someone
+outside the incident (an email to owners, the external dead-man switch) when nobody at all was paged?

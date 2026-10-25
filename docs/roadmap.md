@@ -99,7 +99,12 @@ Validate the risky assumptions before writing product code. Each spike produces 
     region; one alert per monitor opening an incident through `incident.declare` as the system actor `sys_monitors`,
     resolved on recovery; alarm chains that reschedule first, and a shard alarm that re-pushes configs and catches
     missed heartbeats; a Monitors card in the dashboard (create, pause and resume) (RFC 0007).
-  - Left: TCP checks (`connect()`); editing and deleting monitors in the dashboard (the mutations exist); regex,
+  - Also done: a separate restart guard (`restartedAt`), fresh-only quorum with a "No data" status, refreshes
+    without outbox events, heartbeat routing checked against D1, a port list for checks; in the dashboard, failure
+    reasons, waiting and no-data chips, a confirmed pause with who paused it, the down row's incident link, and a
+    one-time heartbeat URL with Copy and a `curl` example.
+  - Left: TCP checks (`connect()`); editing and deleting monitors in the dashboard (the mutations exist); regenerating
+    a heartbeat URL; whether "No data" pages (Q17); member names for "Paused by" (today "you" or "a teammate"); regex,
     headers and TLS expiry; configurable quorum and severity; alerting on a stalled probe (RFC 0007 "Watching the
     watcher"; today it is logged and re-pushed); `AlertGroupDO` and alert routes, moving monitor alerts out of the
     workspace shard; a timeline note on the incident when its monitor recovers (needs the incident timeline);

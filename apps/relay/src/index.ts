@@ -43,6 +43,7 @@ const DEFAULT_TTL_SECONDS: Record<Urgency, number> = {
 const CALL_TTL_SECONDS = 60;
 const MAX_CALL_TTL_SECONDS = 5 * 60;
 const KINDS: readonly PushKind[] = ["alert", "call"];
+const ENVIRONMENTS: readonly ApnsEnvironment[] = ["sandbox", "production"];
 /** APNs keeps an undelivered push for at most about 30 days. */
 const MAX_TTL_SECONDS = 30 * 24 * 60 * 60;
 /** A request body far above any valid send: a device token and a sealed 2 KB plaintext. */
@@ -88,6 +89,8 @@ export async function handle(
         (body.ttlSeconds !== undefined &&
           (typeof body.ttlSeconds !== "number" || body.ttlSeconds > MAX_CALL_TTL_SECONDS)))) ||
     (!call && body.callId !== undefined) ||
+    (body.environment !== undefined &&
+      !ENVIRONMENTS.includes(body.environment as ApnsEnvironment)) ||
     (body.collapseId !== undefined && typeof body.collapseId !== "string") ||
     (body.ttlSeconds !== undefined &&
       (typeof body.ttlSeconds !== "number" ||
@@ -100,8 +103,12 @@ export async function handle(
     return json({ error: "invalid_body" }, 400);
   }
 
+  // The device's own APNs environment when the sender knows it (the instance records it at registration: Xcode
+  // builds get sandbox tokens, EAS builds production ones), else the relay's default. One provider token signs for
+  // both.
   const environment: ApnsEnvironment =
-    env.APNS_ENVIRONMENT === "production" ? "production" : "sandbox";
+    (body.environment as ApnsEnvironment | undefined) ??
+    (env.APNS_ENVIRONMENT === "production" ? "production" : "sandbox");
   const credentials: ApnsCredentials = {
     key: env.APNS_KEY,
     keyId: env.APNS_KEY_ID,

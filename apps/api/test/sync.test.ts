@@ -471,6 +471,7 @@ describe("GET /sync/:workspaceId", () => {
     // A plain object: setting a key on one whose prototype is `env` would write through to the real env.
     const bare: Env = {
       WORKSPACE: env.WORKSPACE,
+      EVENTS: env.EVENTS,
       PROBE: env.PROBE,
       DB: env.DB,
       BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,

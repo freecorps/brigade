@@ -51,8 +51,8 @@ describe("web Worker → API Worker → WorkspaceDO, with the real configs", () 
   test("/api/workspaces/demo round-trips through the WorkspaceDO", async () => {
     const response = await get("/api/workspaces/demo");
     expect(response.status).toBe(200);
-    // The shard's sync tables and its probe pushes (apps/api/README.md).
-    expect(await response.json()).toMatchObject({ workspace: "demo", tables: 6 });
+    // The shard's sync tables, its outbox drain and page ledger, and its probe pushes (apps/api/README.md).
+    expect(await response.json()).toMatchObject({ workspace: "demo", tables: 9 });
   });
 
   test("bare /api runs the Worker first too (the API answers its own 404)", async () => {
@@ -111,6 +111,29 @@ describe("apps/api wrangler.jsonc: the dev sync actor and auth", () => {
   // DEV ONLY (apps/api/src/actor.ts): a deployment with it lets anyone without a session act as a responder.
   test.each(environments)("%s does not set SYNC_DEV_ACTOR", (_name, config) => {
     expect(config?.vars?.SYNC_DEV_ACTOR).toBeUndefined();
+  });
+
+  // TEST ONLY (apps/api/src/workspace.ts): a deployment with it would never send its events, so never page.
+  test.each(environments)("%s does not pause the outbox drain", (_name, config) => {
+    expect(config?.vars?.OUTBOX_DRAIN).toBeUndefined();
+  });
+
+  // The outbox drain's Queue and its consumer are not inherited either.
+  test.each(environments)("%s produces to and consumes its own events queue", (name, config) => {
+    const suffix = name === "dev" ? "-dev" : name === "staging" ? "-staging" : "";
+    expect(config?.queues?.producers).toEqual([
+      { binding: "EVENTS", queue: `brigade-events${suffix}` },
+    ]);
+    expect(config?.queues?.consumers).toEqual([
+      expect.objectContaining({
+        queue: `brigade-events${suffix}`,
+        // QUEUE_MAX_RETRIES (apps/api/src/notify.ts), above MAX_PAGE_ATTEMPTS.
+        max_retries: 10,
+        dead_letter_queue: `brigade-events-dlq${suffix}`,
+      }),
+      // The dead-letter consumer records and acks; it never retries, and has no dead-letter queue of its own.
+      { queue: `brigade-events-dlq${suffix}`, max_batch_size: 10, max_retries: 5 },
+    ]);
   });
 
   // D1 and secrets settings are not inherited, so each environment repeats them.

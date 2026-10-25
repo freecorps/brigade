@@ -419,7 +419,7 @@ describe("monitor down → alert → incident", () => {
         await instance.alarm();
         expect(await state.storage.getAlarm()).toBeGreaterThanOrEqual(before);
       });
-      expect(error).toHaveBeenCalledWith(expect.stringContaining("monitor tick failed"));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("probe pushes failed"));
     } finally {
       error.mockRestore();
     }

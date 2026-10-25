@@ -28,6 +28,8 @@ export default defineConfig(async ({ command, mode }) => ({
               bindings: {
                 ...LOCAL_VARS,
                 BETTER_AUTH_SECRET: TEST_AUTH_SECRET,
+                // Tests read events from the outbox; test/outbox.test.ts drives the drain itself.
+                OUTBOX_DRAIN: "paused",
                 // test/apply-migrations.ts applies these to the local D1 before the tests run.
                 TEST_MIGRATIONS: await readD1Migrations("./migrations"),
               },

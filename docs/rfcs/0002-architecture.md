@@ -69,6 +69,9 @@ docs/rfcs/     Design documents
 the workspace (`spikes/*`) so CI checks and tests it. The PR that records the spike's result tears down what the
 spike deployed and deletes the folder; the write-up in `docs/spikes/` is what stays.
 
+The `brigade-events` consumer runs in the api Worker for now (its `queue` handler, push only); it becomes the
+separate notifier Worker of the runtime map when more notifiers (Slack, email) arrive (RFC 0005 "Notifiers").
+
 Packages are MIT so third parties can build integrations without AGPL concerns; apps are AGPL (RFC 0009).
 
 ## Tooling decisions

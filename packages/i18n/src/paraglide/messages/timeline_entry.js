@@ -22,6 +22,13 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "alert_recovered" | "{a} recovered, so its alert resolved" |
 * | "alert_paused" | "{actor} paused {a}, so its alert resolved" |
 * | "alert_deleted" | "{actor} deleted {a}, so its alert resolved" |
+* | "page_failed_undelivered" | "Couldn't page {a}: the push didn't go through" |
+* | "page_failed_unsupported" | "Couldn't page {a}: Brigade can't push to Android phones yet" |
+* | "page_failed_not_configured" | "Couldn't page {a}: push notifications aren't set up on this server" |
+* | "page_failed_no_devices" | "Couldn't page {a}: no registered device" |
+* | "page_failed_over_limit" | "Couldn't page {a}: this page went to too many phones" |
+* | "page_nobody" | "Nobody was paged: no one who can respond has Brigade on their phone" |
+* | "page_dead_lettered" | "A page may not have gone out: Brigade kept failing to send it" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs
@@ -43,6 +50,13 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "alert_recovered") return /** @type {LocalizedString} */ (`${i?.a} se recuperou, e o alerta foi resolvido`);
 		if (i?.kind === "alert_paused") return /** @type {LocalizedString} */ (`${i?.actor} pausou ${i?.a}, e o alerta foi resolvido`);
 		if (i?.kind === "alert_deleted") return /** @type {LocalizedString} */ (`${i?.actor} excluiu ${i?.a}, e o alerta foi resolvido`);
+		if (i?.kind === "page_failed_undelivered") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: o push não foi entregue`);
+		if (i?.kind === "page_failed_unsupported") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: o Brigade ainda não envia pushes para Android`);
+		if (i?.kind === "page_failed_not_configured") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: as notificações push não estão configuradas neste servidor`);
+		if (i?.kind === "page_failed_no_devices") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: nenhum aparelho registrado`);
+		if (i?.kind === "page_failed_over_limit") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: a chamada foi para celulares demais`);
+		if (i?.kind === "page_nobody") return /** @type {LocalizedString} */ (`Ninguém foi chamado: ninguém que pode responder tem o Brigade no celular`);
+		if (i?.kind === "page_dead_lettered") return /** @type {LocalizedString} */ (`Uma chamada pode não ter saído: o Brigade não conseguiu enviá-la`);
 		return /** @type {LocalizedString} */ (`${i?.actor} alterou o incidente`)
 	}
 	{
@@ -58,6 +72,13 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "alert_recovered") return /** @type {LocalizedString} */ (`${i?.a} recovered, so its alert resolved`);
 		if (i?.kind === "alert_paused") return /** @type {LocalizedString} */ (`${i?.actor} paused ${i?.a}, so its alert resolved`);
 		if (i?.kind === "alert_deleted") return /** @type {LocalizedString} */ (`${i?.actor} deleted ${i?.a}, so its alert resolved`);
+		if (i?.kind === "page_failed_undelivered") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: the push didn't go through`);
+		if (i?.kind === "page_failed_unsupported") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: Brigade can't push to Android phones yet`);
+		if (i?.kind === "page_failed_not_configured") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: push notifications aren't set up on this server`);
+		if (i?.kind === "page_failed_no_devices") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: no registered device`);
+		if (i?.kind === "page_failed_over_limit") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: this page went to too many phones`);
+		if (i?.kind === "page_nobody") return /** @type {LocalizedString} */ (`Nobody was paged: no one who can respond has Brigade on their phone`);
+		if (i?.kind === "page_dead_lettered") return /** @type {LocalizedString} */ (`A page may not have gone out: Brigade kept failing to send it`);
 		return /** @type {LocalizedString} */ (`${i?.actor} changed the incident`)
 	}
 });

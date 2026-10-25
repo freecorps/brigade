@@ -9,7 +9,15 @@ import {
   type SubscriptionChanges,
 } from "@freecorps/brigade-sync/protocol";
 import { readActor, readMemberName } from "./actor.ts";
-import { isProbeRegion, Monitoring } from "./monitors.ts";
+import { isProbeRegion, MONITOR_TICK_MS, Monitoring } from "./monitors.ts";
+import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
+import {
+  Pager,
+  type DeadLetterResult,
+  type DeviceOutcome,
+  type PagePlan,
+  type SkippedMember,
+} from "./paging.ts";
 import type { ProbeReport } from "./probe.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
 import type { RowChange } from "./store.ts";
@@ -77,6 +85,9 @@ const MAX_SALVAGE_LENGTH = 1024 * 1024;
 export class WorkspaceDO extends DurableObject<Env> {
   private readonly shard: Shard;
   private readonly monitoring: Monitoring;
+  private readonly drain: OutboxDrain;
+  private readonly drainPaused: boolean;
+  private readonly pager: Pager;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -86,6 +97,23 @@ export class WorkspaceDO extends DurableObject<Env> {
       shard: "workspace",
       randomBytes,
       log: (message, fields) => this.log(message, fields),
+      onOutbox: () => this.armDrain(),
+    });
+    // TEST ONLY: the API's own tests (vite.config.ts) read events from the outbox, so they pause the drain; the
+    // drain's tests drive it directly. No deployed environment sets it (apps/web test/worker-config.test.ts).
+    this.drainPaused = Reflect.get(env, "OUTBOX_DRAIN") === "paused";
+    this.drain = new OutboxDrain(
+      ctx.storage.sql,
+      async (messages) => {
+        await env.EVENTS.sendBatch(messages);
+      },
+      (message, fields) => this.log(message, fields),
+    );
+    this.pager = new Pager({
+      storage: ctx.storage,
+      shard: this.shard,
+      log: (message, fields) => this.log(message, fields),
+      committed: (version, changes) => this.broadcast(version, changes, undefined),
     });
     this.monitoring = new Monitoring({
       storage: ctx.storage,
@@ -95,6 +123,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
     });
+    // Events left in the outbox (an alarm that failed to arm, a restart) arm the drain again whenever the object
+    // wakes, so a backlog never waits for an unrelated change.
+    try {
+      if (!this.drainPaused && this.drain.backlog() > 0) this.armDrain();
+    } catch (error) {
+      this.log("arming the outbox drain failed", { error: String(error) });
+    }
   }
 
   info(): WorkspaceInfo {
@@ -189,14 +224,87 @@ export class WorkspaceDO extends DurableObject<Env> {
     return this.monitoring.ping(monitorId, digest);
   }
 
-  /** Monitor upkeep (`Monitoring.tick`): probe pushes, heartbeat deadlines, stalled probes. */
+  /**
+   * What the push notifier should send for `event` (RPC from the queue consumer, src/notify.ts): see `Pager.plan`.
+   * A shard that serves no workspace yet plans nothing.
+   */
+  planPage(event: BrigadeEvent): PagePlan {
+    if (this.shard.workspace() !== event.workspaceId) return { send: false, reason: "not_found" };
+    return this.pager.plan(event, Date.now());
+  }
+
+  /**
+   * What a page did (RPC from the queue consumer): see `Pager.record`. `skipped` defaults to none, so a consumer
+   * from the version before it (during a deploy) still records its outcomes.
+   */
+  recordPage(
+    event: BrigadeEvent,
+    outcomes: DeviceOutcome[],
+    final: boolean,
+    skipped: SkippedMember[] = [],
+  ): void {
+    if (this.shard.workspace() !== event.workspaceId) return;
+    this.pager.record(event, outcomes, final, skipped, Date.now());
+  }
+
+  /** A page the Queue gave up on (RPC from the dead-letter consumer): see `Pager.deadLettered`. */
+  recordDeadLetter(event: BrigadeEvent): DeadLetterResult {
+    if (this.shard.workspace() !== event.workspaceId) return "other_workspace";
+    return this.pager.deadLettered(event, Date.now());
+  }
+
+  /**
+   * The shard's one alarm (RFC 0005, RFC 0007): monitor upkeep (`Monitoring.tick`), then draining the outbox to the
+   * Queue, so events the tick wrote go out in the same run. A fallback a tick from now is set first, so a failure
+   * never ends the chain; then the alarm moves to the earliest either needs, or goes when neither needs it.
+   */
   override async alarm(): Promise<void> {
+    const now = Date.now();
+    await this.ctx.storage.setAlarm(now + MONITOR_TICK_MS);
+    let monitors: number | null = now + MONITOR_TICK_MS;
     try {
-      await this.monitoring.tick(Date.now());
+      monitors = await this.monitoring.tick(now);
     } catch (error) {
-      // `tick` set the next alarm before anything that can fail.
       this.log("monitor tick failed", { error });
     }
+    if (!this.drainPaused) {
+      try {
+        await this.drain.drain(Date.now());
+      } catch (error) {
+        this.log("outbox drain failed", { error });
+        try {
+          this.drain.failed(Date.now(), error);
+        } catch (backoff) {
+          this.log("backing off the outbox drain failed", { error: backoff });
+        }
+      }
+    }
+    // Read and set in one turn: a mutation committing meanwhile arms the drain after this, never before.
+    const next = earliest(monitors, this.drainPaused ? null : this.drain.nextWake(Date.now()));
+    if (next === null) await this.ctx.storage.deleteAlarm();
+    else await this.ctx.storage.setAlarm(next);
+  }
+
+  /**
+   * Called after every mutation that wrote events: brings the alarm forward so the drain runs now, or when its
+   * backoff ends after a failed send. Fire and forget; a failure is logged, and the next alarm drains anyway.
+   */
+  private armDrain(): void {
+    if (this.drainPaused) return;
+    // Runs after a committed mutation (`onOutbox` must not throw): a storage error reading the backoff only logs;
+    // the fallback alarm drains later anyway.
+    let at: number;
+    try {
+      at = Math.max(Date.now(), this.drain.retryAt() ?? 0);
+    } catch (error) {
+      this.log("arming the outbox drain failed", { error: String(error) });
+      return;
+    }
+    const { storage } = this.ctx;
+    storage
+      .getAlarm()
+      .then((current) => (current === null || current > at ? storage.setAlarm(at) : undefined))
+      .catch((error: unknown) => this.log("arming the outbox drain failed", { error }));
   }
 
   /** Accepts a sync socket the Worker forwarded (`GET /sync/:workspaceId`). */
@@ -545,6 +653,12 @@ export class WorkspaceDO extends DurableObject<Env> {
       }),
     );
   }
+}
+
+function earliest(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Math.min(a, b);
 }
 
 function describe(error: unknown): { error: string; stack?: string } {

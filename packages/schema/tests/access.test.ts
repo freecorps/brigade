@@ -21,6 +21,7 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "workspace:read": true,
     "monitor:read": true,
     "monitor:manage": true,
+    "device:register": true,
   },
   admin: {
     "incident:read": true,
@@ -31,6 +32,7 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "workspace:read": true,
     "monitor:read": true,
     "monitor:manage": true,
+    "device:register": true,
   },
   responder: {
     "incident:read": true,
@@ -41,6 +43,7 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "workspace:read": true,
     "monitor:read": true,
     "monitor:manage": false,
+    "device:register": true,
   },
   viewer: {
     "incident:read": true,
@@ -51,6 +54,7 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "workspace:read": true,
     "monitor:read": true,
     "monitor:manage": false,
+    "device:register": true,
   },
 };
 
@@ -64,6 +68,7 @@ test("every permission comes from the statement", () => {
     "workspace:read",
     "monitor:read",
     "monitor:manage",
+    "device:register",
   ]);
 });
 

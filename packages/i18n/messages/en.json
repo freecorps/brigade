@@ -174,6 +174,8 @@
   "push_waiting": "Waiting…",
   "push_unavailable": "Not available on this platform yet.",
   "push_error": "Failed: {error}",
+  "push_paging": "Paging",
+  "push_registered": "Registered on {shard}",
   "auth_sign_in_title": "Sign in to Brigade",
   "auth_sign_in_description": "Use the email and password you signed up with.",
   "auth_sign_up_title": "Create your account",
@@ -517,6 +519,13 @@
         "kind=alert_recovered": "{a} recovered, so its alert resolved",
         "kind=alert_paused": "{actor} paused {a}, so its alert resolved",
         "kind=alert_deleted": "{actor} deleted {a}, so its alert resolved",
+        "kind=page_failed_undelivered": "Couldn't page {a}: the push didn't go through",
+        "kind=page_failed_unsupported": "Couldn't page {a}: Brigade can't push to Android phones yet",
+        "kind=page_failed_not_configured": "Couldn't page {a}: push notifications aren't set up on this server",
+        "kind=page_failed_no_devices": "Couldn't page {a}: no registered device",
+        "kind=page_failed_over_limit": "Couldn't page {a}: this page went to too many phones",
+        "kind=page_nobody": "Nobody was paged: no one who can respond has Brigade on their phone",
+        "kind=page_dead_lettered": "A page may not have gone out: Brigade kept failing to send it",
         "kind=*": "{actor} changed the incident"
       }
     }

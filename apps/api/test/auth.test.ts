@@ -663,6 +663,7 @@ describe("GET /sync/:workspaceId: the actor", () => {
     const workspace = await createWorkspace(ana.cookie);
     const deployed: Env = {
       WORKSPACE: env.WORKSPACE,
+      EVENTS: env.EVENTS,
       PROBE: env.PROBE,
       DB: env.DB,
       BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,

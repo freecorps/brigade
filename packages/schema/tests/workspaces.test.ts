@@ -30,6 +30,8 @@ describe("workspace.create", () => {
       "member.sync",
       "monitor.report",
       "monitor.evaluate",
+      "device.expire",
+      "notification.fail",
     ]);
     const result = runMutation(
       mutations,

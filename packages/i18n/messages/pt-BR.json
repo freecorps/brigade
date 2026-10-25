@@ -174,6 +174,8 @@
   "push_waiting": "Aguardando…",
   "push_unavailable": "Ainda não disponível nesta plataforma.",
   "push_error": "Falhou: {error}",
+  "push_paging": "Chamados",
+  "push_registered": "Registrado em {shard}",
   "auth_sign_in_title": "Entrar no Brigade",
   "auth_sign_in_description": "Use o e-mail e a senha do seu cadastro.",
   "auth_sign_up_title": "Crie sua conta",
@@ -517,6 +519,13 @@
         "kind=alert_recovered": "{a} se recuperou, e o alerta foi resolvido",
         "kind=alert_paused": "{actor} pausou {a}, e o alerta foi resolvido",
         "kind=alert_deleted": "{actor} excluiu {a}, e o alerta foi resolvido",
+        "kind=page_failed_undelivered": "Não foi possível chamar {a}: o push não foi entregue",
+        "kind=page_failed_unsupported": "Não foi possível chamar {a}: o Brigade ainda não envia pushes para Android",
+        "kind=page_failed_not_configured": "Não foi possível chamar {a}: as notificações push não estão configuradas neste servidor",
+        "kind=page_failed_no_devices": "Não foi possível chamar {a}: nenhum aparelho registrado",
+        "kind=page_failed_over_limit": "Não foi possível chamar {a}: a chamada foi para celulares demais",
+        "kind=page_nobody": "Ninguém foi chamado: ninguém que pode responder tem o Brigade no celular",
+        "kind=page_dead_lettered": "Uma chamada pode não ter saído: o Brigade não conseguiu enviá-la",
         "kind=*": "{actor} alterou o incidente"
       }
     }

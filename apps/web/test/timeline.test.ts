@@ -71,6 +71,24 @@ test("every kind of entry reads as a sentence, in English and Portuguese", async
       monitor: "Checkout API",
       reason: "deleted",
     }),
+    entry({ kind: "page_failed", actor: "sys_notifier", userId: "usr_bia", reason: "undelivered" }),
+    entry({ kind: "page_failed", actor: "sys_notifier", userId: "usr_me", reason: "unsupported" }),
+    entry({
+      kind: "page_failed",
+      actor: "sys_notifier",
+      userId: "usr_bia",
+      reason: "not_configured",
+    }),
+    entry({ kind: "page_failed", actor: "sys_notifier", userId: null, reason: "no_devices" }),
+    entry({ kind: "page_failed", actor: "sys_notifier", userId: "usr_bia", reason: "no_devices" }),
+    entry({ kind: "page_failed", actor: "sys_notifier", userId: "usr_bia", reason: "over_limit" }),
+    entry({ kind: "page_failed", actor: "sys_notifier", userId: null, reason: "dead_lettered" }),
+    entry({
+      kind: "page_failed",
+      actor: "sys_notifier",
+      userId: "usr_bia",
+      reason: "dead_lettered",
+    }),
   ];
   const english = entries.map((item) => entryText(item, who));
   expect(english).toEqual([
@@ -86,12 +104,26 @@ test("every kind of entry reads as a sentence, in English and Portuguese", async
     "Checkout API recovered, so its alert resolved",
     "Bia Lima paused Checkout API, so its alert resolved",
     "Bia Lima deleted Checkout API, so its alert resolved",
+    "Couldn't page Bia Lima: the push didn't go through",
+    "Couldn't page you: Brigade can't push to Android phones yet",
+    "Couldn't page Bia Lima: push notifications aren't set up on this server",
+    "Nobody was paged: no one who can respond has Brigade on their phone",
+    "Couldn't page Bia Lima: no registered device",
+    "Couldn't page Bia Lima: this page went to too many phones",
+    "A page may not have gone out: Brigade kept failing to send it",
+    "A page may not have gone out: Brigade kept failing to send it",
   ]);
   await setLocale("pt-BR");
   const portuguese = entries.map((item) => entryText(item, who));
   expect(portuguese[0]).toBe("Bia Lima declarou o incidente como SEV1 Crítica");
   expect(portuguese[1]).toBe("Bia Lima mudou o status de Triagem para Corrigindo");
   expect(portuguese[4]).toBe("Bia Lima definiu você como comandante do incidente");
+  expect(portuguese.slice(-4)).toEqual([
+    "Não foi possível chamar Bia Lima: nenhum aparelho registrado",
+    "Não foi possível chamar Bia Lima: a chamada foi para celulares demais",
+    "Uma chamada pode não ter saído: o Brigade não conseguiu enviá-la",
+    "Uma chamada pode não ter saído: o Brigade não conseguiu enviá-la",
+  ]);
   // Every entry is worded in Portuguese, none falls back to English.
   for (const [index, text] of portuguese.entries())
     expect(text, String(index)).not.toBe(english[index]);

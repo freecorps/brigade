@@ -51,6 +51,57 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   calls (spike S6, [write-up](../spikes/s6-voip-call-screen.md)).
 - **The relay is part of this repo** (`apps/relay`). Anyone can run their own with their own store credentials.
 
+## Device registration
+
+Built before instance registration and handles exist (the instance still holds raw device tokens and sends with the
+relay's bearer token):
+
+- **`device.register`** (`packages/schema`, permission `device:register`, every role): the app sends its device id
+  (`dev_<ULID>`), `platform` (`ios`, `android`), the token's APNs `environment` (`sandbox` for Xcode builds,
+  `production` for EAS builds; S1 found the sandbox relay refuses production tokens), the push token, the PushKit
+  token for calls (or null) and the HPKE public key. A member registers only their own devices (another member's id
+  is `forbidden`), at most 10 per workspace; the same token under a new id (a reinstall) replaces the old device.
+  `device.unregister` removes one's own device; `device.expire` (server only) drops one APNs said is gone, only if
+  its token is still the one the push went to (a device registered again with a new token meanwhile is kept).
+- **Server-only.** Devices live in the workspace shard's `devices` table, which is never synced: no member sees
+  another's tokens or key, and the `device.*` events carry neither.
+- **The app** registers from the development `/push` screen once it has permission, a token and a key, through
+  Brigade Sync (as the dev actor until mobile sign-in exists). Its device id is derived from the device key, so a
+  relaunch registers the same id (a no-op). Registration from sign-in, and unregistering on sign-out, come with
+  mobile sign-in.
+- **The relay** takes the device's `environment` with each push and picks the APNs host from it (one provider token
+  signs for both).
+
+## Who is paged
+
+There are no on-call schedules until Phase 2. Until then a page goes to the incident commander if one is assigned,
+can still respond (not a viewer), did not cause the event and has a registered device; otherwise to every member who
+can respond (owners, admins, responders; viewers only read), except whoever caused it. Each of them on every
+registered device. A commander without a device does not leave the incident unpaged: everyone who can respond is
+paged instead. Every member the page was for who has no device (the commander included) is recorded as not paged
+(`no_devices`, "Couldn't page Ana: no registered device"), and so is one none of whose devices fit in a page's 200
+(`over_limit`); RFC 0005 "Notifiers".
+
+Members are the shard's member list (RFC 0003), a cache of D1's that `member.sync` writes when a member opens a sync
+socket. So someone who never opened Brigade is not paged (they have no device either), and the cache can lag D1:
+
+- **Demoted** (to viewer) in D1: still paged as before until they next open Brigade, when `member.sync` copies the new
+  role.
+- **Removed** in D1: their row and their devices stay in the shard, and they keep being paged, since a removed
+  member's socket is refused and never syncs again. No API path removes or demotes a member yet (the organization
+  member routes are refused), so this takes an edit made outside Brigade.
+- **To do with member management:** the `member.*` mutations (`member.role_changed`, `member.removed`) must update
+  the shard's cache in the same transaction: change the row's role, or delete the row and every device of that
+  member (`device.unregistered` for each). Until they exist, an out-of-band D1 edit is not reflected in who is
+  paged. The page path does not re-read D1: a D1 outage would then become a reason a page is late or missing.
+- **A handed-over phone** (same install, so the same device id, signed in as another member) keeps paging the first
+  member until it unregisters: `device.register` refuses another member's device id (`forbidden`). Registering on
+  sign-in and unregistering on sign-out (mobile sign-in) settle it.
+
+Content: title `SEV1 · INC-142` (codes, so no locale is needed), body the incident's title, and the incident id,
+sealed per device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id, so a repeat replaces
+the notification. What happens when a page fails is RFC 0005 "Notifiers".
+
 ## Driver abstraction
 
 ```ts

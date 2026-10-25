@@ -5,9 +5,11 @@ import { setLocale as setI18nLocale, type Locale } from "@freecorps/brigade-i18n
 import { newId, type Actor, type IncidentStatus } from "@freecorps/brigade-schema";
 import { createSyncClient, type SyncClient } from "@freecorps/brigade-sync";
 import { SyncProvider } from "@freecorps/brigade-sync/react";
+import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, test, vi } from "vite-plus/test";
+import { MUTATION_RETENTION_MS } from "../../../packages/sync/src/protocol.ts";
 import {
   FakeNetwork,
   FakeServer,
@@ -15,6 +17,8 @@ import {
   type ShardServer,
 } from "../../../packages/sync/tests/fake-server.ts";
 import { IncidentsCard } from "../src/components/incidents-card";
+import { StackStatusProvider } from "../src/components/stack-status";
+import { routeTree } from "../src/routeTree.gen";
 import { PreferencesProvider, usePreferences } from "../src/components/preferences";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -56,9 +60,10 @@ function LocaleProbe() {
 
 /**
  * `clientAhead`: how far the client's clock runs ahead of the server's, in ms. `offline`: every socket closes
- * before it opens, as when the shard cannot be reached.
+ * before it opens, as when the shard cannot be reached. `maxPending`: the client's cap on unconfirmed changes.
+ * `app`: render the real router and root layout (as main.tsx does) instead of the card alone.
  */
-function mount({ clientAhead = 0, offline = false } = {}) {
+function mount({ clientAhead = 0, offline = false, maxPending = 500, app = false } = {}) {
   const timers = new FakeTimers();
   const server = new FakeServer(() => T0 + timers.now);
   const network = new FakeNetwork(server);
@@ -73,6 +78,7 @@ function mount({ clientAhead = 0, offline = false } = {}) {
     now: () => T0 + timers.now + clientAhead,
     random: () => 0.5,
     randomBytes,
+    maxPending,
   });
   const shard = server.shard(SHARD);
   const declare = (title: string, severity: "sev1" | "sev2" | "sev3", status?: IncidentStatus) => {
@@ -90,7 +96,18 @@ function mount({ clientAhead = 0, offline = false } = {}) {
       <PreferencesProvider initialLocale="en">
         <LocaleProbe />
         <SyncProvider client={syncClient} shard={SHARD}>
-          <IncidentsCard />
+          {app ? (
+            <StackStatusProvider>
+              <RouterProvider
+                router={createRouter({
+                  routeTree,
+                  history: createMemoryHistory({ initialEntries: ["/"] }),
+                })}
+              />
+            </StackStatusProvider>
+          ) : (
+            <IncidentsCard />
+          )}
         </SyncProvider>
       </PreferencesProvider>,
     );
@@ -106,7 +123,7 @@ function mount({ clientAhead = 0, offline = false } = {}) {
     network.sockets
       .flatMap((socket) => socket.sent)
       .filter((f) => (f as { type: string }).type === "mutate");
-  return { container, shard, network, declare, flush, sentMutations };
+  return { container, shard, network, timers, declare, flush, sentMutations };
 }
 
 const $ = <E extends Element = HTMLElement>(selector: string, scope: ParentNode = document) =>
@@ -207,7 +224,7 @@ test("refused changes: in the row when listed, in the card otherwise; read once 
     const input = $<HTMLInputElement>('input[placeholder="What\'s happening?"]')!;
     setValue(input, "Search slow");
   });
-  await click($$("button").find((b) => b.textContent === "Declare"));
+  await click($$("button").find((b) => b.textContent?.startsWith("Declare SEV")));
   await view.flush();
   expect(titles()).toEqual(["Checkout down"]);
   const cardLevel = dismissButtons().filter((b) => !b.closest("li[data-incident]"));
@@ -246,7 +263,7 @@ test("a title the shard refuses is given back if the field is still empty", asyn
   refuseDeclareTitle(view.shard);
   const input = $<HTMLInputElement>("input")!;
   await act(async () => setValue(input, "Search slow"));
-  await click($$("button").find((b) => b.textContent === "Declare"));
+  await click($$("button").find((b) => b.textContent?.startsWith("Declare SEV")));
   expect(input.value).toBe("");
   await view.flush();
   expect(input.value).toBe("Search slow");
@@ -255,7 +272,7 @@ test("a title the shard refuses is given back if the field is still empty", asyn
 test("an empty title stays local, with an error read out; Declare stays enabled", async () => {
   const view = mount();
   await view.flush();
-  const submit = $$("button").find((b) => b.textContent === "Declare")!;
+  const submit = $$("button").find((b) => b.textContent?.startsWith("Declare SEV"))!;
   expect(submit.hasAttribute("disabled")).toBe(false);
   await click(submit);
   expect($('[role="alert"]')?.textContent).toContain("Enter a title.");
@@ -276,7 +293,7 @@ test("phones: the form opens from one button, and folds back after a declare or 
 
   await click(opener());
   await act(async () => setValue($<HTMLInputElement>("input")!, "Card reader offline"));
-  await click($$("button").find((b) => b.textContent === "Declare"));
+  await click($$("button").find((b) => b.textContent?.startsWith("Declare SEV")));
   expect(document.activeElement).toBe(opener());
   await view.flush();
   expect(titles()).toEqual(["Card reader offline"]);
@@ -333,7 +350,7 @@ test("unavailable: a calm count line, the reason and that it keeps trying; the f
   expect(card.textContent).toContain("vp run dev");
   expect(card.textContent).toContain("This page keeps trying on its own.");
   expect(card.textContent).toContain("—");
-  expect($$("button").some((b) => b.textContent === "Declare")).toBe(true);
+  expect($$("button").some((b) => b.textContent?.startsWith("Declare SEV"))).toBe(true);
 });
 
 test("refused: the reason and a Reload that reloads; a declare is acknowledged", async () => {
@@ -349,7 +366,7 @@ test("refused: the reason and a Reload that reloads; a declare is acknowledged",
   expect($('[role="status"]', card)?.textContent).toBe("Not loaded");
   expect(card.textContent).toContain("You don't have access to these incidents.");
   await act(async () => setValue($<HTMLInputElement>("input")!, "Card reader offline"));
-  await click($$("button").find((b) => b.textContent === "Declare"));
+  await click($$("button").find((b) => b.textContent?.startsWith("Declare SEV")));
   expect(card.textContent).toContain("Sent “Card reader offline”.");
   expect(view.sentMutations()).toHaveLength(1);
   await click($$("button").find((b) => b.textContent === "Reload"));
@@ -382,6 +399,105 @@ test("a language switch rewords an existing notice and the connection state", as
   await act(async () => switchLocale!("pt-BR"));
   expect(row("Checkout down")!.textContent).toContain("Não foi possível mover para Descartado.");
   expect($('[role="status"]')?.textContent).toBe("Ao vivo");
+});
+
+test("the real root keeps the card's state across a language switch, with a change in flight", async () => {
+  // The fetches of the stack card have nowhere to go here; they fail quietly.
+  vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("offline"));
+  const view = mount({ app: true });
+  const id = view.declare("Checkout down", "sev2");
+  await act(async () => {
+    for (let i = 0; i < 20 && !$("#incidents-title"); i++)
+      await new Promise((r) => setTimeout(r, 10));
+  });
+  await view.flush();
+  expect(titles()).toEqual(["Checkout down"]);
+  const input = $<HTMLInputElement>('input[placeholder="What\'s happening?"]')!;
+  await act(async () => setValue(input, "Half-typed title"));
+
+  // A change the shard will refuse, still in flight while the language switches.
+  view.shard.write(ops, "incident.setStatus", { id, status: "monitoring" });
+  await choose("Checkout down", "Status", /^Declined$/);
+  await act(async () => switchLocale!("pt-BR"));
+  expect($("h1")?.textContent).toBe("Visão geral");
+  expect($("#incidents-title")?.textContent).toBe("Incidentes");
+  // The same card: the typed text survived, and the refusal lands in it.
+  expect($<HTMLInputElement>('input[placeholder="O que está acontecendo?"]')).toBe(input);
+  expect(input.value).toBe("Half-typed title");
+  await view.flush();
+  expect(row("Checkout down")!.textContent).toContain("Não foi possível mover para Descartado.");
+  vi.restoreAllMocks();
+});
+
+test("focus moved outside the card stays there when the row it came from is removed", async () => {
+  const view = mount();
+  const gone = view.declare("Leaving", "sev1");
+  view.declare("Staying", "sev2");
+  await view.flush();
+  const outside = document.createElement("button");
+  outside.textContent = "Elsewhere";
+  document.body.append(outside);
+  const trigger = $$("button", row("Leaving")).find((b) => b.textContent?.startsWith("Status:"))!;
+  act(() => trigger.focus());
+  await act(async () => {
+    outside.focus();
+    await Promise.resolve();
+  });
+  view.shard.write(ops, "incident.setStatus", { id: gone, status: "resolved" });
+  await view.flush();
+  await frame();
+  expect(titles()).toEqual(["Staying"]);
+  expect(document.activeElement).toBe(outside);
+});
+
+test("declares refused without issues keep their notice under the form and do not give the title back", async () => {
+  // too_many_pending: the client's cap is 0, so it refuses before sending.
+  const capped = mount({ maxPending: 0 });
+  await capped.flush();
+  const submit = async (title: string) => {
+    await act(async () => setValue($<HTMLInputElement>("input")!, title));
+    await click($$("button").find((b) => b.textContent?.startsWith("Declare SEV")));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  };
+  const formNotice = () => {
+    // The slot right after the form, before the list: where the user just acted.
+    const form = $("form")!;
+    const next = form.nextElementSibling;
+    return next?.tagName === "UL" ? next.textContent : null;
+  };
+  await submit("Card reader offline");
+  expect(formNotice()).toContain("Couldn't declare it. Wait for the pending changes to be sent");
+  expect($<HTMLInputElement>("input")!.value).toBe("");
+  act(() => {
+    root?.unmount();
+    client?.close();
+  });
+  document.body.innerHTML = "";
+
+  // expired: sent while offline, never confirmed within the retention window.
+  const offline = mount({ offline: true });
+  await offline.flush();
+  await submit("Badge printer jammed");
+  expect(titles()).toEqual(["Badge printer jammed"]); // Optimistic, waiting.
+  await act(async () => {
+    offline.timers.advance(MUTATION_RETENTION_MS + 1);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(formNotice()).toContain(
+    "Couldn't declare it. It waited too long to be sent and was dropped.",
+  );
+  expect($<HTMLInputElement>("input")!.value).toBe("");
+  expect(titles()).toEqual([]);
+
+  // closed: the page's client stopped.
+  act(() => client!.close());
+  await submit("Lift out of order");
+  expect(formNotice()).toContain("Couldn't declare it. This page stopped syncing.");
+  expect($<HTMLInputElement>("input")!.value).toBe("");
 });
 
 /** Types into a controlled input the way React listens for it. */

@@ -5,7 +5,7 @@ export type Incidents_All_ClearInputs = {};
 /**
 * | output |
 * | --- |
-* | "No active incidents. All clear." |
+* | "All clear." |
 *
 * @param {Incidents_All_ClearInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

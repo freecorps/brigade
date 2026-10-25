@@ -100,9 +100,8 @@
   "declare_title_label": "Title",
   "declare_title_placeholder": "What's happening?",
   "declare_severity_label": "Severity",
-  "declare_submit": "Declare",
-  "incident_saving": "Saving…",
-  "incident_queued": "Waiting to send",
+  "incident_change_saving": "Saving…",
+  "incident_change_queued": "Waiting to send",
   "incident_declared": "Declared {time}",
   "incident_severity_label": "Severity",
   "incident_status_label": "Status",
@@ -125,7 +124,7 @@
   "sync_error_closed": "This page stopped syncing. Reload it to try again.",
   "sync_error_internal": "Something went wrong on the server. Try again.",
   "incident_quoted_title": "“{title}”",
-  "incidents_all_clear": "No active incidents. All clear.",
+  "incidents_all_clear": "All clear.",
   "incidents_sev1_count": [
     {
       "declarations": [
@@ -152,12 +151,15 @@
   "incident_move_failed_here": "Couldn't move it to {status}. {reason}",
   "incident_severity_failed": "Couldn't change {incident} to {severity}. {reason}",
   "incident_severity_failed_here": "Couldn't change it to {severity}. {reason}",
-  "incident_sending": "Saving",
-  "incident_not_sent": "Not sent",
+  "incident_unnumbered_saving": "Saving",
+  "incident_unnumbered_not_sent": "Not sent",
   "declare_cancel": "Cancel",
   "incident_declare_failed_here": "Couldn't declare it. {reason}",
   "declare_title_empty": "Enter a title.",
   "declare_sent": "Sent “{title}”. It shows here once the list loads.",
   "sync_unavailable_short": "Unavailable",
-  "time_just_now": "just now"
+  "time_just_now": "just now",
+  "incident_label": "{number} “{title}”",
+  "severity_named": "{code} {name}",
+  "declare_submit_severity": "Declare {severity}"
 }

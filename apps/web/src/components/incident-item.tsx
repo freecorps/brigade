@@ -72,14 +72,15 @@ export function IncidentItem({
         {number ? (
           <span className="text-sm font-medium text-muted-foreground tabular-nums">{number}</span>
         ) : (
-          <span className="inline-flex items-center gap-1 rounded-sm border border-dashed px-1 text-xs leading-5 text-muted-foreground">
+          <span className="inline-flex items-center gap-1 rounded-sm border border-dashed border-muted-foreground/60 px-1 text-xs leading-5 text-muted-foreground">
             <PendingIcon aria-hidden className="size-3 shrink-0" />
-            {online ? m.incident_sending() : m.incident_not_sent()}
+            {online ? m.incident_unnumbered_saving() : m.incident_unnumbered_not_sent()}
           </span>
         )}
       </div>
-      {/* Pieces wrap whole, never mid-phrase. */}
-      <p className="flex flex-wrap justify-end gap-x-1 text-xs text-muted-foreground md:col-start-2 md:row-start-2 md:justify-start">
+      {/* Pieces wrap whole, never mid-phrase. Below md the pending word always takes its own line, so the row's
+          height changes when a change starts or settles, never when the connection flaps. */}
+      <p className="flex flex-wrap justify-end gap-x-1 text-right text-xs text-muted-foreground md:col-start-2 md:row-start-2 md:justify-start md:text-left">
         <time
           className="whitespace-nowrap"
           dateTime={new Date(row.declaredAt).toISOString()}
@@ -88,8 +89,11 @@ export function IncidentItem({
           {m.incident_declared({ time: declared })}
         </time>
         {number && pending.any ? (
-          <span className="whitespace-nowrap">
-            · {online ? m.incident_saving() : m.incident_queued()}
+          <span className="whitespace-nowrap max-md:basis-full">
+            <span aria-hidden className="max-md:hidden">
+              ·{" "}
+            </span>
+            {online ? m.incident_change_saving() : m.incident_change_queued()}
           </span>
         ) : null}
       </p>
@@ -102,14 +106,14 @@ export function IncidentItem({
         <div className="md:col-start-3 md:row-span-2 md:row-start-1 md:self-center">
           <DropdownMenu>
             <DropdownMenuTrigger
-              render={<Button variant="ghost" className="gap-1 px-1.5 max-sm:min-w-11" />}
+              render={<Button variant="ghost" className="gap-1 px-1.5 max-[374px]:min-w-11" />}
             >
               <span className="sr-only">{m.incident_severity_label()}: </span>
               <span className={cn("inline-flex", pending.severity && UNSAVED)}>
                 <SeverityBadge severity={row.severity} />
               </span>
-              {/* Below sm the badge alone is the trigger, so both menus fit one line at 320px. */}
-              <ChevronDownIcon aria-hidden className="text-muted-foreground max-sm:hidden" />
+              {/* Below 375px the badge alone is the trigger, so both menus fit one line at 320px. */}
+              <ChevronDownIcon aria-hidden className="text-muted-foreground max-[374px]:hidden" />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
               <DropdownMenuGroup>
@@ -135,14 +139,14 @@ export function IncidentItem({
           <DropdownMenu>
             <DropdownMenuTrigger
               data-status-trigger={row.id}
-              render={<Button variant="ghost" className="gap-1 px-1.5 max-sm:min-w-11" />}
+              render={<Button variant="ghost" className="gap-1 px-1.5 max-[374px]:min-w-11" />}
             >
               <span className="sr-only">{m.incident_status_label()}: </span>
               <span className={cn("inline-flex", pending.status && UNSAVED)}>
                 <StatusBadge status={row.status} />
               </span>
-              {/* Below sm the badge alone is the trigger, so both menus fit one line at 320px. */}
-              <ChevronDownIcon aria-hidden className="text-muted-foreground max-sm:hidden" />
+              {/* Below 375px the badge alone is the trigger, so both menus fit one line at 320px. */}
+              <ChevronDownIcon aria-hidden className="text-muted-foreground max-[374px]:hidden" />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
               <DropdownMenuGroup>
@@ -170,6 +174,27 @@ export function IncidentItem({
         </div>
       </div>
       {notices ? <div className="col-span-full mt-2">{notices}</div> : null}
+    </li>
+  );
+}
+
+/**
+ * A placeholder row with the real row's grid and heights (number and time, title, the two 44px menus), so the
+ * list does not jump when the data arrives.
+ */
+export function IncidentItemSkeleton() {
+  return (
+    <li
+      aria-hidden
+      className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:px-6 md:grid-cols-[--spacing(20)_minmax(0,1fr)_--spacing(40)_--spacing(40)] md:items-start"
+    >
+      <span className="my-0.5 block h-4 w-12 rounded-sm bg-muted md:row-span-2" />
+      <span className="my-0.5 block h-3 w-24 justify-self-end rounded-sm bg-muted md:col-start-2 md:row-start-2 md:justify-self-start" />
+      <span className="col-span-2 my-0.5 block h-4 w-3/4 max-w-md rounded-sm bg-muted md:col-span-1 md:col-start-2 md:row-start-1" />
+      <div className="col-span-2 -mb-2 flex h-11 items-center gap-3 md:contents">
+        <span className="block h-6 w-28 rounded-sm bg-muted md:col-start-3 md:row-span-2 md:row-start-1 md:my-2.5 md:ml-1.5" />
+        <span className="block h-6 w-28 rounded-sm bg-muted md:col-start-4 md:row-span-2 md:row-start-1 md:my-2.5 md:ml-1.5" />
+      </div>
     </li>
   );
 }

@@ -100,9 +100,8 @@
   "declare_title_label": "Título",
   "declare_title_placeholder": "O que está acontecendo?",
   "declare_severity_label": "Severidade",
-  "declare_submit": "Declarar",
-  "incident_saving": "Salvando…",
-  "incident_queued": "Aguardando envio",
+  "incident_change_saving": "Salvando…",
+  "incident_change_queued": "Aguardando envio",
   "incident_declared": "Declarado {time}",
   "incident_severity_label": "Severidade",
   "incident_status_label": "Status",
@@ -125,7 +124,7 @@
   "sync_error_closed": "Esta página parou de sincronizar. Recarregue para tentar de novo.",
   "sync_error_internal": "Algo deu errado no servidor. Tente de novo.",
   "incident_quoted_title": "“{title}”",
-  "incidents_all_clear": "Nenhum incidente ativo. Tudo tranquilo.",
+  "incidents_all_clear": "Tudo tranquilo.",
   "incidents_sev1_count": [
     {
       "declarations": [
@@ -152,12 +151,15 @@
   "incident_move_failed_here": "Não foi possível mover para {status}. {reason}",
   "incident_severity_failed": "Não foi possível mudar {incident} para {severity}. {reason}",
   "incident_severity_failed_here": "Não foi possível mudar para {severity}. {reason}",
-  "incident_sending": "Salvando",
-  "incident_not_sent": "Pendente",
+  "incident_unnumbered_saving": "Salvando",
+  "incident_unnumbered_not_sent": "Pendente",
   "declare_cancel": "Cancelar",
   "incident_declare_failed_here": "Não foi possível declarar. {reason}",
   "declare_title_empty": "Digite um título.",
   "declare_sent": "“{title}” enviado. Ele aparece aqui quando a lista carregar.",
   "sync_unavailable_short": "Indisponível",
-  "time_just_now": "agora"
+  "time_just_now": "agora",
+  "incident_label": "{number} “{title}”",
+  "severity_named": "{code} {name}",
+  "declare_submit_severity": "Declarar {severity}"
 }

@@ -113,7 +113,10 @@ test("every refused outcome becomes a notice with a translated reason; a confirm
   expect(mutationErrorReason("unknown_mutation")).toBe(mutationErrorReason("internal"));
 
   const severity = noticeFor(fail("conflict"), { ...change, kind: "severity", to: "sev1" }, "k")!;
-  expect(noticeText(severity, "card")).toMatch(/^Couldn't change INC-12 “Checkout down” to SEV1\./);
+  // The full severity label, as the badges show it.
+  expect(noticeText(severity, "card")).toMatch(
+    /^Couldn't change INC-12 “Checkout down” to SEV1 Critical\./,
+  );
   // Not numbered yet: the title alone names it. The card draws the subject as separate parts.
   const unnumbered = noticeFor(fail("not_found"), { ...change, number: null }, "k")!;
   expect(noticeText(unnumbered, "card")).toBe(

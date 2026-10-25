@@ -10,7 +10,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 /**
 * | output |
 * | --- |
-* | "No active incidents. All clear." |
+* | "All clear." |
 *
 * @param {Incidents_All_ClearInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options
@@ -19,6 +19,6 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 export const incidents_all_clear = /** @type {((inputs?: Incidents_All_ClearInputs, options?: { locale?: "en" | "pt-BR" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Incidents_All_ClearInputs, { locale?: "en" | "pt-BR" }, {}>} */ ((inputs = {}, options = {}) => {
 	void inputs;
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
-	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("Nenhum incidente ativo. Tudo tranquilo.")
-	return /** @type {LocalizedString} */ ("No active incidents. All clear.")
+	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("Tudo tranquilo.")
+	return /** @type {LocalizedString} */ ("All clear.")
 });

@@ -25,8 +25,6 @@ export const WORKSPACE_ID = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 /** Set by the Worker on the upgrade it forwards; the shard records it on first use. */
 export const WORKSPACE_HEADER = "Brigade-Workspace";
 
-export { DEV_ACTOR, DEV_ACTOR_VAR };
-
 /** The actor every sync socket acts as here, or undefined if this deployment has none (no auth yet). */
 export function syncActor(env: object): Actor | undefined {
   return Reflect.get(env, DEV_ACTOR_VAR) === "1" ? DEV_ACTOR : undefined;

@@ -63,7 +63,10 @@ export function DeclareForm({
     event.preventDefault();
     const checked = checkDeclare(client.newId("inc"), title, severity);
     if (!checked.ok) {
-      setInvalid((current) => ({ empty: title === "", attempt: (current?.attempt ?? 0) + 1 }));
+      setInvalid((current) => ({
+        empty: title.trim() === "",
+        attempt: (current?.attempt ?? 0) + 1,
+      }));
       titleRef.current?.focus();
       return;
     }
@@ -122,7 +125,7 @@ export function DeclareForm({
           aria-invalid={invalid !== null}
           aria-describedby={invalid ? errorId : undefined}
           // 16px: iOS zooms into smaller inputs.
-          className="h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive/40 md:col-start-1 md:row-start-2"
+          className="h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive md:col-start-1 md:row-start-2"
         />
         {invalid ? (
           <p
@@ -155,7 +158,10 @@ export function DeclareForm({
               <label
                 key={option}
                 className={cn(
-                  "flex h-11 cursor-pointer flex-col items-center justify-center px-1.5 text-xs leading-tight select-none has-focus-visible:ring-3 has-focus-visible:ring-ring has-focus-visible:ring-inset md:px-2.5",
+                  "flex h-11 cursor-pointer flex-col items-center justify-center px-1.5 text-xs leading-tight select-none md:px-2.5",
+                  // Focus: the ring at the edge, then a card-coloured gap before the fill, so it holds 3:1 on
+                  // every severity colour (the inset ring paints over the inset shadow).
+                  "has-focus-visible:shadow-[inset_0_0_0_5px_var(--color-card)] has-focus-visible:ring-3 has-focus-visible:ring-ring has-focus-visible:ring-inset",
                   selected
                     ? cn(SEGMENT_TONES[option], "ring-2 ring-current ring-inset")
                     : "text-muted-foreground hover:bg-muted",
@@ -184,7 +190,8 @@ export function DeclareForm({
         </div>
         <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2 md:contents">
           <Button type="submit" className="md:col-start-3 md:row-start-2 md:mt-0">
-            {m.declare_submit()}
+            {/* Names what is about to page people. */}
+            {m.declare_submit_severity({ severity: severity.toUpperCase() })}
           </Button>
           <Button type="button" variant="ghost" className="md:hidden" onClick={close}>
             {m.declare_cancel()}

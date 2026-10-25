@@ -22,7 +22,7 @@ import {
   type FocusEvent,
 } from "react";
 import { DeclareForm } from "@/components/declare-form";
-import { IncidentItem } from "@/components/incident-item";
+import { IncidentItem, IncidentItemSkeleton } from "@/components/incident-item";
 import { usePreferences } from "@/components/preferences";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -74,9 +74,15 @@ export function IncidentsCard() {
   // on a dismiss or a re-render, and refusals landing together are all read.
   const [announcements, setAnnouncements] = useState<Notice[]>([]);
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const mounted = useRef(true);
   useEffect(() => {
+    mounted.current = true;
     const pending = timers.current;
-    return () => pending.forEach(clearTimeout);
+    return () => {
+      mounted.current = false;
+      pending.forEach(clearTimeout);
+      pending.clear();
+    };
   }, []);
   const nextKey = useRef(0);
   const track = useCallback(
@@ -88,7 +94,8 @@ export function IncidentsCard() {
       return outcome.then((result) => {
         setBusy((current) => adjustBusy(current, keys, -1));
         const notice = noticeFor(result, target, `n${nextKey.current++}`);
-        if (notice) {
+        // An outcome landing after the card unmounted: nothing to show it in, and no timer to leave behind.
+        if (notice && mounted.current) {
           setNotices((current) => [...current, notice].slice(-MAX_NOTICES));
           setAnnouncements((current) => [...current, notice]);
           const timer = setTimeout(() => {
@@ -176,6 +183,17 @@ export function IncidentsCard() {
       focused.current = { element, fallbacks: plan(element) };
     }
   };
+  // Focus leaving for somewhere else on the page (not one of the card's menus, which render in portals) ends
+  // the tracking: a row removed later must not pull focus back. A control removed while focused stays tracked.
+  const onBlur = (event: FocusEvent<HTMLElement>) => {
+    const element = event.target;
+    const next = event.relatedTarget;
+    if (next instanceof Element && next.closest('[role="menu"]')) return;
+    if (next instanceof Node && cardRef.current?.contains(next)) return;
+    queueMicrotask(() => {
+      if (element.isConnected && focused.current?.element === element) focused.current = null;
+    });
+  };
   useLayoutEffect(() => {
     const last = focused.current;
     if (!last) return;
@@ -186,14 +204,8 @@ export function IncidentsCard() {
     focused.current = null;
     requestAnimationFrame(() => {
       const active = document.activeElement;
-      // Focus already somewhere on the card on purpose: leave it.
-      if (
-        active instanceof HTMLElement &&
-        active.isConnected &&
-        cardRef.current?.contains(active)
-      ) {
-        return;
-      }
+      // Only when focus was really lost: on <body>, nowhere, or on something no longer on the page.
+      if (active && active !== document.body && active.isConnected) return;
       for (const selector of last.fallbacks) {
         const next = cardRef.current?.querySelector<HTMLElement>(selector);
         if (next) return next.focus();
@@ -220,8 +232,15 @@ export function IncidentsCard() {
 
   const now = useNow(20_000);
   const sev1 = rows.filter((row) => row.severity === "sev1").length;
+  // A refused declare shows where the user just acted, under the form; a refused change to a row no longer
+  // listed goes below the list. Neither reserves any space until there is one.
+  const unlisted = notices.filter((notice) => !listed.has(notice.incidentId));
+  const declareNotices = renderNotices(
+    unlisted.filter((notice) => notice.kind === "declare"),
+    "card",
+  );
   const cardNotices = renderNotices(
-    notices.filter((notice) => !listed.has(notice.incidentId)),
+    unlisted.filter((notice) => notice.kind !== "declare"),
     "card",
   );
   const hasPanel = view === "reconnecting" || view === "unavailable" || view === "refused";
@@ -231,6 +250,7 @@ export function IncidentsCard() {
     <Card
       ref={cardRef}
       onFocus={onFocus}
+      onBlur={onBlur}
       aria-labelledby="incidents-title"
       // Rows run to the card's edges (the SEV1 rule included), so the card clips them to its corners.
       className={cn(rows.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
@@ -264,6 +284,7 @@ export function IncidentsCard() {
 
       <CardContent className="flex flex-col gap-5">
         <DeclareForm onDeclare={onDeclare} />
+        {declareNotices}
 
         {/* Read out once per new notice, in the card's wording, wherever it is drawn. */}
         <div aria-live="assertive" className="sr-only" data-announcer="">
@@ -298,10 +319,7 @@ export function IncidentsCard() {
         ) : view === "connecting" ? (
           <ul aria-hidden className="-mx-4 -mb-5 divide-y border-t sm:-mx-6 sm:-mb-6">
             {[0, 1, 2].map((index) => (
-              <li key={index} className="flex flex-col gap-2 px-4 py-4 sm:px-6">
-                <span className="block h-4 w-16 rounded-sm bg-muted" />
-                <span className="block h-5 w-3/4 max-w-md rounded-sm bg-muted" />
-              </li>
+              <IncidentItemSkeleton key={index} />
             ))}
           </ul>
         ) : status === "ready" ? (
@@ -328,7 +346,7 @@ export function IncidentsCard() {
 
 /**
  * A refused change and its dismiss button. In the card it first says which incident (the number never broken,
- * the quoted title truncated with the full one on hover), then the change; in a row, only the change.
+ * the quoted title on up to two lines), then the change; in a row, only the change.
  */
 function NoticeItem({
   notice,
@@ -346,13 +364,15 @@ function NoticeItem({
       <CircleAlertIcon aria-hidden className="mt-2.5 size-4 shrink-0 text-destructive" />
       <div id={textId} className="min-w-0 flex-1 py-2">
         {subject ? (
-          <p className="flex min-w-0 gap-1 font-medium">
+          // Up to two lines (no hover on touch), the full title on hover where there is one; the number never
+          // breaks at its hyphen.
+          <p className="line-clamp-2 font-medium [overflow-wrap:anywhere]" title={notice.title}>
             {subject.number ? (
-              <span className="shrink-0 tabular-nums">{subject.number}</span>
+              <>
+                <span className="whitespace-nowrap tabular-nums">{subject.number}</span>{" "}
+              </>
             ) : null}
-            <span className="truncate" title={notice.title}>
-              {subject.title}
-            </span>
+            {subject.title}
           </p>
         ) : null}
         <p className="[overflow-wrap:anywhere]">{noticeText(notice, "row")}</p>

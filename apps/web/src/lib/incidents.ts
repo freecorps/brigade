@@ -1,7 +1,7 @@
 // Pure helpers for the live incident list: which status moves to offer, what to say about the connection, how to
 // check a declare before sending it, and how to word a mutation the shard refused.
 import { formatRelativeTime, m, type Locale } from "@freecorps/brigade-i18n";
-import { incidentStatusLabels } from "@freecorps/brigade-i18n/labels";
+import { incidentStatusLabels, severityLabels } from "@freecorps/brigade-i18n/labels";
 import {
   canTransition,
   formatIncidentNumber,
@@ -127,15 +127,20 @@ export function noticeText(notice: Notice, place: NoticePlace): string {
       ? m.incident_declare_failed_here({ reason })
       : m.incident_declare_failed({ title: notice.title, reason });
   }
-  const { number, title } = noticeSubject(notice);
-  const incident = number ? `${number} ${title}` : title;
+  // The order of number and title is the message's, not the code's.
+  const number = formatIncidentNumber(notice.number);
+  const incident = number
+    ? m.incident_label({ number, title: notice.title })
+    : m.incident_quoted_title({ title: notice.title });
   if (notice.kind === "status") {
     const status = incidentStatusLabels[notice.to as IncidentStatus]();
     return place === "row"
       ? m.incident_move_failed_here({ status, reason })
       : m.incident_move_failed({ incident, status, reason });
   }
-  const severity = String(notice.to).toUpperCase();
+  // The full label ("SEV2 High"), as the badges show it.
+  const to = notice.to as Severity;
+  const severity = m.severity_named({ code: to.toUpperCase(), name: severityLabels[to]() });
   return place === "row"
     ? m.incident_severity_failed_here({ severity, reason })
     : m.incident_severity_failed({ incident, severity, reason });

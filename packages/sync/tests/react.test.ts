@@ -5,7 +5,7 @@ import { renderToString } from "react-dom/server";
 import { expect, test } from "vite-plus/test";
 import { newId, type Actor } from "@freecorps/brigade-schema";
 import { createSyncClient, type MutationOutcome } from "../src/client.ts";
-import { SyncProvider, useMutation, useQuery } from "../src/react.ts";
+import { SyncProvider, useConnectionState, useMutation, useQuery } from "../src/react.ts";
 import { FakeNetwork, FakeServer, FakeTimers } from "./fake-server.ts";
 
 const T0 = Date.UTC(2026, 9, 24, 12, 0, 0);
@@ -82,5 +82,20 @@ test("a server render shows loading even when the client already holds the query
     createElement(SyncProvider, { client, shard: "ws_1" }, createElement(Active)),
   );
   expect(html).toBe("<p>loading</p>");
+  stop();
+});
+
+test("a server render shows idle even when the shard's socket is open", () => {
+  const { client, network } = setup();
+  const stop = client.query("ws_1", "incidents.active", {}).subscribe(() => {});
+  network.flush();
+  expect(client.connectionState("ws_1")).toBe("open");
+  function Connection() {
+    return createElement("p", null, useConnectionState());
+  }
+  const html = renderToString(
+    createElement(SyncProvider, { client, shard: "ws_1" }, createElement(Connection)),
+  );
+  expect(html).toBe("<p>idle</p>");
   stop();
 });

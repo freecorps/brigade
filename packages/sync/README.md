@@ -70,8 +70,9 @@ function ActiveIncidents() {
 - `useSyncClient()` returns the provider's client, for what the hooks do not cover (`newId("inc")` for a declare).
 - Without React: `client.query(shard, name, args)` returns a handle with `subscribe(listener)` and
   `getSnapshot()` (the `useSyncExternalStore` contract); `client.mutate(shard, name, args)`;
-  `client.newId(prefix)`; `client.connectionState(shard)` and `client.onConnectionChange(shard, listener)` for an offline indicator; `client.close()`, after
-  which every subscription holds a final `error` state with code `closed`.
+  `client.newId(prefix)`; `client.connectionState(shard)` and `client.onConnectionChange(shard, listener)` for an
+  offline indicator; `client.close()`, after which every subscription holds a final `error` state with code
+  `closed`.
 
 The client uses the global `WebSocket`, `setTimeout` and `crypto.getRandomValues` unless given `transport`,
 `timers` and `randomBytes`; `now`, `random` (backoff jitter), `clientId`, `backoff`, `idleCloseMs`, `lingerMs` and
@@ -103,10 +104,11 @@ missing global with no option given). `src/` uses no DOM or Node APIs, and only 
 patch per version per socket, a change log for resumes with a snapshot fallback, de-duplication with retention,
 result-before-patch). The `WorkspaceDO` implementation follows it.
 
-The hooks are tested with a server render (`react-dom/server`, no DOM): wiring, the provider and
-`getServerSnapshot`, which is always `loading` so hydration matches. A mounted test (effects, re-renders on
-updates) needs `react-dom/client` with jsdom or happy-dom, or the deprecated react-test-renderer; it waits for
-the first app that mounts the hooks. The live behaviour behind `useSyncExternalStore` is the `QueryHandle`,
-covered by `tests/client.test.ts`.
+The hooks are tested two ways. `tests/react.test.ts` renders them on the server (`react-dom/server`, no DOM): the
+wiring, the provider and the server snapshots, which are `loading` for `useQuery` and `idle` for
+`useConnectionState`, so hydration matches. `tests/react-mounted.test.ts` mounts them with `react-dom/client` on
+happy-dom against the reference server: rows, an optimistic mutation and its confirmation, a rollback, the
+connection state and a shard switch. The live behaviour behind `useSyncExternalStore` is the `QueryHandle` and
+`onConnectionChange`, covered by `tests/client.test.ts`.
 
 License: MIT.

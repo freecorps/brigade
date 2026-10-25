@@ -95,10 +95,13 @@ export function MonitorForm({
       return;
     }
     setSending(true);
-    void onCreate(checked).then((done) => {
-      setSending(false);
-      if (done) setDraft(EMPTY_DRAFT);
-    });
+    // `onCreate` can throw (no WebCrypto outside a secure context): the form must not stay busy.
+    void onCreate(checked)
+      .catch(() => false)
+      .then((done) => {
+        setSending(false);
+        if (done) setDraft(EMPTY_DRAFT);
+      });
   };
 
   const onKeyDown = (event: KeyboardEvent) => {

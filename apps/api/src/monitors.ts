@@ -108,7 +108,10 @@ export class Monitoring {
     const secret = store.get("heartbeats", monitorId);
     const monitor = store.get("monitors", monitorId);
     if (!secret || !monitor || digest.byteLength !== 32) return false;
-    if (!crypto.subtle.timingSafeEqual(hexBytes(secret.tokenHash), digest)) return false;
+    const stored = hexBytes(secret.tokenHash);
+    // timingSafeEqual throws on a length mismatch; a malformed stored hash is a refusal, not a 500.
+    if (stored.byteLength !== digest.byteLength) return false;
+    if (!crypto.subtle.timingSafeEqual(stored, digest)) return false;
     if (monitor.paused) return true;
     const now = Date.now();
     store.update("heartbeats", monitorId, { lastPingAt: now });

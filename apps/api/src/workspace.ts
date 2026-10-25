@@ -334,7 +334,12 @@ export class WorkspaceDO extends DurableObject<Env> {
       this.broadcast(result.version, changes, ws);
       // A monitor changed: the alarm pushes it to its probes (and keeps watching its heartbeats) right away.
       if (changes.some((change) => change.table === "monitors")) {
-        void this.ctx.storage.setAlarm(Date.now());
+        this.ctx.storage.setAlarm(Date.now()).catch((error: unknown) => {
+          // The next alarm (or a later change) pushes it instead; log rather than leave an unhandled rejection.
+          console.error(
+            JSON.stringify({ message: "arming the alarm failed", error: String(error) }),
+          );
+        });
       }
     }
   }

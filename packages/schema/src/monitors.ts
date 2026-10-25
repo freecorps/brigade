@@ -675,6 +675,9 @@ function moveTo(
  * unchanged verdict every `REPORT_EVERY_MS` so latency, colo and the check time stay fresh on the dashboard, and
  * those refreshes are synced but are not domain events (`silent`), so they never reach the outbox.
  */
+/** How far ahead of the shard's clock a probe's check time may be (Cloudflare clocks agree far closer). */
+export const REPORT_CLOCK_SKEW_MS = 60_000;
+
 export const reportMonitorCheck = defineMutation({
   name: "monitor.report",
   args: v.object({
@@ -696,6 +699,10 @@ export const reportMonitorCheck = defineMutation({
     if (monitor.paused) return fail("conflict", "Monitor is paused");
     const sources = monitorSources(monitor);
     if (!sources.includes(args.source)) return fail("conflict", "Not one of the monitor's sources");
+    // Probes stamp `at` when their check starts; one from the future (a skewed clock, a bug) would win every
+    // later comparison below and freeze this region's result.
+    if (args.at > ctx.now + REPORT_CLOCK_SKEW_MS)
+      return fail("invalid_args", "Check time is in the future");
     const previous = monitor.checks.find((check) => check.source === args.source);
     // A late report (a retry overtaken by a newer one) must not undo what the newer one said.
     if (previous && previous.at > args.at) return fail("conflict", "A newer result is recorded");
@@ -706,12 +713,13 @@ export const reportMonitorCheck = defineMutation({
     }
 
     const { open, id, ...result } = args;
-    const check: MonitorCheck = result;
+    // An up verdict can carry the error of a single failed check that did not flip it: that is no reason, and is
+    // neither stored nor sent.
+    const check: MonitorCheck = { ...result, error: result.up ? null : result.error };
     const checks = [...monitor.checks.filter((c) => c.source !== args.source), check].sort(
       (a, b) => sources.indexOf(a.source) - sources.indexOf(b.source),
     );
     const events: DomainEvent[] = [];
-    // An up verdict can carry the error of a single failed check that did not flip it: that is no reason.
     const reason = (c: MonitorCheck) => (c.up ? null : c.error);
     if (!previous || previous.up !== check.up || reason(previous) !== reason(check)) {
       events.push({
@@ -720,7 +728,7 @@ export const reportMonitorCheck = defineMutation({
         data: { ...check, error: reason(check) },
       } satisfies MonitorChecked);
     }
-    const patch: Partial<Omit<MonitorRow, "id">> = { checks };
+    const patch: Partial<Omit<MonitorRow, "id">> = { checks, updatedAt: ctx.now };
     const moved = moveTo(store, monitor, monitorStatus(monitor, checks, ctx.now), open, ctx, patch);
     if ("failed" in moved) return moved.failed;
     store.update("monitors", id, patch);
@@ -743,7 +751,7 @@ export const evaluateMonitor = defineMutation({
     if (monitor.paused) return fail("conflict", "Monitor is paused");
     const status = monitorStatus(monitor, monitor.checks, ctx.now);
     if (status === monitor.status) return fail("conflict", "The status holds");
-    const patch: Partial<Omit<MonitorRow, "id">> = {};
+    const patch: Partial<Omit<MonitorRow, "id">> = { updatedAt: ctx.now };
     const moved = moveTo(store, monitor, status, args.open, ctx, patch);
     if ("failed" in moved) return moved.failed;
     store.update("monitors", args.id, patch);

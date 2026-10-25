@@ -15,6 +15,7 @@ import {
   ok,
   queries,
   quorum,
+  REPORT_CLOCK_SKEW_MS,
   REPORT_EVERY_MS,
   runMutation,
   serverMutations,
@@ -617,6 +618,41 @@ describe("monitor.report: quorum → alert → incident", () => {
 });
 
 describe("monitor.report: restarts, refreshes and stale probes", () => {
+  test("a check time from the future is refused, so it cannot freeze the region's result", () => {
+    const db = store();
+    const id = createHttp(db, ["weur"]);
+    const ahead = report(db, id, "weur", false, T + 1000 + REPORT_CLOCK_SKEW_MS + 1, T + 1000);
+    expect(ahead).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+    // Slightly ahead (clock skew) is fine.
+    expect(report(db, id, "weur", true, T + 2000, T + 1000).ok).toBe(true);
+  });
+
+  test("an up result stores no error, and a report bumps updatedAt", () => {
+    const db = store();
+    const id = createHttp(db, ["weur"]);
+    const result = runMutation(
+      serverMutations,
+      "monitor.report",
+      {
+        id,
+        source: "weur",
+        at: T + 1000,
+        up: true,
+        latencyMs: 42,
+        colo: "CDG",
+        httpStatus: 200,
+        error: "timeout",
+        open: open(),
+      },
+      db,
+      system(T + 1000),
+    );
+    expect(result.ok).toBe(true);
+    const row = db.get("monitors", id);
+    expect(row?.checks.find((c) => c.source === "weur")?.error).toBeNull();
+    expect(row?.updatedAt).toBe(T + 1000);
+  });
+
   test("a report computed before another region flipped the status still counts", () => {
     // The reviewer's case: wnam and enam down → down; weur's down, computed before the flip, arrives after it;
     // wnam recovers. Two of three regions are still down: no recovery and no second incident.

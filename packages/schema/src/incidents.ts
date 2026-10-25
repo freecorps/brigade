@@ -216,7 +216,8 @@ export const postIncidentUpdate = defineMutation({
   name: "incident.postUpdate",
   args: v.object({
     id: incidentId,
-    body: v.string({ min: 1, max: UPDATE_BODY_MAX, multiline: true }),
+    // Joiners between letters, as in names: Persian, Arabic and Indic text needs them.
+    body: v.string({ min: 1, max: UPDATE_BODY_MAX, multiline: true, joiners: true }),
   }),
   permission: "incident:update",
   apply(store, args, ctx) {

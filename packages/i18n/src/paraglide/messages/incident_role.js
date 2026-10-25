@@ -15,7 +15,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "operations" | "sentence" | "operations lead" |
 * | "commander" | * | "Incident commander" |
 * | "communications" | * | "Communications lead" |
-* | * | * | "Operations lead" |
+* | "operations" | * | "Operations lead" |
+* | * | * | "Role" |
 *
 * @param {Incident_RoleInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options
@@ -29,7 +30,8 @@ export const incident_role = /** @type {((inputs: Incident_RoleInputs, options?:
 		if (i?.role === "operations" && i?.form === "sentence") return /** @type {LocalizedString} */ (`responsável pelas operações`);
 		if (i?.role === "commander") return /** @type {LocalizedString} */ (`Comandante do incidente`);
 		if (i?.role === "communications") return /** @type {LocalizedString} */ (`Responsável pela comunicação`);
-		return /** @type {LocalizedString} */ (`Responsável pelas operações`)
+		if (i?.role === "operations") return /** @type {LocalizedString} */ (`Responsável pelas operações`);
+		return /** @type {LocalizedString} */ (`Papel`)
 	}
 	{
 		if (i?.role === "commander" && i?.form === "sentence") return /** @type {LocalizedString} */ (`incident commander`);
@@ -37,6 +39,7 @@ export const incident_role = /** @type {((inputs: Incident_RoleInputs, options?:
 		if (i?.role === "operations" && i?.form === "sentence") return /** @type {LocalizedString} */ (`operations lead`);
 		if (i?.role === "commander") return /** @type {LocalizedString} */ (`Incident commander`);
 		if (i?.role === "communications") return /** @type {LocalizedString} */ (`Communications lead`);
-		return /** @type {LocalizedString} */ (`Operations lead`)
+		if (i?.role === "operations") return /** @type {LocalizedString} */ (`Operations lead`);
+		return /** @type {LocalizedString} */ (`Role`)
 	}
 });

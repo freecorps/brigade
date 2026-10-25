@@ -495,7 +495,8 @@
         "role=operations, form=sentence": "operations lead",
         "role=commander, form=*": "Incident commander",
         "role=communications, form=*": "Communications lead",
-        "role=*, form=*": "Operations lead"
+        "role=operations, form=*": "Operations lead",
+        "role=*, form=*": "Role"
       }
     }
   ],
@@ -515,7 +516,8 @@
         "kind=update": "{actor} posted an update",
         "kind=alert_recovered": "{a} recovered, so its alert resolved",
         "kind=alert_paused": "{actor} paused {a}, so its alert resolved",
-        "kind=*": "{actor} deleted {a}, so its alert resolved"
+        "kind=alert_deleted": "{actor} deleted {a}, so its alert resolved",
+        "kind=*": "{actor} changed the incident"
       }
     }
   ],

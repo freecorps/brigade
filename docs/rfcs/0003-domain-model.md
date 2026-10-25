@@ -39,7 +39,8 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
 
 - **Timeline** (`timeline` table, query `incident.timeline`): its own synced, append-only table, not a view of the
   outbox. Every mutation that changes an incident appends one entry in its own transaction, next to its event
-  (RFC 0005): `declared`, `status_changed`, `severity_changed`, `acknowledged`, `role_assigned`, `update`, and
+  (RFC 0005): `declared`, `status_changed`, `severity_changed`, `acknowledged`, `role_assigned` (stored with the
+  previous and new holder; the dashboard words it as assigned, unassigned, taken or stepped down), `update`, and
   `alert_resolved` when the alert of the monitor that opened it resolves (recovered, or the monitor paused or
   deleted), by `sys_monitors` or the member who did it. The outbox is server-only and drained, while clients need
   entries live and optimistic, so deriving the timeline from events would need a projection anyway. Entries are

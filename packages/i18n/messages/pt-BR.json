@@ -495,7 +495,8 @@
         "role=operations, form=sentence": "responsável pelas operações",
         "role=commander, form=*": "Comandante do incidente",
         "role=communications, form=*": "Responsável pela comunicação",
-        "role=*, form=*": "Responsável pelas operações"
+        "role=operations, form=*": "Responsável pelas operações",
+        "role=*, form=*": "Papel"
       }
     }
   ],
@@ -515,7 +516,8 @@
         "kind=update": "{actor} publicou uma atualização",
         "kind=alert_recovered": "{a} se recuperou, e o alerta foi resolvido",
         "kind=alert_paused": "{actor} pausou {a}, e o alerta foi resolvido",
-        "kind=*": "{actor} excluiu {a}, e o alerta foi resolvido"
+        "kind=alert_deleted": "{actor} excluiu {a}, e o alerta foi resolvido",
+        "kind=*": "{actor} alterou o incidente"
       }
     }
   ],

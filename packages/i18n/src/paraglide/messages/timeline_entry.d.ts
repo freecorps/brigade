@@ -21,7 +21,8 @@ export type Timeline_EntryInputs = {
 * | "update" | "{actor} posted an update" |
 * | "alert_recovered" | "{a} recovered, so its alert resolved" |
 * | "alert_paused" | "{actor} paused {a}, so its alert resolved" |
-* | * | "{actor} deleted {a}, so its alert resolved" |
+* | "alert_deleted" | "{actor} deleted {a}, so its alert resolved" |
+* | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

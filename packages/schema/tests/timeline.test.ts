@@ -137,6 +137,18 @@ describe("timeline", () => {
     expect(entries.every((entry) => entry.incidentId === ID)).toBe(true);
   });
 
+  test("an update may join letters with ZWNJ or ZWJ, as Persian and Indic text needs", () => {
+    const store = storeWith([legacy()]);
+    const zwnj = String.fromCodePoint(0x200c);
+    expect(run(store, "incident.postUpdate", { id: ID, body: `نسرین${zwnj}دخت is on it` }).ok).toBe(
+      true,
+    );
+    // Still refused at the edges or alone.
+    expect(run(store, "incident.postUpdate", { id: ID, body: `${zwnj}Rolling back` }).ok).toBe(
+      false,
+    );
+  });
+
   test("the query reads the incident's id range, not the whole table", () => {
     const store = storeWith([legacy(), legacy({ id: OTHER, number: 8 })]);
     run(store, "incident.postUpdate", { id: ID, body: "Mine" });
@@ -453,6 +465,9 @@ describe("member names", () => {
     // A joiner the cut leaves at the end (it belongs to the letter before it) is dropped.
     const joined = `${"a".repeat(MEMBER_NAME_MAX - 1)}${ZWNJ}b`;
     expect(fitMemberName(joined)).toBe("a".repeat(MEMBER_NAME_MAX - 1));
+    // A joiner the trim exposes (a cut that ends "…a<ZWNJ> ") is dropped too.
+    const spaced = `${"a".repeat(MEMBER_NAME_MAX - 2)}${ZWNJ} ${"b".repeat(5)}`;
+    expect(fitMemberName(spaced)).toBe("a".repeat(MEMBER_NAME_MAX - 2));
     for (const name of ["", "   ", `Ana${cp(0x202e)}`, cp(0x200b)]) {
       expect(fitMemberName(name), JSON.stringify(name)).toBeNull();
     }

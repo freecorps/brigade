@@ -21,7 +21,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "update" | "{actor} posted an update" |
 * | "alert_recovered" | "{a} recovered, so its alert resolved" |
 * | "alert_paused" | "{actor} paused {a}, so its alert resolved" |
-* | * | "{actor} deleted {a}, so its alert resolved" |
+* | "alert_deleted" | "{actor} deleted {a}, so its alert resolved" |
+* | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options
@@ -41,7 +42,8 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "update") return /** @type {LocalizedString} */ (`${i?.actor} publicou uma atualização`);
 		if (i?.kind === "alert_recovered") return /** @type {LocalizedString} */ (`${i?.a} se recuperou, e o alerta foi resolvido`);
 		if (i?.kind === "alert_paused") return /** @type {LocalizedString} */ (`${i?.actor} pausou ${i?.a}, e o alerta foi resolvido`);
-		return /** @type {LocalizedString} */ (`${i?.actor} excluiu ${i?.a}, e o alerta foi resolvido`)
+		if (i?.kind === "alert_deleted") return /** @type {LocalizedString} */ (`${i?.actor} excluiu ${i?.a}, e o alerta foi resolvido`);
+		return /** @type {LocalizedString} */ (`${i?.actor} alterou o incidente`)
 	}
 	{
 		if (i?.kind === "declared") return /** @type {LocalizedString} */ (`${i?.actor} declared the incident as ${i?.a}`);
@@ -55,6 +57,7 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "update") return /** @type {LocalizedString} */ (`${i?.actor} posted an update`);
 		if (i?.kind === "alert_recovered") return /** @type {LocalizedString} */ (`${i?.a} recovered, so its alert resolved`);
 		if (i?.kind === "alert_paused") return /** @type {LocalizedString} */ (`${i?.actor} paused ${i?.a}, so its alert resolved`);
-		return /** @type {LocalizedString} */ (`${i?.actor} deleted ${i?.a}, so its alert resolved`)
+		if (i?.kind === "alert_deleted") return /** @type {LocalizedString} */ (`${i?.actor} deleted ${i?.a}, so its alert resolved`);
+		return /** @type {LocalizedString} */ (`${i?.actor} changed the incident`)
 	}
 });

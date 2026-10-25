@@ -13,7 +13,8 @@ export type Incident_RoleInputs = {
 * | "operations" | "sentence" | "operations lead" |
 * | "commander" | * | "Incident commander" |
 * | "communications" | * | "Communications lead" |
-* | * | * | "Operations lead" |
+* | "operations" | * | "Operations lead" |
+* | * | * | "Role" |
 *
 * @param {Incident_RoleInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

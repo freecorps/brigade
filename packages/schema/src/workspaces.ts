@@ -41,11 +41,16 @@ export function fitMemberName(raw: string): string | null {
       if (cut.length + part.length > MEMBER_NAME_MAX) break;
       cut += part;
     }
-    // A joiner left at the end (ZWNJ, ZWJ) has nothing to join.
-    while (cut.endsWith(String.fromCharCode(0x200c)) || cut.endsWith(String.fromCharCode(0x200d))) {
-      cut = cut.slice(0, -1);
+    // A joiner left at the end (ZWNJ, ZWJ) has nothing to join; trimming can expose one, so repeat until neither
+    // a joiner nor a space ends the name.
+    const joiner = (text: string) =>
+      text.endsWith(String.fromCharCode(0x200c)) || text.endsWith(String.fromCharCode(0x200d));
+    for (let before = ""; before !== cut;) {
+      before = cut;
+      while (joiner(cut)) cut = cut.slice(0, -1);
+      cut = trimSpace(cut);
     }
-    name = trimSpace(cut);
+    name = cut;
   }
   const result = memberName(name);
   return result.ok ? result.value : null;

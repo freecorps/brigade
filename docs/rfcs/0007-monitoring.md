@@ -80,7 +80,7 @@ verdict or failure reason changes.
 - **"No data" does not page** (open question Q17): it opens no incident, since the failure is Brigade's probes, but
   it never resolves a firing alert either (no data is no recovery), the dashboard shows it, and
   `monitor.status_changed` goes to the outbox for notifiers. A down monitor whose probes die stays down-alerted.
-  The other side of it: a monitor that goes down *after* most of its probes died shows `unknown` and does not
+  The other side of it: a monitor that goes down _after_ most of its probes died shows `unknown` and does not
   page, even when every surviving region sees it down (an up monitor in three regions whose `enam` and `weur`
   probes went silent, then `wnam` reports down: one fresh result is below the floor of two, so "No data", no
   alert, no incident). An outage that only the surviving probes see is therefore missed until enough regions report

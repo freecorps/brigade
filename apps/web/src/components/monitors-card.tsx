@@ -272,8 +272,7 @@ function MonitorItem({
       data-monitor={row.id}
       className={cn(
         ROW_GRID,
-        alerting &&
-          "before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-sev1",
+        alerting && "before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-sev1",
       )}
     >
       <div className="col-start-1 row-start-1 flex flex-wrap items-center gap-2 md:col-auto md:flex-col md:items-start">
@@ -603,7 +602,10 @@ function PingUrl({
 
 /** Whether the copy shortcut is ⌘C rather than Ctrl+C. */
 function isApple(): boolean {
-  return typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
+  return (
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent)
+  );
 }
 
 /**

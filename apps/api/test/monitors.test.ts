@@ -600,9 +600,9 @@ describe("heartbeats", () => {
     try {
       expect((await ping(heartbeatToken(ws.id, monitorId, secret))).status).toBe(202);
       // The shard still checks the secret.
-      expect((await ping(heartbeatToken(ws.id, monitorId, newHeartbeatSecret(random)))).status).toBe(
-        404,
-      );
+      expect(
+        (await ping(heartbeatToken(ws.id, monitorId, newHeartbeatSecret(random)))).status,
+      ).toBe(404);
       expect(errors).toHaveBeenCalledWith(expect.stringContaining("workspace lookup failed"));
     } finally {
       errors.mockRestore();

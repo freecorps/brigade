@@ -309,14 +309,15 @@ function dropFocusOnMove(list: HTMLElement) {
     const active = document.activeElement;
     if (node.isConnected && active instanceof HTMLElement && node.contains(active)) active.blur();
   };
-  const { insertBefore, appendChild } = list;
+  const insertBefore = list.insertBefore.bind(list);
+  const appendChild = list.appendChild.bind(list);
   list.insertBefore = function <T extends Node>(node: T, child: Node | null) {
     blurMoved(node);
-    return insertBefore.call(list, node, child) as T;
+    return insertBefore(node, child) as T;
   };
   list.appendChild = function <T extends Node>(node: T) {
     blurMoved(node);
-    return appendChild.call(list, node) as T;
+    return appendChild(node) as T;
   };
   return () => {
     delete (list as Partial<Pick<HTMLElement, "insertBefore" | "appendChild">>).insertBefore;
@@ -383,7 +384,9 @@ function clipboard(write: (text: string) => Promise<void>) {
 async function createHeartbeat() {
   const view = await mount();
   await click(button("Add monitor"));
-  const kind = $$('input[type="radio"]').find((radio) => (radio as HTMLInputElement).value === "heartbeat");
+  const kind = $$('input[type="radio"]').find(
+    (radio) => (radio as HTMLInputElement).value === "heartbeat",
+  );
   await click(kind);
   const name = $$("input").find(
     (input) => document.querySelector(`label[for="${input.id}"]`)?.textContent === "Name",
@@ -410,7 +413,9 @@ test("the heartbeat URL panel focuses Copy, and closing before copying asks", as
 
   const dismiss = () => $$('button[aria-label="Dismiss"]')[0];
   await click(dismiss());
-  expect(document.body.textContent).toContain("Close without copying? The URL can't be shown again.");
+  expect(document.body.textContent).toContain(
+    "Close without copying? The URL can't be shown again.",
+  );
   expect(document.activeElement).toBe(button("Keep it open"));
   await click(button("Keep it open"));
   expect(document.body.textContent).not.toContain("Close without copying?");

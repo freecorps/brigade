@@ -144,15 +144,16 @@ Validate the risky assumptions before writing product code. Each spike produces 
     "Offline phones"); who is paged before schedules (Q18).
 - [x] External dead-man switch
   - A Cron Trigger beats once a minute into the `WatchdogDO`'s outbox; the beat goes through the alarm, the outbox
-    drain, the `brigade-events` Queue and the consumer, which checks the relay's `/health`; only a beat proved end to
-    end, within 2 minutes, with the relay up pings the operator's `DEAD_MAN_URL` (a secret; any healthchecks.io-style
+    drain, the `brigade-events` Queue and the consumer, which checks the relay takes its send token; only a beat proved
+    end to end, within 2 minutes, with the relay up pings the operator's `DEAD_MAN_URL` (a secret; any healthchecks.io-style
     check outside Cloudflare), so silence anywhere trips the external check. `GET /health/paging` and a dashboard
-    notice show `degraded` (no beat, nothing proved for 3 minutes, relay down or not configured); status changes are
+    notice show `degraded` (no beat, nothing proved for 3 minutes, proofs late, relay refusing the token, down or not
+    configured; reasons only to members); status changes are
     `brigade.status_changed` events. Local double: `scripts/dead-man-double.mjs` (RFC 0007 "Watching the watcher").
   - Left: deploying it (the `WatchdogDO` migration `v3` and the cron ship with the next API deploy) and setting
     `DEAD_MAN_URL` on `brigade-api-dev` and later environments (owner's call, an account outside Cloudflare); proving
-    each shard's own drain, APNs and D1, telling someone inside Brigade when it degrades, and whether
-    `/health/paging` needs a session (Q19).
+    each shard's own drain, APNs and D1, telling someone inside Brigade when it degrades, and an instance-operator
+    role for `/health/paging`'s `external` (Q19).
 - [ ] i18n plumbing (en, pt-BR)
 
 ## Phase 2 — On-call (4–6 weeks)

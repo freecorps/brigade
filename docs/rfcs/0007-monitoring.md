@@ -105,10 +105,13 @@ verdict or failure reason changes.
      beat: a `brigade.heartbeat` event written to the watchdog's own outbox, and its alarm armed.
   2. The alarm drains it with the same `OutboxDrain` as the shards to the `brigade-events` Queue.
   3. The Queue consumer routes the watchdog's events (`workspaceId` `_system`, which no workspace can have) away from
-     the shards: for a heartbeat it calls the relay's `GET /health` (5 s timeout) and reports back to the watchdog
-     (`proved`).
-  4. The watchdog pings `DEAD_MAN_URL` (one `GET`, 10 s timeout) only when that beat is newer than any proved before,
-     came back within 2 minutes and the relay answered. Anything else is silence.
+     the shards: for a heartbeat it proves the relay takes its send token (`POST /send` with the bearer token and no
+     body, 5 s timeout: `400 invalid_body` means the token was accepted, before any APNs call or log; `401` is
+     `unauthorized`; anything else `unreachable`; the relay's `/health` checks no token) and reports back to the
+     watchdog (`proved`).
+  4. The watchdog pings `DEAD_MAN_URL` (one `GET`, 5 s timeout) only when that beat is newer than any proved before,
+     came back within 2 minutes and the relay took the token. Anything else is silence. The ping runs in the object's
+     `waitUntil`, so a check that hangs never holds up the consumer and the pages in its batch.
 
   So a stop anywhere (the cron, Durable Objects, alarms, the drain, the Queue, the consumer, the relay) stops the
   pings within a minute or two. The operator's check sets its own period (1 minute) and grace (we suggest 5 minutes)
@@ -117,16 +120,26 @@ verdict or failure reason changes.
   loopback, for the local double `scripts/dead-man-double.mjs`); without it everything else still runs and nothing is
   pinged. A failed ping is logged and recorded; the next proved beat tries again.
 
-  Inside Brigade the same state is `GET /health/paging` (`ok`, `degraded` or `unknown`, the reasons and the times;
-  never a URL or an id), and the dashboard shows a notice above the incidents while it is not `ok` (nothing while it
-  is). `degraded` means: no beat for 3 minutes (`no_beat`), nothing proved for 3 minutes (`pipeline_stalled`), or the
-  relay unreachable or not configured on the last proof. `unknown` is before the first proof (a new deployment; local
-  runs, where the cron only fires by hand). The watchdog itself unreachable is a 503, which the dashboard shows as
-  "couldn't check". Each status change is a `brigade.status_changed` event in the watchdog's outbox and a log line
-  (`paging pipeline degraded`); nothing consumes the event yet.
+  Inside Brigade the same state is `GET /health/paging` (never a URL or an id): without a session, or for a user in
+  no workspace, only `{ status }` (`ok`, `degraded` or `unknown`), since why and since when would tell an outsider when
+  pages stop going out; for any member of a workspace also the reasons and the times, since a responder needs to know
+  they may not be paged; for an owner or admin of any workspace also `external` (whether the check is configured and
+  the last ping), which is the operator's business. The pipeline is one per instance and there is no instance-operator
+  role yet (Q19). The dashboard asks with the session's cookie and shows a notice above the incidents while it is not
+  `ok` (nothing while it is), checking every minute while the tab is visible. `degraded` means: no beat for 3 minutes
+  (`no_beat`); the newest proved beat, by when the cron wrote it, older than 3 minutes (`pipeline_stalled`: beats
+  stopped coming through, or come through late from a backed-up Queue); the last proof took over 2 minutes
+  (`pipeline_slow`, which is also why it pinged nothing, so the dashboard and the external check agree); or the relay
+  refused the token (`relay_unauthorized`), did not answer (`relay_unreachable`) or is not configured
+  (`relay_not_configured`) on the last proof. `unknown` is before the first proof (a new deployment; local runs, where
+  the cron only fires by hand). The watchdog itself unreachable is a 503, which the dashboard shows as "couldn't
+  check". Each change of status or reasons on a beat or a proof is a `brigade.status_changed` event in the watchdog's
+  outbox and a log line (`paging pipeline degraded`); nothing consumes the event yet. `no_beat` never is: a beat or a
+  proof is what records a change, and no beat means neither runs, so only `GET /health/paging` and the external check
+  see it.
 
   Not covered: each workspace shard's own alarm and outbox (the watchdog proves the shared code and the shared
-  Queue, not every shard's drain), APNs itself (the relay's `/health` does not call it), and D1. See open question
+  Queue, not every shard's drain), APNs itself (the token check stops before it), and D1. See open question
   Q19.
 
 - Internal self-check: a DO alarm verifies every `ProbeDO` reported recently and alerts on stalled probes.

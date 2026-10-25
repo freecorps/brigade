@@ -1,8 +1,8 @@
 // The external dead-man switch (RFC 0007 "Watching the watcher"). Once a minute the Cron Trigger asks the one
 // `WatchdogDO` for a beat: a `brigade.heartbeat` event written to its own outbox and sent by its alarm through the same
-// `OutboxDrain` the shards use, to the `brigade-events` Queue. The consumer (src/notify.ts) checks the relay's
-// relay with a token-checked `POST /send` and reports back (`proved`); only a beat that made it all the way, quickly, with the relay answering,
-// pings the operator's external check (`DEAD_MAN_URL`). The external check alerts on silence, so any stage that stops
+// `OutboxDrain` the shards use, to the `brigade-events` Queue. The consumer (src/notify.ts) checks the relay takes its
+// send token and reports back (`proved`); only a beat that made it all the way, quickly, with the relay taking the
+// token, pings the operator's external check (`DEAD_MAN_URL`). The external check alerts on silence, so any stage that stops
 // (the cron, Durable Objects, alarms, the drain, the Queue, the consumer, the relay) stops the pings and pages the
 // operators through a channel outside Cloudflare. Inside Brigade the same state is `GET /health/paging`, which the
 // dashboard shows.

@@ -183,26 +183,34 @@ heartbeat token's SHA-256); `monitor.*` mutations need `monitor:manage` (owners 
 RFC 0007 "Watching the watcher" (`src/watchdog.ts`). A Cron Trigger (`* * * * *`, `scheduled`) asks the one
 `WatchdogDO` for a beat: a `brigade.heartbeat` event in its own `outbox`, drained by its alarm through the same
 `OutboxDrain` to `brigade-events`. The consumer sends the watchdog's events (`workspaceId` `_system`) to
-`proveHeartbeat` instead of a shard: it calls the relay's `GET /health` and reports to `WatchdogDO.proved()`, which
-pings `DEAD_MAN_URL` when the beat is the newest yet, took at most 2 minutes and the relay answered. The external check
+`proveHeartbeat` instead of a shard: it proves the relay takes the send token (`POST /send` with the token and no
+body: `400 invalid_body` is accepted, `401` refused) and reports to `WatchdogDO.proved()`, which pings `DEAD_MAN_URL`
+(in `waitUntil`, 5 s timeout) when the beat is the newest yet, took at most 2 minutes and the relay took the token. The external check
 (any service or self-hosted checker that alerts on a missed URL ping; period 1 minute, grace about 5) pages the
 operators when the pings stop.
 
-`GET /health/paging` answers `{ status, reasons, lastBeatAt, lastProvedAt, lastOkAt, external }`: `degraded` after 3
-minutes with no beat (`no_beat`) or nothing proved (`pipeline_stalled`), or with the relay `relay_unreachable` or
-`relay_not_configured` on the last proof; `unknown` before the first proof. The dashboard shows a notice while it is
-not `ok`. Status changes write `brigade.status_changed` and log `paging pipeline degraded`.
+`GET /health/paging` answers `{ status }` without a session (or to a user in no workspace); `{ status, reasons,
+lastBeatAt, lastProvedAt, lastOkAt }` to a member; and `external` too to an owner or admin of any workspace.
+`degraded` after 3 minutes with no beat (`no_beat`), with the newest proved beat older than 3 minutes
+(`pipeline_stalled`), with the last proof over 2 minutes late (`pipeline_slow`), or with the relay
+`relay_unauthorized`, `relay_unreachable` or `relay_not_configured` on the last proof; `unknown` before the first
+proof. The dashboard shows a notice while it is not `ok`. Changes of status or reasons write `brigade.status_changed`
+and log `paging pipeline degraded`.
 
 `DEAD_MAN_URL` is an optional secret (`wrangler secret put DEAD_MAN_URL --env dev`; `https:` only, `http:` on
 loopback). Locally the cron never fires on its own, and `secrets.required` keeps optional secrets out of `.dev.vars`,
 so pass them from the shell (apps/web's `vite.config.ts` hands them to the local API) and run the cron by hand:
 
 ```bash
-node scripts/dead-man-double.mjs                       # from the root: the external check's stand-in, port 8790
-DEAD_MAN_URL=http://127.0.0.1:8790/ping RELAY_URL=http://127.0.0.1:8790 vp run dev
+RELAY_SEND_TOKEN=local node scripts/dead-man-double.mjs   # from the root: the check's (and relay's) stand-in, port 8790
+DEAD_MAN_URL=http://127.0.0.1:8790/ping RELAY_URL=http://127.0.0.1:8790 RELAY_SEND_TOKEN=local vp run dev
+# The cron, by hand: the Vite plugin's local explorer (GET /cdn-cgi/handler/scheduled reaches the web Worker instead).
 curl -X POST "http://localhost:5173/cdn-cgi/local/explorer/api/local/scheduled?worker=brigade-api" \
   -H 'Content-Type: application/json' -d '{"cron":"* * * * *"}'
 ```
+
+Each run pings the double; start `vp run dev` with another `RELAY_SEND_TOKEN` and the next run shows
+`relay_unauthorized` on the dashboard and pings nothing.
 
 ## Run it
 

@@ -96,7 +96,6 @@
   "intl_title_accepted": "Accepted",
   "intl_title_rejected": "Rejected",
   "incidents_title": "Active incidents",
-  "incidents_empty_hint": "Declare one here and it shows up in every open tab.",
   "declare_heading": "Declare an incident",
   "declare_title_label": "Title",
   "declare_title_placeholder": "What's happening?",
@@ -126,5 +125,28 @@
   "sync_error_expired": "It waited too long to be sent and was dropped.",
   "sync_error_too_many_pending": "Too many changes are waiting to be sent. Try again once you're back online.",
   "sync_error_closed": "This page stopped syncing. Reload it to try again.",
-  "sync_error_internal": "Something went wrong on the server. Try again."
+  "sync_error_internal": "Something went wrong on the server. Try again.",
+  "incident_quoted_title": "“{title}”",
+  "incidents_all_clear": "No active incidents. All clear.",
+  "incidents_sev1_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} is SEV1",
+        "countPlural=*": "{countFormatted} are SEV1"
+      }
+    }
+  ],
+  "declare_open": "Declare incident",
+  "declare_title_invalid": "Write a title with visible text.",
+  "sync_refused": "Not loaded",
+  "sync_refused_hint": "Brigade couldn't load this list. {reason}",
+  "sync_error_read_forbidden": "You don't have access to these incidents.",
+  "sync_offline_hint": "Can't reach Brigade right now. Changes are kept and sent when the connection is back.",
+  "reload": "Reload"
 }

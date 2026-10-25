@@ -96,7 +96,6 @@
   "intl_title_accepted": "Aceito",
   "intl_title_rejected": "Rejeitado",
   "incidents_title": "Incidentes ativos",
-  "incidents_empty_hint": "Declare um aqui e ele aparece em todas as abas abertas.",
   "declare_heading": "Declarar um incidente",
   "declare_title_label": "Título",
   "declare_title_placeholder": "O que está acontecendo?",
@@ -120,11 +119,34 @@
   "sync_retrying": "Esta página continua tentando sozinha.",
   "sync_error_forbidden": "Você não tem permissão para fazer isso.",
   "sync_error_not_found": "O incidente não existe mais.",
-  "sync_error_conflict": "Alguém alterou antes.",
+  "sync_error_conflict": "Alguém alterou isso antes de você.",
   "sync_error_invalid_transition": "O status mudou nesse meio-tempo, então essa mudança não é mais permitida.",
   "sync_error_invalid_args": "Confira o que você digitou e tente de novo.",
   "sync_error_expired": "A alteração esperou demais para ser enviada e foi descartada.",
   "sync_error_too_many_pending": "Há alterações demais esperando envio. Tente de novo quando estiver online.",
   "sync_error_closed": "Esta página parou de sincronizar. Recarregue para tentar de novo.",
-  "sync_error_internal": "Algo deu errado no servidor. Tente de novo."
+  "sync_error_internal": "Algo deu errado no servidor. Tente de novo.",
+  "incident_quoted_title": "“{title}”",
+  "incidents_all_clear": "Nenhum incidente ativo. Tudo tranquilo.",
+  "incidents_sev1_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} é SEV1",
+        "countPlural=*": "{countFormatted} são SEV1"
+      }
+    }
+  ],
+  "declare_open": "Declarar incidente",
+  "declare_title_invalid": "Escreva um título com texto visível.",
+  "sync_refused": "Não carregado",
+  "sync_refused_hint": "O Brigade não conseguiu carregar esta lista. {reason}",
+  "sync_error_read_forbidden": "Você não tem acesso a estes incidentes.",
+  "sync_offline_hint": "Não foi possível conectar ao Brigade agora. As alterações ficam guardadas e são enviadas quando a conexão voltar.",
+  "reload": "Recarregar"
 }

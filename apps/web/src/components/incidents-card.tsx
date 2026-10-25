@@ -1,9 +1,6 @@
-import { formatDateTime, formatRelativeTime, m, type Locale } from "@freecorps/brigade-i18n";
-import { incidentStatusLabels, severityLabels } from "@freecorps/brigade-i18n/labels";
+import { m } from "@freecorps/brigade-i18n";
 import {
-  formatIncidentNumber,
-  INCIDENT_TITLE_MAX,
-  SEVERITIES,
+  isActive,
   type IncidentRow,
   type IncidentStatus,
   type Severity,
@@ -12,56 +9,44 @@ import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { useConnectionState, useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { cn } from "cn";
 import {
-  ChevronDownIcon,
   CircleAlertIcon,
-  CircleDashedIcon,
+  CircleCheckIcon,
   LoaderCircleIcon,
+  OctagonAlertIcon,
   RefreshCwIcon,
   XIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useId, useState, type FormEvent } from "react";
-import { SeverityBadge, STATUS_ICONS, StatusBadge } from "@/components/incident-badges";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
+import { DeclareForm } from "@/components/declare-form";
+import { IncidentItem } from "@/components/incident-item";
 import { usePreferences } from "@/components/preferences";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardTitle } from "@/components/ui/card";
 import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { syncClient } from "@/sync-client";
-import {
-  mutationErrorReason,
+  adjustBusy,
   nextFailed,
-  nextStatuses,
+  noticeFor,
+  noticeText,
+  queryErrorReason,
   syncView,
+  type Notice,
+  type NoticeTarget,
   type SyncView,
 } from "@/lib/incidents";
 
 const DEV_COMMAND = "vp run dev";
 
-type Notice = { key: number; text: string };
-
 /**
  * The workspace's active incidents, live from its shard (`useQuery("incidents.active")`), with declare and the
  * status and severity menus. Changes show at once (optimistic) and settle when the shard confirms them; a refused
- * one rolls back on its own and leaves a notice saying why.
+ * one rolls back on its own and leaves a notice saying why, in its row when the row is listed.
  */
 export function IncidentsCard() {
   const { locale } = usePreferences();
-  const { rows, status } = useQuery("incidents.active", {});
+  const { rows, status, error } = useQuery("incidents.active", {});
   const connection = useConnectionState();
   const [failed, setFailed] = useState(false);
   const latched = nextFailed(failed, status, connection);
@@ -72,100 +57,152 @@ export function IncidentsCard() {
   const setStatus = useMutation("incident.setStatus");
   const setSeverity = useMutation("incident.setSeverity");
 
-  // Kept here, not in the rows: a refused move to resolved brings back a row that had left the list.
+  // Kept here, not in the rows: a refused move to Resolved brings back a row that had left the list.
   const [notices, setNotices] = useState<Notice[]>([]);
   const [busy, setBusy] = useState<ReadonlyMap<string, number>>(new Map());
-  const track = useCallback(
-    (id: string, outcome: Promise<MutationOutcome>, fail: (reason: string) => string) => {
-      const bump = (by: number) =>
-        setBusy((current) => new Map(current).set(id, (current.get(id) ?? 0) + by));
-      bump(1);
-      void outcome.then((result) => {
-        bump(-1);
-        if (result.ok) return;
-        const text = fail(mutationErrorReason(result.error.code));
-        setNotices((current) => [...current, { key: Date.now() + Math.random(), text }].slice(-3));
-      });
-    },
-    [],
-  );
+  const nextKey = useRef(0);
+  const track = useCallback((outcome: Promise<MutationOutcome>, target: NoticeTarget) => {
+    setBusy((current) => adjustBusy(current, target.incidentId, 1));
+    return outcome.then((result) => {
+      setBusy((current) => adjustBusy(current, target.incidentId, -1));
+      const notice = noticeFor(result, target, `n${nextKey.current++}`);
+      if (notice) setNotices((current) => [...current, notice].slice(-5));
+      return result;
+    });
+  }, []);
 
-  const label = (row: IncidentRow) => formatIncidentNumber(row.number) ?? `“${row.title}”`;
-  const onDeclare = (id: string, title: string, severity: Severity) =>
-    track(id, declare({ id, title, severity }), (reason) =>
-      m.incident_declare_failed({ title, reason }),
-    );
-  const onStatus = (row: IncidentRow, next: IncidentStatus) =>
-    track(row.id, setStatus({ id: row.id, status: next }), (reason) =>
-      m.incident_change_failed({ incident: label(row), reason }),
-    );
+  const changeTarget = (row: IncidentRow): NoticeTarget => ({
+    kind: "change",
+    incidentId: row.id,
+    number: row.number,
+    title: row.title,
+  });
+
+  // A status that takes the row off the list hands focus to the next row's status menu, else the previous one's,
+  // else the list heading, instead of dropping it on <body>.
+  const focusAfter = useRef<string | null>(null);
+  const onStatus = (row: IncidentRow, next: IncidentStatus) => {
+    if (!isActive(next)) {
+      const index = rows.findIndex((r) => r.id === row.id);
+      focusAfter.current = (rows[index + 1] ?? rows[index - 1])?.id ?? "";
+    }
+    void track(setStatus({ id: row.id, status: next }), changeTarget(row));
+  };
   const onSeverity = (row: IncidentRow, next: Severity) =>
-    track(row.id, setSeverity({ id: row.id, severity: next }), (reason) =>
-      m.incident_change_failed({ incident: label(row), reason }),
+    void track(setSeverity({ id: row.id, severity: next }), changeTarget(row));
+  const onDeclare = (args: { id: string; title: string; severity: Severity }) =>
+    track(declare(args), { kind: "declare", incidentId: args.id, number: null, title: args.title });
+
+  const cardRef = useRef<HTMLElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useLayoutEffect(() => {
+    const target = focusAfter.current;
+    if (target === null) return;
+    focusAfter.current = null;
+    // After the menu has closed and tried to give focus back to the trigger that is gone.
+    requestAnimationFrame(() => {
+      const trigger = target
+        ? cardRef.current?.querySelector<HTMLElement>(`[data-status-trigger="${target}"]`)
+        : null;
+      (trigger ?? headingRef.current)?.focus();
+    });
+  }, [rows]);
+
+  // Below md the form starts collapsed behind one button.
+  const titleRef = useRef<HTMLInputElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const focusTitle = () => {
+    flushSync(() => setExpanded(true));
+    titleRef.current?.focus();
+  };
+
+  // Dismissing a notice moves focus to the next notice's dismiss button, else to the title field.
+  const dismiss = (key: string, button: HTMLElement) => {
+    const all = [...(cardRef.current?.querySelectorAll<HTMLElement>("[data-dismiss]") ?? [])];
+    const next = all[all.indexOf(button) + 1];
+    flushSync(() => setNotices((current) => current.filter((notice) => notice.key !== key)));
+    if (next?.isConnected) next.focus();
+    else focusTitle();
+  };
+
+  const listed = new Set(rows.map((row) => row.id));
+  const renderNotices = (items: Notice[]) =>
+    items.length === 0 ? null : (
+      <ul className="flex flex-col gap-2">
+        {items.map((notice) => (
+          <li
+            key={notice.key}
+            className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/10 py-1 pr-1 pl-3 text-sm"
+          >
+            <CircleAlertIcon aria-hidden className="mt-2.5 size-4 shrink-0 text-destructive" />
+            <p className="min-w-0 flex-1 py-2 font-normal [overflow-wrap:anywhere]">
+              {noticeText(notice)}
+            </p>
+            <Button
+              variant="ghost"
+              size="icon"
+              data-dismiss=""
+              aria-label={m.dismiss()}
+              onClick={(event) => dismiss(notice.key, event.currentTarget)}
+            >
+              <XIcon aria-hidden />
+            </Button>
+          </li>
+        ))}
+      </ul>
     );
 
   const now = useNow(30_000);
+  const sev1 = rows.filter((row) => row.severity === "sev1").length;
+  const latest = notices.at(-1);
 
   return (
-    // Rows run to the card's edges (the SEV1 rule included), so the card clips them to its corners.
     <Card
+      ref={cardRef}
       aria-labelledby="incidents-title"
+      // Rows run to the card's edges (the SEV1 rule included), so the card clips them to its corners.
       className={cn(rows.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
     >
-      {/* The connection state is a word, so it sits beside the title on phones too. */}
-      <CardHeader className="grid-cols-[minmax(0,1fr)_auto] gap-x-4">
-        <CardTitle id="incidents-title">{m.incidents_title()}</CardTitle>
-        <CardDescription className="tabular-nums">
-          {status === "ready" ? (
-            m.incidents_active_count({ count: rows.length })
-          ) : view === "connecting" ? (
-            <span aria-hidden className="my-0.5 block h-4 w-32 rounded-sm bg-muted" />
-          ) : null}
-        </CardDescription>
-        <CardAction className="col-start-2 row-span-2 row-start-1 mt-0 justify-self-end">
-          <ConnectionPill view={view} />
-        </CardAction>
-      </CardHeader>
+      {/* Wraps instead of squeezing the title: a long connection label drops below it. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 px-4 sm:px-6">
+        <div className="flex min-w-0 flex-col gap-1">
+          <CardTitle id="incidents-title" ref={headingRef} tabIndex={-1} className="outline-none">
+            {m.incidents_title()}
+          </CardTitle>
+          <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-1 tabular-nums">
+            {status === "ready" && rows.length > 0 ? (
+              <>
+                <span>{m.incidents_active_count({ count: rows.length })}</span>
+                {sev1 > 0 ? (
+                  <Badge variant="sev1">
+                    <OctagonAlertIcon aria-hidden />
+                    {m.incidents_sev1_count({ count: sev1 })}
+                  </Badge>
+                ) : null}
+              </>
+            ) : view === "connecting" ? (
+              <span aria-hidden className="my-0.5 block h-4 w-32 rounded-sm bg-muted" />
+            ) : null}
+          </CardDescription>
+        </div>
+        <ConnectionPill view={view} />
+      </div>
 
       <CardContent className="flex flex-col gap-5">
-        {view === "unavailable" ? (
-          <div className="flex flex-col items-start gap-3 rounded-md bg-muted p-4 text-sm">
-            <p>{m.sync_unavailable_hint()}</p>
-            <code className="rounded-sm bg-card px-2 py-1 text-foreground">{DEV_COMMAND}</code>
-            <p className="text-muted-foreground">{m.sync_retrying()}</p>
-          </div>
-        ) : (
-          <DeclareForm onDeclare={onDeclare} />
-        )}
+        <DeclareForm
+          onDeclare={onDeclare}
+          titleRef={titleRef}
+          expanded={expanded}
+          onExpand={focusTitle}
+        />
 
-        {notices.length > 0 ? (
-          <ul className="flex flex-col gap-2">
-            {notices.map((notice) => (
-              <li
-                key={notice.key}
-                role="alert"
-                className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/10 py-1 pr-1 pl-3 text-sm"
-              >
-                <CircleAlertIcon aria-hidden className="mt-2.5 size-4 shrink-0 text-destructive" />
-                <p className="min-w-0 flex-1 py-2 [overflow-wrap:anywhere]">{notice.text}</p>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={m.dismiss()}
-                  onClick={() =>
-                    setNotices((current) => current.filter((item) => item.key !== notice.key))
-                  }
-                >
-                  <XIcon aria-hidden />
-                </Button>
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        <StatePanel view={view} errorCode={error?.code} />
 
-        {view === "reconnecting" ? (
-          <p className="text-sm text-muted-foreground">{m.sync_reconnecting_hint()}</p>
-        ) : null}
+        {/* Read out once, whatever row or place a notice is drawn in. */}
+        <div aria-live="assertive" aria-atomic="true" className="sr-only">
+          {latest ? noticeText(latest) : null}
+        </div>
+        {renderNotices(notices.filter((notice) => !listed.has(notice.incidentId)))}
 
         {view === "connecting" ? (
           <ul aria-hidden className="-mx-4 divide-y border-y sm:-mx-6">
@@ -177,9 +214,12 @@ export function IncidentsCard() {
             ))}
           </ul>
         ) : status === "ready" && rows.length === 0 ? (
-          // The header already says "No active incidents": this only says what to do about it.
-          <p className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-            {m.incidents_empty_hint()}
+          <p className="flex items-center gap-3 rounded-md bg-muted p-4 text-sm font-medium">
+            <CircleCheckIcon
+              aria-hidden
+              className="size-5 shrink-0 text-status-resolved-foreground"
+            />
+            {m.incidents_all_clear()}
           </p>
         ) : rows.length > 0 ? (
           <ul aria-labelledby="incidents-title" className="-mx-4 divide-y border-t sm:-mx-6">
@@ -187,10 +227,11 @@ export function IncidentsCard() {
               <IncidentItem
                 key={row.id}
                 row={row}
-                pending={row.number === null || (busy.get(row.id) ?? 0) > 0}
+                pending={row.number === null || busy.has(row.id)}
                 online={connection === "open"}
                 locale={locale}
                 now={now}
+                notices={renderNotices(notices.filter((notice) => notice.incidentId === row.id))}
                 onStatus={onStatus}
                 onSeverity={onSeverity}
               />
@@ -202,11 +243,46 @@ export function IncidentsCard() {
   );
 }
 
+/** Under the form: why the list is stale or missing, and what happens next. */
+function StatePanel({ view, errorCode }: { view: SyncView; errorCode: string | undefined }) {
+  if (view === "reconnecting") {
+    return <p className="text-sm text-muted-foreground">{m.sync_reconnecting_hint()}</p>;
+  }
+  if (view === "unavailable") {
+    return (
+      <div className="flex flex-col items-start gap-3 rounded-md bg-muted p-4 text-sm">
+        {import.meta.env.DEV ? (
+          <>
+            <p>{m.sync_unavailable_hint()}</p>
+            <code className="rounded-sm bg-card px-2 py-1 text-foreground">{DEV_COMMAND}</code>
+            <p className="text-muted-foreground">{m.sync_retrying()}</p>
+          </>
+        ) : (
+          <p>{m.sync_offline_hint()}</p>
+        )}
+      </div>
+    );
+  }
+  if (view === "refused") {
+    // The client never asks again for a refused subscription on its own: a reload starts it over.
+    return (
+      <div className="flex flex-col items-start gap-3 rounded-md bg-muted p-4 text-sm">
+        <p>{m.sync_refused_hint({ reason: queryErrorReason(errorCode) })}</p>
+        <Button variant="outline" onClick={() => window.location.reload()}>
+          <RefreshCwIcon aria-hidden />
+          {m.reload()}
+        </Button>
+      </div>
+    );
+  }
+  return null;
+}
+
 const PILLS: Record<
   SyncView,
   { icon: LucideIcon; text: () => string; tone: string; spin?: boolean }
 > = {
-  live: { icon: CircleDashedIcon, text: m.sync_live, tone: "text-primary" },
+  live: { icon: CircleCheckIcon, text: m.sync_live, tone: "text-primary" },
   connecting: {
     icon: LoaderCircleIcon,
     text: m.sync_connecting,
@@ -220,6 +296,7 @@ const PILLS: Record<
     spin: true,
   },
   unavailable: { icon: CircleAlertIcon, text: m.sync_unavailable, tone: "text-destructive" },
+  refused: { icon: CircleAlertIcon, text: m.sync_refused, tone: "text-destructive" },
 };
 
 /** Calm by design: a word and a small glyph, never a banner, since a reconnect usually fixes itself. */
@@ -237,205 +314,6 @@ function ConnectionPill({ view }: { view: SyncView }) {
       )}
       <span className={view === "live" ? undefined : tone}>{text()}</span>
     </p>
-  );
-}
-
-function DeclareForm({
-  onDeclare,
-}: {
-  onDeclare: (id: string, title: string, severity: Severity) => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [severity, setSeverity] = useState<Severity>("sev3");
-  const titleId = useId();
-  const severityId = useId();
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const trimmed = title.trim();
-    if (!trimmed) return;
-    onDeclare(syncClient.newId("inc"), trimmed, severity);
-    setTitle("");
-  };
-  return (
-    <form
-      onSubmit={submit}
-      aria-label={m.declare_heading()}
-      className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-end"
-    >
-      <div className="flex min-w-0 flex-col gap-1.5">
-        <label htmlFor={titleId} className="text-xs font-medium text-muted-foreground">
-          {m.declare_title_label()}
-        </label>
-        <input
-          id={titleId}
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          maxLength={INCIDENT_TITLE_MAX}
-          placeholder={m.declare_title_placeholder()}
-          autoComplete="off"
-          enterKeyHint="send"
-          // 16px: iOS zooms into smaller inputs.
-          className="h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring"
-        />
-      </div>
-      <div className="flex min-w-0 flex-col gap-1.5">
-        <span id={severityId} className="text-xs font-medium text-muted-foreground">
-          {m.declare_severity_label()}
-        </span>
-        {/* Native radios (arrow keys, form semantics) drawn as a segmented control. Each segment is a 44px target; the edge is an outline drawn over them, so it adds no height. */}
-        <div
-          role="radiogroup"
-          aria-labelledby={severityId}
-          className="grid grid-cols-4 overflow-hidden rounded-md bg-card outline-1 -outline-offset-1 outline-input"
-        >
-          {SEVERITIES.map((option) => (
-            <label
-              key={option}
-              className={cn(
-                "relative flex h-11 min-w-16 cursor-pointer items-center justify-center px-2 text-xs font-bold select-none has-focus-visible:ring-3 has-focus-visible:ring-ring has-focus-visible:ring-inset",
-                option === severity
-                  ? SEGMENT_TONES[option]
-                  : "text-muted-foreground hover:bg-muted",
-              )}
-            >
-              <input
-                type="radio"
-                name="severity"
-                value={option}
-                checked={option === severity}
-                onChange={() => setSeverity(option)}
-                className="sr-only"
-              />
-              {option.toUpperCase()}
-              <span className="sr-only"> {severityLabels[option]()}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-      <Button type="submit" disabled={!title.trim()} focusableWhenDisabled>
-        {m.declare_submit()}
-      </Button>
-    </form>
-  );
-}
-
-/** The selected segment takes its severity's badge colours. */
-const SEGMENT_TONES: Record<Severity, string> = {
-  sev1: "bg-sev1 text-sev1-foreground",
-  sev2: "bg-sev2 text-sev2-foreground",
-  sev3: "bg-sev3 text-sev3-foreground",
-  sev4: "bg-sev4 text-sev4-foreground",
-};
-
-function IncidentItem({
-  row,
-  pending,
-  online,
-  locale,
-  now,
-  onStatus,
-  onSeverity,
-}: {
-  row: IncidentRow;
-  pending: boolean;
-  online: boolean;
-  locale: Locale;
-  now: number;
-  onStatus: (row: IncidentRow, next: IncidentStatus) => void;
-  onSeverity: (row: IncidentRow, next: Severity) => void;
-}) {
-  const number = formatIncidentNumber(row.number);
-  // The shard's clock can be a little ahead of the last tick: never say "in 3 seconds".
-  const declared = formatRelativeTime(Math.min(row.declaredAt, now), locale, now);
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  return (
-    <li
-      aria-busy={pending}
-      className={cn(
-        "relative grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:px-6 md:grid-cols-[6.5rem_minmax(0,1fr)_auto]",
-        row.severity === "sev1" &&
-          "before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-sev1",
-      )}
-    >
-      <div className="md:row-span-2">
-        {number ? (
-          <span className="font-mono text-sm font-semibold tabular-nums">{number}</span>
-        ) : (
-          <span className="inline-flex rounded-sm border border-dashed px-1.5 py-0.5 text-xs leading-tight text-muted-foreground">
-            {m.incident_unnumbered()}
-          </span>
-        )}
-      </div>
-      <p className="justify-self-end text-xs text-muted-foreground md:col-start-2 md:row-start-2 md:justify-self-start">
-        <time
-          dateTime={new Date(row.declaredAt).toISOString()}
-          title={formatDateTime(row.declaredAt, locale, timeZone)}
-        >
-          {m.incident_declared({ time: declared })}
-        </time>
-        {pending ? (
-          <span className="text-muted-foreground">
-            {" · "}
-            {online ? m.incident_saving() : m.incident_queued()}
-          </span>
-        ) : null}
-      </p>
-      <h3 className="col-span-2 font-medium [overflow-wrap:anywhere] md:col-span-1 md:col-start-2 md:row-start-1">
-        {row.title}
-      </h3>
-      <div className="col-span-2 -ml-1.5 flex flex-wrap items-center gap-1 md:col-span-1 md:col-start-3 md:row-span-2 md:row-start-1 md:ml-0 md:justify-end">
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="ghost" className="gap-1 px-1.5" />}>
-            <span className="sr-only">{m.incident_severity_label()}: </span>
-            <SeverityBadge severity={row.severity} />
-            <ChevronDownIcon aria-hidden className="text-muted-foreground" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>{m.incident_severity_label()}</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={row.severity}
-                onValueChange={(value: Severity) => onSeverity(row, value)}
-              >
-                {SEVERITIES.map((option) => (
-                  <DropdownMenuRadioItem key={option} value={option} closeOnClick>
-                    <span className="font-bold">{option.toUpperCase()}</span>
-                    {severityLabels[option]()}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="ghost" className="gap-1 px-1.5" />}>
-            <span className="sr-only">{m.incident_status_label()}: </span>
-            <StatusBadge status={row.status} />
-            <ChevronDownIcon aria-hidden className="text-muted-foreground" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuGroup>
-              <DropdownMenuLabel>{m.incident_status_label()}</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={row.status}
-                onValueChange={(value: IncidentStatus) => onStatus(row, value)}
-              >
-                {/* The current status, then only the moves the lifecycle allows from it. */}
-                {[row.status, ...nextStatuses(row.status)].map((option) => {
-                  const Icon = STATUS_ICONS[option];
-                  return (
-                    <DropdownMenuRadioItem key={option} value={option} closeOnClick>
-                      <Icon aria-hidden className="text-muted-foreground" />
-                      {incidentStatusLabels[option]()}
-                    </DropdownMenuRadioItem>
-                  );
-                })}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </li>
   );
 }
 

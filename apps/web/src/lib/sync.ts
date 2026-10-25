@@ -18,8 +18,10 @@ export function syncUrl(location: Pick<Location, "protocol" | "host">, shard: st
 }
 
 /**
- * A client id that survives reloads of this tab (sessionStorage is per tab), so the shard recognises a mutation
- * re-sent after a reload instead of running it twice. A new tab, or blocked storage, gets a new id.
+ * A client id that survives reloads of this tab (sessionStorage is per tab). Groundwork: the shard de-duplicates
+ * mutations by (clientId, mutationId), but the web client keeps pending mutations in memory only, so nothing is
+ * re-sent after a reload yet. Once they are persisted, a stable id lets the shard recognise them. A new tab, or
+ * blocked storage, gets a new id.
  */
 export function tabClientId(
   storage: Pick<Storage, "getItem" | "setItem"> | undefined,

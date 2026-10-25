@@ -5,7 +5,7 @@ import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { isId, newId, type Actor } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, describe, expect, test } from "vite-plus/test";
-import { RATE_LIMIT } from "../src/auth.ts";
+import { RATE_LIMIT, UNLIMITED_READS, WORKSPACE_LIMIT } from "../src/auth.ts";
 import worker, { createWorkspace as postWorkspace, workerAuth } from "../src/index.ts";
 import type { SocketState } from "../src/workspace.ts";
 
@@ -281,6 +281,20 @@ describe("Better Auth routes", () => {
     }
   });
 
+  test("the dashboard's organization reads are not limited either", async () => {
+    const ana = await signUp("Reader");
+    await createWorkspace(ana.cookie);
+    const ip = "203.0.113.11";
+    for (let i = 0; i < RATE_LIMIT.max + 5; i++) {
+      for (const path of UNLIMITED_READS.filter((p) => p !== "/get-session")) {
+        const response = await api(`/auth${path}`, {
+          headers: { Cookie: ana.cookie, "cf-connecting-ip": ip },
+        });
+        expect(response.status, path).toBe(200);
+      }
+    }
+  });
+
   test("a POST from another site is refused", async () => {
     const response = await api("/auth/sign-up/email", {
       method: "POST",
@@ -355,6 +369,18 @@ describe("POST /workspaces", () => {
     expect((await session(ana.cookie))?.session.activeOrganizationId).toBeNull();
     // And trying again works.
     expect((await createWorkspace(ana.cookie, "Doomed")).name).toBe("Doomed");
+  });
+
+  test(`a user belongs to at most ${WORKSPACE_LIMIT} workspaces`, async () => {
+    const ana = await signUp("Founder");
+    for (let i = 0; i < WORKSPACE_LIMIT; i++) await createWorkspace(ana.cookie, `Team ${i}`);
+    const over = await api("/workspaces", {
+      method: "POST",
+      headers: { Cookie: ana.cookie },
+      body: JSON.stringify({ name: "One more" }),
+    });
+    expect(over.status).toBe(403);
+    expect(await over.json()).toEqual({ error: "workspace_limit" });
   });
 
   test("a body over 4 KiB is refused, whether or not it declares its length", async () => {

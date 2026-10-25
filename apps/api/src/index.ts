@@ -8,6 +8,8 @@ export { WorkspaceDO } from "./workspace.ts";
 const WORKSPACE_PATH = /^\/workspaces\/([^/]+)$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const READ_METHODS = ["GET", "HEAD"];
+/** Better Auth's code when a user already belongs to `WORKSPACE_LIMIT` workspaces. */
+const WORKSPACE_LIMIT_CODE = "YOU_HAVE_REACHED_THE_MAXIMUM_NUMBER_OF_ORGANIZATIONS";
 /** Largest `POST /workspaces` body read, in bytes. */
 const MAX_BODY_LENGTH = 4096;
 
@@ -132,6 +134,9 @@ export async function createWorkspace(request: Request, lazyAuth: () => Auth): P
     if (!workspace) return json({ error: "internal" }, 500);
     return json({ id: workspace.id, name: workspace.name }, 201);
   } catch (error) {
+    if (Reflect.get(Object(Reflect.get(Object(error), "body")), "code") === WORKSPACE_LIMIT_CODE) {
+      return json({ error: "workspace_limit" }, 403);
+    }
     console.error(JSON.stringify({ message: "Creating a workspace failed", error: String(error) }));
     return json({ error: "internal" }, 500);
   }

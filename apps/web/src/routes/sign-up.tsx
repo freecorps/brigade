@@ -12,6 +12,7 @@ import {
   checkSignUp,
   checkWorkspaceName,
   createWorkspace,
+  openWorkspace,
   type FieldErrors,
   type SignUpField,
 } from "@/lib/auth";
@@ -80,10 +81,10 @@ function SignUp() {
       return;
     }
     const name = checkWorkspaceName(values.workspace);
-    if (name.ok) await createWorkspace(name.name);
-    // `POST /workspaces` already made the workspace active in the session; reload the session the dashboard reads
-    // (and wait for it), so it opens on the workspace, or asks for one again if creating it failed.
-    await session.refetch();
+    const created = name.ok ? await createWorkspace(name.name) : undefined;
+    // Opens on the workspace, or (if creating it failed) reloads the session so the dashboard asks for one again.
+    if (created?.ok) await openWorkspace(created.workspace.id);
+    else await session.refetch();
     await navigate({ to: "/", replace: true });
   };
 

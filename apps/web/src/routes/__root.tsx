@@ -12,13 +12,26 @@ function RootLayout() {
   const main = useRef<HTMLElement>(null);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const shown = useRef(pathname);
+  // Whether the user has done anything yet: a redirect on first load (signed out at `/` → `/sign-in`) changes the
+  // path too, and must not move focus past the skip link.
+  const acted = useRef(false);
+  useEffect(() => {
+    const act = () => {
+      acted.current = true;
+    };
+    window.addEventListener("pointerdown", act, { once: true, capture: true });
+    window.addEventListener("keydown", act, { once: true, capture: true });
+    return () => {
+      window.removeEventListener("pointerdown", act, { capture: true });
+      window.removeEventListener("keydown", act, { capture: true });
+    };
+  }, []);
   useEffect(() => {
     // After a client-side navigation, start from the new screen, as a page load would: focus lands on <main>
     // (screen readers read on from there, with the new tab title), not on the link or button that left the last one.
-    // Not on the first load (the path has not changed), which keeps the skip link first.
     if (shown.current === pathname) return;
     shown.current = pathname;
-    main.current?.focus({ preventScroll: true });
+    if (acted.current) main.current?.focus({ preventScroll: true });
   }, [pathname]);
   return (
     <>

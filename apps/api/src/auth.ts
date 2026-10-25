@@ -94,6 +94,18 @@ export type AuthBindings = {
  * `/sign-in/*`, `/sign-up/*`, `/change-password` and `/change-email`.
  */
 export const RATE_LIMIT = { window: 60, max: 100 };
+/**
+ * Reads the dashboard makes on every load: never limited (and no D1 write each), so a team behind one office or
+ * carrier NAT opening the dashboard during an incident cannot hit 429.
+ */
+export const UNLIMITED_READS = [
+  "/get-session",
+  "/organization/get-full-organization",
+  "/organization/get-active-member",
+  "/organization/list",
+] as const;
+/** Workspaces one user may belong to; bounds `POST /workspaces` (each one also provisions a shard). */
+export const WORKSPACE_LIMIT = 10;
 
 export function authOptions(bindings: AuthBindings, undo?: WorkspaceUndo) {
   const random: RandomBytes = (length) => crypto.getRandomValues(new Uint8Array(length));
@@ -109,8 +121,7 @@ export function authOptions(bindings: AuthBindings, undo?: WorkspaceUndo) {
       enabled: true,
       storage: "database",
       ...RATE_LIMIT,
-      // Every page load reads the session; it needs no limit and should not cost a D1 write.
-      customRules: { "/get-session": false },
+      customRules: Object.fromEntries(UNLIMITED_READS.map((path) => [path, false as const])),
     },
     databaseHooks: {
       session: {
@@ -141,6 +152,8 @@ export function authOptions(bindings: AuthBindings, undo?: WorkspaceUndo) {
       useSecureCookies: bindings.secureCookies ?? false,
       // Set by Cloudflare on every request (a client cannot forge it) and passed on by the web Worker's service
       // binding; Better Auth's default, `x-forwarded-for`, is whatever the client sends.
+      // Without it (a future caller that builds a fresh Request) every client would share one bucket per path:
+      // keep the header on any new path into this Worker.
       ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
       ...(bindings.waitUntil ? { backgroundTasks: { handler: bindings.waitUntil } } : {}),
     },
@@ -149,6 +162,7 @@ export function authOptions(bindings: AuthBindings, undo?: WorkspaceUndo) {
         ac,
         roles: authRoles,
         creatorRole: "owner",
+        organizationLimit: WORKSPACE_LIMIT,
         // A workspace outlives its D1 row (its shard, its incidents); deleting one is not designed yet.
         disableOrganizationDeletion: true,
         organizationHooks: {

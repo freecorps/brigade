@@ -8,7 +8,7 @@ import { AuthPage } from "@/components/auth-page";
 import { usePreferences } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
 import { Field, FormError } from "@/components/ui/field";
-import { authClient, checkWorkspaceName, createWorkspace } from "@/lib/auth";
+import { authClient, checkWorkspaceName, createWorkspace, openWorkspace } from "@/lib/auth";
 import { usePageTitle } from "@/lib/page-title";
 import { setSyncActor } from "@/lib/sync";
 import { syncClient } from "@/sync-client";
@@ -55,6 +55,7 @@ function ActiveWorkspace({ userId, children }: { userId: string; children: React
 }
 
 function Loading() {
+  usePageTitle(m.page_title_loading());
   return (
     <div
       role="status"
@@ -67,6 +68,7 @@ function Loading() {
 }
 
 function Unavailable({ retry }: { retry: () => void }) {
+  usePageTitle(m.page_title_loading());
   return (
     <div className="mx-auto flex max-w-sm flex-col items-start gap-4 px-4 py-10">
       <FormError>{m.auth_error_network()}</FormError>
@@ -83,7 +85,6 @@ function CreateWorkspace() {
   // Read so a language switch rewords the form (RequireWorkspace's route does not read it).
   usePreferences();
   usePageTitle(m.page_title_create_workspace());
-  const session = authClient.useSession();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | undefined>();
   const [failure, setFailure] = useState<string | null>(null);
@@ -102,12 +103,17 @@ function CreateWorkspace() {
     setBusy(true);
     const created = await createWorkspace(checked.name);
     if (!created.ok) {
-      setFailure(created.status === 0 ? m.auth_error_network() : m.auth_error_generic());
+      setFailure(
+        created.status === 0
+          ? m.auth_error_network()
+          : created.status === 403
+            ? m.workspace_error_limit()
+            : m.auth_error_generic(),
+      );
       setBusy(false);
       return;
     }
-    // `POST /workspaces` made it active; reloading the session re-renders the gate into the dashboard.
-    await session.refetch();
+    await openWorkspace(created.workspace.id);
   };
 
   return (

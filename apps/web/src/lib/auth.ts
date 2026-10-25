@@ -12,11 +12,29 @@ export const PASSWORD_MAX = 128;
 /** What a user may type as their name; Better Auth itself does not cap it. */
 export const NAME_MAX = 80;
 
-export const authClient = createAuthClient({
-  // Relative to the page: the dashboard and its API share an origin, in dev and deployed.
-  baseURL: `${typeof window === "undefined" ? "http://localhost" : window.location.origin}/api/auth`,
-  plugins: [organizationClient()],
-});
+/** The client, with a stand-in `fetch` for tests. */
+export function makeAuthClient(customFetchImpl?: typeof fetch) {
+  return createAuthClient({
+    // Relative to the page: the dashboard and its API share an origin, in dev and deployed.
+    baseURL: `${typeof window === "undefined" ? "http://localhost" : window.location.origin}/api/auth`,
+    plugins: [organizationClient()],
+    ...(customFetchImpl ? { fetchOptions: { customFetchImpl } } : {}),
+  });
+}
+
+export const authClient = makeAuthClient();
+
+/**
+ * Opens a workspace `POST /workspaces` just created. `set-active` (not a plain session refetch) is what tells the
+ * session, active-organization and active-member hooks to fetch again; without it a hook already mounted (the
+ * header's) keeps the `null` it read before the workspace existed and the dashboard waits forever.
+ */
+export async function openWorkspace(
+  id: string,
+  client: Pick<typeof authClient, "organization"> = authClient,
+): Promise<void> {
+  await client.organization.setActive({ organizationId: id });
+}
 
 export type SignUpField = "name" | "email" | "password" | "workspace";
 export type SignInField = "email" | "password";

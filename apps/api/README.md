@@ -50,7 +50,7 @@ shard on every mutation and query (`runMutation`, `runQuery`).
 
 `/workspaces/:id` is still an unauthenticated dev placeholder (the dashboard's stack check), so `workers_dev` and
 `preview_urls` stay off. **Dev actor:** where `SYNC_DEV_ACTOR` is `"1"` and the request is for `localhost`,
-`127.0.0.1` or `[::1]`, an upgrade without a session acts as
+`127.0.0.1`, `[::1]` or a private LAN address (a phone on the same Wi-Fi), an upgrade without a session acts as
 `{ kind: "user", id: "usr_dev", role: "responder" }` (`src/dev-actor.ts`). Only `vp dev` and the tests set it (in
 `vite.config.ts` here and in apps/web), never a build or an environment in `wrangler.jsonc`; the mobile app relies
 on it until it can sign in. Through the dashboard Worker the endpoints are under `/api` (`/api/auth/*`,

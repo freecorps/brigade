@@ -1,13 +1,15 @@
 import { setLocale } from "@freecorps/brigade-i18n";
 import { WORKSPACE_NAME_MAX } from "@freecorps/brigade-schema";
-import { beforeEach, describe, expect, test } from "vite-plus/test";
+import { beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import {
   authErrorMessage,
   checkSignIn,
   checkSignUp,
   checkWorkspaceName,
   createWorkspace,
+  makeAuthClient,
   NAME_MAX,
+  openWorkspace,
   PASSWORD_MAX,
   PASSWORD_MIN,
 } from "../src/lib/auth";
@@ -150,5 +152,27 @@ describe("createWorkspace", () => {
       throw new TypeError("Failed to fetch");
     }) as typeof fetch;
     expect(await createWorkspace("x", offline)).toEqual({ ok: false, status: 0 });
+  });
+});
+
+describe("opening a new workspace", () => {
+  test("set-active tells the session and organization hooks to fetch again", async () => {
+    const calls: string[] = [];
+    const client = makeAuthClient(async (input) => {
+      calls.push(new URL(input instanceof Request ? input.url : String(input)).pathname);
+      return Response.json({ id: "ws_1" });
+    });
+    const signals = ["$sessionSignal", "$activeOrgSignal", "$activeMemberSignal"] as const;
+    const before = signals.map((name) => client.$store.atoms[name]?.get());
+    await openWorkspace("ws_1", client);
+    expect(calls).toEqual(["/api/auth/organization/set-active"]);
+    // A plain session refetch toggles none of the organization signals, so a mounted
+    // `useActiveOrganization` would keep its stale `null`.
+    // Better Auth flips each signal in a short timeout after the response.
+    await vi.waitFor(() => {
+      signals.forEach((name, index) => {
+        expect(client.$store.atoms[name]?.get(), name).not.toBe(before[index]);
+      });
+    });
   });
 });

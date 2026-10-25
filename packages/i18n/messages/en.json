@@ -199,6 +199,7 @@
   "auth_error_rate_limited": "Too many attempts. Wait a minute and try again.",
   "auth_error_network": "Could not reach Brigade. Check your connection and try again.",
   "auth_error_generic": "Something went wrong. Try again.",
+  "workspace_error_limit": "You belong to as many workspaces as Brigade allows. Ask an owner to add you instead.",
   "workspace_label": "Workspace",
   "workspace_name_label": "Workspace name",
   "workspace_name_invalid": "A name needs visible text: invisible characters alone don't count.",
@@ -214,5 +215,6 @@
   "page_title": "{page} · Brigade",
   "page_title_sign_in": "Sign in",
   "page_title_sign_up": "Create your account",
-  "page_title_create_workspace": "Create your workspace"
+  "page_title_create_workspace": "Create your workspace",
+  "page_title_loading": "Loading"
 }

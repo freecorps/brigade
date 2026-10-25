@@ -125,15 +125,21 @@ Validate the risky assumptions before writing product code. Each spike produces 
     to the push notifier, which pages on a declared incident (SEV1 and SEV2 at `page` urgency) or a severity raised
     into SEV1 or SEV2, seals one push per device (HPKE) and sends it through the relay with the device's APNs
     environment; a per-event ledger in the shard makes redeliveries page nobody twice; relay failures retry (5, 10,
-    20, 40 s), then `notification.failed` and a "Couldn't page …" entry on the incident's timeline; devices register
+    20, 40 s), then `notification.failed` and a "Couldn't page …" entry on the incident's timeline, also for each
+    member the page was for without a device (a commander without one falls back to everyone who can respond) and
+    for a page the Queue dead-lettered (the same Worker consumes `brigade-events-dlq` once); devices register
     with `device.register` (server-only, own devices only) and the `/push` dev screen registers the phone
     (RFC 0005 "Notifiers", RFC 0006 "Device registration", "Who is paged"). Queue `brigade-events-dev` and its
-    dead-letter queue `brigade-events-dlq-dev` exist.
+    dead-letter queue `brigade-events-dlq-dev` exist; the dead-letter consumer is created on the next deploy.
   - Left: the production and staging queues (owner approval); `RELAY_URL` and `RELAY_SEND_TOKEN` on the deployed API;
     a real push end to end from the deployed API to a device; registering from mobile sign-in (and unregistering on
     sign-out) instead of the dev screen; the local dev actor is not in the shard's member list, so a phone on
     `vp dev` registers but is not paged; VoIP call pages (`kind: "call"`, Phase 2 with RFC 0010); FCM for Android
-    (Android devices are recorded as `unsupported`); reading and replaying the dead-letter queue; delivery receipts
+    (Android devices are recorded as `unsupported`); replaying dead-lettered pages (today they are recorded, not
+    re-sent); the `member.*` mutations must update the shard's member cache (role changed; removed: row and devices
+    deleted), since until then a member removed or demoted in D1 outside Brigade is still paged (RFC 0006 "Who is
+    paged"); a handed-over phone (same install id, another member) keeps paging the first member until mobile
+    sign-in and sign-out register and unregister it; delivery receipts
     and "why wasn't I paged" (Phase 2); holding back lower-urgency pushes while a page may be undelivered (RFC 0006
     "Offline phones"); who is paged before schedules (Q18).
 - [ ] External dead-man switch

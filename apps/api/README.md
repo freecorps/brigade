@@ -131,8 +131,16 @@ per device with its key (`packages/push`), posts it to the relay's `POST /send` 
 both secrets, both optional) and reports back (`WorkspaceDO.recordPage`). A relay that is unreachable or answers
 5xx is retried (5, 10, 20, 40 s); after 5 attempts, or at once when retrying cannot help (no relay configured,
 Android, a refused request), each member reached on none of their devices gets a `page_failed` timeline entry and a
-`notification.failed` event, written by `sys_notifier`. A token APNs calls gone (`BadDeviceToken`, `Unregistered`, 410) drops the device (`device.expire`). Devices are a server-only table (`devices`), written by `device.register`
-and `device.unregister` (any member, their own devices only).
+`notification.failed` event, written by `sys_notifier`; so does each member the page was for without a device
+(`no_devices`) or past the 200-device cap (`over_limit`). A token APNs calls gone (`BadDeviceToken`, `Unregistered`,
+410) drops the device (`device.expire`, unless it was registered again with another token meanwhile). Devices are a
+server-only table (`devices`), written by `device.register` and `device.unregister` (any member, their own devices
+only).
+
+A message the shard fails on every time (unreachable, throwing) is retried up to `max_retries` (10); the last
+delivery logs `page dead-lettered` and it goes to `brigade-events-dlq`, which the same handler consumes
+(`consumeDeadLetters`): it asks the shard once to record the page as `dead_lettered` on the incident's timeline
+(`WorkspaceDO.recordDeadLetter`) and acks, whether or not that worked.
 
 - **Limits:** client frames up to 64 KiB of text (binary frames are refused); 32 subscriptions per socket and
   about 8 KiB of attachment state (measured as JSON).

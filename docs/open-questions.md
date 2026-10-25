@@ -69,4 +69,11 @@ responder with a registered device (except whoever caused it), and every declare
 at `high` urgency. For a small team that is what we want; for a larger one it wakes everybody. Should SEV3 and SEV4
 notify at all, and should a workspace be able to narrow the interim rule (owners and admins only) before schedules
 land? Also: a failed page is surfaced only on the incident's timeline and in logs; should it also reach someone
-outside the incident (an email to owners, the external dead-man switch) when nobody at all was paged?
+outside the incident (an email to owners, the external dead-man switch) when nobody at all was paged? And every
+member the page was for without a device gets their own "Couldn't page …" line: right for a small team, noisy for a
+large one where most never install the app.
+
+Who counts as a member is the shard's cached member list, not D1 (RFC 0006 "Who is paged"): a member removed in D1
+keeps being paged, and one demoted keeps being paged until they next open Brigade, until the `member.*` mutations
+(member management) delete the row and the member's devices, or change the role, in the shard. No API path removes or
+demotes a member today, so only an edit made outside Brigade hits this.

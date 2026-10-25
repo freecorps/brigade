@@ -220,12 +220,15 @@ export class WorkspaceDO extends DurableObject<Env> {
     return this.pager.plan(event, Date.now());
   }
 
-  /** What a page did (RPC from the queue consumer): see `Pager.record`. */
+  /**
+   * What a page did (RPC from the queue consumer): see `Pager.record`. `skipped` defaults to none, so a consumer
+   * from the version before it (during a deploy) still records its outcomes.
+   */
   recordPage(
     event: BrigadeEvent,
     outcomes: DeviceOutcome[],
     final: boolean,
-    skipped: SkippedMember[],
+    skipped: SkippedMember[] = [],
   ): void {
     if (this.shard.workspace() !== event.workspaceId) return;
     this.pager.record(event, outcomes, final, skipped, Date.now());

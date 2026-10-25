@@ -76,7 +76,12 @@ function ActiveWorkspace({ userId, children }: { userId: string; children: React
   );
 }
 
-function MemberProvider({ workspaceId, userId, role, children }: Member & { children: ReactNode }) {
+export function MemberProvider({
+  workspaceId,
+  userId,
+  role,
+  children,
+}: Member & { children: ReactNode }) {
   const value = useMemo(() => ({ workspaceId, userId, role }), [workspaceId, userId, role]);
   return <MemberContext.Provider value={value}>{children}</MemberContext.Provider>;
 }

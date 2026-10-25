@@ -1,0 +1,277 @@
+// @vitest-environment happy-dom
+// MonitorsCard mounted with react-dom against the reference shard server from packages/sync's tests: the keyboard
+// flow of the create form, the confirmed pause, and how a down, no-data or paused monitor reads.
+import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
+import { newId, type Actor, type MonitorRow } from "@freecorps/brigade-schema";
+import { createSyncClient, type SyncClient } from "@freecorps/brigade-sync";
+import { SyncProvider } from "@freecorps/brigade-sync/react";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, expect, test } from "vite-plus/test";
+import { FakeNetwork, FakeServer, FakeTimers } from "../../../packages/sync/tests/fake-server.ts";
+import { MonitorsCard } from "../src/components/monitors-card";
+import { PreferencesProvider } from "../src/components/preferences";
+import { MemberProvider } from "../src/components/session";
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// The card's relative times read the real clock, so the shard's clock starts there too.
+const T0 = Date.now();
+const SHARD = "demo";
+const owner: Actor = { kind: "user", id: "usr_dev", role: "owner" };
+
+let root: Root | undefined;
+let client: SyncClient | undefined;
+
+afterEach(() => {
+  act(() => {
+    root?.unmount();
+    client?.close();
+  });
+  root = client = undefined;
+  document.body.innerHTML = "";
+  localStorage.clear();
+  void setI18nLocale("en");
+});
+
+let seed = 0;
+const randomBytes = (length: number) => new Uint8Array(length).fill(++seed % 256);
+
+/** A monitor row as the shard would hold it; `status` and the rest overridable. */
+function monitor(overrides: Partial<MonitorRow>): MonitorRow {
+  return {
+    id: newId("mon", T0 - 1000 * ++seed, randomBytes),
+    name: "Checkout",
+    kind: "http",
+    url: "https://example.com/health",
+    method: "GET",
+    expectedStatus: null,
+    keyword: null,
+    timeoutSeconds: 10,
+    regions: ["wnam", "enam", "weur"],
+    intervalSeconds: 60,
+    graceSeconds: null,
+    paused: false,
+    pausedBy: null,
+    pausedAt: null,
+    status: "pending",
+    since: T0 - 60_000,
+    restartedAt: T0 - 60_000,
+    checks: [],
+    alertId: null,
+    incidentId: null,
+    createdAt: T0 - 60_000,
+    createdBy: "usr_dev",
+    updatedAt: T0 - 60_000,
+    ...overrides,
+  };
+}
+
+/** `rows` go straight into the shard's store; `created` through `monitor.createHttp`, as a member would. */
+async function mount(rows: MonitorRow[] = [], created: MonitorRow[] = []) {
+  const timers = new FakeTimers();
+  const server = new FakeServer(() => T0 + timers.now);
+  const network = new FakeNetwork(server);
+  client = createSyncClient({
+    url: (shard) => `ws://test/api/sync/${shard}`,
+    actor: owner,
+    transport: network.transport(owner),
+    timers,
+    now: () => T0 + timers.now,
+    random: () => 0.5,
+    randomBytes,
+  });
+  const shard = server.shard(SHARD);
+  for (const row of rows) shard.store.insert("monitors", row);
+  for (const row of created) {
+    const {
+      id,
+      name,
+      url,
+      method,
+      expectedStatus,
+      keyword,
+      intervalSeconds,
+      timeoutSeconds,
+      regions,
+    } = row;
+    const args = {
+      id,
+      name,
+      url,
+      method,
+      expectedStatus,
+      keyword,
+      intervalSeconds,
+      timeoutSeconds,
+    };
+    expect(shard.write(owner, "monitor.createHttp", { ...args, regions }).ok).toBe(true);
+  }
+  const container = document.createElement("div");
+  document.body.append(container);
+  const syncClient = client;
+  act(() => {
+    root = createRoot(container);
+    root.render(
+      <PreferencesProvider initialLocale="en">
+        <SyncProvider client={syncClient} shard={SHARD}>
+          <MemberProvider workspaceId={SHARD} userId={owner.id} role="owner">
+            <MonitorsCard />
+          </MemberProvider>
+        </SyncProvider>
+      </PreferencesProvider>,
+    );
+  });
+  const flush = async () => {
+    await act(async () => {
+      network.flush();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  };
+  await flush();
+  return { container, shard, flush };
+}
+
+const $$ = (selector: string, scope: ParentNode = document) => [
+  ...scope.querySelectorAll<HTMLElement>(selector),
+];
+const button = (name: string | RegExp, scope: ParentNode = document) =>
+  $$("button", scope).find((b) =>
+    typeof name === "string" ? b.textContent === name : name.test(b.textContent ?? ""),
+  );
+const frame = () =>
+  act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+
+async function click(element: Element | null | undefined) {
+  expect(element).toBeTruthy();
+  await act(async () => {
+    (element as HTMLElement).click();
+    await Promise.resolve();
+  });
+}
+
+async function key(element: Element, name: string) {
+  await act(async () => {
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true }),
+    );
+    await Promise.resolve();
+  });
+}
+
+test("the form takes focus on its name, Escape closes it and focus goes back to Add monitor", async () => {
+  await mount();
+  await click(button("Add monitor"));
+  const name = document.activeElement as HTMLInputElement;
+  expect(name.tagName).toBe("INPUT");
+  expect(document.querySelector(`label[for="${name.id}"]`)?.textContent).toBe("Name");
+  // While adding, the empty note is not shown under the form.
+  expect(document.body.textContent).not.toContain("Nothing is watched yet");
+  await key(name, "Escape");
+  expect(document.querySelector("form")).toBeNull();
+  expect(document.activeElement).toBe(button("Add monitor"));
+});
+
+test("a refused field says what to fix; the regions error is tied to every checkbox", async () => {
+  await mount();
+  await click(button("Add monitor"));
+  for (const box of $$('input[type="checkbox"]').filter((b) => (b as HTMLInputElement).checked)) {
+    await click(box);
+  }
+  await click(button("Create monitor"));
+  await frame();
+  expect(document.body.textContent).toContain("Give the monitor a name.");
+  expect(document.body.textContent).toContain("Pick at least one region.");
+  const errorId = $$("p").find((p) => p.textContent === "Pick at least one region.")?.id;
+  expect(errorId).toBeTruthy();
+  for (const box of $$('input[type="checkbox"]')) {
+    expect(box.getAttribute("aria-describedby")).toBe(errorId);
+  }
+  expect(document.activeElement?.getAttribute("aria-invalid")).toBe("true");
+});
+
+test("pausing asks first; cancel keeps it running and returns focus", async () => {
+  const row = monitor({ id: newId("mon", T0, randomBytes) });
+  const view = await mount([], [row]);
+  const item = () => document.querySelector(`[data-monitor="${row.id}"]`)!;
+  const pause = button("Pause", item())!;
+  await click(pause);
+  expect(item().textContent).toContain("Pause checks? A firing alert resolves.");
+  // The confirm button has focus; Escape cancels.
+  expect(document.activeElement?.textContent).toBe("Pause");
+  expect(document.activeElement).not.toBe(pause);
+  await key(document.activeElement!, "Escape");
+  await frame();
+  expect(item().textContent).not.toContain("Pause checks?");
+  expect(document.activeElement).toBe(button("Pause", item()));
+
+  await click(button("Pause", item()));
+  await click(document.activeElement);
+  await view.flush();
+  expect(view.shard.store.get("monitors", row.id)).toMatchObject({
+    paused: true,
+    pausedBy: "usr_dev",
+  });
+  expect(item().textContent).toContain("Paused by you");
+  expect(button("Resume", item())).toBeTruthy();
+});
+
+test("a down monitor links its incident and says why each region failed; no data is never up", async () => {
+  const incidentId = newId("inc", T0, randomBytes);
+  const down = monitor({
+    name: "Checkout",
+    status: "down",
+    incidentId,
+    alertId: newId("alt", T0, randomBytes),
+    checks: [
+      {
+        source: "wnam",
+        at: T0 - 1000,
+        up: false,
+        latencyMs: 90,
+        colo: "SJC",
+        httpStatus: 503,
+        error: "status",
+      },
+      {
+        source: "enam",
+        at: T0 - 1000,
+        up: false,
+        latencyMs: null,
+        colo: "IAD",
+        httpStatus: null,
+        error: "timeout",
+      },
+    ],
+  });
+  const silent = monitor({
+    name: "Search",
+    status: "unknown",
+    regions: ["weur"],
+    checks: [
+      {
+        source: "weur",
+        at: T0 - 60 * 60_000,
+        up: true,
+        latencyMs: 80,
+        colo: "CDG",
+        httpStatus: 200,
+        error: null,
+      },
+    ],
+  });
+  await mount([down, silent]);
+  const item = (id: string) => document.querySelector(`[data-monitor="${id}"]`)!;
+  const link = item(down.id).querySelector("a")!;
+  expect(link.getAttribute("href")).toBe(`#incident-${incidentId}`);
+  expect(link.textContent).toBe("Open incident");
+  expect(item(down.id).textContent).toContain("Got 503, expected 2xx or 3xx");
+  expect(item(down.id).textContent).toContain("Timed out");
+  expect(item(down.id).textContent).not.toContain("HTTP");
+  // weur never reported since the restart.
+  expect(item(down.id).textContent).toContain("Western EuropeWaiting");
+
+  expect(item(silent.id).textContent).toContain("No data");
+  expect(item(silent.id).textContent).not.toMatch(/\bUp\b/);
+});

@@ -15,6 +15,9 @@ import os
 
 struct IncomingCall {
   let id: UUID
+  /// This call, as opposed to an earlier one with the same id (a repeat of a missed or failed page rings again):
+  /// its timers act only on the instance that scheduled them, as Android's `timerApplies` does.
+  let instance = UUID()
   var title: String
   var body: String
   var incident: String?
@@ -244,7 +247,9 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
         }
         self.calls[call.id]?.ringingSince = Date()
         self.log.info("call reported")
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.ringTimeout) { self.timeOut(call.id) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.ringTimeout) {
+          self.timeOut(call.id, instance: call.instance)
+        }
       }
     }
   }
@@ -259,8 +264,8 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
     provider.reportCall(with: id, updated: update)
   }
 
-  private func timeOut(_ id: UUID) {
-    guard let call = calls[id], !call.answered else { return }
+  private func timeOut(_ id: UUID, instance: UUID) {
+    guard let call = calls[id], call.instance == instance, !call.answered else { return }
     finish(id, reason: .unanswered, event: "missed")
   }
 
@@ -326,8 +331,9 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
     if let call = calls[action.callUUID] { emit?("onAnswer", call.dictionary) }
     action.fulfill()
     let id = action.callUUID
+    let instance = calls[id]?.instance
     DispatchQueue.main.asyncAfter(deadline: .now() + Self.answeredMaxLength) { [weak self] in
-      guard let self, self.calls[id]?.answered == true else { return }
+      guard let self, let call = self.calls[id], call.instance == instance, call.answered else { return }
       self.finish(id, reason: .remoteEnded, event: "timed_out")
     }
     // The Simulator may never activate the call's audio session; speak anyway after a moment.

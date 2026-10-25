@@ -246,6 +246,24 @@ describe("knownCall: a repeat of an ended page", () => {
   });
 });
 
+describe("iOS timers", () => {
+  test("act only on the call instance that scheduled them, as on Android", () => {
+    const swift = native("ios/CallCenter.swift");
+    expect(swift).toContain("let instance = UUID()");
+    expect(swift).toContain("self.timeOut(call.id, instance: call.instance)");
+    expect(body(swift, "private func timeOut(")).toContain(
+      "guard let call = calls[id], call.instance == instance, !call.answered else { return }",
+    );
+    expect(
+      body(swift, "func provider(_ provider: CXProvider, perform action: CXAnswerCallAction)"),
+    ).toContain(
+      "guard let self, let call = self.calls[id], call.instance == instance, call.answered else { return }",
+    );
+    // The bug this guards against: a timer that looked the call up by id alone.
+    expect(swift).not.toMatch(/self\.calls\[id\]\?\.answered == true/);
+  });
+});
+
 describe("Android timers", () => {
   test("act only on the call instance that scheduled them, and end() cancels them", () => {
     const calls = kotlinFile("Calls.kt");

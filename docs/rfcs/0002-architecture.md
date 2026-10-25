@@ -87,7 +87,7 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
   (`@cloudflare/vite-plugin`) runs Workers inside the Vite dev server; validated with Vite+ in spike S5: the
   api Worker runs as an `auxiliaryWorkers` entry of apps/web in dev; apps/api tests use `@cloudflare/vitest-plugin`
   and apps/web's routing test uses wrangler's test harness (see [docs/spikes/s5-tooling-skeleton.md](../spikes/s5-tooling-skeleton.md)).
-- **Mobile:** Expo (development builds, EAS Build/Submit), `apps/mobile`, app id `br.com.freecorps.brigade`.
+- **Mobile:** Expo (development builds, EAS Build/Submit), `apps/mobile`, app id `app.freecorps.brigade`.
   Metro, not Vite. Expo's default Metro config handles the Bun workspace (isolated installs included), and
   `metro.config.js` only adds the `@freecorps/source` condition to `resolver.unstable_conditionNames`, so the
   app imports `packages/*` from source like everything else. Only `import` reads `exports`, so workspace

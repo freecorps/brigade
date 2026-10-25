@@ -164,14 +164,19 @@ export const unregisterDevice = defineMutation({
 /**
  * Server only, as the notifier: drops a device whose push service said its token is gone (APNs `BadDeviceToken`,
  * `Unregistered`), so later pages do not count it. The app registers again with a fresh token when it next runs.
+ * `pushToken` is the token the push went to: a device registered again with a new token while the push was out
+ * is kept (`conflict`), since its new token was never tried.
  */
 export const expireDevice = defineMutation({
   name: "device.expire",
-  args: v.object({ id: v.id("dev") }),
+  args: v.object({ id: v.id("dev"), pushToken }),
   permission: "incident:update",
   apply(store, args) {
     const current = store.get("devices", args.id);
     if (!current) return fail("not_found", "Device not found");
+    if (current.pushToken !== args.pushToken) {
+      return fail("conflict", "Device was registered again with another token");
+    }
     store.delete("devices", args.id);
     const event: DeviceUnregistered = {
       type: "device.unregistered",

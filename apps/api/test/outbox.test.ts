@@ -14,6 +14,7 @@ import {
   type OutboxSend,
 } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
+import type { WorkspaceDO } from "../src/workspace.ts";
 
 const ana: Actor = { kind: "user", id: "usr_ana", role: "responder" };
 const NOW = Date.UTC(2026, 9, 25, 12, 0, 0);
@@ -24,10 +25,15 @@ let names = 0;
 function withDrain<R>(
   events: number,
   send: OutboxSend,
-  fn: (drain: OutboxDrain, sql: SqlStorage, logs: { message: string }[]) => Promise<R>,
+  fn: (
+    drain: OutboxDrain,
+    sql: SqlStorage,
+    logs: { message: string }[],
+    instance: WorkspaceDO,
+  ) => Promise<R>,
   jitter = () => 1,
 ) {
-  return runInDurableObject(env.WORKSPACE.getByName(`outbox-${++names}`), async (_i, state) => {
+  return runInDurableObject(env.WORKSPACE.getByName(`outbox-${++names}`), async (instance: WorkspaceDO, state) => {
     const logs: { message: string }[] = [];
     const log = (message: string, fields: Record<string, unknown>) =>
       logs.push({ message, ...fields });
@@ -43,7 +49,12 @@ function withDrain<R>(
         now: NOW + i,
       });
     }
-    return fn(new OutboxDrain(state.storage.sql, send, log, jitter), state.storage.sql, logs);
+    return fn(
+      new OutboxDrain(state.storage.sql, send, log, jitter),
+      state.storage.sql,
+      logs,
+      instance,
+    );
   });
 }
 
@@ -178,6 +189,34 @@ describe("OutboxDrain", () => {
       // Sent twice with the same ids: consumers de-duplicate by `event.id`.
       expect(batches).toEqual([before, before]);
       expect(drain.backlog()).toBe(0);
+    });
+  });
+
+  test("a row that is not JSON is logged and dropped, and the events after it still go", async () => {
+    const { batches, send } = recorder();
+    await withDrain(2, send, async (drain, sql, logs) => {
+      const [first, second] = ids(sql);
+      sql.exec("update outbox set event = '{not json' where id = ?", first);
+      expect(await drain.drain(NOW)).toBe(2);
+      expect(batches).toEqual([[second]]);
+      expect(drain.backlog()).toBe(0);
+      expect(logs).toContainEqual(
+        expect.objectContaining({ message: "outbox event unreadable, dropped", id: first }),
+      );
+    });
+  });
+
+  test("a drain that throws in the alarm backs off instead of running again on every alarm", async () => {
+    const { send } = recorder();
+    await withDrain(1, send, async (drain, sql, _logs, instance) => {
+      // Storage refuses the delete after the send, so `drain` throws rather than recording a failed send.
+      sql.exec(`create trigger no_delete before delete on outbox
+                begin select raise(abort, 'storage gone'); end`);
+      Reflect.set(instance, "drainPaused", false);
+      await instance.alarm();
+      expect(drain.retryAt()).not.toBeNull();
+      expect(drain.backlog()).toBe(1);
+      sql.exec("drop trigger no_delete");
     });
   });
 

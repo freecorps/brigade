@@ -187,12 +187,25 @@ describe("device.unregister and device.expire", () => {
     const id = deviceId();
     run(store, ana, "device.register", args(id));
     expect(Object.keys(mutations)).not.toContain("device.expire");
-    const result = run(store, NOTIFIER_ACTOR, "device.expire", { id });
+    const result = run(store, NOTIFIER_ACTOR, "device.expire", { id, pushToken: "a".repeat(64) });
     expect(result.ok && result.events[0]?.data).toEqual({
       id,
       userId: "usr_ana",
       reason: "token_invalid",
     });
+    expect(store.get("devices", id)).toBeUndefined();
+  });
+
+  test("device.expire keeps a device registered again with a new token while the push was out", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const id = deviceId();
+    run(store, ana, "device.register", args(id));
+    // The page went to the old token; the app rotated it before APNs answered that the old one is gone.
+    run(store, ana, "device.register", args(id, { pushToken: "b".repeat(64) }));
+    expect(
+      run(store, NOTIFIER_ACTOR, "device.expire", { id, pushToken: "a".repeat(64) }),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(store.get("devices", id)?.pushToken).toBe("b".repeat(64));
   });
 });
 

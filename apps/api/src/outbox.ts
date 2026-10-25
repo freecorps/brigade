@@ -163,7 +163,10 @@ export class OutboxDrain {
     }
   }
 
-  /** The next batch in `seq` order, bounded by count and bytes. An event too large for the Queue is logged and dropped. */
+  /**
+   * The next batch in `seq` order, bounded by count and bytes. An event too large for the Queue, or one that is not
+   * JSON, is logged and dropped: either would otherwise block the shard's outbox for good.
+   */
   private next(): { seq: number; body: BrigadeEvent | null }[] {
     const rows = this.sql
       .exec<{ seq: number; id: string; event: string }>(
@@ -181,14 +184,27 @@ export class OutboxDrain {
         batch.push({ seq: row.seq, body: null });
         continue;
       }
+      let body: BrigadeEvent;
+      try {
+        body = JSON.parse(row.event) as BrigadeEvent;
+      } catch (error) {
+        // Cannot happen with `writeOutbox`; a damaged row must not stop every event after it.
+        this.log("outbox event unreadable, dropped", { id: row.id, bytes: size, error });
+        batch.push({ seq: row.seq, body: null });
+        continue;
+      }
       if (batch.length > 0 && bytes + size > DRAIN_BATCH_BYTES) break;
       bytes += size;
-      batch.push({ seq: row.seq, body: JSON.parse(row.event) as BrigadeEvent });
+      batch.push({ seq: row.seq, body });
     }
     return batch;
   }
 
-  private failed(now: number, error: unknown): void {
+  /**
+   * Records a failed drain and backs off. `drain` calls it when a send fails; the alarm calls it when `drain` threw
+   * (storage), so a failure that repeats does not run the drain on every alarm.
+   */
+  failed(now: number, error: unknown): void {
     const failures = (this.state("failures") ?? 0) + 1;
     const ceiling = Math.min(DRAIN_RETRY_MAX_MS, DRAIN_RETRY_FIRST_MS * 2 ** (failures - 1));
     // Half to all of the ceiling, so shards that failed together do not retry together.

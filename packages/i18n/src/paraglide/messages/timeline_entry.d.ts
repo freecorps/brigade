@@ -25,7 +25,10 @@ export type Timeline_EntryInputs = {
 * | "page_failed_undelivered" | "Couldn't page {a}: the push didn't go through" |
 * | "page_failed_unsupported" | "Couldn't page {a}: Brigade can't push to Android phones yet" |
 * | "page_failed_not_configured" | "Couldn't page {a}: push notifications aren't set up on this server" |
+* | "page_failed_no_devices" | "Couldn't page {a}: no registered device" |
+* | "page_failed_over_limit" | "Couldn't page {a}: this page went to too many phones" |
 * | "page_nobody" | "Nobody was paged: no one who can respond has Brigade on their phone" |
+* | "page_dead_lettered" | "A page may not have gone out: Brigade kept failing to send it" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs

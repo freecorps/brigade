@@ -7,16 +7,22 @@ import { v } from "./validate.ts";
 
 /**
  * Why a page reached nobody (or not one member):
- * - `no_devices`: no one the page was for has a device registered;
+ * - `no_devices`: the member has no device registered (with `userId: null`, no one the page was for has one);
  * - `undelivered`: the relay or the push service kept failing for every device of the member;
  * - `unsupported`: the member's devices are all on a platform the relay cannot reach yet (Android until FCM);
- * - `not_configured`: this instance has no push relay set up.
+ * - `not_configured`: this instance has no push relay set up;
+ * - `over_limit`: the page went to more devices than one page sends to (`MAX_PAGE_DEVICES`), and none of the
+ *   member's were among them;
+ * - `dead_lettered`: the event kept failing before anything was recorded (the shard was unreachable or threw) and
+ *   the Queue gave up on it, so whether anyone was paged is unknown (`userId: null`).
  */
 export const PAGE_FAILURES = [
   "no_devices",
   "undelivered",
   "unsupported",
   "not_configured",
+  "over_limit",
+  "dead_lettered",
 ] as const;
 export type PageFailure = (typeof PAGE_FAILURES)[number];
 

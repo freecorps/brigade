@@ -127,8 +127,12 @@ describe("apps/api wrangler.jsonc: the dev sync actor and auth", () => {
     expect(config?.queues?.consumers).toEqual([
       expect.objectContaining({
         queue: `brigade-events${suffix}`,
+        // QUEUE_MAX_RETRIES (apps/api/src/notify.ts), above MAX_PAGE_ATTEMPTS.
+        max_retries: 10,
         dead_letter_queue: `brigade-events-dlq${suffix}`,
       }),
+      // The dead-letter consumer records and acks; it never retries, and has no dead-letter queue of its own.
+      { queue: `brigade-events-dlq${suffix}`, max_batch_size: 10, max_retries: 0 },
     ]);
   });
 

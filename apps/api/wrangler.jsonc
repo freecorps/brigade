@@ -32,9 +32,11 @@
   ],
   // The outbox drain's Queue and its consumer (RFC 0005; src/outbox.ts, src/notify.ts). Pages are urgent, so a
   // batch waits at most 1 s. The consumer gives up on a page after 5 attempts (`MAX_PAGE_ATTEMPTS`) and records it
-  // as failed; `max_retries` is above that so the Queue never drops a page first. Whatever still fails (a bug)
-  // lands in the dead-letter queue. Production and staging queues do not exist yet: the first deploy (owner
-  // approval) creates them with `wrangler queues create`.
+  // as failed; `max_retries` is above that (`QUEUE_MAX_RETRIES`) so the Queue never drops a page first. Whatever
+  // still fails (the shard unreachable or throwing every time) lands in the dead-letter queue, which this Worker
+  // also consumes: it records each page there on its incident's timeline once and acks, never retrying
+  // (`consumeDeadLetters`). Production and staging queues do not exist yet: the first deploy (owner approval)
+  // creates them with `wrangler queues create`.
   "queues": {
     "producers": [{ "binding": "EVENTS", "queue": "brigade-events" }],
     "consumers": [
@@ -45,6 +47,7 @@
         "max_retries": 10,
         "dead_letter_queue": "brigade-events-dlq",
       },
+      { "queue": "brigade-events-dlq", "max_batch_size": 10, "max_retries": 0 },
     ],
   },
   // Set with `wrangler secret put` (deployed) or apps/api/.dev.vars (local, gitignored); never in this file.
@@ -79,6 +82,7 @@
             "max_retries": 10,
             "dead_letter_queue": "brigade-events-dlq-dev",
           },
+          { "queue": "brigade-events-dlq-dev", "max_batch_size": 10, "max_retries": 0 },
         ],
       },
       "secrets": { "required": ["BETTER_AUTH_SECRET"] },
@@ -103,6 +107,7 @@
             "max_retries": 10,
             "dead_letter_queue": "brigade-events-dlq-staging",
           },
+          { "queue": "brigade-events-dlq-staging", "max_batch_size": 10, "max_retries": 0 },
         ],
       },
       "secrets": { "required": ["BETTER_AUTH_SECRET"] },

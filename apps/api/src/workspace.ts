@@ -11,7 +11,7 @@ import {
 import { readActor, readMemberName } from "./actor.ts";
 import { isProbeRegion, MONITOR_TICK_MS, Monitoring } from "./monitors.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
-import { Pager, type DeviceOutcome, type PagePlan } from "./paging.ts";
+import { Pager, type DeviceOutcome, type PagePlan, type SkippedMember } from "./paging.ts";
 import type { ProbeReport } from "./probe.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
 import type { RowChange } from "./store.ts";
@@ -221,9 +221,20 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /** What a page did (RPC from the queue consumer): see `Pager.record`. */
-  recordPage(event: BrigadeEvent, outcomes: DeviceOutcome[], final: boolean): void {
+  recordPage(
+    event: BrigadeEvent,
+    outcomes: DeviceOutcome[],
+    final: boolean,
+    skipped: SkippedMember[],
+  ): void {
     if (this.shard.workspace() !== event.workspaceId) return;
-    this.pager.record(event, outcomes, final, Date.now());
+    this.pager.record(event, outcomes, final, skipped, Date.now());
+  }
+
+  /** A page the Queue gave up on (RPC from the dead-letter consumer): see `Pager.deadLettered`. */
+  recordDeadLetter(event: BrigadeEvent): void {
+    if (this.shard.workspace() !== event.workspaceId) return;
+    this.pager.deadLettered(event, Date.now());
   }
 
   /**
@@ -245,6 +256,11 @@ export class WorkspaceDO extends DurableObject<Env> {
         await this.drain.drain(Date.now());
       } catch (error) {
         this.log("outbox drain failed", { error });
+        try {
+          this.drain.failed(Date.now(), error);
+        } catch (backoff) {
+          this.log("backing off the outbox drain failed", { error: backoff });
+        }
       }
     }
     // Read and set in one turn: a mutation committing meanwhile arms the drain after this, never before.

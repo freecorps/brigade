@@ -2,12 +2,19 @@
 // The first is push: for an event that pages, the workspace shard plans who gets it, each device's push is sealed
 // to its own key (HPKE, `packages/push`) and sent through the relay (RFC 0006), and the outcomes go back to the
 // shard. Delivery is at-least-once, so the shard's page ledger, keyed by `event.id`, makes a redelivery page nobody
-// twice.
+// twice. What the Queue gives up on lands in `brigade-events-dlq`, whose consumer (`consumeDeadLetters`) records it
+// on the incident's timeline.
 
 import { sealPush } from "@freecorps/brigade-push";
 import { formatIncidentNumber } from "@freecorps/brigade-schema";
 import type { BrigadeEvent } from "./outbox.ts";
-import type { DeviceOutcome, PagePlan, PageTarget } from "./paging.ts";
+import {
+  asksForPage,
+  type DeviceOutcome,
+  type PagePlan,
+  type PageTarget,
+  type SendFailure,
+} from "./paging.ts";
 import { WORKSPACE_ID } from "./workspace.ts";
 
 /**
@@ -15,6 +22,11 @@ import { WORKSPACE_ID } from "./workspace.ts";
  * Queue's `max_retries` (wrangler.jsonc) is higher, so the consumer, not the Queue, decides when to give up.
  */
 export const MAX_PAGE_ATTEMPTS = 5;
+/**
+ * The `brigade-events` consumer's `max_retries` (wrangler.jsonc): a message that fails on delivery
+ * `QUEUE_MAX_RETRIES + 1` (the shard unreachable or throwing every time) goes to the dead-letter queue.
+ */
+export const QUEUE_MAX_RETRIES = 10;
 /** Delay before redelivering a page that failed: 5, 10, 20, 40 s. Pages are urgent; giving up takes about 75 s. */
 export const PAGE_RETRY_FIRST_SECONDS = 5;
 export const PAGE_RETRY_MAX_SECONDS = 60;
@@ -56,8 +68,50 @@ export async function consumeEvents(
       } catch (error) {
         // The shard was unreachable or threw: nothing was recorded, so the whole page runs again.
         log("event handling failed", { event: event.id, type: event.type, error: String(error) });
+        if (message.attempts > QUEUE_MAX_RETRIES) {
+          // This retry sends it to the dead-letter queue; its consumer records it if it can.
+          log(asksForPage(event) ? "page dead-lettered" : "event dead-lettered", {
+            event: event.id,
+            type: event.type,
+            incident: event.subject,
+            workspace: event.workspaceId,
+            attempts: message.attempts,
+          });
+        }
         message.retry({ delaySeconds: retryDelay(message.attempts) });
       }
+    }),
+  );
+}
+
+/**
+ * The `brigade-events-dlq` consumer: events the Queue gave up on. Each page is recorded once on its incident's
+ * timeline (`dead_lettered`) if the shard can be reached now; either way every message is acked, so nothing here
+ * loops. The consumer's `max_retries` is 0 and it has no dead-letter queue of its own (wrangler.jsonc).
+ */
+export async function consumeDeadLetters(
+  batch: MessageBatch<unknown>,
+  env: Pick<NotifyEnv, "WORKSPACE">,
+): Promise<void> {
+  await Promise.all(
+    batch.messages.map(async (message) => {
+      const event = parseEvent(message.body);
+      if (!event || !asksForPage(event)) {
+        log("dead-lettered event dropped", { messageId: message.id, event: event?.id });
+        return message.ack();
+      }
+      try {
+        await env.WORKSPACE.getByName(event.workspaceId).recordDeadLetter(event);
+        log("dead-lettered page recorded", { event: event.id, incident: event.subject });
+      } catch (error) {
+        log("dead-lettered page could not be recorded", {
+          event: event.id,
+          incident: event.subject,
+          workspace: event.workspaceId,
+          error: String(error),
+        });
+      }
+      message.ack();
     }),
   );
 }
@@ -89,6 +143,7 @@ export async function notifyPush(
     event,
     sent.map((one) => one.outcome),
     final,
+    plan.skipped,
   );
   return !final;
 }
@@ -105,7 +160,7 @@ async function pushOne(
 ): Promise<Sent> {
   const { deviceId, userId } = target;
   const failed = (
-    reason: "undelivered" | "unsupported" | "not_configured",
+    reason: SendFailure,
     more: { retry?: boolean; expired?: boolean } = {},
   ): Sent => ({
     outcome: {
@@ -113,7 +168,8 @@ async function pushOne(
       userId,
       ok: false,
       reason,
-      ...(more.expired ? { expired: true } : {}),
+      // The token this push went to, so a device registered again meanwhile is not dropped.
+      ...(more.expired ? { expiredToken: target.pushToken } : {}),
     },
     retry: more.retry ?? false,
   });

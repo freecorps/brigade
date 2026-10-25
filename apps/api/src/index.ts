@@ -7,7 +7,7 @@ import {
   type Auth,
   type AuthBindings,
 } from "./auth.ts";
-import { consumeEvents } from "./notify.ts";
+import { consumeDeadLetters, consumeEvents } from "./notify.ts";
 import { WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
 
 export { ProbeDO } from "./probe.ts";
@@ -71,9 +71,13 @@ export default {
     }
   },
 
-  /** `brigade-events` (RFC 0005): the shards' drained outboxes, routed to notifiers (src/notify.ts). */
+  /**
+   * `brigade-events` (RFC 0005): the shards' drained outboxes, routed to notifiers (src/notify.ts); and its
+   * dead-letter queue, `brigade-events-dlq`, where what the first gave up on is recorded.
+   */
   async queue(batch, env): Promise<void> {
-    await consumeEvents(batch, env);
+    if (batch.queue.startsWith("brigade-events-dlq")) await consumeDeadLetters(batch, env);
+    else await consumeEvents(batch, env);
   },
 } satisfies ExportedHandler<Env>;
 

@@ -22,7 +22,10 @@ import type { RowChange } from "./store.ts";
 export const PAGING_SEVERITIES: readonly Severity[] = ["sev1", "sev2"];
 /** How long the ledger remembers an event: past the Queue's longest retention (14 days), so a redelivery is known. */
 export const LEDGER_RETENTION_MS = 15 * 24 * 60 * 60 * 1000;
-/** A page goes to at most this many devices; more is a misconfiguration, and the rest are logged. */
+/**
+ * A page goes to at most this many devices. More is a misconfiguration (over 20 members with 10 phones each): it is
+ * logged, and a member none of whose devices fit is recorded as not paged (`over_limit`).
+ */
 export const MAX_PAGE_DEVICES = 200;
 
 const SCHEMA = `
@@ -50,18 +53,26 @@ export type PageTarget = {
   publicKey: string;
 };
 
+/** A member the page is for but is not sent to; recorded as not paged once the page settles. */
+export type SkippedMember = { userId: string; reason: "no_devices" | "over_limit" };
+
 export type PagePlan =
   | {
       send: true;
       incident: Pick<IncidentRow, "id" | "number" | "title" | "severity">;
       urgency: Urgency;
       targets: PageTarget[];
+      /** Handed back with the outcomes (`Pager.record`). */
+      skipped: SkippedMember[];
     }
   | {
       send: false;
       /** Why nothing is sent: not a paging event, already done, the incident moved on, or nobody to page. */
       reason: "not_a_page" | "done" | "not_found" | "acknowledged" | "inactive" | "nobody";
     };
+
+/** Why one device's push failed, as the notifier reports it. */
+export type SendFailure = Extract<PageFailure, "undelivered" | "unsupported" | "not_configured">;
 
 /** One device's outcome, as the notifier reports it. */
 export type DeviceOutcome =
@@ -70,9 +81,12 @@ export type DeviceOutcome =
       deviceId: string;
       userId: string;
       ok: false;
-      /** The push service says the token is gone: the device is dropped (`device.expire`). */
-      expired?: boolean;
-      reason: Exclude<PageFailure, "no_devices">;
+      /**
+       * The push service says this token, the one the push went to, is gone: the device is dropped
+       * (`device.expire`) unless it was registered again with another token meanwhile.
+       */
+      expiredToken?: string;
+      reason: SendFailure;
     };
 
 /**
@@ -96,27 +110,23 @@ export function asksForPage(event: BrigadeEvent): boolean {
 const rank = (severity: Severity) => ["sev1", "sev2", "sev3", "sev4"].indexOf(severity);
 
 /**
- * Who a page goes to, until on-call schedules exist (Phase 2): the incident commander, if one is assigned and is
- * not who caused the event; otherwise every member who can respond (owner, admin, responder; viewers only read),
- * except who caused it. Their registered devices, in member then device order.
+ * Who a page goes to, until on-call schedules exist (Phase 2): the incident commander, if one is assigned, is still a
+ * member who can respond, did not cause the event and has a device; otherwise every member who can respond (owner,
+ * admin, responder; viewers only read), except who caused it. `targets` are their registered devices, in member then
+ * device order; `noDevices` the members it is for who have none (a commander without a device included), so a page
+ * that missed them says so.
+ *
+ * Members are the shard's member list (`member.sync`): a member removed or demoted in D1 is still paged until the
+ * shard's list says otherwise (RFC 0006 "Who is paged").
  */
 export function pageTargets(
   store: Store<BrigadeTables>,
   incident: Pick<IncidentRow, "roles">,
   actorId: string,
-): PageTarget[] {
+): { targets: PageTarget[]; noDevices: string[] } {
   const members = store.scan("members");
-  const commander = incident.roles?.commander;
-  const users =
-    commander !== undefined &&
-    commander !== actorId &&
-    members.some((member) => member.id === commander)
-      ? [commander]
-      : members
-          .filter((member) => member.role !== "viewer" && member.id !== actorId)
-          .map((member) => member.id);
   const devices = store.scan("devices");
-  return users.flatMap((userId) =>
+  const devicesOf = (userId: string): PageTarget[] =>
     devices
       .filter((device) => device.userId === userId)
       .map(({ id, platform, environment, pushToken, publicKey }) => ({
@@ -126,8 +136,27 @@ export function pageTargets(
         environment,
         pushToken,
         publicKey,
-      })),
-  );
+      }));
+  const noDevices: string[] = [];
+  const commander = incident.roles?.commander;
+  if (
+    commander !== undefined &&
+    commander !== actorId &&
+    members.some((member) => member.id === commander && member.role !== "viewer")
+  ) {
+    const targets = devicesOf(commander);
+    if (targets.length > 0) return { targets, noDevices };
+    // A commander who cannot be reached must not leave the incident unpaged: fall back to everyone who can respond.
+    noDevices.push(commander);
+  }
+  const targets: PageTarget[] = [];
+  for (const member of members) {
+    if (member.role === "viewer" || member.id === actorId || member.id === commander) continue;
+    const mine = devicesOf(member.id);
+    if (mine.length === 0) noDevices.push(member.id);
+    targets.push(...mine);
+  }
+  return { targets, noDevices };
 }
 
 export type PagerOptions = {
@@ -157,10 +186,17 @@ export class Pager {
     if (!isActive(incident.status)) return { send: false, reason: "inactive" };
     if (incident.acknowledgedAt != null) return { send: false, reason: "acknowledged" };
 
-    const all = pageTargets(this.options.shard.store, incident, event.actor.id);
+    const { targets: all, noDevices } = pageTargets(
+      this.options.shard.store,
+      incident,
+      event.actor.id,
+    );
+    const skipped: SkippedMember[] = noDevices.map((userId) => ({ userId, reason: "no_devices" }));
     if (all.length === 0) {
-      // Someone declared it by hand: they know. A monitor did: nobody would hear of it, so say so.
-      if (event.actor.kind !== "user") this.fail(event, incident.id, null, "no_devices", now);
+      // Each member the page was for is told apart; with none at all, a member who declared it by hand knows, and a
+      // monitor's incident says nobody was paged.
+      if (skipped.length > 0) this.settle(event, incident.id, skipped, now);
+      else if (event.actor.kind !== "user") this.fail(event, incident.id, null, "no_devices", now);
       this.finish(event.id, now);
       return { send: false, reason: "nobody" };
     }
@@ -173,12 +209,20 @@ export class Pager {
         .toArray()
         .map((row) => row.device_id),
     );
-    const targets = all.filter((target) => !delivered.has(target.deviceId));
-    if (targets.length > MAX_PAGE_DEVICES) {
+    const pending = all.filter((target) => !delivered.has(target.deviceId));
+    const targets = pending.slice(0, MAX_PAGE_DEVICES);
+    if (pending.length > MAX_PAGE_DEVICES) {
+      const sent = new Set(targets.map((target) => target.userId));
+      const left = [...new Set(pending.slice(MAX_PAGE_DEVICES).map((target) => target.userId))];
+      const missed = left.filter((userId) => !sent.has(userId));
       this.options.log("page has too many devices, some skipped", {
         event: event.id,
-        devices: targets.length,
+        incident: incident.id,
+        devices: pending.length,
+        limit: MAX_PAGE_DEVICES,
+        membersMissed: missed.length,
       });
+      for (const userId of missed) skipped.push({ userId, reason: "over_limit" });
     }
     return {
       send: true,
@@ -189,16 +233,24 @@ export class Pager {
         severity: incident.severity,
       },
       urgency: PAGING_SEVERITIES.includes(incident.severity) ? "page" : "high",
-      targets: targets.slice(0, MAX_PAGE_DEVICES),
+      targets,
+      skipped,
     };
   }
 
   /**
    * Records what a send did. Delivered devices go in the ledger (a retry skips them); expired ones are dropped.
    * When `final` (retries spent, or nothing left worth retrying), every member who got the page on none of their
-   * devices gets a `page_failed` entry and `notification.failed`, and the event is closed in the ledger.
+   * devices, and every member in `skipped` (the plan's) not reached, gets a `page_failed` entry and
+   * `notification.failed`, and the event is closed in the ledger.
    */
-  record(event: BrigadeEvent, outcomes: DeviceOutcome[], final: boolean, now: number): void {
+  record(
+    event: BrigadeEvent,
+    outcomes: DeviceOutcome[],
+    final: boolean,
+    skipped: readonly SkippedMember[],
+    now: number,
+  ): void {
     const { sql } = this.options.storage;
     if (this.done(event.id)) return;
     for (const outcome of outcomes) {
@@ -211,13 +263,63 @@ export class Pager {
           outcome.userId,
           now,
         );
-      } else if (outcome.expired) {
-        this.run(`expire:${outcome.deviceId}`, "device.expire", { id: outcome.deviceId }, now);
+      } else if (outcome.expiredToken !== undefined) {
+        this.run(
+          `expire:${event.id}:${outcome.deviceId}`,
+          "device.expire",
+          { id: outcome.deviceId, pushToken: outcome.expiredToken },
+          now,
+        );
       }
     }
     if (!final) return;
+    const failures = new Map<string, SendFailure[]>();
+    for (const outcome of outcomes) {
+      if (outcome.ok) continue;
+      failures.set(outcome.userId, [...(failures.get(outcome.userId) ?? []), outcome.reason]);
+    }
+    const missed: { userId: string; reason: PageFailure }[] = [...failures].map(
+      ([userId, reasons]) => ({
+        userId,
+        // The most telling reason: a missing relay or an unsupported platform explains more than "undelivered".
+        reason: reasons.includes("not_configured")
+          ? "not_configured"
+          : reasons.every((r) => r === "unsupported")
+            ? "unsupported"
+            : "undelivered",
+      }),
+    );
+    for (const one of skipped) {
+      if (!failures.has(one.userId)) missed.push(one);
+    }
+    this.settle(event, event.subject!, missed, now);
+    this.finish(event.id, now);
+  }
+
+  /**
+   * A page the Queue gave up on (the dead-letter consumer, src/notify.ts): if nothing settled it, its incident says
+   * the page may not have gone out (`dead_lettered`), and the page is closed. Not for an incident that is
+   * acknowledged or no longer active, which `plan` would not page either.
+   */
+  deadLettered(event: BrigadeEvent, now: number): void {
+    if (!asksForPage(event) || this.done(event.id)) return;
+    const incident = this.options.shard.store.get("incidents", event.subject!);
+    if (!incident) return;
+    if (isActive(incident.status) && incident.acknowledgedAt == null) {
+      this.fail(event, incident.id, null, "dead_lettered", now);
+    }
+    this.finish(event.id, now);
+  }
+
+  /** Records each member in `missed` as not paged, except who the page reached on some device. */
+  private settle(
+    event: BrigadeEvent,
+    incidentId: string,
+    missed: readonly { userId: string; reason: PageFailure }[],
+    now: number,
+  ): void {
     const reached = new Set(
-      sql
+      this.options.storage.sql
         .exec<{ user_id: string }>(
           "select distinct user_id from page_deliveries where event_id = ?",
           event.id,
@@ -225,21 +327,9 @@ export class Pager {
         .toArray()
         .map((row) => row.user_id),
     );
-    const failures = new Map<string, Exclude<PageFailure, "no_devices">[]>();
-    for (const outcome of outcomes) {
-      if (outcome.ok || reached.has(outcome.userId)) continue;
-      failures.set(outcome.userId, [...(failures.get(outcome.userId) ?? []), outcome.reason]);
+    for (const { userId, reason } of missed) {
+      if (!reached.has(userId)) this.fail(event, incidentId, userId, reason, now);
     }
-    for (const [userId, reasons] of failures) {
-      // The most telling reason: a missing relay or an unsupported platform explains more than "undelivered".
-      const reason = reasons.includes("not_configured")
-        ? "not_configured"
-        : reasons.every((r) => r === "unsupported")
-          ? "unsupported"
-          : "undelivered";
-      this.fail(event, event.subject!, userId, reason, now);
-    }
-    this.finish(event.id, now);
   }
 
   private fail(

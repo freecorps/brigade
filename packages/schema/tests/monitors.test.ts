@@ -130,6 +130,9 @@ describe("targets (SSRF)", () => {
       "https://example.com:8443/health",
       "http://example.com:8080/",
       "https://[2606:4700::1111]/",
+      // Just outside ORCHIDv2 and RFC 9637's documentation prefix.
+      "https://[2001:30::1]/",
+      "https://[3fff:1000::1]/",
       "http://172.32.0.1/",
     ]) {
       expect(targetProblem(url), url).toBeNull();
@@ -172,6 +175,10 @@ describe("targets (SSRF)", () => {
       "http://[2001:2::1]/",
       "http://[2001:10::1]/",
       "http://[2001:1f:ffff::1]/",
+      "http://[2001:20::1]/",
+      "http://[2001:2f:ffff::1]/",
+      "http://[3fff::1]/",
+      "http://[3fff:fff:ffff::1]/",
       // Ports other than MONITOR_PORTS: a monitor is no port scanner.
       "http://example.com:22/",
       "http://example.com:25/",
@@ -628,6 +635,39 @@ describe("monitor.report: restarts, refreshes and stale probes", () => {
     expect(db.get("monitors", id)?.status).toBe("down");
     expect(db.scan("incidents")).toHaveLength(1);
     expect(db.scan("alerts")).toEqual([expect.objectContaining({ status: "firing" })]);
+  });
+
+  test("an up verdict carrying a single failure's error is no new reason: no monitor.checked", () => {
+    const db = store();
+    const id = createHttp(db, ["weur"]);
+    report(db, id, "weur", true, T + 1000);
+    // One timed-out check did not flip the verdict: still up, with the failed check's error and no status.
+    const held = (at: number, error: string | null) =>
+      runMutation(
+        serverMutations,
+        "monitor.report",
+        {
+          id,
+          source: "weur",
+          at,
+          up: true,
+          latencyMs: null,
+          colo: "CDG",
+          httpStatus: null,
+          error,
+          open: open(),
+        },
+        db,
+        system(at),
+      );
+    expect(types(held(T + 2000, "timeout"))).toEqual([]);
+    expect(types(held(T + 3000, null))).toEqual([]);
+    // A down verdict's reason still counts, and is sent.
+    const down = report(db, id, "weur", false, T + 4000);
+    expect(down.ok && down.events[0]).toMatchObject({
+      type: "monitor.checked",
+      data: { up: false, error: "status" },
+    });
   });
 
   test("only a restart cuts results off", () => {

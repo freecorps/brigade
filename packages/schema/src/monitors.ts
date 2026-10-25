@@ -167,22 +167,24 @@ function blockedIpv4(address: string): boolean {
 }
 
 /**
- * Only global unicast (2000::/3), minus documentation (2001:db8::/32), Teredo (2001::/32), benchmarking
- * (2001:2::/48), ORCHID (2001:10::/28) and 6to4 (2002::/16), which can carry a private IPv4 address. Everything
- * else (loopback, mapped IPv4, unique local, link-local, multicast) is refused. The URL parser has already
- * expanded `::`, so the first groups are in place.
+ * Only global unicast (2000::/3), minus documentation (2001:db8::/32 and 3fff::/20, RFC 9637), Teredo
+ * (2001::/32), benchmarking (2001:2::/48), ORCHID (2001:10::/28) and ORCHIDv2 (2001:20::/28), and 6to4
+ * (2002::/16), which can carry a private IPv4 address. Everything else (loopback, mapped IPv4, unique local,
+ * link-local, multicast) is refused. The URL parser has already expanded `::`, so the first groups are in place.
  */
 function blockedIpv6(address: string): boolean {
   const groups = expandIpv6(address);
   const [first = 0, second = 0, third = 0] = groups;
   if (first < 0x2000 || first > 0x3fff) return true;
   if (first === 0x2002) return true;
+  if (first === 0x3fff) return (second & 0xf000) === 0;
   if (first !== 0x2001) return false;
   return (
     second === 0 ||
     second === 0xdb8 ||
     (second === 0x2 && third === 0) ||
-    (second & 0xfff0) === 0x10
+    (second & 0xfff0) === 0x10 ||
+    (second & 0xfff0) === 0x20
   );
 }
 
@@ -709,8 +711,14 @@ export const reportMonitorCheck = defineMutation({
       (a, b) => sources.indexOf(a.source) - sources.indexOf(b.source),
     );
     const events: DomainEvent[] = [];
-    if (!previous || previous.up !== check.up || previous.error !== check.error) {
-      events.push({ type: "monitor.checked", subject: id, data: check } satisfies MonitorChecked);
+    // An up verdict can carry the error of a single failed check that did not flip it: that is no reason.
+    const reason = (c: MonitorCheck) => (c.up ? null : c.error);
+    if (!previous || previous.up !== check.up || reason(previous) !== reason(check)) {
+      events.push({
+        type: "monitor.checked",
+        subject: id,
+        data: { ...check, error: reason(check) },
+      } satisfies MonitorChecked);
     }
     const patch: Partial<Omit<MonitorRow, "id">> = { checks };
     const moved = moveTo(store, monitor, monitorStatus(monitor, checks, ctx.now), open, ctx, patch);

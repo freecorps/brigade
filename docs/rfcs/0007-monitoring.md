@@ -34,7 +34,8 @@
   link-local, shared, reserved or multicast (IPv4 and IPv6 literals, any IPv4 spelling the URL parser normalises),
   nor a local-only name (`localhost`, single-label, `.local`, `.internal`, `.lan`, `.home.arpa`, …). Checked when a
   monitor is saved and again by the probe before every request (`targetProblem`). Also refused: `192.88.99.0/24`
-  (6to4 relay), `2001:2::/48` (benchmarking) and `2001:10::/28` (ORCHID).
+  (6to4 relay), `2001:2::/48` (benchmarking), `2001:10::/28` and `2001:20::/28` (ORCHID, ORCHIDv2) and
+  `3fff::/20` (documentation, RFC 9637).
 - **Ports:** only the default ports, 8080 and 8443, and the other ports Cloudflare proxies HTTP(S) on (2052, 2053,
   2082, 2083, 2086, 2087, 2095, 2096, 8880): `MONITOR_PORTS`. Not "anything above 1024": Redis, Elasticsearch and
   friends listen there, and a check's error (`network` against `timeout`) would tell whether something answers, which

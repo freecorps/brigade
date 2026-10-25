@@ -163,8 +163,9 @@ export class WorkspaceDO extends DurableObject<Env> {
   /**
    * A probe's verdicts for its region (RPC from `ProbeDO`), each run as `monitor.report` by the monitors' system
    * actor and de-duplicated by its report id. Returns, per report, whether the probe may stop sending it: true
-   * when it committed or can never apply (a stale, paused or deleted monitor), false when it should be sent
-   * again. A storage failure throws, and the probe sends them all again.
+   * when it committed or can never apply (a paused or deleted monitor, a region it no longer uses, a result from
+   * before its last restart or older than one recorded), false when it should be sent again. A storage failure
+   * throws, and the probe sends them all again.
    */
   report(region: ProbeRegion, reports: ProbeReport[]): boolean[] {
     if (!isProbeRegion(region) || this.shard.workspace() === undefined)
@@ -183,7 +184,7 @@ export class WorkspaceDO extends DurableObject<Env> {
    * False for an unknown monitor or a wrong token, alike; a shard that serves no workspace yet answers false
    * without claiming one.
    */
-  heartbeat(monitorId: string, digest: ArrayBuffer): boolean {
+  async heartbeat(monitorId: string, digest: ArrayBuffer): Promise<boolean> {
     if (this.shard.workspace() === undefined) return false;
     return this.monitoring.ping(monitorId, digest);
   }

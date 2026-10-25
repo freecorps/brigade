@@ -10,9 +10,13 @@ import { httpCheck, observedColo, type CheckResult, type HttpCheckConfig } from 
 
 /** One region's verdict on one monitor, sent to the workspace shard (`WorkspaceDO.report`). */
 export type ProbeReport = {
-  /** De-duplicates a retried report (the shard's mutation id). */
+  /**
+   * De-duplicates a retried report (the shard's mutation id): one id per check result, so sending the same result
+   * again is answered from the shard's stored result instead of running twice.
+   */
   reportId: string;
   id: string;
+  /** When the region last checked: the latest check, even when only an unchanged verdict is re-sent. */
   at: number;
   up: boolean;
   latencyMs: number | null;
@@ -25,6 +29,8 @@ export type ProbeReport = {
 export function probeName(workspaceId: string, region: ProbeRegion): string {
   return `${workspaceId}:${region}`;
 }
+
+const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
 
 /** Checks run at once per alarm, at most. */
 const PARALLEL_CHECKS = 6;
@@ -42,7 +48,8 @@ const SCHEMA = `
     verdict integer,
     reported_verdict integer,
     reported_at integer,
-    result text
+    result text,
+    report_id text
   ) without rowid;
 `;
 
@@ -56,6 +63,7 @@ type CheckRow = {
   reported_verdict: number | null;
   reported_at: number | null;
   result: string | null;
+  report_id: string | null;
 };
 
 type Stored = CheckResult & { at: number; colo: string | null };
@@ -155,13 +163,14 @@ export class ProbeDO extends DurableObject<Env> {
     const verdict = flips ? ok : row.verdict;
     // Only if `configure` did not replace the check while it ran.
     this.ctx.storage.sql.exec(
-      `update probe_checks set next_at = ?, last_ok = ?, streak = ?, verdict = ?, result = ?
+      `update probe_checks set next_at = ?, last_ok = ?, streak = ?, verdict = ?, result = ?, report_id = ?
        where id = ? and config = ?`,
       now + config.intervalSeconds * 1000,
       ok,
       streak,
       verdict,
       JSON.stringify(result),
+      newId("rep", now, random),
       row.id,
       row.config,
     );
@@ -181,11 +190,10 @@ export class ProbeDO extends DurableObject<Env> {
           now - row.reported_at >= REPORT_EVERY_MS),
     );
     if (pending.length === 0) return;
-    const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
     const reports: ProbeReport[] = pending.map((row) => {
       const result = JSON.parse(row.result!) as Stored;
       return {
-        reportId: newId("rep", now, random),
+        reportId: row.report_id ?? newId("rep", now, random),
         id: row.id,
         at: result.at,
         up: row.verdict === 1,

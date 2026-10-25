@@ -1,10 +1,11 @@
 // The workspace shard's side of monitoring (RFC 0007): pushing each region's checks to its `ProbeDO`, turning
 // probe reports and heartbeats into `monitor.report` mutations, and the shard alarm that catches what pushes
-// nothing: missed heartbeats, probes that stopped reporting, and pushes that failed.
+// nothing: missed heartbeats, probes that stopped reporting (`monitor.evaluate`), and pushes that failed.
 
 import { monitor_incident_title } from "@freecorps/brigade-i18n/messages";
 import {
   MONITOR_ACTOR,
+  monitorStatus,
   newId,
   PROBE_REGIONS,
   REPORT_EVERY_MS,
@@ -56,24 +57,37 @@ export class Monitoring {
    * Throws on a storage failure, so the caller (a probe) retries.
    */
   report(clientId: string, mutationId: string, report: MonitorReport): MutationResultMessage {
+    return this.run(clientId, mutationId, "monitor.report", report);
+  }
+
+  /**
+   * Runs a server-only monitor mutation as the monitors' system actor, with the ids and the title of the incident
+   * it may open (mutations make neither). De-duplicated by `mutationId`.
+   */
+  private run(
+    clientId: string,
+    mutationId: string,
+    name: "monitor.report" | "monitor.evaluate",
+    args: { id: string },
+  ): MutationResultMessage {
     const { shard } = this.options;
     const now = Date.now();
     const stored = shard.storedResult(MONITOR_ACTOR.id, clientId, mutationId, now);
     if (stored) return stored;
-    const monitor = shard.store.get("monitors", report.id);
+    const monitor = shard.store.get("monitors", args.id);
     const random = this.options.randomBytes;
     const { result, changes } = shard.mutate({
       clientId,
       mutationId,
       actor: MONITOR_ACTOR,
-      name: "monitor.report",
+      name,
       args: {
-        ...report,
+        ...args,
         open: {
           alertId: newId("alt", now, random),
           incidentId: newId("inc", now, random),
           // TODO(RFC 0008): the workspace's default locale, once workspaces have one.
-          title: monitor_incident_title({ name: monitor?.name ?? report.id }, { locale: "en" }),
+          title: monitor_incident_title({ name: monitor?.name ?? args.id }, { locale: "en" }),
         },
       },
       now,
@@ -86,9 +100,10 @@ export class Monitoring {
   /**
    * A heartbeat ping with the SHA-256 of its token: false unless the monitor exists with that hash (compared in
    * constant time). The exact time is kept server-side; the monitor row is updated only when the source turns up
-   * or every `REPORT_EVERY_MS`, so a ping a minute does not make a shard version a minute.
+   * or every `REPORT_EVERY_MS`, so a ping a minute does not make a shard version a minute. An accepted ping also
+   * re-arms the shard alarm if it was lost, since that alarm is what notices the next missed ping.
    */
-  ping(monitorId: string, digest: ArrayBuffer): boolean {
+  async ping(monitorId: string, digest: ArrayBuffer): Promise<boolean> {
     const { store } = this.options.shard;
     const secret = store.get("heartbeats", monitorId);
     const monitor = store.get("monitors", monitorId);
@@ -110,29 +125,40 @@ export class Monitoring {
         error: null,
       });
     }
+    const { storage } = this.options;
+    if ((await storage.getAlarm()) === null) await storage.setAlarm(now + MONITOR_TICK_MS);
     return true;
   }
 
   /**
-   * The shard alarm's monitor work. Sets the next alarm first (or deletes it once no monitor or probe needs it),
-   * so a failure below never ends the chain.
+   * The shard alarm's monitor work. Sets a fallback alarm before anything else, so a failure below never ends the
+   * chain; once the work is done the alarm moves to the next deadline, or goes once no monitor or probe needs it.
    */
   async tick(now: number): Promise<void> {
     const { storage, log } = this.options;
+    await storage.setAlarm(now + MONITOR_TICK_MS);
     const monitors = this.options.shard.store.scan("monitors");
-    const pushed = storage.sql
-      .exec<{ n: number }>("select count(*) as n from probe_pushes")
-      .one().n;
-    const next = this.nextWake(monitors, now);
-    if (next !== null || pushed > 0) await storage.setAlarm(next ?? now + MONITOR_TICK_MS);
-    else await storage.deleteAlarm();
-
     try {
       this.missedHeartbeats(monitors, now);
     } catch (error) {
       log("heartbeat deadlines failed", { error });
     }
-    await this.pushProbes(monitors, now);
+    try {
+      this.staleMonitors(monitors, now);
+    } catch (error) {
+      log("stale monitors failed", { error });
+    }
+    try {
+      await this.pushProbes(monitors, now);
+    } finally {
+      const latest = this.options.shard.store.scan("monitors");
+      const pushed = storage.sql
+        .exec<{ n: number }>("select count(*) as n from probe_pushes")
+        .one().n;
+      const next = this.nextWake(latest, now);
+      if (next !== null) await storage.setAlarm(next);
+      else if (pushed === 0) await storage.deleteAlarm();
+    }
   }
 
   /** The earliest of a tick from now and the next heartbeat deadline; null without active monitors. */
@@ -142,24 +168,29 @@ export class Monitoring {
     let next = now + MONITOR_TICK_MS;
     for (const monitor of active) {
       if (monitor.kind !== "heartbeat") continue;
-      next = Math.min(next, Math.max(now + 1000, this.deadline(monitor)));
+      next = Math.min(next, Math.max(now + 1000, this.nextMiss(monitor)));
     }
     return next;
   }
 
-  /** When a heartbeat monitor is late: its last ping (or its start) plus the interval and the grace. */
+  /** When a heartbeat monitor is late: its last ping (or its restart) plus the interval and the grace. */
   private deadline(monitor: MonitorRow): number {
     const secret = this.options.shard.store.get("heartbeats", monitor.id);
-    const base = Math.max(secret?.lastPingAt ?? 0, monitor.since);
+    const base = Math.max(secret?.lastPingAt ?? 0, monitor.restartedAt);
     return base + (monitor.intervalSeconds + (monitor.graceSeconds ?? 0)) * 1000;
+  }
+
+  /** When `missedHeartbeats` next reports this monitor: its deadline, or a refresh of a miss already reported. */
+  private nextMiss(monitor: MonitorRow): number {
+    const deadline = this.deadline(monitor);
+    const last = monitor.checks.find((check) => check.source === "heartbeat");
+    return last && !last.up && last.at >= deadline ? last.at + REPORT_EVERY_MS : deadline;
   }
 
   /** A missed heartbeat is a failed check from its one source, so one miss makes the monitor down. */
   private missedHeartbeats(monitors: MonitorRow[], now: number): void {
     for (const monitor of monitors) {
-      if (monitor.kind !== "heartbeat" || monitor.paused || now < this.deadline(monitor)) continue;
-      const last = monitor.checks.find((check) => check.source === "heartbeat");
-      if (last && !last.up && now - last.at < REPORT_EVERY_MS) continue;
+      if (monitor.kind !== "heartbeat" || monitor.paused || now < this.nextMiss(monitor)) continue;
       this.report("heartbeat", newId("mis", now, this.options.randomBytes), {
         id: monitor.id,
         source: "heartbeat",
@@ -169,6 +200,21 @@ export class Monitoring {
         colo: null,
         httpStatus: null,
         error: "missed",
+      });
+    }
+  }
+
+  /**
+   * HTTP monitors whose results went stale since the last report (`monitorStatus`): every probe stopped
+   * reporting, or too many did. Each gets `monitor.evaluate`, which turns it `unknown` (no data) and emits
+   * `monitor.status_changed`; a firing alert stays (RFC 0007 "Quorum and flapping").
+   */
+  private staleMonitors(monitors: MonitorRow[], now: number): void {
+    for (const monitor of monitors) {
+      if (monitor.kind !== "http" || monitor.paused) continue;
+      if (monitorStatus(monitor, monitor.checks, now) === monitor.status) continue;
+      this.run("monitor", newId("evl", now, this.options.randomBytes), "monitor.evaluate", {
+        id: monitor.id,
       });
     }
   }
@@ -200,7 +246,7 @@ export class Monitoring {
         if (!last && checks.length === 0) return;
         const stale = active.some((monitor) => {
           const check = monitor.checks.find((c) => c.source === region);
-          return now - (check?.at ?? monitor.since) > STALE_MS;
+          return now - (check?.at ?? monitor.restartedAt) > STALE_MS;
         });
         if (stale) log("probe stalled", { region });
         if (last && last.config === config && now - last.at < REPUSH_MS && !stale) return;

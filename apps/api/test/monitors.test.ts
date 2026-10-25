@@ -1,17 +1,23 @@
 // Monitoring end to end (RFC 0007), a paging path: the HTTP check and its target rules, ProbeDO's alarm chain,
 // probe reports turning into an alert and an incident on the workspace shard, and heartbeats.
 import { env, exports } from "cloudflare:workers";
-import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import {
+  listDurableObjectIds,
+  runDurableObjectAlarm,
+  runInDurableObject,
+} from "cloudflare:test";
 import { describe, expect, test, vi } from "vite-plus/test";
 import {
   heartbeatToken,
   newHeartbeatSecret,
   newId,
+  REPORT_EVERY_MS,
+  staleAfterMs,
   type Actor,
   type ProbeRegion,
 } from "@freecorps/brigade-schema";
 import { httpCheck, MAX_BODY_BYTES, type HttpCheckConfig } from "../src/check.ts";
-import { probeName, type ProbeDO } from "../src/probe.ts";
+import { probeName, type ProbeDO, type ProbeReport } from "../src/probe.ts";
 import { Shard } from "../src/shard.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
 
@@ -129,6 +135,12 @@ let names = 0;
 async function workspace() {
   // A real workspace id: `workspace.create` takes only those.
   const id = newId("ws", Date.now() + ++names, random);
+  // The organization Better Auth would have written: heartbeats look the workspace up in D1.
+  await env.DB.prepare(
+    'insert into "organization" ("id", "name", "slug", "createdAt") values (?, ?, ?, ?)',
+  )
+    .bind(id, "Acme", `ws-${id}`, new Date().toISOString())
+    .run();
   const stub = env.WORKSPACE.getByName(id);
   expect(await stub.provision({ id, name: "Acme" }, { ...admin, role: "owner" })).toEqual({
     ok: true,
@@ -247,11 +259,20 @@ describe("monitor down → alert → incident", () => {
       );
     });
 
-    // Still failing: no second alert or incident.
+    // Still failing: no second alert or incident. The unchanged verdict, re-sent once REPORT_EVERY_MS passed,
+    // refreshes the row (its check time) without an outbox event.
+    const events = await ws.withShard((_shard, _instance, sql) => outbox(sql).length);
+    await runInDurableObject(weur, (_instance, state) => {
+      state.storage.sql.exec("update probe_checks set reported_at = ?", Date.now() - REPORT_EVERY_MS);
+    });
+    const before = await ws.withShard((shard) => shard.store.get("monitors", monitorId)!.checks[0]!.at);
+    await new Promise((resolve) => setTimeout(resolve, 5));
     await runProbe(weur);
-    await ws.withShard((shard) => {
+    await ws.withShard((shard, _instance, sql) => {
       expect(shard.store.scan("alerts")).toHaveLength(1);
       expect(shard.store.scan("incidents")).toHaveLength(1);
+      expect(shard.store.get("monitors", monitorId)!.checks[0]!.at).toBeGreaterThan(before);
+      expect(outbox(sql)).toHaveLength(events);
     });
 
     answer = 200;
@@ -274,6 +295,132 @@ describe("monitor down → alert → incident", () => {
     await ws.withShard((_shard, instance) => instance.alarm());
     expect(await runInDurableObject(weur, (instance: ProbeDO) => instance.rows())).toEqual([]);
     expect(await runInDurableObject(weur, (_i, state) => state.storage.getAlarm())).toBeNull();
+  });
+
+  test("a report computed before another region's flip still counts: one incident, no false recovery", async () => {
+    const ws = await workspace();
+    const monitorId = newId("mon", Date.now(), random);
+    await ws.run("monitor.createHttp", {
+      id: monitorId,
+      name: "Checkout",
+      url: "https://example.com/health",
+      method: "GET",
+      expectedStatus: null,
+      keyword: null,
+      intervalSeconds: 60,
+      timeoutSeconds: 5,
+      regions: ["wnam", "enam", "weur"],
+    });
+    const start = Date.now();
+    const verdict = (up: boolean, at: number): ProbeReport => ({
+      reportId: newId("rep", at, random),
+      id: monitorId,
+      at,
+      up,
+      latencyMs: up ? 80 : null,
+      colo: "IAD",
+      httpStatus: up ? 200 : null,
+      error: up ? null : "timeout",
+    });
+    expect(await ws.stub.report("wnam", [verdict(false, start + 1)])).toEqual([true]);
+    expect(await ws.stub.report("enam", [verdict(false, start + 3)])).toEqual([true]);
+    // weur checked between the two, but its report arrives after the flip to down.
+    const late = verdict(false, start + 2);
+    expect(await ws.stub.report("weur", [late])).toEqual([true]);
+    // A retry of the same report is answered from the stored result and changes nothing.
+    expect(await ws.stub.report("weur", [late])).toEqual([true]);
+    expect(await ws.stub.report("wnam", [verdict(true, start + 4)])).toEqual([true]);
+    await ws.withShard((shard, _instance, sql) => {
+      const monitor = shard.store.get("monitors", monitorId)!;
+      expect(monitor.status).toBe("down");
+      expect(monitor.checks.map((check) => [check.source, check.up])).toEqual([
+        ["wnam", true],
+        ["enam", false],
+        ["weur", false],
+      ]);
+      expect(shard.store.scan("incidents")).toHaveLength(1);
+      expect(shard.store.scan("alerts")).toEqual([expect.objectContaining({ status: "firing" })]);
+      expect(outbox(sql).filter((event) => event.startsWith("monitor.checked"))).toHaveLength(4);
+    });
+  });
+
+  test("a monitor whose probes stop reporting turns unknown on the shard alarm, not up", async () => {
+    const ws = await workspace();
+    const monitorId = newId("mon", Date.now(), random);
+    await ws.run("monitor.createHttp", {
+      id: monitorId,
+      name: "Checkout",
+      url: "https://example.com/health",
+      method: "GET",
+      expectedStatus: null,
+      keyword: null,
+      intervalSeconds: 60,
+      timeoutSeconds: 5,
+      regions: ["weur"],
+    });
+    const at = Date.now();
+    expect(
+      await ws.stub.report("weur", [
+        {
+          reportId: newId("rep", at, random),
+          id: monitorId,
+          at,
+          up: true,
+          latencyMs: 80,
+          colo: "CDG",
+          httpStatus: 200,
+          error: null,
+        },
+      ]),
+    ).toEqual([true]);
+    // The region's only result is older than the stale window: nothing says the target is up any more.
+    await ws.withShard((shard) => {
+      const monitor = shard.store.get("monitors", monitorId)!;
+      const old = Date.now() - staleAfterMs(monitor) - 1000;
+      shard.store.update("monitors", monitorId, {
+        checks: monitor.checks.map((check) => ({ ...check, at: old })),
+      });
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await ws.withShard((_shard, instance) => instance.alarm());
+    } finally {
+      error.mockRestore();
+    }
+    await ws.withShard((shard, _instance, sql) => {
+      expect(shard.store.get("monitors", monitorId)?.status).toBe("unknown");
+      expect(outbox(sql)).toContain("monitor.status_changed by sys_monitors");
+      expect(shard.store.scan("incidents")).toEqual([]);
+    });
+  });
+
+  test("the shard alarm reschedules itself even when its work fails", async () => {
+    const ws = await workspace();
+    await ws.run("monitor.createHttp", {
+      id: newId("mon", Date.now(), random),
+      name: "Checkout",
+      url: "https://example.com/health",
+      method: "GET",
+      expectedStatus: null,
+      keyword: null,
+      intervalSeconds: 60,
+      timeoutSeconds: 5,
+      regions: ["weur"],
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await runInDurableObject(ws.stub, async (instance: WorkspaceDO, state) => {
+        await state.storage.deleteAlarm();
+        const monitoring = Reflect.get(instance, "monitoring") as object;
+        Reflect.set(monitoring, "pushProbes", () => Promise.reject(new Error("push broke")));
+        const before = Date.now();
+        await instance.alarm();
+        expect(await state.storage.getAlarm()).toBeGreaterThanOrEqual(before);
+      });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("monitor tick failed"));
+    } finally {
+      error.mockRestore();
+    }
   });
 
   test("a probe run that throws keeps its alarm chain", async () => {
@@ -362,13 +509,25 @@ describe("heartbeats", () => {
     ).toBe(404);
     expect((await ping("not-a-token")).status).toBe(404);
     expect((await ping(heartbeatToken("monitors-nope", monitorId, secret))).status).toBe(404);
+    // A well-formed token for a workspace that does not exist: the same 404, and no Durable Object made for it.
+    const madeUp = newId("ws", Date.now(), random);
+    const refused = await ping(heartbeatToken(madeUp, monitorId, secret));
+    expect(refused.status).toBe(404);
+    expect(await refused.json()).toEqual({ error: "not_found" });
+    const made = await listDurableObjectIds(env.WORKSPACE);
+    expect(made.map((id) => id.toString())).not.toContain(
+      env.WORKSPACE.idFromName(madeUp).toString(),
+    );
     expect((await ping(heartbeatToken(ws.id, monitorId, secret), "GET")).status).toBe(405);
     await ws.withShard((shard) => {
       expect(shard.store.get("monitors", monitorId)?.status).toBe("pending");
     });
 
+    // A lost shard alarm is re-armed by the next accepted ping.
+    await runInDurableObject(ws.stub, (_instance, state) => state.storage.deleteAlarm());
     const accepted = await ping(heartbeatToken(ws.id, monitorId, secret));
     expect(accepted.status).toBe(202);
+    expect(await runInDurableObject(ws.stub, (_i, state) => state.storage.getAlarm())).not.toBeNull();
     await ws.withShard((shard) => {
       expect(shard.store.get("monitors", monitorId)).toMatchObject({
         status: "up",
@@ -384,6 +543,7 @@ describe("heartbeats", () => {
       shard.store.update("heartbeats", monitorId, { lastPingAt: past });
       shard.store.update("monitors", monitorId, {
         since: past,
+        restartedAt: past,
         checks: monitor.checks.map((check) => ({ ...check, at: past })),
       });
     });

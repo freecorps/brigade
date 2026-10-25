@@ -184,8 +184,10 @@ async function openSync(
 
 /**
  * `POST /heartbeat/:token`: a heartbeat monitor's ping (RFC 0007). The token names the workspace and the monitor
- * and carries the secret; the shard compares the secret's SHA-256 with the stored one in constant time. Every
- * refusal is the same 404, so a caller cannot tell a wrong secret from a missing monitor. The body is never read.
+ * and carries the secret; the shard compares the secret's SHA-256 with the stored one in constant time. The
+ * workspace is looked up in D1 first (`workspaceExists`), so a token for a made-up workspace never wakes, let alone
+ * creates, a shard (open question Q16). Every refusal is the same 404, so a caller cannot tell a wrong secret from a
+ * missing monitor or workspace. The body is never read.
  */
 export async function receiveHeartbeat(
   request: Request,
@@ -199,6 +201,13 @@ export async function receiveHeartbeat(
   if (!parsed || !WORKSPACE_ID.test(parsed.workspaceId)) return json({ error: "not_found" }, 404);
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(parsed.secret));
   try {
+    if (!(await workspaceExists(env.DB, parsed.workspaceId))) {
+      return json({ error: "not_found" }, 404);
+    }
+  } catch (error) {
+    return failed("workspace lookup failed", parsed.workspaceId, error);
+  }
+  try {
     const accepted = await env.WORKSPACE.getByName(parsed.workspaceId).heartbeat(
       parsed.monitorId,
       digest,
@@ -207,6 +216,36 @@ export async function receiveHeartbeat(
   } catch (error) {
     return failed("WorkspaceDO.heartbeat failed", parsed.workspaceId, error);
   }
+}
+
+/** Workspaces seen in D1, per isolate, until the time they expire: a ping a minute is not a D1 read a minute. */
+const knownWorkspaces = new Map<string, number>();
+const KNOWN_WORKSPACE_MS = 10 * 60 * 1000;
+const KNOWN_WORKSPACES_MAX = 10_000;
+
+/**
+ * Whether a Better Auth organization (a workspace) has this id. Only a hit is cached: a made-up id costs one
+ * indexed D1 read, and no Durable Object.
+ */
+export async function workspaceExists(
+  db: D1Database,
+  id: string,
+  now = Date.now(),
+): Promise<boolean> {
+  const expires = knownWorkspaces.get(id);
+  if (expires !== undefined && expires > now) return true;
+  const row = await db.prepare('select 1 as found from "organization" where "id" = ?').bind(id).first();
+  if (!row) {
+    knownWorkspaces.delete(id);
+    return false;
+  }
+  // Oldest first: a Map iterates in insertion order.
+  if (knownWorkspaces.size >= KNOWN_WORKSPACES_MAX) {
+    knownWorkspaces.delete(knownWorkspaces.keys().next().value!);
+  }
+  knownWorkspaces.delete(id);
+  knownWorkspaces.set(id, now + KNOWN_WORKSPACE_MS);
+  return true;
 }
 
 /**

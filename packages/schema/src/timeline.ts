@@ -11,6 +11,11 @@ import { v } from "./validate.ts";
  * Appends `entry` to `incident`'s timeline as `ctx.actor` at `ctx.now`. Entries are numbered from the incident's
  * `timelineSeq`, a field clients hold too, so an optimistic entry and the server's share an id unless another change
  * landed first (the optimistic one is then re-applied under the next number).
+ *
+ * A client numbers from the highest of `timelineSeq` and the entries it holds: its subscriptions resume one by one,
+ * so it can hold another member's entry before the incident row that counts it, and the same number would make
+ * the optimistic insert collide (and the entry vanish until the server's answer). On the server the two always
+ * agree, so it skips the read.
  */
 export function appendTimeline(
   store: MutationStore,
@@ -18,7 +23,12 @@ export function appendTimeline(
   entry: TimelineEntry,
   ctx: MutationContext,
 ): TimelineRow {
-  const seq = (incident.timelineSeq ?? 0) + 1;
+  let last = incident.timelineSeq ?? 0;
+  if (!ctx.server) {
+    const { from, to } = prefixRange(`${incident.id}:`);
+    for (const held of store.range("timeline", from, to)) last = Math.max(last, held.seq);
+  }
+  const seq = last + 1;
   const row = {
     id: `${incident.id}:${seq}`,
     incidentId: incident.id,

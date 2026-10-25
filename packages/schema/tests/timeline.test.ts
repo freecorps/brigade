@@ -173,6 +173,24 @@ describe("timeline", () => {
     }
     expect(client.dump()).toEqual(server.dump());
   });
+
+  test("a client holding an entry its incident row does not count yet numbers after it", () => {
+    // Another member's entry 1 arrived; the incident row the client holds is older (timelineSeq 0).
+    const client = storeWith([legacy()]);
+    client.insert("timeline", {
+      id: `${ID}:1`,
+      incidentId: ID,
+      seq: 1,
+      at: T,
+      actor: "usr_bia",
+      kind: "update",
+      body: "Theirs",
+    });
+    expect(run(client, "incident.postUpdate", { id: ID, body: "Mine" }, ctx("responder", T, false)).ok).toBe(
+      true,
+    );
+    expect(evaluateQuery(incidentTimeline, { id: ID }, client).map((row) => row.seq)).toEqual([1, 2]);
+  });
 });
 
 describe("incident.postUpdate", () => {

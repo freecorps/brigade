@@ -123,6 +123,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
     });
+    // Events left in the outbox (an alarm that failed to arm, a restart) arm the drain again whenever the object
+    // wakes, so a backlog never waits for an unrelated change.
+    try {
+      if (!this.drainPaused && this.drain.backlog() > 0) this.armDrain();
+    } catch (error) {
+      this.log("arming the outbox drain failed", { error: String(error) });
+    }
   }
 
   info(): WorkspaceInfo {

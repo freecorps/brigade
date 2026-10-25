@@ -86,8 +86,10 @@ export async function consumeEvents(
 
 /**
  * The `brigade-events-dlq` consumer: events the Queue gave up on. Each page is recorded once on its incident's
- * timeline (`dead_lettered`) if the shard can be reached now; either way every message is acked, so nothing here
- * loops. The consumer's `max_retries` is 0 and it has no dead-letter queue of its own (wrangler.jsonc).
+ * timeline (`dead_lettered`). If the shard cannot be reached, the message is retried after
+ * `DEAD_LETTER_RETRY_SECONDS`; the consumer's `max_retries` is 5 and it has no dead-letter queue of its own
+ * (wrangler.jsonc), so spent retries delete it and nothing loops. Malformed events and events that do not page are
+ * acked at once.
  */
 export async function consumeDeadLetters(
   batch: MessageBatch<unknown>,

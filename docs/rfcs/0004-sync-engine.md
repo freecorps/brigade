@@ -335,7 +335,8 @@ server → client
 - **Dev actor (local only):** where `SYNC_DEV_ACTOR` is `"1"` and the request is for `localhost`, `127.0.0.1` or
   `[::1]`, an upgrade **without a session** acts as `{ kind: "user", id: "usr_dev", role: "responder" }`
   (`DEV_ACTOR`) on any shard; for any other host it gets `401`, so a deployment that set the variable by mistake
-  still refuses it (a phone reaching `vp dev` over the LAN therefore gets no dev actor; use Metro's `--localhost`).
+  still refuses it. A private LAN address (10/8, 172.16/12, 192.168/16) counts as local, so a phone on the
+  same Wi-Fi can use `vp dev`; Cloudflare's edge never serves a deployed Worker under such a host.
   Only `vp dev` and the tests set
   it, in their Vite configs; no environment in `apps/api/wrangler.jsonc` does (`apps/web/test/worker-config.test.ts`
   checks each one), so every deployed Worker answers such an upgrade with `401`. The mobile app relies on it until

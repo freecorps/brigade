@@ -16,15 +16,25 @@ export type ActorResult = { ok: true; actor: Actor } | { ok: false; response: Re
 
 /** Hosts a local run serves on: the dev actor never applies to a request for any other host. */
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+/**
+ * A private IPv4 address (10/8, 172.16/12, 192.168/16): a phone on the same Wi-Fi reaching `vp dev` by the
+ * computer's address. Cloudflare's edge never serves a deployed Worker under such a host.
+ */
+const PRIVATE_IPV4 = /^(10\.\d+|172\.(1[6-9]|2\d|3[01])|192\.168)\.\d+\.\d+$/;
+
+function isLocalHost(hostname: string): boolean {
+  return LOCAL_HOSTS.has(hostname) || PRIVATE_IPV4.test(hostname);
+}
 
 /**
  * DEV ONLY: whether an upgrade without a session may act as `DEV_ACTOR`. Both must hold: the variable is set (only
  * local runs and the tests set it, in their Vite configs, never a deployed environment; apps/web
  * test/worker-config.test.ts checks every environment in wrangler.jsonc), and the request is for a local host, so a
- * deployment that sets the variable by mistake still refuses it. The mobile app relies on it until it can sign in.
+ * deployment that sets the variable by mistake still refuses it. A private LAN address counts as local, so a
+ * phone can use `vp dev` over Wi-Fi. The mobile app relies on it until it can sign in.
  */
 export function devActorEnabled(env: object, request: Request): boolean {
-  return Reflect.get(env, DEV_ACTOR_VAR) === "1" && LOCAL_HOSTS.has(new URL(request.url).hostname);
+  return Reflect.get(env, DEV_ACTOR_VAR) === "1" && isLocalHost(new URL(request.url).hostname);
 }
 
 /**

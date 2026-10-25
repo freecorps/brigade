@@ -484,13 +484,27 @@ describe("GET /sync/:workspaceId", () => {
 
   test("with SYNC_DEV_ACTOR, an upgrade without a session for a host that is not local is still refused", async () => {
     // A deployment that set the variable by mistake: its requests are for its own hostname, never localhost.
-    for (const host of ["http://api.test", "https://brigade.example.com", "http://192.168.0.10"]) {
+    for (const host of [
+      "http://api.test",
+      "https://brigade.example.com",
+      "http://8.8.8.8",
+      "http://172.32.0.1",
+      "http://192.168.0.10.example.com",
+    ]) {
       const response = await exports.default.fetch(`${host}/sync/${workspace()}`, {
         headers: { Upgrade: "websocket" },
       });
       expect(response.status, host).toBe(401);
     }
-    for (const host of ["http://localhost", "http://127.0.0.1:5173", "http://[::1]:8787"]) {
+    // Local, or a private LAN address: a phone on the same Wi-Fi reaching `vp dev`.
+    for (const host of [
+      "http://localhost",
+      "http://127.0.0.1:5173",
+      "http://[::1]:8787",
+      "http://192.168.0.10:5173",
+      "http://10.0.2.2:5173",
+      "http://172.20.1.5",
+    ]) {
       const response = await exports.default.fetch(`${host}/sync/${workspace()}`, {
         headers: { Upgrade: "websocket" },
       });

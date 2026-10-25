@@ -78,7 +78,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     refused now, each with its `member.*` event; a `baseURL` per environment (`BETTER_AUTH_URL`, the dashboard's
     `/api/auth` origin) once deployed hostnames exist, so email links point at the dashboard rather than the
     API Worker; repairing a workspace whose shard was never provisioned because the Worker died between the D1
-    write and the RPC; and a dev actor for phones on the LAN if Metro's `--localhost` is not enough.
+    write and the RPC.
 - [ ] Monitors (HTTP/TCP/heartbeat) with quorum → alerts → incidents
 - [ ] Incidents: declare, severity, status, roles, timeline, updates
 - [ ] Brigade Sync in production for web + mobile

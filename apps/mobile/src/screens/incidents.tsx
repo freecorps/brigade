@@ -20,7 +20,7 @@ import {
 import { fontFamily, fontSize, radius, spacing } from "@freecorps/brigade-ui";
 import { Link } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   AccessibilityInfo,
   Platform,
@@ -84,9 +84,12 @@ function IncidentList({ onReload }: { onReload: () => void }) {
   const setSeverity = useMutation("incident.setSeverity");
   const { choose, sheet } = useChoiceSheet();
 
-  // The latest rows, for picks made from a sheet opened on an older list.
+  // The latest rows, for picks made from a sheet opened on an older list. Updated after each commit, before a
+  // sheet's callback can run, since a ref must not be written during render.
   const latest = useRef(rows);
-  latest.current = rows;
+  useLayoutEffect(() => {
+    latest.current = rows;
+  }, [rows]);
   const [title, setTitle] = useState("");
   const [refusals, setRefusals] = useState<Refusal[]>([]);
   // In-flight changes per incident, so the row can say "Saving…" until the shard answers.

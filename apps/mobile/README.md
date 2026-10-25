@@ -117,8 +117,9 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
   mode and the Android strings from `packages/i18n`. The development-only `/call-test` screen rings a test call;
   on Android, `adb shell am broadcast -a app.freecorps.brigade.call.DEBUG_RING -n
   app.freecorps.brigade/app.freecorps.brigade.call.DebugCallReceiver --es title … --es body … --es incident <id>`
-  does the same from a shell. The route decision has JVM tests: `./gradlew :brigade-call:testDebugUnitTest` in
-  the prebuilt `android/` (with `ANDROID_HOME` set). See the S6 write-up.
+  does the same from a shell. The paging decisions live in `src/lib/call-route.ts`, tested in CI, and the native code
+  mirrors them; the Kotlin copy also has JVM tests: `./gradlew :brigade-call:testDebugUnitTest` in the prebuilt
+  `android/` (with `ANDROID_HOME` set). See the S6 write-up.
 - **Autolinking:** `expo-router`'s optional peers (Reanimated, Worklets, Gesture Handler) are installed by Bun
   but excluded from autolinking until the app uses them.
 

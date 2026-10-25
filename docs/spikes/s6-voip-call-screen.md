@@ -19,8 +19,9 @@ device steps that are left.
 - **`incident.ack`** (`packages/schema`): a named mutation with a new permission, `incident:ack` (owner, admin and
   responder; not viewer). It sets `acknowledgedAt` and `acknowledgedBy` on the incident and emits
   `incident.acknowledged { by }`. The first ack wins: a second is a `conflict` (no change). Resolved and declined
-  incidents cannot be acknowledged (`invalid_transition`). Rows stored before the fields existed acknowledge
-  fine. Escalation runs do not exist yet, so the ack lives on the incident until `IncidentDO` has runs (RFC 0003).
+  incidents cannot be acknowledged (`invalid_transition`). Reopening a resolved incident clears the ack, so the
+  next page can be acknowledged. Rows stored before the fields existed acknowledge fine. Any member with
+  `incident:ack` can acknowledge, not only the page's targets (left for escalation runs). Escalation runs do not exist yet, so the ack lives on the incident until `IncidentDO` has runs (RFC 0003).
 - **The relay sends calls** (`apps/relay`): `POST /send` with `kind: "call"` and a `callId` (lowercase UUID) sends
   a PushKit VoIP push, `apns-push-type: voip` to the `<APNS_TOPIC>.voip` topic, priority 10, body
   `{ call: { id }, brigade: <envelope> }`. A call must be `urgency: page` (its default), expires after 60 seconds by
@@ -35,15 +36,22 @@ device steps that are left.
     `IncomingCallActivity`, a native ringing screen shown over the lock screen. Answer (on that screen or the
     notification) sets the connection active and opens the React Native call screen; while the call lasts, the
     app's activity may show over the lock screen (`setShowWhenLocked`), and that is cleared when it ends.
-    Unanswered calls end after 60 seconds. `CallSpeech` speaks through `TextToSpeech` on the voice-call stream.
+    Unanswered calls end after 60 seconds; answered ones hang up natively 3 minutes after answering, ack or not
+    (`ANSWERED_CALL_MAX_MS`), which also bounds the time the app is shown over the lock screen. If Telecom gives
+    the call no connection, or the ringing notification cannot be posted, the call ends and the page is posted on
+    `brigade_pages` instead. `CallSpeech` speaks through `TextToSpeech` on the voice-call stream.
     The ringing screen's and the channels' strings are resources the plugin generates from `packages/i18n`.
   - **iOS:** `CallCenter` registers PushKit from an `ExpoAppDelegateSubscriber` at launch (a VoIP push can launch
     the app in the background). Every VoIP push is reported to CallKit at once, as "Brigade on-call"; a missing or
     malformed call id gets a new UUID rather than no call. Then the envelope is decrypted with the same
     `BrigadePushCrypto` as the Notification Service Extension (now public in the `BrigadePush` pod) and the caller
-    name updated. If CallKit refuses the call, the page is posted as a time-sensitive notification. Answering
+    name updated. If CallKit refuses the call, the page is posted as a time-sensitive notification. On iOS 16
+    (the app's minimum is 16.4; HPKE needs iOS 17) the envelope cannot be opened: the phone still rings, as
+    "Brigade on-call" with the fallback text, but the call carries no incident id, so it cannot be acknowledged
+    from the call. Documented rather than raising the minimum. Answering
     sets the audio session (`playAndRecord`, `voiceChat`) and speaks with `AVSpeechSynthesizer` once CallKit
-    activates it; 1 on CallKit's keypad (`CXPlayDTMFCallAction`) acknowledges. The plugin adds the `voip`
+    activates it; 1 on CallKit's keypad (`CXPlayDTMFCallAction`) acknowledges; the press is also kept on the call
+    (`ackKeyPressed`), so JavaScript that attaches after it (a cold launch) acknowledges on mount. The plugin adds the `voip`
     background mode; `call_caller` joins the strings generated into `Localizable.strings`.
   - **JavaScript:** `src/lib/call-session.ts` holds the answered call: it reads `call_script` and
     `call_script_prompt` aloud in the app's language, sends `incident.ack` through Brigade Sync once (the button and
@@ -51,8 +59,9 @@ device steps that are left.
     retry, says `call_script_acked` and hangs up. `/call` is the call screen ("1 Acknowledge", "Hang up"; Back
     disabled while the call lasts). The development-only `/call-test` screen shows the route a page would take,
     the PushKit token, and rings a test call for the first unacknowledged incident after 10 seconds.
-  - **Test hooks, development builds only:** on Android, an `adb shell am broadcast` to `DebugCallReceiver` (only
-    senders holding `DUMP`, which adb's shell does, and ignored unless the app is debuggable); on iOS, launch
+  - **Test hooks, development builds only:** on Android, an `adb shell am broadcast` to `DebugCallReceiver` (in
+    the module's `src/debug` source set, so release builds do not contain it; only senders holding `DUMP`, which
+    adb's shell does, and ignored unless the app is debuggable); on iOS, launch
     arguments (`-BrigadeTestCall <title>`, `-BrigadeTestCallAnswer YES`, `-BrigadeTestCallAck YES`) that ring,
     then answer and press 1 as CallKit transactions, because this Simulator cannot be tapped.
 
@@ -79,7 +88,9 @@ plausible, since paging is the app's purpose, but is not decided by this spike.
 
 ### The fallback (paging paths need one)
 
-`CallRoute.kt` decides, from five facts, how a page reaches this phone:
+`decideRoute` decides, from five facts, how a page reaches this phone. Its source of truth is TypeScript,
+`apps/mobile/src/lib/call-route.ts`, because CI runs `vp run -r test` on Linux and cannot run Kotlin or Swift tests;
+`CallRoute.kt` mirrors it, and the TypeScript test also reads `CallRoute.kt` and checks its branches match:
 
 1. Notifications off for the app: **blocked**. Nothing can be shown; the phone should report it so the instance
    escalates past it.
@@ -89,10 +100,13 @@ plausible, since paging is the app's purpose, but is not decided by this spike.
 5. Otherwise (both channels off): **blocked**.
 
 `brigade_pages` uses the alarm sound and asks to bypass Do Not Disturb. If Telecom accepts the call and then
-fails to create it, the page becomes a notification too. Seven JVM tests (`CallRouteTest.kt`) cover the table,
-including all 32 combinations against "something is shown whenever something can be". They run with
-`./gradlew :brigade-call:testDebugUnitTest` in the prebuilt project, not in `vp run -r test` (see open
-questions). On iOS, a `reportNewIncomingCall` error posts a time-sensitive notification with the decrypted page.
+fails to create it, or creates none, or the ringing notification cannot be posted, the page becomes a
+notification too. `call-route.test.ts` covers the table in CI, including all 32 combinations against "something is
+shown whenever something can be" and "rings only when all three allow it"; the JVM tests (`CallRouteTest.kt`)
+still run by hand with `./gradlew :brigade-call:testDebugUnitTest`. A Gradle job in CI was not added: it needs a
+prebuild, a JDK and the Android SDK for a five-line function. The side effects around the decision (Telecom's
+failure callbacks, a refused notification, the iOS fallback notification) stay untested in CI; they are checked
+on the emulator below and on phones. On iOS, a `reportNewIncomingCall` error posts a time-sensitive notification with the decrypted page.
 The step-1 alert push (RFC 0006) is sent before any call, so a phone that cannot ring has already been notified.
 
 ### Reading the incident: platform text-to-speech
@@ -121,8 +135,11 @@ and stops delivering VoIP pushes after repeated failures. So:
   `aps`, no flag, nothing the app could read as "do not ring".
 - The app reports first and decrypts second. A push it cannot decrypt still rings as "Brigade on-call" with the
   fallback text; a push without a valid call id rings under a new UUID.
-- Repeats of one page share the call id, and CallKit's `callUUIDAlreadyExists` is treated as success, so a retry
-  never rings twice.
+- Repeats of one page share the call id, and **every push is reported**, repeats included (`voipPushPlan` in
+  `src/lib/call-route.ts`, tested in CI; `CallCenter` mirrors it). A repeat while the call rings or is answered
+  gets CallKit's `callUUIDAlreadyExists`, treated as success, so it never rings twice. A repeat after the call
+  ended (remembered for 5 minutes, the longest a call push lives) is reported and ended at once
+  (`answeredElsewhere`). Only the development `simulate` path skips CallKit for a known id.
 - A call lives 60 seconds by default. A phone that comes online later should get the stored alert push, not a call
   for a page that may already be acknowledged.
 
@@ -132,7 +149,9 @@ The App ID needs the VoIP Services capability. The team's APNs token key (`.p8`)
 ### How FCM will drive Android
 
 FCM is not set up. The instance will send a high-priority FCM data message (`priority: high`, no `notification`
-block, so the app's code always runs) with `{ kind: "call", id, enc, ct }` through the relay. The app's
+block, so the app's code always runs) with `{ kind: "call", id, enc, ct }` through the relay. That differs from the
+APNs body (`{ call: { id }, brigade: <envelope> }`) on purpose: FCM data values are flat strings, so the envelope's
+fields are spread out and the kind is explicit, where APNs carries JSON and the push type already says "call". The app's
 `FirebaseMessagingService.onMessageReceived` decrypts it with the device key (Tink's HPKE, the same suite as
 `packages/push`) and calls `Calls.ring`, the function the debug broadcast calls today. A high-priority message
 lets the app start the call from the background; FCM may deprioritize an app whose high-priority messages do not
@@ -185,8 +204,29 @@ and the TTS callbacks are the evidence.
   alert: the provider token is accepted for the `.voip` topic, which says nothing yet about the App ID's VoIP
   capability (a real device token will).
 
-Not verified: decryption failing on a VoIP push (the code path is the same as the extension's, tested in S1),
-the CallKit-refused fallback notification, a VoIP push launching a terminated app.
+Not verified: the CallKit-refused fallback notification, a VoIP push launching a terminated app.
+
+### Re-run after the review fixes
+
+On 2026-10-25, after the fixes for an independent review (every VoIP push reported, the ack cleared on reopen,
+fallbacks when Telecom or the ringing notification fails, a maximum call length, the keypad ack kept for a
+late JavaScript):
+
+- **Android emulator**, PIN set, screen off: the broadcast rang over the keyguard (`IncomingCallActivity` above
+  `isKeyguardShowing=true`, Telecom `RINGING`, `brigade_calls` with `INSISTENT` and a full-screen intent). A
+  second broadcast with the same call id while it rang made no second Telecom call. Answer → `ACTIVE`, the call
+  screen over the keyguard, speech; "1 Acknowledge" → "Acknowledged", the confirmation spoken, hung up, keyguard
+  back. An answered call left alone hung up natively exactly 3 minutes after answering (`call ended:
+  timed_out`). With `USE_FULL_SCREEN_INTENT` denied the route was `notify` on `brigade_pages`, no Telecom call; a
+  second page while one rang also became a `notify`. The forced connection failure (`onCreateIncomingConnection`
+  with no call) could not be triggered from outside the app; it stays untested. A release build's merged manifest
+  has no `DebugCallReceiver`; the debug one does.
+- **The shard:** a second ack was `conflict`; resolving and reopening the incident and acking again was `ok`.
+- **iOS Simulator** (builds with Xcode 27 beta 6): three VoIP pushes with one call id straight to the APNs
+  sandbox (all `200`) gave `call reported`, then, after the Simulator ended the call, `repeat of an ended call
+  reported and ended` twice; two pushes sent at once with a new id gave `call reported` and `repeat reported`
+  (`callUUIDAlreadyExists`). The app was never terminated. Those pushes carried a dummy envelope: `voip push not
+  decrypted` each time, and each was still reported, so a push that cannot be decrypted still rings.
 
 ### Tests
 
@@ -196,9 +236,12 @@ the CallKit-refused fallback notification, a VoIP push launching a terminated ap
   minute, and every call the app could not ring for (no or bad UUID, not a page, try-once, over 5 minutes, a call id
   on an alert, an unknown kind) is a `400` that never reaches APNs.
 - `packages/push`: the incident id round-trips through the envelope.
+- `packages/schema` also: reopening clears the ack, client and server agree on it.
 - `apps/mobile`: the call session (the script in both languages, one ack for two presses, conflict as success,
-  retry after failure, no ack without an incident, hang up once), the plugin (Android strings from the catalog,
-  escaping, `voip` background mode), and the Kotlin route table (JVM, run by hand as above).
+  retry after failure, no ack without an incident, hang up once, a key pressed before JavaScript listened), the
+  paging decisions (`call-route.test.ts`: the Android route table, every VoIP push reported, the maximum call
+  length, each checked against the Kotlin and Swift copies), the plugin (Android strings from the catalog,
+  escaping, `voip` background mode), and the Kotlin route table again (JVM, run by hand as above).
 
 ### Building locally
 
@@ -268,8 +311,11 @@ On an Android phone (needs FCM, or the debug broadcast over USB):
   a few seconds post the fallback notification? Needs a device to see which cases look like that.
 - **Over the lock screen.** On Android, the React Native app is shown over the keyguard while the call lasts, with
   Back disabled; a native in-call activity would expose less. Decide before release.
-- **Kotlin tests in CI.** `CallRouteTest` needs a prebuilt Android project; CI runs `vp run -r test` only. Add a CI
-  job that prebuilds and runs the module's unit tests, or move the table into a shared spec both platforms test.
+- **Native tests in CI.** The decisions are tested in TypeScript and the native copies checked by text; a native
+  CI job (Gradle unit tests, a macOS runner for Swift) would test the native code itself. Worth it once the
+  module grows past a few decisions.
+- **Who may ack.** Any member with `incident:ack` can acknowledge, not only the page's targets; escalation runs
+  decide whether that stays.
 - **Ack over HTTPS.** RFC 0004 sends paging actions from notifications over plain HTTPS because iOS suspends
   sockets in the background. During a CallKit call the app runs, so the socket worked here; a keypad ack from a
   cold launch may need the HTTPS path.

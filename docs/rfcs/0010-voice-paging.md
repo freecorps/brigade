@@ -71,9 +71,13 @@ the fallback the bot keeps when the audio session cannot start.
 | Android: notifications off                                                    | Nothing can show; the route is `blocked` (report it, below) |
 | iOS: CallKit refuses the call                                                 | Time-sensitive notification with the decrypted page         |
 | iOS: the VoIP push cannot be decrypted                                        | Still rings, as "Brigade on-call" with the fallback text    |
+| Android: Telecom creates no connection, or the ringing notification fails     | The call ends; page notification on `brigade_pages`         |
 | Nobody answers in 60 s, or the call is declined                               | The call ends; escalation continues on its own timeout      |
 
-The Android decision is a pure function (`CallRoute.kt`) with JVM unit tests. The step-1 alert push (RFC 0006) is
+The Android decision and the iOS handling of repeated pushes are pure functions in
+`apps/mobile/src/lib/call-route.ts`, tested in CI; the Kotlin and Swift copies mirror them. Every VoIP push is
+reported to CallKit, repeats of a page included (a repeat after its call ended is reported and ended at once). An
+answered call hangs up natively after 3 minutes. The step-1 alert push (RFC 0006) is
 always sent before the call, so a phone whose call cannot ring has already been notified.
 
 ### Payload: nothing the app could ignore
@@ -88,6 +92,12 @@ an optional `incident` (the id the ack names).
 On Android the same payload will arrive as a high-priority FCM data message (`{ kind: "call", id, enc, ct }`); the
 app's `FirebaseMessagingService` decrypts it with Tink's HPKE and calls the same `Calls.ring` the spike's debug
 broadcast calls. FCM is not set up yet.
+
+### Left
+
+- Real phones (the write-up's list), the voice bot, and FCM.
+- Any member with `incident:ack` can acknowledge, not only the page's targets; escalation runs decide whether the
+  ack is limited to them.
 
 ## Where it sits in the escalation ladder
 

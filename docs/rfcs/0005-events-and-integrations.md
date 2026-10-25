@@ -4,7 +4,8 @@
 
 ## Domain events
 
-Every successful mutation emits one or more events with a CloudEvents-style envelope:
+Every successful mutation emits one or more events with a CloudEvents-style envelope (the one exception is a
+mutation declared `silent`, today only `monitor.report`'s routine refreshes; RFC 0004):
 
 ```ts
 interface BrigadeEvent<T = unknown> {

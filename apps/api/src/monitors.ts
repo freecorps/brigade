@@ -247,9 +247,12 @@ export class Monitoring {
         const config = JSON.stringify(checks);
         const last = pushes.get(region);
         if (!last && checks.length === 0) return;
+        // Quiet for longer than a refresh allows: `STALE_MS`, or a whole check interval plus a refresh for a
+        // monitor checked less often than that (an hourly check is not a stalled probe 15 minutes in).
         const stale = active.some((monitor) => {
           const check = monitor.checks.find((c) => c.source === region);
-          return now - (check?.at ?? monitor.restartedAt) > STALE_MS;
+          const window = Math.max(STALE_MS, monitor.intervalSeconds * 1000 + REPORT_EVERY_MS);
+          return now - (check?.at ?? monitor.restartedAt) > window;
         });
         if (stale) log("probe stalled", { region });
         if (last && last.config === config && now - last.at < REPUSH_MS && !stale) return;

@@ -105,7 +105,16 @@ export function MonitorsCard() {
       close();
       return true;
     }
-    const heartbeat = await newHeartbeat(window.location.origin, workspaceId, checked.args.id);
+    let heartbeat: Awaited<ReturnType<typeof newHeartbeat>>;
+    try {
+      heartbeat = await newHeartbeat(window.location.origin, workspaceId, checked.args.id);
+    } catch {
+      // No WebCrypto (an insecure context): say so, and keep the draft.
+      setRefused(
+        m.monitor_change_failed({ name: checked.args.name, reason: m.sync_error_internal() }),
+      );
+      return false;
+    }
     void createHeartbeat({ ...checked.args, tokenHash: heartbeat.tokenHash }).then((outcome) => {
       // A refused monitor's URL would never work: take it back.
       if (!report(checked.args.name)(outcome)) setPing(null);

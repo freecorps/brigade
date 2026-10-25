@@ -13,7 +13,13 @@ function propertyRegex(source: string): RegExp | undefined {
   }
 }
 
-type Properties = { hidden: RegExp; visible: RegExp; pictographic: RegExp; ideographic: RegExp };
+type Properties = {
+  hidden: RegExp;
+  visible: RegExp;
+  pictographic: RegExp;
+  ideographic: RegExp;
+  letter: RegExp;
+};
 
 function detectProperties(): Properties | undefined {
   const hidden = propertyRegex(
@@ -22,8 +28,9 @@ function detectProperties(): Properties | undefined {
   const visible = propertyRegex("^[\\p{L}\\p{N}\\p{S}\\p{P}]$");
   const pictographic = propertyRegex("^\\p{Extended_Pictographic}$");
   const ideographic = propertyRegex("^\\p{Ideographic}$");
-  return hidden && visible && pictographic && ideographic
-    ? { hidden, visible, pictographic, ideographic }
+  const letter = propertyRegex("^[\\p{L}\\p{M}]$");
+  return hidden && visible && pictographic && ideographic && letter
+    ? { hidden, visible, pictographic, ideographic, letter }
     : undefined;
 }
 
@@ -62,6 +69,7 @@ const SPACE = new Set([
 const BLANK = new Set([0x2800, 0x1d159, 0x115f, 0x1160, 0x3164, 0xffa0]);
 
 const ZWJ = 0x200d;
+const ZWNJ = 0x200c;
 const isSurrogate = (cp: number) => cp >= 0xd800 && cp <= 0xdfff;
 // Variation selectors. Only two kinds are ever accepted: text/emoji presentation (VS15, VS16) and the
 // ideographic ones (VS17-VS256, CJK glyph variants). VS1-VS14 select nothing in titles and are rejected.
@@ -100,8 +108,11 @@ const HIDDEN = TEXT_ERRORS.hidden;
 export type TextRules = {
   /** Whether the engine supports Unicode property escapes; false means the lenient fallback is in use. */
   readonly full: boolean;
-  /** Why `input` is not acceptable text, or undefined. Multi-line text may also hold `\n` and `\t`. */
-  problem(input: string, multiline: boolean): string | undefined;
+  /**
+   * Why `input` is not acceptable text, or undefined. Multi-line text may also hold `\n` and `\t`; with `joiners`
+   * (people's names), ZWNJ and ZWJ may also stand between two letters, as Persian, Arabic and Indic scripts need.
+   */
+  problem(input: string, multiline: boolean, joiners?: boolean): string | undefined;
   /** Whether `input` has at least one visible code point (a letter, number, symbol or punctuation). */
   hasVisible(input: string): boolean;
   /** `value` for an error message: hidden code points become U+FFFD, cut to `MAX_ECHO` (never mid-pair). */
@@ -122,7 +133,10 @@ export function createTextRules(properties: Properties | undefined): TextRules {
     (properties ? properties.visible.test(char) : !fallbackHidden(cp) && !isSurrogate(cp));
   const pictographic = (char: string) => properties?.pictographic.test(char) ?? false;
 
-  function problem(input: string, multiline: boolean): string | undefined {
+  const letter = (char: string | undefined) =>
+    char !== undefined && (properties?.letter.test(char) ?? false);
+
+  function problem(input: string, multiline: boolean, joiners = false): string | undefined {
     const chars = Array.from(input); // code points; an unpaired surrogate stays a single element
     // What the previous code point lets a selector, joiner or skin tone attach to.
     let after: "none" | "base" | "pictograph" | "ideograph" = "none";
@@ -145,6 +159,12 @@ export function createTextRules(properties: Properties | undefined): TextRules {
           ((isPresentationSelector(cp) && (after === "pictograph" || isKeycapBase(previous))) ||
             (isIdeographicSelector(cp) && after === "ideograph"));
         if (selects) continue;
+        // A joiner between two letters shapes them (Persian words need ZWNJ, Indic conjuncts ZWJ); anywhere else it
+        // hides text.
+        if (joiners && (cp === ZWNJ || cp === ZWJ) && letter(chars[i - 1]) && letter(chars[i + 1])) {
+          after = "none";
+          continue;
+        }
         if (cp === ZWJ) {
           const next = chars[i + 1];
           if (after !== "pictograph" || next === undefined || !pictographic(next)) return HIDDEN;

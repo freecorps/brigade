@@ -69,7 +69,8 @@ export type TimelineRow = {
  */
 export type MemberRow = {
   id: string; // the user id (usr_<ULID>)
-  name: string;
+  /** Null when their name in D1 is not one the shard can keep (`fitMemberName`): shown as unnamed. */
+  name: string | null;
   role: Role;
   updatedAt: number;
 };

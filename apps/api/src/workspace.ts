@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { Actor, ProbeRegion } from "@freecorps/brigade-schema";
+import { fitMemberName, type Actor, type ProbeRegion } from "@freecorps/brigade-schema";
 import {
   encode,
   parseClientMessage,
@@ -228,11 +228,14 @@ export class WorkspaceDO extends DurableObject<Env> {
 
   /**
    * Copies the member this socket acts as into the shard's member list (`member.sync`, RFC 0003), so roles can
-   * point at them and the dashboard can show their name. Skipped when the copy is current. A failure is logged and
-   * the socket still opens: the list is a cache of D1, refreshed on the member's next socket.
+   * point at them and the dashboard can show their name. The name is fitted first (trimmed, cut, or null when the
+   * shard cannot keep it: `fitMemberName`), so an odd name in D1 still lists the member, and the copy is skipped
+   * when that fitted value is current. A failure is logged and the socket still opens: the list is a cache of D1,
+   * refreshed on the member's next socket.
    */
-  private syncMember(actor: Actor, name: string): void {
+  private syncMember(actor: Actor, raw: string): void {
     try {
+      const name = fitMemberName(raw);
       const current = this.shard.store.get("members", actor.id);
       if (current && current.name === name && current.role === actor.role) return;
       const { result, changes } = this.shard.mutate({

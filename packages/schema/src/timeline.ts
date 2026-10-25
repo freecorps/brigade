@@ -3,7 +3,7 @@
 // view of the outbox: the outbox is server-only and drained, while clients need the entries live and optimistic.
 
 import type { MutationContext, MutationStore } from "./mutation.ts";
-import { defineQuery } from "./query.ts";
+import { defineQuery, prefixRange } from "./query.ts";
 import type { IncidentRow, TimelineEntry, TimelineRow } from "./tables.ts";
 import { v } from "./validate.ts";
 
@@ -38,6 +38,8 @@ export const incidentTimeline = defineQuery({
   args: v.object({ id: v.id("inc") }),
   permission: "incident:read",
   table: "timeline",
+  // Entry ids are `<incident id>:<seq>`, so one incident's entries are an id range: no scan of every incident's.
+  range: (args) => prefixRange(`${args.id}:`),
   filter: (row, args) => row.incidentId === args.id,
   sort: (a, b) => a.seq - b.seq,
 });

@@ -73,3 +73,19 @@ test("a transaction that throws undoes every write, including nested ones", () =
   });
   expect(store.scan("notes").map((row) => row.id)).toEqual(["a", "c"]);
 });
+
+test("range reads the ids from `from` up to, not including, `to`, in id order", () => {
+  const store = createMemoryStore<Tables>({
+    notes: ["inc_a;", "inc_a:2", "inc_a", "inc_a:10", "inc_b:1", "inc_a:1"].map((id) => ({
+      id,
+      text: "",
+      tags: [],
+    })),
+  });
+  expect(store.range("notes", "inc_a:", "inc_a;").map((row) => row.id)).toEqual([
+    "inc_a:1",
+    "inc_a:10",
+    "inc_a:2",
+  ]);
+  expect(store.range("notes", "x", "y")).toEqual([]);
+});

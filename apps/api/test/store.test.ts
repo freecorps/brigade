@@ -48,6 +48,32 @@ describe("SqlStore", () => {
     });
   });
 
+  test("range reads one id range off the primary key, like the memory store", async () => {
+    await withStore((store, storage) => {
+      for (const id of ["inc_a;", "inc_a:2", "inc_a", "inc_a:10", "inc_b:1", "inc_a:1"]) {
+        store.insert("incidents", incident(id));
+      }
+      expect(store.range("incidents", "inc_a:", "inc_a;").map((row) => row.id)).toEqual([
+        "inc_a:1",
+        "inc_a:10",
+        "inc_a:2",
+      ]);
+      expect(() => store.range("nope" as "incidents", "a", "b")).toThrow(StoreError);
+      // SQLite answers it from the (tbl, id) key: a search, not a scan of every row.
+      const plan = storage.sql
+        .exec<{ detail: string }>(
+          "explain query plan select data from store_rows where tbl = ? and id >= ? and id < ? order by id",
+          "incidents",
+          "inc_a:",
+          "inc_a;",
+        )
+        .toArray()
+        .map((row) => row.detail)
+        .join(" ");
+      expect(plan).toMatch(/SEARCH store_rows USING PRIMARY KEY \(tbl=\? AND id>\? AND id<\?\)/);
+    });
+  });
+
   test("never shares objects with callers", async () => {
     await withStore((store) => {
       const row = incident("inc_a");

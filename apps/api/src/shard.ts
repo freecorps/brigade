@@ -400,7 +400,7 @@ export class Shard {
 /**
  * What `changes` do to one subscription's result: rows in it now (entered or changed) are upserts, ids that were
  * in it and are not any more are deletes; undefined if it is untouched. Membership is `evaluateQuery`'s: a query
- * with a `key` holds only the row with that id, whatever its filter says. Throws if the query's code does.
+ * with a `key` holds only the row with that id, and one with a `range` only rows in it, whatever its filter says. Throws if the query's code does.
  */
 export function subscriptionChanges(
   query: AnyQuery,
@@ -408,9 +408,11 @@ export function subscriptionChanges(
   changes: readonly RowChange[],
 ): SubscriptionChanges | undefined {
   const key = query.key?.(args);
+  const range = query.range?.(args);
   const member = (row: WireRow | undefined) =>
     row !== undefined &&
     (key === undefined || row.id === key) &&
+    (range === undefined || (row.id >= range.from && row.id < range.to)) &&
     query.filter(row as BrigadeTables[typeof query.table], args);
   const patch: SubscriptionChanges = { upserts: [], deletes: [] };
   for (const change of changes) {

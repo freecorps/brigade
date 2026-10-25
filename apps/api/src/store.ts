@@ -115,6 +115,19 @@ export class SqlStore implements Store<BrigadeTables> {
     return rows.sort(byId);
   }
 
+  /** Reads off the `(tbl, id)` primary key, so only the range's rows. */
+  range<T extends TableName>(table: T, from: string, to: string): BrigadeTables[T][] {
+    const rows = this.exec<{ data: string }>(
+      "select data from store_rows where tbl = ? and id >= ? and id < ? order by id",
+      checked(table),
+      from,
+      to,
+    ).map((row) => JSON.parse(row.data) as BrigadeTables[T]);
+    // As in `scan`: SQLite's byte order and the memory store's code unit order agree on ASCII ids and bounds (the
+    // only ones queries use: prefixed ULIDs).
+    return rows.sort(byId);
+  }
+
   /** `transactionSync`; an error `fn` throws passes through as is, one from storage itself is a `StorageFailure`. */
   transaction<R>(fn: () => R): R {
     let thrown: { error: unknown } | undefined;

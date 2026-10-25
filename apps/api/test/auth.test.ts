@@ -2,10 +2,10 @@
 // through the Worker with the test D1 (migrations applied by test/apply-migrations.ts).
 import { env, exports } from "cloudflare:workers";
 import { createExecutionContext, runInDurableObject } from "cloudflare:test";
-import { isId, newId, type Actor } from "@freecorps/brigade-schema";
+import { isId, MEMBER_NAME_MAX, newId, type Actor } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, describe, expect, test } from "vite-plus/test";
-import { RATE_LIMIT, UNLIMITED_READS, WORKSPACE_LIMIT } from "../src/auth.ts";
+import { INVALID_NAME_CODE, RATE_LIMIT, UNLIMITED_READS, WORKSPACE_LIMIT } from "../src/auth.ts";
 import worker, { createWorkspace as postWorkspace, workerAuth } from "../src/index.ts";
 import type { SocketState } from "../src/workspace.ts";
 
@@ -74,7 +74,7 @@ async function createWorkspace(cookie: string, name = "Acme") {
 async function session(cookie: string) {
   const response = await api("/auth/get-session", { headers: { Cookie: cookie } });
   return (await response.json()) as {
-    user: { id: string; email: string };
+    user: { id: string; email: string; name: string };
     session: { activeOrganizationId: string | null };
   } | null;
 }
@@ -309,6 +309,40 @@ describe("Better Auth routes", () => {
       expect(new Set(statuses), path).toEqual(new Set([200]));
     }
   }, 30_000);
+
+  test("a name follows the member name rule at sign-up and on update-user, and is stored trimmed", async () => {
+    const cp = (...points: number[]) => String.fromCodePoint(...points);
+    // A Persian name with a ZWNJ between its parts is a name; a bidi override or a lone joiner is not.
+    const persian = `نسرین${cp(0x200c)}دخت`;
+    const nasrin = await signUp(`  ${persian} `, email("nasrin"));
+    expect((await session(nasrin.cookie))?.user).toMatchObject({ name: persian });
+    for (const name of [`Ana${cp(0x202e)}`, `${cp(0x200d)}Ana`, " ", "x".repeat(MEMBER_NAME_MAX + 1)]) {
+      const response = await api("/auth/sign-up/email", {
+        method: "POST",
+        body: JSON.stringify({ name, email: email("bad"), password: PASSWORD }),
+      });
+      expect(response.status, JSON.stringify(name)).toBe(400);
+      expect(await response.json()).toMatchObject({ code: INVALID_NAME_CODE });
+    }
+    const rename = (name: unknown) =>
+      api("/auth/update-user", {
+        method: "POST",
+        headers: { Cookie: nasrin.cookie },
+        body: JSON.stringify({ name }),
+      });
+    const refused = await rename(`Nasrin${cp(0x2067)}`);
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ code: INVALID_NAME_CODE });
+    expect((await rename(" Nasrin ")).status).toBe(200);
+    expect((await session(nasrin.cookie))?.user).toMatchObject({ name: "Nasrin" });
+    // Changing something else leaves the name alone.
+    const image = await api("/auth/update-user", {
+      method: "POST",
+      headers: { Cookie: nasrin.cookie },
+      body: JSON.stringify({ image: "https://example.com/n.png" }),
+    });
+    expect(image.status).toBe(200);
+  });
 
   test("a POST from another site is refused", async () => {
     const response = await api("/auth/sign-up/email", {
@@ -592,6 +626,31 @@ describe("GET /sync/:workspaceId: the actor", () => {
         (instance as unknown as { shard: { version(): number } }).shard.version(),
       ),
     ).toBe(version);
+  });
+
+  test("a name from before the name rule is fitted, or listed as unnamed, and not re-sent on every socket", async () => {
+    const cp = (...points: number[]) => String.fromCodePoint(...points);
+    const ana = await signUp("Ana");
+    const workspace = await createWorkspace(ana.cookie);
+    const members = async () => {
+      const socket = await connect(workspace.id, ana.cookie);
+      socket.send({ type: "subscribe", subId: "m", query: "members.all", args: {} });
+      return ((await socket.next()) as { rows?: { name: string | null }[] }).rows;
+    };
+    const setName = (name: string) =>
+      env.DB.prepare(`update "user" set name = ? where id = ?`).bind(name, ana.user.id).run();
+    const version = () =>
+      runInDurableObject(env.WORKSPACE.getByName(workspace.id), (instance) =>
+        (instance as unknown as { shard: { version(): number } }).shard.version(),
+      );
+
+    await setName(`  ${"a".repeat(MEMBER_NAME_MAX)}bcd `);
+    expect(await members()).toMatchObject([{ name: "a".repeat(MEMBER_NAME_MAX) }]);
+    await setName(`Ana${cp(0x202e)}`);
+    expect(await members()).toMatchObject([{ id: ana.user.id, name: null, role: "owner" }]);
+    const unnamed = await version();
+    await members();
+    expect(await version()).toBe(unnamed);
   });
 
   test("without a session and without the dev actor: 401", async () => {

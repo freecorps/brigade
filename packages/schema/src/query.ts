@@ -25,7 +25,23 @@ export type QueryDef<
   sort?(a: BrigadeTables[T], b: BrigadeTables[T]): number;
   /** Single-row queries: the id to read with `store.get` instead of scanning the table. */
   key?(args: Args): string;
+  /**
+   * Queries over an id prefix: the half-open id range (`from` <= id < `to`) to read with `store.range` instead of
+   * scanning the table. Rows outside it never belong to the result, whatever `filter` says.
+   */
+  range?(args: Args): IdRange;
 };
+
+export type IdRange = { from: string; to: string };
+
+/**
+ * The ids that start with `prefix`: from the prefix itself to the prefix with its last code unit raised by one
+ * (`inc_x:` to `inc_x;`), so a store reads them off its id order.
+ */
+export function prefixRange(prefix: string): IdRange {
+  const last = prefix.charCodeAt(prefix.length - 1);
+  return { from: prefix, to: prefix.slice(0, -1) + String.fromCharCode(last + 1) };
+}
 
 // `any` keeps every concrete query assignable to a registry entry (args are checked by its validator).
 export type AnyQuery = QueryDef<string, any, SyncedTable>;
@@ -45,6 +61,7 @@ export function defineQuery<
   filter(row: BrigadeTables[T], args: Infer<V>): boolean;
   sort?(a: BrigadeTables[T], b: BrigadeTables[T]): number;
   key?(args: Infer<V>): string;
+  range?(args: Infer<V>): IdRange;
 }): QueryDef<Name, Infer<V>, T> {
   // The type already excludes server-only tables; this also catches casts and plain JS callers.
   if (TABLES[def.table].serverOnly) {
@@ -59,7 +76,7 @@ export type QueryResult<R = unknown> =
   | { ok: false; error: { code: QueryErrorCode; message: string; issues?: Issue[] } };
 
 /**
- * Runs a query over its table, or reads one row when the query has a `key`. Throws for a server-only table, so a
+ * Runs a query over its table, reads one row when the query has a `key`, or an id range when it has a `range`. Throws for a server-only table, so a
  * query built without `defineQuery` still cannot read one (`runQuery` turns that into `internal`).
  */
 export function evaluateQuery<Args, T extends SyncedTable>(
@@ -77,6 +94,9 @@ export function evaluateQuery<Args, T extends SyncedTable>(
   if (query.key) {
     const row = store.get(query.table, query.key(args));
     candidates = row ? [row] : [];
+  } else if (query.range) {
+    const { from, to } = query.range(args);
+    candidates = store.range(query.table, from, to);
   } else {
     candidates = store.scan(query.table);
   }

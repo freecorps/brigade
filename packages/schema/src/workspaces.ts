@@ -6,11 +6,50 @@ import { ROLES } from "./access.ts";
 import { defineMutation, fail, ok, type DomainEvent } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
 import type { MemberRow, WorkspaceRow } from "./tables.ts";
+import { trimSpace } from "./text.ts";
 import { v } from "./validate.ts";
 
 export const WORKSPACE_NAME_MAX = 80;
-/** The longest member name the shard keeps; Better Auth's own limit is the dashboard's sign-up form. */
+/** The longest member name, in UTF-16 code units after trimming: what the API accepts and the shard keeps. */
 export const MEMBER_NAME_MAX = 100;
+
+/**
+ * A person's name: the title rules (no controls, bidi or other invisible characters) except that ZWNJ and ZWJ may
+ * join two letters, which Persian, Arabic and Indic names need. The API checks it at sign-up and on a name change.
+ */
+export const memberName = v.string({ min: 1, max: MEMBER_NAME_MAX, joiners: true });
+
+// Graphemes where the engine has them (Workers, browsers, Hermes), so a cut never splits an accent or an emoji.
+const graphemes =
+  typeof Intl !== "undefined" && "Segmenter" in Intl
+    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    : undefined;
+
+/**
+ * The name the shard keeps for a member whose D1 name may predate `memberName` (or skipped it): trimmed, cut to
+ * `MEMBER_NAME_MAX` at a grapheme, and checked. Null when even that is refused, so the member is still listed
+ * (and assignable) and the dashboard shows them as unnamed instead of not at all.
+ */
+export function fitMemberName(raw: string): string | null {
+  let name = trimSpace(raw);
+  if (name.length > MEMBER_NAME_MAX) {
+    const parts = graphemes
+      ? Array.from(graphemes.segment(name), (part) => part.segment)
+      : Array.from(name);
+    let cut = "";
+    for (const part of parts) {
+      if (cut.length + part.length > MEMBER_NAME_MAX) break;
+      cut += part;
+    }
+    // A joiner left at the end (ZWNJ, ZWJ) has nothing to join.
+    while (cut.endsWith(String.fromCharCode(0x200c)) || cut.endsWith(String.fromCharCode(0x200d))) {
+      cut = cut.slice(0, -1);
+    }
+    name = trimSpace(cut);
+  }
+  const result = memberName(name);
+  return result.ok ? result.value : null;
+}
 
 /** A workspace name as people type it; the API checks it with this before Better Auth stores it. */
 export const workspaceName = v.string({ min: 1, max: WORKSPACE_NAME_MAX });
@@ -60,7 +99,8 @@ export const syncMember = defineMutation({
   name: "member.sync",
   args: v.object({
     id: v.string({ min: 1, max: 64 }),
-    name: v.string({ min: 1, max: MEMBER_NAME_MAX }),
+    // Null: D1's name is not one the shard can keep (see `fitMemberName`).
+    name: v.nullable(memberName),
     role: v.picklist(ROLES),
   }),
   permission: "workspace:read",
@@ -80,9 +120,17 @@ export const syncMember = defineMutation({
   },
 });
 
-/** By name, then id (code point order, the same on every replica). */
+/** By name, unnamed members last, then id (code point order, the same on every replica). */
 const byName = (a: MemberRow, b: MemberRow) =>
-  (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  (a.name === b.name
+    ? 0
+    : a.name === null
+      ? 1
+      : b.name === null
+        ? -1
+        : a.name < b.name
+          ? -1
+          : 1) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /** The members the shard knows (see `member.sync`). */
 export const allMembers = defineQuery({

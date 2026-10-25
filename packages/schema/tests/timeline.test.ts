@@ -2,9 +2,13 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   createMemoryStore,
   evaluateQuery,
+  fitMemberName,
   incidentByNumber,
   incidentTimeline,
   allMembers,
+  MEMBER_NAME_MAX,
+  memberName,
+  prefixRange,
   mutations,
   newId,
   runMutation,
@@ -35,7 +39,7 @@ const ctx = (
   server,
 });
 
-const member = (id: string, name: string, role: Role = "responder"): MemberRow => ({
+const member = (id: string, name: string | null, role: Role = "responder"): MemberRow => ({
   id,
   name,
   role,
@@ -131,6 +135,28 @@ describe("timeline", () => {
     const entries = evaluateQuery(incidentTimeline, { id: ID }, store);
     expect(entries.map((entry) => entry.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
     expect(entries.every((entry) => entry.incidentId === ID)).toBe(true);
+  });
+
+  test("the query reads the incident's id range, not the whole table", () => {
+    const store = storeWith([legacy(), legacy({ id: OTHER, number: 8 })]);
+    run(store, "incident.postUpdate", { id: ID, body: "Mine" });
+    run(store, "incident.postUpdate", { id: OTHER, body: "Elsewhere" });
+    expect(prefixRange(`${ID}:`)).toEqual({ from: `${ID}:`, to: `${ID};` });
+    let scanned = 0;
+    const counting = {
+      ...store,
+      scan: ((table) => {
+        scanned++;
+        return store.scan(table);
+      }) as typeof store.scan,
+    };
+    expect(evaluateQuery(incidentTimeline, { id: ID }, counting).map((row) => row.id)).toEqual([
+      `${ID}:1`,
+    ]);
+    expect(scanned).toBe(0);
+    // An id outside the range is not the incident's, whatever its row says.
+    store.insert("timeline", { ...store.get("timeline", `${ID}:1`)!, id: `${OTHER}:9` });
+    expect(evaluateQuery(incidentTimeline, { id: ID }, store)).toHaveLength(1);
   });
 
   test("a client's optimistic entries match the server's", () => {
@@ -320,6 +346,19 @@ describe("member.sync", () => {
     expect(store.get("members", "usr_ana")).toMatchObject({ name: "Ana", role: "admin" });
   });
 
+  test("keeps names with joiners between letters, and an unnamed member as null", () => {
+    const store = storeWith([], []);
+    const zwnj = String.fromCodePoint(0x200c);
+    // A Persian name: "Mohammad-Mehdi" written with a ZWNJ between its two parts.
+    const persian = `محمد${zwnj}مهدی`;
+    expect(sync(store, { id: "usr_ana", name: persian, role: "responder" }).ok).toBe(true);
+    expect(store.get("members", "usr_ana")?.name).toBe(persian);
+    expect(sync(store, { id: "usr_ana", name: null, role: "responder" }, ctx("responder", T + 1)).ok).toBe(
+      true,
+    );
+    expect(store.get("members", "usr_ana")?.name).toBeNull();
+  });
+
   test("copies only the actor itself, with its own role", () => {
     const store = storeWith([], []);
     for (const args of [
@@ -354,6 +393,52 @@ describe("member.sync", () => {
   });
 });
 
+describe("member names", () => {
+  const cp = (...points: number[]) => String.fromCodePoint(...points);
+  const ZWNJ = cp(0x200c);
+  const ZWJ = cp(0x200d);
+
+  test("joiners may stand between letters, as scripts need them", () => {
+    // Persian with ZWNJ; Devanagari "ksha" with ZWJ after the virama (a mark), for the half form.
+    for (const name of [`نسرین${ZWNJ}دخت`, `क${cp(0x094d)}${ZWJ}ष`, "Ana Conceição", "José 🚒"]) {
+      expect(memberName(name), name).toEqual({ ok: true, value: name });
+    }
+  });
+
+  test("joiners anywhere else, bidi controls and other invisibles are refused", () => {
+    for (const name of [
+      `${ZWNJ}Ana`,
+      `Ana${ZWJ}`,
+      `Ana ${ZWNJ} Souza`,
+      `Ana${cp(0x202e)}Souza`, // right-to-left override
+      `Ana${cp(0x2067)}Souza`, // right-to-left isolate
+      `Ana${cp(0x200f)}`, // right-to-left mark
+      `Ana${cp(0x200b)}Souza`, // zero width space
+      `Ana${cp(0x2060)}Souza`, // word joiner
+      `Ana${cp(0xe0041)}`, // tag
+      "x".repeat(MEMBER_NAME_MAX + 1),
+    ]) {
+      expect(memberName(name).ok, JSON.stringify(name)).toBe(false);
+    }
+  });
+
+  test("fitMemberName trims, cuts at a grapheme, and gives null when nothing fits", () => {
+    expect(fitMemberName("  Ana  ")).toBe("Ana");
+    const long = `${"a".repeat(MEMBER_NAME_MAX - 1)}é${"b".repeat(20)}`;
+    expect(fitMemberName(long)).toBe(`${"a".repeat(MEMBER_NAME_MAX - 1)}é`);
+    // A family emoji (one grapheme, 11 code units) that would not fit whole is left out, not split.
+    const family = cp(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467);
+    const cut = fitMemberName(`${"a".repeat(MEMBER_NAME_MAX - 4)}${family}`);
+    expect(cut).toBe("a".repeat(MEMBER_NAME_MAX - 4));
+    // A joiner the cut leaves at the end (it belongs to the letter before it) is dropped.
+    const joined = `${"a".repeat(MEMBER_NAME_MAX - 1)}${ZWNJ}b`;
+    expect(fitMemberName(joined)).toBe("a".repeat(MEMBER_NAME_MAX - 1));
+    for (const name of ["", "   ", `Ana${cp(0x202e)}`, cp(0x200b)]) {
+      expect(fitMemberName(name), JSON.stringify(name)).toBeNull();
+    }
+  });
+});
+
 describe("queries", () => {
   test("incident.byNumber finds the numbered incident only", () => {
     const store = storeWith([legacy(), legacy({ id: OTHER, number: null })]);
@@ -370,12 +455,20 @@ describe("queries", () => {
   test("members.all is sorted by name, and every role reads it", () => {
     const store = storeWith(
       [],
-      [member("usr_z", "Zoe"), member("usr_a", "Ana"), member("usr_b", "Ana")],
+      [
+        member("usr_n", null),
+        member("usr_z", "Zoe"),
+        member("usr_m", null),
+        member("usr_a", "Ana"),
+        member("usr_b", "Ana"),
+      ],
     );
     expect(evaluateQuery(allMembers, {}, store).map((row) => row.id)).toEqual([
       "usr_a",
       "usr_b",
       "usr_z",
+      "usr_m",
+      "usr_n",
     ]);
     expect(runQuery(queries, "members.all", {}, store, "viewer").ok).toBe(true);
     expect(runQuery(queries, "incident.timeline", { id: ID }, store, "viewer").ok).toBe(true);

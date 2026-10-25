@@ -6,6 +6,7 @@
 // creates exactly what these options need, and prints the SQL for anything missing.
 
 import {
+  memberName,
   newId,
   roles,
   statement,
@@ -13,7 +14,7 @@ import {
   type RandomBytes,
 } from "@freecorps/brigade-schema";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { organization } from "better-auth/plugins";
 import { createAccessControl } from "better-auth/plugins/access";
 import { adminAc, defaultStatements, ownerAc } from "better-auth/plugins/organization/access";
@@ -106,6 +107,26 @@ export const UNLIMITED_READS = [
 ] as const;
 /** Workspaces one user may belong to; bounds `POST /workspaces` (each one also provisions a shard). */
 export const WORKSPACE_LIMIT = 10;
+/** Better Auth's routes that set a user's name. */
+export const NAME_PATHS = ["/sign-up/email", "/update-user"] as const;
+/** The error code when a name breaks `memberName`. */
+export const INVALID_NAME_CODE = "INVALID_NAME";
+
+/**
+ * Checks a name before Better Auth stores it, with the rule the shard's member list keeps names by (`memberName`:
+ * no bidi or other invisible characters, joiners only between letters, at most `MEMBER_NAME_MAX`), and stores it
+ * trimmed. Better Auth itself takes any string.
+ */
+const checkName = createAuthMiddleware(async (ctx) => {
+  if (!(NAME_PATHS as readonly string[]).includes(ctx.path)) return;
+  const body: unknown = ctx.body;
+  if (typeof body !== "object" || body === null || !("name" in body)) return;
+  const name = memberName(body.name, "name");
+  if (!name.ok) {
+    throw APIError.from("BAD_REQUEST", { code: INVALID_NAME_CODE, message: "Invalid name" });
+  }
+  return { context: { body: { ...body, name: name.value } } };
+});
 
 export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
   const random: RandomBytes = (length) => crypto.getRandomValues(new Uint8Array(length));
@@ -115,6 +136,7 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
     secret: bindings.secret,
     database: bindings.database,
     emailAndPassword: { enabled: true },
+    hooks: { before: checkName },
     // Off by default on Workers (Better Auth enables it only when NODE_ENV is "production"). The in-memory store
     // would count per isolate, so the counts live in D1.
     rateLimit: {

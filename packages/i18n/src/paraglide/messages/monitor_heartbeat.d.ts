@@ -13,6 +13,8 @@ export type Monitor_HeartbeatInputs = {
 * | "try" | "Try it from a terminal:" |
 * | "copy" | "Copy URL" |
 * | "copied" | "Copied" |
+* | "copy_key" | "Press Ctrl+C to copy it." |
+* | "copy_key_apple" | "Press ⌘C to copy it." |
 * | "close_prompt" | "Close without copying? The URL can't be shown again." |
 * | "close" | "Close anyway" |
 * | * | "Keep it open" |

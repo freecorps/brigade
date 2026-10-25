@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 // MonitorsCard mounted with react-dom against the reference shard server from packages/sync's tests: the keyboard
-// flow of the create form, the confirmed pause, and how a down, no-data or paused monitor reads.
+// flow of the create form, the confirmed pause, the heartbeat URL panel, and how a down, no-data or paused
+// monitor reads.
 import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
 import { newId, type Actor, type MonitorRow } from "@freecorps/brigade-schema";
 import { createSyncClient, type SyncClient } from "@freecorps/brigade-sync";
@@ -29,6 +30,7 @@ afterEach(() => {
     client?.close();
   });
   root = client = undefined;
+  Reflect.deleteProperty(navigator, "clipboard");
   document.body.innerHTML = "";
   localStorage.clear();
   void setI18nLocale("en");
@@ -358,4 +360,86 @@ test("a row that re-sorts keeps the focus of a button inside it", async () => {
   }
   expect(ids()).toEqual([moving.id, first.id]);
   expect(document.activeElement).toBe(pause);
+});
+
+/** Types into a controlled input the way React listens for it. */
+function setValue(input: HTMLInputElement, value: string) {
+  // The prototype's setter, with the input as receiver: React's own value tracker would hide an own-property set.
+  Reflect.set(HTMLInputElement.prototype, "value", value, input);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** A clipboard that resolves or refuses `writeText`, in place of the page's. */
+function clipboard(write: (text: string) => Promise<void>) {
+  const writes: string[] = [];
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: (text: string) => (writes.push(text), write(text)) },
+  });
+  return writes;
+}
+
+/** Creates a heartbeat monitor through the form; its panel shows the URL once. */
+async function createHeartbeat() {
+  const view = await mount();
+  await click(button("Add monitor"));
+  const kind = $$('input[type="radio"]').find((radio) => (radio as HTMLInputElement).value === "heartbeat");
+  await click(kind);
+  const name = $$("input").find(
+    (input) => document.querySelector(`label[for="${input.id}"]`)?.textContent === "Name",
+  ) as HTMLInputElement;
+  act(() => setValue(name, "Nightly backup"));
+  await click(button("Create monitor"));
+  // The secret is hashed with Web Crypto before the panel shows.
+  const readonly = () => document.querySelector<HTMLInputElement>("input[readonly]");
+  for (let tries = 0; !readonly() && tries < 50; tries++) {
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+  }
+  await view.flush();
+  const url = readonly()!;
+  expect(url?.value).toMatch(/\/heartbeat\//);
+  return { ...view, url };
+}
+
+test("the heartbeat URL panel focuses Copy, and closing before copying asks", async () => {
+  const writes = clipboard(async () => {});
+  const { url } = await createHeartbeat();
+  expect(document.activeElement).toBe(button("Copy URL"));
+  // Not one big live region: only the confirmation is announced.
+  expect(url.closest('[role="status"]')).toBeNull();
+
+  const dismiss = () => $$('button[aria-label="Dismiss"]')[0];
+  await click(dismiss());
+  expect(document.body.textContent).toContain("Close without copying? The URL can't be shown again.");
+  expect(document.activeElement).toBe(button("Keep it open"));
+  await click(button("Keep it open"));
+  expect(document.body.textContent).not.toContain("Close without copying?");
+
+  await click(button("Copy URL"));
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(writes).toEqual([url.value]);
+  expect(button("Copied")).toBeTruthy();
+  expect($$('[role="status"]').map((status) => status.textContent)).toContain("Copied");
+  // Copied: closing asks nothing.
+  await click(dismiss());
+  expect(document.body.textContent).not.toContain("Close without copying?");
+  expect(document.querySelector("input[readonly]")).toBeNull();
+});
+
+test("when the clipboard refuses, the URL is focused and selected, with the shortcut to copy it", async () => {
+  clipboard(() => Promise.reject(new DOMException("Denied", "NotAllowedError")));
+  const { url } = await createHeartbeat();
+  expect(document.body.textContent).not.toContain("to copy it");
+  await click(button("Copy URL"));
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(document.activeElement).toBe(url);
+  expect([url.selectionStart, url.selectionEnd]).toEqual([0, url.value.length]);
+  const hint = document.getElementById(url.getAttribute("aria-describedby") ?? "");
+  expect(hint?.textContent).toMatch(/^Press (Ctrl\+C|⌘C) to copy it\.$/);
+  expect(button("Copy URL")).toBeTruthy();
 });

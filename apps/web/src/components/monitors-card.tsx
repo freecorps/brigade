@@ -506,7 +506,10 @@ function PingUrl({
   onDismiss: () => void;
 }) {
   const textId = useId();
+  const hintId = useId();
   const [copied, setCopied] = useState(false);
+  /** Set when the clipboard refused: the URL is selected for a manual copy, and the shortcut shown. */
+  const [manual, setManual] = useState(false);
   const [asking, setAsking] = useState(false);
   const copyRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -519,17 +522,18 @@ function PingUrl({
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
+      setManual(false);
       setAsking(false);
     } catch {
-      // No clipboard (an insecure origin, a denied permission): select it for a manual copy instead.
+      // No clipboard (an insecure origin, a denied permission): select it for a manual copy instead. Focus
+      // first, or the selection is not the one the shortcut copies.
+      setManual(true);
+      inputRef.current?.focus();
       inputRef.current?.select();
     }
   };
   return (
-    <div
-      role="status"
-      className="flex flex-col gap-3 rounded-md border border-primary/40 bg-primary/5 p-3 text-sm"
-    >
+    <div className="flex flex-col gap-3 rounded-md border border-primary/40 bg-primary/5 p-3 text-sm">
       <div className="flex items-start gap-3">
         <div id={textId} className="flex min-w-0 flex-1 flex-col gap-1">
           <p className="font-semibold">{m.monitor_heartbeat({ part: "once", interval: "" })}</p>
@@ -552,6 +556,7 @@ function PingUrl({
           readOnly
           value={url}
           aria-labelledby={textId}
+          aria-describedby={manual ? hintId : undefined}
           onFocus={(event) => event.currentTarget.select()}
           className="h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 font-mono text-base outline-none focus-visible:ring-3 focus-visible:ring-ring sm:text-sm"
         />
@@ -560,6 +565,15 @@ function PingUrl({
           {m.monitor_heartbeat({ part: copied ? "copied" : "copy", interval: "" })}
         </Button>
       </div>
+      {/* Only the confirmation is announced; the panel itself is read when focus lands on Copy. */}
+      <span role="status" className="sr-only">
+        {copied ? m.monitor_heartbeat({ part: "copied", interval: "" }) : ""}
+      </span>
+      {manual ? (
+        <p id={hintId} className="-mt-1 text-muted-foreground">
+          {m.monitor_heartbeat({ part: isApple() ? "copy_key_apple" : "copy_key", interval: "" })}
+        </p>
+      ) : null}
       <div className="flex flex-col gap-1">
         <p className="text-muted-foreground">
           {m.monitor_heartbeat({ part: "try", interval: "" })}
@@ -585,6 +599,11 @@ function PingUrl({
       ) : null}
     </div>
   );
+}
+
+/** Whether the copy shortcut is ⌘C rather than Ctrl+C. */
+function isApple(): boolean {
+  return typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
 }
 
 /**

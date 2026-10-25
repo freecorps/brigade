@@ -416,6 +416,8 @@
         "part=try": "Teste no terminal:",
         "part=copy": "Copiar URL",
         "part=copied": "Copiada",
+        "part=copy_key": "Pressione Ctrl+C para copiar.",
+        "part=copy_key_apple": "Pressione ⌘C para copiar.",
         "part=close_prompt": "Fechar sem copiar? A URL não pode ser mostrada de novo.",
         "part=close": "Fechar mesmo assim",
         "part=*": "Manter aberta"

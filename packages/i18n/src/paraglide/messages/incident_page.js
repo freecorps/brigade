@@ -27,9 +27,14 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "no_members" | "Teammates show up here once they have opened Brigade." |
 * | "you" | "You" |
 * | "you_object" | "you" |
-* | "monitors" | "Monitors" |
+* | "monitors" | "A monitor" |
 * | "teammate" | "A teammate" |
 * | "read_only" | "Viewers follow the incident; responders and admins change it." |
+* | "not_found_title" | "Incident not found" |
+* | "load_failed_title" | "Couldn't load the incident" |
+* | "unnamed" | "Unnamed member" |
+* | "show_more" | "Show more" |
+* | "show_less" | "Show less" |
 * | * | "Incident" |
 *
 * @param {Incident_PageInputs} inputs
@@ -56,9 +61,14 @@ export const incident_page = /** @type {((inputs: Incident_PageInputs, options?:
 		if (i?.part === "no_members") return /** @type {LocalizedString} */ (`As pessoas do time aparecem aqui depois de abrirem o Brigade.`);
 		if (i?.part === "you") return /** @type {LocalizedString} */ (`Você`);
 		if (i?.part === "you_object") return /** @type {LocalizedString} */ (`você`);
-		if (i?.part === "monitors") return /** @type {LocalizedString} */ (`Monitores`);
+		if (i?.part === "monitors") return /** @type {LocalizedString} */ (`Um monitor`);
 		if (i?.part === "teammate") return /** @type {LocalizedString} */ (`Alguém do time`);
 		if (i?.part === "read_only") return /** @type {LocalizedString} */ (`Leitores acompanham o incidente; respondedores e admins o alteram.`);
+		if (i?.part === "not_found_title") return /** @type {LocalizedString} */ (`Incidente não encontrado`);
+		if (i?.part === "load_failed_title") return /** @type {LocalizedString} */ (`Não foi possível carregar o incidente`);
+		if (i?.part === "unnamed") return /** @type {LocalizedString} */ (`Membro sem nome`);
+		if (i?.part === "show_more") return /** @type {LocalizedString} */ (`Mostrar mais`);
+		if (i?.part === "show_less") return /** @type {LocalizedString} */ (`Mostrar menos`);
 		return /** @type {LocalizedString} */ (`Incidente`)
 	}
 	{
@@ -79,9 +89,14 @@ export const incident_page = /** @type {((inputs: Incident_PageInputs, options?:
 		if (i?.part === "no_members") return /** @type {LocalizedString} */ (`Teammates show up here once they have opened Brigade.`);
 		if (i?.part === "you") return /** @type {LocalizedString} */ (`You`);
 		if (i?.part === "you_object") return /** @type {LocalizedString} */ (`you`);
-		if (i?.part === "monitors") return /** @type {LocalizedString} */ (`Monitors`);
+		if (i?.part === "monitors") return /** @type {LocalizedString} */ (`A monitor`);
 		if (i?.part === "teammate") return /** @type {LocalizedString} */ (`A teammate`);
 		if (i?.part === "read_only") return /** @type {LocalizedString} */ (`Viewers follow the incident; responders and admins change it.`);
+		if (i?.part === "not_found_title") return /** @type {LocalizedString} */ (`Incident not found`);
+		if (i?.part === "load_failed_title") return /** @type {LocalizedString} */ (`Couldn't load the incident`);
+		if (i?.part === "unnamed") return /** @type {LocalizedString} */ (`Unnamed member`);
+		if (i?.part === "show_more") return /** @type {LocalizedString} */ (`Show more`);
+		if (i?.part === "show_less") return /** @type {LocalizedString} */ (`Show less`);
 		return /** @type {LocalizedString} */ (`Incident`)
 	}
 });

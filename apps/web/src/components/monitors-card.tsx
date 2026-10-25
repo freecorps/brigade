@@ -7,6 +7,7 @@ import {
   type MonitorRow,
 } from "@freecorps/brigade-schema";
 import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
+import { Link, useRouter } from "@tanstack/react-router";
 import { cn } from "cn";
 import {
   CheckIcon,
@@ -406,10 +407,31 @@ function MonitorItemSkeleton() {
   );
 }
 
-/** The incident an alerting monitor opened, by number once the shard has given it one. */
+const INCIDENT_LINK =
+  "inline-flex min-h-6 items-center rounded-sm text-sm font-medium whitespace-nowrap text-primary underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring";
+
+/**
+ * The incident an alerting monitor opened: its page once the shard has numbered it (`/incidents/<n>`), until then
+ * its row in the incident list.
+ */
 function IncidentLink({ id }: { id: string }) {
   const { rows } = useQuery("incident.byId", { id });
-  const number = formatIncidentNumber(rows[0]?.number ?? null);
+  const router = useRouter({ warn: false }) as ReturnType<typeof useRouter> | null;
+  const numbered = rows[0]?.number ?? null;
+  const number = formatIncidentNumber(numbered);
+  if (numbered !== null) {
+    const text = m.monitor_incident_link({ has: "yes", number: number ?? "" });
+    // A plain link where the card renders without a router (its own tests).
+    return router ? (
+      <Link to="/incidents/$number" params={{ number: String(numbered) }} className={INCIDENT_LINK}>
+        {text}
+      </Link>
+    ) : (
+      <a href={`/incidents/${numbered}`} className={INCIDENT_LINK}>
+        {text}
+      </a>
+    );
+  }
   return (
     <a
       href={`#incident-${id}`}
@@ -420,9 +442,9 @@ function IncidentLink({ id }: { id: string }) {
         target.scrollIntoView({ block: "center" });
         target.focus({ preventScroll: true });
       }}
-      className="inline-flex min-h-6 items-center rounded-sm text-sm font-medium whitespace-nowrap text-primary underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring"
+      className={INCIDENT_LINK}
     >
-      {m.monitor_incident_link({ has: number ? "yes" : "no", number: number ?? "" })}
+      {m.monitor_incident_link({ has: "no", number: "" })}
     </a>
   );
 }

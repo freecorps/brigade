@@ -102,7 +102,7 @@ export function noticeText(notice: Notice, place: NoticePlace): string {
   }
   // Made on the incident's own page, which says which incident: only the change.
   if (notice.kind === "update" || notice.kind === "role") {
-    const role = notice.role ? m.incident_role({ role: notice.role }) : "";
+    const role = notice.role ? m.incident_role({ role: notice.role, form: "sentence" }) : "";
     return m.incident_change_failed({ kind: notice.kind, role, reason });
   }
   // The order of number and title is the message's, not the code's.
@@ -176,4 +176,18 @@ export function checkDeclare(
 /** Whether the shard refused a declare for its title (give the text back), not for the clock. */
 export function titleRefused(notice: Notice | undefined): boolean {
   return notice?.kind === "declare" && notice.reason === "invalid_args";
+}
+
+let opened: number | null = null;
+
+/** Notes the incident whose page the list's title link opened, so the list can put focus back on it. */
+export function rememberOpened(number: number): void {
+  opened = number;
+}
+
+/** The incident `rememberOpened` noted, once: a later visit to the list starts at the top as usual. */
+export function takeOpened(): number | null {
+  const number = opened;
+  opened = null;
+  return number;
 }

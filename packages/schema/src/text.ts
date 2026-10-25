@@ -161,7 +161,12 @@ export function createTextRules(properties: Properties | undefined): TextRules {
         if (selects) continue;
         // A joiner between two letters shapes them (Persian words need ZWNJ, Indic conjuncts ZWJ); anywhere else it
         // hides text.
-        if (joiners && (cp === ZWNJ || cp === ZWJ) && letter(chars[i - 1]) && letter(chars[i + 1])) {
+        if (
+          joiners &&
+          (cp === ZWNJ || cp === ZWJ) &&
+          letter(chars[i - 1]) &&
+          letter(chars[i + 1])
+        ) {
           after = "none";
           continue;
         }

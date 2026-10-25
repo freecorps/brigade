@@ -316,7 +316,12 @@ describe("Better Auth routes", () => {
     const persian = `نسرین${cp(0x200c)}دخت`;
     const nasrin = await signUp(`  ${persian} `, email("nasrin"));
     expect((await session(nasrin.cookie))?.user).toMatchObject({ name: persian });
-    for (const name of [`Ana${cp(0x202e)}`, `${cp(0x200d)}Ana`, " ", "x".repeat(MEMBER_NAME_MAX + 1)]) {
+    for (const name of [
+      `Ana${cp(0x202e)}`,
+      `${cp(0x200d)}Ana`,
+      " ",
+      "x".repeat(MEMBER_NAME_MAX + 1),
+    ]) {
       const response = await api("/auth/sign-up/email", {
         method: "POST",
         body: JSON.stringify({ name, email: email("bad"), password: PASSWORD }),

@@ -122,15 +122,8 @@ export const syncMember = defineMutation({
 
 /** By name, unnamed members last, then id (code point order, the same on every replica). */
 const byName = (a: MemberRow, b: MemberRow) =>
-  (a.name === b.name
-    ? 0
-    : a.name === null
-      ? 1
-      : b.name === null
-        ? -1
-        : a.name < b.name
-          ? -1
-          : 1) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  (a.name === b.name ? 0 : a.name === null ? 1 : b.name === null ? -1 : a.name < b.name ? -1 : 1) ||
+  (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /** The members the shard knows (see `member.sync`). */
 export const allMembers = defineQuery({

@@ -3,12 +3,25 @@ import { UPDATE_BODY_MAX, type MemberRow, type TimelineRow } from "@freecorps/br
 import { afterEach, expect, test } from "vite-plus/test";
 import { parseIncidentNumber } from "../src/components/incident-detail";
 import { noticeText, type Notice } from "../src/lib/incidents";
-import { assignable, checkUpdate, entryText, people, personName } from "../src/lib/timeline";
+import {
+  assignable,
+  bodyParts,
+  checkUpdate,
+  entryText,
+  entryTime,
+  people,
+  personName,
+  updateLength,
+} from "../src/lib/timeline";
 
 afterEach(() => setLocale("en"));
 
 const ID = "inc_01M5PWGDG00000000000000001";
-const member = (id: string, name: string, role: MemberRow["role"] = "responder"): MemberRow => ({
+const member = (
+  id: string,
+  name: string | null,
+  role: MemberRow["role"] = "responder",
+): MemberRow => ({
   id,
   name,
   role,
@@ -22,8 +35,10 @@ test("people are named from the member list; the signed-in member is you; nobody
   expect(personName("usr_me", who)).toBe("You");
   expect(personName("usr_me", who, "object")).toBe("you");
   expect(personName("usr_bia", who)).toBe("Bia Lima");
-  expect(personName("sys_monitors", who)).toBe("Monitors");
+  expect(personName("sys_monitors", who)).toBe("A monitor");
   expect(personName("usr_gone", who)).toBe("A teammate");
+  // Listed, but with a name the shard could not keep.
+  expect(personName("usr_x", people("usr_me", [member("usr_x", null)]))).toBe("Unnamed member");
 });
 
 test("every kind of entry reads as a sentence, in English and Portuguese", async () => {
@@ -60,13 +75,13 @@ test("every kind of entry reads as a sentence, in English and Portuguese", async
   const english = entries.map((item) => entryText(item, who));
   expect(english).toEqual([
     "Bia Lima declared the incident as SEV1 Critical",
-    "Bia Lima moved it from Triage to Fixing",
+    "Bia Lima changed the status from Triage to Fixing",
     "Bia Lima changed the severity from SEV3 Medium to SEV2 High",
     "You acknowledged the page",
-    "Bia Lima made you Incident commander",
-    "Bia Lima removed you as Communications lead",
-    "Bia Lima took the Operations lead role",
-    "Bia Lima stepped down as Operations lead",
+    "Bia Lima made you incident commander",
+    "Bia Lima removed you as communications lead",
+    "Bia Lima took the operations lead role",
+    "Bia Lima stepped down as operations lead",
     "Bia Lima posted an update",
     "Checkout API recovered, so its alert resolved",
     "Bia Lima paused Checkout API, so its alert resolved",
@@ -75,7 +90,8 @@ test("every kind of entry reads as a sentence, in English and Portuguese", async
   await setLocale("pt-BR");
   const portuguese = entries.map((item) => entryText(item, who));
   expect(portuguese[0]).toBe("Bia Lima declarou o incidente como SEV1 Crítica");
-  expect(portuguese[4]).toBe("Bia Lima definiu você como Comandante do incidente");
+  expect(portuguese[1]).toBe("Bia Lima mudou o status de Triagem para Corrigindo");
+  expect(portuguese[4]).toBe("Bia Lima definiu você como comandante do incidente");
   // Every entry is worded in Portuguese, none falls back to English.
   for (const [index, text] of portuguese.entries())
     expect(text, String(index)).not.toBe(english[index]);
@@ -110,8 +126,46 @@ test("a refused update or role change says what failed", () => {
     "Couldn't post the update. You don't have permission to do that.",
   );
   expect(noticeText({ ...base, kind: "role", role: "operations" } as Notice, "row")).toMatch(
-    /^Couldn't change the Operations lead\. /,
+    /^Couldn't change the operations lead\. /,
   );
+});
+
+test("an update over the limit is too long, counted as the shard counts it", () => {
+  expect(checkUpdate(ID, "x".repeat(UPDATE_BODY_MAX + 1))).toEqual({ ok: false, reason: "long" });
+  // Pasted far past the limit: still "too long", not "invalid".
+  expect(checkUpdate(ID, "x".repeat(UPDATE_BODY_MAX * 3))).toEqual({ ok: false, reason: "long" });
+  // Surrounding space does not count.
+  expect(checkUpdate(ID, `  ${"x".repeat(UPDATE_BODY_MAX)}\n\n`).ok).toBe(true);
+  expect(updateLength(`  ${"x".repeat(10)}\n`)).toBe(10);
+});
+
+test("links in an update are found, without the punctuation that ends the sentence", () => {
+  expect(
+    bodyParts("See https://status.example.com/incidents/42. Also (http://example.org/a), done"),
+  ).toEqual([
+    { text: "See " },
+    { url: "https://status.example.com/incidents/42" },
+    { text: ". Also (" },
+    { url: "http://example.org/a" },
+    { text: "), done" },
+  ]);
+  expect(bodyParts("https://en.wikipedia.org/wiki/Mars_(planet)")).toEqual([
+    { url: "https://en.wikipedia.org/wiki/Mars_(planet)" },
+  ]);
+  // Not links: other schemes, a scheme alone, markup.
+  for (const text of ["javascript:alert(1)", "https://", "ftp://example.com", "<b>hi</b>"]) {
+    expect(bodyParts(text), text).toEqual([{ text }]);
+  }
+});
+
+test("timeline times: the clock and how long ago for a day, then the date", () => {
+  const now = Date.UTC(2026, 9, 25, 14, 11);
+  expect(entryTime(now - 6 * 60_000, now, "en", "UTC")).toBe("2:05 PM · 6 minutes ago");
+  expect(entryTime(now - 30_000, now, "en", "UTC")).toBe("2:10 PM · just now");
+  expect(entryTime(now - 25 * 60 * 60_000, now, "en", "UTC")).toBe("Oct 24, 2026, 1:11 PM");
+  expect(entryTime(now - 6 * 60_000, now, "pt-BR", "UTC")).toBe("14:05 · há 6 minutos");
+  // A clock a little ahead never says "in 3 seconds".
+  expect(entryTime(now + 3000, now, "en", "UTC")).toBe("2:11 PM · just now");
 });
 
 test("incident numbers in the URL", () => {

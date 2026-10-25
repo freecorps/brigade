@@ -186,10 +186,12 @@ describe("timeline", () => {
       kind: "update",
       body: "Theirs",
     });
-    expect(run(client, "incident.postUpdate", { id: ID, body: "Mine" }, ctx("responder", T, false)).ok).toBe(
-      true,
-    );
-    expect(evaluateQuery(incidentTimeline, { id: ID }, client).map((row) => row.seq)).toEqual([1, 2]);
+    expect(
+      run(client, "incident.postUpdate", { id: ID, body: "Mine" }, ctx("responder", T, false)).ok,
+    ).toBe(true);
+    expect(evaluateQuery(incidentTimeline, { id: ID }, client).map((row) => row.seq)).toEqual([
+      1, 2,
+    ]);
   });
 });
 
@@ -371,9 +373,9 @@ describe("member.sync", () => {
     const persian = `محمد${zwnj}مهدی`;
     expect(sync(store, { id: "usr_ana", name: persian, role: "responder" }).ok).toBe(true);
     expect(store.get("members", "usr_ana")?.name).toBe(persian);
-    expect(sync(store, { id: "usr_ana", name: null, role: "responder" }, ctx("responder", T + 1)).ok).toBe(
-      true,
-    );
+    expect(
+      sync(store, { id: "usr_ana", name: null, role: "responder" }, ctx("responder", T + 1)).ok,
+    ).toBe(true);
     expect(store.get("members", "usr_ana")?.name).toBeNull();
   });
 

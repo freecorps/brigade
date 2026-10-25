@@ -24,9 +24,14 @@ export type Incident_PageInputs = {
 * | "no_members" | "Teammates show up here once they have opened Brigade." |
 * | "you" | "You" |
 * | "you_object" | "you" |
-* | "monitors" | "Monitors" |
+* | "monitors" | "A monitor" |
 * | "teammate" | "A teammate" |
 * | "read_only" | "Viewers follow the incident; responders and admins change it." |
+* | "not_found_title" | "Incident not found" |
+* | "load_failed_title" | "Couldn't load the incident" |
+* | "unnamed" | "Unnamed member" |
+* | "show_more" | "Show more" |
+* | "show_less" | "Show less" |
 * | * | "Incident" |
 *
 * @param {Incident_PageInputs} inputs

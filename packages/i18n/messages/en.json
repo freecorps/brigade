@@ -211,6 +211,7 @@
   "sign_out": "Sign out",
   "session_loading": "Loading your workspace…",
   "auth_error_too_long": "Use at most {max} characters.",
+  "auth_name_invalid": "Remove invisible, control or bidi characters from the name.",
   "workspace_name_hint": "For example, Platform team.",
   "page_title": "{page} · Brigade",
   "page_title_sign_in": "Sign in",
@@ -456,21 +457,31 @@
         "part=no_members": "Teammates show up here once they have opened Brigade.",
         "part=you": "You",
         "part=you_object": "you",
-        "part=monitors": "Monitors",
+        "part=monitors": "A monitor",
         "part=teammate": "A teammate",
         "part=read_only": "Viewers follow the incident; responders and admins change it.",
+        "part=not_found_title": "Incident not found",
+        "part=load_failed_title": "Couldn't load the incident",
+        "part=unnamed": "Unnamed member",
+        "part=show_more": "Show more",
+        "part=show_less": "Show less",
         "part=*": "Incident"
       }
     }
   ],
+  "incident_update_length": "{count} of {max} characters",
+  "incident_update_announced": "{actor} posted an update: {body}",
   "incident_role": [
     {
-      "declarations": ["input role"],
-      "selectors": ["role"],
+      "declarations": ["input role", "input form"],
+      "selectors": ["role", "form"],
       "match": {
-        "role=commander": "Incident commander",
-        "role=communications": "Communications lead",
-        "role=*": "Operations lead"
+        "role=commander, form=sentence": "incident commander",
+        "role=communications, form=sentence": "communications lead",
+        "role=operations, form=sentence": "operations lead",
+        "role=commander, form=*": "Incident commander",
+        "role=communications, form=*": "Communications lead",
+        "role=*, form=*": "Operations lead"
       }
     }
   ],
@@ -480,7 +491,7 @@
       "selectors": ["kind"],
       "match": {
         "kind=declared": "{actor} declared the incident as {a}",
-        "kind=status_changed": "{actor} moved it from {a} to {b}",
+        "kind=status_changed": "{actor} changed the status from {a} to {b}",
         "kind=severity_changed": "{actor} changed the severity from {a} to {b}",
         "kind=acknowledged": "{actor} acknowledged the page",
         "kind=role_assigned": "{actor} made {b} {a}",

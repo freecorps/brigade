@@ -22,7 +22,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { formatAge, nextStatuses } from "@/lib/incidents";
+import { formatAge, nextStatuses, rememberOpened } from "@/lib/incidents";
 
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -40,6 +40,7 @@ export function IncidentItem({
   locale,
   now,
   notices,
+  editable = true,
   onStatus,
   onSeverity,
 }: {
@@ -51,6 +52,8 @@ export function IncidentItem({
   now: number;
   /** Refused changes to this incident, shown in the row so nothing above the list moves. */
   notices: ReactNode;
+  /** False for viewers: the badges are shown, not menus. */
+  editable?: boolean;
   onStatus: (row: IncidentRow, next: IncidentStatus) => void;
   onSeverity: (row: IncidentRow, next: Severity) => void;
 }) {
@@ -116,6 +119,7 @@ export function IncidentItem({
           <SeverityMenu
             severity={row.severity}
             pending={pending.severity}
+            disabled={!editable}
             onChange={(next) => onSeverity(row, next)}
           />
         </div>
@@ -124,6 +128,7 @@ export function IncidentItem({
             status={row.status}
             pending={pending.status}
             trigger={row.id}
+            disabled={!editable}
             onChange={(next) => onStatus(row, next)}
           />
         </div>
@@ -133,30 +138,40 @@ export function IncidentItem({
   );
 }
 
+// Always underlined (lightly), so the title reads as a link without a pointer to hover with.
 const TITLE_LINK =
-  "rounded-sm underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring";
+  "rounded-sm underline decoration-muted-foreground/50 underline-offset-4 outline-none hover:decoration-current focus-visible:ring-3 focus-visible:ring-ring";
 
 /**
  * The title as a link to the incident's page. A client-side navigation inside the app; a plain link where the list
- * renders without a router (the card's own tests).
+ * renders without a router (the card's own tests). Opening it remembers the incident, so coming back to the list
+ * puts focus on this link again.
  */
 function IncidentTitleLink({ number, title }: { number: number; title: string }) {
   const router = useRouter({ warn: false }) as ReturnType<typeof useRouter> | null;
+  const props = {
+    className: TITLE_LINK,
+    "data-incident-link": number,
+    onClick: () => rememberOpened(number),
+  };
   if (!router) {
     return (
-      <a href={`/incidents/${number}`} className={TITLE_LINK}>
+      <a href={`/incidents/${number}`} {...props}>
         {title}
       </a>
     );
   }
   return (
-    <Link to="/incidents/$number" params={{ number: String(number) }} className={TITLE_LINK}>
+    <Link to="/incidents/$number" params={{ number: String(number) }} {...props}>
       {title}
     </Link>
   );
 }
 
-/** The severity badge as a menu trigger; the dashed outline marks a change the shard has not confirmed. */
+/**
+ * The severity badge as a menu trigger; the dashed outline marks a change the shard has not confirmed. `disabled`
+ * (a viewer): just the badge.
+ */
 export function SeverityMenu({
   severity,
   pending,
@@ -168,10 +183,18 @@ export function SeverityMenu({
   disabled?: boolean;
   onChange: (next: Severity) => void;
 }) {
+  // Someone who may not change it (a viewer) gets the badge, not a control that does nothing.
+  if (disabled) {
+    return (
+      <span className="inline-flex min-h-11 items-center px-1.5">
+        <span className="sr-only">{m.incident_severity_label()}: </span>
+        <SeverityBadge severity={severity} />
+      </span>
+    );
+  }
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        disabled={disabled}
         render={
           <Button
             variant="ghost"
@@ -208,7 +231,10 @@ export function SeverityMenu({
   );
 }
 
-/** The status badge as a menu trigger: the current status, then only the moves the lifecycle allows. */
+/**
+ * The status badge as a menu trigger: the current status, then only the moves the lifecycle allows. `disabled` (a
+ * viewer): just the badge.
+ */
 export function StatusMenu({
   status,
   pending,
@@ -223,11 +249,18 @@ export function StatusMenu({
   disabled?: boolean;
   onChange: (next: IncidentStatus) => void;
 }) {
+  if (disabled) {
+    return (
+      <span className="inline-flex min-h-11 items-center px-1.5">
+        <span className="sr-only">{m.incident_status_label()}: </span>
+        <StatusBadge status={status} />
+      </span>
+    );
+  }
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         data-status-trigger={trigger}
-        disabled={disabled}
         render={
           <Button
             variant="ghost"

@@ -1,15 +1,19 @@
 export type LocalizedString = import('../runtime.js').LocalizedString;
 export type Incident_RoleInputs = {
     role: NonNullable<unknown>;
+    form: NonNullable<unknown>;
 };
 /** @typedef {import('../runtime.js').LocalizedString} LocalizedString */
-/** @typedef {{ role: NonNullable<unknown> }} Incident_RoleInputs */
+/** @typedef {{ role: NonNullable<unknown>, form: NonNullable<unknown> }} Incident_RoleInputs */
 /**
-* | role | output |
-* | --- | --- |
-* | "commander" | "Incident commander" |
-* | "communications" | "Communications lead" |
-* | * | "Operations lead" |
+* | role | form | output |
+* | --- | --- | --- |
+* | "commander" | "sentence" | "incident commander" |
+* | "communications" | "sentence" | "communications lead" |
+* | "operations" | "sentence" | "operations lead" |
+* | "commander" | * | "Incident commander" |
+* | "communications" | * | "Communications lead" |
+* | * | * | "Operations lead" |
 *
 * @param {Incident_RoleInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

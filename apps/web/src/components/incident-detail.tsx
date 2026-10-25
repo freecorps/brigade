@@ -1,4 +1,4 @@
-import { formatDateTime, m, type Locale } from "@freecorps/brigade-i18n";
+import { formatDateTime, formatNumber, m, type Locale } from "@freecorps/brigade-i18n";
 import {
   can,
   formatIncidentNumber,
@@ -30,10 +30,20 @@ import {
   XIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import { STATUS_ICONS } from "@/components/incident-badges";
 import { SeverityMenu, StatusMenu } from "@/components/incident-item";
-import { useNow } from "@/components/incidents-card";
+import { ANNOUNCE_MS, useNow } from "@/components/incidents-card";
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
@@ -52,21 +62,29 @@ import {
   formatAge,
   noticeFor,
   noticeText,
+  queryErrorReason,
   type Notice,
   type NoticeTarget,
 } from "@/lib/incidents";
 import { usePageTitle } from "@/lib/page-title";
 import {
   assignable,
+  bodyParts,
   checkUpdate,
   entryText,
+  entryTime,
   people,
   personName,
+  UPDATE_COUNT_FROM,
+  updateLength,
   type People,
+  type UpdateProblem,
 } from "@/lib/timeline";
 
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const MAX_NOTICES = 5;
+/** Characters of another member's update read out when it arrives; the rest is on the timeline. */
+const ANNOUNCE_CHARS = 280;
 
 /** `/incidents/12` → 12; anything else (zero, signs, leading zeros, too long) is no incident. */
 export function parseIncidentNumber(raw: string): number | null {
@@ -86,10 +104,11 @@ export function IncidentPage({ number }: { number: number | null }) {
 }
 
 function ByNumber({ number }: { number: number }) {
-  const { rows, status } = useQuery("incident.byNumber", { number });
+  const { rows, status, error } = useQuery("incident.byNumber", { number });
   const row = rows[0];
   if (row) return <Incident row={row} />;
-  if (status === "ready" || status === "error") return <NotFound />;
+  if (status === "error") return <LoadFailed code={error?.code} />;
+  if (status === "ready") return <NotFound />;
   return <Loading />;
 }
 
@@ -121,12 +140,30 @@ function Loading() {
 }
 
 function NotFound() {
-  usePageTitle(m.incident_page({ part: "*" }));
+  usePageTitle(m.incident_page({ part: "not_found_title" }));
+  return (
+    <Problem
+      title={m.incident_page({ part: "not_found_title" })}
+      text={m.incident_page({ part: "not_found" })}
+    />
+  );
+}
+
+/** The shard refused the query or failed: not the same as there being no such incident. */
+function LoadFailed({ code }: { code: string | undefined }) {
+  usePageTitle(m.incident_page({ part: "load_failed_title" }));
+  return (
+    <Problem title={m.incident_page({ part: "load_failed_title" })} text={queryErrorReason(code)} />
+  );
+}
+
+function Problem({ title, text }: { title: string; text: string }) {
   return (
     <Shell>
+      <h1 className="text-2xl font-semibold text-balance">{title}</h1>
       <p className="flex items-start gap-3 rounded-md bg-muted p-4 text-sm font-medium">
         <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-        {m.incident_page({ part: "not_found" })}
+        {text}
       </p>
     </Shell>
   );
@@ -244,9 +281,28 @@ function Incident({ row }: { row: IncidentRow }) {
         )}
       </header>
 
-      {/* Phones: roles above the timeline (short, and what responders look for first); from md a side column. */}
+      {/* The timeline comes first in the page (and in tab order), the roles beside it from md. Phones show the roles
+          above it (short, and what responders look for first); keyboards are rare there. */}
       <div className="grid items-start gap-6 md:grid-cols-[minmax(0,1fr)_--spacing(80)]">
-        <Card aria-labelledby="roles-title" className="md:order-2">
+        <Card aria-labelledby="timeline-title">
+          <CardTitle id="timeline-title" className="px-4 sm:px-6">
+            {m.incident_page({ part: "timeline" })}
+          </CardTitle>
+          <CardContent className="flex flex-col gap-5">
+            {editable ? (
+              <UpdateForm
+                incidentId={row.id}
+                locale={locale}
+                pending={busy.has("update")}
+                onPost={onPost}
+              />
+            ) : null}
+            {noticesFor(["update"])}
+            <Timeline incidentId={row.id} who={who} locale={locale} now={now} />
+          </CardContent>
+        </Card>
+
+        <Card aria-labelledby="roles-title" className="max-md:order-first">
           <CardTitle id="roles-title" className="px-4 sm:px-6">
             {m.incident_page({ part: "roles" })}
           </CardTitle>
@@ -273,25 +329,15 @@ function Incident({ row }: { row: IncidentRow }) {
             {noticesFor(["role"])}
           </CardContent>
         </Card>
-
-        <Card aria-labelledby="timeline-title" className="md:order-1">
-          <CardTitle id="timeline-title" className="px-4 sm:px-6">
-            {m.incident_page({ part: "timeline" })}
-          </CardTitle>
-          <CardContent className="flex flex-col gap-5">
-            {editable ? (
-              <UpdateForm incidentId={row.id} pending={busy.has("update")} onPost={onPost} />
-            ) : null}
-            {noticesFor(["update"])}
-            <Timeline incidentId={row.id} who={who} locale={locale} now={now} />
-          </CardContent>
-        </Card>
       </div>
     </Shell>
   );
 }
 
-/** A role, who holds it, and (for those who may change it) a menu of the members who may hold it. */
+/**
+ * A role, who holds it, and (for those who may change it) a menu of the members who may hold it. Viewers get the
+ * name as text. The trigger is named by the role's label and the holder, so the role is read once.
+ */
 function RoleRow({
   role,
   holder,
@@ -309,40 +355,58 @@ function RoleRow({
   editable: boolean;
   onAssign: (role: IncidentRole, userId: string | null) => void;
 }) {
-  const label = m.incident_role({ role });
+  const labelId = useId();
+  const nameId = useId();
+  const label = m.incident_role({ role, form: "title" });
   const name = holder === null ? m.incident_page({ part: "nobody" }) : personName(holder, who);
+  const nameClass = cn(
+    "min-w-0 [overflow-wrap:anywhere]",
+    holder === null ? "text-muted-foreground" : "font-medium",
+  );
+  if (!editable) {
+    return (
+      <li className="flex flex-col gap-0.5">
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        <span className="flex items-start gap-2 py-1.5 text-sm">
+          <UserRoundIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <span className={nameClass}>{name}</span>
+        </span>
+      </li>
+    );
+  }
   // The holder stays listed even if the shard no longer counts them as assignable (a viewer now).
   const options =
     holder === null || members.some((option) => option.id === holder)
       ? members
       : [...members, { id: holder, name, role: "viewer" as const, updatedAt: 0 }];
   return (
-    <li className="flex flex-col gap-0.5">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+    // gap-2: the trigger's focus ring (3px past a 2px offset) clears the label.
+    <li className="flex flex-col gap-2">
+      <span id={labelId} className="text-xs font-medium text-muted-foreground">
+        {label}
+      </span>
       <DropdownMenu>
         <DropdownMenuTrigger
-          disabled={!editable}
+          aria-labelledby={`${labelId} ${nameId}`}
           render={
+            // whitespace-normal: a long name wraps inside the trigger instead of pushing the chevron out.
             <Button
               variant="ghost"
-              className="-ml-2 h-auto min-h-11 max-w-full justify-start gap-2 px-2 py-1.5 text-left font-normal"
+              className="-ml-2 h-auto min-h-11 max-w-full justify-start gap-2 px-2 py-1.5 text-left font-normal whitespace-normal"
             />
           }
         >
-          <span className="sr-only">{label}: </span>
           <UserRoundIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
           <span
+            id={nameId}
             className={cn(
-              "min-w-0 [overflow-wrap:anywhere]",
-              holder === null ? "text-muted-foreground" : "font-medium",
+              nameClass,
               pending && "rounded-sm outline-1 outline-offset-2 outline-current outline-dashed",
             )}
           >
             {name}
           </span>
-          {editable ? (
-            <ChevronDownIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-          ) : null}
+          <ChevronDownIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         </DropdownMenuTrigger>
         <DropdownMenuContent className="max-w-[min(20rem,calc(100vw-2rem))]">
           <DropdownMenuGroup>
@@ -378,20 +442,26 @@ function RoleRow({
  */
 function UpdateForm({
   incidentId,
+  locale,
   pending,
   onPost,
 }: {
   incidentId: string;
+  locale: Locale;
   pending: boolean;
   onPost: (body: string) => Promise<Notice | undefined>;
 }) {
   const [body, setBody] = useState("");
-  const [invalid, setInvalid] = useState<{ reason: "empty" | "invalid"; attempt: number } | null>(
-    null,
-  );
+  const [invalid, setInvalid] = useState<{ reason: UpdateProblem; attempt: number } | null>(null);
   const fieldId = useId();
   const hintId = useId();
   const errorId = useId();
+  const countId = useId();
+  // No `maxLength`: it would cut a pasted update short without a word. The count shows near the limit instead,
+  // and Post says it is too long.
+  const length = updateLength(body);
+  const counting = length >= UPDATE_COUNT_FROM;
+  const over = length > UPDATE_BODY_MAX;
   const ref = useRef<HTMLTextAreaElement>(null);
 
   const submit = (event?: FormEvent) => {
@@ -429,10 +499,11 @@ function UpdateForm({
         }}
         onKeyDown={onKeyDown}
         rows={3}
-        maxLength={UPDATE_BODY_MAX}
         placeholder={m.incident_page({ part: "update_placeholder" })}
         aria-invalid={invalid !== null}
-        aria-describedby={invalid ? `${errorId} ${hintId}` : hintId}
+        aria-describedby={[invalid && errorId, counting && countId, hintId]
+          .filter(Boolean)
+          .join(" ")}
         // 16px: iOS zooms into smaller inputs. Grows with the text up to a limit, then scrolls.
         className="field-sizing-content max-h-80 min-h-24 w-full min-w-0 resize-y rounded-md border border-input bg-card px-3 py-2.5 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive"
       />
@@ -444,15 +515,38 @@ function UpdateForm({
           className="flex items-start gap-1.5 text-sm text-destructive"
         >
           <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
-          {m.incident_page({
-            part: invalid.reason === "empty" ? "update_empty" : "update_invalid",
-          })}
+          {invalid.reason === "long"
+            ? m.auth_error_too_long({ max: formatNumber(UPDATE_BODY_MAX, locale) })
+            : m.incident_page({
+                part: invalid.reason === "empty" ? "update_empty" : "update_invalid",
+              })}
         </p>
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <p id={hintId} className="text-xs text-muted-foreground">
-          {m.incident_page({ part: "update_hint" })}
-        </p>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <p id={hintId} className="text-xs text-muted-foreground">
+            {m.incident_page({ part: "update_hint" })}
+          </p>
+          {counting ? (
+            <p
+              id={countId}
+              className={cn(
+                "text-xs whitespace-nowrap tabular-nums",
+                over ? "font-medium text-destructive" : "text-muted-foreground",
+              )}
+            >
+              <span aria-hidden>
+                {formatNumber(length, locale)} / {formatNumber(UPDATE_BODY_MAX, locale)}
+              </span>
+              <span className="sr-only">
+                {m.incident_update_length({
+                  count: formatNumber(length, locale),
+                  max: formatNumber(UPDATE_BODY_MAX, locale),
+                })}
+              </span>
+            </p>
+          ) : null}
+        </div>
         <Button type="submit" className="max-sm:w-full">
           {pending ? (
             <LoaderCircleIcon aria-hidden className="animate-spin motion-reduce:animate-none" />
@@ -475,7 +569,11 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
   alert_resolved: HeartPulseIcon,
 };
 
-/** The incident's timeline, newest first: one line per change, and an update's text under its line. */
+/**
+ * The incident's timeline, newest first: one line per change, and an update's text under its line. Another
+ * member's new update is read out politely as it arrives; the entries already there when the page opened, and the
+ * member's own, are not.
+ */
 function Timeline({
   incidentId,
   who,
@@ -488,6 +586,14 @@ function Timeline({
   now: number;
 }) {
   const { rows, status } = useQuery("incident.timeline", { id: incidentId });
+  const announcements = useAnnouncements(rows, status === "ready", who);
+  const announcer = (
+    <div aria-live="polite" className="sr-only">
+      {announcements.map(({ key, text }) => (
+        <p key={key}>{text}</p>
+      ))}
+    </div>
+  );
   if (rows.length === 0) {
     return status === "ready" ? (
       <p className="text-sm text-muted-foreground">{m.incident_page({ part: "timeline_empty" })}</p>
@@ -495,46 +601,155 @@ function Timeline({
   }
   const entries = [...rows].reverse();
   return (
-    <ol aria-labelledby="timeline-title" className="flex flex-col">
-      {entries.map((entry, index) => {
-        const Icon =
-          entry.kind === "status_changed" ? STATUS_ICONS[entry.to] : ENTRY_ICONS[entry.kind];
-        const last = index === entries.length - 1;
-        return (
-          <li key={entry.id} className="grid grid-cols-[--spacing(8)_minmax(0,1fr)] gap-x-3">
-            {/* The rail: an icon per entry, joined by a line down to the next (older) one. */}
-            <div className="flex flex-col items-center">
-              <span
-                className={cn(
-                  "flex size-8 shrink-0 items-center justify-center rounded-full border bg-card",
-                  entry.kind === "update" && "border-primary/40 text-primary",
-                )}
-              >
-                <Icon aria-hidden className="size-4" />
-              </span>
-              {last ? null : <span aria-hidden className="w-px flex-1 bg-border" />}
-            </div>
-            <div className={cn("flex min-w-0 flex-col gap-1 pt-1.5", !last && "pb-5")}>
-              <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                <span className="[overflow-wrap:anywhere]">{entryText(entry, who)}</span>
-                <time
-                  className="text-xs whitespace-nowrap text-muted-foreground"
-                  dateTime={new Date(entry.at).toISOString()}
-                  title={formatDateTime(entry.at, locale, TIME_ZONE)}
+    <>
+      {announcer}
+      <ol aria-labelledby="timeline-title" className="flex flex-col">
+        {entries.map((entry, index) => {
+          const Icon =
+            entry.kind === "status_changed" ? STATUS_ICONS[entry.to] : ENTRY_ICONS[entry.kind];
+          const last = index === entries.length - 1;
+          return (
+            <li key={entry.id} className="grid grid-cols-[--spacing(8)_minmax(0,1fr)] gap-x-3">
+              {/* The rail: an icon per entry, joined by a line down to the next (older) one. */}
+              <div className="flex flex-col items-center">
+                <span
+                  className={cn(
+                    "flex size-8 shrink-0 items-center justify-center rounded-full border bg-card",
+                    entry.kind === "update" && "border-primary/40 text-primary",
+                  )}
                 >
-                  {formatAge(Math.min(entry.at, now), now, locale)}
-                </time>
-              </p>
-              {entry.kind === "update" ? (
-                <p className="rounded-md bg-muted px-3 py-2 whitespace-pre-wrap [overflow-wrap:anywhere]">
-                  {entry.body}
+                  <Icon aria-hidden className="size-4" />
+                </span>
+                {last ? null : <span aria-hidden className="w-px flex-1 bg-border" />}
+              </div>
+              <div className={cn("flex min-w-0 flex-col gap-1 pt-1.5", !last && "pb-5")}>
+                <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <span className="[overflow-wrap:anywhere]">{entryText(entry, who)}</span>
+                  <time
+                    className="text-xs whitespace-nowrap text-muted-foreground tabular-nums"
+                    dateTime={new Date(entry.at).toISOString()}
+                    title={formatDateTime(entry.at, locale, TIME_ZONE)}
+                  >
+                    {entryTime(entry.at, now, locale, TIME_ZONE)}
+                  </time>
                 </p>
-              ) : null}
-            </div>
-          </li>
-        );
-      })}
-    </ol>
+                {entry.kind === "update" ? <UpdateBody body={entry.body} /> : null}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </>
+  );
+}
+
+/**
+ * What to read out of the timeline: another member's update that arrived after the first load, for
+ * `ANNOUNCE_MS`. Entries are told apart by id and author, since the member's own entry can be renumbered when
+ * someone else's lands under its number first.
+ */
+function useAnnouncements(rows: readonly TimelineRow[], ready: boolean, who: People) {
+  const seen = useRef<Set<string> | null>(null);
+  const [announcements, setAnnouncements] = useState<{ key: string; text: string; at: number }[]>(
+    [],
+  );
+  useEffect(() => {
+    if (!ready) return;
+    const keys = rows.map((row) => `${row.id} ${row.actor}`);
+    if (seen.current === null) {
+      seen.current = new Set(keys);
+      return;
+    }
+    const known = seen.current;
+    const fresh = rows.filter((row, index) => !known.has(keys[index]!));
+    for (const key of keys) known.add(key);
+    const theirs = fresh.filter((row) => row.kind === "update" && row.actor !== who.self);
+    if (theirs.length === 0) return;
+    const at = Date.now();
+    setAnnouncements((current) => [
+      ...current,
+      ...theirs.map((row) => {
+        const body = row.kind === "update" ? row.body : "";
+        return {
+          key: `${row.id} ${row.actor}`,
+          at,
+          text: m.incident_update_announced({
+            actor: personName(row.actor, who),
+            body: body.length > ANNOUNCE_CHARS ? `${body.slice(0, ANNOUNCE_CHARS)}…` : body,
+          }),
+        };
+      }),
+    ]);
+  }, [rows, ready, who]);
+  useEffect(() => {
+    const oldest = announcements[0];
+    if (!oldest) return;
+    const timer = setTimeout(
+      () => setAnnouncements((current) => current.slice(1)),
+      Math.max(0, oldest.at + ANNOUNCE_MS - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [announcements]);
+  return announcements;
+}
+
+/**
+ * An update's text, with its links as links (opened in a new tab), clamped to 12 lines with Show more when it is
+ * longer, so one long update does not push the rest of the timeline away.
+ */
+function UpdateBody({ body }: { body: string }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const id = useId();
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element || expanded) return;
+    const measure = () => setClamped(element.scrollHeight > element.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [body, expanded]);
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <p
+        ref={ref}
+        id={id}
+        className={cn(
+          "self-stretch rounded-md bg-muted px-3 py-2 whitespace-pre-wrap [overflow-wrap:anywhere]",
+          !expanded && "line-clamp-12",
+        )}
+      >
+        {bodyParts(body).map((part, index) =>
+          "url" in part ? (
+            <a
+              key={index}
+              href={part.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-sm text-primary underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring"
+            >
+              {part.url}
+            </a>
+          ) : (
+            <Fragment key={index}>{part.text}</Fragment>
+          ),
+        )}
+      </p>
+      {clamped || expanded ? (
+        <Button
+          variant="link"
+          aria-expanded={expanded}
+          aria-controls={id}
+          className="-ml-1 px-1"
+          onClick={() => setExpanded((open) => !open)}
+        >
+          {m.incident_page({ part: expanded ? "show_less" : "show_more" })}
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

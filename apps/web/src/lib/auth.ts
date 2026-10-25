@@ -2,7 +2,7 @@
 // forwards `/api/auth/*` to the API Worker), the dashboard's own `POST /api/workspaces`, and the pure checks and
 // error wording the forms use (tested in test/auth.test.ts).
 import { m } from "@freecorps/brigade-i18n";
-import { WORKSPACE_NAME_MAX, workspaceName } from "@freecorps/brigade-schema";
+import { memberName, WORKSPACE_NAME_MAX, workspaceName } from "@freecorps/brigade-schema";
 import { organizationClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 
@@ -82,6 +82,8 @@ export function checkSignUp(values: Record<SignUpField, string>): FieldErrors<Si
   if (values.name.trim() === "") errors.name = m.auth_error_required();
   else if (values.name.trim().length > NAME_MAX)
     errors.name = m.auth_error_too_long({ max: NAME_MAX });
+  // The API's rule for names (`memberName`): it would refuse the sign-up with `INVALID_NAME`.
+  else if (!memberName(values.name).ok) errors.name = m.auth_name_invalid();
   const email = checkEmail(values.email);
   if (email) errors.email = email;
   const password = checkPassword(values.password);
@@ -110,6 +112,7 @@ export function authErrorMessage(error: AuthFailure, during: "sign-in" | "sign-u
   if (during === "sign-in" && (status === 401 || error?.code === "INVALID_EMAIL_OR_PASSWORD")) {
     return m.auth_error_credentials();
   }
+  if (during === "sign-up" && error?.code === "INVALID_NAME") return m.auth_name_invalid();
   if (during === "sign-up" && (status === 422 || error?.code?.startsWith("USER_ALREADY_EXISTS"))) {
     return m.auth_error_email_taken();
   }

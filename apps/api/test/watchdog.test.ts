@@ -1,5 +1,5 @@
 // The external dead-man switch (RFC 0007 "Watching the watcher"): the cron's heartbeat goes through the watchdog's
-// outbox, the Queue and the consumer, which checks the relay; only a beat proved end to end, in time, with the relay
+// outbox, the Queue and the consumer, which checks the relay takes its token; only a beat proved end to end, in time, with the relay
 // up pings the external check. Everything else is silence, which is what makes the external check page.
 import { env, exports } from "cloudflare:workers";
 import {
@@ -18,6 +18,7 @@ import {
   HEARTBEAT_EVENT,
   MAX_PROOF_LATENCY_MS,
   pagingStatus,
+  PING_TIMEOUT_MS,
   pingUrl,
   STATUS_EVENT,
   SYSTEM_WORKSPACE,
@@ -66,15 +67,31 @@ function watchdog() {
   return { stub, events, heartbeats, notifyEnv };
 }
 
-/** A relay whose `/health` answers `status`, or throws when it is null. */
-function relay(status: number | null) {
+/**
+ * A relay answering the consumer's token check (`POST /send`, no body) as apps/relay does: `400 invalid_body` for
+ * `test-token`, `401` for any other; or with `status` and no body, or throwing when `status` is null.
+ */
+function relay(status: "relay" | number | null = "relay") {
   const urls: string[] = [];
+  const auth: (string | null)[] = [];
   const send: Fetch = async (request) => {
-    urls.push(request.url);
+    urls.push(`${request.method} ${request.url}`);
+    auth.push(request.headers.get("Authorization"));
     if (status === null) throw new TypeError("connection refused");
-    return new Response(null, { status });
+    if (typeof status === "number") return new Response(null, { status });
+    if (request.headers.get("Authorization") !== "Bearer test-token") {
+      return Response.json({ error: "unauthorized" }, { status: 401 });
+    }
+    return Response.json({ error: "invalid_body" }, { status: 400 });
   };
-  return { urls, send };
+  return { urls, auth, send };
+}
+
+/** Lets the ping the watchdog started in `waitUntil` finish and record itself. */
+async function pinged(stub: DurableObjectStub<WatchdogDO>, expected: boolean | null) {
+  await vi.waitFor(async () => {
+    expect((await stub.health()).external.lastPingOk).toBe(expected);
+  });
 }
 
 async function deliver(events: BrigadeEvent[], notifyEnv: NotifyEnv, send: Fetch) {
@@ -88,10 +105,12 @@ async function deliver(events: BrigadeEvent[], notifyEnv: NotifyEnv, send: Fetch
 }
 
 describe("pagingStatus", () => {
+  /** Each beat proved a second after it was written. */
   const at = (first: number | null, last: number | null, proved: number | null) => ({
     firstBeatAt: first,
     lastBeatAt: last,
-    lastProvedAt: proved,
+    provedBeatAt: proved,
+    lastProvedAt: proved === null ? null : proved + 1000,
     relay: proved === null ? null : ("ok" as const),
   });
 
@@ -123,6 +142,25 @@ describe("pagingStatus", () => {
     ).toEqual({ status: "degraded", reasons: ["pipeline_stalled"] });
   });
 
+  test("beats coming through ten minutes late: stalled and slow, though every one is proved", () => {
+    // The Queue is backed up: the beat written at 12:00 is proved at 12:10, and so on.
+    const now = NOW + 20 * MINUTE;
+    const times = {
+      firstBeatAt: NOW,
+      lastBeatAt: now,
+      provedBeatAt: now - 10 * MINUTE,
+      lastProvedAt: now,
+      relay: "ok" as const,
+    };
+    expect(pagingStatus(times, now)).toEqual({
+      status: "degraded",
+      reasons: ["pipeline_stalled", "pipeline_slow"],
+    });
+    // Slow but within the window: the pings stop (MAX_PROOF_LATENCY_MS), and the dashboard says why.
+    const slow = { ...times, provedBeatAt: now - 2.5 * MINUTE };
+    expect(pagingStatus(slow, now)).toEqual({ status: "degraded", reasons: ["pipeline_slow"] });
+  });
+
   test("a cron that stopped beating is degraded too", () => {
     const now = NOW + 5 * MINUTE + BEAT_STALE_MS + 1;
     expect(pagingStatus(at(NOW, NOW + 5 * MINUTE, NOW + 5 * MINUTE), now)).toEqual({
@@ -132,7 +170,11 @@ describe("pagingStatus", () => {
   });
 
   test("the relay's state on the last proof", () => {
-    const times = { firstBeatAt: NOW, lastBeatAt: NOW, lastProvedAt: NOW };
+    const times = { firstBeatAt: NOW, lastBeatAt: NOW, provedBeatAt: NOW, lastProvedAt: NOW };
+    expect(pagingStatus({ ...times, relay: "unauthorized" }, NOW)).toEqual({
+      status: "degraded",
+      reasons: ["relay_unauthorized"],
+    });
     expect(pagingStatus({ ...times, relay: "unreachable" }, NOW)).toEqual({
       status: "degraded",
       reasons: ["relay_unreachable"],
@@ -206,13 +248,16 @@ describe("the heartbeat, end to end", () => {
     const { stub, heartbeats, notifyEnv } = watchdog();
     await stub.beat();
     const [heartbeat] = await heartbeats();
-    const up = relay(200);
+    const up = relay();
     // Delivered twice (at-least-once): the second proves nothing new and pings nothing.
     const result = await deliver([heartbeat!, heartbeat!], notifyEnv(), up.send);
     expect(result.explicitAcks.sort()).toEqual(["msg-0", "msg-1"]);
     expect(result.retryMessages).toEqual([]);
-    expect(up.urls[0]).toBe("https://relay.test/health");
+    // The token check: the send route with the token and no body, which never reaches APNs.
+    expect(up.urls[0]).toBe("POST https://relay.test/send");
+    expect(up.auth[0]).toBe("Bearer test-token");
     expect(pings()).toEqual([PING_URL]);
+    await pinged(stub, true);
     expect(await stub.health()).toMatchObject({
       status: "ok",
       reasons: [],
@@ -243,10 +288,35 @@ describe("the heartbeat, end to end", () => {
     ]);
   });
 
+  test("a relay that refuses the send token: no ping, degraded relay_unauthorized", async () => {
+    const { stub, heartbeats, notifyEnv } = watchdog();
+    await stub.beat();
+    const wrong = relay();
+    await deliver(await heartbeats(), { ...notifyEnv(), RELAY_SEND_TOKEN: "rotated" }, wrong.send);
+    expect(wrong.auth).toEqual(["Bearer rotated"]);
+    expect(pings()).toEqual([]);
+    expect(await stub.health()).toMatchObject({
+      status: "degraded",
+      reasons: ["relay_unauthorized"],
+      lastOkAt: null,
+    });
+  });
+
+  test("a relay that answers its token check with anything but 400 invalid_body is unreachable", async () => {
+    const { stub, heartbeats, notifyEnv } = watchdog();
+    for (const status of [200, 404, 500]) {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      await stub.beat();
+      await deliver([(await heartbeats()).at(-1)!], notifyEnv(), relay(status).send);
+      expect((await stub.health()).reasons, String(status)).toEqual(["relay_unreachable"]);
+    }
+    expect(pings()).toEqual([]);
+  });
+
   test("no relay configured: no ping, degraded", async () => {
     const { stub, heartbeats, notifyEnv } = watchdog();
     await stub.beat();
-    const none = relay(200);
+    const none = relay();
     await deliver(await heartbeats(), notifyEnv(null), none.send);
     expect(none.urls).toEqual([]);
     expect(pings()).toEqual([]);
@@ -259,8 +329,55 @@ describe("the heartbeat, end to end", () => {
     const [heartbeat] = await heartbeats();
     const health = await stub.proved(heartbeat!.time, "ok", NOW + MAX_PROOF_LATENCY_MS + 1);
     expect(health.lastProvedAt).not.toBeNull();
+    // The dashboard says why the external check heard nothing.
+    expect(health).toMatchObject({ status: "degraded", reasons: ["pipeline_slow"] });
     expect(pings()).toEqual([]);
   });
+
+  test("a backed-up queue (beats ten minutes late): degraded, no pings, though the relay is up", async () => {
+    const { stub, heartbeats, events } = watchdog();
+    for (let minute = 0; minute <= 20; minute++) {
+      await stub.beat(NOW + minute * MINUTE);
+      if (minute < 10) continue;
+      // Each minute the consumer gets the beat from ten minutes earlier.
+      const late = (await heartbeats())[minute - 10]!;
+      await stub.proved(late.time, "ok", NOW + minute * MINUTE + 1000);
+    }
+    expect(await stub.health(NOW + 20 * MINUTE + 1000)).toMatchObject({
+      status: "degraded",
+      reasons: ["pipeline_stalled", "pipeline_slow"],
+    });
+    expect(pings()).toEqual([]);
+    // Each change of reasons is an event, not only each change of status.
+    const changes = (await events()).filter((event) => event.type === STATUS_EVENT);
+    expect(changes.map((event) => event.data)).toEqual([
+      { status: "degraded", previous: "unknown", reasons: ["pipeline_stalled"] },
+      { status: "degraded", previous: "degraded", reasons: ["pipeline_stalled", "pipeline_slow"] },
+    ]);
+  });
+
+  test("an external check that never answers does not hold up proved()", async () => {
+    const { stub, heartbeats } = watchdog();
+    await stub.beat();
+    // Hangs until the watchdog's own timeout aborts it.
+    vi.mocked(globalThis.fetch).mockImplementation(
+      (_input, init) =>
+        new Promise((_resolve, reject) =>
+          init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)),
+        ),
+    );
+    const [heartbeat] = await heartbeats();
+    const started = Date.now();
+    const health = await stub.proved(heartbeat!.time, "ok");
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(health.status).toBe("ok");
+    expect(pings()).toEqual([PING_URL]);
+    // Recorded as failed once the timeout gives up on it.
+    await vi.waitFor(
+      async () => expect((await stub.health()).external.lastPingOk).toBe(false),
+      { timeout: PING_TIMEOUT_MS + 2000, interval: 200 },
+    );
+  }, 15_000);
 
   test("an older heartbeat after a newer one changes nothing", async () => {
     const { stub, heartbeats } = watchdog();
@@ -278,8 +395,8 @@ describe("the heartbeat, end to end", () => {
     await stub.beat(NOW);
     pingAnswer = () => new Response(null, { status: 500 });
     const [heartbeat] = await heartbeats();
-    const health = await stub.proved(heartbeat!.time, "ok", NOW + 1000);
-    expect(health.external).toMatchObject({ lastPingOk: false });
+    await stub.proved(heartbeat!.time, "ok", NOW + 1000);
+    await pinged(stub, false);
   });
 
   test("beats that never come back: the pipeline is stalled after the window", async () => {
@@ -307,7 +424,7 @@ describe("the heartbeat, end to end", () => {
       data: { status: "degraded" },
       specversion: "1.0",
     };
-    const up = relay(200);
+    const up = relay();
     const result = await deliver([event], notifyEnv(), up.send);
     expect(result.explicitAcks).toEqual(["msg-0"]);
     expect(up.urls).toEqual([]);
@@ -315,13 +432,65 @@ describe("the heartbeat, end to end", () => {
 });
 
 describe("GET /health/paging", () => {
-  test("answers the watchdog's state, uncached; other methods get 405", async () => {
-    const response = await exports.default.fetch("http://api.test/health/paging");
+  const ORIGIN = "http://api.test";
+  let people = 0;
+  const api = (path: string, init: { method?: string; body?: string; cookie?: string } = {}) =>
+    exports.default.fetch(`${ORIGIN}${path}`, {
+      method: init.method,
+      body: init.body,
+      headers: {
+        Origin: ORIGIN,
+        "Content-Type": "application/json",
+        // Sign-up is rate-limited per IP (TEST-NET-3, RFC 5737).
+        "cf-connecting-ip": `203.0.113.${++people}`,
+        ...(init.cookie ? { Cookie: init.cookie } : {}),
+      },
+    });
+  async function signUp(name: string) {
+    const response = await api("/auth/sign-up/email", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        email: `${name}-${people}@example.com`,
+        password: "correct horse battery staple",
+      }),
+    });
     expect(response.status).toBe(200);
-    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    const { user } = (await response.json()) as { user: { id: string } };
+    const cookie = response.headers
+      .getSetCookie()
+      .map((value) => value.split(";")[0])
+      .join("; ");
+    return { id: user.id, cookie };
+  }
+  async function paging(cookie?: string) {
+    const response = await api("/health/paging", { cookie });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     const body = (await response.json()) as Record<string, unknown>;
+    // Never the ping URL, whoever asks.
+    expect(JSON.stringify(body)).not.toContain("dead-man-test");
+    return body;
+  }
+
+  test("without a session, or in no workspace: the status alone", async () => {
+    const body = await paging();
+    expect(Object.keys(body)).toEqual(["status"]);
     expect(["ok", "degraded", "unknown"]).toContain(body.status);
-    expect(Object.keys(body).sort()).toEqual([
+    const lone = await signUp("lone");
+    expect(Object.keys(await paging(lone.cookie))).toEqual(["status"]);
+  });
+
+  test("a member sees why and since when; only an owner or admin sees the external check", async () => {
+    const owner = await signUp("owner");
+    const created = await api("/workspaces", {
+      method: "POST",
+      body: JSON.stringify({ name: "Acme" }),
+      cookie: owner.cookie,
+    });
+    expect(created.status).toBe(201);
+    const { id: workspaceId } = (await created.json()) as { id: string };
+    expect(Object.keys(await paging(owner.cookie)).sort()).toEqual([
       "external",
       "lastBeatAt",
       "lastOkAt",
@@ -329,9 +498,22 @@ describe("GET /health/paging", () => {
       "reasons",
       "status",
     ]);
-    // Coarse on purpose: never the ping URL.
-    expect(JSON.stringify(body)).not.toContain("dead-man-test");
-    const post = await exports.default.fetch("http://api.test/health/paging", { method: "POST" });
-    expect(post.status).toBe(405);
+    const responder = await signUp("responder");
+    await env.DB.prepare(
+      `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, ?, ?)`,
+    )
+      .bind(`mem_${people}`, workspaceId, responder.id, "responder", new Date().toISOString())
+      .run();
+    expect(Object.keys(await paging(responder.cookie)).sort()).toEqual([
+      "lastBeatAt",
+      "lastOkAt",
+      "lastProvedAt",
+      "reasons",
+      "status",
+    ]);
+  });
+
+  test("other methods get 405", async () => {
+    expect((await api("/health/paging", { method: "POST" })).status).toBe(405);
   });
 });

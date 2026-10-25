@@ -85,6 +85,8 @@ const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const MAX_NOTICES = 5;
 /** Characters of another member's update read out when it arrives; the rest is on the timeline. */
 const ANNOUNCE_CHARS = 280;
+/** More new updates from others than this at once (a resume) are announced as one count. */
+const ANNOUNCE_BATCH = 3;
 
 /** `/incidents/12` → 12; anything else (zero, signs, leading zeros, too long) is no incident. */
 export function parseIncidentNumber(raw: string): number | null {
@@ -666,17 +668,31 @@ function useAnnouncements(rows: readonly TimelineRow[], ready: boolean, who: Peo
     const theirs = fresh.filter((row) => row.kind === "update" && row.actor !== who.self);
     if (theirs.length === 0) return;
     const at = Date.now();
+    // A batch (a resume after a long gap) is one line, not a screen reader reading dozens of updates.
+    if (theirs.length > ANNOUNCE_BATCH) {
+      setAnnouncements((current) => [
+        ...current,
+        {
+          key: theirs.map((row) => row.id).join(" "),
+          at,
+          text: m.incident_updates_announced({ count: theirs.length }),
+        },
+      ]);
+      return;
+    }
     setAnnouncements((current) => [
       ...current,
       ...theirs.map((row) => {
-        const body = row.kind === "update" ? row.body : "";
+        // By code point, so an emoji is never cut in half.
+        const chars = Array.from(row.kind === "update" ? row.body : "");
+        const body =
+          chars.length > ANNOUNCE_CHARS
+            ? `${chars.slice(0, ANNOUNCE_CHARS).join("")}…`
+            : chars.join("");
         return {
           key: `${row.id} ${row.actor}`,
           at,
-          text: m.incident_update_announced({
-            actor: personName(row.actor, who),
-            body: body.length > ANNOUNCE_CHARS ? `${body.slice(0, ANNOUNCE_CHARS)}…` : body,
-          }),
+          text: m.incident_update_announced({ actor: personName(row.actor, who), body }),
         };
       }),
     ]);

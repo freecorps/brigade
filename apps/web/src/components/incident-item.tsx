@@ -10,7 +10,7 @@ import {
 import { Link, useRouter } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ChevronDownIcon, ClockIcon, CloudUploadIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { SeverityBadge, STATUS_ICONS, StatusBadge } from "@/components/incident-badges";
 import { Button } from "@/components/ui/button";
 import {
@@ -152,7 +152,12 @@ function IncidentTitleLink({ number, title }: { number: number; title: string })
   const props = {
     className: TITLE_LINK,
     "data-incident-link": number,
-    onClick: () => rememberOpened(number),
+    // Only a plain click navigates this tab; a modified or middle click opens another and leaves this list here.
+    onClick: (event: MouseEvent) => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0)
+        return;
+      rememberOpened(number);
+    },
   };
   if (!router) {
     return (

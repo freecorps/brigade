@@ -471,6 +471,20 @@
   ],
   "incident_update_length": "{count} de {max} caracteres",
   "incident_update_announced": "{actor} publicou uma atualização: {body}",
+  "incident_updates_announced": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 nova atualização de outras pessoas",
+        "countPlural=*": "{countFormatted} novas atualizações de outras pessoas"
+      }
+    }
+  ],
   "incident_role": [
     {
       "declarations": ["input role", "input form"],

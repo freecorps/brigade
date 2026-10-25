@@ -289,6 +289,18 @@ test("updates: links open in a new tab, others' updates are read out, a monitor 
   expect(live.textContent).not.toContain("Watching the error rate");
 });
 
+test("a burst of others' updates is announced as one count", async () => {
+  const view = await mount("/incidents/1");
+  const id = view.declare("Checkout down");
+  await act(() => view.router.load());
+  await view.flush();
+  const live = $('[aria-live="polite"]')!;
+  for (let i = 1; i <= 5; i++)
+    view.shard.write(bia, "incident.postUpdate", { id, body: `Step ${i}` });
+  await view.flush();
+  expect(live.textContent).toBe("5 new updates from others");
+});
+
 test("back to the list puts focus on the incident's title link", async () => {
   const view = await mount("/");
   view.declare("Checkout down");

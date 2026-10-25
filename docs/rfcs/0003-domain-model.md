@@ -66,7 +66,9 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   one. When invitations and member management land, their `member.*` mutations write this table as well, and
   removing a member must delete their `members` row in the same transaction (or they stay assignable).
 - **Member names** (`memberName`): the title rules of RFC 0004, except that ZWNJ and ZWJ may stand between two
-  letters (Persian, Arabic and Indic names need them); bidi controls and every other invisible character are still
+  letters (Persian, Arabic and Indic names need them). The rule does not check the script, so a joiner between two
+  Latin letters passes and looks like the plain name; accepted on purpose, since names are not identifiers (roles
+  and the picker use member ids) and two people can already share a visible name. Bidi controls and every other invisible character are still
   refused, and a name is 1 to 100 characters after trimming. The API applies it before Better Auth stores a name
   (sign-up, `update-user`: `INVALID_NAME`). A name already in D1 that predates the rule is trimmed and cut to the
   cap at a grapheme by the Worker; if that still fails, the shard stores `name: null` and the dashboard shows the

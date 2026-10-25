@@ -101,6 +101,7 @@ export * from './incident_unnumbered_not_sent.js';
 export * from './incident_unnumbered_saving.js';
 export * from './incident_update_announced.js';
 export * from './incident_update_length.js';
+export * from './incident_updates_announced.js';
 export * from './incidents_active_count.js';
 export * from './incidents_all_clear.js';
 export * from './incidents_sev1_count.js';

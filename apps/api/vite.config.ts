@@ -30,6 +30,9 @@ export default defineConfig(async ({ command, mode }) => ({
                 BETTER_AUTH_SECRET: TEST_AUTH_SECRET,
                 // Tests read events from the outbox; test/outbox.test.ts drives the drain itself.
                 OUTBOX_DRAIN: "paused",
+                // The dead-man switch's ping (src/watchdog.ts): a loopback URL nothing listens on;
+                // test/watchdog.test.ts answers it with a stubbed `fetch`.
+                DEAD_MAN_URL: "http://localhost/dead-man-test",
                 // test/apply-migrations.ts applies these to the local D1 before the tests run.
                 TEST_MIGRATIONS: await readD1Migrations("./migrations"),
               },

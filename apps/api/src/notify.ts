@@ -15,6 +15,7 @@ import {
   type PageTarget,
   type SendFailure,
 } from "./paging.ts";
+import { HEARTBEAT_EVENT, isSystemEvent, WATCHDOG_NAME, type RelayHealth } from "./watchdog.ts";
 import { WORKSPACE_ID } from "./workspace.ts";
 
 /**
@@ -32,10 +33,14 @@ export const PAGE_RETRY_FIRST_SECONDS = 5;
 export const PAGE_RETRY_MAX_SECONDS = 60;
 /** How long the relay gets per send. */
 export const RELAY_TIMEOUT_MS = 10_000;
+/** How long the relay's `/health` gets when the dead-man switch's heartbeat comes through. */
+export const RELAY_HEALTH_TIMEOUT_MS = 5000;
 
 /** Optional: an instance without a relay still runs, and every page it would send is recorded as failed. */
 export type NotifyEnv = {
   WORKSPACE: Env["WORKSPACE"];
+  /** The dead-man switch's watchdog (src/watchdog.ts); without it a heartbeat is logged and dropped. */
+  WATCHDOG?: Env["WATCHDOG"];
   /** The relay's base URL, e.g. a `brigade-relay-<env>` Worker. A secret, so hostnames stay out of the repo. */
   RELAY_URL?: string;
   /** Bearer token for the relay's `POST /send`. */
@@ -53,6 +58,11 @@ export async function consumeEvents(
   const seen = new Set<string>();
   await Promise.all(
     batch.messages.map(async (message) => {
+      // The dead-man switch's own events (src/watchdog.ts): never a shard's, never a page.
+      if (isSystemEvent(message.body)) {
+        await proveHeartbeat(message.body, env, send);
+        return message.ack();
+      }
       const event = parseEvent(message.body);
       if (!event) {
         log("event dropped: not a Brigade event", { messageId: message.id });
@@ -120,6 +130,48 @@ export async function consumeDeadLetters(
       }
     }),
   );
+}
+
+/**
+ * A `brigade.heartbeat` came through the outbox and the Queue: checks the relay is up and tells the watchdog, which
+ * pings the external check. Never throws, and the message is acked either way: a lost heartbeat is a minute of
+ * silence, and the next one is already on its way. Other system events (`brigade.status_changed`) have no notifier
+ * yet.
+ */
+export async function proveHeartbeat(
+  event: BrigadeEvent,
+  env: Pick<NotifyEnv, "WATCHDOG" | "RELAY_URL">,
+  send: Fetch,
+): Promise<void> {
+  if (event.type !== HEARTBEAT_EVENT) return;
+  if (!env.WATCHDOG) {
+    log("heartbeat dropped: no watchdog binding", { event: event.id });
+    return;
+  }
+  const relay = await relayHealth(env, send);
+  try {
+    await env.WATCHDOG.getByName(WATCHDOG_NAME).proved(event.time, relay);
+  } catch (error) {
+    log("heartbeat could not be recorded", { event: event.id, error: String(error) });
+  }
+}
+
+/** The relay's `GET /health`: whether a page could get past this Worker right now. */
+async function relayHealth(env: Pick<NotifyEnv, "RELAY_URL">, send: Fetch): Promise<RelayHealth> {
+  if (!env.RELAY_URL) return "not_configured";
+  try {
+    const response = await send(
+      new Request(new URL("/health", env.RELAY_URL), {
+        signal: AbortSignal.timeout(RELAY_HEALTH_TIMEOUT_MS),
+      }),
+    );
+    await response.body?.cancel();
+    if (response.ok) return "ok";
+    log("relay health refused", { status: response.status });
+  } catch (error) {
+    log("relay health unreachable", { error: String(error) });
+  }
+  return "unreachable";
 }
 
 /** How long the dead-letter consumer waits before trying a shard again. */

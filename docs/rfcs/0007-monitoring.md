@@ -98,8 +98,37 @@ verdict or failure reason changes.
 
 ## Watching the watcher
 
-- External dead-man switch: the `api` Worker pings an external heartbeat service (e.g. healthchecks.io) every minute;
-  if Brigade itself stops, that service pages through an independent channel.
+- External dead-man switch (built; `apps/api/src/watchdog.ts`). Brigade cannot page about its own outage, so a check
+  outside Cloudflare's failure domain does: it expects a ping every minute and alerts the instance's operators through
+  its own channels when the pings stop. What pings is not "the Worker is up" but the paging pipeline end to end:
+  1. A Cron Trigger (`* * * * *`, the API Worker's `scheduled`) asks the one `WatchdogDO` (named `watchdog`) for a
+     beat: a `brigade.heartbeat` event written to the watchdog's own outbox, and its alarm armed.
+  2. The alarm drains it with the same `OutboxDrain` as the shards to the `brigade-events` Queue.
+  3. The Queue consumer routes the watchdog's events (`workspaceId` `_system`, which no workspace can have) away from
+     the shards: for a heartbeat it calls the relay's `GET /health` (5 s timeout) and reports back to the watchdog
+     (`proved`).
+  4. The watchdog pings `DEAD_MAN_URL` (one `GET`, 10 s timeout) only when that beat is newer than any proved before,
+     came back within 2 minutes and the relay answered. Anything else is silence.
+
+  So a stop anywhere (the cron, Durable Objects, alarms, the drain, the Queue, the consumer, the relay) stops the
+  pings within a minute or two. The operator's check sets its own period (1 minute) and grace (we suggest 5 minutes)
+  and its own alert channels; any service or self-hosted checker that alerts on a missed URL ping works
+  (healthchecks.io-style), so Brigade names none. `DEAD_MAN_URL` is an optional secret (`https:`; `http:` only on
+  loopback, for the local double `scripts/dead-man-double.mjs`); without it everything else still runs and nothing is
+  pinged. A failed ping is logged and recorded; the next proved beat tries again.
+
+  Inside Brigade the same state is `GET /health/paging` (`ok`, `degraded` or `unknown`, the reasons and the times;
+  never a URL or an id), and the dashboard shows a notice above the incidents while it is not `ok` (nothing while it
+  is). `degraded` means: no beat for 3 minutes (`no_beat`), nothing proved for 3 minutes (`pipeline_stalled`), or the
+  relay unreachable or not configured on the last proof. `unknown` is before the first proof (a new deployment; local
+  runs, where the cron only fires by hand). The watchdog itself unreachable is a 503, which the dashboard shows as
+  "couldn't check". Each status change is a `brigade.status_changed` event in the watchdog's outbox and a log line
+  (`paging pipeline degraded`); nothing consumes the event yet.
+
+  Not covered: each workspace shard's own alarm and outbox (the watchdog proves the shared code and the shared
+  Queue, not every shard's drain), APNs itself (the relay's `/health` does not call it), and D1. See open question
+  Q19.
+
 - Internal self-check: a DO alarm verifies every `ProbeDO` reported recently and alerts on stalled probes.
   Built so far: the workspace shard's alarm logs a stalled region and pushes its config again, and a monitor whose
   regions all go quiet turns "No data"; it does not page yet (Q17).

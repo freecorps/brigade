@@ -59,6 +59,23 @@ keeps being paged, and one demoted keeps being paged until they next open Brigad
 (member management) delete the row and the member's devices, or change the role, in the shard. No API path removes or
 demotes a member today, so only an edit made outside Brigade hits this.
 
+## Q19 — What else the dead-man switch should prove (RFC 0007)
+
+The external dead-man switch pings only when a heartbeat went through the watchdog's outbox, the Queue, the consumer
+and a relay that answers `/health` (RFC 0007 "Watching the watcher"). It does not prove each workspace shard's own
+alarm and drain (a shard stuck on a storage error still backs off alone and logs), APNs (the relay's `/health` does not
+call it), or D1 (sign-in, heartbeat routing). Options, not exclusive:
+
+- Have the watchdog read a cheap liveness summary from shards with a backlog (the drain's `failures` and backlog
+  size) and turn `degraded` past a threshold. Needs a registry of shards, which does not exist yet.
+- A relay `/health?deep=1` that asks APNs for a provider token (no push), so a revoked key shows up.
+- One D1 read per beat.
+
+Also open: who inside Brigade hears `brigade.status_changed` (an email to the instance's operators once the email
+notifier exists?), whether `GET /health/paging` should need a session once the API has public routes (today it says
+only `ok`/`degraded` and why, like `/health`), and whether Q17's "page Brigade's operators on `unknown`" should ride on
+this switch (it carries no workspace data today).
+
 ---
 
 # Decided

@@ -8,9 +8,11 @@ import {
   type AuthBindings,
 } from "./auth.ts";
 import { consumeDeadLetters, consumeEvents } from "./notify.ts";
+import { WATCHDOG_NAME } from "./watchdog.ts";
 import { WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
 
 export { ProbeDO } from "./probe.ts";
+export { WatchdogDO } from "./watchdog.ts";
 export { WorkspaceDO } from "./workspace.ts";
 
 const WORKSPACE_PATH = /^\/workspaces\/([^/]+)$/;
@@ -52,6 +54,8 @@ export default {
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
 
+    if (pathname === "/health/paging") return pagingHealth(request, env);
+
     const workspace = WORKSPACE_PATH.exec(pathname)?.[1];
     if (pathname !== "/health" && workspace === undefined) return json({ error: "not_found" }, 404);
     if (!READ_METHODS.includes(request.method)) {
@@ -79,7 +83,35 @@ export default {
     if (batch.queue.startsWith("brigade-events-dlq")) await consumeDeadLetters(batch, env);
     else await consumeEvents(batch, env);
   },
+
+  /**
+   * The dead-man switch's clock (RFC 0007 "Watching the watcher"): one heartbeat a minute into the watchdog's outbox
+   * (src/watchdog.ts). A failure throws, so the Cron Trigger's past events show it, and the silence it leaves trips
+   * the external check.
+   */
+  async scheduled(_controller, env): Promise<void> {
+    await env.WATCHDOG.getByName(WATCHDOG_NAME).beat();
+  },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * `GET /health/paging`: whether the paging pipeline proved itself lately (src/watchdog.ts), for the dashboard. As
+ * open as `/health`: it says only `ok`, `degraded` or `unknown`, why, and when, never a URL or an id. Answers 503 when
+ * the watchdog itself cannot be reached, which is also degraded.
+ */
+export async function pagingHealth(request: Request, env: Env): Promise<Response> {
+  if (!READ_METHODS.includes(request.method)) {
+    return json({ error: "method_not_allowed" }, 405, { Allow: READ_METHODS.join(", ") });
+  }
+  try {
+    return json(await env.WATCHDOG.getByName(WATCHDOG_NAME).health(), 200, {
+      "Cache-Control": "no-store",
+    });
+  } catch (error) {
+    console.error(JSON.stringify({ message: "WatchdogDO.health failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
+}
 
 /**
  * Better Auth on this Worker's D1 for one request; a new workspace gets its shard provisioned right away.

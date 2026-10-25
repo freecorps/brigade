@@ -19,12 +19,18 @@
     "bindings": [
       { "name": "WORKSPACE", "class_name": "WorkspaceDO" },
       { "name": "PROBE", "class_name": "ProbeDO" },
+      // WatchdogDO: the one object behind the external dead-man switch (RFC 0007, src/watchdog.ts).
+      { "name": "WATCHDOG", "class_name": "WatchdogDO" },
     ],
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WorkspaceDO"] },
     { "tag": "v2", "new_sqlite_classes": ["ProbeDO"] },
+    { "tag": "v3", "new_sqlite_classes": ["WatchdogDO"] },
   ],
+  // The dead-man switch's clock: a heartbeat through the paging pipeline every minute (src/index.ts `scheduled`).
+  // Inherited by the environments. Locally it never fires on its own: GET /cdn-cgi/handler/scheduled runs it.
+  "triggers": { "crons": ["* * * * *"] },
   // Better Auth's tables (src/auth.ts); migrations/ holds their schema. No `database_id` for production and
   // staging yet: those databases do not exist, and the first deploy (owner approval) creates and pins them.
   "d1_databases": [
@@ -52,6 +58,7 @@
   },
   // Set with `wrangler secret put` (deployed) or apps/api/.dev.vars (local, gitignored); never in this file.
   // RELAY_URL and RELAY_SEND_TOKEN (src/notify.ts) are optional: without them every page is recorded as failed.
+  // DEAD_MAN_URL (src/watchdog.ts) is optional too: the external check's ping URL; without it nothing is pinged.
   "secrets": { "required": ["BETTER_AUTH_SECRET"] },
   // Durable Object, D1, Queue and secrets settings are not inherited, so each environment repeats them.
   // No `vars` anywhere: no deployed environment may set SYNC_DEV_ACTOR (src/actor.ts); only local runs and the
@@ -62,6 +69,7 @@
         "bindings": [
           { "name": "WORKSPACE", "class_name": "WorkspaceDO" },
           { "name": "PROBE", "class_name": "ProbeDO" },
+          { "name": "WATCHDOG", "class_name": "WatchdogDO" },
         ],
       },
       "d1_databases": [
@@ -92,6 +100,7 @@
         "bindings": [
           { "name": "WORKSPACE", "class_name": "WorkspaceDO" },
           { "name": "PROBE", "class_name": "ProbeDO" },
+          { "name": "WATCHDOG", "class_name": "WatchdogDO" },
         ],
       },
       "d1_databases": [

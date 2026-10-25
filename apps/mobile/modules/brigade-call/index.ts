@@ -1,7 +1,14 @@
 import { requireOptionalNativeModule, type EventSubscription } from "expo";
 
 /** A page ringing as a call: decrypted content, and the incident the ack names. */
-export type IncomingCall = { id: string; title: string; body: string; incident?: string | null };
+export type IncomingCall = {
+  id: string;
+  title: string;
+  body: string;
+  incident?: string | null;
+  /** iOS: 1 was pressed on CallKit's keypad, maybe before JavaScript was listening. */
+  ackKeyPressed?: boolean;
+};
 
 /** How a page reaches this phone now (Android decides per call; iOS always rings through CallKit). */
 export type RingStatus = {
@@ -13,7 +20,8 @@ export type RingStatus = {
   pageChannelEnabled?: boolean;
 };
 
-export type CallEndReason = "declined" | "hung_up" | "missed" | "remote";
+/** `timed_out`: hung up natively `ANSWERED_CALL_MAX_MS` after answering; `failed`: the ringing UI could not show. */
+export type CallEndReason = "declined" | "hung_up" | "missed" | "remote" | "timed_out" | "failed";
 
 type Events = {
   onAnswer(call: IncomingCall): void;

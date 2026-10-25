@@ -1,0 +1,15 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!-- Development only: `adb shell am broadcast` rings a test call (docs/spikes/s6-voip-call-screen.md). Only
+         senders holding DUMP (adb's shell, the system) can reach it. In the debug source set, so a release build has
+         neither the receiver nor its class. -->
+    <receiver
+      android:name=".DebugCallReceiver"
+      android:exported="true"
+      android:permission="android.permission.DUMP">
+      <intent-filter>
+        <action android:name="app.freecorps.brigade.call.DEBUG_RING" />
+      </intent-filter>
+    </receiver>
+  </application>
+</manifest>

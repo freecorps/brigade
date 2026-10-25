@@ -5,7 +5,14 @@ import { m, type Locale } from "@freecorps/brigade-i18n";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { reasonText } from "@/lib/incidents";
 
-export type ActiveCall = { id: string; title: string; body: string; incident?: string | null };
+export type ActiveCall = {
+  id: string;
+  title: string;
+  body: string;
+  incident?: string | null;
+  /** iOS: 1 was pressed on CallKit's keypad before JavaScript was listening (a cold launch). */
+  ackKeyPressed?: boolean;
+};
 
 export type AckState =
   | { kind: "idle" }
@@ -58,16 +65,21 @@ export class CallSession {
 
   getState = (): CallState => this.#state;
 
-  /** The call was answered: show it and read the incident aloud. A repeat for the same call does nothing. */
+  /**
+   * The call was answered: show it and read the incident aloud. A repeat for the same call does not read it again.
+   * A key pressed before JavaScript was listening (`ackKeyPressed`) is acknowledged now.
+   */
   answered(call: ActiveCall): void {
-    if (this.#state?.call.id === call.id) return;
-    this.#set({
-      call,
-      ack: call.incident ? { kind: "idle" } : { kind: "unavailable" },
-      ended: false,
-    });
-    const locale = this.locale();
-    this.deps.speak(callScript(call, locale), speechLanguage(locale));
+    if (this.#state?.call.id !== call.id) {
+      this.#set({
+        call,
+        ack: call.incident ? { kind: "idle" } : { kind: "unavailable" },
+        ended: false,
+      });
+      const locale = this.locale();
+      this.deps.speak(callScript(call, locale), speechLanguage(locale));
+    }
+    if (call.ackKeyPressed) void this.acknowledge(call.id);
   }
 
   /**

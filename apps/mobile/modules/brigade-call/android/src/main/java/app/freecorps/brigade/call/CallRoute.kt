@@ -1,8 +1,9 @@
 package app.freecorps.brigade.call
 
 /**
- * How an incoming page reaches the responder (RFC 0010; paging paths need a fallback, AGENTS.md). Pure, so the
- * JVM unit tests cover every combination.
+ * How an incoming page reaches the responder (RFC 0010; paging paths need a fallback, AGENTS.md). Mirrors
+ * `decideRoute` in apps/mobile/src/lib/call-route.ts, the source of truth that CI tests (its test also checks the
+ * branches below); change both together. The JVM tests (CallRouteTest.kt) run only by hand.
  */
 sealed class CallRoute {
   /** Telecom call, CallStyle notification and full-screen ringing screen. */

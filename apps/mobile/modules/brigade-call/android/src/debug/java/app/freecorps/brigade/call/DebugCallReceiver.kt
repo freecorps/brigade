@@ -12,7 +12,8 @@ import android.util.Log
  *   adb shell am broadcast -a app.freecorps.brigade.call.DEBUG_RING -n app.freecorps.brigade/app.freecorps.brigade.call.DebugCallReceiver \
  *     --es title "SEV1 · Checkout down" --es body "502s from payments" --es incident inc_…
  *
- * The manifest only lets holders of DUMP (adb's shell) send it; a release build ignores it.
+ * The manifest only lets holders of DUMP (adb's shell) send it. It lives in the debug source set (src/debug), so a
+ * release build does not contain it; the debuggable check stays as a second guard.
  */
 class DebugCallReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {

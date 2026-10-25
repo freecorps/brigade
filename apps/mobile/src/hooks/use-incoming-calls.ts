@@ -13,7 +13,7 @@ export function useIncomingCalls(): void {
     const module = BrigadeCall;
     if (!module) return;
     const open = () => router.navigate("/call");
-    // Answered before React started (a cold start from the ringing screen).
+    // Answered before React started (a cold start from the ringing screen), with 1 already pressed on iOS.
     const answered = module.getAnsweredCall();
     let timer: ReturnType<typeof setTimeout> | undefined;
     if (answered) {

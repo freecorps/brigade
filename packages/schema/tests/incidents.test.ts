@@ -333,6 +333,34 @@ describe("incident.ack", () => {
     expect(store.get("incidents", ID)).toEqual(incident());
   });
 
+  test("reopening clears the ack, so the next page can be acknowledged", () => {
+    const acked = { acknowledgedAt: T - 1, acknowledgedBy: "usr_bia" };
+    const store = storeWith(incident({ status: "resolved", ...acked }));
+    expect(run(store, "incident.setStatus", { id: ID, status: "investigating" }).ok).toBe(true);
+    expect(store.get("incidents", ID)).toEqual(
+      incident({
+        status: "investigating",
+        acknowledgedAt: null,
+        acknowledgedBy: null,
+        updatedAt: T,
+      }),
+    );
+    expect(run(store, "incident.ack", { id: ID }).ok).toBe(true);
+    // Moving between open statuses keeps it.
+    expect(run(store, "incident.setStatus", { id: ID, status: "fixing" }).ok).toBe(true);
+    expect(store.get("incidents", ID)?.acknowledgedBy).toBe("usr_ana");
+  });
+
+  test("a client's optimistic reopen matches the server's", () => {
+    const row = incident({ status: "resolved", acknowledgedAt: T - 1, acknowledgedBy: "usr_bia" });
+    const client = storeWith(row);
+    const server = storeWith(row);
+    const args = { id: ID, status: "investigating" };
+    run(client, "incident.setStatus", args, ctx({ server: false }));
+    run(server, "incident.setStatus", args);
+    expect(client.dump()).toEqual(server.dump());
+  });
+
   test("a client's optimistic ack matches the server's", () => {
     const client = storeWith(incident());
     const server = storeWith(incident());

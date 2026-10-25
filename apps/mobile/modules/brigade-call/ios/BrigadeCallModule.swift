@@ -23,6 +23,7 @@ public class BrigadeCallModule: Module {
       return ["route": "ring"]
     }
 
+    /// With `ackKeyPressed` if 1 was pressed before JavaScript listened: the hook acknowledges on mount.
     Function("getAnsweredCall") { () -> [String: Any]? in
       return CallCenter.shared.answeredCall?.dictionary.compactMapValues { $0 }
     }

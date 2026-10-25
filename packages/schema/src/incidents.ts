@@ -109,7 +109,13 @@ export const setIncidentStatus = defineMutation({
     if (!canTransition(incident.status, args.status)) {
       return fail("invalid_transition", `Cannot move from ${incident.status} to ${args.status}`);
     }
-    store.update("incidents", args.id, { status: args.status, updatedAt: ctx.now });
+    // A reopened incident pages again: the ack that stopped the last page must not stop the next one.
+    const reopened = !isActive(incident.status) && isActive(args.status);
+    store.update("incidents", args.id, {
+      status: args.status,
+      updatedAt: ctx.now,
+      ...(reopened && { acknowledgedAt: null, acknowledgedBy: null }),
+    });
     const event: IncidentStatusChanged = {
       type: "incident.status_changed",
       subject: args.id,

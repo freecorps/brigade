@@ -41,6 +41,11 @@ object Calls {
   private const val ACCOUNT_ID = "brigade"
   /** An unanswered call stops ringing after this; the instance escalates on its own timeout. */
   private const val RING_TIMEOUT_MS = 60_000L
+  /**
+   * An answered call hangs up this long after answering, ack or not, which also bounds how long the app is shown
+   * over the lock screen. Mirrors `ANSWERED_CALL_MAX_MS` in apps/mobile/src/lib/call-route.ts.
+   */
+  const val ANSWERED_MAX_MS = 180_000L
   const val EXTRA_CALL_ID = "app.freecorps.brigade.call.ID"
 
   interface Listener {
@@ -156,8 +161,11 @@ object Calls {
     notification.flags = notification.flags or Notification.FLAG_INSISTENT
     try {
       NotificationManagerCompat.from(context).notify(id.hashCode(), notification)
-    } catch (error: SecurityException) {
+    } catch (error: Exception) {
+      // Without the notification nothing rings or shows the ringing screen: end the call, post the page instead.
       Log.w(TAG, "ringing notification refused: $error")
+      end(context, id, "failed")
+      notifyPage(context, call, PAGE_CHANNEL)
     }
   }
 
@@ -169,6 +177,7 @@ object Calls {
       state.connection?.setActive()
       cancelNotification(context, id)
       Log.i(TAG, "call answered")
+      main.postDelayed({ if (calls[id]?.answered == true) end(context, id, "timed_out") }, ANSWERED_MAX_MS)
       listener?.onAnswer(state.call)
     }
     // The call screen is the React app, over the lock screen while the call lasts.
@@ -181,7 +190,7 @@ object Calls {
 
   fun decline(context: Context, id: String) = end(context, id, "declined")
 
-  /** Ends a call: declined, hung up from the call screen, ended by Telecom, or timed out. */
+  /** Ends a call: declined, hung up from the call screen, ended by Telecom, missed, timed out or failed. */
   fun end(context: Context, id: String, reason: String) {
     val state = calls.remove(id) ?: return
     state.connection?.let {
@@ -189,6 +198,7 @@ object Calls {
         "declined" -> DisconnectCause.REJECTED
         "missed" -> DisconnectCause.MISSED
         "remote" -> DisconnectCause.REMOTE
+        "failed" -> DisconnectCause.ERROR
         else -> DisconnectCause.LOCAL
       }
       it.setDisconnected(DisconnectCause(cause))

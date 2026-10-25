@@ -123,6 +123,18 @@ describe("CallSession", () => {
     expect(session.state?.ended).toBe(true);
   });
 
+  test("a key pressed before JavaScript listened is acknowledged on mount, once", async () => {
+    const { session, acks, spoken, release } = setup();
+    // The hook reads `getAnsweredCall()` on mount; the onAnswer event may also arrive for the same call.
+    session.answered({ ...CALL, ackKeyPressed: true });
+    session.answered({ ...CALL, ackKeyPressed: true });
+    release();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(acks).toEqual([CALL.incident]);
+    expect(spoken[0]).toEqual([callScript(CALL, "en"), "en-US"]);
+  });
+
   test("speaks in Portuguese for a pt-BR user", () => {
     const { session, spoken } = setup(undefined, "pt-BR");
     session.answered(CALL);

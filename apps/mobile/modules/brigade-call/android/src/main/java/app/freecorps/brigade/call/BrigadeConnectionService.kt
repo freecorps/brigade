@@ -4,17 +4,25 @@ import android.net.Uri
 import android.telecom.Connection
 import android.telecom.ConnectionRequest
 import android.telecom.ConnectionService
+import android.telecom.DisconnectCause
 import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
+import android.util.Log
 
 /** Telecom's side of a self-managed call: the system knows Brigade is ringing or in a call. */
 class BrigadeConnectionService : ConnectionService() {
   override fun onCreateIncomingConnection(
     account: PhoneAccountHandle?,
     request: ConnectionRequest,
-  ): Connection? {
-    val id = callId(request) ?: return null
-    val call = Calls.get(id) ?: return null
+  ): Connection {
+    val id = callId(request)
+    val call = id?.let(Calls::get)
+    if (id == null || call == null) {
+      // Never null: Telecom would show nothing. A failed connection, and the page as a notification if we know it.
+      Log.w("BrigadeCall", "no call for the incoming connection")
+      id?.let { Calls.connectionFailed(applicationContext, it) }
+      return Connection.createFailedConnection(DisconnectCause(DisconnectCause.ERROR))
+    }
     return BrigadeConnection(applicationContext, id).apply {
       connectionProperties = Connection.PROPERTY_SELF_MANAGED
       audioModeIsVoip = true

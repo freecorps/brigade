@@ -7,6 +7,7 @@ import {
   mutations,
   SEVERITIES,
   type IncidentRow,
+  type IncidentStatus,
   type Severity,
 } from "@freecorps/brigade-schema";
 import { nextFailed, syncView, type MutationOutcome, type SyncView } from "@freecorps/brigade-sync";
@@ -20,7 +21,15 @@ import { fontFamily, fontSize, radius, spacing } from "@freecorps/brigade-ui";
 import { Link } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
+import {
+  AccessibilityInfo,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from "react-native";
 import { Badge } from "@/components/badge";
 import { useChoiceSheet } from "@/components/choice-sheet";
 import { SEV1_GLYPH, STATUS_GLYPHS, type Glyph } from "@/components/glyphs";
@@ -34,7 +43,9 @@ import {
   nextStatuses,
   refusalFor,
   refusalText,
+  pickTarget,
   severityName,
+  titleToRestore,
   type Refusal,
   type Target,
 } from "@/lib/incidents";
@@ -73,6 +84,10 @@ function IncidentList({ onReload }: { onReload: () => void }) {
   const setSeverity = useMutation("incident.setSeverity");
   const { choose, sheet } = useChoiceSheet();
 
+  // The latest rows, for picks made from a sheet opened on an older list.
+  const latest = useRef(rows);
+  latest.current = rows;
+  const [title, setTitle] = useState("");
   const [refusals, setRefusals] = useState<Refusal[]>([]);
   // In-flight changes per incident, so the row can say "Saving…" until the shard answers.
   const [busy, setBusy] = useState<ReadonlyMap<string, number>>(new Map());
@@ -90,11 +105,17 @@ function IncidentList({ onReload }: { onReload: () => void }) {
     void outcome.then((result) => {
       bump(-1);
       const refusal = refusalFor(result, target, `r${nextKey.current++}`);
-      if (refusal) setRefusals((current) => [...current, refusal].slice(-5));
+      if (!refusal) return;
+      setRefusals((current) => [...current, refusal].slice(-5));
+      // VoiceOver has no live regions (accessibilityLiveRegion is Android's), so say it once.
+      if (process.env.EXPO_OS === "ios") {
+        AccessibilityInfo.announceForAccessibility(refusalText(refusal, "list"));
+      }
+      // A title the shard refused comes back to the field, unless something new was typed.
+      setTitle((field) => titleToRestore(refusal, field) ?? field);
     });
   };
 
-  const [title, setTitle] = useState("");
   const [severity, setSeverityChoice] = useState<Severity>("sev3");
   const [invalid, setInvalid] = useState<"empty" | "invalid" | null>(null);
   const onDeclare = () => {
@@ -109,18 +130,36 @@ function IncidentList({ onReload }: { onReload: () => void }) {
     track(declare(args), { kind: "declare", incidentId: id, title: args.title });
   };
 
+  // A sheet stays open while the list moves: each pick is checked against the latest rows before it is sent.
+  const pickStatus = (id: string, to: IncidentStatus) => {
+    const current = pickTarget(latest.current, id, { kind: "status", to });
+    if (!current) return;
+    const { number, title: subject } = current;
+    track(setStatus({ id, status: to }), {
+      kind: "status",
+      incidentId: id,
+      number,
+      title: subject,
+      to,
+    });
+  };
+  const pickSeverity = (id: string, to: Severity) => {
+    const current = pickTarget(latest.current, id, { kind: "severity", to });
+    if (!current) return;
+    const { number, title: subject } = current;
+    track(setSeverity({ id, severity: to }), {
+      kind: "severity",
+      incidentId: id,
+      number,
+      title: subject,
+      to,
+    });
+  };
   const changeStatus = (row: IncidentRow) =>
     choose(
       m.incident_status_label(),
       nextStatuses(row.status).map((to) => ({ value: to, label: incidentStatusLabels[to]() })),
-      (to) =>
-        track(setStatus({ id: row.id, status: to }), {
-          kind: "status",
-          incidentId: row.id,
-          number: row.number,
-          title: row.title,
-          to,
-        }),
+      (to) => pickStatus(row.id, to),
     );
   const changeSeverity = (row: IncidentRow) =>
     choose(
@@ -129,14 +168,7 @@ function IncidentList({ onReload }: { onReload: () => void }) {
         value: to,
         label: severityName(to),
       })),
-      (to) =>
-        track(setSeverity({ id: row.id, severity: to }), {
-          kind: "severity",
-          incidentId: row.id,
-          number: row.number,
-          title: row.title,
-          to,
-        }),
+      (to) => pickSeverity(row.id, to),
     );
 
   const now = useNow(20_000);
@@ -299,10 +331,13 @@ function IncidentList({ onReload }: { onReload: () => void }) {
 
       <Link href="/legend" asChild>
         <Pressable accessibilityRole="link">
+          {/* Sized inside: Link's `asChild` drops a style function on the Pressable. 48pt tall to tap. */}
           {({ pressed }) => (
-            <ThemedText style={{ color: colors.primary, opacity: pressed ? 0.6 : 1 }}>
-              {m.legend_title()}
-            </ThemedText>
+            <View style={{ minHeight: spacing[12], justifyContent: "center" }}>
+              <ThemedText style={{ color: colors.primary, opacity: pressed ? 0.6 : 1 }}>
+                {m.legend_title()}
+              </ThemedText>
+            </View>
           )}
         </Pressable>
       </Link>

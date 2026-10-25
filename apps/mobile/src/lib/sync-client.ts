@@ -9,6 +9,7 @@ export const syncClient = createSyncClient({
     const url = syncUrl(shard, {
       override: process.env.EXPO_PUBLIC_BRIGADE_SYNC_URL,
       hostUri: Constants.expoConfig?.hostUri,
+      dev: __DEV__,
     });
     // Thrown inside the client, which retries with backoff: the list shows sync as unavailable.
     if (!url) throw new Error("No sync URL: set EXPO_PUBLIC_BRIGADE_SYNC_URL");

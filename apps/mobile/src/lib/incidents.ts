@@ -6,6 +6,7 @@ import {
   canTransition,
   formatIncidentNumber,
   INCIDENT_STATUSES,
+  type IncidentRow,
   type IncidentStatus,
   type Severity,
 } from "@freecorps/brigade-schema";
@@ -14,6 +15,21 @@ import type { MutationOutcome, SyncErrorCode } from "@freecorps/brigade-sync";
 /** The statuses `from` may move to, in lifecycle order (never `from` itself). */
 export function nextStatuses(from: IncidentStatus): IncidentStatus[] {
   return INCIDENT_STATUSES.filter((to) => canTransition(from, to));
+}
+
+/**
+ * The row a pick still applies to, looked up again when the pick happens: a sheet stays open while the list moves.
+ * Undefined when the incident left the list, already has that value, or can no longer move there.
+ */
+export function pickTarget(
+  rows: readonly IncidentRow[],
+  id: string,
+  change: { kind: "status"; to: IncidentStatus } | { kind: "severity"; to: Severity },
+): IncidentRow | undefined {
+  const row = rows.find((candidate) => candidate.id === id);
+  if (!row) return undefined;
+  if (change.kind === "severity") return row.severity === change.to ? undefined : row;
+  return canTransition(row.status, change.to) ? row : undefined;
 }
 
 /** "SEV2 High", as the badges show it. */
@@ -65,6 +81,16 @@ export function refusalFor(
     code === "invalid_args" &&
     issues?.some((issue) => issue.path === "id") === true;
   return { ...target, key, code, clockSkew };
+}
+
+/**
+ * The title to give back to the form after a refusal: a declare refused for its title (not the device clock),
+ * and only while the field is still empty, so nothing typed since is lost.
+ */
+export function titleToRestore(refusal: Refusal, field: string): string | undefined {
+  const forTitle =
+    refusal.kind === "declare" && refusal.code === "invalid_args" && !refusal.clockSkew;
+  return forTitle && field === "" ? refusal.title : undefined;
 }
 
 /**

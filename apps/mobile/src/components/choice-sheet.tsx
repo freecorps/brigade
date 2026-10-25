@@ -47,20 +47,15 @@ function ChoiceDialog({ request, onClose }: { request: Request; onClose: () => v
   const colors = useTheme();
   return (
     <Modal transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={m.declare_cancel()}
-        onPress={onClose}
-        style={{
-          flex: 1,
-          justifyContent: "center",
-          padding: spacing[6],
-          backgroundColor: "rgba(0, 0, 0, 0.4)",
-        }}
-      >
+      <View style={{ flex: 1, justifyContent: "center", padding: spacing[6] }}>
+        {/* The backdrop closes the dialog on touch; screen readers use the Cancel row (or Back) instead. */}
+        <Pressable
+          accessible={false}
+          importantForAccessibility="no"
+          onPress={onClose}
+          style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(0, 0, 0, 0.4)" }]}
+        />
         <View
-          // Taps inside the dialog stay in it.
-          onStartShouldSetResponder={() => true}
           style={{
             backgroundColor: colors.card,
             borderRadius: radius.xl,
@@ -76,27 +71,46 @@ function ChoiceDialog({ request, onClose }: { request: Request; onClose: () => v
             {request.title}
           </ThemedText>
           {request.choices.map((choice) => (
-            <Pressable
+            <DialogRow
               key={String(choice.value)}
-              accessibilityRole="button"
+              label={choice.label}
               onPress={() => {
                 onClose();
                 request.pick(choice.value);
               }}
-              style={({ pressed }) => ({
-                minHeight: spacing[12],
-                justifyContent: "center",
-                paddingHorizontal: spacing[6],
-                backgroundColor: pressed ? colors.accent : "transparent",
-                borderTopWidth: StyleSheet.hairlineWidth,
-                borderTopColor: colors.border,
-              })}
-            >
-              <ThemedText>{choice.label}</ThemedText>
-            </Pressable>
+            />
           ))}
+          <DialogRow label={m.declare_cancel()} muted onPress={onClose} />
         </View>
-      </Pressable>
+      </View>
     </Modal>
+  );
+}
+
+function DialogRow({
+  label,
+  muted = false,
+  onPress,
+}: {
+  label: string;
+  muted?: boolean;
+  onPress: () => void;
+}) {
+  const colors = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => ({
+        minHeight: spacing[12],
+        justifyContent: "center",
+        paddingHorizontal: spacing[6],
+        backgroundColor: pressed ? colors.accent : "transparent",
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: colors.border,
+      })}
+    >
+      <ThemedText variant={muted ? "caption" : "body"}>{label}</ThemedText>
+    </Pressable>
   );
 }

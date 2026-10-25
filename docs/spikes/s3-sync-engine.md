@@ -26,12 +26,15 @@ The mobile screen is the app's home: the active list from `useQuery("incidents.a
 "Saving" / "Not sent" before the shard numbers it), title, severity and status badges and the declared time; a
 declare form (title, severity defaulting to SEV3, "Declare SEV3"); and per row, the severity and status badges are
 buttons. Tapping one opens the system action sheet on iOS (`ActionSheetIOS`) and a plain dialog on Android, which
-React Native has no native list dialog for. Status offers only the moves `canTransition` allows. A refused change
-rolls back on its own and leaves a translated message in its row. The connection reads as a word and a small glyph
+React Native has no native list dialog for. Status offers only the moves `canTransition` allows, and a pick is
+checked again against the latest rows when it is made (`pickTarget`): nothing is sent if the incident left the list,
+already has that value, or can no longer move there. A refused change rolls back on its own and leaves a translated
+message in its row, announced to VoiceOver on iOS; a declare refused for its title gives the title back to an
+empty field, as the dashboard does. The connection reads as a word and a small glyph
 (Live, Connecting…, Reconnecting…, Sync unavailable, Not loaded), from the same `syncView` the dashboard uses.
 
 The app has one `SyncClient` at module scope. Its URL is `ws://<Metro host>:5173/api/sync/demo` in development,
-from Expo's `hostUri`, or `EXPO_PUBLIC_BRIGADE_SYNC_URL`. Ids come from `client.newId("inc")` with `expo-crypto`'s
+from Expo's `hostUri` (development builds only), or `EXPO_PUBLIC_BRIGADE_SYNC_URL`. Ids come from `client.newId("inc")` with `expo-crypto`'s
 random bytes, and the optimistic actor mirrors the shard's dev actor, tied by a test. The client id is per launch:
 pending mutations live in memory, so a per-install id would buy nothing until they are persisted.
 
@@ -59,11 +62,17 @@ the phones, from a temporary logging transport (`createSyncClient({ transport })
 
 Each change reached every connected client as one `patch` frame for its version. At version 9 the two tabs, the
 Simulator and the emulator showed the same four incidents in the same order, with the same badges
-(`three-clients.png`).
+(`clients-side-by-side.png`).
 
-The mobile changes went through the app's `SyncClient` (`client.mutate`, the function `useMutation` returns),
-driven from the host because taps cannot be injected on this Simulator runtime (S4, "How it was driven"). The
-action sheet itself was not tapped.
+The mobile changes in this table went through the app's `SyncClient` (`client.mutate`, the function `useMutation`
+returns), driven from the host because taps cannot be injected on this Simulator runtime (S4, "How it was
+driven").
+
+A second run after review (a fresh shard) used real taps on the Android emulator (`adb shell input`): the status
+badge opened the dialog with its Cancel row (`android-status-dialog.png`), picking Investigating sent
+`incident.setStatus` and the dashboard showed it at version 7, a tap on the backdrop closed a second dialog with
+nothing sent, and typing a title and pressing return declared INC-5 (version 8), which the dashboard and the
+Simulator listed.
 
 ### Resume
 
@@ -84,17 +93,22 @@ A new process starts from nothing, as designed: each cold launch subscribed with
 
 ### A refused change
 
-From the screen's own path (temporary code calling the row's status handler), INC-3 was moved to the status it
-already had. The shard answered `conflict`; the row stayed Triage and showed "Couldn't move it to Triage.
-Someone changed it first." (`ios-incidents-refused.png`).
+Staged in the second run with temporary code. The Simulator's socket was dropped while INC-3 was in Triage; tab B
+moved it to Investigating. The app, still showing Triage, then picked Declined through the screen's own pick
+handler (the one the action sheet calls), which allowed it from the stale view and queued it. On reconnect the
+shard refused it with `invalid_transition`; the row rolled back to Investigating and read "Couldn't move it to
+Declined. Its status changed in the meantime, so that move is no longer allowed." (`ios-incidents-refused.png`).
+The same pick sent again once the app was live sent nothing: the pick-time check saw Investigating.
 
 ### Screens
 
-Screenshots in `test-results/pr-media/` (gitignored), each checked by eye: `ios-incidents-{light,dark}-{en,pt-BR}`,
-`android-incidents-{light,dark}-{en,pt-BR}`, `ios-incidents-empty` (version 0: "All clear."),
-`ios-incidents-reconnecting`, `ios-incidents-refused`, `ios-incidents-dynamic-type-xxxl` and `-rows` (the top and
-the rows at `accessibility-extra-extra-extra-large`: text wraps, badges stack one per line, nothing clips; the
-glyphs keep their fixed size, as in S4) and `three-clients`.
+Screenshots are attached to the pull request, not committed. Each was checked by eye:
+`ios-incidents-{light,dark}-{en,pt-BR}`, `android-incidents-{light,dark}-{en,pt-BR}`, `ios-incidents-empty`
+(version 0: "All clear."), `ios-incidents-reconnecting`, `ios-incidents-refused`, `android-status-dialog`,
+`clients-side-by-side`, and three at `accessibility-extra-extra-extra-large`: `ios-incidents-dynamic-type-xxxl`
+(the top), `-rows` (rows: text wraps, badges stack one per line, nothing clips) and `-sev1` (the whole Declare
+button above the SEV1 row). On the iPhone 17 at that size the two together are taller than the screen, so the
+SEV1 badge's last few points run off the bottom edge in `-sev1`. The glyphs keep their fixed size, as in S4.
 
 What needed a decision or a workaround:
 
@@ -103,16 +117,19 @@ What needed a decision or a workaround:
   Simulator reaches `localhost:5173` directly and the emulator through `adb reverse tcp:5173 tcp:5173`, which
   reached the IPv6-only listener without change. LAN mode and physical devices would need the dev server on the
   LAN (`apps/mobile/README.md`).
-- **`syncView` and `nextFailed` moved to `packages/sync`.** They are pure functions of the query status and the
-  socket state; the dashboard re-exports them. The wording of a refused change stays per app (it reuses the
-  dashboard's messages), since only the strings are shared, not the components (Q5).
+- **What is shared, and what is duplicated for now.** `syncView` and `nextFailed` moved to `packages/sync`: pure
+  functions of the query status and the socket state, used by both apps (the dashboard re-exports them). The
+  helpers that word a refused change (the error-reason table, the per-kind sentences, the relative age) use the
+  same `packages/i18n` messages but are duplicated in `apps/web/src/lib/incidents.ts` and
+  `apps/mobile/src/lib/incidents.ts`; moving them to a shared place is tracked in #20.
 - **Three new messages**: the app's "keeps trying" and offline hints (the dashboard's say "this page") and the
   hint for the badge buttons.
 
 ## What was not verified
 
-- **Taps.** The action sheet, the Android dialog and the declare form were not operated by hand; the mutations
-  they call were. The iOS action sheet and the Android dialog were not seen on screen.
+- **Taps on iOS.** The iOS action sheet and the iOS declare form were not operated or seen on screen (no tap
+  injection on this Simulator runtime); the Android dialog and form were tapped (above).
+- **VoiceOver.** The announcement of a refused change was not listened to.
 - **Physical devices and LAN mode.** Only the Simulator and the emulator, both on the Mac's `localhost`.
 - **Auth.** Every socket is the dev actor (`SYNC_DEV_ACTOR`); refusals for permissions were not exercised end to
   end.

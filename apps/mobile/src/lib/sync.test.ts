@@ -16,16 +16,28 @@ test("the dev host is Metro's host, without its port", () => {
 });
 
 test("development builds connect to the dashboard's dev server on the Metro host", () => {
-  expect(syncUrl("demo", { hostUri: "localhost:8081" })).toBe("ws://localhost:5173/api/sync/demo");
-  expect(syncUrl("a b", { hostUri: "10.0.2.2:8081" })).toBe("ws://10.0.2.2:5173/api/sync/a%20b");
+  const dev = true;
+  expect(syncUrl("demo", { hostUri: "localhost:8081", dev })).toBe(
+    "ws://localhost:5173/api/sync/demo",
+  );
+  expect(syncUrl("a b", { hostUri: "10.0.2.2:8081", dev })).toBe(
+    "ws://10.0.2.2:5173/api/sync/a%20b",
+  );
+});
+
+test("release builds never fall back to the Metro host", () => {
+  const release = { hostUri: "localhost:8081", dev: false };
+  expect(syncUrl("demo", release)).toBeUndefined();
+  expect(syncUrl("demo", { ...release, override: "wss://brigade.example.com/api/sync" })).toBe(
+    "wss://brigade.example.com/api/sync/demo",
+  );
 });
 
 test("an override wins, and without one or a Metro host there is no URL", () => {
-  expect(
-    syncUrl("demo", { override: "wss://brigade.example.com/api/sync/", hostUri: "localhost:8081" }),
-  ).toBe("wss://brigade.example.com/api/sync/demo");
-  expect(syncUrl("demo", { override: "  ", hostUri: "localhost:8081" })).toBe(
-    "ws://localhost:5173/api/sync/demo",
+  const dev = { hostUri: "localhost:8081", dev: true };
+  expect(syncUrl("demo", { ...dev, override: "wss://brigade.example.com/api/sync/" })).toBe(
+    "wss://brigade.example.com/api/sync/demo",
   );
-  expect(syncUrl("demo", {})).toBeUndefined();
+  expect(syncUrl("demo", { ...dev, override: "  " })).toBe("ws://localhost:5173/api/sync/demo");
+  expect(syncUrl("demo", { dev: true })).toBeUndefined();
 });

@@ -1,10 +1,76 @@
 import { setLocale } from "@freecorps/brigade-i18n";
 import { afterEach, expect, test } from "vite-plus/test";
-import { formatAge, nextStatuses, refusalFor, refusalText, type Target } from "./incidents";
+import type { IncidentRow } from "@freecorps/brigade-schema";
+import {
+  formatAge,
+  nextStatuses,
+  pickTarget,
+  refusalFor,
+  refusalText,
+  titleToRestore,
+  type Target,
+} from "./incidents";
 
 afterEach(() => setLocale("en"));
 
 const ID = "inc_01M5PWGDG00000000000000001";
+
+const row = (changes: Partial<IncidentRow>): IncidentRow => ({
+  id: ID,
+  number: 3,
+  title: "Status page CSS broken",
+  severity: "sev4",
+  status: "triage",
+  declaredAt: 0,
+  declaredBy: "usr_dev",
+  updatedAt: 0,
+  ...changes,
+});
+
+test("a pick is checked against the latest rows, not the ones the sheet opened on", () => {
+  const triage = [row({})];
+  expect(pickTarget(triage, ID, { kind: "status", to: "declined" })).toEqual(triage[0]);
+  // Another client moved it on while the sheet was open: Declined is no longer a move from Investigating.
+  expect(
+    pickTarget([row({ status: "investigating" })], ID, { kind: "status", to: "declined" }),
+  ).toBeUndefined();
+  expect(pickTarget(triage, ID, { kind: "status", to: "triage" })).toBeUndefined();
+  expect(pickTarget([], ID, { kind: "status", to: "fixing" })).toBeUndefined();
+  expect(pickTarget(triage, ID, { kind: "severity", to: "sev1" })).toEqual(triage[0]);
+  expect(
+    pickTarget([row({ severity: "sev1" })], ID, { kind: "severity", to: "sev1" }),
+  ).toBeUndefined();
+  expect(pickTarget([], ID, { kind: "severity", to: "sev1" })).toBeUndefined();
+});
+
+test("a title the shard refused comes back only to an empty field, and never for the clock", () => {
+  const declare: Target = { kind: "declare", incidentId: ID, title: "Checkout down" };
+  const refused = refusalFor(
+    {
+      ok: false,
+      error: { code: "invalid_args", message: "bad", issues: [{ path: "title", message: "x" }] },
+    },
+    declare,
+    "t1",
+  )!;
+  expect(titleToRestore(refused, "")).toBe("Checkout down");
+  expect(titleToRestore(refused, "Typed since")).toBeUndefined();
+  const skew = refusalFor(
+    {
+      ok: false,
+      error: { code: "invalid_args", message: "bad", issues: [{ path: "id", message: "x" }] },
+    },
+    declare,
+    "t2",
+  )!;
+  expect(titleToRestore(skew, "")).toBeUndefined();
+  const forbidden = refusalFor(
+    { ok: false, error: { code: "forbidden", message: "no" } },
+    declare,
+    "t3",
+  )!;
+  expect(titleToRestore(forbidden, "")).toBeUndefined();
+});
 
 test("only the moves the lifecycle allows are offered", () => {
   expect(nextStatuses("resolved")).toEqual(["investigating"]);

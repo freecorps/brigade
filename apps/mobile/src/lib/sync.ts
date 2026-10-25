@@ -31,16 +31,16 @@ export function devHost(hostUri: string | null | undefined): string | undefined 
 
 /**
  * The shard's socket URL. `override` (EXPO_PUBLIC_BRIGADE_SYNC_URL) is a base such as `wss://brigade.example.com/api/sync`;
- * without it, development builds use the dev server on the Metro host. Undefined when neither is known (a release
- * build with no override): the list then shows sync as unavailable.
+ * without it, development builds (`dev`, the app's `__DEV__`) use the dev server on the Metro host. A release build
+ * never does, even with a `hostUri`: with no override it has no URL, and the list shows sync as unavailable.
  */
 export function syncUrl(
   shard: string,
-  { override, hostUri }: { override?: string; hostUri?: string | null },
+  { override, hostUri, dev }: { override?: string; hostUri?: string | null; dev: boolean },
 ): string | undefined {
   const base = override?.trim().replace(/\/+$/, "");
   if (base) return `${base}/${encodeURIComponent(shard)}`;
-  const host = devHost(hostUri);
+  const host = dev ? devHost(hostUri) : undefined;
   if (!host) return undefined;
   return `ws://${host}:${DEV_SERVER_PORT}/api/sync/${encodeURIComponent(shard)}`;
 }

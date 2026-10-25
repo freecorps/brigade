@@ -1,7 +1,7 @@
 // The external dead-man switch (RFC 0007 "Watching the watcher"). Once a minute the Cron Trigger asks the one
 // `WatchdogDO` for a beat: a `brigade.heartbeat` event written to its own outbox and sent by its alarm through the same
 // `OutboxDrain` the shards use, to the `brigade-events` Queue. The consumer (src/notify.ts) checks the relay's
-// `/health` and reports back (`proved`); only a beat that made it all the way, quickly, with the relay answering,
+// relay with a token-checked `POST /send` and reports back (`proved`); only a beat that made it all the way, quickly, with the relay answering,
 // pings the operator's external check (`DEAD_MAN_URL`). The external check alerts on silence, so any stage that stops
 // (the cron, Durable Objects, alarms, the drain, the Queue, the consumer, the relay) stops the pings and pages the
 // operators through a channel outside Cloudflare. Inside Brigade the same state is `GET /health/paging`, which the
@@ -22,21 +22,35 @@ export const HEARTBEAT_EVENT = "brigade.heartbeat";
 export const STATUS_EVENT = "brigade.status_changed";
 export const WATCHDOG_ACTOR: Actor = { kind: "system", id: "sys_watchdog", role: "admin" };
 
-/** A beat not proved within this (three missed minutes) makes the pipeline degraded; so does no beat at all. */
+/**
+ * The newest proved beat older than this (three missed minutes) makes the pipeline degraded; so does no beat at all.
+ */
 export const BEAT_STALE_MS = 3 * 60 * 1000;
-/** A proof that took longer than this to come back still counts as alive inside Brigade, but does not ping. */
+/**
+ * A proof that took longer than this to come back pings nothing, and shows as `pipeline_slow`, so the dashboard and
+ * the external check agree.
+ */
 export const MAX_PROOF_LATENCY_MS = 2 * 60 * 1000;
 /** How long the external check gets per ping. */
-export const PING_TIMEOUT_MS = 10_000;
+export const PING_TIMEOUT_MS = 5000;
 
-export type RelayHealth = "ok" | "unreachable" | "not_configured";
+/**
+ * What the consumer found at the relay: `ok` when it took the send token (src/notify.ts), `unauthorized` when it
+ * refused it, `unreachable` for anything else.
+ */
+export type RelayHealth = "ok" | "unauthorized" | "unreachable" | "not_configured";
 export type DegradedReason =
   | "no_beat"
   | "pipeline_stalled"
+  | "pipeline_slow"
+  | "relay_unauthorized"
   | "relay_unreachable"
   | "relay_not_configured";
 
-/** `GET /health/paging`. Coarse on purpose: no URLs, ids or error text. */
+/**
+ * `GET /health/paging`, as the watchdog knows it. Coarse on purpose: no URLs, ids or error text. The route
+ * (src/index.ts) trims it further by who asks (`pagingHealthFor`).
+ */
 export type PagingHealth = {
   /** `unknown` until the first beat is proved (a new deployment, or local dev where the cron never runs). */
   status: "ok" | "degraded" | "unknown";
@@ -70,6 +84,7 @@ type Keys =
   | "last_ok_at"
   | "relay"
   | "status"
+  | "reasons"
   | "last_ping_at"
   | "last_ping_ok"
   | "beats";
@@ -118,7 +133,9 @@ export class WatchdogDO extends DurableObject<Env> {
   /**
    * A heartbeat came out of the Queue (RPC from the consumer), with what the consumer found at the relay. Records it,
    * and pings the external check when the beat is the newest yet, came through within `MAX_PROOF_LATENCY_MS` and the
-   * relay answered. A redelivery, or a beat older than one already proved, changes nothing.
+   * relay took the token. A redelivery, or a beat older than one already proved, changes nothing. The ping runs in
+   * `waitUntil` (it keeps the object from being evicted, not the RPC from returning), so an external check that
+   * hangs never holds up the consumer, and with it the pages in the same batch.
    */
   async proved(beatTime: string, relay: RelayHealth, now = Date.now()): Promise<PagingHealth> {
     const beatAt = Date.parse(beatTime);
@@ -132,7 +149,7 @@ export class WatchdogDO extends DurableObject<Env> {
       this.settle(now);
     });
     await this.armDrain(now);
-    if (relay === "ok" && now - beatAt <= MAX_PROOF_LATENCY_MS) await this.ping(now);
+    if (relay === "ok" && now - beatAt <= MAX_PROOF_LATENCY_MS) this.ctx.waitUntil(this.ping(now));
     else if (relay === "ok") log("heartbeat too late to ping", { latencyMs: now - beatAt });
     return this.health(now);
   }
@@ -149,6 +166,7 @@ export class WatchdogDO extends DurableObject<Env> {
         {
           firstBeatAt: num(this.get("first_beat_at")),
           lastBeatAt: num(this.get("last_beat_at")),
+          provedBeatAt: num(this.get("proved_beat_at")),
           lastProvedAt: num(this.get("last_proved_at")),
           relay: this.get("relay") as RelayHealth | null,
         },
@@ -180,14 +198,18 @@ export class WatchdogDO extends DurableObject<Env> {
   }
 
   /**
-   * Recomputes the status and, when it changed, writes `brigade.status_changed` to the outbox and logs it (Workers
-   * Logs alerts can watch for `paging pipeline degraded`). Call inside a transaction.
+   * Recomputes the status and, when it or its reasons changed, writes `brigade.status_changed` to the outbox and logs
+   * it (Workers Logs alerts can watch for `paging pipeline degraded`). Runs only on a beat or a proof, so `no_beat`
+   * (no beat is what runs it) is never logged or evented: only `GET /health/paging` and the external check see it.
+   * Call inside a transaction.
    */
   private settle(now: number): void {
     const { status, reasons } = this.health(now);
     const previous = this.get("status");
-    if (previous === status) return;
+    const key = JSON.stringify([...reasons].sort());
+    if (previous === status && this.get("reasons") === key) return;
     this.set("status", status);
+    this.set("reasons", key);
     // The first beat (nothing to unknown) is not a change anyone needs to hear about.
     if (previous === null && status === "unknown") return;
     this.write([{ type: STATUS_EVENT, data: { status, previous, reasons } }], now, 0);
@@ -255,25 +277,34 @@ export class WatchdogDO extends DurableObject<Env> {
 /**
  * The status from the recorded times (pure, so the rules are tested on their own):
  * - `no_beat`: the cron has not beaten for `BEAT_STALE_MS` (the cron or this object stopped);
- * - `pipeline_stalled`: nothing has been proved for `BEAT_STALE_MS` since the last proof, or since the first beat
- *   (the alarm, the drain, the Queue or the consumer stopped);
- * - `relay_unreachable` / `relay_not_configured`: what the consumer found at the relay on the last proof.
+ * - `pipeline_stalled`: the newest proved beat (or, before any, the first beat) is older than `BEAT_STALE_MS`, so
+ *   beats stopped coming through or come through late (the alarm, the drain, the Queue or the consumer stopped, or
+ *   the Queue is backed up);
+ * - `pipeline_slow`: the last proof took longer than `MAX_PROOF_LATENCY_MS`, which pings nothing;
+ * - `relay_unauthorized` / `relay_unreachable` / `relay_not_configured`: what the consumer found at the relay on the
+ *   last proof.
  * With no beat yet, or beats but none proved and none overdue, it is `unknown`.
  */
 export function pagingStatus(
   times: {
     firstBeatAt: number | null;
     lastBeatAt: number | null;
+    /** The time of the newest beat proved (when the cron wrote it, not when it came back). */
+    provedBeatAt: number | null;
     lastProvedAt: number | null;
     relay: RelayHealth | null;
   },
   now: number,
 ): Pick<PagingHealth, "status" | "reasons"> {
-  const { firstBeatAt, lastBeatAt, lastProvedAt, relay } = times;
+  const { firstBeatAt, lastBeatAt, provedBeatAt, lastProvedAt, relay } = times;
   if (lastBeatAt === null || firstBeatAt === null) return { status: "unknown", reasons: [] };
   const reasons: DegradedReason[] = [];
   if (now - lastBeatAt > BEAT_STALE_MS) reasons.push("no_beat");
-  if (now - (lastProvedAt ?? firstBeatAt) > BEAT_STALE_MS) reasons.push("pipeline_stalled");
+  if (now - (provedBeatAt ?? firstBeatAt) > BEAT_STALE_MS) reasons.push("pipeline_stalled");
+  if (provedBeatAt !== null && lastProvedAt !== null) {
+    if (lastProvedAt - provedBeatAt > MAX_PROOF_LATENCY_MS) reasons.push("pipeline_slow");
+  }
+  if (relay === "unauthorized") reasons.push("relay_unauthorized");
   if (relay === "unreachable") reasons.push("relay_unreachable");
   if (relay === "not_configured") reasons.push("relay_not_configured");
   if (reasons.length > 0) return { status: "degraded", reasons };
@@ -282,7 +313,7 @@ export function pagingStatus(
 
 /**
  * `DEAD_MAN_URL` when it is usable: `https:`, or `http:` on a loopback host for the local double
- * (scripts/dead-man-double.ts). Anything else is logged and ignored, as if unset.
+ * (scripts/dead-man-double.mjs). Anything else is logged and ignored, as if unset.
  */
 export function pingUrl(env: Pick<WatchdogEnv, "DEAD_MAN_URL">): URL | undefined {
   const raw = env.DEAD_MAN_URL;

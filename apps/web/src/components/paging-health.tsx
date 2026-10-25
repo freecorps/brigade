@@ -14,25 +14,36 @@ import {
 const REASONS: Record<DegradedReason, () => string> = {
   no_beat: m.paging_reason_no_beat,
   pipeline_stalled: m.paging_reason_pipeline_stalled,
+  pipeline_slow: m.paging_reason_pipeline_slow,
+  relay_unauthorized: m.paging_reason_relay_unauthorized,
   relay_unreachable: m.paging_reason_relay_unreachable,
   relay_not_configured: m.paging_reason_relay_not_configured,
 };
 
 /**
- * The paging self-check's state, checked on load and every minute. Says nothing while all is well: a notice that is
- * always there stops being read. `fetcher` is for the tests.
+ * The paging self-check's state, checked on load and every minute while the tab is visible, and again when it comes
+ * back. Says nothing while all is well: a notice that is always there stops being read. `fetcher` is for the tests.
  */
 export function PagingHealthNotice({ fetcher = fetch }: { fetcher?: typeof fetch }) {
   const [health, setHealth] = useState<PagingHealth | "unreachable">();
   useEffect(() => {
     const controller = new AbortController();
+    let timer: ReturnType<typeof setInterval> | undefined;
     const check = () =>
       void fetchPagingHealth(fetcher, controller.signal).then((next) => {
         if (!controller.signal.aborted) setHealth(next);
       });
-    check();
-    const timer = setInterval(check, PAGING_REFRESH_MS);
+    const poll = () => {
+      clearInterval(timer);
+      timer = undefined;
+      if (document.visibilityState === "hidden") return;
+      check();
+      timer = setInterval(check, PAGING_REFRESH_MS);
+    };
+    poll();
+    document.addEventListener("visibilitychange", poll);
     return () => {
+      document.removeEventListener("visibilitychange", poll);
       clearInterval(timer);
       controller.abort();
     };

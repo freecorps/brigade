@@ -1,4 +1,4 @@
-import { parseHeartbeatToken, workspaceName } from "@freecorps/brigade-schema";
+import { isRole, parseHeartbeatToken, workspaceName, type Role } from "@freecorps/brigade-schema";
 import { ACTOR_HEADER, MEMBER_NAME_HEADER, resolveActor } from "./actor.ts";
 import {
   AUTH_BASE_PATH,
@@ -8,7 +8,7 @@ import {
   type AuthBindings,
 } from "./auth.ts";
 import { consumeDeadLetters, consumeEvents } from "./notify.ts";
-import { WATCHDOG_NAME } from "./watchdog.ts";
+import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
 import { WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
 
 export { ProbeDO } from "./probe.ts";
@@ -54,7 +54,7 @@ export default {
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
 
-    if (pathname === "/health/paging") return pagingHealth(request, env);
+    if (pathname === "/health/paging") return pagingHealth(request, env, auth);
 
     const workspace = WORKSPACE_PATH.exec(pathname)?.[1];
     if (pathname !== "/health" && workspace === undefined) return json({ error: "not_found" }, 404);
@@ -95,22 +95,60 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 /**
- * `GET /health/paging`: whether the paging pipeline proved itself lately (src/watchdog.ts), for the dashboard. As
- * open as `/health`: it says only `ok`, `degraded` or `unknown`, why, and when, never a URL or an id. Answers 503 when
- * the watchdog itself cannot be reached, which is also degraded.
+ * `GET /health/paging`: whether the paging pipeline proved itself lately (src/watchdog.ts), for the dashboard. Never a
+ * URL or an id, and trimmed by who asks (`pagingHealthFor`). Answers 503 when the watchdog itself cannot be reached,
+ * which is also degraded.
  */
-export async function pagingHealth(request: Request, env: Env): Promise<Response> {
+export async function pagingHealth(
+  request: Request,
+  env: Env,
+  auth: () => Auth,
+): Promise<Response> {
   if (!READ_METHODS.includes(request.method)) {
     return json({ error: "method_not_allowed" }, 405, { Allow: READ_METHODS.join(", ") });
   }
+  let health: PagingHealth;
   try {
-    return json(await env.WATCHDOG.getByName(WATCHDOG_NAME).health(), 200, {
-      "Cache-Control": "no-store",
-    });
+    health = await env.WATCHDOG.getByName(WATCHDOG_NAME).health();
   } catch (error) {
     console.error(JSON.stringify({ message: "WatchdogDO.health failed", error: String(error) }));
     return json({ error: "unavailable" }, 503);
   }
+  const session = await auth().api.getSession({ headers: request.headers });
+  const roles = session ? await memberRoles(env.DB, session.user.id) : [];
+  return json(pagingHealthFor(health, roles), 200, {
+    // Varies by the session's cookie, so no shared cache may keep it.
+    "Cache-Control": "private, no-store",
+  });
+}
+
+/**
+ * What `GET /health/paging` shows, by the asker's roles across workspaces. The pipeline is one per instance, so no
+ * single workspace owns it:
+ * - no session, or no workspace: `{ status }` only, like `/health`; why and since when would tell an outsider when
+ *   pages stop going out;
+ * - any member: the reasons and times too, since a responder needs to know they may not be paged;
+ * - an owner or admin of some workspace: also `external` (whether the dead-man check is set up and answering), the
+ *   operator's business. There is no instance-operator role yet (Q19).
+ */
+export function pagingHealthFor(
+  health: PagingHealth,
+  roles: readonly Role[],
+): Pick<PagingHealth, "status"> & Partial<PagingHealth> {
+  if (roles.length === 0) return { status: health.status };
+  if (roles.some((role) => role === "owner" || role === "admin")) return health;
+  const { external: _external, ...rest } = health;
+  return rest;
+}
+
+/** The user's Brigade roles in every workspace they belong to (empty when none). */
+async function memberRoles(db: D1Database, userId: string): Promise<Role[]> {
+  const { results } = await db
+    .prepare(`select role from member where "userId" = ?`)
+    .bind(userId)
+    .all<{ role: string }>();
+  // Better Auth stores several roles comma-separated; Brigade gives each member one, as `memberRole` reads it.
+  return results.map((row) => row.role).filter(isRole);
 }
 
 /**

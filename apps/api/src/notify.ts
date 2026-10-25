@@ -33,7 +33,7 @@ export const PAGE_RETRY_FIRST_SECONDS = 5;
 export const PAGE_RETRY_MAX_SECONDS = 60;
 /** How long the relay gets per send. */
 export const RELAY_TIMEOUT_MS = 10_000;
-/** How long the relay's `/health` gets when the dead-man switch's heartbeat comes through. */
+/** How long the relay's token check gets when the dead-man switch's heartbeat comes through. */
 export const RELAY_HEALTH_TIMEOUT_MS = 5000;
 
 /** Optional: an instance without a relay still runs, and every page it would send is recorded as failed. */
@@ -133,14 +133,14 @@ export async function consumeDeadLetters(
 }
 
 /**
- * A `brigade.heartbeat` came through the outbox and the Queue: checks the relay is up and tells the watchdog, which
- * pings the external check. Never throws, and the message is acked either way: a lost heartbeat is a minute of
+ * A `brigade.heartbeat` came through the outbox and the Queue: checks the relay is up and takes the send token, and
+ * tells the watchdog, which pings the external check. Never throws, and the message is acked either way: a lost heartbeat is a minute of
  * silence, and the next one is already on its way. Other system events (`brigade.status_changed`) have no notifier
  * yet.
  */
 export async function proveHeartbeat(
   event: BrigadeEvent,
-  env: Pick<NotifyEnv, "WATCHDOG" | "RELAY_URL">,
+  env: Pick<NotifyEnv, "WATCHDOG" | "RELAY_URL" | "RELAY_SEND_TOKEN">,
   send: Fetch,
 ): Promise<void> {
   if (event.type !== HEARTBEAT_EVENT) return;
@@ -156,18 +156,33 @@ export async function proveHeartbeat(
   }
 }
 
-/** The relay's `GET /health`: whether a page could get past this Worker right now. */
-async function relayHealth(env: Pick<NotifyEnv, "RELAY_URL">, send: Fetch): Promise<RelayHealth> {
+/**
+ * Whether a page could get past this Worker right now: `POST /send` with the send token and an empty body. The relay
+ * checks the token before it reads the body (apps/relay src/index.ts), so `400 invalid_body` means it took the token
+ * without calling APNs or logging anything, `401` that it refused it (a rotated or mistyped `RELAY_SEND_TOKEN`), and
+ * anything else that it is not answering as a relay. Its `/health` would say nothing about the token.
+ */
+async function relayHealth(
+  env: Pick<NotifyEnv, "RELAY_URL" | "RELAY_SEND_TOKEN">,
+  send: Fetch,
+): Promise<RelayHealth> {
   if (!env.RELAY_URL) return "not_configured";
   try {
     const response = await send(
-      new Request(new URL("/health", env.RELAY_URL), {
+      new Request(new URL("/send", env.RELAY_URL), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${env.RELAY_SEND_TOKEN ?? ""}` },
         signal: AbortSignal.timeout(RELAY_HEALTH_TIMEOUT_MS),
       }),
     );
-    await response.body?.cancel();
-    if (response.ok) return "ok";
-    log("relay health refused", { status: response.status });
+    const status = response.status;
+    const body: unknown = await response.json().catch(() => null);
+    if (status === 400 && Reflect.get(Object(body), "error") === "invalid_body") return "ok";
+    if (status === 401) {
+      log("relay refused the send token", { status });
+      return "unauthorized";
+    }
+    log("relay token check failed", { status });
   } catch (error) {
     log("relay health unreachable", { error: String(error) });
   }

@@ -5,7 +5,7 @@ export type Paging_Reason_Pipeline_StalledInputs = {};
 /**
 * | output |
 * | --- |
-* | "Test pages stopped getting through the event queue." |
+* | "Test pages stopped getting through the event queue, or get through minutes late." |
 *
 * @param {Paging_Reason_Pipeline_StalledInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

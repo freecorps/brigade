@@ -4,12 +4,13 @@
 import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { PagingHealthNotice } from "../src/components/paging-health";
 import { PreferencesProvider } from "../src/components/preferences";
 import {
   fetchPagingHealth,
   PAGING_HEALTH_PATH,
+  PAGING_REFRESH_MS,
   pagingView,
   parsePagingHealth,
 } from "../src/lib/paging-health";
@@ -41,22 +42,33 @@ describe("parsePagingHealth", () => {
     });
   });
 
+  test("without a session the API says only the status: still an answer, with no reasons", () => {
+    expect(parsePagingHealth({ status: "degraded" })).toEqual({
+      status: "degraded",
+      reasons: [],
+      lastOkAt: null,
+    });
+  });
+
   test("anything else is not an answer", () => {
-    for (const body of [null, "ok", { status: "fine", reasons: [] }, { status: "ok" }]) {
+    for (const body of [null, "ok", { status: "fine", reasons: [] }, { status: "ok", reasons: 1 }]) {
       expect(parsePagingHealth(body), JSON.stringify(body)).toBeUndefined();
     }
   });
 });
 
 describe("fetchPagingHealth", () => {
-  test("asks the API through the web Worker", async () => {
+  test("asks the API through the web Worker, with the session's cookie", async () => {
     let asked = "";
-    const fetcher = (async (input: string) => {
+    let init: RequestInit | undefined;
+    const fetcher = (async (input: string, options?: RequestInit) => {
       asked = input;
+      init = options;
       return Response.json({ status: "ok", reasons: [], lastOkAt: null });
     }) as typeof fetch;
     expect(await fetchPagingHealth(fetcher)).toMatchObject({ status: "ok" });
     expect(asked).toBe(PAGING_HEALTH_PATH);
+    expect(init?.credentials).toBe("same-origin");
   });
 
   test("an error answer, a bad body or no network is unreachable", async () => {
@@ -121,9 +133,56 @@ describe("PagingHealthNotice", () => {
     );
     const alert = shown.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain("Pages may not reach phones");
-    expect(alert?.textContent).toContain("Test pages stopped getting through the event queue.");
+    expect(alert?.textContent).toContain("Test pages stopped getting through the event queue");
     expect(alert?.textContent).toContain("No push relay is set up");
     expect(alert?.textContent).toContain("Last test page that got through:");
+  });
+
+  test("a relay that refuses the send token says so, in pt-BR too", async () => {
+    const body = { status: "degraded", reasons: ["relay_unauthorized"], lastOkAt: null };
+    expect((await mount(answer(body))).textContent).toContain(
+      "The push relay refused Brigade's send token",
+    );
+    act(() => root?.unmount());
+    container.remove();
+    expect((await mount(answer(body), "pt-BR")).textContent).toContain(
+      "O relay de push recusou o token de envio do Brigade",
+    );
+  });
+
+  test("checks only while the tab is visible, and again when it comes back", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    let visibility: DocumentVisibilityState = "visible";
+    const state = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    let calls = 0;
+    const fetcher = (async () => {
+      calls += 1;
+      return Response.json({ status: "ok", reasons: [] });
+    }) as unknown as typeof fetch;
+    try {
+      await mount(fetcher);
+      expect(calls).toBe(1);
+      visibility = "hidden";
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      act(() => {
+        vi.advanceTimersByTime(PAGING_REFRESH_MS * 3);
+      });
+      expect(calls).toBe(1);
+      visibility = "visible";
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      expect(calls).toBe(2);
+      act(() => {
+        vi.advanceTimersByTime(PAGING_REFRESH_MS);
+      });
+      expect(calls).toBe(3);
+    } finally {
+      state.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   test("the API cannot say: an alert too, in pt-BR as well", async () => {

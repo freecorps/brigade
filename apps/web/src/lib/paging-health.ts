@@ -9,6 +9,8 @@ export const PAGING_REFRESH_MS = 60_000;
 export const DEGRADED_REASONS = [
   "no_beat",
   "pipeline_stalled",
+  "pipeline_slow",
+  "relay_unauthorized",
   "relay_unreachable",
   "relay_not_configured",
 ] as const;
@@ -32,9 +34,13 @@ export type PagingView =
   | { kind: "degraded"; reasons: DegradedReason[]; lastOkAt: Date | null }
   | { kind: "unreachable" };
 
+/**
+ * The API's answer. Without a session (one that just expired, say) it is `{ status }` alone, which still shows the
+ * notice, without the reasons.
+ */
 export function parsePagingHealth(body: unknown): PagingHealth | undefined {
   if (typeof body !== "object" || body === null) return undefined;
-  const { status, reasons, lastOkAt } = body as Record<string, unknown>;
+  const { status, reasons = [], lastOkAt } = body as Record<string, unknown>;
   if (status !== "ok" && status !== "degraded" && status !== "unknown") return undefined;
   if (!Array.isArray(reasons)) return undefined;
   const ok = typeof lastOkAt === "string" ? new Date(lastOkAt) : null;
@@ -64,6 +70,8 @@ export async function fetchPagingHealth(
   try {
     const response = await fetcher(PAGING_HEALTH_PATH, {
       signal,
+      // The reasons and times need the session (apps/api `pagingHealthFor`).
+      credentials: "same-origin",
       headers: { accept: "application/json" },
     });
     if (!response.ok) return "unreachable";

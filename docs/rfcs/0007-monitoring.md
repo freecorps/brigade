@@ -7,7 +7,9 @@
 - Regular Workers run near the caller; Cron Triggers run wherever Cloudflare schedules them. Neither gives region control.
 - **`ProbeDO` with `locationHint`** (`wnam`, `enam`, `sam`, `weur`, `eeur`, `apac`, `oc`, `afr`, `me`) — one per
   workspace and region. Hints are best-effort; the DO reports its actual colo (`request.cf.colo` on its outbound
-  calls / trace) so the UI shows where checks really ran. Validate in spike S2.
+  calls / trace) so the UI shows where checks really ran. Validate in spike S2 (running; first samples in
+  [docs/spikes/s2-probe-placement.md](../spikes/s2-probe-placement.md): `sam`, `afr` and `me` land in Miami,
+  London and Warsaw, as Cloudflare documents that objects do not spawn in those regions yet).
 - Each `ProbeDO` uses `alarm()` to run its monitors on schedule (min interval: 30s).
 
 ## Check types (v1)

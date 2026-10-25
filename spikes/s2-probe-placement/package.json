@@ -1,0 +1,29 @@
+{
+  "name": "@freecorps/brigade-spike-s2",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Spike S2 (RFC 0007): where Durable Objects created with each locationHint run. Not product code.",
+  "license": "AGPL-3.0-only",
+  "author": "Freecorps Tecnologia da Informação LTDA",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freecorps/brigade.git",
+    "directory": "spikes/s2-probe-placement"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "vp build",
+    "test": "wrangler types --check && vp test",
+    "check": "vp check",
+    "cf-typegen": "wrangler types",
+    "report": "vpx scripts/report.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.65.0",
+    "@cloudflare/vitest-plugin": "^1.4.7",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:",
+    "wrangler": "^4.152.0"
+  }
+}

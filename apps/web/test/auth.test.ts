@@ -41,6 +41,19 @@ describe("sign-up and sign-in checks", () => {
     });
   });
 
+  test("names follow the API's rule: joiners between letters, never bidi controls", () => {
+    const cp = (...points: number[]) => String.fromCodePoint(...points);
+    expect(checkSignUp({ ...valid, name: `نسرین${cp(0x200c)}دخت` }).name).toBeUndefined();
+    for (const name of [`Ana${cp(0x202e)}`, `${cp(0x200d)}Ana`]) {
+      expect(checkSignUp({ ...valid, name }).name, JSON.stringify(name)).toBe(
+        "Remove invisible, control or bidi characters from the name.",
+      );
+    }
+    expect(authErrorMessage({ status: 400, code: "INVALID_NAME" }, "sign-up")).toBe(
+      "Remove invisible, control or bidi characters from the name.",
+    );
+  });
+
   test("emails need an @ and a dot after it; passwords need the minimum length", () => {
     for (const email of ["ana", "ana@example", "ana @example.com", "@example.com"]) {
       expect(checkSignUp({ ...valid, email }).email, email).toBe(

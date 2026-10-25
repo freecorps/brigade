@@ -1,4 +1,5 @@
-import type { IncidentStatus, Severity } from "./lifecycle.ts";
+import type { Role } from "./access.ts";
+import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
 import type {
   AlertStatus,
   CheckSource,
@@ -23,6 +24,54 @@ export type IncidentRow = {
   /** The first acknowledgement, which stops paging (RFC 0003); null until someone acknowledges. */
   acknowledgedAt: number | null;
   acknowledgedBy: string | null;
+  /** Who holds each incident role (member ids); a role nobody holds is absent. Absent on rows from before roles. */
+  roles?: { [R in IncidentRole]?: string };
+  /** How many timeline entries the incident has: the last entry's `seq`. Absent on rows from before timelines. */
+  timelineSeq?: number;
+  updatedAt: number;
+};
+
+/** What a timeline entry records, by `kind` (RFC 0003 "TimelineEntry"). */
+export type TimelineEntry =
+  | { kind: "declared"; title: string; severity: Severity }
+  | { kind: "status_changed"; from: IncidentStatus; to: IncidentStatus }
+  | { kind: "severity_changed"; from: Severity; to: Severity }
+  | { kind: "acknowledged" }
+  /** `from` and `to` are member ids; null: nobody (assigned from nobody, or unassigned). */
+  | { kind: "role_assigned"; role: IncidentRole; from: string | null; to: string | null }
+  /** A written update (`incident.postUpdate`). */
+  | { kind: "update"; body: string }
+  /** The alert of the monitor that opened the incident resolved; the monitor's name as it was then. */
+  | {
+      kind: "alert_resolved";
+      monitorId: string;
+      monitor: string;
+      reason: "recovered" | "paused" | "deleted";
+    };
+
+/**
+ * One entry of an incident's timeline: append-only, written by the mutation that made the change, in its
+ * transaction (RFC 0003). The id is `<incident id>:<seq>`, so client and server number an entry alike.
+ */
+export type TimelineRow = {
+  id: string;
+  incidentId: string;
+  /** 1, 2, 3… per incident, in the order the shard ran the changes. */
+  seq: number;
+  at: number;
+  /** Who made the change: a member id or a system actor (`sys_monitors`). */
+  actor: string;
+} & TimelineEntry;
+
+/**
+ * A member of the workspace as the shard knows it (RFC 0003): a copy of Better Auth's D1 rows, kept for roles to
+ * point at and for names to show. Written by `member.sync` when the member opens a socket.
+ */
+export type MemberRow = {
+  id: string; // the user id (usr_<ULID>)
+  /** Null when their name in D1 is not one the shard can keep (`fitMemberName`): shown as unnamed. */
+  name: string | null;
+  role: Role;
   updatedAt: number;
 };
 
@@ -119,6 +168,8 @@ export type BrigadeTables = {
   monitors: MonitorRow;
   alerts: AlertRow;
   heartbeats: HeartbeatRow;
+  timeline: TimelineRow;
+  members: MemberRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -131,6 +182,8 @@ export const TABLES = {
   monitors: { serverOnly: false },
   alerts: { serverOnly: false },
   heartbeats: { serverOnly: true },
+  timeline: { serverOnly: false },
+  members: { serverOnly: false },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

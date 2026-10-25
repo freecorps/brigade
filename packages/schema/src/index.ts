@@ -8,6 +8,7 @@ export * from "./tables.ts";
 export * from "./mutation.ts";
 export * from "./query.ts";
 export * from "./incidents.ts";
+export * from "./timeline.ts";
 export * from "./workspaces.ts";
 export * from "./monitors.ts";
 export * from "./registry.ts";

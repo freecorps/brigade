@@ -39,6 +39,11 @@ export type Member = { workspaceId: string; userId: string; role: Role };
 
 const MemberContext = createContext<Member | null>(null);
 
+/** The signed-in member when below `RequireWorkspace`, or null (a card rendered on its own, as in its tests). */
+export function useOptionalMember(): Member | null {
+  return useContext(MemberContext);
+}
+
 /** The member `RequireWorkspace` signed in; only below it. */
 export function useMember(): Member {
   const member = useContext(MemberContext);

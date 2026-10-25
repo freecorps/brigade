@@ -448,3 +448,26 @@ test("when the clipboard refuses, the URL is focused and selected, with the shor
   expect(hint?.textContent).toMatch(/^Press (Ctrl\+C|⌘C) to copy it\.$/);
   expect(button("Copy URL")).toBeTruthy();
 });
+
+test("a numbered incident links to its page, by number", async () => {
+  const incidentId = newId("inc", T0 - 1000, randomBytes);
+  const down = monitor({
+    name: "Checkout API",
+    status: "down",
+    incidentId,
+    alertId: newId("alt", T0, randomBytes),
+  });
+  const view = await mount([down]);
+  expect(
+    view.shard.write(owner, "incident.declare", {
+      id: incidentId,
+      title: "Checkout API is down",
+      severity: "sev2",
+    }).ok,
+  ).toBe(true);
+  await view.flush();
+  await view.flush();
+  const link = document.querySelector(`[data-monitor="${down.id}"] a`)!;
+  expect(link.getAttribute("href")).toBe("/incidents/1");
+  expect(link.textContent).toBe("Open INC-1");
+});

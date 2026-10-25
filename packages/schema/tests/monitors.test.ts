@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vite-plus/test";
 import {
   activeIncidents,
+  incidentTimeline,
   createMemoryStore,
   defineMutation,
   defineRegistry,
@@ -410,12 +411,13 @@ describe("managing monitors", () => {
 });
 
 describe("monitor.report: quorum → alert → incident", () => {
-  test("is the only mutation allowed to succeed without an event", () => {
+  test("is the only mutation allowed to succeed without an event, with the member mirror", () => {
     // Every other state change emits an event through the outbox (RFC 0005); a new silent mutation needs a reason.
+    // `member.sync` copies D1's membership into the shard: a cache, not a domain change (RFC 0004).
     const silent = Object.values(serverMutations)
       .filter((def) => (def as { silent?: boolean }).silent)
       .map((def) => def.name);
-    expect(silent).toEqual(["monitor.report"]);
+    expect(silent).toEqual(["member.sync", "monitor.report"]);
   });
 
   test("is server only", () => {
@@ -491,6 +493,19 @@ describe("monitor.report: quorum → alert → incident", () => {
     });
     expect(db.get("monitors", id)).toMatchObject({ status: "up", alertId: null });
     expect(evaluateQuery(activeIncidents, {}, db)).toHaveLength(1);
+    // Its timeline: declared by the monitors, then the recovery note.
+    expect(evaluateQuery(incidentTimeline, { id: incident.id }, db)).toMatchObject([
+      { seq: 1, kind: "declared", actor: "sys_monitors", at: T + 2000 },
+      {
+        seq: 2,
+        kind: "alert_resolved",
+        actor: "sys_monitors",
+        at: T + 4000,
+        monitorId: id,
+        monitor: "Checkout",
+        reason: "recovered",
+      },
+    ]);
 
     // Down again: a new alert and a new incident.
     expect(types(report(db, id, "weur", false, T + 5000))).toContain("incident.declared");
@@ -575,6 +590,23 @@ describe("monitor.report: quorum → alert → incident", () => {
     expect(types(remove)).toEqual(["monitor.deleted", "alert.resolved"]);
     expect(db.scan("alerts").every((alert) => alert.status === "resolved")).toBe(true);
     expect(evaluateQuery(activeIncidents, {}, db)).toHaveLength(2);
+    // Each incident's timeline says why its alert ended, and who ended it.
+    const notes = db
+      .scan("timeline")
+      .filter((entry) => entry.kind === "alert_resolved")
+      .map(({ kind, actor, at, ...rest }) => ({
+        kind,
+        actor,
+        at,
+        reason: Reflect.get(rest, "reason"),
+      }));
+    expect(notes).toEqual(
+      expect.arrayContaining([
+        { kind: "alert_resolved", actor: "usr_ana", at: T + 2000, reason: "paused" },
+        { kind: "alert_resolved", actor: "usr_ana", at: T + 5000, reason: "deleted" },
+      ]),
+    );
+    expect(notes).toHaveLength(2);
   });
 
   test("changing the target starts over; renaming keeps the results", () => {

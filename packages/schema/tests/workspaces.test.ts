@@ -27,6 +27,7 @@ describe("workspace.create", () => {
     expect(Object.keys(serverMutations)).toEqual([
       ...Object.keys(mutations),
       "workspace.create",
+      "member.sync",
       "monitor.report",
       "monitor.evaluate",
     ]);

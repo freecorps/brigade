@@ -56,11 +56,15 @@ describe("Shard", () => {
         version: 1,
       });
       expect(shard.version()).toBe(1);
-      // The counter is server-only: changed, but not in the change log or the patches.
-      expect(changes.map((change) => [change.table, change.id])).toEqual([["incidents", id]]);
+      // The counter is server-only: changed, but not in the change log or the patches. The timeline entry is synced.
+      expect(changes.map((change) => [change.table, change.id])).toEqual([
+        ["incidents", id],
+        ["timeline", `${id}:1`],
+      ]);
       expect(shard.store.get("incidents", id)?.number).toBe(1);
       expect(sql.exec("select version, tbl, id from change_log").toArray()).toEqual([
         { version: 1, tbl: "incidents", id },
+        { version: 1, tbl: "timeline", id: `${id}:1` },
       ]);
       expect(sql.exec("select version from store_rows where tbl = 'incidents'").toArray()).toEqual([
         { version: 1 },
@@ -252,10 +256,9 @@ describe("Shard", () => {
       for (const id of ids) declare(shard, id);
       expect(shard.version()).toBe(4);
       expect(shard.logStart()).toBe(2);
-      expect(sql.exec("select version from change_log order by version").toArray()).toEqual([
-        { version: 3 },
-        { version: 4 },
-      ]);
+      expect(
+        sql.exec("select distinct version from change_log order by version").toArray(),
+      ).toEqual([{ version: 3 }, { version: 4 }]);
       expect(shard.resume(query, [], { version: 1, epoch: shard.epoch })).toBeUndefined();
       expect(shard.resume(query, [], { version: 5, epoch: shard.epoch })).toBeUndefined();
       expect(shard.resume(query, [], { version: 4, epoch: shard.epoch })).toEqual({

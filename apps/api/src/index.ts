@@ -1,5 +1,5 @@
 import { parseHeartbeatToken, workspaceName } from "@freecorps/brigade-schema";
-import { ACTOR_HEADER, resolveActor } from "./actor.ts";
+import { ACTOR_HEADER, MEMBER_NAME_HEADER, resolveActor } from "./actor.ts";
 import {
   AUTH_BASE_PATH,
   createAuth,
@@ -154,7 +154,7 @@ export async function createWorkspace(request: Request, lazyAuth: () => Auth): P
  * `GET /sync/:workspaceId` with `Upgrade: websocket`: hands the socket to the workspace's shard (RFC 0004
  * "Socket topology"). The Worker authenticates the upgrade (`resolveActor`: 401 without a session, 403 for a
  * non-member or another site's page) and forwards a request it builds itself, carrying only the upgrade, the
- * workspace id and the verified actor, so no client header reaches the shard.
+ * workspace id and the verified actor (with the member's name), so no client header reaches the shard.
  */
 async function openSync(
   request: Request,
@@ -175,6 +175,9 @@ async function openSync(
     [WORKSPACE_HEADER]: workspace,
     [ACTOR_HEADER]: JSON.stringify(resolved.actor),
   });
+  if (resolved.name !== undefined) {
+    headers.set(MEMBER_NAME_HEADER, encodeURIComponent(resolved.name));
+  }
   try {
     return await env.WORKSPACE.getByName(workspace).fetch(request.url, { headers });
   } catch (error) {

@@ -64,8 +64,9 @@ runQuery(queries, name, rawArgs, store, role, { onError? }) // → { ok: true, r
 - **Events and the outbox**: a successful mutation returns its domain events (`type`, `subject`, `data`). The
   server writes them to the outbox in `commit`, inside the mutation's transaction (RFC 0005); if `commit` throws,
   the rows roll back too. Clients drop the events. Every success must emit an event: one with none is a bug in
-  the mutation and becomes `internal`, unless the mutation is declared `silent` (see "Server-side writes"; today only
-  `monitor.report`, whose routine refreshes change synced fields that are not domain facts). So "no change" (setting the current status or severity) is one code for
+  the mutation and becomes `internal`, unless the mutation is declared `silent` (see "Server-side writes"; today
+  `monitor.report`, whose routine refreshes change synced fields that are not domain facts, and `member.sync`,
+  the shard's cache of the members in D1). So "no change" (setting the current status or severity) is one code for
   both, `conflict`, which also covers an existing id; it also makes a rebased mutation the server already applied
   fail locally and drop out of the optimistic view.
 - **Transactions are re-entrant.** The server already runs inside its own transaction when it calls
@@ -426,7 +427,10 @@ One code path for every write → one audit trail.
 - A storage failure inside the nested `incident.declare` is caught and thrown again, so the shard rolls the whole
   report back and the probe retries, instead of storing `internal` as the report's answer.
 - A mutation may be declared `silent`: it may then succeed without events. Only for writes that refresh observed
-  values (a monitor's latency, colo and check time), which are synced but are no domain events (RFC 0005).
+  values (a monitor's latency, colo and check time), which are synced but are no domain events (RFC 0005), and
+  for `member.sync`, which copies the socket's own member (name and role, as the Worker read them in D1) into the
+  shard's `members` table on an upgrade whose copy is missing or stale (RFC 0003 "Members in the shard"): a cache
+  of D1, not a change to the workspace. It runs as that member, client id `api`, and refuses any other id or role.
 - Ids and text a server mutation needs (a new incident's and alert's ids, the incident title rendered with
   `packages/i18n`) are made by the shard before it runs the mutation and passed in its args, so `apply` stays
   deterministic.

@@ -28,3 +28,10 @@ export function canTransition(from: IncidentStatus, to: IncidentStatus): boolean
 export function isActive(status: IncidentStatus): boolean {
   return status !== "resolved" && status !== "declined";
 }
+
+/**
+ * Incident roles (RFC 0003 "RoleAssignment"): a fixed set until workspaces define their own (Phase 3). At most one
+ * member holds each role on an incident.
+ */
+export const INCIDENT_ROLES = ["commander", "communications", "operations"] as const;
+export type IncidentRole = (typeof INCIDENT_ROLES)[number];

@@ -1380,3 +1380,71 @@ test("waiting ends in idle once nothing needs the shard: by the retry timer or b
     a.close();
   }
 });
+
+test("two clients post to one incident at once: each ends with the other's entry and its own after it", async () => {
+  const { client, incidentId, settle, network, shard, warnings } = setup();
+  const id = incidentId();
+  shard.write(bia, "incident.declare", { id, title: "Checkout is down", severity: "sev2" });
+  const a = client(ana);
+  const b = client(bia);
+  const timeline = (c: typeof a) => {
+    const watched = watch(c.query(SHARD, "incident.timeline", { id }));
+    // The incident row too, as the incident page holds it: optimistic numbers come from its `timelineSeq`.
+    watch(c.query(SHARD, "incident.byId", { id }));
+    return watched;
+  };
+  const aLine = timeline(a);
+  const bLine = timeline(b);
+  await settle();
+  const entries = (line: ReturnType<typeof timeline>) =>
+    line.get().rows.map((row) => {
+      const entry = row as { id: string; actor: string; body?: string };
+      return [entry.id, entry.actor, entry.body ?? null];
+    });
+  expect(entries(aLine)).toEqual([[`${id}:1`, bia.id, null]]);
+
+  // Neither has heard of the other's update: both number theirs 2. Bia's reaches the server first.
+  const theirs = b.mutate(SHARD, "incident.postUpdate", { id, body: "Rolling back" });
+  const mine = a.mutate(SHARD, "incident.postUpdate", { id, body: "Paged the DB team" });
+  expect(entries(aLine).at(-1)).toEqual([`${id}:2`, ana.id, "Paged the DB team"]);
+  expect(entries(bLine).at(-1)).toEqual([`${id}:2`, bia.id, "Rolling back"]);
+
+  // Ana's view goes from her own entry 2 to Bia's entry 2 and hers re-applied as 3, never showing both as 2.
+  const seen: string[][] = [];
+  aLine.states.length = 0;
+  while (network.step()) {
+    const last = aLine.states.at(-1);
+    if (last) seen.push(last.rows.map((row) => (row as { id: string }).id));
+  }
+  await settle();
+  for (const ids of seen) expect(new Set(ids).size).toBe(ids.length);
+  expect(await theirs).toMatchObject({ ok: true });
+  expect(await mine).toMatchObject({ ok: true });
+  const expected = [
+    [`${id}:1`, bia.id, null],
+    [`${id}:2`, bia.id, "Rolling back"],
+    [`${id}:3`, ana.id, "Paged the DB team"],
+  ];
+  expect(entries(aLine)).toEqual(expected);
+  expect(entries(bLine)).toEqual(expected);
+  expect(aLine.get()).toMatchObject({ pending: false });
+  expect(bLine.get().rows).toEqual(aLine.get().rows);
+
+  // A post the server refuses (the app thinks Vic responds; the shard knows a viewer) shows, then leaves no gap.
+  const v = client(ana, vic);
+  const vLine = timeline(v);
+  await settle();
+  const refused = v.mutate(SHARD, "incident.postUpdate", { id, body: "Not allowed" });
+  expect(vLine.get().rows).toHaveLength(4);
+  await settle();
+  expect(await refused).toMatchObject({ ok: false, error: { code: "forbidden" } });
+  expect(vLine.get().rows).toEqual(aLine.get().rows);
+  const next = a.mutate(SHARD, "incident.postUpdate", { id, body: "DB is back" });
+  await settle();
+  expect(await next).toMatchObject({ ok: true });
+  for (const line of [aLine, bLine, vLine]) {
+    expect(line.get().rows.map((row) => (row as { seq: number }).seq)).toEqual([1, 2, 3, 4]);
+  }
+  expect(shard.store.get("incidents", id)?.timelineSeq).toBe(4);
+  expect(warnings).toEqual([]);
+});

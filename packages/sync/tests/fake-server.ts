@@ -402,7 +402,7 @@ export class ShardServer {
     const after = this.store.dump();
     const changes: Change[] = [];
     // The synced tables the dashboard's tests subscribe to.
-    for (const table of ["incidents", "monitors", "alerts"] as const) {
+    for (const table of ["incidents", "monitors", "alerts", "timeline", "members"] as const) {
       const old = new Map((before[table] ?? []).map((row) => [row.id, JSON.stringify(row)]));
       const now = new Map((after[table] ?? []).map((row) => [row.id, JSON.stringify(row)]));
       for (const id of new Set([...old.keys(), ...now.keys()])) {

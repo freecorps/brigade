@@ -11,8 +11,16 @@ import { DEV_ACTOR, DEV_ACTOR_VAR } from "./dev-actor.ts";
  * binding, so the shard can trust it without a signature.
  */
 export const ACTOR_HEADER = "Brigade-Actor";
+/**
+ * Set next to `ACTOR_HEADER` when the actor is a signed-in member: their name, URI-encoded (a header value is
+ * Latin-1), for the shard's member list (`member.sync`).
+ */
+export const MEMBER_NAME_HEADER = "Brigade-Member-Name";
 
-export type ActorResult = { ok: true; actor: Actor } | { ok: false; response: Response };
+/** `name`: the member's name from Better Auth; absent for the dev actor, which has no user. */
+export type ActorResult =
+  | { ok: true; actor: Actor; name?: string }
+  | { ok: false; response: Response };
 
 /** Hosts a local run serves on: the dev actor never applies to a request for any other host. */
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -63,7 +71,7 @@ export async function resolveActor(
 
   const role = await memberRole(env.DB, workspaceId, session.user.id);
   if (role === undefined) return refuse(403, "not_a_member");
-  return { ok: true, actor: { kind: "user", id: session.user.id, role } };
+  return { ok: true, actor: { kind: "user", id: session.user.id, role }, name: session.user.name };
 }
 
 /** The user's Brigade role in the workspace, or undefined if they are not a member (or hold no Brigade role). */
@@ -95,6 +103,17 @@ export function readActor(headers: Headers): Actor | undefined {
   if (kind !== "user" && kind !== "system" && kind !== "integration") return undefined;
   if (typeof id !== "string" || id.length === 0 || !isRole(role)) return undefined;
   return { kind, id, role };
+}
+
+/** The member name the Worker set on a forwarded upgrade, or undefined. */
+export function readMemberName(headers: Headers): string | undefined {
+  const raw = headers.get(MEMBER_NAME_HEADER);
+  if (raw === null) return undefined;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return undefined;
+  }
 }
 
 function refuse(status: 401 | 403, error: string): ActorResult {

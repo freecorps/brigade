@@ -23,16 +23,23 @@ const invalid = (path: string, message: string): Validated<never> => ({
  * some room for padding) is rejected before any other work. Then the text rules (`text.ts`): no unpaired
  * surrogates, controls, format or unassigned code points, default-ignorables or line/paragraph separators (emoji
  * sequences excepted), tabs and newlines only in multi-line text, and at least one visible code point. `min` is
- * checked after all that, so invisible padding cannot satisfy it.
+ * checked after all that, so invisible padding cannot satisfy it. `joiners` lets ZWNJ and ZWJ stand between letters,
+ * for people's names.
  */
-function string(options: { min?: number; max: number; multiline?: boolean }): Validator<string> {
+function string(options: {
+  min?: number;
+  max: number;
+  multiline?: boolean;
+  joiners?: boolean;
+}): Validator<string> {
   const min = options.min ?? 0;
   const raw = options.max * 2 + 64;
   const multiline = options.multiline ?? false;
+  const joiners = options.joiners ?? false;
   return (input, path = "") => {
     if (typeof input !== "string") return invalid(path, "Expected a string");
     if (input.length > raw) return invalid(path, `Expected at most ${options.max} characters`);
-    const problem = textRules.problem(input, multiline);
+    const problem = textRules.problem(input, multiline, joiners);
     if (problem) return invalid(path, problem);
     const value = trimSpace(input);
     if (value.length > 0 && !textRules.hasVisible(value)) {

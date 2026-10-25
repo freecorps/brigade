@@ -33,6 +33,48 @@ Workspace ─┬─ Member (User + role: owner | admin | responder | viewer)
 Implemented in `packages/schema` (`canTransition`). Severity is independent of status and can change any time
 (every change is a timeline entry).
 
+## Timeline, updates and roles
+
+First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with the incident then):
+
+- **Timeline** (`timeline` table, query `incident.timeline`): its own synced, append-only table, not a view of the
+  outbox. Every mutation that changes an incident appends one entry in its own transaction, next to its event
+  (RFC 0005): `declared`, `status_changed`, `severity_changed`, `acknowledged`, `role_assigned` (stored with the
+  previous and new holder; the dashboard words it as assigned, unassigned, taken or stepped down), `update`, and
+  `alert_resolved` when the alert of the monitor that opened it resolves (recovered, or the monitor paused or
+  deleted), by `sys_monitors` or the member who did it. The outbox is server-only and drained, while clients need
+  entries live and optimistic, so deriving the timeline from events would need a projection anyway. Entries are
+  numbered per incident (`<incident id>:<seq>`, from the incident's `timelineSeq`), so a client's optimistic entry
+  and the server's share an id; nothing edits or deletes one. "Edit timeline" for responders means adding to it.
+  A client numbers from the highest of `timelineSeq` and the entries it holds, since its subscriptions resume one
+  by one; when another change landed first, its entry is re-applied under the next number. The query reads one
+  incident's entries as an id range (`<id>:` up to `<id>;`) off the store's `(tbl, id)` key, not a scan of every
+  incident's. `incident.byNumber` still scans the workspace's incidents (bounded while they live in
+  `WorkspaceDO`); it gets a number index when `IncidentDO` takes them over.
+- **Updates** (`incident.postUpdate`, `incident:update`, event `incident.update_posted`): a timeline entry of
+  kind `update` with a multi-line body of 1 to 4000 characters (the text rules of RFC 0004), allowed in every
+  status so a resolved incident can get closing notes. No visibility flag yet: every update is internal, and
+  publishing one to a status page (Phase 3) will be its own action with its own event.
+- **Roles** (`incident.assignRole`, `incident:update`, event `incident.role_assigned`): a fixed set until role
+  definitions exist (Phase 3), `commander`, `communications` and `operations`, at most one member each, stored on
+  the incident (`roles`). `userId: null` unassigns. The assignee must be in the shard's member list and not a
+  viewer (`invalid_args` on `userId` otherwise).
+- **Members in the shard** (`members` table, query `members.all`, `workspace:read` for every role): a copy of
+  D1's membership, so a shard can check an assignee without leaving its synchronous mutation and the dashboard can
+  show names. The Worker already reads the member in D1 when it authenticates a sync upgrade; it passes their
+  name along, and the shard runs the server-only `member.sync` (RFC 0004 "Server-side writes") when its copy is
+  missing or stale. So a member appears once they have opened a socket, and a role change shows on their next
+  one. When invitations and member management land, their `member.*` mutations write this table as well, and
+  removing a member must delete their `members` row in the same transaction (or they stay assignable).
+- **Member names** (`memberName`): the title rules of RFC 0004, except that ZWNJ and ZWJ may stand between two
+  letters (Persian, Arabic and Indic names need them). The rule does not check the script, so a joiner between two
+  Latin letters passes and looks like the plain name; accepted on purpose, since names are not identifiers (roles
+  and the picker use member ids) and two people can already share a visible name. Bidi controls and every other invisible character are still
+  refused, and a name is 1 to 100 characters after trimming. The API applies it before Better Auth stores a name
+  (sign-up, `update-user`: `INVALID_NAME`). A name already in D1 that predates the rule is trimmed and cut to the
+  cap at a grapheme by the Worker; if that still fails, the shard stores `name: null` and the dashboard shows the
+  member as unnamed, so they stay listed and assignable instead of being refused on every socket.
+
 ## Alert → incident flow
 
 1. Alert arrives (monitor or webhook) → normalized to `AlertEvent { source, fingerprint, status: firing|resolved, labels, payload }`.

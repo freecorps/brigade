@@ -1,5 +1,10 @@
 import { m } from "@freecorps/brigade-i18n";
-import type { IncidentRow, IncidentStatus, Severity } from "@freecorps/brigade-schema";
+import {
+  can,
+  type IncidentRow,
+  type IncidentStatus,
+  type Severity,
+} from "@freecorps/brigade-schema";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { useConnectionState, useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { cn } from "cn";
@@ -24,6 +29,7 @@ import {
 import { DeclareForm } from "@/components/declare-form";
 import { IncidentItem, IncidentItemSkeleton } from "@/components/incident-item";
 import { usePreferences } from "@/components/preferences";
+import { useOptionalMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
@@ -35,6 +41,7 @@ import {
   noticeText,
   queryErrorReason,
   syncView,
+  takeOpened,
   type Notice,
   type NoticePlace,
   type NoticeTarget,
@@ -58,6 +65,20 @@ export function IncidentsCard() {
   const { locale } = usePreferences();
   const { rows, status, error } = useQuery("incidents.active", {});
   const connection = useConnectionState();
+  // Viewers see the badges; without a session around the card (its tests) the menus stay.
+  const member = useOptionalMember();
+  const editable = member ? can(member.role, "incident:update") : true;
+  // Back from an incident's page: focus goes to its title link again, where the user left the list.
+  const returning = useRef(takeOpened());
+  useLayoutEffect(() => {
+    if (returning.current === null || rows.length === 0) return;
+    const link = cardRef.current?.querySelector<HTMLElement>(
+      `[data-incident-link="${returning.current}"]`,
+    );
+    returning.current = null;
+    link?.focus({ preventScroll: true });
+    link?.scrollIntoView({ block: "nearest" });
+  }, [rows.length]);
   const [failed, setFailed] = useState(false);
   const latched = nextFailed(failed, status, connection);
   if (latched !== failed) setFailed(latched);
@@ -312,6 +333,7 @@ export function IncidentsCard() {
                   notices.filter((notice) => notice.incidentId === row.id),
                   "row",
                 )}
+                editable={editable}
                 onStatus={onStatus}
                 onSeverity={onSeverity}
               />
@@ -508,7 +530,7 @@ function ConnectionPill({ view }: { view: SyncView }) {
 }
 
 /** Epoch ms, refreshed every `ms`, so relative times move on their own. */
-function useNow(ms: number): number {
+export function useNow(ms: number): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), ms);

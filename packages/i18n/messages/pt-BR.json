@@ -211,6 +211,7 @@
   "sign_out": "Sair",
   "session_loading": "Carregando seu espaço de trabalho…",
   "auth_error_too_long": "Use no máximo {max} caracteres.",
+  "auth_name_invalid": "Remova caracteres invisíveis, de controle ou bidi do nome.",
   "workspace_name_hint": "Por exemplo, Time de plataforma.",
   "page_title": "{page} · Brigade",
   "page_title_sign_in": "Entrar",
@@ -431,6 +432,102 @@
       "match": {
         "has=yes": "Abrir {number}",
         "has=*": "Abrir incidente"
+      }
+    }
+  ],
+  "incident_page": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=back": "Todos os incidentes",
+        "part=loading": "Carregando o incidente…",
+        "part=not_found": "Não há incidente com este número neste espaço de trabalho.",
+        "part=roles": "Papéis",
+        "part=timeline": "Linha do tempo",
+        "part=timeline_empty": "Nada na linha do tempo ainda.",
+        "part=update_label": "Publicar uma atualização",
+        "part=update_placeholder": "O que vocês sabem agora? O que vem a seguir?",
+        "part=update_hint": "Todos no espaço de trabalho veem na linha do tempo.",
+        "part=update_empty": "Escreva a atualização primeiro.",
+        "part=update_invalid": "Remova caracteres invisíveis, de controle ou bidi e tente de novo.",
+        "part=post": "Publicar atualização",
+        "part=nobody": "Sem responsável",
+        "part=unassign": "Remover",
+        "part=no_members": "As pessoas do time aparecem aqui depois de abrirem o Brigade.",
+        "part=you": "Você",
+        "part=you_object": "você",
+        "part=monitors": "Um monitor",
+        "part=teammate": "Alguém do time",
+        "part=read_only": "Leitores acompanham o incidente; respondedores e admins o alteram.",
+        "part=not_found_title": "Incidente não encontrado",
+        "part=load_failed_title": "Não foi possível carregar o incidente",
+        "part=unnamed": "Membro sem nome",
+        "part=show_more": "Mostrar mais",
+        "part=show_less": "Mostrar menos",
+        "part=*": "Incidente"
+      }
+    }
+  ],
+  "incident_update_length": "{count} de {max} caracteres",
+  "incident_update_announced": "{actor} publicou uma atualização: {body}",
+  "incident_updates_announced": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 nova atualização de outras pessoas",
+        "countPlural=*": "{countFormatted} novas atualizações de outras pessoas"
+      }
+    }
+  ],
+  "incident_role": [
+    {
+      "declarations": ["input role", "input form"],
+      "selectors": ["role", "form"],
+      "match": {
+        "role=commander, form=sentence": "comandante do incidente",
+        "role=communications, form=sentence": "responsável pela comunicação",
+        "role=operations, form=sentence": "responsável pelas operações",
+        "role=commander, form=*": "Comandante do incidente",
+        "role=communications, form=*": "Responsável pela comunicação",
+        "role=operations, form=*": "Responsável pelas operações",
+        "role=*, form=*": "Papel"
+      }
+    }
+  ],
+  "timeline_entry": [
+    {
+      "declarations": ["input kind", "input actor", "input a", "input b"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=declared": "{actor} declarou o incidente como {a}",
+        "kind=status_changed": "{actor} mudou o status de {a} para {b}",
+        "kind=severity_changed": "{actor} mudou a severidade de {a} para {b}",
+        "kind=acknowledged": "{actor} reconheceu o chamado",
+        "kind=role_assigned": "{actor} definiu {b} como {a}",
+        "kind=role_unassigned": "{actor} tirou {b} de {a}",
+        "kind=role_taken": "{actor} assumiu o papel de {a}",
+        "kind=role_left": "{actor} deixou o papel de {a}",
+        "kind=update": "{actor} publicou uma atualização",
+        "kind=alert_recovered": "{a} se recuperou, e o alerta foi resolvido",
+        "kind=alert_paused": "{actor} pausou {a}, e o alerta foi resolvido",
+        "kind=alert_deleted": "{actor} excluiu {a}, e o alerta foi resolvido",
+        "kind=*": "{actor} alterou o incidente"
+      }
+    }
+  ],
+  "incident_change_failed": [
+    {
+      "declarations": ["input kind", "input role", "input reason"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=update": "Não foi possível publicar a atualização. {reason}",
+        "kind=*": "Não foi possível alterar {role}. {reason}"
       }
     }
   ]

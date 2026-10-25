@@ -2,14 +2,23 @@
 // status and severity; once IncidentDO exists it owns them and this becomes an outbox-fed projection (RFC 0004).
 
 import { idTime } from "./id.ts";
-import { canTransition, INCIDENT_STATUSES, isActive, SEVERITIES } from "./lifecycle.ts";
-import type { IncidentStatus, Severity } from "./lifecycle.ts";
+import {
+  canTransition,
+  INCIDENT_ROLES,
+  INCIDENT_STATUSES,
+  isActive,
+  SEVERITIES,
+} from "./lifecycle.ts";
+import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
 import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
 import type { IncidentRow } from "./tables.ts";
+import { appendTimeline } from "./timeline.ts";
 import { v } from "./validate.ts";
 
 export const INCIDENT_TITLE_MAX = 200;
+/** The longest written update, in UTF-16 code units after trimming. */
+export const UPDATE_BODY_MAX = 4000;
 /** How far into the future of the server's clock the time in a client-made id may be. */
 export const ID_CLOCK_SKEW_MS = 10 * 60 * 1000;
 
@@ -27,11 +36,23 @@ export type IncidentSeverityChanged = DomainEvent<
 >;
 /** Someone acknowledged the page: escalation stops (RFC 0003, "Escalation run"). */
 export type IncidentAcknowledged = DomainEvent<"incident.acknowledged", { by: string }>;
+/** A member wrote an update; `entryId` is its timeline entry. */
+export type IncidentUpdatePosted = DomainEvent<
+  "incident.update_posted",
+  { entryId: string; body: string }
+>;
+/** An incident role changed hands; `to` null: unassigned. */
+export type IncidentRoleAssigned = DomainEvent<
+  "incident.role_assigned",
+  { role: IncidentRole; from: string | null; to: string | null }
+>;
 export type IncidentEvent =
   | IncidentDeclared
   | IncidentStatusChanged
   | IncidentSeverityChanged
-  | IncidentAcknowledged;
+  | IncidentAcknowledged
+  | IncidentUpdatePosted
+  | IncidentRoleAssigned;
 
 /** `INC-142`; null while the server has not numbered the incident yet. */
 export function formatIncidentNumber(number: number | null): string | null {
@@ -76,9 +97,12 @@ export const declareIncident = defineMutation({
       declaredBy: ctx.actor.id,
       acknowledgedAt: null,
       acknowledgedBy: null,
+      roles: {},
+      timelineSeq: 0,
       updatedAt: ctx.now,
     };
     store.insert("incidents", row);
+    appendTimeline(store, row, { kind: "declared", title: row.title, severity: row.severity }, ctx);
     const { id, number, title, severity, status } = row;
     const event: IncidentDeclared = {
       type: "incident.declared",
@@ -109,6 +133,12 @@ export const setIncidentStatus = defineMutation({
       updatedAt: ctx.now,
       ...(reopened && { acknowledgedAt: null, acknowledgedBy: null }),
     });
+    appendTimeline(
+      store,
+      incident,
+      { kind: "status_changed", from: incident.status, to: args.status },
+      ctx,
+    );
     const event: IncidentStatusChanged = {
       type: "incident.status_changed",
       subject: args.id,
@@ -129,6 +159,12 @@ export const setIncidentSeverity = defineMutation({
       return fail("conflict", `Severity is already ${args.severity}`);
     }
     store.update("incidents", args.id, { severity: args.severity, updatedAt: ctx.now });
+    appendTimeline(
+      store,
+      incident,
+      { kind: "severity_changed", from: incident.severity, to: args.severity },
+      ctx,
+    );
     const event: IncidentSeverityChanged = {
       type: "incident.severity_changed",
       subject: args.id,
@@ -161,10 +197,85 @@ export const acknowledgeIncident = defineMutation({
       acknowledgedBy: ctx.actor.id,
       updatedAt: ctx.now,
     });
+    appendTimeline(store, incident, { kind: "acknowledged" }, ctx);
     const event: IncidentAcknowledged = {
       type: "incident.acknowledged",
       subject: args.id,
       data: { by: ctx.actor.id },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * A written update on the incident's timeline (RFC 0003 "Update"): what responders know, for the team and, once
+ * status pages exist, for publishing (a separate step then; every update is internal now). Allowed in any status,
+ * so a resolved incident can still get its closing notes.
+ */
+export const postIncidentUpdate = defineMutation({
+  name: "incident.postUpdate",
+  args: v.object({
+    id: incidentId,
+    // Joiners between letters, as in names: Persian, Arabic and Indic text needs them.
+    body: v.string({ min: 1, max: UPDATE_BODY_MAX, multiline: true, joiners: true }),
+  }),
+  permission: "incident:update",
+  apply(store, args, ctx) {
+    const incident = store.get("incidents", args.id);
+    if (!incident) return fail("not_found", "Incident not found");
+    store.update("incidents", args.id, { updatedAt: ctx.now });
+    const entry = appendTimeline(store, incident, { kind: "update", body: args.body }, ctx);
+    const event: IncidentUpdatePosted = {
+      type: "incident.update_posted",
+      subject: args.id,
+      data: { entryId: entry.id, body: args.body },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * Gives an incident role to a member, or takes it away (`userId: null`). The member must be in the shard's member
+ * list (`members`, RFC 0003) and hold a role that may run incidents: viewers only read. On a client the check runs
+ * over the members it holds, so the picker subscribes to them.
+ */
+export const assignIncidentRole = defineMutation({
+  name: "incident.assignRole",
+  args: v.object({
+    id: incidentId,
+    role: v.picklist(INCIDENT_ROLES),
+    // Better Auth user ids (`usr_<ULID>`), or the local dev actor's; membership is the real check.
+    userId: v.nullable(v.string({ min: 1, max: 64 })),
+  }),
+  permission: "incident:update",
+  apply(store, args, ctx) {
+    const incident = store.get("incidents", args.id);
+    if (!incident) return fail("not_found", "Incident not found");
+    const role: IncidentRole = args.role;
+    const userId: string | null = args.userId;
+    const roles = { ...incident.roles };
+    const from = roles[role] ?? null;
+    if (from === userId) {
+      return fail("conflict", userId ? "Already holds the role" : "Nobody holds the role");
+    }
+    if (userId !== null) {
+      const member = store.get("members", userId);
+      // `invalid_args`, not `not_found` or `forbidden`: the incident exists and the actor may assign; the
+      // choice of member is what is wrong.
+      if (!member || member.role === "viewer") {
+        const message = member ? "Viewers cannot hold incident roles" : "Not a member";
+        return fail("invalid_args", message, [{ path: "userId", message }]);
+      }
+      roles[role] = userId;
+    } else {
+      delete roles[role];
+    }
+    store.update("incidents", args.id, { roles, updatedAt: ctx.now });
+    appendTimeline(store, incident, { kind: "role_assigned", role, from, to: userId }, ctx);
+    const event: IncidentRoleAssigned = {
+      type: "incident.role_assigned",
+      subject: args.id,
+      data: { role, from, to: userId },
     };
     return ok(event);
   },
@@ -195,4 +306,13 @@ export const incidentById = defineQuery({
   // `key` reads the row directly; `filter` still tells the server whether a changed row belongs here.
   key: (args) => args.id,
   filter: (row, args) => row.id === args.id,
+});
+
+/** The incident numbered `INC-<number>`: how the dashboard's incident page addresses it. */
+export const incidentByNumber = defineQuery({
+  name: "incident.byNumber",
+  args: v.object({ number: v.integer({ min: 1, max: Number.MAX_SAFE_INTEGER }) }),
+  permission: "incident:read",
+  table: "incidents",
+  filter: (row, args) => row.number === args.number,
 });

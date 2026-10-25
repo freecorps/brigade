@@ -7,9 +7,10 @@ import {
   type IncidentStatus,
   type Severity,
 } from "@freecorps/brigade-schema";
+import { Link, useRouter } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ChevronDownIcon, ClockIcon, CloudUploadIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { SeverityBadge, STATUS_ICONS, StatusBadge } from "@/components/incident-badges";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,7 +22,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { formatAge, nextStatuses } from "@/lib/incidents";
+import { formatAge, nextStatuses, rememberOpened } from "@/lib/incidents";
 
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -39,6 +40,7 @@ export function IncidentItem({
   locale,
   now,
   notices,
+  editable = true,
   onStatus,
   onSeverity,
 }: {
@@ -50,6 +52,8 @@ export function IncidentItem({
   now: number;
   /** Refused changes to this incident, shown in the row so nothing above the list moves. */
   notices: ReactNode;
+  /** False for viewers: the badges are shown, not menus. */
+  editable?: boolean;
   onStatus: (row: IncidentRow, next: IncidentStatus) => void;
   onSeverity: (row: IncidentRow, next: Severity) => void;
 }) {
@@ -101,99 +105,202 @@ export function IncidentItem({
         ) : null}
       </p>
       <h3 className="col-span-2 font-semibold [overflow-wrap:anywhere] md:col-span-1 md:col-start-2 md:row-start-1">
-        {row.title}
+        {/* The incident's page needs its number: an incident the shard has not numbered yet is not a link. */}
+        {row.number === null ? (
+          row.title
+        ) : (
+          <IncidentTitleLink number={row.number} title={row.title} />
+        )}
       </h3>
       {/* Phones: both menus on one line, and -mb-2 trims the space under the 44px triggers without shrinking
           them. From md the wrapper dissolves and each menu takes its own column, centred on the row. */}
       <div className="col-span-2 -mb-2 -ml-1.5 flex flex-wrap items-center gap-1 max-[374px]:-ml-1 md:contents">
         <div className="md:col-start-3 md:row-span-2 md:row-start-1 md:self-center">
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  className="gap-1 px-1.5 max-[374px]:min-w-11 max-[374px]:gap-0.5 max-[374px]:px-1"
-                />
-              }
-            >
-              <span className="sr-only">{m.incident_severity_label()}: </span>
-              <span className={cn("inline-flex", pending.severity && UNSAVED)}>
-                <SeverityBadge severity={row.severity} />
-              </span>
-              {/* Below 375px a smaller chevron and tighter spacing, so both menus usually fit one line at 320px. */}
-              <ChevronDownIcon
-                aria-hidden
-                className="size-4 text-muted-foreground max-[374px]:size-3"
-              />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>{m.incident_severity_label()}</DropdownMenuLabel>
-                <DropdownMenuRadioGroup
-                  value={row.severity}
-                  // Base UI also reports a click on the checked item; that would be a refused no-op.
-                  onValueChange={(value: Severity) => {
-                    if (value !== row.severity) onSeverity(row, value);
-                  }}
-                >
-                  {SEVERITIES.map((option) => (
-                    <DropdownMenuRadioItem key={option} value={option} closeOnClick>
-                      <SeverityBadge severity={option} />
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <SeverityMenu
+            severity={row.severity}
+            pending={pending.severity}
+            disabled={!editable}
+            onChange={(next) => onSeverity(row, next)}
+          />
         </div>
         <div className="md:col-start-4 md:row-span-2 md:row-start-1 md:self-center">
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              data-status-trigger={row.id}
-              render={
-                <Button
-                  variant="ghost"
-                  className="gap-1 px-1.5 max-[374px]:min-w-11 max-[374px]:gap-0.5 max-[374px]:px-1"
-                />
-              }
-            >
-              <span className="sr-only">{m.incident_status_label()}: </span>
-              <span className={cn("inline-flex", pending.status && UNSAVED)}>
-                <StatusBadge status={row.status} />
-              </span>
-              {/* Below 375px a smaller chevron and tighter spacing, so both menus usually fit one line at 320px. */}
-              <ChevronDownIcon
-                aria-hidden
-                className="size-4 text-muted-foreground max-[374px]:size-3"
-              />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>{m.incident_status_label()}</DropdownMenuLabel>
-                <DropdownMenuRadioGroup
-                  value={row.status}
-                  onValueChange={(value: IncidentStatus) => {
-                    if (value !== row.status) onStatus(row, value);
-                  }}
-                >
-                  {/* The current status (checked), then only the moves the lifecycle allows. */}
-                  {[row.status, ...nextStatuses(row.status)].map((option) => {
-                    const Icon = STATUS_ICONS[option];
-                    return (
-                      <DropdownMenuRadioItem key={option} value={option} closeOnClick>
-                        <Icon aria-hidden className="text-muted-foreground" />
-                        {incidentStatusLabels[option]()}
-                      </DropdownMenuRadioItem>
-                    );
-                  })}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <StatusMenu
+            status={row.status}
+            pending={pending.status}
+            trigger={row.id}
+            disabled={!editable}
+            onChange={(next) => onStatus(row, next)}
+          />
         </div>
       </div>
       {notices ? <div className="col-span-full mt-2">{notices}</div> : null}
     </li>
+  );
+}
+
+// Always underlined (lightly), so the title reads as a link without a pointer to hover with.
+const TITLE_LINK =
+  "rounded-sm underline decoration-muted-foreground/50 underline-offset-4 outline-none hover:decoration-current focus-visible:ring-3 focus-visible:ring-ring";
+
+/**
+ * The title as a link to the incident's page. A client-side navigation inside the app; a plain link where the list
+ * renders without a router (the card's own tests). Opening it remembers the incident, so coming back to the list
+ * puts focus on this link again.
+ */
+function IncidentTitleLink({ number, title }: { number: number; title: string }) {
+  const router = useRouter({ warn: false }) as ReturnType<typeof useRouter> | null;
+  const props = {
+    className: TITLE_LINK,
+    "data-incident-link": number,
+    // Only a plain click navigates this tab; a modified or middle click opens another and leaves this list here.
+    onClick: (event: MouseEvent) => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0)
+        return;
+      rememberOpened(number);
+    },
+  };
+  if (!router) {
+    return (
+      <a href={`/incidents/${number}`} {...props}>
+        {title}
+      </a>
+    );
+  }
+  return (
+    <Link to="/incidents/$number" params={{ number: String(number) }} {...props}>
+      {title}
+    </Link>
+  );
+}
+
+/**
+ * The severity badge as a menu trigger; the dashed outline marks a change the shard has not confirmed. `disabled`
+ * (a viewer): just the badge.
+ */
+export function SeverityMenu({
+  severity,
+  pending,
+  disabled,
+  onChange,
+}: {
+  severity: Severity;
+  pending: boolean;
+  disabled?: boolean;
+  onChange: (next: Severity) => void;
+}) {
+  // Someone who may not change it (a viewer) gets the badge, not a control that does nothing.
+  if (disabled) {
+    return (
+      <span className="inline-flex min-h-11 items-center px-1.5">
+        <span className="sr-only">{m.incident_severity_label()}: </span>
+        <SeverityBadge severity={severity} />
+      </span>
+    );
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            className="gap-1 px-1.5 max-[374px]:min-w-11 max-[374px]:gap-0.5 max-[374px]:px-1"
+          />
+        }
+      >
+        <span className="sr-only">{m.incident_severity_label()}: </span>
+        <span className={cn("inline-flex", pending && UNSAVED)}>
+          <SeverityBadge severity={severity} />
+        </span>
+        {/* Below 375px a smaller chevron and tighter spacing, so both menus usually fit one line at 320px. */}
+        <ChevronDownIcon aria-hidden className="size-4 text-muted-foreground max-[374px]:size-3" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>{m.incident_severity_label()}</DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={severity}
+            // Base UI also reports a click on the checked item; that would be a refused no-op.
+            onValueChange={(value: Severity) => {
+              if (value !== severity) onChange(value);
+            }}
+          >
+            {SEVERITIES.map((option) => (
+              <DropdownMenuRadioItem key={option} value={option} closeOnClick>
+                <SeverityBadge severity={option} />
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * The status badge as a menu trigger: the current status, then only the moves the lifecycle allows. `disabled` (a
+ * viewer): just the badge.
+ */
+export function StatusMenu({
+  status,
+  pending,
+  trigger,
+  disabled,
+  onChange,
+}: {
+  status: IncidentStatus;
+  pending: boolean;
+  /** `data-status-trigger`, which the list's focus keeping looks for. */
+  trigger?: string;
+  disabled?: boolean;
+  onChange: (next: IncidentStatus) => void;
+}) {
+  if (disabled) {
+    return (
+      <span className="inline-flex min-h-11 items-center px-1.5">
+        <span className="sr-only">{m.incident_status_label()}: </span>
+        <StatusBadge status={status} />
+      </span>
+    );
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        data-status-trigger={trigger}
+        render={
+          <Button
+            variant="ghost"
+            className="gap-1 px-1.5 max-[374px]:min-w-11 max-[374px]:gap-0.5 max-[374px]:px-1"
+          />
+        }
+      >
+        <span className="sr-only">{m.incident_status_label()}: </span>
+        <span className={cn("inline-flex", pending && UNSAVED)}>
+          <StatusBadge status={status} />
+        </span>
+        <ChevronDownIcon aria-hidden className="size-4 text-muted-foreground max-[374px]:size-3" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>{m.incident_status_label()}</DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={status}
+            onValueChange={(value: IncidentStatus) => {
+              if (value !== status) onChange(value);
+            }}
+          >
+            {[status, ...nextStatuses(status)].map((option) => {
+              const Icon = STATUS_ICONS[option];
+              return (
+                <DropdownMenuRadioItem key={option} value={option} closeOnClick>
+                  <Icon aria-hidden className="text-muted-foreground" />
+                  {incidentStatusLabels[option]()}
+                </DropdownMenuRadioItem>
+              );
+            })}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

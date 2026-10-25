@@ -18,6 +18,8 @@ export interface Store<S extends Tables> {
   delete<T extends keyof S & string>(table: T, id: string): boolean;
   /** Every row of the table, ordered by id. */
   scan<T extends keyof S & string>(table: T): S[T][];
+  /** The rows whose id is at least `from` and below `to` (code unit order), ordered by id. */
+  range<T extends keyof S & string>(table: T, from: string, to: string): S[T][];
   /**
    * Runs `fn` atomically: if it throws, every write made inside it is undone and the error is rethrown.
    * Must be re-entrant: a nested call rolls back only its own writes (SQLite: savepoints), and an outer
@@ -79,6 +81,11 @@ export function createMemoryStore<S extends Tables>(
     },
     scan(name) {
       return sorted(table(name)).map((row) => copy(row) as S[typeof name]);
+    },
+    range(name, from, to) {
+      return sorted(table(name))
+        .filter((row) => row.id >= from && row.id < to)
+        .map((row) => copy(row) as S[typeof name]);
     },
     transaction(fn) {
       const before = new Map([...tables].map(([name, rows]) => [name, new Map(rows)]));

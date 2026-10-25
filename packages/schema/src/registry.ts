@@ -3,14 +3,18 @@
 import {
   acknowledgeIncident,
   activeIncidents,
+  assignIncidentRole,
   declareIncident,
   incidentById,
+  incidentByNumber,
+  postIncidentUpdate,
   setIncidentSeverity,
   setIncidentStatus,
 } from "./incidents.ts";
 import { allMonitors, evaluateMonitor, monitorMutations, reportMonitorCheck } from "./monitors.ts";
 import { defineRegistry } from "./mutation.ts";
-import { createWorkspace } from "./workspaces.ts";
+import { incidentTimeline } from "./timeline.ts";
+import { allMembers, createWorkspace, syncMember } from "./workspaces.ts";
 
 /** What clients may send over a socket. */
 export const mutations = defineRegistry([
@@ -18,10 +22,19 @@ export const mutations = defineRegistry([
   setIncidentStatus,
   setIncidentSeverity,
   acknowledgeIncident,
+  postIncidentUpdate,
+  assignIncidentRole,
   ...monitorMutations,
 ]);
 
-export const queries = defineRegistry([activeIncidents, incidentById, allMonitors]);
+export const queries = defineRegistry([
+  activeIncidents,
+  incidentById,
+  incidentByNumber,
+  incidentTimeline,
+  allMembers,
+  allMonitors,
+]);
 
 /**
  * Every mutation the shard runs: what clients may send (`mutations`) plus the server-only ones, which only the
@@ -32,8 +45,11 @@ export const serverMutations = defineRegistry([
   setIncidentStatus,
   setIncidentSeverity,
   acknowledgeIncident,
+  postIncidentUpdate,
+  assignIncidentRole,
   ...monitorMutations,
   createWorkspace,
+  syncMember,
   reportMonitorCheck,
   evaluateMonitor,
 ]);

@@ -90,6 +90,8 @@ describe("incident.declare", () => {
       declaredBy: "usr_ana",
       acknowledgedAt: null,
       acknowledgedBy: null,
+      roles: {},
+      timelineSeq: 1,
       updatedAt: T,
     });
     expect(formatIncidentNumber(store.get("incidents", ID)!.number)).toBe("INC-1");
@@ -178,7 +180,9 @@ describe("incident.setStatus", () => {
         },
       ],
     });
-    expect(store.get("incidents", ID)).toEqual(incident({ status: "investigating", updatedAt: T }));
+    expect(store.get("incidents", ID)).toEqual(
+      incident({ status: "investigating", timelineSeq: 1, updatedAt: T }),
+    );
   });
 
   test("every pair follows the lifecycle", () => {
@@ -244,7 +248,7 @@ describe("incident.setSeverity", () => {
       ],
     });
     expect(store.get("incidents", ID)).toEqual(
-      incident({ status: "resolved", severity: "sev1", updatedAt: T }),
+      incident({ status: "resolved", severity: "sev1", timelineSeq: 1, updatedAt: T }),
     );
   });
 
@@ -285,6 +289,7 @@ describe("incident.ack", () => {
         status: "investigating",
         acknowledgedAt: T,
         acknowledgedBy: "usr_ana",
+        timelineSeq: 1,
         updatedAt: T,
       }),
     );
@@ -342,6 +347,7 @@ describe("incident.ack", () => {
         status: "investigating",
         acknowledgedAt: null,
         acknowledgedBy: null,
+        timelineSeq: 1,
         updatedAt: T,
       }),
     );

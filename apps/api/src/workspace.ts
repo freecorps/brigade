@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { Actor, ProbeRegion } from "@freecorps/brigade-schema";
+import { fitMemberName, type Actor, type ProbeRegion } from "@freecorps/brigade-schema";
 import {
   encode,
   parseClientMessage,
@@ -8,7 +8,7 @@ import {
   type ServerMessage,
   type SubscriptionChanges,
 } from "@freecorps/brigade-sync/protocol";
-import { readActor } from "./actor.ts";
+import { readActor, readMemberName } from "./actor.ts";
 import { isProbeRegion, Monitoring } from "./monitors.ts";
 import type { ProbeReport } from "./probe.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
@@ -217,11 +217,41 @@ export class WorkspaceDO extends DurableObject<Env> {
       this.log("shard serves another workspace", { workspace });
       return Response.json({ error: "internal" }, { status: 500 });
     }
+    const name = readMemberName(request.headers);
+    if (name !== undefined) this.syncMember(actor, name);
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server);
     const state: SocketState = { workspace, actor, clientId: null, subs: [] };
     server.serializeAttachment(state);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /**
+   * Copies the member this socket acts as into the shard's member list (`member.sync`, RFC 0003), so roles can
+   * point at them and the dashboard can show their name. The name is fitted first (trimmed, cut, or null when the
+   * shard cannot keep it: `fitMemberName`), so an odd name in D1 still lists the member, and the copy is skipped
+   * when that fitted value is current. A failure is logged and the socket still opens: the list is a cache of D1,
+   * refreshed on the member's next socket.
+   */
+  private syncMember(actor: Actor, raw: string): void {
+    try {
+      const name = fitMemberName(raw);
+      const current = this.shard.store.get("members", actor.id);
+      if (current && current.name === name && current.role === actor.role) return;
+      const { result, changes } = this.shard.mutate({
+        clientId: "api",
+        mutationId: "member",
+        actor,
+        name: "member.sync",
+        args: { id: actor.id, name, role: actor.role },
+        now: Date.now(),
+        internal: true,
+      });
+      if (result.ok) this.broadcast(result.version, changes, undefined);
+      else this.log("member sync refused", { code: result.error.code });
+    } catch (error) {
+      this.log("member sync failed", { error });
+    }
   }
 
   override webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {

@@ -1,8 +1,5 @@
 // The hooks without a DOM: a server render runs them once (with `getServerSnapshot`), which is enough to check the
-// wiring. The live behaviour behind `useSyncExternalStore` is the `QueryHandle`, tested in client.test.ts.
-// A mounted test (effects, re-renders on updates) needs a renderer: react-dom/client needs a DOM (jsdom or
-// happy-dom) and react-test-renderer is deprecated, so it waits for the first app that mounts the hooks (S3's web
-// slice, then S4 on device).
+// wiring. The mounted behaviour (effects, re-renders on updates) is in react-mounted.test.ts, on happy-dom.
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { expect, test } from "vite-plus/test";

@@ -314,6 +314,11 @@ export class SyncClient<
   private readonly random: () => number;
   private readonly shards = new Map<string, Shard>();
   private readonly subscriptions = new Map<string, Subscription>();
+  /** Per shard: the listeners of `onConnectionChange` and the state they last saw. */
+  private readonly connectionListeners = new Map<
+    string,
+    { listeners: Set<() => void>; last: ConnectionState }
+  >();
   private nextSubId = 0;
   private closed = false;
 
@@ -424,6 +429,44 @@ export class SyncClient<
   }
 
   /**
+   * Calls `listener` whenever `connectionState(shard)` changes; returns the unsubscribe. With `connectionState`
+   * as the snapshot it fits `useSyncExternalStore`. Listening does not open a socket.
+   */
+  onConnectionChange(shard: string, listener: () => void): () => void {
+    let entry = this.connectionListeners.get(shard);
+    if (!entry) {
+      entry = { listeners: new Set(), last: this.connectionState(shard) };
+      this.connectionListeners.set(shard, entry);
+    }
+    // A wrapper per call, so the same function listening twice unsubscribes once each.
+    const wrapped = () => listener();
+    entry.listeners.add(wrapped);
+    const current = entry;
+    return () => {
+      current.listeners.delete(wrapped);
+      if (current.listeners.size === 0 && this.connectionListeners.get(shard) === current) {
+        this.connectionListeners.delete(shard);
+      }
+    };
+  }
+
+  /** Notifies `onConnectionChange` listeners of `shard` if its state moved since they last heard. */
+  private connectionChanged(shard: string): void {
+    const entry = this.connectionListeners.get(shard);
+    if (!entry) return;
+    const next = this.connectionState(shard);
+    if (next === entry.last) return;
+    entry.last = next;
+    for (const listener of entry.listeners) {
+      try {
+        listener();
+      } catch (error) {
+        this.warn("A connection listener threw", error);
+      }
+    }
+  }
+
+  /**
    * Closes every socket. Pending mutations resolve with `closed`; every subscription gets a final `error` state
    * (`closed`, with the server's last rows) and then stops updating.
    */
@@ -446,6 +489,8 @@ export class SyncClient<
       this.disconnect(shard);
     }
     this.shards.clear();
+    for (const shard of this.connectionListeners.keys()) this.connectionChanged(shard);
+    this.connectionListeners.clear();
     // Handles keep returning their final state; nothing updates or notifies them any more.
     for (const sub of this.subscriptions.values()) {
       if (sub.lingerTimer !== undefined) this.timers.clearTimeout(sub.lingerTimer);
@@ -588,6 +633,7 @@ export class SyncClient<
       this.disconnect(shard);
       // Nothing left to show: forget the shard; a later subscription starts from a snapshot.
       this.shards.delete(shard.id);
+      this.connectionChanged(shard.id);
     }, this.options.idleCloseMs ?? 5000);
   }
 
@@ -605,9 +651,11 @@ export class SyncClient<
     shard.healthy = false;
     shard.connection++;
     for (const live of shard.subs.values()) live.synced = false;
+    this.connectionChanged(shard.id);
     socket.onopen = () => {
       if (shard.socket !== socket) return;
       shard.open = true;
+      this.connectionChanged(shard.id);
       this.greet(shard);
     };
     socket.onmessage = ((event: { data: unknown }) => {
@@ -623,6 +671,7 @@ export class SyncClient<
       if (shard.healthy) shard.attempt = 0;
       shard.healthy = false;
       if (!this.closed && this.refs(shard) > 0) this.retry(shard);
+      this.connectionChanged(shard.id);
     };
     // A close always follows an error; reconnecting is handled there.
     socket.onerror = () => {};
@@ -636,7 +685,9 @@ export class SyncClient<
     shard.retryTimer = this.timers.setTimeout(() => {
       shard.retryTimer = undefined;
       if (!this.closed && this.refs(shard) > 0 && !shard.socket) this.connect(shard);
+      this.connectionChanged(shard.id);
     }, delay);
+    this.connectionChanged(shard.id);
   }
 
   /** Closes the shard's socket, if any, without reconnecting. */
@@ -650,6 +701,7 @@ export class SyncClient<
     } catch (error) {
       this.warn(`Could not close the socket for ${shard.id}`, error);
     }
+    this.connectionChanged(shard.id);
   }
 
   private disconnect(shard: Shard): void {
@@ -658,6 +710,7 @@ export class SyncClient<
     }
     shard.idleTimer = shard.retryTimer = shard.expiryTimer = undefined;
     this.closeSocket(shard, "idle");
+    this.connectionChanged(shard.id);
   }
 
   /**

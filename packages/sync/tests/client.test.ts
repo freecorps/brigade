@@ -1251,3 +1251,47 @@ test("an empty patch carries the new epoch, so a later socket does not drop a mu
   while (network.step()) expect(idsOf(b.get())).toContain(id);
   expect(b.get()).toMatchObject({ pending: false, rows: [{ id, number: 2 }, { id: other }] });
 });
+
+test("onConnectionChange reports each socket state once, without opening a socket itself", async () => {
+  const { client, settle, network, timers } = setup();
+  const a = client(ana);
+  const seen: string[] = [];
+  const stop = a.onConnectionChange(SHARD, () => seen.push(a.connectionState(SHARD)));
+  await settle();
+  expect(network.sockets).toHaveLength(0); // Listening alone connects nothing.
+
+  const stopQuery = a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+  await settle();
+  expect(seen).toEqual(["connecting", "open"]);
+
+  network.disconnect();
+  await settle();
+  expect(seen.at(-1)).toBe("waiting");
+  network.reconnect();
+  timers.advance(500);
+  await settle();
+  expect(seen.slice(2)).toEqual(["waiting", "connecting", "open"]);
+
+  // The idle close after the last subscription leaves.
+  stopQuery();
+  timers.advance(1000 + 5000);
+  await settle();
+  expect(seen.at(-1)).toBe("idle");
+
+  stop();
+  a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+  await settle();
+  expect(seen.at(-1)).toBe("idle"); // Unsubscribed: no more calls.
+  a.close();
+});
+
+test("closing the client tells connection listeners the shard is idle", async () => {
+  const { client, settle } = setup();
+  const a = client(ana);
+  const seen: string[] = [];
+  a.onConnectionChange(SHARD, () => seen.push(a.connectionState(SHARD)));
+  a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+  await settle();
+  a.close();
+  expect(seen).toEqual(["connecting", "open", "idle"]);
+});

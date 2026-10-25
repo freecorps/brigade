@@ -8,7 +8,7 @@ row store come from [`@freecorps/brigade-schema`](../schema/README.md); the same
 | ---------------------------------- | ----------------------------------------------------------------------------- |
 | `@freecorps/brigade-sync`          | `createSyncClient`, `SyncClient`, the protocol (re-exported)                  |
 | `@freecorps/brigade-sync/protocol` | Message types, `PROTOCOL_VERSION`, `parseServerMessage`, `parseClientMessage` |
-| `@freecorps/brigade-sync/react`    | `SyncProvider`, `useQuery`, `useMutation` (React is a peer dependency)        |
+| `@freecorps/brigade-sync/react`    | `SyncProvider`, `useQuery`, `useMutation`, `useConnectionState` (React peer)  |
 
 ## Web and mobile
 
@@ -64,9 +64,12 @@ function ActiveIncidents() {
   `unknown_mutation`, `internal`) plus the client's: `invalid_args` for args that are not JSON or too large to
   send, `too_many_pending` (more than 500 unconfirmed), `expired` (still unconfirmed when the client reconnected
   more than 7 days after making it) and `closed`.
+- `useConnectionState({ shard? })` returns the shard's socket state: `idle`, `connecting`, `open` or `waiting` (for
+  a retry). It only reads; queries and mutations open the socket. A failed upgrade reaches a browser only as a
+  close, so "never loaded and `waiting`" is the only sign the shard is unreachable.
 - Without React: `client.query(shard, name, args)` returns a handle with `subscribe(listener)` and
   `getSnapshot()` (the `useSyncExternalStore` contract); `client.mutate(shard, name, args)`;
-  `client.newId(prefix)`; `client.connectionState(shard)` for an offline indicator; `client.close()`, after
+  `client.newId(prefix)`; `client.connectionState(shard)` and `client.onConnectionChange(shard, listener)` for an offline indicator; `client.close()`, after
   which every subscription holds a final `error` state with code `closed`.
 
 The client uses the global `WebSocket`, `setTimeout` and `crypto.getRandomValues` unless given `transport`,

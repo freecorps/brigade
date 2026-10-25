@@ -30,6 +30,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
 - [ ] **S3 — Sync engine prototype** (RFC 0004). Pass: two browser tabs and one Expo client stay in sync;
       reconnect resumes from the last version.
   - One `WorkspaceDO` with `subscribe` / `mutate` / `resume`; `packages/sync` with `useQuery` / `useMutation`.
+  - Done: the shard and the client (#14, #13, #17). The web dashboard lists active incidents live and declares,
+    sets status and sets severity through the real shard. Two browser tabs stay in sync, and a dropped socket
+    resumes from its last version with a patch, not a snapshot.
+  - Left: the same list in the Expo app (iOS Simulator and Android), the three-client check and the write-up
+    `docs/spikes/s3-sync-engine.md`.
 - [ ] **S4 — Expo in the workspace.** Pass: development build runs on the iOS Simulator importing `packages/*`
       through Metro; `eas build` succeeds (needs Heitor's EAS account); Hermes `Intl.PluralRules`,
       `RelativeTimeFormat` and `dateStyle`/`timeStyle` checked (polyfill if missing); Hermes regex Unicode

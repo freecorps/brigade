@@ -8,6 +8,7 @@ import {
   type ServerMessage,
   type SubscriptionChanges,
 } from "@freecorps/brigade-sync/protocol";
+import { DEV_ACTOR, DEV_ACTOR_VAR } from "./dev-actor.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
 import type { RowChange } from "./store.ts";
 
@@ -23,17 +24,6 @@ export const WORKSPACE_ID = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 
 /** Set by the Worker on the upgrade it forwards; the shard records it on first use. */
 export const WORKSPACE_HEADER = "Brigade-Workspace";
-
-/**
- * DEV ONLY. There is no auth yet, so every socket acts as this responder, and only where `SYNC_DEV_ACTOR` is "1":
- * the `dev` environment in wrangler.jsonc and local runs (vite.config.ts, the tests). Anywhere else the sync
- * upgrade is refused with 501. Once auth exists the Worker authenticates the upgrade and passes the actor to the
- * shard in a signed header (RFC 0004 "Socket topology").
- */
-export const DEV_ACTOR: Actor = { kind: "user", id: "usr_dev", role: "responder" };
-
-/** The variable that enables `DEV_ACTOR`. */
-export const DEV_ACTOR_VAR = "SYNC_DEV_ACTOR";
 
 /** The actor every sync socket acts as here, or undefined if this deployment has none (no auth yet). */
 export function syncActor(env: object): Actor | undefined {

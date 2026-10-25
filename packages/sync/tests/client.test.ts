@@ -263,9 +263,10 @@ test("offline mutations stay pending, then are re-sent with the same id and the 
 
   expect(await offline).toEqual({ ok: true, version: 3 });
   expect(active.get().pending).toBe(false);
+  // The other writer raised the first one to SEV1, so it now lists first.
   expect(active.get().rows).toMatchObject([
-    { id: second, number: 2 },
     { id: first, number: 1, severity: "sev1" },
+    { id: second, number: 2 },
   ]);
 });
 
@@ -853,7 +854,7 @@ test("a shard restored from a backup at a lower version answers with a snapshot 
   const a = client(ana);
   const active = watch(a.query(SHARD, "incidents.active", {}));
   await settle();
-  expect(idsOf(active.get())).toEqual([lost, kept]);
+  expect(idsOf(active.get())).toEqual([kept, lost]); // Kept is SEV1 now, so it lists first.
 
   network.disconnect();
   await settle();

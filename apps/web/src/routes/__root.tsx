@@ -6,7 +6,8 @@ import { SiteHeader } from "@/components/site-header";
 export const Route = createRootRoute({ component: RootLayout });
 
 function RootLayout() {
-  const { locale } = usePreferences();
+  // Read only to re-render on a locale change, which rewords the skip link.
+  usePreferences();
   return (
     <>
       <a
@@ -16,9 +17,10 @@ function RootLayout() {
         {m.skip_to_content()}
       </a>
       <SiteHeader />
-      {/* Keyed on the locale so every message re-renders in the new language (packages/i18n README).
-          The header stays mounted, so focus returns to the language menu after a switch. */}
-      <main id="main" key={locale} tabIndex={-1} className="outline-none">
+      {/* Not keyed on the locale: a remount would drop live state (refused-change notices, the declare
+          text, changes in flight). Every message is worded at render, and a locale change re-renders every
+          `usePreferences` reader and what it renders; each route component reads it for that reason. */}
+      <main id="main" tabIndex={-1} className="outline-none">
         <Outlet />
       </main>
     </>

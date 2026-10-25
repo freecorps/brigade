@@ -297,3 +297,65 @@ test("a monitor that went silent while down still links its incident, sorts firs
   expect(items[1]!.className).not.toContain("before:bg-sev1");
   expect(document.body.textContent).toContain("1 down");
 });
+
+/**
+ * Browsers drop focus to the body when the node holding it is removed, which a move by `insertBefore` is;
+ * happy-dom keeps it. This puts the browser's behaviour back on one list.
+ */
+function dropFocusOnMove(list: HTMLElement) {
+  const blurMoved = (node: Node) => {
+    const active = document.activeElement;
+    if (node.isConnected && active instanceof HTMLElement && node.contains(active)) active.blur();
+  };
+  const { insertBefore, appendChild } = list;
+  list.insertBefore = function <T extends Node>(node: T, child: Node | null) {
+    blurMoved(node);
+    return insertBefore.call(list, node, child) as T;
+  };
+  list.appendChild = function <T extends Node>(node: T) {
+    blurMoved(node);
+    return appendChild.call(list, node) as T;
+  };
+  return () => {
+    delete (list as Partial<Pick<HTMLElement, "insertBefore" | "appendChild">>).insertBefore;
+    delete (list as Partial<Pick<HTMLElement, "insertBefore" | "appendChild">>).appendChild;
+  };
+}
+
+// React's commit restores focus on its own, and `useStableFocus` is the fallback; this pins the result either way.
+test("a row that re-sorts keeps the focus of a button inside it", async () => {
+  const first = monitor({ id: newId("mon", T0 - 2, randomBytes), name: "Alpha" });
+  const moving = monitor({ id: newId("mon", T0 - 1, randomBytes), name: "Bravo" });
+  const view = await mount([], [first, moving]);
+  const ids = () => $$("[data-monitor]").map((item) => item.dataset.monitor);
+  expect(ids()).toEqual([first.id, moving.id]);
+  // React keeps the renamed row in place and re-inserts the one it passes: that row's button loses focus.
+  const pause = button("Pause", document.querySelector(`[data-monitor="${first.id}"]`)!)!;
+  act(() => pause.focus());
+  expect(document.activeElement).toBe(pause);
+
+  // Renamed elsewhere: the row moves to the top, and React re-inserts it.
+  const { id, url, method, expectedStatus, keyword, intervalSeconds, timeoutSeconds, regions } =
+    moving;
+  expect(
+    view.shard.write(owner, "monitor.updateHttp", {
+      id,
+      name: "Aardvark",
+      url,
+      method,
+      expectedStatus,
+      keyword,
+      intervalSeconds,
+      timeoutSeconds,
+      regions,
+    }).ok,
+  ).toBe(true);
+  const restore = dropFocusOnMove(document.querySelector<HTMLElement>("ul[aria-labelledby]")!);
+  try {
+    await view.flush();
+  } finally {
+    restore();
+  }
+  expect(ids()).toEqual([moving.id, first.id]);
+  expect(document.activeElement).toBe(pause);
+});

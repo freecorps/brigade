@@ -589,34 +589,21 @@ function PingUrl({
 
 /**
  * A ref for a list whose rows re-sort: React moves a row by re-inserting it, which drops focus from a button
- * inside it. The element last focused in the list is focused again after such a render.
+ * inside it. React's commit already puts focus back on the element that had it; this is the fallback should that
+ * ever not happen. The element focused in the list when a render starts is focused again once it commits, if focus
+ * fell to the page itself (a click elsewhere moved it somewhere real, so that is left alone).
  */
 function useStableFocus(rows: readonly unknown[]) {
   const listRef = useRef<HTMLUListElement>(null);
-  const focused = useRef<{ element: HTMLElement; lostAt: number | null } | null>(null);
-  useEffect(() => {
-    const list = listRef.current;
-    if (!list) return;
-    const onFocus = (event: FocusEvent) =>
-      (focused.current = { element: event.target as HTMLElement, lostAt: null });
-    const onBlur = (event: FocusEvent) => {
-      // Focus moved somewhere real: forget it. A blur from a re-insert has no related target.
-      if (event.relatedTarget || !focused.current) focused.current = null;
-      else focused.current.lostAt = performance.now();
-    };
-    list.addEventListener("focusin", onFocus);
-    list.addEventListener("focusout", onBlur);
-    return () => {
-      list.removeEventListener("focusin", onFocus);
-      list.removeEventListener("focusout", onBlur);
-    };
-  });
+  const focused = useRef<HTMLElement | null>(null);
+  // Read during render, before the commit moves any row.
+  const active = typeof document === "undefined" ? null : document.activeElement;
+  focused.current =
+    active instanceof HTMLElement && listRef.current?.contains(active) ? active : null;
   useLayoutEffect(() => {
-    const last = focused.current;
-    // Only a blur from this very render (a click on the page's background is not one).
-    const justLost = last?.lostAt != null && performance.now() - last.lostAt < 100;
-    if (last && justLost && last.element.isConnected && document.activeElement === document.body) {
-      last.element.focus({ preventScroll: true });
+    const element = focused.current;
+    if (element?.isConnected && document.activeElement === document.body) {
+      element.focus({ preventScroll: true });
     }
   }, [rows]);
   return listRef;

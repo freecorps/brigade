@@ -38,7 +38,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     Hermes `Intl` checked and polyfilled, regex Unicode property escapes supported (`UNICODE_PROPERTY_ESCAPES`
     is `true`; an emoji title is accepted, a zero-width space rejected) ([write-up](spikes/s4-expo-workspace.md)).
   - Done on iOS: development build on the iPhone 17 Simulator (iOS 27), the same `Intl` results and regex
-    property escapes as Android; the launch screen now uses the splash ground ([write-up](spikes/s4-expo-workspace.md)).
+    property escapes as Android, except that a medium date and time are joined with " at " instead of ", "; the
+    launch screen now uses the splash ground ([write-up](spikes/s4-expo-workspace.md)).
   - eas build pending (needs Heitor's EAS account).
 - [ ] **S2 — Probe placement** (RFC 0007). Pass: observed colo per `locationHint` over 48h (deploy needs Heitor's approval).
 - [ ] **S1 — APNs from a Worker and payload encryption** (RFC 0006). Pass: push received on a real iPhone from a

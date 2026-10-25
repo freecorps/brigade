@@ -19,7 +19,8 @@ vp run start            # Metro only, for an already installed development build
 Use `bunx`, not `npx`: npm refuses to run in this repository because the root `devEngines` names Bun.
 
 On macOS, the selected Xcode must have a Simulator runtime for its own iOS SDK. With several Xcodes installed, pick
-one per command with `DEVELOPER_DIR=/Applications/<Xcode>.app/Contents/Developer bunx expo run:ios`.
+one per command with `DEVELOPER_DIR=/Applications/<Xcode>.app/Contents/Developer bunx expo run:ios`, or install
+the missing runtime for the selected Xcode with `xcodebuild -downloadPlatform iOS`.
 
 `android/` and `ios/` are generated from `app.config.ts` and gitignored; change native settings there, never in
 the generated folders.

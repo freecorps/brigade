@@ -24,12 +24,16 @@ const children = (element: XmlElement | undefined, name: string): XmlElement[] =
   return Array.isArray(value) ? value : [];
 };
 
-/** sRGB components between 0 and 1, as Interface Builder writes them, from `#rrggbb`. */
-function components(hex: string): Record<"red" | "green" | "blue", string> {
+/**
+ * sRGB components between 0 and 1 from `#rrggbb`, written the way expo-splash-screen writes them
+ * (15 significant digits, blue first), so both produce the same XML.
+ */
+function components(hex: string): Record<"blue" | "green" | "red", string> {
   const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
   if (!match) throw new Error(`Expected a #rrggbb colour, got ${hex}`);
-  const channel = (value: string | undefined) => String(Number.parseInt(value ?? "0", 16) / 255);
-  return { red: channel(match[1]), green: channel(match[2]), blue: channel(match[3]) };
+  const channel = (value: string | undefined) =>
+    (Number.parseInt(value ?? "0", 16) / 255).toPrecision(15);
+  return { blue: channel(match[3]), green: channel(match[2]), red: channel(match[1]) };
 }
 
 /**
@@ -44,28 +48,36 @@ export function applySplashGround(storyboard: Storyboard, fallback: string): Sto
   )[0];
   const root = children(view, "view")[0];
   if (!root) throw new Error("SplashScreen.storyboard has no launch view");
-  root.color = [{ $: { key: "backgroundColor", name: COLOR_NAME } }];
+  root.color = [
+    ...children(root, "color").filter((color) => color.$?.key !== "backgroundColor"),
+    { $: { key: "backgroundColor", name: COLOR_NAME } },
+  ];
 
-  const resources = children(document, "resources")[0];
-  if (resources) {
-    // The template's system colour is no longer used.
-    delete resources.systemColor;
-    resources.namedColor = [
-      {
-        $: { name: COLOR_NAME },
-        color: [
-          {
-            $: {
-              alpha: "1.000",
-              ...components(fallback),
-              customColorSpace: "sRGB",
-              colorSpace: "custom",
-            },
+  // Declare the named colour, creating <resources> if the storyboard has none.
+  if (children(document, "resources").length === 0) document.resources = [{}];
+  const resources = children(document, "resources")[0] as XmlElement;
+  // The template's systemBackgroundColor is no longer used; other system colours stay.
+  const systemColors = children(resources, "systemColor").filter(
+    (color) => color.$?.name !== "systemBackgroundColor",
+  );
+  if (systemColors.length > 0) resources.systemColor = systemColors;
+  else delete resources.systemColor;
+  resources.namedColor = [
+    ...children(resources, "namedColor").filter((color) => color.$?.name !== COLOR_NAME),
+    {
+      $: { name: COLOR_NAME },
+      color: [
+        {
+          $: {
+            alpha: "1.000",
+            ...components(fallback),
+            customColorSpace: "sRGB",
+            colorSpace: "custom",
           },
-        ],
-      },
-    ];
-  }
+        },
+      ],
+    },
+  ];
   return storyboard;
 }
 

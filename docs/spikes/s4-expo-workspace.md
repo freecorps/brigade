@@ -158,14 +158,22 @@ What it took:
 - **The Xcode must have a Simulator runtime for its own iOS SDK.** This Mac also had Xcode 26.6 (iOS 26.5 SDK)
   selected, with only the iOS 27.0 runtime installed. `xcodebuild` then finds no destination ("Unable to find a
   destination matching the provided destination specifier"). `DEVELOPER_DIR=<Xcode 27>/Contents/Developer bunx
-  expo run:ios` builds with the matching Xcode without changing `xcode-select`.
+  expo run:ios` builds with the matching Xcode without changing `xcode-select`. Installing the runtime for the
+  selected Xcode (`xcodebuild -downloadPlatform iOS`) is the other way.
 - **Fixed: the launch screen ignored the splash ground.** Without a splash image, `expo-splash-screen` 58.0.11
   writes the light and dark ground into the `SplashScreenBackground` colour set but leaves `SplashScreen.storyboard`
   on the template's `systemBackgroundColor`. The cold start was pure white or black, then the app drew `#f7f7f5` or
   `#121211`. `plugins/splash-ground.ts`, a config plugin applied from `app.config.ts`, points the launch view at
   the colour set as `expo-splash-screen` does when there is an image. Remove it once the app has a splash image.
-  Checked by recording cold starts: the ground stays the same colour from launch to the first frame in both themes
-  (`ios-splash-dark`). Android was not affected.
+  Its test runs `expo-splash-screen`'s own storyboard helpers on the SDK 58 bare template's storyboard; they are
+  loaded by file path, since the package does not export them.
+  Checked by recording one cold start per theme (`ios-cold-start-light.mp4`, `ios-cold-start-dark.mp4`, stills
+  `ios-splash-light` and `ios-splash-dark`). Light keeps `#f7f7f5` from launch to the first app frame. Dark keeps
+  `#121211` through the launch screen, then shows about 145 ms of pure black (4.80 s to 4.95 s in the recording)
+  while the development client hands over to the app, before the app draws `#121211` (`ios-cold-start-dark-handover`:
+  only the dev client's Tools button is drawn). That gap belongs to the development build, like the black frame
+  seen on Android. Release builds embed the bundle, so check it with the first `preview` build. Android was not
+  affected by the storyboard issue.
 - **Fixed: the `/intl` probe reported `dateStyle`/`timeStyle` as missing.** iOS's Hermes formats them correctly
   but joins medium date and short time with " at " ("Mar 5, 2026 at 2:30 PM"), where Android and Node print ", ".
   That is locale data, not support, so `src/intl/probe.ts` accepts both joiners. No `@formatjs` date or number
@@ -193,7 +201,8 @@ The checklist, each item passed:
 2. The overview renders the workspace packages from source: badges with glyphs, plural rows, date and relative
    time (`ios-light-en`).
 3. Light and dark follow the system while the app runs (`xcrun simctl ui booted appearance dark|light`), and the
-   splash ground matches each theme after the fix above (`ios-dark-en`, `ios-splash-dark`).
+   launch screen shows each theme's ground after the fix above (`ios-dark-en`, `ios-splash-light`,
+   `ios-splash-dark`; the development-only black gap in dark is described there).
 4. `pt-BR` (`ios-light-pt-BR`, `ios-dark-pt-BR`). The built `Info.plist` has `CFBundleLocalizations` `en` and
    `pt-BR`. The language was set per launch with `xcrun simctl launch booted br.com.freecorps.brigade
    -AppleLanguages "(pt-BR)" -AppleLocale pt_BR`, not through Settings → Apps → Brigade → Language.
@@ -201,17 +210,21 @@ The checklist, each item passed:
 6. Safe areas: the header sits below the Dynamic Island, content never scrolls under the status bar, and the last
    card clears the home indicator (`ios-safe-area-bottom`).
 7. Reduce Motion (`xcrun simctl spawn booted defaults write com.apple.Accessibility ReduceMotionEnabled -bool
-   true`, then relaunch): pushing `/intl` cross-fades in about 350 ms instead of sliding (`ios-reduce-motion-fade`
-   against `ios-push-slide`, recordings `ios-reduce-motion-push.mp4` and `ios-default-push.mp4`).
-8. Dynamic Type at `accessibility-extra-extra-extra-large`: text grows, rows grow and badges wrap one per line,
-   nothing clips (`ios-dynamic-type-xxxl-pt-BR`). Set with `xcrun simctl ui booted content_size`, it applied on
-   the next launch, not to the running app; a live change from Settings was not tried. The badge glyphs keep their
-   fixed size (`fontSize.sm`); scaling them with the text is left for when the badges get real use.
+   true`, then relaunch): pushing `/intl` cross-fades in place instead of sliding (`ios-reduce-motion-fade` against
+   `ios-push-slide`, recordings `ios-reduce-motion-push.mp4` and `ios-default-push.mp4`). From the recording's
+   frame timestamps, 10 to 90 % of the change takes about 300 ms and the eased whole about 650 ms.
+8. Dynamic Type at `accessibility-extra-extra-extra-large`, pt-BR: text grows, rows grow and badges wrap one per
+   line. The whole overview, top to end, was captured in overlapping pages (`ios-dynamic-type-xxxl-pt-BR` and
+   `-1` to `-6`, `-7-end` at the end of the scroll) and nothing clips; the last card clears the home indicator.
+   Set with `xcrun simctl ui booted content_size`, it applied on the next launch, not to the running app; a live
+   change from Settings was not tried. The badge glyphs keep their fixed size (`fontSize.sm`) and the gap between
+   code and name stays `spacing[1]`, so at this size they look small; scaling them with the text is left for when
+   the badges get real use. `/intl` was not checked at this size.
 
 How it was driven: on this beta runtime, XCTest-based input (taps, swipes, the "Open in Brigade?" prompt that
 `xcrun simctl openurl brigade://intl` raises) timed out, so no screen was reached by tapping. `/intl` and the
-bottom of the overview were reached with a temporary `router.push("/intl")` and `scrollToEnd` in a development
-build, not committed. Screenshots come from `xcrun simctl io booted screenshot` once the app was drawn in the
+rest of the overview were reached with a temporary `router.push("/intl")` and `scrollTo`/`scrollToEnd` in a
+development build, not committed. Screenshots come from `xcrun simctl io booted screenshot` once the app was drawn in the
 foreground, and each was checked by eye.
 
 ## Decision

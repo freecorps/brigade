@@ -275,3 +275,25 @@ test("a down monitor links its incident and says why each region failed; no data
   expect(item(silent.id).textContent).toContain("No data");
   expect(item(silent.id).textContent).not.toMatch(/\bUp\b/);
 });
+
+test("a monitor that went silent while down still links its incident, sorts first and counts as down", async () => {
+  const incidentId = newId("inc", T0, randomBytes);
+  const fine = monitor({ name: "Account", status: "up" });
+  const silent = monitor({
+    name: "Zebra checkout",
+    status: "unknown",
+    regions: ["weur"],
+    incidentId,
+    alertId: newId("alt", T0, randomBytes),
+  });
+  await mount([fine, silent]);
+  const items = $$("[data-monitor]");
+  expect(items.map((item) => item.dataset.monitor)).toEqual([silent.id, fine.id]);
+  const [first] = items;
+  expect(first!.textContent).toContain("No data");
+  expect(first!.querySelector("a")?.getAttribute("href")).toBe(`#incident-${incidentId}`);
+  expect(first!.className).toContain("before:bg-sev1");
+  expect(items[1]!.querySelector("a")).toBeNull();
+  expect(items[1]!.className).not.toContain("before:bg-sev1");
+  expect(document.body.textContent).toContain("1 down");
+});

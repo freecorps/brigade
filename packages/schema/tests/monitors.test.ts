@@ -7,6 +7,7 @@ import {
   evaluateQuery,
   freshFloor,
   MONITOR_ACTOR,
+  monitorAlerting,
   monitorSources,
   monitorStatus,
   mutations,
@@ -579,6 +580,24 @@ describe("monitor.report: quorum → alert → incident", () => {
     const c = createHttp(db, ["weur"], "C");
     report(db, c, "weur", false);
     expect(evaluateQuery(queries["monitors.all"], {}, db).map((row) => row.id)).toEqual([c, a, b]);
+  });
+
+  test("a monitor that went silent while down keeps its alert and still sorts first", () => {
+    const db = store();
+    const a = createHttp(db, ["weur"], "A");
+    const b = createHttp(db, ["weur"], "B");
+    report(db, b, "weur", false);
+    const monitor = db.get("monitors", b)!;
+    expect(types(evaluate(db, b, T + 1000 + staleAfterMs(monitor) + 1))).toContain(
+      "monitor.status_changed",
+    );
+    expect(db.get("monitors", b)).toMatchObject({
+      status: "unknown",
+      alertId: expect.any(String),
+    });
+    expect(monitorAlerting(db.get("monitors", b)!)).toBe(true);
+    expect(monitorAlerting(db.get("monitors", a)!)).toBe(false);
+    expect(evaluateQuery(queries["monitors.all"], {}, db).map((row) => row.id)).toEqual([b, a]);
   });
 });
 

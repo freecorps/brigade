@@ -2,6 +2,7 @@ import { m, type Locale } from "@freecorps/brigade-i18n";
 import {
   can,
   formatIncidentNumber,
+  monitorAlerting,
   type MonitorCheck,
   type MonitorRow,
 } from "@freecorps/brigade-schema";
@@ -118,7 +119,7 @@ export function MonitorsCard() {
     void setPaused({ id: row.id, paused: !row.paused }).then(report(row.name));
   };
 
-  const down = rows.filter((row) => monitorBadge(row) === "down").length;
+  const down = rows.filter(monitorAlerting).length;
   const loading = status !== "ready" && status !== "error";
   return (
     <Card
@@ -237,6 +238,8 @@ function MonitorItem({
   const promptId = useId();
   const badge = monitorBadge(row);
   const { variant, icon: Icon } = BADGES[badge];
+  // A down monitor whose probes went silent is "No data" but keeps its alert and incident: still shown as one.
+  const alerting = monitorAlerting(row);
   const [confirming, setConfirming] = useState(false);
   const pauseRef = useRef<HTMLButtonElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
@@ -269,7 +272,7 @@ function MonitorItem({
       data-monitor={row.id}
       className={cn(
         ROW_GRID,
-        badge === "down" &&
+        alerting &&
           "before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-sev1",
       )}
     >
@@ -278,7 +281,7 @@ function MonitorItem({
           <Icon aria-hidden />
           {m.monitor_status({ status: badge })}
         </Badge>
-        {badge === "down" && row.incidentId ? <IncidentLink id={row.incidentId} /> : null}
+        {alerting && row.incidentId ? <IncidentLink id={row.incidentId} /> : null}
       </div>
       <div className="col-span-2 row-start-2 flex min-w-0 flex-col gap-0.5 md:col-span-1 md:row-start-1">
         <p
@@ -395,7 +398,7 @@ function MonitorItemSkeleton() {
   );
 }
 
-/** The incident a down monitor opened, by number once the shard has given it one. */
+/** The incident an alerting monitor opened, by number once the shard has given it one. */
 function IncidentLink({ id }: { id: string }) {
   const { rows } = useQuery("incident.byId", { id });
   const number = formatIncidentNumber(rows[0]?.number ?? null);

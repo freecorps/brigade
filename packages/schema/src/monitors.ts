@@ -745,9 +745,17 @@ export const evaluateMonitor = defineMutation({
 
 // ---- Queries ---------------------------------------------------------------------------------------------------
 
-/** Down first, then by name and id (code point order, the same on every replica). */
+/**
+ * Whether a monitor needs someone: down, or still holding a firing alert (a down monitor whose probes went
+ * silent is `unknown`, and its alert and incident stay until it reports up again).
+ */
+export function monitorAlerting(row: Pick<MonitorRow, "paused" | "status" | "alertId">): boolean {
+  return !row.paused && (row.alertId !== null || row.status === "down");
+}
+
+/** Alerting first, then by name and id (code point order, the same on every replica). */
 const downFirst = (a: MonitorRow, b: MonitorRow) =>
-  Number(b.status === "down" && !b.paused) - Number(a.status === "down" && !a.paused) ||
+  Number(monitorAlerting(b)) - Number(monitorAlerting(a)) ||
   (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) ||
   (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 

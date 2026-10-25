@@ -38,6 +38,11 @@ if (!token) {
 }
 
 const url = new URL("/summary", base);
+// The token must not cross the network in clear; plain HTTP only to a local `wrangler dev`.
+if (url.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
+  console.error("refusing to send PROBE_ADMIN_TOKEN over plain HTTP; use an https:// URL");
+  process.exit(2);
+}
 if (values.hours) url.searchParams.set("hours", values.hours);
 const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
 if (!response.ok) {

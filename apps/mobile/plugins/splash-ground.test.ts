@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vite-plus/test";
 import { applySplashGround, type Storyboard, type XmlElement } from "./splash-ground.ts";
 
@@ -119,11 +121,12 @@ interface InterfaceBuilder {
     },
   ): Storyboard;
 }
-const INTERFACE_BUILDER = new URL(
-  "../node_modules/expo-splash-screen/plugin/build/InterfaceBuilder.js",
-  import.meta.url,
-).href;
-const loadInterfaceBuilder = async () => (await import(INTERFACE_BUILDER)) as InterfaceBuilder;
+// Resolved from the package's own package.json (which `exports` allows), wherever Bun installed it.
+const INTERFACE_BUILDER = createRequire(import.meta.url)
+  .resolve("expo-splash-screen/package.json")
+  .replace(/package\.json$/, "plugin/build/InterfaceBuilder.js");
+const loadInterfaceBuilder = async () =>
+  (await import(pathToFileURL(INTERFACE_BUILDER).href)) as InterfaceBuilder;
 
 // SplashScreen.storyboard from the SDK 58 bare template (expo/template.tgz, template 58.0.28), verbatim.
 const BARE_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>

@@ -167,13 +167,14 @@ What it took:
   the colour set as `expo-splash-screen` does when there is an image. Remove it once the app has a splash image.
   Its test runs `expo-splash-screen`'s own storyboard helpers on the SDK 58 bare template's storyboard; they are
   loaded by file path, since the package does not export them.
-  Checked by recording one cold start per theme (`ios-cold-start-light.mp4`, `ios-cold-start-dark.mp4`, stills
-  `ios-splash-light` and `ios-splash-dark`). Light keeps `#f7f7f5` from launch to the first app frame. Dark keeps
-  `#121211` through the launch screen, then shows about 145 ms of pure black (4.80 s to 4.95 s in the recording)
-  while the development client hands over to the app, before the app draws `#121211` (`ios-cold-start-dark-handover`:
-  only the dev client's Tools button is drawn). That gap belongs to the development build, like the black frame
-  seen on Android. Release builds embed the bundle, so check it with the first `preview` build. Android was not
-  affected by the storyboard issue.
+  Checked by recording one cold start per theme (stills `ios-splash-light` and `ios-splash-dark`). Light keeps
+  `#f7f7f5` from launch to the first app frame. Dark keeps `#121211` through the launch screen. That is apart from
+  about 60–90 ms of the development client's launcher in both themes (light 4.12–4.21 s, dark 4.04–4.10 s in the
+  recordings). Dark then shows about 145 ms of pure black (4.80 s to 4.95 s) while the development client hands
+  over to the app, before the app draws `#121211` (`ios-cold-start-dark-handover`: only the dev client's Tools button is
+  drawn). That gap is most likely the development build's: it comes from the handover, like the black frame seen
+  on Android, and no `preview` build was run to rule it out. Release builds embed the bundle, so check it with the
+  first `preview` build. Android was not affected by the storyboard issue.
 - **Fixed: the `/intl` probe reported `dateStyle`/`timeStyle` as missing.** iOS's Hermes formats them correctly
   but joins medium date and short time with " at " ("Mar 5, 2026 at 2:30 PM"), where Android and Node print ", ".
   That is locale data, not support, so `src/intl/probe.ts` accepts both joiners. No `@formatjs` date or number
@@ -211,8 +212,7 @@ The checklist, each item passed:
    card clears the home indicator (`ios-safe-area-bottom`).
 7. Reduce Motion (`xcrun simctl spawn booted defaults write com.apple.Accessibility ReduceMotionEnabled -bool
    true`, then relaunch): pushing `/intl` cross-fades in place instead of sliding (`ios-reduce-motion-fade` against
-   `ios-push-slide`, recordings `ios-reduce-motion-push.mp4` and `ios-default-push.mp4`). From the recording's
-   frame timestamps, 10 to 90 % of the change takes about 300 ms and the eased whole about 650 ms.
+   `ios-push-slide`, stills from a screen recording of each). From the recording's frame timestamps, 10 to 90 % of the change takes about 300 ms and the eased whole about 650 ms.
 8. Dynamic Type at `accessibility-extra-extra-extra-large`, pt-BR: text grows, rows grow and badges wrap one per
    line. The whole overview, top to end, was captured in overlapping pages (`ios-dynamic-type-xxxl-pt-BR` and
    `-1` to `-6`, `-7-end` at the end of the scroll) and nothing clips; the last card clears the home indicator.

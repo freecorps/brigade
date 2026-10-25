@@ -32,7 +32,8 @@ export function CallDiagnostics() {
     const module = BrigadeCall;
     if (!module) return;
     const refresh = () => setStatus(module.getRingStatus());
-    void Notifications.requestPermissionsAsync().finally(refresh);
+    // Refresh either way: the route shows whatever the system now allows.
+    Notifications.requestPermissionsAsync().then(refresh, refresh);
     module
       .getVoipToken()
       .then((token) => {

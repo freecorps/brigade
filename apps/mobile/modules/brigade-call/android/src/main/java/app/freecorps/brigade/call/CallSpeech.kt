@@ -15,6 +15,8 @@ object CallSpeech {
   private const val UTTERANCE = "brigade-call"
   private var tts: TextToSpeech? = null
   private var ready = false
+  /** The engine's init reported failure: every later `speak` finishes at once. */
+  private var failed = false
   private var pending: Pair<String, String>? = null
   var onDone: ((utterance: String) -> Unit)? = null
 
@@ -24,6 +26,7 @@ object CallSpeech {
     if (engine == null) {
       tts = TextToSpeech(context.applicationContext) { status ->
         ready = status == TextToSpeech.SUCCESS
+        failed = !ready
         if (!ready) {
           Log.w("BrigadeCall", "text-to-speech unavailable: $status")
           // Nothing will be spoken: tell the call session, which waits for it, that this utterance is over.
@@ -65,7 +68,12 @@ object CallSpeech {
       }
     } else if (ready) {
       flush()
+    } else if (failed) {
+      // The engine could not start earlier: nothing will be spoken, so do not leave the call session waiting.
+      pending = null
+      onDone?.invoke(UTTERANCE)
     }
+    // Otherwise the engine is still starting; its init callback speaks `pending`.
   }
 
   private fun flush() {

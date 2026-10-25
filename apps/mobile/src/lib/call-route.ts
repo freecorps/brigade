@@ -53,13 +53,26 @@ export function fallbackChannel(
 /**
  * How a call ended, as the native module reports it (`onEnd`). An acknowledged call arrives as `hung_up`: the call
  * session hangs up after the ack.
- * - `declined`: rejected while ringing (on iOS, also a system end before answering, which the app cannot tell apart).
+ * - `declined`: rejected while ringing.
+ * - `failed` also covers, on iOS, a ringing call ended within `SYSTEM_END_MS` of CallKit accepting it: no person
+ *   declines that fast, so it is the system ending a call it took (seen on the Simulator), and a repeat rings.
  * - `hung_up`: answered, then ended by the responder, the call screen or the system.
  * - `timed_out`: answered, then hung up natively after `ANSWERED_CALL_MAX_MS`.
  * - `missed`: nobody answered within the ring timeout (60 s).
  * - `failed`: the ringing UI could not be shown, or CallKit reset.
  */
 export type CallEndReason = "declined" | "hung_up" | "timed_out" | "missed" | "failed";
+
+/** An unanswered call ended sooner than this after it started ringing was ended by the system, not a person. */
+export const SYSTEM_END_MS = 2_000;
+
+/**
+ * The reason for an unanswered call's end on iOS, where CallKit reports a person's decline and the system ending
+ * the call the same way. `msSinceRinging` is undefined if CallKit never confirmed the call.
+ */
+export function unansweredEndReason(msSinceRinging: number | undefined): CallEndReason {
+  return msSinceRinging !== undefined && msSinceRinging < SYSTEM_END_MS ? "failed" : "declined";
+}
 
 /**
  * Ends after which a repeat of the same page (same call id) does not ring again: the responder saw the call and

@@ -13,6 +13,13 @@ mention on-call paging (PagerDuty/Opsgenie precedent).
 The `VoiceProvider` contract is defined; pick the first implementation by price for Brazilian numbers
 (Twilio vs local providers) once Phase 2 starts.
 
+## Q14 — A call iOS ends on its own (RFC 0010)
+
+CallKit sometimes ends a call it accepted before anyone could answer (seen on the Simulator within a second). The
+app now records an unanswered end within 2 seconds of ringing as `failed`, so a repeat of the page rings. Should it
+also post the time-sensitive fallback notification at once? Check on devices which real cases look like this
+(spike S6 write-up).
+
 ---
 
 # Decided

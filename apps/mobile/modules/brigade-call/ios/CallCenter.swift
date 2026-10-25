@@ -19,6 +19,8 @@ struct IncomingCall {
   var body: String
   var incident: String?
   var answered = false
+  /// When CallKit confirmed the call (it started ringing); nil until then.
+  var ringingSince: Date?
   /// 1 was pressed on CallKit's keypad, maybe before JavaScript was listening (a cold launch from a VoIP push).
   /// It stays set for the rest of the call: JavaScript that reads it again acknowledges again, which is harmless
   /// (a second `incident.ack` is a `conflict`, and the call session treats that as acknowledged).
@@ -69,6 +71,9 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   /// Declined or answered: a repeat does not ring again; after `missed` or `failed` it does. Mirrors
   /// `REPEAT_SUPPRESSING_END_REASONS` in apps/mobile/src/lib/call-route.ts.
   static let repeatSuppressingReasons: Set<String> = ["declined", "hung_up", "timed_out"]
+  /// An unanswered call ended sooner than this after it rang was ended by the system, not a person: `failed`, so a
+  /// repeat rings. Mirrors `SYSTEM_END_MS` and `unansweredEndReason` (src/lib/call-route.ts).
+  static let systemEnd: TimeInterval = 2
 
   /// Mirrors `knownCall` in apps/mobile/src/lib/call-route.ts.
   static func known(active: Bool, ended: EndedCall?, now: Date) -> KnownCall {
@@ -227,10 +232,17 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
         if let error {
           if (error as? CXErrorCodeIncomingCallError)?.code == .callUUIDAlreadyExists { return }
           self.log.error("call not reported: \(String(describing: error), privacy: .public)")
-          let call = self.calls.removeValue(forKey: call.id) ?? call
-          self.notifyPage(call)
+          guard let tracked = self.calls.removeValue(forKey: call.id) else {
+            // Ended here before CallKit answered (only a reset does that today, recorded as `failed`): page unless
+            // that end suppresses a repeat.
+            if let ended = self.ended[call.id], Self.repeatSuppressingReasons.contains(ended.reason) { return }
+            self.notifyPage(call)
+            return
+          }
+          self.notifyPage(tracked)
           return
         }
+        self.calls[call.id]?.ringingSince = Date()
         self.log.info("call reported")
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.ringTimeout) { self.timeOut(call.id) }
       }
@@ -288,8 +300,8 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   func requestEnd(_ id: UUID) { request(CXEndCallAction(call: id)) }
 
   private func request(_ action: CXCallAction) {
-    DispatchQueue.main.async {
-      self.controller.request(CXTransaction(action: action)) { [weak self] error in
+    DispatchQueue.main.async { [weak self] in
+      self?.controller.request(CXTransaction(action: action)) { error in
         if let error {
           self?.log.error("call action failed: \(String(describing: error), privacy: .public)")
         }
@@ -332,7 +344,10 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
       // Already ended here (timed out, or a repeat reported and ended): keep the reason it ended with.
       return action.fulfill()
     }
-    let reason = call.answered ? "hung_up" : "declined"
+    let reason =
+      call.answered
+      ? "hung_up"
+      : call.ringingSince.map { Date().timeIntervalSince($0) < Self.systemEnd } == true ? "failed" : "declined"
     rememberEnded(action.callUUID, reason: reason)
     stopSpeaking()
     log.info("call ended: \(reason, privacy: .public)")

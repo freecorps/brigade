@@ -8,6 +8,8 @@ import {
   ENDED_CALL_MEMORY_MS,
   fallbackChannel,
   knownCall,
+  SYSTEM_END_MS,
+  unansweredEndReason,
   PAGE_CHANNEL,
   REPEAT_SUPPRESSING_END_REASONS,
   voipPushPlan,
@@ -184,6 +186,21 @@ describe("knownCall: a repeat of an ended page", () => {
       (maxTtl ?? "0").split("*").reduce((product, factor) => product * Number(factor.trim()), 1) *
       1000;
     expect(ENDED_CALL_MEMORY_MS).toBe(maxTtlMs);
+  });
+
+  test("an unanswered call the system ends at once counts as failed, so its repeat rings", () => {
+    expect(unansweredEndReason(60)).toBe("failed");
+    expect(unansweredEndReason(SYSTEM_END_MS - 1)).toBe("failed");
+    expect(unansweredEndReason(SYSTEM_END_MS)).toBe("declined");
+    expect(unansweredEndReason(15_000)).toBe("declined");
+    expect(unansweredEndReason(undefined)).toBe("declined");
+    expect(knownCall(false, { reason: unansweredEndReason(60), atMs: 0 }, 1_000)).toBe("new");
+    const swift = native("ios/CallCenter.swift");
+    expect(swift).toContain(`static let systemEnd: TimeInterval = ${SYSTEM_END_MS / 1000}`);
+    expect(swift).toMatch(
+      /call\.answered\s+\? "hung_up"\s+: call\.ringingSince\.map \{ Date\(\)\.timeIntervalSince\(\$0\) < Self\.systemEnd \} == true \? "failed" : "declined"/,
+    );
+    expect(swift).toContain("self.calls[call.id]?.ringingSince = Date()");
   });
 
   test("CallRoute.kt and CallCenter.swift use the same reasons, memory and branches", () => {

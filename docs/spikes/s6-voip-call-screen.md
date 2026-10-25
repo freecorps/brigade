@@ -158,8 +158,9 @@ and stops delivering VoIP pushes after repeated failures. So:
   never repeats by itself, the instance re-sends, and each send expires at most 5 minutes (`MAX_CALL_TTL_SECONDS`)
   after it was sent, so a copy sent before the end arrives within 5 minutes of it; a later send is a new attempt
   and rings. The memory is in RAM, so a killed app treats a repeat as new and rings. On iOS, a call the system ends
-  before it is answered reaches the app as a `CXEndCallAction`, indistinguishable from a decline (see the open
-  question on calls the system ends at once).
+  before it is answered reaches the app as a `CXEndCallAction`, like a decline; one that ends within 2 seconds of
+  ringing (`SYSTEM_END_MS`) is recorded as `failed`, so its repeat rings. (A Focus that blocks calls is different:
+  CallKit refuses the report, and the refusal path posts the time-sensitive notification.)
 - A call lives 60 seconds by default. A phone that comes online later should get the stored alert push, not a call
   for a page that may already be acknowledged.
 
@@ -355,9 +356,9 @@ On an Android phone (needs FCM, or the debug broadcast over USB):
 - **The voice bot.** This spike's call is the phone talking to itself. RFC 0010's case for App Review is a real
   audio session (Cloudflare Realtime) with server-side TTS and STT; until then, is "the incident read on the phone,
   press 1" enough for App Review to accept PushKit and CallKit? Ship the alert push alone until the bot exists?
-- **A call the system ends at once.** On the Simulator, CallKit ended the call itself within a second. A real phone
-  may do the same (a Focus, Screen Time); the app sees an ordinary end. Should an unanswered call that ends within
-  a few seconds post the fallback notification? Needs a device to see which cases look like that.
+- **A call the system ends at once.** On the Simulator, CallKit ended a call it had accepted within a second; it is
+  now `failed`, so a repeat rings. Whether it should also post the fallback notification is Q14 in
+  `docs/open-questions.md`; a device shows which real cases look like that.
 - **Over the lock screen.** On Android, the React Native app is shown over the keyguard while the call lasts, with
   Back disabled; a native in-call activity would expose less. Decide before release.
 - **Native tests in CI.** The decisions are tested in TypeScript and the native copies checked by text; a native

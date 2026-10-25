@@ -186,7 +186,7 @@ async function openSync(
  * `POST /heartbeat/:token`: a heartbeat monitor's ping (RFC 0007). The token names the workspace and the monitor
  * and carries the secret; the shard compares the secret's SHA-256 with the stored one in constant time. The
  * workspace is looked up in D1 first (`workspaceExists`), so a token for a made-up workspace never wakes, let alone
- * creates, a shard (open question Q16). Every refusal is the same 404, so a caller cannot tell a wrong secret from a
+ * creates, a shard (open question Q16); if D1 itself fails, the ping goes to the shard anyway. Every refusal is the same 404, so a caller cannot tell a wrong secret from a
  * missing monitor or workspace. The body is never read.
  */
 export async function receiveHeartbeat(
@@ -205,7 +205,15 @@ export async function receiveHeartbeat(
       return json({ error: "not_found" }, 404);
     }
   } catch (error) {
-    return failed("workspace lookup failed", parsed.workspaceId, error);
+    // Fail open: a D1 outage must not drop a real ping and page someone for a missed beat. The shard still
+    // checks the secret, so the worst a made-up workspace costs meanwhile is one empty shard.
+    console.error(
+      JSON.stringify({
+        message: "workspace lookup failed; asking the shard",
+        workspace: parsed.workspaceId,
+        error: String(error),
+      }),
+    );
   }
   try {
     const accepted = await env.WORKSPACE.getByName(parsed.workspaceId).heartbeat(

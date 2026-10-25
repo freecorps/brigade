@@ -13,6 +13,7 @@ import {
   type ProbeRegion,
 } from "@freecorps/brigade-schema";
 import { httpCheck, MAX_BODY_BYTES, type HttpCheckConfig } from "../src/check.ts";
+import { receiveHeartbeat } from "../src/index.ts";
 import { probeName, type ProbeDO, type ProbeReport } from "../src/probe.ts";
 import { Shard } from "../src/shard.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
@@ -567,6 +568,47 @@ describe("heartbeats", () => {
     await ws.withShard((shard) => {
       expect(shard.store.get("monitors", monitorId)).toMatchObject({ status: "up", alertId: null });
       expect(shard.store.scan("alerts")).toEqual([expect.objectContaining({ status: "resolved" })]);
+    });
+  });
+
+  test("a D1 failure does not drop a real ping: the shard still decides", async () => {
+    const ws = await workspace();
+    const monitorId = newId("mon", Date.now(), random);
+    const secret = newHeartbeatSecret(random);
+    expect(
+      await ws.run("monitor.createHeartbeat", {
+        id: monitorId,
+        name: "Nightly backup",
+        intervalSeconds: 60,
+        graceSeconds: 30,
+        tokenHash: await sha256Hex(secret),
+      }),
+    ).toMatchObject({ ok: true });
+    const broken = {
+      prepare: () => {
+        throw new Error("D1_ERROR: unavailable");
+      },
+    } as unknown as D1Database;
+    const brokenEnv = { ...env, DB: broken };
+    const ping = (token: string) =>
+      receiveHeartbeat(
+        new Request(`http://localhost/heartbeat/${token}`, { method: "POST" }),
+        brokenEnv,
+        token,
+      );
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect((await ping(heartbeatToken(ws.id, monitorId, secret))).status).toBe(202);
+      // The shard still checks the secret.
+      expect((await ping(heartbeatToken(ws.id, monitorId, newHeartbeatSecret(random)))).status).toBe(
+        404,
+      );
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining("workspace lookup failed"));
+    } finally {
+      errors.mockRestore();
+    }
+    await ws.withShard((shard) => {
+      expect(shard.store.get("monitors", monitorId)?.status).toBe("up");
     });
   });
 });

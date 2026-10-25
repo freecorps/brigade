@@ -1,28 +1,7 @@
 import { m } from "@freecorps/brigade-i18n";
-import { incidentStatusLabels, severityLabels } from "@freecorps/brigade-i18n/labels";
-import { INCIDENT_STATUSES, SEVERITIES, type IncidentStatus } from "@freecorps/brigade-schema";
-import {
-  CircleCheckIcon,
-  CircleDashedIcon,
-  CircleSlashIcon,
-  EyeIcon,
-  OctagonAlertIcon,
-  SearchIcon,
-  WrenchIcon,
-  type LucideIcon,
-} from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { INCIDENT_STATUSES, SEVERITIES } from "@freecorps/brigade-schema";
+import { SeverityBadge, StatusBadge } from "@/components/incident-badges";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-
-// Each status carries its own glyph, so the name and the shape say it before the colour does.
-const STATUS_ICONS: Record<IncidentStatus, LucideIcon> = {
-  triage: CircleDashedIcon,
-  investigating: SearchIcon,
-  fixing: WrenchIcon,
-  monitoring: EyeIcon,
-  resolved: CircleCheckIcon,
-  declined: CircleSlashIcon,
-};
 
 /** Sample counts for the plural message: zero, one, few, and a count that needs a separator. */
 const SAMPLE_COUNTS = [0, 1, 3, 1284];
@@ -39,11 +18,7 @@ export function LegendCard() {
           <ul className="flex flex-wrap gap-2">
             {SEVERITIES.map((severity) => (
               <li key={severity}>
-                <Badge variant={severity}>
-                  {severity === "sev1" ? <OctagonAlertIcon aria-hidden /> : null}
-                  <span className="font-bold">{severity.toUpperCase()}</span>
-                  <span>{severityLabels[severity]()}</span>
-                </Badge>
+                <SeverityBadge severity={severity} />
               </li>
             ))}
           </ul>
@@ -51,17 +26,11 @@ export function LegendCard() {
 
         <Group id="legend-status" title={m.legend_status()}>
           <ul className="flex flex-wrap gap-2">
-            {INCIDENT_STATUSES.map((status) => {
-              const Icon = STATUS_ICONS[status];
-              return (
-                <li key={status}>
-                  <Badge variant={status}>
-                    <Icon aria-hidden />
-                    {incidentStatusLabels[status]()}
-                  </Badge>
-                </li>
-              );
-            })}
+            {INCIDENT_STATUSES.map((status) => (
+              <li key={status}>
+                <StatusBadge status={status} />
+              </li>
+            ))}
           </ul>
         </Group>
 

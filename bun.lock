@@ -65,6 +65,7 @@
         "@base-ui/react": "^1.9.0",
         "@freecorps/brigade-i18n": "workspace:*",
         "@freecorps/brigade-schema": "workspace:*",
+        "@freecorps/brigade-sync": "workspace:*",
         "@freecorps/brigade-ui": "workspace:*",
         "@tanstack/react-router": "^1.170.46",
         "class-variance-authority": "^0.7.1",

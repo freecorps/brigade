@@ -1,5 +1,6 @@
 import { m } from "@freecorps/brigade-i18n";
 import { createFileRoute } from "@tanstack/react-router";
+import { IncidentsCard } from "@/components/incidents-card";
 import { LegendCard } from "@/components/legend-card";
 import { StackCard } from "@/components/stack-card";
 
@@ -12,6 +13,7 @@ function Overview() {
         <h1 className="text-2xl font-semibold">{m.overview_title()}</h1>
         <p className="max-w-prose text-sm text-muted-foreground">{m.overview_description()}</p>
       </div>
+      <IncidentsCard />
       <StackCard />
       <LegendCard />
     </div>

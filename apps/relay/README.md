@@ -11,6 +11,11 @@ handles, rate limits or FCM yet.
 | `POST /send`  | `Authorization: Bearer <RELAY_SEND_TOKEN>`; body `{ deviceToken, envelope, urgency?, collapseId?, ttlSeconds? }` |
 |               | `200 { status, apnsId, apnsUniqueId, ms }` when APNs accepts; `502` with APNs' `reason` when it does not         |
 |               | `502 {"error":"apns_unreachable"}` when `fetch` fails; `400` for a bad body; `401` without the token             |
+|               | `500 {"error":"relay_misconfigured"}` when `APNS_KEY` cannot sign a provider token                               |
+
+`ttlSeconds` is how long APNs keeps trying an offline phone: by default 15 minutes for `page`, 1 hour for `high`,
+4 hours for `low`; at most 30 days; 0 means try once, which `page` refuses. A wrong `APNS_KEY_ID` or `APNS_TEAM_ID`
+signs fine and comes back as `502` with APNs' `InvalidProviderToken`: check the secrets.
 
 `urgency` is `low` (APNs priority 5), `high` or `page` (priority 10; `page` is `time-sensitive`). The payload's
 alert is a pair of localization keys, the fallback the app shows when it cannot decrypt.

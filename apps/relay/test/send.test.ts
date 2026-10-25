@@ -104,6 +104,7 @@ describe("POST /send", () => {
       await sendBody({ ttlSeconds: 1.5 }),
       await sendBody({ ttlSeconds: "60" }),
       await sendBody({ ttlSeconds: 31 * 24 * 60 * 60 }),
+      await sendBody({ urgency: "page", ttlSeconds: 0 }),
     ];
     for (const body of bodies) {
       expect((await handle(post(body), env, apns.send)).status).toBe(400);
@@ -139,9 +140,16 @@ describe("POST /send", () => {
     };
     expect(await expiration({ urgency: "page" })).toBeGreaterThanOrEqual(now + 15 * 60);
     expect(await expiration({ urgency: "page" })).toBeLessThan(now + 15 * 60 + 5);
-    expect(await expiration({ urgency: "low" })).toBeGreaterThanOrEqual(now + 4 * 60 * 60);
-    expect(await expiration({ ttlSeconds: 120 })).toBeGreaterThanOrEqual(now + 120);
-    expect(await expiration({ ttlSeconds: 0 })).toBe(0);
+    const within = async (overrides: Record<string, unknown>, seconds: number) => {
+      const value = await expiration(overrides);
+      expect(value, JSON.stringify(overrides)).toBeGreaterThanOrEqual(now + seconds);
+      expect(value, JSON.stringify(overrides)).toBeLessThan(now + seconds + 5);
+    };
+    await within({ urgency: "high" }, 60 * 60);
+    await within({ urgency: "low" }, 4 * 60 * 60);
+    await within({ ttlSeconds: 120 }, 120);
+    await within({ ttlSeconds: 30 * 24 * 60 * 60 }, 30 * 24 * 60 * 60);
+    expect(await expiration({ urgency: "high", ttlSeconds: 0 })).toBe(0);
   });
 
   test("a broken APNs key is the relay's error, not the caller's", async () => {

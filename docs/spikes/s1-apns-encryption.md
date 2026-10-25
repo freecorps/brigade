@@ -24,7 +24,7 @@
   `POST /send` takes `{ deviceToken, envelope, urgency, collapseId?, ttlSeconds? }` behind a bearer token
   (`RELAY_SEND_TOKEN`, compared in constant time), reading at most 8 KB of body, and forwards to APNs. APNs keeps
   trying an offline phone until `ttlSeconds` (default 15 minutes for `page`, 1 hour for `high`, 4 hours for
-  `low`; 0 means try once). A broken `APNS_KEY` answers `500 relay_misconfigured`, not a caller error. Traces are
+  `low`; 0 means try once, refused for `page`). A broken `APNS_KEY` answers `500 relay_misconfigured`, not a caller error. Traces are
   off: an outbound fetch span records the URL, which ends in the device token. `src/apns.ts` signs the ES256 provider
   token with WebCrypto, caches it for 40 minutes (APNs wants one between 20 and 60 minutes old), and builds the
   request: `apns-push-type: alert`, priority 10 (5 for `low`), `apns-expiration`, `apns-collapse-id`, and the
@@ -240,7 +240,9 @@ Left for the real iPhone (needs the device):
 - **Extension build number on EAS.** The plugin writes the extension's `CFBundleVersion` from
   `ios.buildNumber` at prebuild; with `appVersionSource: remote` and `autoIncrement`, check on the first EAS
   production build that it matches the app's, which App Store Connect requires.
-
+- **A later push replaces a stored page.** APNs keeps one undelivered push per app and device, so a page waiting
+  for a phone in a lift is dropped if a `low` push follows it. Plan in RFC 0006 ("Offline phones"): re-sync open
+  pages on reconnect, and hold back or re-send around pages.
 - **Secure Enclave key.** `SecureEnclave.P256.KeyAgreement.PrivateKey` would keep the private key out of memory.
   Whether CryptoKit's HPKE accepts it, and whether the extension can use a key the app created there, needs a
   device: the Simulator has no Secure Enclave.

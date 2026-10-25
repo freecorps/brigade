@@ -73,7 +73,9 @@ export async function handle(
       (typeof body.ttlSeconds !== "number" ||
         !Number.isInteger(body.ttlSeconds) ||
         body.ttlSeconds < 0 ||
-        body.ttlSeconds > MAX_TTL_SECONDS))
+        body.ttlSeconds > MAX_TTL_SECONDS ||
+        // A page is never "try once": a phone in a lift would miss it.
+        (body.ttlSeconds === 0 && urgency === "page")))
   ) {
     return json({ error: "invalid_body" }, 400);
   }
@@ -159,15 +161,20 @@ async function readJson(request: Request): Promise<unknown> {
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > MAX_BODY_BYTES) {
-      await reader.cancel();
-      return null;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_BODY_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch {
+    // The client's stream broke mid-body: a bad request, not a relay error.
+    return null;
   }
   const bytes = new Uint8Array(size);
   let offset = 0;

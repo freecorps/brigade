@@ -39,8 +39,11 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   relay access could forge one. Before production: seal `iat`, the instance id and the urgency inside the
   plaintext, let the extension take the interruption level from the decrypted urgency and fall back on stale
   pushes, then authenticate the sender (HPKE auth mode or the instance's Ed25519 signature).
-- **Offline phones:** pushes carry an `apns-expiration` by urgency (pages 15 minutes), so a phone briefly out of
-  coverage still gets the page; never "try once" for pages.
+- **Offline phones:** pushes carry an `apns-expiration` by urgency (pages 15 minutes; the relay refuses "try once"
+  for a page). APNs keeps only the latest undelivered push per app and device, so a later push (even a `low`
+  status update) replaces a stored page. Before production: the app re-syncs open pages when it reconnects or comes
+  to the foreground, and the instance holds back lower-urgency pushes to a device while a page to it may be
+  undelivered (or re-sends the page after them). This is a paging path: it needs a fallback and a test.
 - **The relay is part of this repo** (`apps/relay`). Anyone can run their own with their own store credentials.
 
 ## Driver abstraction
@@ -82,8 +85,8 @@ APNs only speaks HTTP/2. **Spike S1 measured it** ([write-up](../spikes/s1-apns-
 Cloudflare's edge speaks HTTP/2 to the origin. Local workerd (`wrangler dev`, `vp dev`) has no HTTP/2 and gets
 `Network connection lost.` ([cloudflare/workerd#4841](https://github.com/cloudflare/workerd/issues/4841)). So the
 relay is a plain Worker. This behaviour is observed, not documented, so it stays a risk: the relay must alert on
-`apns_unreachable` (not built yet; the spike only logs it), and the fallback stays ready, a tiny APNs sender in Cloudflare Containers (or any small VM)
-behind the relay, with the rest of the design unchanged. Develop against a deployed `dev` relay. FCM HTTP v1 works
+`apns_unreachable` (not built yet; the spike only logs it), and the fallback stays ready, a tiny APNs sender in
+Cloudflare Containers (or any small VM) behind the relay, with the rest of the design unchanged. Develop against a deployed `dev` relay. FCM HTTP v1 works
 over HTTP/1.1.
 
 ## Terms of the hosted relay

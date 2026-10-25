@@ -29,8 +29,9 @@ export interface ApnsPush {
   urgency: Urgency;
   /** `apns-collapse-id`: a repeat replaces the notification on screen (64 bytes at most). */
   collapseId?: string;
-  /** Seconds since the epoch after which APNs drops an undelivered push; 0 means try once. */
-  expiration?: number;
+  /** Seconds since the epoch after which APNs drops an undelivered push; 0 means try once. Required, so no
+   * caller gets "try once" by forgetting it. */
+  expiration: number;
 }
 
 /**
@@ -60,7 +61,7 @@ export function buildApnsRequest(
     "apns-push-type": "alert",
     // 10: deliver now (alerts). 5: may be delayed to save power.
     "apns-priority": push.urgency === "low" ? "5" : "10",
-    "apns-expiration": String(push.expiration ?? 0),
+    "apns-expiration": String(push.expiration),
     "content-type": "application/json",
   });
   if (push.collapseId !== undefined) {

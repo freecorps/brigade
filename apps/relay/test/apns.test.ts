@@ -86,7 +86,12 @@ describe("ApnsTokenCache", () => {
 describe("buildApnsRequest", () => {
   test("POST /3/device/<token> on the sandbox host with the provider token and alert headers", async () => {
     const request = buildApnsRequest(
-      { deviceToken: DEVICE_TOKEN.toUpperCase(), envelope: await envelope(), urgency: "page" },
+      {
+        deviceToken: DEVICE_TOKEN.toUpperCase(),
+        envelope: await envelope(),
+        urgency: "page",
+        expiration: 0,
+      },
       { environment: "sandbox", topic: "app.example", jwt: "a.b.c" },
     );
     expect(request.method).toBe("POST");
@@ -119,7 +124,7 @@ describe("buildApnsRequest", () => {
   test("the body carries the localized fallback, mutable-content and the envelope only", async () => {
     const sealed = await envelope();
     const request = buildApnsRequest(
-      { deviceToken: DEVICE_TOKEN, envelope: sealed, urgency: "page" },
+      { deviceToken: DEVICE_TOKEN, envelope: sealed, urgency: "page", expiration: 0 },
       { environment: "sandbox", topic: "app.example", jwt: "a.b.c" },
     );
     const body = (await request.json()) as Record<string, unknown>;
@@ -154,7 +159,10 @@ describe("buildApnsRequest", () => {
     const options = { environment: "sandbox", topic: "app.example", jwt: "a.b.c" } as const;
     for (const deviceToken of ["", "zz".repeat(32), "a".repeat(63), `${"a".repeat(64)}/../x`]) {
       expect(() =>
-        buildApnsRequest({ deviceToken, envelope: sealed, urgency: "high" }, options),
+        buildApnsRequest(
+          { deviceToken, envelope: sealed, urgency: "high", expiration: 0 },
+          options,
+        ),
       ).toThrow(/device token/);
     }
     expect(() =>
@@ -163,6 +171,7 @@ describe("buildApnsRequest", () => {
           deviceToken: DEVICE_TOKEN,
           envelope: sealed,
           urgency: "high",
+          expiration: 0,
           collapseId: "x".repeat(65),
         },
         options,

@@ -4,8 +4,9 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 import { themes } from "../../packages/ui/src/tokens.ts";
 import { withSplashGround } from "./plugins/splash-ground.ts";
 
-// One id on both stores. Freecorps owns freecorps.com.br, so reverse-DNS from it.
-const APP_ID = "br.com.freecorps.brigade";
+// One id on both stores, registered under the Freecorps Apple team. Same `app.freecorps.*` prefix as
+// Freecorps' other apps.
+const APP_ID = "app.freecorps.brigade";
 
 export default ({ config }: ConfigContext): ExpoConfig =>
   // iOS: point the launch screen at the splash ground, which expo-splash-screen skips without an image.
@@ -15,6 +16,8 @@ const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
   ...config,
   name: "Brigade",
   slug: "brigade",
+  // The EAS project belongs to the Freecorps organisation, not a personal account.
+  owner: "freecorps",
   // Deep links (`brigade://`), and the dev client's own URL scheme.
   scheme: "brigade",
   version: "0.1.0",
@@ -55,6 +58,9 @@ const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
       },
     ],
   ],
-  // EAS: `extra.eas.projectId` is added by `eas init` (needs Heitor's Expo account), see
-  // docs/spikes/s4-expo-workspace.md.
+  // EAS project `@freecorps/brigade`. `eas init` cannot write to a dynamic config, so it lives here. Not a
+  // secret.
+  extra: {
+    eas: { projectId: "67e9e504-0692-4883-88d5-8e17863f661d" },
+  },
 });

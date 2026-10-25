@@ -5,8 +5,8 @@ Decisions we still need to make. Each one links to the RFC it affects. Once deci
 
 ## Q8 — Critical Alerts entitlement (RFC 0006)
 
-Owner: Freecorps Apple developer account holder. Apply as soon as the bundle ID exists; mention on-call paging
-(PagerDuty/Opsgenie precedent).
+Owner: Freecorps Apple developer account holder. The bundle ID `app.freecorps.brigade` exists, so apply now;
+mention on-call paging (PagerDuty/Opsgenie precedent).
 
 ## Q13 — PSTN provider choice (RFC 0010)
 

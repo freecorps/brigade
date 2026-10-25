@@ -35,6 +35,7 @@ import {
 } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { asksForPage, MAX_PAGE_DEVICES, pageTargets } from "../src/paging.ts";
+import worker from "../src/index.ts";
 import { Shard } from "../src/shard.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
 
@@ -483,15 +484,22 @@ describe("when paging fails (the paging path's fallback)", () => {
     const fake = relay(() =>
       Response.json({ status: 410, reason: "Unregistered" }, { status: 502 }),
     );
-    // Not retryable: one attempt settles it.
-    expect(await deliver(event, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
+    // The device is dropped and the page retried, so the next plan sees the member without it.
+    expect(await deliver(event, fake.send)).toMatchObject({
+      acked: [],
+      retried: [expect.objectContaining({ msgId: "msg-0" })],
+    });
     expect(
       await ws.withShard((shard) => shard.store.get("devices", phone.deviceId)),
     ).toBeUndefined();
     const types = (await ws.events()).map((e) => e.type);
     expect(types).toContain("device.unregistered");
+    expect(await deliver(event, fake.send, { attempts: 2 })).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
     expect(await ws.timeline(incident)).toContainEqual(
-      expect.objectContaining({ kind: "page_failed", userId: "usr_bia", reason: "undelivered" }),
+      expect.objectContaining({ kind: "page_failed", userId: "usr_bia", reason: "no_devices" }),
     );
   });
 
@@ -597,6 +605,32 @@ describe("when paging fails (the paging path's fallback)", () => {
     expect(await ws.timeline(incident)).toContainEqual(
       expect.objectContaining({ kind: "page_failed", userId: bia.id, reason: "no_devices" }),
     );
+  });
+
+  test("a commander whose only device expired is replaced by everyone who can respond on the retry", async () => {
+    // Ana raises the severity, so she is not paged; Duda is the other responder.
+    const duda = user("usr_duda", "responder");
+    const ws = await workspace([ana, bia, duda]);
+    const dudaPhone = await ws.device(duda);
+    const biaPhone = await ws.device(bia);
+    const { incident } = await ws.declare(MONITOR_ACTOR, "sev3");
+    await ws.run(ana, "incident.assignRole", { id: incident, role: "commander", userId: bia.id });
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev1" });
+    const raised = (await ws.events(incident)).find((e) => e.type === "incident.severity_changed")!;
+    const fake = relay((body) =>
+      body.deviceToken === biaPhone.pushToken
+        ? Response.json({ status: 410, reason: "Unregistered" }, { status: 502 })
+        : Response.json({ status: 200 }),
+    );
+    expect(await deliver(raised, fake.send)).toMatchObject({
+      acked: [],
+      retried: [expect.objectContaining({ msgId: "msg-0" })],
+    });
+    await deliver(raised, fake.send, { attempts: 2 });
+    expect(fake.requests.map((r) => r.body.deviceToken)).toEqual([
+      biaPhone.pushToken,
+      dudaPhone.pushToken,
+    ]);
   });
 
   test("a commander with a device is the only one paged", async () => {
@@ -734,7 +768,7 @@ describe("the dead-letter consumer", () => {
     }
   });
 
-  test("never retries: an unreachable shard, a malformed message or an event that does not page is acked", async () => {
+  test("an unreachable shard is retried; a malformed message or an event that does not page is acked", async () => {
     const ws = await workspace();
     const { incident, event } = await ws.declare(MONITOR_ACTOR);
     const broken = {
@@ -742,7 +776,8 @@ describe("the dead-letter consumer", () => {
         getByName: () => ({ recordDeadLetter: () => Promise.reject(new Error("reset")) }),
       },
     } as unknown as { WORKSPACE: typeof env.WORKSPACE };
-    expect(await deadLetter(event, broken)).toEqual({ acked: ["dlq-0"], retried: [] });
+    // Likely still down (that is how the page got here): try again later, not drop the only record.
+    expect(await deadLetter(event, broken)).toEqual({ acked: [], retried: ["dlq-0"] });
     expect(logged()).toContainEqual(
       expect.objectContaining({
         message: "dead-lettered page could not be recorded",
@@ -754,6 +789,30 @@ describe("the dead-letter consumer", () => {
     const update = (await ws.events(incident)).find((e) => e.type === "incident.update_posted")!;
     expect(await deadLetter(update)).toEqual({ acked: ["dlq-0"], retried: [] });
     expect((await ws.timeline(incident)).filter((row) => row.kind === "page_failed")).toEqual([]);
+  });
+});
+
+describe("queue routing", () => {
+  test("the Worker sends dead-letter queues to the dead-letter consumer", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    for (const name of [
+      "brigade-events-dlq",
+      "brigade-events-dlq-dev",
+      "brigade-events-dlq-staging",
+    ]) {
+      const batch = createMessageBatch(name, [
+        { id: "dlq-r", timestamp: new Date(), attempts: 1, body: event },
+      ]);
+      const ctx = createExecutionContext();
+      await worker.queue!(batch, env as never);
+      expect((await getQueueResult(batch, ctx)).explicitAcks, name).toEqual(["dlq-r"]);
+    }
+    // Recorded as dead-lettered (by the first; the rest found it settled), not paged again as a fresh event.
+    expect((await ws.timeline(incident)).filter((row) => row.kind === "page_failed")).toEqual([
+      expect.objectContaining({ reason: "dead_lettered" }),
+    ]);
   });
 });
 

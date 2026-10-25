@@ -11,7 +11,13 @@ import {
 import { readActor, readMemberName } from "./actor.ts";
 import { isProbeRegion, MONITOR_TICK_MS, Monitoring } from "./monitors.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
-import { Pager, type DeviceOutcome, type PagePlan, type SkippedMember } from "./paging.ts";
+import {
+  Pager,
+  type DeadLetterResult,
+  type DeviceOutcome,
+  type PagePlan,
+  type SkippedMember,
+} from "./paging.ts";
 import type { ProbeReport } from "./probe.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
 import type { RowChange } from "./store.ts";
@@ -235,9 +241,9 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /** A page the Queue gave up on (RPC from the dead-letter consumer): see `Pager.deadLettered`. */
-  recordDeadLetter(event: BrigadeEvent): void {
-    if (this.shard.workspace() !== event.workspaceId) return;
-    this.pager.deadLettered(event, Date.now());
+  recordDeadLetter(event: BrigadeEvent): DeadLetterResult {
+    if (this.shard.workspace() !== event.workspaceId) return "other_workspace";
+    return this.pager.deadLettered(event, Date.now());
   }
 
   /**

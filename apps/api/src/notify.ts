@@ -101,20 +101,27 @@ export async function consumeDeadLetters(
         return message.ack();
       }
       try {
-        await env.WORKSPACE.getByName(event.workspaceId).recordDeadLetter(event);
-        log("dead-lettered page recorded", { event: event.id, incident: event.subject });
+        const result = await env.WORKSPACE.getByName(event.workspaceId).recordDeadLetter(event);
+        log("dead-lettered page handled", { event: event.id, incident: event.subject, result });
+        message.ack();
       } catch (error) {
+        // The shard is likely still down (that is how the page got here): try again later rather than drop the
+        // only record. With no dead-letter queue of its own, spent retries delete the message, so nothing loops.
         log("dead-lettered page could not be recorded", {
           event: event.id,
           incident: event.subject,
           workspace: event.workspaceId,
+          attempts: message.attempts,
           error: String(error),
         });
+        message.retry({ delaySeconds: DEAD_LETTER_RETRY_SECONDS });
       }
-      message.ack();
     }),
   );
 }
+
+/** How long the dead-letter consumer waits before trying a shard again. */
+export const DEAD_LETTER_RETRY_SECONDS = 120;
 
 /** Seconds before the next delivery of a message on its `attempts`-th try (1 the first time). */
 export function retryDelay(attempts: number): number {
@@ -236,14 +243,15 @@ async function pushOne(
     apnsStatus: answer.status,
     reason: answer.reason,
   });
-  // APNs says the token is gone: drop the device, do not retry.
+  // APNs says the token is gone: drop the device, and retry the page while attempts remain, so the next plan sees
+  // this member without that device (a commander's page then falls back to everyone who can respond).
   if (
     answer.status === 410 ||
     answer.reason === "BadDeviceToken" ||
     answer.reason === "Unregistered" ||
     answer.reason === "DeviceTokenNotForTopic"
   ) {
-    return failed("undelivered", { expired: true });
+    return failed("undelivered", { expired: true, retry: true });
   }
   // A request the relay or APNs will refuse again (bad body, bad credentials on our side) is not retried; the
   // relay being unreachable, APNs throttling or failing, or anything unknown is.

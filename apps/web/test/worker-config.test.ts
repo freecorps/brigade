@@ -132,7 +132,7 @@ describe("apps/api wrangler.jsonc: the dev sync actor and auth", () => {
         dead_letter_queue: `brigade-events-dlq${suffix}`,
       }),
       // The dead-letter consumer records and acks; it never retries, and has no dead-letter queue of its own.
-      { queue: `brigade-events-dlq${suffix}`, max_batch_size: 10, max_retries: 0 },
+      { queue: `brigade-events-dlq${suffix}`, max_batch_size: 10, max_retries: 5 },
     ]);
   });
 

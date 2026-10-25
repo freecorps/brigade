@@ -100,14 +100,16 @@ splits off when there is more than push to run. It routes each event to its noti
   which the dashboard shows. So does every member the page was for who has no device (`no_devices`, whoever caused
   the event), and one left out by the 200-device cap (`over_limit`). A page with nobody at all to go to is recorded
   once (`userId: null`, `no_devices`) when a monitor caused it; a member who declared it by hand knows. APNs saying
-  a token is gone drops the device (`device.expire`, only if the token is still the one the push went to).
+  a token is gone drops the device (`device.expire`, only if the token is still the one the push went to) and retries
+  the page while attempts remain, so a commander whose only device just expired is replaced by everyone who can
+  respond on the next attempt.
 - **The shard failing.** The shard being unreachable or throwing retries the whole message, up to the Queue's
   `max_retries` (10, so 11 deliveries); the last logs `page dead-lettered` (event, incident, workspace) and the
   message goes to `brigade-events-dlq`. The same Worker consumes that queue: for a page not already settled, on an
   incident still active and unacknowledged, it records `notification.failed` with `userId: null` and
-  `dead_lettered` ("A page may not have gone out"), closes the page in the ledger, and acks. It tries once
-  (`max_retries: 0`, no dead-letter queue of its own); if the shard still cannot be reached it logs `dead-lettered
-  page could not be recorded` and acks, so nothing loops. Unconsumed, the Queue would keep it 4 days, unread.
+  `dead_lettered` ("A page may not have gone out"), closes the page in the ledger, and acks. If the shard
+  still cannot be reached it logs `dead-lettered page could not be recorded` and retries in 2 minutes, up to 5
+  times (`max_retries: 5`, no dead-letter queue of its own, so spent retries delete the message: nothing loops).
 - **The outbox.** A row the drain cannot read (not JSON) or too large for the Queue is logged and dropped, so it
   never blocks the events after it; any drain that throws (storage) backs off like a failed send.
 - **Not yet.** Delivery receipts (did the phone show it, did anyone see it) and the "why wasn't I paged" view are

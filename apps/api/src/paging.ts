@@ -166,6 +166,15 @@ export type PagerOptions = {
   committed: (version: number, changes: readonly RowChange[]) => void;
 };
 
+/** What the dead-letter consumer's record did, so its log says what happened. */
+export type DeadLetterResult =
+  | "recorded"
+  | "closed"
+  | "settled"
+  | "no_incident"
+  | "not_a_page"
+  | "other_workspace";
+
 export class Pager {
   constructor(private readonly options: PagerOptions) {
     options.storage.sql.exec(SCHEMA);
@@ -301,14 +310,15 @@ export class Pager {
    * the page may not have gone out (`dead_lettered`), and the page is closed. Not for an incident that is
    * acknowledged or no longer active, which `plan` would not page either.
    */
-  deadLettered(event: BrigadeEvent, now: number): void {
-    if (!asksForPage(event) || this.done(event.id)) return;
+  deadLettered(event: BrigadeEvent, now: number): DeadLetterResult {
+    if (!asksForPage(event)) return "not_a_page";
+    if (this.done(event.id)) return "settled";
     const incident = this.options.shard.store.get("incidents", event.subject!);
-    if (!incident) return;
-    if (isActive(incident.status) && incident.acknowledgedAt == null) {
-      this.fail(event, incident.id, null, "dead_lettered", now);
-    }
+    if (!incident) return "no_incident";
+    const open = isActive(incident.status) && incident.acknowledgedAt == null;
+    if (open) this.fail(event, incident.id, null, "dead_lettered", now);
     this.finish(event.id, now);
+    return open ? "recorded" : "closed";
   }
 
   /** Records each member in `missed` as not paged, except who the page reached on some device. */

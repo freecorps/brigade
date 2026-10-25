@@ -15,6 +15,7 @@ import {
 import { defineQuery } from "./query.ts";
 import type { IncidentRow } from "./tables.ts";
 import { v } from "./validate.ts";
+import { createWorkspace } from "./workspaces.ts";
 
 export const INCIDENT_TITLE_MAX = 200;
 /** How far into the future of the server's clock the time in a client-made id may be. */
@@ -158,5 +159,10 @@ export const incidentById = defineQuery({
   filter: (row, args) => row.id === args.id,
 });
 
-export const mutations = defineRegistry([declareIncident, setIncidentStatus, setIncidentSeverity]);
+export const mutations = defineRegistry([
+  declareIncident,
+  setIncidentStatus,
+  setIncidentSeverity,
+  createWorkspace,
+]);
 export const queries = defineRegistry([activeIncidents, incidentById]);

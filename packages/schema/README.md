@@ -13,6 +13,8 @@ See [RFC 0003](../../docs/rfcs/0003-domain-model.md) and [RFC 0004](../../docs/r
 - `mutation.ts` / `query.ts`: `defineMutation`, `runMutation`, `defineQuery`, `runQuery`.
 - `incidents.ts`: the incident index — `incident.declare`, `incident.setStatus`, `incident.setSeverity`,
   `incidents.active`, `incident.byId` — and the `mutations` / `queries` registries.
+- `workspaces.ts`: the shard's `workspace` row and `workspace.create` (run by the API when Better Auth creates a
+  workspace; emits `workspace.created`), and `workspaceName`, the name validator the API and the web forms share.
 
 ```ts
 import {

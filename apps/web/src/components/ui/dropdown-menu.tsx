@@ -88,8 +88,22 @@ function DropdownMenuRadioItem({ className, children, ...props }: MenuPrimitive.
   );
 }
 
+function DropdownMenuItem({ className, ...props }: MenuPrimitive.Item.Props) {
+  return (
+    <MenuPrimitive.Item
+      data-slot="dropdown-menu-item"
+      className={cn(
+        "relative flex min-h-11 cursor-default items-center gap-2 rounded-md px-3 py-2 text-sm outline-hidden select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 export {
   DropdownMenu,
+  DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuGroup,

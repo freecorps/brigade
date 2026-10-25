@@ -15,12 +15,21 @@ export type IncidentRow = {
   updatedAt: number;
 };
 
+/** The workspace a shard serves: one row, written by `workspace.create` (RFC 0003). */
+export type WorkspaceRow = {
+  id: string; // ws_<ULID>, the Better Auth organization id
+  name: string;
+  createdAt: number;
+  createdBy: string;
+};
+
 /** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only. */
 export type CounterRow = { id: string; value: number };
 
 export type BrigadeTables = {
   incidents: IncidentRow;
   counters: CounterRow;
+  workspace: WorkspaceRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -29,6 +38,7 @@ export type TableName = Extract<keyof BrigadeTables, string>;
 export const TABLES = {
   incidents: { serverOnly: false },
   counters: { serverOnly: true },
+  workspace: { serverOnly: false },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

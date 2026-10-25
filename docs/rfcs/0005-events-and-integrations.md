@@ -22,6 +22,12 @@ interface BrigadeEvent<T = unknown> {
 
 Event types are versioned with the schema package and documented in the generated API reference.
 
+Users, sessions and membership live in D1, written by Better Auth (RFC 0002), not by a shard. A change there that
+integrations care about is announced by the workspace shard: creating a workspace runs `workspace.create` in its
+new `WorkspaceDO` (`workspace.created`, subject the workspace id). Membership changes (`member.added`,
+`member.role_changed`, `member.removed`) follow the same path when invitations land; until then the creator's
+membership is part of `workspace.created` (`createdBy`).
+
 ## Delivery: transactional outbox
 
 1. A mutation writes its rows **and** its events to an `outbox` table in the same DO SQLite transaction.

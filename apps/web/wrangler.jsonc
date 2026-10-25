@@ -6,7 +6,8 @@
   "main": "./worker/index.ts",
   // Same as apps/api: matches the installed workerd so local and deployed behaviour agree.
   "compatibility_date": "2026-10-19",
-  // No public workers.dev or preview URLs until auth exists. Both keys are inherited by environments.
+  // No public workers.dev or preview URLs yet: the API still has an open dev route (`/workspaces/:id`, the stack
+  // check). Both keys are inherited by environments.
   "workers_dev": false,
   "preview_urls": false,
   "observability": {

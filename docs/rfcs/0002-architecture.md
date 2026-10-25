@@ -89,6 +89,12 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
 - **Web dashboard:** React + TanStack Router + shadcn/ui.
 - **Site and docs:** Fumadocs on TanStack Start (Vite-based), prerendered, i18n per locale (RFC 0008).
 - **Auth:** Better Auth on Workers + D1; Expo client for mobile (OAuth/OIDC with PKCE via system browser, plus QR pairing).
+  Built so far: email and password with cookie sessions for the web, and the organization plugin for workspaces
+  (`apps/api/src/auth.ts`, served at `/auth/*`, `/api/auth/*` through the dashboard). One Better Auth instance per
+  request, created only when the request needs it. D1 schema changes are checked-in SQL in `apps/api/migrations/`
+  (`wrangler d1 migrations apply`); `apps/api/test/migrations.test.ts` fails, printing the SQL, when Better Auth
+  needs more than they create. The secret `BETTER_AUTH_SECRET` comes from `wrangler secret put` or a local
+  `apps/api/.dev.vars`.
 - **Workers tooling:** `wrangler` per app, invoked through `vp run` tasks. The Cloudflare Vite plugin
   (`@cloudflare/vite-plugin`) runs Workers inside the Vite dev server; validated with Vite+ in spike S5: the
   api Worker runs as an `auxiliaryWorkers` entry of apps/web in dev; apps/api tests use `@cloudflare/vitest-plugin`

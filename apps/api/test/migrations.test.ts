@@ -1,0 +1,32 @@
+// migrations/ must create exactly the tables and columns Better Auth needs for src/auth.ts. When an upgrade or a
+// new plugin needs more, this fails and prints the SQL to put in the next migration.
+import { env } from "cloudflare:workers";
+import { getMigrations } from "better-auth/db/migration";
+import { expect, test } from "vite-plus/test";
+import { authOptions } from "../src/auth.ts";
+
+test("the checked-in migrations apply and leave Better Auth nothing to create", async () => {
+  const { toBeCreated, toBeAdded, compileMigrations } = await getMigrations(
+    authOptions({ database: env.DB, secret: env.BETTER_AUTH_SECRET }),
+  );
+  const missing = [...toBeCreated, ...toBeAdded].map((table) => table.table);
+  if (missing.length > 0) console.error(await compileMigrations());
+  expect(missing).toEqual([]);
+});
+
+test("every Brigade table is there, with the indexes the actor lookup uses", async () => {
+  const { results } = await env.DB.prepare(
+    "select type, name from sqlite_master where name not like 'sqlite_%' and name not like '_cf_%' order by type, name",
+  ).all<{ type: string; name: string }>();
+  expect(results.filter((row) => row.type === "table").map((row) => row.name)).toEqual([
+    "account",
+    "d1_migrations",
+    "invitation",
+    "member",
+    "organization",
+    "session",
+    "user",
+    "verification",
+  ]);
+  expect(results.map((row) => row.name)).toContain("member_organizationId_idx");
+});

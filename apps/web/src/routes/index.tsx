@@ -3,9 +3,19 @@ import { createFileRoute } from "@tanstack/react-router";
 import { IncidentsCard } from "@/components/incidents-card";
 import { LegendCard } from "@/components/legend-card";
 import { usePreferences } from "@/components/preferences";
+import { RequireWorkspace } from "@/components/session";
 import { StackCard } from "@/components/stack-card";
 
-export const Route = createFileRoute("/")({ component: Overview });
+export const Route = createFileRoute("/")({ component: Dashboard });
+
+/** Signed-in members only: the gate sends everyone else to sign in (or to create their workspace). */
+function Dashboard() {
+  return (
+    <RequireWorkspace>
+      <Overview />
+    </RequireWorkspace>
+  );
+}
 
 function Overview() {
   // Read so a language switch re-renders the page (and its cards) in place: the router memoizes route

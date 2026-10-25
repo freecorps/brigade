@@ -1,11 +1,10 @@
-// Kept free of Workers imports so the web dashboard's tests can check its optimistic actor matches this one.
+// Kept free of Workers imports so the mobile app's tests can check its optimistic actor matches this one.
 import type { Actor } from "@freecorps/brigade-schema";
 
 /**
- * DEV ONLY. There is no auth yet, so every socket acts as this responder, and only where `SYNC_DEV_ACTOR` is "1":
- * the `dev` environment in wrangler.jsonc and local runs (vite.config.ts, the tests). Anywhere else the sync
- * upgrade is refused with 501. Once auth exists the Worker authenticates the upgrade and passes the actor to the
- * shard in a signed header (RFC 0004 "Socket topology").
+ * DEV ONLY: who a sync upgrade without a session acts as, and only where `SYNC_DEV_ACTOR` is "1": local runs
+ * (vite.config.ts) and the tests, never a deployed environment (src/actor.ts). Everywhere else such an upgrade
+ * gets 401. The mobile app relies on it until it can sign in.
  */
 export const DEV_ACTOR: Actor = { kind: "user", id: "usr_dev", role: "responder" };
 

@@ -1,5 +1,5 @@
 import { env, exports } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
+import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import worker, { WorkspaceDO } from "../src/index.ts";
 
@@ -79,7 +79,11 @@ describe("api worker", () => {
       } as unknown as ReturnType<typeof env.WORKSPACE.getByName>);
       const log = vi.spyOn(console, "error").mockImplementation(() => {});
 
-      const response = await worker.fetch(new Request("http://api.test/workspaces/acme"), env);
+      const response = await worker.fetch(
+        new Request("http://api.test/workspaces/acme"),
+        env,
+        createExecutionContext(),
+      );
       expect(response.status).toBe(status);
       expect(await response.json()).toEqual({ error });
       expect(log).toHaveBeenCalledTimes(1);

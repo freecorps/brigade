@@ -20,8 +20,15 @@ const server = createTestHarness({
         assets: { ...rawConfig.assets, directory: "./test/fixtures/assets" },
       },
     },
-    // As in `vp dev` (vite.config.ts): the dev sync actor, set only for local runs.
-    { configPath: "../api/wrangler.jsonc", vars: { SYNC_DEV_ACTOR: "1" } },
+    // As in `vp dev` (vite.config.ts): the dev sync actor, set only for local runs, and a Better Auth secret
+    // that only signs cookies inside this test run (deployed Workers get theirs from `wrangler secret put`).
+    {
+      configPath: "../api/wrangler.jsonc",
+      vars: {
+        SYNC_DEV_ACTOR: "1",
+        BETTER_AUTH_SECRET: "brigade-tests-only-secret-not-for-deployments",
+      },
+    },
   ],
 });
 
@@ -88,19 +95,29 @@ describe("web Worker → API Worker → WorkspaceDO, with the real configs", () 
   });
 });
 
-describe("apps/api wrangler.jsonc: the dev sync actor", () => {
+describe("apps/api wrangler.jsonc: the dev sync actor and auth", () => {
   const api = experimental_readRawConfig({ config: "../api/wrangler.jsonc" }).rawConfig;
-  // DEV ONLY until auth exists (apps/api/src/workspace.ts): a deployment with it lets anyone act as a responder.
-  test.each([
-    ["top level (production)", api.vars],
-    ["staging", api.env?.staging?.vars],
-  ])("%s does not set SYNC_DEV_ACTOR", (_name, vars) => {
-    expect(vars?.SYNC_DEV_ACTOR).toBeUndefined();
+  const environments = [
+    ["top level (production)", api],
+    ["dev", api.env?.dev],
+    ["staging", api.env?.staging],
+  ] as const;
+
+  test("there are exactly these environments", () => {
+    expect(Object.keys(api.env ?? {}).sort()).toEqual(["dev", "staging"]);
   });
 
-  test("only the dev environment sets it", () => {
-    expect(api.env?.dev?.vars).toEqual({ SYNC_DEV_ACTOR: "1" });
-    expect(Object.keys(api.env ?? {}).sort()).toEqual(["dev", "staging"]);
+  // DEV ONLY (apps/api/src/actor.ts): a deployment with it lets anyone without a session act as a responder.
+  test.each(environments)("%s does not set SYNC_DEV_ACTOR", (_name, config) => {
+    expect(config?.vars?.SYNC_DEV_ACTOR).toBeUndefined();
+  });
+
+  // D1 and secrets settings are not inherited, so each environment repeats them.
+  test.each(environments)("%s binds DB and requires the Better Auth secret", (_name, config) => {
+    expect(config?.d1_databases?.map((database: { binding: string }) => database.binding)).toEqual([
+      "DB",
+    ]);
+    expect(config?.secrets?.required).toEqual(["BETTER_AUTH_SECRET"]);
   });
 });
 

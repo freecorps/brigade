@@ -60,6 +60,16 @@ Validate the risky assumptions before writing product code. Each spike produces 
 ## Phase 1 — Core loop (4–6 weeks)
 
 - [ ] Auth (Better Auth), workspaces, members
+  - Done: Better Auth on Workers + D1 (email and password, cookie sessions), a workspace created at sign-up with
+    its creator as `owner`, sign-up, sign-in and sign-out in the dashboard, and the sync upgrade authenticated:
+    the Worker resolves the session and the member's role and hands the shard a verified actor (401 without a
+    session, 403 for a non-member or a cross-site page); the dev actor is local-only. D1 `brigade-db-dev` exists
+    with the migrations applied.
+  - Left: invitations and member management (roles, removal, with `member.*` events), switching workspaces in
+    the UI, closing open sockets on sign-out or role change (RFC 0004 "Session revocation"), mobile sign-in (PKCE
+    via the system browser, QR pairing, bearer tokens on the upgrade), email verification and password reset
+    (needs the email notifier), putting `/workspaces/:id` (the stack check) behind auth before `workers_dev` is
+    turned on, and the production and staging D1 databases and secrets (owner approval).
 - [ ] Monitors (HTTP/TCP/heartbeat) with quorum → alerts → incidents
 - [ ] Incidents: declare, severity, status, roles, timeline, updates
 - [ ] Brigade Sync in production for web + mobile

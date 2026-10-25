@@ -8,7 +8,7 @@ import {
   type ServerMessage,
   type SubscriptionChanges,
 } from "@freecorps/brigade-sync/protocol";
-import { DEV_ACTOR, DEV_ACTOR_VAR } from "./dev-actor.ts";
+import { readActor } from "./actor.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
 import type { RowChange } from "./store.ts";
 
@@ -19,27 +19,14 @@ export interface WorkspaceInfo {
   databaseSize: number;
 }
 
-/** Workspace ids: 1-63 chars of `a-z`, `0-9`, `-`, `_`, starting with `a-z0-9`. */
-export const WORKSPACE_ID = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+/**
+ * Workspace ids: a workspace's own id (`ws_<ULID>`, the Better Auth organization id), or 1-63 chars of `a-z`,
+ * `0-9`, `-`, `_` starting with `a-z0-9` (dev shards such as `demo`, and the tests).
+ */
+export const WORKSPACE_ID = /^(?:ws_[0-9A-HJKMNP-TV-Z]{26}|[a-z0-9][a-z0-9_-]{0,62})$/;
 
 /** Set by the Worker on the upgrade it forwards; the shard records it on first use. */
 export const WORKSPACE_HEADER = "Brigade-Workspace";
-
-/** The actor every sync socket acts as here, or undefined if this deployment has none (no auth yet). */
-export function syncActor(env: object): Actor | undefined {
-  return Reflect.get(env, DEV_ACTOR_VAR) === "1" ? DEV_ACTOR : undefined;
-}
-
-/** The answer to a sync upgrade where `syncActor` gives none. */
-export function syncUnavailable(): Response {
-  return Response.json(
-    {
-      error: "not_implemented",
-      message: `Sync needs auth, which does not exist yet; only deployments with ${DEV_ACTOR_VAR}=1 (dev) serve it`,
-    },
-    { status: 501 },
-  );
-}
 
 /** Subscriptions per socket; each lives in the socket's attachment. */
 export const MAX_SUBSCRIPTIONS = 32;
@@ -128,6 +115,38 @@ export class WorkspaceDO extends DurableObject<Env> {
     return epoch;
   }
 
+  /**
+   * Runs `workspace.create` once Better Auth has created the workspace (RPC from the API Worker): records the
+   * shard's workspace and writes `workspace.created` to the outbox, like any mutation (RFC 0005). Idempotent: a
+   * second call finds the row and changes nothing.
+   */
+  provision(workspace: { id: string; name: string }, actor: Actor): { ok: boolean; code?: string } {
+    if (!this.shard.claim(workspace.id)) {
+      this.log("shard serves another workspace", { workspace: workspace.id });
+      return { ok: false, code: "internal" };
+    }
+    const now = Date.now();
+    // De-duplicated like a socket's mutation: a retry gets the stored result instead of running again.
+    const stored = this.shard.storedResult(actor.id, "api", "provision", now);
+    const { result, changes } = stored
+      ? { result: stored, changes: [] }
+      : this.shard.mutate({
+          clientId: "api",
+          mutationId: "provision",
+          actor,
+          name: "workspace.create",
+          args: workspace,
+          now,
+        });
+    if (result.ok) {
+      if (!stored) this.broadcast(result.version, changes, undefined);
+      return { ok: true };
+    }
+    // Already provisioned (a retry): fine.
+    if (result.error.code === "conflict") return { ok: true };
+    return { ok: false, code: result.error.code };
+  }
+
   /** Accepts a sync socket the Worker forwarded (`GET /sync/:workspaceId`). */
   override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
@@ -136,8 +155,9 @@ export class WorkspaceDO extends DurableObject<Env> {
         { status: 426, headers: { Upgrade: "websocket" } },
       );
     }
-    const actor = syncActor(this.env);
-    if (!actor) return syncUnavailable();
+    // Set by the Worker after it authenticated the upgrade (src/actor.ts); never copied from the client.
+    const actor = readActor(request.headers);
+    if (!actor) return Response.json({ error: "internal" }, { status: 500 });
     const workspace = request.headers.get(WORKSPACE_HEADER) ?? "";
     if (!WORKSPACE_ID.test(workspace))
       return Response.json({ error: "invalid_workspace_id" }, { status: 400 });
@@ -310,7 +330,11 @@ export class WorkspaceDO extends DurableObject<Env> {
    * the result now (entered or changed) and ids that were in it and left. Other sockets skip the version, except
    * `origin` (the mutating socket), which always gets it.
    */
-  private broadcast(version: number, changes: readonly RowChange[], origin: WebSocket): void {
+  private broadcast(
+    version: number,
+    changes: readonly RowChange[],
+    origin: WebSocket | undefined,
+  ): void {
     for (const ws of this.ctx.getWebSockets()) {
       try {
         this.patchSocket(ws, version, changes, ws === origin);

@@ -1,6 +1,6 @@
 // The sync endpoint end to end: real WebSockets through the Worker into WorkspaceDO.
 import { env, exports } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
+import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { isId, newId } from "@freecorps/brigade-schema";
 import { MAX_CLIENT_MESSAGE_LENGTH, PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
@@ -466,19 +466,20 @@ describe("GET /sync/:workspaceId", () => {
     });
   });
 
-  test("without SYNC_DEV_ACTOR the upgrade is refused with 501, before the shard", async () => {
-    // As in production and staging: the variable is unset (test/wrangler-config and apps/web's config test).
+  test("without SYNC_DEV_ACTOR an upgrade without a session is refused with 401, before the shard", async () => {
+    // As in every deployed environment: the variable is unset (apps/web's config test checks wrangler.jsonc).
     // A plain object: setting a key on one whose prototype is `env` would write through to the real env.
-    const bare: Env = { WORKSPACE: env.WORKSPACE };
+    const bare: Env = {
+      WORKSPACE: env.WORKSPACE,
+      DB: env.DB,
+      BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
+    };
     const request = new Request(`http://api.test/sync/${workspace()}`, {
       headers: { Upgrade: "websocket" },
     }) as Parameters<typeof worker.fetch>[0];
-    const response = await worker.fetch(request, bare);
-    expect(response.status).toBe(501);
-    expect(await response.json()).toMatchObject({
-      error: "not_implemented",
-      message: expect.stringContaining("SYNC_DEV_ACTOR"),
-    });
+    const response = await worker.fetch(request, bare, createExecutionContext());
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "unauthenticated" });
   });
 
   test(`a socket holds at most ${MAX_SUBSCRIPTIONS} subscriptions; re-subscribing one replaces it`, async () => {

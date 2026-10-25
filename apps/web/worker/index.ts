@@ -1,7 +1,7 @@
 // The dashboard's Worker. Static assets serve the SPA (`not_found_handling: "single-page-application"`);
 // `run_worker_first: ["/api", "/api/*"]` sends only API calls here, and they go to the API Worker through the
 // `API` service binding with the `/api` prefix stripped, so `/api/health` reaches the API's `/health`.
-// Dev-only for now: there is no auth, and neither Worker has a public URL (wrangler.jsonc).
+// Neither Worker has a public URL yet (wrangler.jsonc): the API still has an open dev route.
 
 const API_PREFIX = "/api";
 

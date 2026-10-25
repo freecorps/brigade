@@ -5,11 +5,23 @@ import { createSyncClient, TOKEN, type SyncClient } from "@freecorps/brigade-syn
 
 export const CLIENT_ID_STORAGE_KEY = "brigade-sync-client";
 
+let currentActor: Actor | undefined;
+
 /**
- * The actor optimistic mutations run as. It matches the shard's dev-only actor (apps/api, `SYNC_DEV_ACTOR`): the
- * server takes the actor from the socket, and another role here would show changes the shard then refuses.
+ * Sets who optimistic mutations run as: the signed-in member and their role in the workspace (components/session).
+ * The shard takes the actor from the authenticated socket; the same role here means a change the shard would
+ * refuse is not shown first.
  */
-export const DEV_ACTOR: Actor = { kind: "user", id: "usr_dev", role: "responder" };
+export function setSyncActor(actor: Actor): void {
+  currentActor = actor;
+}
+
+function syncActor(): Actor {
+  // The dashboard renders nothing that mutates before the session gate sets it; a throw here fails the mutation
+  // with `internal` instead of running it as someone else.
+  if (!currentActor) throw new Error("No signed-in member yet");
+  return currentActor;
+}
 
 /** `ws://host/api/sync/demo` from an `http:` page, `wss://` from an `https:` one. */
 export function syncUrl(location: Pick<Location, "protocol" | "host">, shard: string): string {
@@ -56,7 +68,7 @@ export function createBrowserSyncClient(): SyncClient {
   );
   return createSyncClient({
     url: (shard) => syncUrl(window.location, shard),
-    actor: DEV_ACTOR,
+    actor: syncActor,
     clientId,
   });
 }

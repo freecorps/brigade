@@ -376,6 +376,12 @@ extra hop and more moving parts, so we start without it.
 ## Clients
 
 - `packages/sync`: framework-agnostic client + React hooks (`useQuery`, `useMutation`) used by web and mobile.
+  Settled in spike S3: the same client and hooks run unchanged in the browser and on Hermes (iOS and Android). React
+  Native passes `randomBytes` from `expo-crypto`, since Hermes has no `crypto.getRandomValues`; the global
+  `WebSocket` needs no adapter. How a list reads the connection (`syncView`, `nextFailed`) lives in `packages/sync`
+  so both apps say the same thing; each app draws it with its own components.
+- **Client ids** are per browser tab (web) and per launch (mobile) while pending mutations live only in memory: a
+  stable id buys de-duplication across restarts only once the queue itself survives them. Persist both together.
 - Mobile cache: `expo-sqlite` stores the latest snapshot per subscription → the app opens instantly and reads offline.
 - Offline mutations are queued and shown as "pending". Paging actions from notifications (ack/escalate) use plain HTTPS,
   not the socket, because iOS suspends sockets in the background.

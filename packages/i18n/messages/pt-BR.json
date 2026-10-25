@@ -161,5 +161,8 @@
   "time_just_now": "agora",
   "incident_label": "{number} “{title}”",
   "severity_named": "{code} {name}",
-  "declare_submit_severity": "Declarar {severity}"
+  "declare_submit_severity": "Declarar {severity}",
+  "mobile_sync_retrying": "O app continua tentando sozinho.",
+  "mobile_sync_offline_hint": "Não foi possível conectar ao Brigade agora. Suas alterações são enviadas quando a conexão voltar, desde que o app continue aberto.",
+  "mobile_change_hint": "Abre as opções"
 }

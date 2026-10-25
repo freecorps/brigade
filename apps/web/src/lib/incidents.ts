@@ -11,44 +11,14 @@ import {
   type IncidentStatus,
   type Severity,
 } from "@freecorps/brigade-schema";
-import type {
-  ConnectionState,
-  MutationOutcome,
-  QueryStatus,
-  SyncErrorCode,
-} from "@freecorps/brigade-sync";
+import type { MutationOutcome, SyncErrorCode } from "@freecorps/brigade-sync";
+
+// How the list reads the connection, shared with the mobile app (packages/sync, view.ts).
+export { nextFailed, syncView, type SyncView } from "@freecorps/brigade-sync";
 
 /** The statuses `from` may move to, in lifecycle order (never `from` itself). */
 export function nextStatuses(from: IncidentStatus): IncidentStatus[] {
   return INCIDENT_STATUSES.filter((to) => canTransition(from, to));
-}
-
-/** What the list tells the user about sync. */
-export type SyncView = "connecting" | "live" | "reconnecting" | "unavailable" | "refused";
-
-/**
- * Whether the list has failed to connect since it last had data. The browser hides why a WebSocket upgrade
- * failed (a 501 outside dev, a 502 or 503 with the API Worker down, nothing listening): it only sees the socket
- * close, and the client then waits to retry. So "never loaded, and `waiting` after an attempt" is the only error
- * signal. It latches until data arrives, so the retries (`waiting` → `connecting` → `waiting`) do not flicker.
- */
-export function nextFailed(failed: boolean, status: QueryStatus, connection: ConnectionState) {
-  if (status === "ready") return false;
-  return failed || connection === "waiting";
-}
-
-/**
- * `refused`: the shard answered the subscription with an error (forbidden, internal…). The client does not ask
- * again on its own (only a new listener does), so the page offers a reload rather than "keeps trying".
- */
-export function syncView(
-  status: QueryStatus,
-  connection: ConnectionState,
-  failed: boolean,
-): SyncView {
-  if (status === "error") return "refused";
-  if (status === "loading") return failed ? "unavailable" : "connecting";
-  return connection === "open" ? "live" : "reconnecting";
 }
 
 /** Why a change was refused: the client's and server's codes, plus a declare refused for the device's clock. */

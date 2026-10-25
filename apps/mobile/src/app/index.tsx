@@ -1,5 +1,5 @@
-import { Overview } from "@/screens/overview";
+import { Incidents } from "@/screens/incidents";
 
-export default function OverviewRoute() {
-  return <Overview />;
+export default function IncidentsRoute() {
+  return <Incidents />;
 }

@@ -1,4 +1,5 @@
 import { getLocale, m, setLocale } from "@freecorps/brigade-i18n";
+import { SyncProvider } from "@freecorps/brigade-sync/react";
 import { fontWeight } from "@freecorps/brigade-ui";
 import { useCalendars, useLocales } from "expo-localization";
 import { Stack } from "expo-router";
@@ -9,6 +10,8 @@ import { LocaleContext } from "@/hooks/use-locale";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { useTheme } from "@/hooks/use-theme";
 import { pickLocale } from "@/lib/locale";
+import { SHARD } from "@/lib/sync";
+import { syncClient } from "@/lib/sync-client";
 
 export default function RootLayout() {
   const colors = useTheme();
@@ -28,23 +31,26 @@ export default function RootLayout() {
   }, [colors.background]);
 
   return (
-    <LocaleContext value={value}>
-      <StatusBar style="auto" />
-      <Stack
-        key={locale}
-        screenOptions={{
-          headerStyle: { backgroundColor: colors.background },
-          headerTintColor: colors.foreground,
-          headerTitleStyle: { color: colors.foreground, fontWeight: fontWeight.semibold },
-          headerShadowVisible: false,
-          contentStyle: { backgroundColor: colors.background },
-          // Reduced motion: no sliding, a short fade instead (packages/ui, Motion).
-          animation: reducedMotion ? "fade" : "default",
-        }}
-      >
-        <Stack.Screen name="index" options={{ title: m.app_name() }} />
-        <Stack.Screen name="intl" options={{ title: m.intl_title() }} />
-      </Stack>
-    </LocaleContext>
+    <SyncProvider client={syncClient} shard={SHARD}>
+      <LocaleContext value={value}>
+        <StatusBar style="auto" />
+        <Stack
+          key={locale}
+          screenOptions={{
+            headerStyle: { backgroundColor: colors.background },
+            headerTintColor: colors.foreground,
+            headerTitleStyle: { color: colors.foreground, fontWeight: fontWeight.semibold },
+            headerShadowVisible: false,
+            contentStyle: { backgroundColor: colors.background },
+            // Reduced motion: no sliding, a short fade instead (packages/ui, Motion).
+            animation: reducedMotion ? "fade" : "default",
+          }}
+        >
+          <Stack.Screen name="index" options={{ title: m.incidents_title() }} />
+          <Stack.Screen name="legend" options={{ title: m.legend_title() }} />
+          <Stack.Screen name="intl" options={{ title: m.intl_title() }} />
+        </Stack>
+      </LocaleContext>
+    </SyncProvider>
   );
 }

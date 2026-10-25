@@ -161,5 +161,8 @@
   "time_just_now": "just now",
   "incident_label": "{number} “{title}”",
   "severity_named": "{code} {name}",
-  "declare_submit_severity": "Declare {severity}"
+  "declare_submit_severity": "Declare {severity}",
+  "mobile_sync_retrying": "The app keeps trying on its own.",
+  "mobile_sync_offline_hint": "Can't reach Brigade right now. Changes you make are sent when the connection is back, as long as the app stays open.",
+  "mobile_change_hint": "Opens the choices"
 }

@@ -1,9 +1,25 @@
 # @freecorps/brigade-mobile
 
 The Brigade app for iOS and Android: Expo SDK 58, Expo Router, React Native 0.88 on Hermes. It is bundled by Metro,
-not Vite (RFC 0002). So far it has one screen, the severity and status legend drawn from `packages/ui` tokens and
-the `packages/i18n` catalog, and a development-only `/intl` diagnostics route. Spike write-up:
-[docs/spikes/s4-expo-workspace.md](../../docs/spikes/s4-expo-workspace.md).
+not Vite (RFC 0002). The home screen is the workspace's live incident list (Brigade Sync, RFC 0004): declare, and
+change an incident's status or severity. From it, `/legend` shows the severity and status legend, and a
+development-only `/intl` route reports Hermes `Intl` support. Spike write-ups:
+[S4](../../docs/spikes/s4-expo-workspace.md), [S3](../../docs/spikes/s3-sync-engine.md).
+
+## Live data in development
+
+The list connects to `ws://<Metro host>:5173/api/sync/demo`, the dashboard's dev server, so start it first with
+`vp run dev` at the repository root. The host is the one the app loaded its bundle from (`hostUri`), and the dev
+server listens on `localhost` only, so keep Metro on `localhost` too:
+
+```bash
+REACT_NATIVE_PACKAGER_HOSTNAME=localhost bunx expo run:ios       # the Simulator shares the Mac's localhost
+adb reverse tcp:8081 tcp:8081 && adb reverse tcp:5173 tcp:5173   # Android emulator or device, then:
+REACT_NATIVE_PACKAGER_HOSTNAME=localhost bunx expo run:android
+```
+
+`EXPO_PUBLIC_BRIGADE_SYNC_URL` (a base such as `wss://brigade.example.com/api/sync`) overrides the URL; without
+it, a release build has no URL and shows sync as unavailable.
 
 ## Run it
 
@@ -26,7 +42,7 @@ the missing runtime for the selected Xcode with `xcodebuild -downloadPlatform iO
 the generated folders.
 
 ```bash
-vp test                 # locale, theme and Intl-probe logic (Node, no emulator)
+vp test                 # locale, theme, Intl-probe, sync URL and incident wording logic (Node, no emulator)
 vp run build            # cached expo export of the Android and iOS JS bundles into dist/: proves Metro resolves everything
 ```
 

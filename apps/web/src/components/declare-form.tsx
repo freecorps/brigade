@@ -80,8 +80,15 @@ export function DeclareForm({
       // The shard found the title invalid after all: give the text back (opening the form again on a phone),
       // unless something new was typed. Not for a clock refusal: the title was fine, and the notice says why.
       if (titleRefused(notice)) {
-        setExpanded(true);
-        setTitle((current) => (current === "" ? typed : current));
+        // On the opener (about to leave the page) or already lost: focus goes to the title. Never away from
+        // something the user moved on to.
+        const active = document.activeElement;
+        const lost = !active || active === document.body || active === openerRef.current;
+        flushSync(() => {
+          setExpanded(true);
+          setTitle((current) => (current === "" ? typed : current));
+        });
+        if (lost) titleRef.current?.focus();
       }
     });
   };
@@ -189,7 +196,7 @@ export function DeclareForm({
           })}
         </div>
         <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2 md:contents">
-          <Button type="submit" className="md:col-start-3 md:row-start-2 md:mt-0">
+          <Button type="submit" className="tabular-nums md:col-start-3 md:row-start-2 md:mt-0">
             {/* Names what is about to page people. */}
             {m.declare_submit_severity({ severity: severity.toUpperCase() })}
           </Button>

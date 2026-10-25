@@ -38,6 +38,7 @@ afterEach(() => {
   });
   root = client = undefined;
   switchLocale = undefined;
+  vi.restoreAllMocks();
   document.body.innerHTML = "";
   setWidth(1024);
   localStorage.clear();
@@ -90,6 +91,9 @@ function mount({ clientAhead = 0, offline = false, maxPending = 500, app = false
   const container = document.createElement("div");
   document.body.append(container);
   const syncClient = client;
+  const router = app
+    ? createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ["/"] }) })
+    : undefined;
   act(() => {
     root = createRoot(container);
     root.render(
@@ -98,12 +102,7 @@ function mount({ clientAhead = 0, offline = false, maxPending = 500, app = false
         <SyncProvider client={syncClient} shard={SHARD}>
           {app ? (
             <StackStatusProvider>
-              <RouterProvider
-                router={createRouter({
-                  routeTree,
-                  history: createMemoryHistory({ initialEntries: ["/"] }),
-                })}
-              />
+              <RouterProvider router={router!} />
             </StackStatusProvider>
           ) : (
             <IncidentsCard />
@@ -123,7 +122,7 @@ function mount({ clientAhead = 0, offline = false, maxPending = 500, app = false
     network.sockets
       .flatMap((socket) => socket.sent)
       .filter((f) => (f as { type: string }).type === "mutate");
-  return { container, shard, network, timers, declare, flush, sentMutations };
+  return { container, shard, network, timers, router, declare, flush, sentMutations };
 }
 
 const $ = <E extends Element = HTMLElement>(selector: string, scope: ParentNode = document) =>
@@ -269,6 +268,23 @@ test("a title the shard refuses is given back if the field is still empty", asyn
   expect(input.value).toBe("Search slow");
 });
 
+test("phones: a title the shard refuses opens the form again with focus in the title", async () => {
+  setWidth(375);
+  const view = mount();
+  await view.flush();
+  refuseDeclareTitle(view.shard);
+  const opener = () => $$("button").find((b) => b.textContent === "Declare incident");
+  await click(opener());
+  await act(async () => setValue($<HTMLInputElement>("input")!, "Search slow"));
+  await click($$("button").find((b) => b.textContent?.startsWith("Declare SEV")));
+  expect(document.activeElement).toBe(opener());
+  await view.flush();
+  expect(opener()).toBeUndefined();
+  const input = $<HTMLInputElement>("input")!;
+  expect(input.value).toBe("Search slow");
+  expect(document.activeElement).toBe(input);
+});
+
 test("an empty title stays local, with an error read out; Declare stays enabled", async () => {
   const view = mount();
   await view.flush();
@@ -333,6 +349,37 @@ test("a row removed elsewhere while one of its controls has focus hands focus to
   );
 });
 
+test("a row moved above the focused one keeps focus where it was", async () => {
+  const view = mount();
+  view.declare("Lower", "sev3");
+  const upper = view.declare("Upper", "sev2");
+  await view.flush();
+  expect(titles()).toEqual(["Upper", "Lower"]);
+  const trigger = $(`[data-status-trigger="${upper}"]`)!;
+  act(() => trigger.focus());
+  // Some browsers drop focus to <body> when a node holding it is moved; happy-dom does not, so do it here.
+  // React's commit and the card's layout effect both put it back.
+  for (const method of ["insertBefore", "appendChild"] as const) {
+    const original = Node.prototype[method] as (this: Node, ...args: Node[]) => Node;
+    vi.spyOn(Node.prototype, method).mockImplementation(function (this: Node, ...args: Node[]) {
+      const active = document.activeElement;
+      if (args[0]!.isConnected && active instanceof HTMLElement && args[0]!.contains(active)) {
+        active.blur();
+      }
+      return original.apply(this, args);
+    } as never);
+  }
+  // Raised to SEV1 elsewhere: the lower row moves to the top.
+  view.shard.write(ops, "incident.setSeverity", {
+    id: row("Lower")!.dataset.incident!,
+    severity: "sev1",
+  });
+  await view.flush();
+  await frame();
+  expect(titles()).toEqual(["Lower", "Upper"]);
+  expect(document.activeElement).toBe(trigger);
+});
+
 test("the list puts SEV1 first, whatever its age", async () => {
   const view = mount();
   view.declare("Newer, SEV3", "sev3");
@@ -349,7 +396,7 @@ test("unavailable: a calm count line, the reason and that it keeps trying; the f
   expect($('[role="status"]', card)?.textContent).toContain("Sync unavailable");
   expect(card.textContent).toContain("vp run dev");
   expect(card.textContent).toContain("This page keeps trying on its own.");
-  expect(card.textContent).toContain("—");
+  expect(card.textContent).not.toContain("—");
   expect($$("button").some((b) => b.textContent?.startsWith("Declare SEV"))).toBe(true);
 });
 
@@ -365,13 +412,25 @@ test("refused: the reason and a Reload that reloads; a declare is acknowledged",
   const card = $("#incidents-title")!.closest("section")!;
   expect($('[role="status"]', card)?.textContent).toBe("Not loaded");
   expect(card.textContent).toContain("You don't have access to these incidents.");
+  // The acknowledgement's live region is there, empty, before anything is sent: filling it is announced.
+  const sent = $$('[role="status"]', card)[1]!;
+  expect(sent.textContent).toBe("");
   await act(async () => setValue($<HTMLInputElement>("input")!, "Card reader offline"));
   await click($$("button").find((b) => b.textContent?.startsWith("Declare SEV")));
-  expect(card.textContent).toContain("Sent “Card reader offline”.");
+  expect($$('[role="status"]', card)[1]).toBe(sent);
+  expect(sent.textContent).toMatch(/^Sent “Card reader offline”\./);
   expect(view.sentMutations()).toHaveLength(1);
   await click($$("button").find((b) => b.textContent === "Reload"));
   expect(reload).toHaveBeenCalledOnce();
-  vi.restoreAllMocks();
+
+  // A declare the shard then refuses: "Sent" does not stay next to its failure.
+  refuseDeclareTitle(view.shard);
+  await act(async () => setValue($<HTMLInputElement>("input")!, "Search slow"));
+  await click($$("button").find((b) => b.textContent?.startsWith("Declare SEV")));
+  expect(sent.textContent).toMatch(/^Sent “Search slow”\./);
+  await view.flush();
+  expect(sent.textContent).toBe("");
+  expect(card.textContent).toContain("“Search slow”");
 });
 
 test("reconnecting: the rows stay put and the hint comes after them", async () => {
@@ -406,10 +465,7 @@ test("the real root keeps the card's state across a language switch, with a chan
   vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("offline"));
   const view = mount({ app: true });
   const id = view.declare("Checkout down", "sev2");
-  await act(async () => {
-    for (let i = 0; i < 20 && !$("#incidents-title"); i++)
-      await new Promise((r) => setTimeout(r, 10));
-  });
+  await act(() => view.router!.load());
   await view.flush();
   expect(titles()).toEqual(["Checkout down"]);
   const input = $<HTMLInputElement>('input[placeholder="What\'s happening?"]')!;
@@ -426,7 +482,6 @@ test("the real root keeps the card's state across a language switch, with a chan
   expect(input.value).toBe("Half-typed title");
   await view.flush();
   expect(row("Checkout down")!.textContent).toContain("Não foi possível mover para Descartado.");
-  vi.restoreAllMocks();
 });
 
 test("focus moved outside the card stays there when the row it came from is removed", async () => {

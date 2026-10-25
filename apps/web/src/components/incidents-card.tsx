@@ -70,20 +70,15 @@ export function IncidentsCard() {
   // Kept here, not in the rows: a refused move to Resolved brings back a row that had left the list.
   const [notices, setNotices] = useState<Notice[]>([]);
   const [busy, setBusy] = useState<ReadonlyMap<string, number>>(new Map());
-  // Each new notice is read once, in the card's wording, and leaves the live region after ANNOUNCE_MS: never
-  // on a dismiss or a re-render, and refusals landing together are all read.
+  // Each new notice is read once, in the card's wording, and leaves the live region after ANNOUNCE_MS, oldest
+  // first: never on a dismiss or a re-render, and refusals landing together are all read. The one timer is
+  // cleared with the effect, so none outlives the card.
   const [announcements, setAnnouncements] = useState<Notice[]>([]);
-  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
-  const mounted = useRef(true);
   useEffect(() => {
-    mounted.current = true;
-    const pending = timers.current;
-    return () => {
-      mounted.current = false;
-      pending.forEach(clearTimeout);
-      pending.clear();
-    };
-  }, []);
+    if (announcements.length === 0) return;
+    const timer = setTimeout(() => setAnnouncements((current) => current.slice(1)), ANNOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [announcements]);
   const nextKey = useRef(0);
   const track = useCallback(
     (outcome: Promise<MutationOutcome>, target: NoticeTarget, field?: "status" | "severity") => {
@@ -94,15 +89,10 @@ export function IncidentsCard() {
       return outcome.then((result) => {
         setBusy((current) => adjustBusy(current, keys, -1));
         const notice = noticeFor(result, target, `n${nextKey.current++}`);
-        // An outcome landing after the card unmounted: nothing to show it in, and no timer to leave behind.
-        if (notice && mounted.current) {
+        // After an unmount these updates are dropped, and no effect runs to start a timer.
+        if (notice) {
           setNotices((current) => [...current, notice].slice(-MAX_NOTICES));
           setAnnouncements((current) => [...current, notice]);
-          const timer = setTimeout(() => {
-            timers.current.delete(timer);
-            setAnnouncements((current) => current.filter((item) => item.key !== notice.key));
-          }, ANNOUNCE_MS);
-          timers.current.add(timer);
         }
         return notice;
       });
@@ -141,6 +131,10 @@ export function IncidentsCard() {
       incidentId: args.id,
       number: null,
       title: args.title,
+    }).then((notice) => {
+      // Refused after all: "Sent" must not stand next to the failure, unless a newer declare replaced it.
+      if (notice) setSent((current) => (current === args.title ? null : current));
+      return notice;
     });
   };
 
@@ -199,6 +193,10 @@ export function IncidentsCard() {
     if (!last) return;
     if (last.element.isConnected) {
       last.fallbacks = plan(last.element);
+      // Defensive: a browser can drop focus to <body> when React moves a keyed row (a new severity reorders
+      // the list). The control is still there, so it gets focus back.
+      const active = document.activeElement;
+      if (!active || active === document.body) last.element.focus({ preventScroll: true });
       return;
     }
     focused.current = null;
@@ -276,9 +274,7 @@ export function IncidentsCard() {
             </>
           ) : view === "connecting" ? (
             <span aria-hidden className="block h-4 w-32 rounded-sm bg-muted" />
-          ) : (
-            <span aria-hidden>—</span>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -392,8 +388,8 @@ function NoticeItem({
 }
 
 /**
- * Below the list: why it is stale or missing. A failure gets an alert glyph and a destructive rule, so it never
- * reads like the calm "All clear"; only the passing reconnect hint stays quiet.
+ * Below the list: why it is stale or missing. A failure gets an alert glyph and the refused notices' destructive
+ * surface, so it never reads like the calm "All clear"; only the passing reconnect hint stays quiet.
  */
 function StatePanel({
   view,
@@ -409,18 +405,20 @@ function StatePanel({
   }
   if (view !== "unavailable" && view !== "refused") return null;
   return (
-    <div className="flex items-start gap-3 rounded-md border-l-4 border-destructive bg-muted p-4 text-sm">
+    <div className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
       <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-destructive" />
       <div className="flex min-w-0 flex-col items-start gap-3">
         {view === "refused" ? (
           // The client never asks again for a refused subscription on its own: a reload starts it over.
           <>
             <p>{m.sync_refused_hint({ reason: queryErrorReason(errorCode) })}</p>
-            {sent ? (
-              <p role="status" className="text-muted-foreground [overflow-wrap:anywhere]">
-                {m.declare_sent({ title: sent })}
-              </p>
-            ) : null}
+            {/* Mounted empty with the panel, so the acknowledgement is an update screen readers announce. */}
+            <p
+              role="status"
+              className="text-muted-foreground [overflow-wrap:anywhere] empty:hidden"
+            >
+              {sent ? m.declare_sent({ title: sent }) : null}
+            </p>
             <Button variant="outline" onClick={() => window.location.reload()}>
               <RefreshCwIcon aria-hidden />
               {m.reload()}
@@ -433,7 +431,10 @@ function StatePanel({
             <p className="text-muted-foreground">{m.sync_retrying()}</p>
           </>
         ) : (
-          <p>{m.sync_offline_hint()}</p>
+          <>
+            <p>{m.sync_offline_hint()}</p>
+            <p className="text-muted-foreground">{m.sync_retrying()}</p>
+          </>
         )}
       </div>
     </div>

@@ -102,18 +102,26 @@ export function IncidentItem({
       </h3>
       {/* Phones: both menus on one line, and -mb-2 trims the space under the 44px triggers without shrinking
           them. From md the wrapper dissolves and each menu takes its own column, centred on the row. */}
-      <div className="col-span-2 -mb-2 -ml-1.5 flex flex-wrap items-center gap-1 md:contents">
+      <div className="col-span-2 -mb-2 -ml-1.5 flex flex-wrap max-[374px]:-ml-1 items-center gap-1 md:contents">
         <div className="md:col-start-3 md:row-span-2 md:row-start-1 md:self-center">
           <DropdownMenu>
             <DropdownMenuTrigger
-              render={<Button variant="ghost" className="gap-1 px-1.5 max-[374px]:min-w-11" />}
+              render={
+                <Button
+                  variant="ghost"
+                  className="gap-1 px-1.5 max-[374px]:min-w-11 max-[374px]:gap-0.5 max-[374px]:px-1"
+                />
+              }
             >
               <span className="sr-only">{m.incident_severity_label()}: </span>
               <span className={cn("inline-flex", pending.severity && UNSAVED)}>
                 <SeverityBadge severity={row.severity} />
               </span>
-              {/* Below 375px the badge alone is the trigger, so both menus fit one line at 320px. */}
-              <ChevronDownIcon aria-hidden className="text-muted-foreground max-[374px]:hidden" />
+              {/* Below 375px a smaller chevron and tighter spacing, so both menus usually fit one line at 320px. */}
+              <ChevronDownIcon
+                aria-hidden
+                className="size-4 text-muted-foreground max-[374px]:size-3"
+              />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
               <DropdownMenuGroup>
@@ -139,14 +147,22 @@ export function IncidentItem({
           <DropdownMenu>
             <DropdownMenuTrigger
               data-status-trigger={row.id}
-              render={<Button variant="ghost" className="gap-1 px-1.5 max-[374px]:min-w-11" />}
+              render={
+                <Button
+                  variant="ghost"
+                  className="gap-1 px-1.5 max-[374px]:min-w-11 max-[374px]:gap-0.5 max-[374px]:px-1"
+                />
+              }
             >
               <span className="sr-only">{m.incident_status_label()}: </span>
               <span className={cn("inline-flex", pending.status && UNSAVED)}>
                 <StatusBadge status={row.status} />
               </span>
-              {/* Below 375px the badge alone is the trigger, so both menus fit one line at 320px. */}
-              <ChevronDownIcon aria-hidden className="text-muted-foreground max-[374px]:hidden" />
+              {/* Below 375px a smaller chevron and tighter spacing, so both menus usually fit one line at 320px. */}
+              <ChevronDownIcon
+                aria-hidden
+                className="size-4 text-muted-foreground max-[374px]:size-3"
+              />
             </DropdownMenuTrigger>
             <DropdownMenuContent>
               <DropdownMenuGroup>

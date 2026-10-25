@@ -409,6 +409,14 @@ describe("managing monitors", () => {
 });
 
 describe("monitor.report: quorum → alert → incident", () => {
+  test("is the only mutation allowed to succeed without an event", () => {
+    // Every other state change emits an event through the outbox (RFC 0005); a new silent mutation needs a reason.
+    const silent = Object.values(serverMutations)
+      .filter((def) => (def as { silent?: boolean }).silent)
+      .map((def) => def.name);
+    expect(silent).toEqual(["monitor.report"]);
+  });
+
   test("is server only", () => {
     const db = store();
     const id = createHttp(db, ["weur"]);

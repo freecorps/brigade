@@ -27,7 +27,7 @@ const row = (changes: Partial<IncidentRow>): IncidentRow => ({
   ...changes,
 });
 
-test("a pick is checked against the latest rows, not the ones the sheet opened on", () => {
+test("pickTarget checks a pick against the rows it is given (the screen passes the latest)", () => {
   const triage = [row({})];
   expect(pickTarget(triage, ID, { kind: "status", to: "declined" })).toEqual(triage[0]);
   // Another client moved it on while the sheet was open: Declined is no longer a move from Investigating.

@@ -28,9 +28,11 @@ declare form (title, severity defaulting to SEV3, "Declare SEV3"); and per row, 
 buttons. Tapping one opens the system action sheet on iOS (`ActionSheetIOS`) and a plain dialog on Android, which
 React Native has no native list dialog for. Status offers only the moves `canTransition` allows, and a pick is
 checked again against the latest rows when it is made (`pickTarget`): nothing is sent if the incident left the list,
-already has that value, or can no longer move there. A refused change rolls back on its own and leaves a translated
-message in its row, announced to VoiceOver on iOS; a declare refused for its title gives the title back to an
-empty field, as the dashboard does. The connection reads as a word and a small glyph
+already has that value, or can no longer move there. Such a pick is dropped silently; the row already shows the new
+state. A refused change rolls back on its own and leaves a translated message in its row. On iOS the app also passes
+it to `AccessibilityInfo.announceForAccessibility`, which was not heard with VoiceOver on and can be cut short when
+focus moves as the sheet closes. A declare refused for its title (not for the device clock) gives the title back to
+an empty field; the dashboard does the same, without the clock exception (#20). The connection reads as a word and a small glyph
 (Live, Connecting…, Reconnecting…, Sync unavailable, Not loaded), from the same `syncView` the dashboard uses.
 
 The app has one `SyncClient` at module scope. Its URL is `ws://<Metro host>:5173/api/sync/demo` in development,

@@ -10,7 +10,8 @@
   "workspaces": [
     "packages/*",
     "apps/*",
-    "tools/*"
+    "tools/*",
+    "spikes/*"
   ],
   "type": "module",
   "scripts": {

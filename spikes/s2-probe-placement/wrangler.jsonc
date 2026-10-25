@@ -1,0 +1,22 @@
+// Spike S2 only (docs/spikes/s2-probe-placement.md): one Worker, no environments, deployed as `brigade-probe-dev`.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "brigade-probe-dev",
+  "main": "./src/index.ts",
+  // Matches the installed workerd so local and deployed behaviour agree (as in apps/api).
+  "compatibility_date": "2026-10-19",
+  // On workers.dev only; every route needs PROBE_ADMIN_TOKEN.
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true, "head_sampling_rate": 0.01 },
+  },
+  "upload_source_maps": true,
+  "durable_objects": {
+    "bindings": [{ "name": "PROBE", "class_name": "ProbeDO" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ProbeDO"] }],
+  // Set with `wrangler secret put PROBE_ADMIN_TOKEN`; the tests bind a fake one (vite.config.ts).
+  "secrets": { "required": ["PROBE_ADMIN_TOKEN"] },
+}

@@ -60,8 +60,13 @@ packages/
 integrations/
   slack/       ChatProvider implementation (Worker, bound via service binding)        (AGPL-3.0)
   ...
+spikes/        Throwaway spike code: not product, never published, private packages   (AGPL-3.0)
 docs/rfcs/     Design documents
 ```
+
+`spikes/<name>/` holds code a roadmap spike needs that is not the start of an app (S2's probe Worker). It sits in
+the workspace (`spikes/*`) so CI checks and tests it. The PR that records the spike's result tears down what the
+spike deployed and deletes the folder; the write-up in `docs/spikes/` is what stays.
 
 Packages are MIT so third parties can build integrations without AGPL concerns; apps are AGPL (RFC 0009).
 

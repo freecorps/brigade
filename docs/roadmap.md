@@ -45,6 +45,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - `eas build` succeeded for Android and iOS under the Freecorps EAS organisation; the Android build ran on the
     emulator ([write-up](spikes/s4-expo-workspace.md#eas-build)).
 - [ ] **S2 — Probe placement** (RFC 0007). Pass: observed colo per `locationHint` over 48h (deploy needs Heitor's approval).
+  - Deployed as `brigade-probe-dev` and sampling every hint since 2026-10-25; first samples in the
+    [write-up](spikes/s2-probe-placement.md). Left: read the 48-hour result and settle RFC 0007 "Placement".
 - [ ] **S1 — APNs from a Worker and payload encryption** (RFC 0006). Pass: push received on a real iPhone from a
       Worker, decrypted in the Notification Service Extension (needs Apple credentials and a device).
 - [ ] **S6 — VoIP call screen** (RFC 0010). Pass: locked iPhone and Android ring natively; answering plays the

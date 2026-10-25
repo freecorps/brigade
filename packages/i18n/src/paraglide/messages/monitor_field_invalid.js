@@ -11,7 +11,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | field | output |
 * | --- | --- |
 * | "name" | "Give the monitor a name." |
-* | "url" | "Use a public http or https address, on port 80, 443, 8080 or 8443." |
+* | "url" | "Use a public http or https address, on a web port such as 80, 443, 8080 or 8443." |
 * | "expected_status" | "Use a status from 100 to 599, or leave it empty." |
 * | "keyword" | "Use at most 200 characters." |
 * | "interval" | "Use whole seconds, from 30 to 86,400 (24 hours)." |
@@ -28,7 +28,7 @@ export const monitor_field_invalid = /** @type {((inputs: Monitor_Field_InvalidI
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.field === "name") return /** @type {LocalizedString} */ (`Dê um nome ao monitor.`);
-		if (i?.field === "url") return /** @type {LocalizedString} */ (`Use um endereço http ou https público, na porta 80, 443, 8080 ou 8443.`);
+		if (i?.field === "url") return /** @type {LocalizedString} */ (`Use um endereço http ou https público, numa porta web como 80, 443, 8080 ou 8443.`);
 		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Use um status de 100 a 599, ou deixe vazio.`);
 		if (i?.field === "keyword") return /** @type {LocalizedString} */ (`Use no máximo 200 caracteres.`);
 		if (i?.field === "interval") return /** @type {LocalizedString} */ (`Use segundos inteiros, de 30 a 86.400 (24 horas).`);
@@ -39,7 +39,7 @@ export const monitor_field_invalid = /** @type {((inputs: Monitor_Field_InvalidI
 	}
 	{
 		if (i?.field === "name") return /** @type {LocalizedString} */ (`Give the monitor a name.`);
-		if (i?.field === "url") return /** @type {LocalizedString} */ (`Use a public http or https address, on port 80, 443, 8080 or 8443.`);
+		if (i?.field === "url") return /** @type {LocalizedString} */ (`Use a public http or https address, on a web port such as 80, 443, 8080 or 8443.`);
 		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Use a status from 100 to 599, or leave it empty.`);
 		if (i?.field === "keyword") return /** @type {LocalizedString} */ (`Use at most 200 characters.`);
 		if (i?.field === "interval") return /** @type {LocalizedString} */ (`Use whole seconds, from 30 to 86,400 (24 hours).`);

@@ -8,7 +8,7 @@ export type Monitor_Field_InvalidInputs = {
 * | field | output |
 * | --- | --- |
 * | "name" | "Give the monitor a name." |
-* | "url" | "Use a public http or https address, on port 80, 443, 8080 or 8443." |
+* | "url" | "Use a public http or https address, on a web port such as 80, 443, 8080 or 8443." |
 * | "expected_status" | "Use a status from 100 to 599, or leave it empty." |
 * | "keyword" | "Use at most 200 characters." |
 * | "interval" | "Use whole seconds, from 30 to 86,400 (24 hours)." |

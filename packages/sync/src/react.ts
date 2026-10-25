@@ -1,5 +1,5 @@
-// React bindings for the sync client: `SyncProvider`, `useQuery`, `useMutation`, `useConnectionState`. React DOM and React Native
-// alike: no DOM APIs, only `useSyncExternalStore` over `SyncClient.query` handles.
+// React bindings for the sync client: `SyncProvider`, `useQuery`, `useMutation`, `useConnectionState` and
+// `useSyncClient`. React DOM and React Native alike: no DOM APIs, only `useSyncExternalStore` over the client.
 
 import {
   createContext,

@@ -651,7 +651,6 @@ export class SyncClient<
     shard.healthy = false;
     shard.connection++;
     for (const live of shard.subs.values()) live.synced = false;
-    this.connectionChanged(shard.id);
     socket.onopen = () => {
       if (shard.socket !== socket) return;
       shard.open = true;
@@ -675,6 +674,8 @@ export class SyncClient<
     };
     // A close always follows an error; reconnecting is handled there.
     socket.onerror = () => {};
+    // Only now: a listener that reacts by closing the client finds the socket fully wired.
+    this.connectionChanged(shard.id);
   }
 
   private retry(shard: Shard): void {

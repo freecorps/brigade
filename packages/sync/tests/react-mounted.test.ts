@@ -190,4 +190,8 @@ test("useConnectionState follows a new shard option; useSyncClient returns the p
   act(() => root!.render(tree(SHARD)));
   expect(output()).toBe("open");
   expect(seen).toBe(client);
+  // It now listens to ws_1: a drop there shows, which a subscription left on ws_2 would miss.
+  act(() => network.disconnect());
+  act(() => network.flush());
+  expect(output()).toBe("waiting");
 });

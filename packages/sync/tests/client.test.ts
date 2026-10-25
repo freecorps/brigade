@@ -1358,3 +1358,24 @@ test("connection listeners are independent: one leaving or throwing does not sto
   expect(warnings.filter((w) => w === "A connection listener threw")).toHaveLength(3);
   a.close();
 });
+
+test("waiting ends in idle once nothing needs the shard: by the retry timer or by the idle timer", async () => {
+  // (a) The retry (3 s) fires after the last subscription left (1 s linger): nothing to reconnect for.
+  // (b) The idle close (1 s linger + 5 s) fires while the retry (15 s) is still pending.
+  for (const initialMs of [4000, 20_000]) {
+    const { client, settle, network, timers } = setup();
+    const a = client(ana, ana, { backoff: { initialMs } });
+    const seen: string[] = [];
+    a.onConnectionChange(SHARD, () => seen.push(a.connectionState(SHARD)));
+    const stop = a.query(SHARD, "incidents.active", {}).subscribe(() => {});
+    await settle();
+    network.disconnect();
+    await settle();
+    stop();
+    timers.advance(30_000);
+    await settle();
+    expect(seen).toEqual(["connecting", "open", "waiting", "idle"]);
+    expect(network.sockets).toHaveLength(1);
+    a.close();
+  }
+});

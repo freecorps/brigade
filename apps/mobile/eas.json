@@ -18,6 +18,9 @@
     "preview": {
       "extends": "base",
       "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
         "EXPO_PUBLIC_BRIGADE_ENV": "staging"
       }

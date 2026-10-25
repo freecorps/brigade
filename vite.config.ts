@@ -26,5 +26,12 @@ export default defineConfig({
   },
   run: {
     cache: true,
+    // Native mobile builds on this computer (apps/mobile/README.md). Never cached: their outputs live outside the
+    // task graph, and a cached task's file-access tracking breaks Gradle, which then cannot start the shebang-less
+    // `prefab_command` scripts AGP writes ("error=8, Exec format error").
+    tasks: {
+      "mobile:install": { command: "node scripts/mobile-install.mjs", cache: false },
+      "mobile:build": { command: "node scripts/mobile-build.mjs", cache: false },
+    },
   },
 });

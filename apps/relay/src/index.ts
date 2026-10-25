@@ -13,16 +13,29 @@ import {
  * holds `RELAY_SEND_TOKEN`.
  */
 
-export interface RelayEnv {
-  APNS_ENVIRONMENT: string;
-  APNS_TOPIC: string;
-  APNS_KEY: string;
-  APNS_KEY_ID: string;
-  APNS_TEAM_ID: string;
-  RELAY_SEND_TOKEN: string;
-}
+/** The bindings `handle` reads, from the generated `Env`, so tests can pass plain values. */
+export type RelayEnv = Pick<
+  Env,
+  | "APNS_ENVIRONMENT"
+  | "APNS_TOPIC"
+  | "APNS_KEY"
+  | "APNS_KEY_ID"
+  | "APNS_TEAM_ID"
+  | "RELAY_SEND_TOKEN"
+>;
 
 const URGENCIES: readonly Urgency[] = ["low", "high", "page"];
+/**
+ * How long APNs keeps trying a phone that is offline, by urgency, unless the sender sets `ttlSeconds`. A page
+ * that only tries once is lost to a phone in a lift; one that arrives an hour late is noise.
+ */
+const DEFAULT_TTL_SECONDS: Record<Urgency, number> = {
+  page: 15 * 60,
+  high: 60 * 60,
+  low: 4 * 60 * 60,
+};
+/** APNs keeps an undelivered push for at most about 30 days. */
+const MAX_TTL_SECONDS = 30 * 24 * 60 * 60;
 /** A request body far above any valid send: a device token and a sealed 2 KB plaintext. */
 const MAX_BODY_BYTES = 8 * 1024;
 
@@ -55,7 +68,12 @@ export async function handle(
     typeof body.deviceToken !== "string" ||
     envelope === null ||
     !URGENCIES.includes(urgency as Urgency) ||
-    (body.collapseId !== undefined && typeof body.collapseId !== "string")
+    (body.collapseId !== undefined && typeof body.collapseId !== "string") ||
+    (body.ttlSeconds !== undefined &&
+      (typeof body.ttlSeconds !== "number" ||
+        !Number.isInteger(body.ttlSeconds) ||
+        body.ttlSeconds < 0 ||
+        body.ttlSeconds > MAX_TTL_SECONDS))
   ) {
     return json({ error: "invalid_body" }, 400);
   }
@@ -67,14 +85,24 @@ export async function handle(
     keyId: env.APNS_KEY_ID,
     teamId: env.APNS_TEAM_ID,
   };
+  // Signing fails only on a broken APNS_KEY: the relay's fault, not the caller's.
+  let jwt: string;
+  try {
+    jwt = await tokens.get(credentials, Date.now());
+  } catch (error) {
+    console.error(JSON.stringify({ message: "APNs token signing failed", error: String(error) }));
+    return json({ error: "relay_misconfigured" }, 500);
+  }
+  const ttl = (body.ttlSeconds as number | undefined) ?? DEFAULT_TTL_SECONDS[urgency as Urgency];
   let apnsRequest: Request;
   try {
-    const jwt = await tokens.get(credentials, Date.now());
     apnsRequest = buildApnsRequest(
       {
         deviceToken: body.deviceToken,
         envelope,
         urgency: urgency as Urgency,
+        // 0 keeps APNs' "try once"; otherwise an absolute time.
+        expiration: ttl === 0 ? 0 : Math.floor(Date.now() / 1000) + ttl,
         ...(body.collapseId === undefined ? {} : { collapseId: body.collapseId as string }),
       },
       { environment, topic: env.APNS_TOPIC, jwt },
@@ -124,13 +152,31 @@ async function authorized(request: Request, expected: string): Promise<boolean> 
   return diff === 0;
 }
 
+/** Reads at most `MAX_BODY_BYTES`, whether or not the request declares its length. */
 async function readJson(request: Request): Promise<unknown> {
-  const length = Number(request.headers.get("Content-Length") ?? "0");
-  if (length > MAX_BODY_BYTES) return null;
-  const text = await request.text();
-  if (text.length > MAX_BODY_BYTES) return null;
+  if (Number(request.headers.get("Content-Length") ?? "0") > MAX_BODY_BYTES) return null;
+  if (request.body === null) return null;
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BODY_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
   try {
-    return JSON.parse(text);
+    return JSON.parse(new TextDecoder().decode(bytes));
   } catch {
     return null;
   }

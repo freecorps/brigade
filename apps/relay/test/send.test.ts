@@ -5,7 +5,7 @@ import { handle, type RelayEnv } from "../src/index.ts";
 
 const env: RelayEnv = {
   APNS_ENVIRONMENT: "sandbox",
-  APNS_TOPIC: "app.example",
+  APNS_TOPIC: "app.freecorps.brigade",
   APNS_KEY: generateKeyPairSync("ec", { namedCurve: "P-256" })
     .privateKey.export({ type: "pkcs8", format: "pem" })
     .toString(),
@@ -100,10 +100,55 @@ describe("POST /send", () => {
       await sendBody({ urgency: "urgent" }),
       await sendBody({ collapseId: 5 }),
       await sendBody({ pad: "x".repeat(9000) }),
+      await sendBody({ ttlSeconds: -1 }),
+      await sendBody({ ttlSeconds: 1.5 }),
+      await sendBody({ ttlSeconds: "60" }),
+      await sendBody({ ttlSeconds: 31 * 24 * 60 * 60 }),
     ];
     for (const body of bodies) {
       expect((await handle(post(body), env, apns.send)).status).toBe(400);
     }
+    expect(apns.sent).toHaveLength(0);
+  });
+
+  test("an oversized body without Content-Length is refused", async () => {
+    const apns = fakeApns();
+    const chunk = new TextEncoder().encode("x".repeat(4096));
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < 3; i++) controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    const request = new Request("https://relay.test/send", {
+      method: "POST",
+      headers: { Authorization: "Bearer test-token" },
+      body,
+      duplex: "half",
+    } as RequestInit);
+    expect((await handle(request, env, apns.send)).status).toBe(400);
+    expect(apns.sent).toHaveLength(0);
+  });
+
+  test("keeps trying an offline phone for a while, by urgency or as asked", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const expiration = async (overrides: Record<string, unknown>) => {
+      const apns = fakeApns();
+      await handle(post(await sendBody(overrides)), env, apns.send);
+      return Number(apns.sent[0]?.headers.get("apns-expiration"));
+    };
+    expect(await expiration({ urgency: "page" })).toBeGreaterThanOrEqual(now + 15 * 60);
+    expect(await expiration({ urgency: "page" })).toBeLessThan(now + 15 * 60 + 5);
+    expect(await expiration({ urgency: "low" })).toBeGreaterThanOrEqual(now + 4 * 60 * 60);
+    expect(await expiration({ ttlSeconds: 120 })).toBeGreaterThanOrEqual(now + 120);
+    expect(await expiration({ ttlSeconds: 0 })).toBe(0);
+  });
+
+  test("a broken APNs key is the relay's error, not the caller's", async () => {
+    const apns = fakeApns();
+    const response = await handle(post(await sendBody()), { ...env, APNS_KEY: "nope" }, apns.send);
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "relay_misconfigured" });
     expect(apns.sent).toHaveLength(0);
   });
 

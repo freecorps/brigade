@@ -21,8 +21,11 @@
   `parsePushEnvelope` for untrusted input, and a 2048-byte plaintext limit so a sealed push stays well inside
   APNs' 4 KB. HPKE `info` is `"app.freecorps.brigade push v1"`, binding every ciphertext to this protocol.
 - **`apps/relay`** (`@freecorps/brigade-relay`, AGPL): the relay Worker, reduced to what the spike needs.
-  `POST /send` takes `{ deviceToken, envelope, urgency, collapseId? }` behind a bearer token
-  (`RELAY_SEND_TOKEN`, compared in constant time) and forwards to APNs. `src/apns.ts` signs the ES256 provider
+  `POST /send` takes `{ deviceToken, envelope, urgency, collapseId?, ttlSeconds? }` behind a bearer token
+  (`RELAY_SEND_TOKEN`, compared in constant time), reading at most 8 KB of body, and forwards to APNs. APNs keeps
+  trying an offline phone until `ttlSeconds` (default 15 minutes for `page`, 1 hour for `high`, 4 hours for
+  `low`; 0 means try once). A broken `APNS_KEY` answers `500 relay_misconfigured`, not a caller error. Traces are
+  off: an outbound fetch span records the URL, which ends in the device token. `src/apns.ts` signs the ES256 provider
   token with WebCrypto, caches it for 40 minutes (APNs wants one between 20 and 60 minutes old), and builds the
   request: `apns-push-type: alert`, priority 10 (5 for `low`), `apns-expiration`, `apns-collapse-id`, and the
   body below. Instance registration, handles, rate limits and FCM are not part of the spike.
@@ -69,8 +72,9 @@
     (`getDevicePushTokenAsync`). A development-only `/push` screen shows the permission, the APNs device token and
     the device public key, and logs them to Metro.
 - **`apps/relay/scripts/send-test-push.ts`** plays the instance: it seals `{ title, body }` for a device's public
-  key and posts it to a relay (`vp run send-test-push -- <device token> <public key> [title] [body] [urgency]`,
-  with `RELAY_URL` and `RELAY_TOKEN_FILE` set).
+  key and posts it to a relay (`vpx scripts/send-test-push.ts <device token> <public key> [title] [body] [urgency]`
+  from `apps/relay`, with `RELAY_URL`, `RELAY_TOKEN_FILE` and `NODE_OPTIONS=--conditions=@freecorps/source` set; see
+  its README).
 
 Versions: Wrangler 4.152.0, workerd 1.20261019.1 (compatibility date 2026-10-19), Expo SDK 58, React Native 0.88,
 Xcode 27.0 beta 6, iPhone 17 Simulator on iOS 27.0, macOS 27.2 on Apple silicon.
@@ -99,7 +103,8 @@ What that means:
 - **The relay stays a plain Worker.** No Container or VM in front of APNs is needed today, and the Sockets API
   (`connect()` with a hand-written HTTP/2 client) was not needed.
 - **Keep the fallback in the RFC, and alert on it.** If the edge stopped upgrading, every APNs send would fail with
-  a network error. The relay must treat `apns_unreachable` as a paging-path failure: alert on it, and keep the
+  a network error. The relay must treat `apns_unreachable` as a paging-path failure: alert on it (not built yet;
+  the spike only logs it), and keep the
   RFC's fallback (a small APNs sender in Cloudflare Containers or a VM) ready. This follows the rule that a paging
   path has a fallback and a test.
 - **Local development cannot reach APNs.** Test against a deployed `dev` Worker, or put an HTTP/2-speaking proxy in
@@ -199,8 +204,8 @@ For a device, use `-destination 'generic/platform=iOS'`. Automatic signing then 
 ## Decision
 
 - **APNs from a Worker: yes.** The relay is a Worker that `fetch`es APNs. Production relies on Cloudflare's edge
-  speaking HTTP/2 to APNs, which is observed, not documented, so the relay alerts on `apns_unreachable` and the
-  Containers/VM sender stays the documented fallback (RFC 0006).
+  speaking HTTP/2 to APNs, which is observed, not documented, so the production relay must alert on
+  `apns_unreachable` (the spike only logs it) and the Containers/VM sender stays the documented fallback (RFC 0006).
 - **Encryption: HPKE** (RFC 9180), base mode, DHKEM(P-256, HKDF-SHA256) + HKDF-SHA256 + AES-128-GCM, `info`
   `"app.freecorps.brigade push v1"`, envelope `{ v: 1, enc, ct }`, in `packages/push` (MIT, WebCrypto only).
   iOS 17+ decrypts in the extension; iOS 16.4 shows the fallback.
@@ -218,6 +223,23 @@ Left for the real iPhone (needs the device):
 3. Check the `pt-BR` fallback with the phone in Portuguese.
 
 ## Open questions
+
+- **What the relay can still do with content it cannot read.** The sealed plaintext is only `{ title, body }`,
+  base mode does not authenticate the sender, and nothing binds a ciphertext to a time, an instance or an urgency.
+  A malicious relay (which already holds device tokens and past envelopes) can replay an old SEV1 days later, or
+  turn a `low` push into a time-sensitive page, since `interruption-level` travels in clear; anyone with a device's
+  public key and access to the relay can forge content. Confidentiality holds. Planned fix (RFC 0006): seal `iat`,
+  the instance id and the urgency inside the plaintext; the extension sets the interruption level from the
+  decrypted urgency and shows the fallback for stale pushes; then sender authentication (HPKE auth mode, or a
+  signature with the instance's Ed25519 key).
+- **One provider token for the whole relay.** Each isolate signs and caches its own JWT. With many isolates APNs
+  may answer `TooManyProviderTokenUpdates`; the production relay should share one token (a Durable Object or KV).
+- **APNs environment per device, not per relay.** Ad hoc and store builds (every EAS build, including
+  `development`) get production device tokens, so the sandbox `dev` relay answers `BadDeviceToken` for them; Xcode
+  debug builds get sandbox tokens. Device registration should record the token's environment.
+- **Extension build number on EAS.** The plugin writes the extension's `CFBundleVersion` from
+  `ios.buildNumber` at prebuild; with `appVersionSource: remote` and `autoIncrement`, check on the first EAS
+  production build that it matches the app's, which App Store Connect requires.
 
 - **Secure Enclave key.** `SecureEnclave.P256.KeyAgreement.PrivateKey` would keep the private key out of memory.
   Whether CryptoKit's HPKE accepts it, and whether the extension can use a key the app created there, needs a

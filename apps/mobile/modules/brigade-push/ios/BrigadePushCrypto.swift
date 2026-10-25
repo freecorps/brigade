@@ -34,12 +34,6 @@ enum BrigadePushCrypto {
     return base64url(try loadOrCreateKey().publicKey.x963Representation)
   }
 
-  /// Deletes the key, so the next `publicKey()` makes a new one. Pushes sealed to the old key show the fallback.
-  static func resetKey() throws {
-    let status = SecItemDelete(baseQuery() as CFDictionary)
-    guard status == errSecSuccess || status == errSecItemNotFound else { throw Failure.keychain(status) }
-  }
-
   /// Opens the `brigade` field of a push: `{ v: 1, enc, ct }` (packages/push `PushEnvelope`).
   static func open(envelope: Any?) throws -> Content {
     guard #available(iOS 17.0, *) else { throw Failure.unsupportedOS }

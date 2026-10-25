@@ -122,15 +122,21 @@ export async function signApnsJwt(credentials: ApnsCredentials, issuedAt: number
 export const APNS_TOKEN_TTL_MS = 40 * 60 * 1000;
 
 export class ApnsTokenCache {
-  #token: { value: Promise<string>; keyId: string; issuedAt: number } | undefined;
+  #token: { value: Promise<string>; credentials: ApnsCredentials; issuedAt: number } | undefined;
 
   async get(credentials: ApnsCredentials, now: number): Promise<string> {
     const cached = this.#token;
-    if (cached && cached.keyId === credentials.keyId && now - cached.issuedAt < APNS_TOKEN_TTL_MS) {
+    // Any change to the key, its id or the team (a rotated secret) signs a new token.
+    const same =
+      cached !== undefined &&
+      cached.credentials.key === credentials.key &&
+      cached.credentials.keyId === credentials.keyId &&
+      cached.credentials.teamId === credentials.teamId;
+    if (same && now - cached.issuedAt < APNS_TOKEN_TTL_MS) {
       return cached.value;
     }
     const value = signApnsJwt(credentials, now);
-    this.#token = { value, keyId: credentials.keyId, issuedAt: now };
+    this.#token = { value, credentials: { ...credentials }, issuedAt: now };
     // A failed signature must not stay cached.
     value.catch(() => {
       if (this.#token?.value === value) this.#token = undefined;

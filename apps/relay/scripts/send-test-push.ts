@@ -3,7 +3,10 @@
  *
  *   RELAY_URL=https://brigade-relay-dev.<subdomain>.workers.dev \
  *   RELAY_TOKEN_FILE=~/.config/brigade/relay-dev-token \
- *   vp run send-test-push -- <device token hex> <device public key base64url> [title] [body] [urgency]
+ *   NODE_OPTIONS=--conditions=@freecorps/source vpx scripts/send-test-push.ts \
+ *   <device token hex> <device public key base64url> [title] [body] [urgency]
+ *
+ * Run it directly: `vp run` does not pass RELAY_URL and RELAY_TOKEN_FILE through to the task.
  *
  * The device token and public key are what the app's dev screen shows. The token is read from a file so it
  * never lands in shell history.

@@ -5,12 +5,12 @@ a device token, an envelope sealed with [`@freecorps/brigade-push`](../../packag
 For now it is spike S1's relay ([write-up](../../docs/spikes/s1-apns-encryption.md)): no instance registration,
 handles, rate limits or FCM yet.
 
-| Route         | Response                                                                                                 |
-| ------------- | -------------------------------------------------------------------------------------------------------- |
-| `GET /health` | `200 {"ok":true}`                                                                                        |
-| `POST /send`  | `Authorization: Bearer <RELAY_SEND_TOKEN>`; body `{ deviceToken, envelope, urgency?, collapseId? }`      |
-|               | `200 { status, apnsId, apnsUniqueId, ms }` when APNs accepts; `502` with APNs' `reason` when it does not |
-|               | `502 {"error":"apns_unreachable"}` when `fetch` fails; `400` for a bad body; `401` without the token     |
+| Route         | Response                                                                                                         |
+| ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `GET /health` | `200 {"ok":true}`                                                                                                |
+| `POST /send`  | `Authorization: Bearer <RELAY_SEND_TOKEN>`; body `{ deviceToken, envelope, urgency?, collapseId?, ttlSeconds? }` |
+|               | `200 { status, apnsId, apnsUniqueId, ms }` when APNs accepts; `502` with APNs' `reason` when it does not         |
+|               | `502 {"error":"apns_unreachable"}` when `fetch` fails; `400` for a bad body; `401` without the token             |
 
 `urgency` is `low` (APNs priority 5), `high` or `page` (priority 10; `page` is `time-sensitive`). The payload's
 alert is a pair of localization keys, the fallback the app shows when it cannot decrypt.
@@ -44,8 +44,10 @@ vp test                                                                   # JWT,
 The device token and public key come from the app's development-only `/push` screen.
 
 ```bash
+# Directly, not through `vp run`: the task runner does not pass RELAY_URL and RELAY_TOKEN_FILE through.
 RELAY_URL=https://brigade-relay-dev.<subdomain>.workers.dev RELAY_TOKEN_FILE=~/.config/brigade/relay-dev-token \
-  vp run send-test-push -- <device token> <device public key> "SEV1 · Checkout down" "502s from payments" page
+  NODE_OPTIONS=--conditions=@freecorps/source vpx scripts/send-test-push.ts \
+  <device token> <device public key> "SEV1 · Checkout down" "502s from payments" page
 ```
 
 License: AGPL-3.0-only.

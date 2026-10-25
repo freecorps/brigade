@@ -17,8 +17,7 @@
     "build:dev": "CLOUDFLARE_ENV=dev vp build",
     "test": "wrangler types --check && vp test",
     "check": "vp check",
-    "cf-typegen": "wrangler types",
-    "send-test-push": "NODE_OPTIONS=--conditions=@freecorps/source vpx scripts/send-test-push.ts"
+    "cf-typegen": "wrangler types"
   },
   "dependencies": {
     "@freecorps/brigade-push": "workspace:*"

@@ -214,7 +214,7 @@ export function MonitorsCard() {
 }
 
 const ROW_GRID =
-  "relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 px-4 py-3 sm:px-6 md:grid-cols-[--spacing(28)_minmax(0,1fr)_minmax(0,18rem)_auto]";
+  "relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 px-4 py-3 sm:px-6 md:grid-cols-[--spacing(28)_minmax(0,1fr)_minmax(0,18rem)_--spacing(30)]";
 
 /**
  * One monitor. Phones stack the badge and name, the target, then the results; from `md` the badge, name and
@@ -245,7 +245,8 @@ function MonitorItem({
   }, [confirming]);
   const cancel = () => {
     setConfirming(false);
-    requestAnimationFrame(() => pauseRef.current?.focus());
+    // The Pause button stays mounted while the prompt is open.
+    pauseRef.current?.focus();
   };
   const latest = row.checks.reduce<MonitorCheck | undefined>(
     (last, check) => (last && last.at >= check.at ? last : check),

@@ -12,6 +12,7 @@ import java.util.Locale
  * or headset, like the rest of a call). Stand-in for the voice bot's server-side TTS (RFC 0010).
  */
 object CallSpeech {
+  private const val UTTERANCE = "brigade-call"
   private var tts: TextToSpeech? = null
   private var ready = false
   private var pending: Pair<String, String>? = null
@@ -23,7 +24,14 @@ object CallSpeech {
     if (engine == null) {
       tts = TextToSpeech(context.applicationContext) { status ->
         ready = status == TextToSpeech.SUCCESS
-        if (!ready) Log.w("BrigadeCall", "text-to-speech unavailable: $status")
+        if (!ready) {
+          Log.w("BrigadeCall", "text-to-speech unavailable: $status")
+          // Nothing will be spoken: tell the call session, which waits for it, that this utterance is over.
+          if (pending != null) {
+            pending = null
+            onDone?.invoke(UTTERANCE)
+          }
+        }
         flush()
       }.apply {
         setAudioAttributes(
@@ -44,6 +52,13 @@ object CallSpeech {
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String) {
               Log.w("BrigadeCall", "speech failed")
+              // As if spoken: the call session moves on (hangs up after an ack) instead of waiting.
+              onDone?.invoke(utteranceId)
+            }
+
+            override fun onError(utteranceId: String, errorCode: Int) {
+              Log.w("BrigadeCall", "speech failed: $errorCode")
+              onDone?.invoke(utteranceId)
             }
           },
         )
@@ -62,7 +77,10 @@ object CallSpeech {
     if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
       Log.w("BrigadeCall", "no voice for $language; using the engine's default")
     }
-    engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "brigade-call")
+    if (engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, UTTERANCE) == TextToSpeech.ERROR) {
+      Log.w("BrigadeCall", "speech not queued")
+      onDone?.invoke(UTTERANCE)
+    }
   }
 
   fun stop() {

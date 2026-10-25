@@ -33,11 +33,14 @@ export function CallDiagnostics() {
     if (!module) return;
     const refresh = () => setStatus(module.getRingStatus());
     void Notifications.requestPermissionsAsync().finally(refresh);
-    void module.getVoipToken().then((token) => {
-      setVoipToken(token);
-      // Development only: lets a script read the token from the Metro log.
-      if (token) console.log(`[brigade-call] ${JSON.stringify({ voipToken: token })}`);
-    });
+    module
+      .getVoipToken()
+      .then((token) => {
+        setVoipToken(token);
+        // Development only: lets a script read the token from the Metro log.
+        if (__DEV__ && token) console.log(`[brigade-call] ${JSON.stringify({ voipToken: token })}`);
+      })
+      .catch(() => setVoipToken(null));
     // Back from the settings screen.
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") refresh();

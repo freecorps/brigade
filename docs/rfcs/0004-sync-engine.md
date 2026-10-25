@@ -416,10 +416,12 @@ One code path for every write → one audit trail.
   incident with the same RBAC and validation, in the same transaction.
 - Server-only mutations sit in `serverMutations` (`packages/schema/src/registry.ts`), never in `mutations`, so a
   socket gets `unknown_mutation` for them. The shard runs them with `internal: true` and de-duplicates them like a
-  socket's: client id `probe:<region>` or `heartbeat`, mutation id the probe's report id. A probe makes one report id
-  per check result and keeps it until the shard accepts the report, so a retried RPC is answered from the stored
-  result; the next check makes a new id. The shard's alarm runs `monitor.evaluate` (client id `monitor`) when
-  results went stale.
+  socket's: client id `probe:<region>` or `heartbeat`, mutation id the probe's report id. A probe stores a new
+  report id with every check result. It sends a report again only after its next check, so a retry carries the
+  newer result under a new id: the de-duplication catches a report delivered twice with one id, not a retry, and a
+  retried report whose first delivery did land is just a newer result for `monitor.report` (an unchanged verdict
+  only refreshes the row). The shard's alarm runs `monitor.evaluate` (client id `monitor`) when results went
+  stale.
 - A storage failure inside the nested `incident.declare` is caught and thrown again, so the shard rolls the whole
   report back and the probe retries, instead of storing `internal` as the report's answer.
 - A mutation may be declared `silent`: it may then succeed without events. Only for writes that refresh observed

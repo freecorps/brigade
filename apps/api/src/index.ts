@@ -1,6 +1,12 @@
 import { workspaceName } from "@freecorps/brigade-schema";
 import { ACTOR_HEADER, resolveActor } from "./actor.ts";
-import { AUTH_BASE_PATH, createAuth, type Auth, type AuthBindings } from "./auth.ts";
+import {
+  AUTH_BASE_PATH,
+  createAuth,
+  WORKSPACE_LIMIT_CODE,
+  type Auth,
+  type AuthBindings,
+} from "./auth.ts";
 import { WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
 
 export { WorkspaceDO } from "./workspace.ts";
@@ -8,8 +14,6 @@ export { WorkspaceDO } from "./workspace.ts";
 const WORKSPACE_PATH = /^\/workspaces\/([^/]+)$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const READ_METHODS = ["GET", "HEAD"];
-/** Better Auth's code when a user already belongs to `WORKSPACE_LIMIT` workspaces. */
-const WORKSPACE_LIMIT_CODE = "YOU_HAVE_REACHED_THE_MAXIMUM_NUMBER_OF_ORGANIZATIONS";
 /** Largest `POST /workspaces` body read, in bytes. */
 const MAX_BODY_LENGTH = 4096;
 

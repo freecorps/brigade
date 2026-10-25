@@ -153,6 +153,15 @@ describe("createWorkspace", () => {
     }) as typeof fetch;
     expect(await createWorkspace("x", offline)).toEqual({ ok: false, status: 0 });
   });
+
+  test("the API's error code comes back, so the limit is told apart from other refusals", async () => {
+    expect(
+      await createWorkspace("x", answer(403, { error: "workspace_limit" }) as typeof fetch),
+    ).toEqual({ ok: false, status: 403, error: "workspace_limit" });
+    expect(
+      await createWorkspace("x", answer(403, { error: "forbidden_origin" }) as typeof fetch),
+    ).toEqual({ ok: false, status: 403, error: "forbidden_origin" });
+  });
 });
 
 describe("opening a new workspace", () => {
@@ -164,7 +173,11 @@ describe("opening a new workspace", () => {
     });
     const signals = ["$sessionSignal", "$activeOrgSignal", "$activeMemberSignal"] as const;
     const before = signals.map((name) => client.$store.atoms[name]?.get());
-    await openWorkspace("ws_1", client);
+    let reloaded = false;
+    await openWorkspace("ws_1", client, () => {
+      reloaded = true;
+    });
+    expect(reloaded).toBe(false);
     expect(calls).toEqual(["/api/auth/organization/set-active"]);
     // A plain session refetch toggles none of the organization signals, so a mounted
     // `useActiveOrganization` would keep its stale `null`.
@@ -174,5 +187,22 @@ describe("opening a new workspace", () => {
         expect(client.$store.atoms[name]?.get(), name).not.toBe(before[index]);
       });
     });
+  });
+});
+
+describe("opening a new workspace when set-active fails", () => {
+  test("an error answer or a network failure falls back to a page load", async () => {
+    for (const fail of [
+      async () => Response.json({ message: "Too many requests" }, { status: 429 }),
+      async () => {
+        throw new TypeError("Failed to fetch");
+      },
+    ]) {
+      let reloaded = false;
+      await openWorkspace("ws_1", makeAuthClient(fail as typeof fetch), () => {
+        reloaded = true;
+      });
+      expect(reloaded).toBe(true);
+    }
   });
 });

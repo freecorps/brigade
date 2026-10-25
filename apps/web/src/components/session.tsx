@@ -106,7 +106,7 @@ function CreateWorkspace() {
       setFailure(
         created.status === 0
           ? m.auth_error_network()
-          : created.status === 403
+          : created.error === "workspace_limit"
             ? m.workspace_error_limit()
             : m.auth_error_generic(),
       );

@@ -107,7 +107,7 @@ export const UNLIMITED_READS = [
 /** Workspaces one user may belong to; bounds `POST /workspaces` (each one also provisions a shard). */
 export const WORKSPACE_LIMIT = 10;
 
-export function authOptions(bindings: AuthBindings, undo?: WorkspaceUndo) {
+export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
   const random: RandomBytes = (length) => crypto.getRandomValues(new Uint8Array(length));
   return {
     appName: "Brigade",
@@ -179,6 +179,15 @@ export function authOptions(bindings: AuthBindings, undo?: WorkspaceUndo) {
           },
           // Runs before Better Auth makes the workspace active in the session, so undoing it here leaves nothing.
           afterCreateOrganization: async ({ organization: workspace, user }) => {
+            // Better Auth counts before it inserts, with no transaction, so parallel creates can all pass
+            // `organizationLimit`. Count again now: keep the user's first WORKSPACE_LIMIT, undo any later one.
+            if (store && (await store.rank(user.id, workspace.id)) >= WORKSPACE_LIMIT) {
+              await store.undo(workspace.id);
+              throw APIError.from("FORBIDDEN", {
+                code: WORKSPACE_LIMIT_CODE,
+                message: "You have reached the maximum number of workspaces",
+              });
+            }
             try {
               await bindings.onWorkspaceCreated?.({
                 id: workspace.id,
@@ -186,7 +195,7 @@ export function authOptions(bindings: AuthBindings, undo?: WorkspaceUndo) {
                 ownerId: user.id,
               });
             } catch (error) {
-              await undo?.(workspace.id);
+              await store?.undo(workspace.id);
               throw error;
             }
           },
@@ -196,19 +205,42 @@ export function authOptions(bindings: AuthBindings, undo?: WorkspaceUndo) {
   } satisfies BetterAuthOptions;
 }
 
-/** Deletes a workspace Better Auth just created, with its memberships. */
-type WorkspaceUndo = (workspaceId: string) => Promise<void>;
+/** Better Auth's error code when a user already belongs to `WORKSPACE_LIMIT` workspaces. */
+export const WORKSPACE_LIMIT_CODE = "YOU_HAVE_REACHED_THE_MAXIMUM_NUMBER_OF_ORGANIZATIONS";
+
+type WorkspaceStore = {
+  /** Deletes a workspace Better Auth just created, with its memberships. */
+  undo(workspaceId: string): Promise<void>;
+  /** How many of the user's memberships are older than the one in `workspaceId` (0 for the first). */
+  rank(userId: string, workspaceId: string): Promise<number>;
+};
 
 export function createAuth(bindings: AuthBindings) {
   // The hook runs inside a request to this instance, so its context (and adapter) exists by then.
   const auth = betterAuth(
-    authOptions(bindings, async (workspaceId) => {
-      const { adapter } = await auth.$context;
-      await adapter.deleteMany({
-        model: "member",
-        where: [{ field: "organizationId", value: workspaceId }],
-      });
-      await adapter.delete({ model: "organization", where: [{ field: "id", value: workspaceId }] });
+    authOptions(bindings, {
+      async undo(workspaceId: string): Promise<void> {
+        const { adapter } = await auth.$context;
+        await adapter.deleteMany({
+          model: "member",
+          where: [{ field: "organizationId", value: workspaceId }],
+        });
+        await adapter.delete({
+          model: "organization",
+          where: [{ field: "id", value: workspaceId }],
+        });
+      },
+      async rank(userId: string, workspaceId: string): Promise<number> {
+        const { adapter } = await auth.$context;
+        const memberships: { organizationId: string }[] = await adapter.findMany({
+          model: "member",
+          where: [{ field: "userId", value: userId }],
+          // Oldest first.
+          sortBy: { field: "createdAt", direction: "asc" },
+        });
+        const index = memberships.findIndex((member) => member.organizationId === workspaceId);
+        return index === -1 ? memberships.length : index;
+      },
     }),
   );
   return auth;

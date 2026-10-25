@@ -383,6 +383,26 @@ describe("POST /workspaces", () => {
     expect(await over.json()).toEqual({ error: "workspace_limit" });
   });
 
+  test("parallel creates cannot get past the limit", async () => {
+    const founder = await signUp("Racer");
+    const responses = await Promise.all(
+      Array.from({ length: WORKSPACE_LIMIT + 5 }, (_, i) =>
+        api("/workspaces", {
+          method: "POST",
+          headers: { Cookie: founder.cookie },
+          body: JSON.stringify({ name: `Team ${i}` }),
+        }),
+      ),
+    );
+    const statuses = responses.map((response) => response.status);
+    expect(statuses.every((status) => status === 201 || status === 403)).toBe(true);
+    const kept = await env.DB.prepare(`select count(*) as n from "member" where "userId" = ?`)
+      .bind(founder.user.id)
+      .first<{ n: number }>();
+    expect(kept?.n).toBeLessThanOrEqual(WORKSPACE_LIMIT);
+    expect(kept?.n).toBe(statuses.filter((status) => status === 201).length);
+  });
+
   test("a body over 4 KiB is refused, whether or not it declares its length", async () => {
     const ana = await signUp("Ana");
     const big = JSON.stringify({ name: "Acme", padding: "x".repeat(5000) });

@@ -32,8 +32,16 @@ export const authClient = makeAuthClient();
 export async function openWorkspace(
   id: string,
   client: Pick<typeof authClient, "organization"> = authClient,
+  reload: () => void = () => window.location.assign("/"),
 ): Promise<void> {
-  await client.organization.setActive({ organizationId: id });
+  try {
+    const { error } = await client.organization.setActive({ organizationId: id });
+    if (!error) return;
+  } catch {
+    // A network failure: fall through.
+  }
+  // The server already made the workspace active (`POST /workspaces` does), so a fresh page load opens it.
+  reload();
 }
 
 export type SignUpField = "name" | "email" | "password" | "workspace";
@@ -114,7 +122,9 @@ export type CreatedWorkspace = { id: string; name: string };
 export async function createWorkspace(
   name: string,
   fetcher: typeof fetch = fetch,
-): Promise<{ ok: true; workspace: CreatedWorkspace } | { ok: false; status: number }> {
+): Promise<
+  { ok: true; workspace: CreatedWorkspace } | { ok: false; status: number; error?: string }
+> {
   let response: Response;
   try {
     response = await fetcher("/api/workspaces", {
@@ -125,7 +135,17 @@ export async function createWorkspace(
   } catch {
     return { ok: false, status: 0 };
   }
-  if (response.status !== 201) return { ok: false, status: response.status };
+  if (response.status !== 201) {
+    // The API's `{ error }` code, so the form can tell the workspace limit from other refusals.
+    const body: unknown = await response.json().catch(() => null);
+    const error =
+      typeof body === "object" && body !== null ? Reflect.get(body, "error") : undefined;
+    return {
+      ok: false,
+      status: response.status,
+      ...(typeof error === "string" ? { error } : {}),
+    };
+  }
   try {
     const body = (await response.json()) as Partial<CreatedWorkspace>;
     if (typeof body.id !== "string" || typeof body.name !== "string")

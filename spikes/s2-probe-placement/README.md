@@ -7,7 +7,7 @@ regional endpoints. Question, method and results: [docs/spikes/s2-probe-placemen
 
 | Route                                  | Auth  | Does                                                       |
 | -------------------------------------- | ----- | ---------------------------------------------------------- |
-| `GET /summary[?hours=N]`               | none  | Per-hint summary as JSON (no addresses, no instance ids)   |
+| `GET /summary[?hours=N]`               | token | Per-hint summary as JSON (no addresses, no instance ids)   |
 | `POST /probes/start[?hint=H]`          | token | Starts every probe (or one); the first sample runs at once |
 | `POST /probes/stop[?hint=H]`           | token | Stops sampling; keeps the samples                          |
 | `POST /probes/reset[?hint=H]`          | token | Stops and deletes the samples                              |
@@ -21,5 +21,5 @@ vp run --filter @freecorps/brigade-spike-s2 build
 # Deploy what was built; the secrets file is outside the repo and holds PROBE_ADMIN_TOKEN=<random>.
 cd spikes/s2-probe-placement && bunx wrangler deploy --secrets-file <path>
 curl -X POST -H "Authorization: Bearer <token>" https://brigade-probe-dev.<subdomain>.workers.dev/probes/start
-vpx scripts/report.ts https://brigade-probe-dev.<subdomain>.workers.dev --hours 48
+PROBE_ADMIN_TOKEN=<token> vpx scripts/report.ts https://brigade-probe-dev.<subdomain>.workers.dev --hours 48
 ```

@@ -97,19 +97,26 @@ export class ProbeDO extends DurableObject<Env> {
     // Set the next alarm before measuring, so nothing below can end the chain.
     await this.ctx.storage.setAlarm(ts + INTERVAL_MS);
     const sample = await measure(this.fetcher);
+    // `stop` or `reset` may have run while the fetches were in flight (input gates open on outbound I/O).
+    if (!this.ctx.storage.kv.get<boolean>("running")) return;
     const timings: Record<string, number | null> = { trace: sample.trace.ms };
     for (const [target, timing] of Object.entries(sample.targets)) timings[target] = timing.ms;
-    this.ctx.storage.sql.exec(
-      "INSERT INTO samples (ts, scheduled, retry, instance, colo, loc, timings) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      ts,
-      info?.scheduledTime ?? null,
-      info?.retryCount ?? 0,
-      this.instance,
-      sample.colo,
-      sample.loc,
-      JSON.stringify(timings),
-    );
-    this.ctx.storage.sql.exec("DELETE FROM samples WHERE ts < ?", ts - RETENTION_MS);
+    try {
+      this.ctx.storage.sql.exec(
+        "INSERT INTO samples (ts, scheduled, retry, instance, colo, loc, timings) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ts,
+        info?.scheduledTime ?? null,
+        info?.retryCount ?? 0,
+        this.instance,
+        sample.colo,
+        sample.loc,
+        JSON.stringify(timings),
+      );
+      this.ctx.storage.sql.exec("DELETE FROM samples WHERE ts < ?", ts - RETENTION_MS);
+    } catch (error) {
+      // Caught so a storage error loses one sample instead of sending the alarm into runtime retries.
+      console.error(JSON.stringify({ message: "storing a sample failed", error: String(error) }));
+    }
   }
 
   private rows(since: number): SampleRow[] {

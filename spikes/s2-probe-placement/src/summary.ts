@@ -4,7 +4,7 @@
 export type SampleRow = {
   /** When the alarm handler started (ms since epoch). */
   ts: number;
-  /** When the alarm was set to fire, or null for the first sample after `start`. */
+  /** When the alarm was set to fire, or null if the runtime passed no alarm info. */
   scheduled: number | null;
   /** The alarm's retry count (0 on a normal run). */
   retry: number;

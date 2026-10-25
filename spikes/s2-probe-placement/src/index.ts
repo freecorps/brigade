@@ -1,4 +1,13 @@
-import { HINTS, INTERVAL_MS, isHint, probeName, TARGETS, TRACE_URL, type Hint } from "./config.ts";
+import {
+  HINTS,
+  INTERVAL_MS,
+  isHint,
+  probeName,
+  RETENTION_MS,
+  TARGETS,
+  TRACE_URL,
+  type Hint,
+} from "./config.ts";
 
 export { ProbeDO } from "./probe.ts";
 
@@ -7,16 +16,21 @@ const ADMIN = /^\/probes\/(start|stop|reset)$/;
 /**
  * Spike S2 routes (docs/spikes/s2-probe-placement.md):
  *
- * - `GET /summary[?hours=N]`: public, the per-hint summary as JSON (colos, timings; nothing sensitive).
- * - `POST /probes/{start,stop,reset}[?hint=H]`: admin, every probe or one.
- * - `GET /probes/samples?hint=H[&hours=N]`: admin, raw samples of one probe.
+ * - `GET /summary[?hours=N]`: the per-hint summary as JSON (colos, timings; nothing sensitive).
+ * - `POST /probes/{start,stop,reset}[?hint=H]`: every probe or one.
+ * - `GET /probes/samples?hint=H[&hours=N]`: raw samples of one probe.
  *
- * Admin routes need `Authorization: Bearer <PROBE_ADMIN_TOKEN>`.
+ * Every route needs `Authorization: Bearer <PROBE_ADMIN_TOKEN>`: even `/summary` wakes all eleven objects and
+ * reads days of rows, so it is not left open to anyone who finds the URL.
  */
 export default {
   async fetch(request, env): Promise<Response> {
     const url = new URL(request.url);
     const { pathname } = url;
+    const action = ADMIN.exec(pathname)?.[1];
+    if (action === undefined && pathname !== "/summary" && pathname !== "/probes/samples")
+      return json({ error: "not_found" }, 404);
+    if (!(await authorized(request, env))) return json({ error: "unauthorized" }, 401);
 
     if (pathname === "/summary") {
       if (request.method !== "GET") return methodNotAllowed("GET");
@@ -41,10 +55,6 @@ export default {
       });
     }
 
-    const action = ADMIN.exec(pathname)?.[1];
-    if (action === undefined && pathname !== "/probes/samples")
-      return json({ error: "not_found" }, 404);
-    if (!(await authorized(request, env))) return json({ error: "unauthorized" }, 401);
     const hintParam = url.searchParams.get("hint");
     if (hintParam !== null && !isHint(hintParam)) return json({ error: "invalid_hint" }, 400);
 
@@ -83,12 +93,17 @@ function probe(env: Env, hint: Hint) {
   return env.PROBE.getByName(probeName(hint), { locationHint: hint });
 }
 
-/** `?hours=N` as a lower bound in ms since epoch: 0 without it, undefined when invalid. */
+/**
+ * `?hours=N` as a lower bound in ms since epoch: 0 without it, undefined when invalid. Capped at the retention
+ * window, which is everything stored anyway (and keeps the bound inside `Date`'s range).
+ */
 function sinceParam(url: URL): number | undefined {
   const hours = url.searchParams.get("hours");
   if (hours === null) return 0;
   const value = Number(hours);
-  return Number.isFinite(value) && value > 0 ? Date.now() - value * 3_600_000 : undefined;
+  return Number.isFinite(value) && value > 0 && value * 3_600_000 <= RETENTION_MS
+    ? Date.now() - value * 3_600_000
+    : undefined;
 }
 
 /** Compares SHA-256 digests in constant time, so neither length nor content leaks through timing. */

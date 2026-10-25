@@ -3,7 +3,7 @@
  *
  *   vpx scripts/report.ts https://brigade-probe-dev.<subdomain>.workers.dev [--hours 48] [--json]
  *
- * The URL can also come from PROBE_URL. Only the public `/summary` is read; no token needed.
+ * The URL can also come from PROBE_URL. Reads `/summary` with the admin token from PROBE_ADMIN_TOKEN.
  */
 import { parseArgs } from "node:util";
 import type { ProbeSummary, Stats } from "../src/summary.ts";
@@ -31,9 +31,15 @@ if (!base) {
   process.exit(2);
 }
 
+const token = process.env.PROBE_ADMIN_TOKEN;
+if (!token) {
+  console.error("set PROBE_ADMIN_TOKEN (the Worker's admin token)");
+  process.exit(2);
+}
+
 const url = new URL("/summary", base);
 if (values.hours) url.searchParams.set("hours", values.hours);
-const response = await fetch(url);
+const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
 if (!response.ok) {
   console.error(`GET ${url.pathname}: ${response.status} ${await response.text()}`);
   process.exit(1);

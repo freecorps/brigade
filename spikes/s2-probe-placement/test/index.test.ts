@@ -49,8 +49,9 @@ describe("trace parsing", () => {
   });
 });
 
-describe("admin routes", () => {
+describe("routes", () => {
   test("refuse requests without the token", async () => {
+    expect((await call("/summary")).status).toBe(401);
     for (const path of ["/probes/start", "/probes/stop", "/probes/reset"]) {
       expect((await call(path, { method: "POST" })).status, path).toBe(401);
       const wrong = await call(path, { method: "POST", headers: { Authorization: "Bearer nope" } });
@@ -113,7 +114,7 @@ describe("admin routes", () => {
 });
 
 describe("GET /summary", () => {
-  test("is public and lists every hint", async () => {
+  test("lists every hint", async () => {
     const stub = env.PROBE.getByName(probeName("enam"));
     await runInDurableObject(stub, (instance: ProbeDO) => {
       instance.fetcher = fakeFetch("IAD");
@@ -121,7 +122,7 @@ describe("GET /summary", () => {
     await stub.start("enam");
     await vi.waitFor(async () => expect(await samplesOf(stub)).toHaveLength(1));
 
-    const response = await call("/summary");
+    const response = await admin("/summary", "GET");
     expect(response.status).toBe(200);
     const body = await response.json<{
       probes: { hint: string; samples: number; colos: { colo: string }[] }[];
@@ -133,10 +134,12 @@ describe("GET /summary", () => {
   });
 
   test("validates hours and the method", async () => {
-    expect((await call("/summary?hours=0")).status).toBe(400);
-    expect((await call("/summary?hours=abc")).status).toBe(400);
-    expect((await call("/summary?hours=48")).status).toBe(200);
-    expect((await call("/summary", { method: "POST" })).status).toBe(405);
+    expect((await admin("/summary?hours=0", "GET")).status).toBe(400);
+    expect((await admin("/summary?hours=abc", "GET")).status).toBe(400);
+    // Past the retention window, and far enough to fall outside Date's range.
+    expect((await admin("/summary?hours=1e10", "GET")).status).toBe(400);
+    expect((await admin("/summary?hours=48", "GET")).status).toBe(200);
+    expect((await admin("/summary")).status).toBe(405);
     expect((await call("/nope")).status).toBe(404);
   });
 });

@@ -1,6 +1,6 @@
 # Spike S2 — Probe placement
 
-- Status: Running. Deployed and sampling since 2026-10-25 14:41 UTC; the 48-hour result is pending (see the end)
+- Status: Running. Deployed and sampling since 2026-10-25 14:51 UTC; the 48-hour result is pending (see the end)
 - Roadmap: Phase 0, S2
 - Settles (once the 48 hours are read): RFC 0007 "Placement" (one `ProbeDO` per workspace and region, created with
   a `locationHint`, reporting the colo it really ran from)
@@ -35,15 +35,16 @@ not meant to become product code; it sits in the workspace (`spikes/*`) only so 
   - writes one row: start time, the time the alarm was set for, its retry count, a random id per object
     instance, colo, the trace's `loc`, and the timings. The egress address in the trace is not stored. Rows
     older than 8 days are pruned.
-- **Routes.** `GET /summary[?hours=N]` is public: per hint, the colo histogram with first and last seen, the
+- **Routes.** `GET /summary[?hours=N]`: per hint, the colo histogram with first and last seen, the
   number of colo changes and the runs between them, instances, the gaps between samples, alarm lateness, retries
-  and latency percentiles (nearest rank). `POST /probes/{start,stop,reset}` and `GET /probes/samples` (raw rows)
-  need `Authorization: Bearer <PROBE_ADMIN_TOKEN>`, a Wrangler secret compared by SHA-256 digest with
-  `crypto.subtle.timingSafeEqual`.
-- **Report.** `vpx scripts/report.ts <worker url> [--hours 48]` prints the summary as three tables
+  and latency percentiles (nearest rank). Also `POST /probes/{start,stop,reset}` and `GET /probes/samples` (raw
+  rows). Every route needs `Authorization: Bearer <PROBE_ADMIN_TOKEN>`, a Wrangler secret compared by SHA-256
+  digest with `crypto.subtle.timingSafeEqual`; `/summary` too, since each call wakes all eleven objects and
+  reads days of rows.
+- **Report.** `PROBE_ADMIN_TOKEN=<token> vpx scripts/report.ts <worker url> [--hours 48]` prints the summary as three tables
   (placement, alarms, latency), plus the colo runs of any probe that moved.
 - **Tests** (`@cloudflare/vitest-plugin`, as in apps/api): the summary logic (percentiles, colo runs and moves,
-  instances, failures, retries), trace parsing, the admin routes refusing a missing or wrong token, an alarm
+  instances, failures, retries), trace parsing, every route refusing a missing or wrong token, an alarm
   storing a sample from a stubbed fetch and scheduling the next one, stop, reset, and `/summary` listing every
   hint without the egress address.
 
@@ -98,22 +99,27 @@ What these first samples already show:
   Singapore: 1654 ms). Product checks will report the same cold-connection time unless they separate connect
   from response time, which a Worker `fetch` does not expose.
 - **The alarms ran on time**: within 0 to 150 ms of the time they were set for, 60 s apart, no retries.
-- **Every sample so far ran in a new instance**: the runtime evicts the idle object between alarms a minute
-  apart and constructs it again for the next one, in the same colo. A new instance is therefore not a migration
-  signal, only a colo change is; and a probe pays the object's cold start on every run.
+- **In the first samples, each one ran in a new instance**: the runtime seems to evict the idle object between
+  alarms a minute apart and construct it again in the same colo. If that holds over 48 hours, a new instance is
+  not a migration signal (only a colo change is), and a probe pays the object's cold start on every run.
 
 ## What remains to observe (pending)
 
-The 48-hour window ends 2026-10-27 14:41 UTC. Then, from `vpx scripts/report.ts <url> --hours 48`:
+The 48-hour window ends 2026-10-27 14:51 UTC (the samples were reset when the reviewed version was deployed). Then, from `PROBE_ADMIN_TOKEN=<token> vpx scripts/report.ts <url> --hours 48`:
 
 - [ ] Colo histogram per hint: still one colo each, or did any probe move (`moves`, and the colo runs)?
 - [ ] Alarm cadence: gaps between samples (p95, max), lateness, retries, and any hole longer than a few minutes.
 - [ ] Latency percentiles per hint and target over 48 hours, and how many requests failed.
-- [ ] Instances per hint over 48 hours (how often objects are reconstructed).
+- [ ] Instances per hint over 48 hours: is every sample a new instance, as the first ones suggest?
 - [ ] Answer question 3 and update RFC 0007 "Placement" in the same PR as this result.
 
-The probes keep running after the window; stop them with `POST /probes/stop` (keeps the samples). Deleting the
-Worker deletes the samples, so ask before doing it.
+Do not redeploy `brigade-probe-dev` before the window ends: a deploy restarts every object, which inflates
+`instances` and could move a probe.
+
+The probes keep running after the window. Once the result is recorded, stop them with `POST /probes/stop` (keeps
+the samples), and in the PR that records the result delete the Worker (`wrangler delete`, which deletes the
+samples too, so only after the result is written down) and remove `spikes/s2-probe-placement`, following RFC
+0002's rule for spike code.
 
 ## Result (48 hours)
 

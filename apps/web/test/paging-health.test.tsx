@@ -160,24 +160,25 @@ describe("PagingHealthNotice", () => {
       return Response.json({ status: "ok", reasons: [] });
     }) as unknown as typeof fetch;
     try {
+      /** Runs `step` and lets any check it started settle and render. */
+      const settle = (step: () => void) =>
+        act(async () => {
+          step();
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+      const visible = (next: DocumentVisibilityState) =>
+        settle(() => {
+          visibility = next;
+          document.dispatchEvent(new Event("visibilitychange"));
+        });
       await mount(fetcher);
       expect(calls).toBe(1);
-      visibility = "hidden";
-      act(() => {
-        document.dispatchEvent(new Event("visibilitychange"));
-      });
-      act(() => {
-        vi.advanceTimersByTime(PAGING_REFRESH_MS * 3);
-      });
+      await visible("hidden");
+      await settle(() => vi.advanceTimersByTime(PAGING_REFRESH_MS * 3));
       expect(calls).toBe(1);
-      visibility = "visible";
-      act(() => {
-        document.dispatchEvent(new Event("visibilitychange"));
-      });
+      await visible("visible");
       expect(calls).toBe(2);
-      act(() => {
-        vi.advanceTimersByTime(PAGING_REFRESH_MS);
-      });
+      await settle(() => vi.advanceTimersByTime(PAGING_REFRESH_MS));
       expect(calls).toBe(3);
     } finally {
       state.mockRestore();

@@ -1603,5 +1603,53 @@
     }
   ],
   "auth_error_email_not_verified": "Confirme seu email primeiro: abra o link que o Brigade enviou e depois entre.",
-  "auth_sign_up_invited_description": "Use o endereço para o qual o convite foi enviado. Depois de confirmá-lo, você pode aceitar o convite."
+  "auth_sign_up_invited_description": "Use o endereço para o qual o convite foi enviado. Depois de confirmá-lo, você pode aceitar o convite.",
+  "email_reset": [
+    {
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "Redefina sua senha do Brigade",
+        "part=intro": "Alguém pediu para redefinir a senha da conta do Brigade de {email}. Se foi você, escolha uma nova senha por este link.",
+        "part=open": "Escolher nova senha",
+        "part=expires": "O link vale uma vez, por 1 hora. Definir uma nova senha encerra a sessão da conta em todos os lugares, inclusive nos celulares, e confirma este endereço de email.",
+        "part=footer": "Se você não pediu isso, ignore este email: sua senha continua a mesma.",
+        "part=*": "Brigade"
+      }
+    }
+  ],
+  "reset_page": [
+    {
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
+      "match": {
+        "part=forgot_link": "Esqueceu a senha?",
+        "part=forgot_page_title": "Esqueci a senha",
+        "part=forgot_title": "Redefinir sua senha",
+        "part=forgot_description": "Informe o e-mail do seu cadastro. Enviaremos um link para você escolher uma nova senha.",
+        "part=send": "Enviar o link",
+        "part=sending": "Enviando…",
+        "part=sent_title": "Confira seu e-mail",
+        "part=sent_body": "Se {email} tiver uma conta no Brigade, um link para escolher uma nova senha está a caminho. Ele vale por 1 hora. Confira também o spam.",
+        "part=other_address": "Usar outro endereço",
+        "part=rate_limited": "Muitos links pedidos para este endereço. Tente de novo em uma hora.",
+        "part=not_configured": "Este servidor do Brigade ainda não envia e-mails. Fale com quem o administra.",
+        "part=failed": "Não foi possível enviar o link. Tente de novo.",
+        "part=back": "Voltar para entrar",
+        "part=reset_page_title": "Nova senha",
+        "part=reset_title": "Escolha uma nova senha",
+        "part=reset_description": "Ao salvar, sua conta é desconectada em todos os lugares, inclusive no app do celular.",
+        "part=new_password_label": "Nova senha",
+        "part=save": "Salvar nova senha",
+        "part=saving": "Salvando…",
+        "part=done_title": "Senha alterada",
+        "part=done_body": "Entre com a nova senha. Todas as sessões foram encerradas, e seu endereço de e-mail está confirmado.",
+        "part=sign_in": "Entrar",
+        "part=invalid_title": "Este link não funciona",
+        "part=invalid_body": "Ele pode ter expirado (os links valem por 1 hora), já ter sido usado ou ter sido cortado. Peça um novo.",
+        "part=request_new": "Enviar um novo link",
+        "part=*": "Redefinir sua senha"
+      }
+    }
+  ]
 }

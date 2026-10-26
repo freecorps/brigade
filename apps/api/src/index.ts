@@ -87,9 +87,12 @@ export async function withoutInvitations(response: Response): Promise<Response> 
 /**
  * Other Better Auth routes refused. `/expo-authorization-proxy` (the `expo()` plugin's) redirects to any HTTPS URL it
  * is given, for social sign-in through the system browser; until that sign-in exists it would only be an open
- * redirect on Brigade's host.
+ * redirect on Brigade's host. `/reset-password/:token` (`REFUSED_PREFIXES`) redirects a reset token to a
+ * `callbackURL`, `brigade://` included, where any app claiming the scheme would get it; the reset email links to the
+ * dashboard's page instead, which posts the token to `/reset-password`.
  */
 const REFUSED_ROUTES = new Set(["/expo-authorization-proxy"]);
+const REFUSED_PREFIXES = ["/reset-password/"];
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {
@@ -102,7 +105,8 @@ export default {
       const route = pathname.slice(AUTH_BASE_PATH.length);
       if (
         (route.startsWith("/organization/") && !ORGANIZATION_ROUTES.has(route)) ||
-        REFUSED_ROUTES.has(route)
+        REFUSED_ROUTES.has(route) ||
+        REFUSED_PREFIXES.some((prefix) => route.startsWith(prefix))
       ) {
         return json({ error: "not_found" }, 404);
       }
@@ -252,11 +256,53 @@ export function workerAuth(
     // The web Worker forwards with the browser's URL, so this is the protocol the browser used.
     secureCookies: new URL(request.url).protocol === "https:",
     onWorkspaceCreated: onWorkspaceCreated ?? provisionWith(env),
+    onPasswordReset: signOutWith(env),
     // Made only when a verification email goes out, so other requests never read the email settings.
     get email() {
       return { sender: emailSender(env), dashboardUrl: (env as NotifyEnv).DASHBOARD_URL };
     },
   });
+}
+
+/**
+ * After a password reset (RFC 0002 "Auth"): signs the user out of every workspace they belong to in D1, each shard
+ * dropping their devices and closing their sockets (`signOutUser`). Never throws: the password is already changed and
+ * every session gone; a shard that fails is logged, and its devices stay registered until the user's app signs in
+ * again or unregisters them.
+ */
+export function signOutWith(env: Env): NonNullable<AuthBindings["onPasswordReset"]> {
+  return async (userId) => {
+    let workspaces: string[];
+    try {
+      const { results } = await env.DB.prepare(
+        `select "organizationId" as id from member where "userId" = ?`,
+      )
+        .bind(userId)
+        .all<{ id: string }>();
+      workspaces = results.map((row) => row.id).filter((id) => WORKSPACE_ID.test(id));
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          message: "reading a reset account's workspaces failed",
+          error: String(error),
+        }),
+      );
+      return;
+    }
+    const outcomes = await Promise.allSettled(
+      workspaces.map((id) => env.WORKSPACE.getByName(id).signOutUser(id, userId)),
+    );
+    outcomes.forEach((outcome, index) => {
+      if (outcome.status === "fulfilled" && outcome.value.ok) return;
+      console.error(
+        JSON.stringify({
+          message: "signing a reset account out of a workspace failed",
+          workspace: workspaces[index],
+          error: outcome.status === "rejected" ? String(outcome.reason) : outcome.value.code,
+        }),
+      );
+    });
+  };
 }
 
 function provisionWith(env: Env): NonNullable<AuthBindings["onWorkspaceCreated"]> {

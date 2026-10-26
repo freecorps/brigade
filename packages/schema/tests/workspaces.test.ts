@@ -40,6 +40,7 @@ describe("workspace.create", () => {
       "monitor.report",
       "monitor.evaluate",
       "device.expire",
+      "device.signOut",
       "notification.fail",
       "notification.failEmail",
       "delivery.plan",

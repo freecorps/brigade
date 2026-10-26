@@ -6,6 +6,7 @@
 import type { Locale } from "@freecorps/brigade-i18n";
 import {
   email_invite,
+  email_reset,
   email_text,
   email_verify,
   member_role,
@@ -146,8 +147,8 @@ export function renderEmail(
 }
 
 /**
- * An account email (verification, invitation): an optional greeting, paragraphs, one link as a button-like anchor,
- * then a footer. Every line is text, escaped as a whole in the HTML, like `renderEmail`.
+ * An account email (verification, password reset, invitation): an optional greeting, paragraphs, one link as a
+ * button-like anchor, then a footer. Every line is text, escaped as a whole in the HTML, like `renderEmail`.
  */
 function renderMessage(
   parts: {
@@ -191,6 +192,29 @@ export function renderVerificationEmail(
   locale: Locale,
 ): OutgoingEmail {
   const text = (part: string) => email_verify({ part, email: to.email }, { locale });
+  return renderMessage(
+    {
+      subject: text("subject"),
+      lines: [text("intro")],
+      link: { label: text("open"), url },
+      after: [text("expires")],
+      footer: text("footer"),
+    },
+    to,
+    locale,
+  );
+}
+
+/**
+ * The password reset email (RFC 0002 "Auth"): `url` is the dashboard's `/reset-password` page. Like the verification
+ * email, nothing in it but the address: on an account nobody verified, whoever signed up typed the name.
+ */
+export function renderPasswordResetEmail(
+  to: { email: string },
+  url: string,
+  locale: Locale,
+): OutgoingEmail {
+  const text = (part: string) => email_reset({ part, email: to.email }, { locale });
   return renderMessage(
     {
       subject: text("subject"),

@@ -4,9 +4,8 @@
 // first, then runs these, so they never decide a change on their own (apps/api/src/members.ts).
 
 import { can, ROLES, type Role } from "./access.ts";
-import { forgetDevice, type DeviceUnregistered } from "./devices.ts";
+import { dropDevices } from "./devices.ts";
 import { defineMutation, fail, ok, type Actor, type DomainEvent } from "./mutation.ts";
-import type { MutationStore } from "./mutation.ts";
 import { dropFromSchedules } from "./schedules.ts";
 import { v } from "./validate.ts";
 
@@ -69,20 +68,6 @@ export function checkMemberChange(
 }
 
 /** Deletes every device of `userId` (they stop being paged right away), with a `device.unregistered` each. */
-function dropDevices(store: MutationStore, userId: string): DeviceUnregistered[] {
-  const events: DeviceUnregistered[] = [];
-  for (const device of store.scan("devices")) {
-    if (device.userId !== userId) continue;
-    forgetDevice(store, device.id);
-    events.push({
-      type: "device.unregistered",
-      subject: device.id,
-      data: { id: device.id, userId, reason: "member_removed" },
-    });
-  }
-  return events;
-}
-
 const memberId = v.string({ min: 1, max: 64 });
 
 /**
@@ -137,7 +122,7 @@ export const removeMember = defineMutation({
       return fail("forbidden", "Not allowed to remove this member");
     }
     if (store.get("members", args.id)) store.delete("members", args.id);
-    const devices = dropDevices(store, args.id);
+    const devices = dropDevices(store, args.id, "member_removed");
     const schedules = dropFromSchedules(store, args.id, ctx);
     const event: MemberRemoved = {
       type: "member.removed",
@@ -184,7 +169,7 @@ export const reconcileMembers = defineMutation({
         };
         events.push(
           event,
-          ...dropDevices(store, current.id),
+          ...dropDevices(store, current.id, "member_removed"),
           ...dropFromSchedules(store, current.id, ctx),
         );
       } else if (role !== current.role) {
@@ -205,7 +190,7 @@ export const reconcileMembers = defineMutation({
         .map((device) => device.userId)
         .filter((userId) => !roles.has(userId)),
     );
-    for (const userId of orphans) events.push(...dropDevices(store, userId));
+    for (const userId of orphans) events.push(...dropDevices(store, userId, "member_removed"));
     if (events.length === 0) return fail("conflict", "Members are up to date");
     return ok(...events);
   },

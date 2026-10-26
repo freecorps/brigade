@@ -135,8 +135,11 @@ export type MemberChangeResult =
       code: "forbidden" | "last_owner" | "not_found" | "conflict" | "unavailable" | "not_applied";
     };
 
-/** Why the shard closes a member's sockets: they are no longer a member, or their role changed. */
-export type SocketVerdict = "removed" | "role_changed";
+/**
+ * Why the shard closes a member's sockets: they are no longer a member, their role changed, or their password was
+ * reset, which ended every session (`signOutUser` in src/workspace.ts).
+ */
+export type SocketVerdict = "removed" | "role_changed" | "signed_out";
 
 /** After a `not_applied`, the shard's alarm reconciles the members this soon, whether or not anyone connects. */
 export const MEMBER_REPAIR_DELAY_MS = 10 * 1000;

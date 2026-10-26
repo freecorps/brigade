@@ -1,6 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  ACCOUNT_ACTOR,
   fitMemberName,
+  newId,
   type Actor,
   type EmailAbout,
   type MemberChange,
@@ -450,6 +452,35 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
+   * After `userId`'s password was reset (RPC from the API Worker's Better Auth hook, RFC 0002 "Auth"): stops paging
+   * their devices here (`device.signOut` as `ACCOUNT_ACTOR`, a `device.unregistered` for each) and closes their open
+   * sockets, which then reconnect with no session and are refused. Better Auth has already deleted every session, so
+   * this is what keeps a phone or a socket of whoever held the account before from going on as them. Nothing to drop
+   * is fine. A shard that serves another workspace, or none yet, answers `not_found`; a storage failure throws.
+   */
+  signOutUser(workspaceId: string, userId: string): { ok: boolean; code?: "not_found" } {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    const now = Date.now();
+    const { result, changes } = this.shard.mutate({
+      clientId: "api",
+      mutationId: newId("mut", now, (length) => crypto.getRandomValues(new Uint8Array(length))),
+      actor: ACCOUNT_ACTOR,
+      name: "device.signOut",
+      args: { userId },
+      now,
+      internal: true,
+    });
+    if (result.ok) this.broadcast(result.version, changes, undefined);
+    else if (result.error.code !== "conflict") {
+      throw new Error(`device.signOut refused: ${result.error.code}`);
+    }
+    this.closeSockets((actor) =>
+      actor.kind === "user" && actor.id === userId ? "signed_out" : undefined,
+    );
+    return { ok: true };
+  }
+
+  /**
    * Makes this shard's member list agree with D1 and closes sockets D1 no longer backs (src/members.ts). Every sync
    * upgrade starts one; exposed so a repair can be asked for directly.
    */
@@ -764,7 +795,10 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
   }
 
-  /** Closes every socket whose actor `judge` gives a verdict for: removed members' with 1008, others' with 1012. */
+  /**
+   * Closes every socket whose actor `judge` gives a verdict for: removed members' with 1008, others' with 1012 (a
+   * signed-out one reconnects and is refused for want of a session).
+   */
   private closeSockets(judge: (actor: Actor) => SocketVerdict | undefined): void {
     for (const ws of this.ctx.getWebSockets()) {
       let verdict: SocketVerdict | undefined;
@@ -778,6 +812,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       }
       if (verdict === "removed") close(ws, CLOSE_POLICY_VIOLATION, "not a member");
       else if (verdict === "role_changed") close(ws, CLOSE_SERVICE_RESTART, "role changed");
+      else if (verdict === "signed_out") close(ws, CLOSE_SERVICE_RESTART, "signed out");
     }
   }
 

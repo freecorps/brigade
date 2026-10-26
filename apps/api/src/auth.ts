@@ -19,7 +19,11 @@ import { expo } from "@better-auth/expo";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { organization } from "better-auth/plugins";
-import { dashboardLink, renderVerificationEmail } from "./email-templates.ts";
+import {
+  dashboardLink,
+  renderPasswordResetEmail,
+  renderVerificationEmail,
+} from "./email-templates.ts";
 import { linkFallback, type EmailSender } from "./email.ts";
 import { createAccessControl } from "better-auth/plugins/access";
 import { adminAc, defaultStatements, ownerAc } from "better-auth/plugins/organization/access";
@@ -99,6 +103,11 @@ export type AuthBindings = {
    * sends nothing.
    */
   email?: { sender: EmailSender | undefined; dashboardUrl?: string };
+  /**
+   * Called once a password reset went through, after Better Auth deleted the user's sessions and the address was
+   * marked verified: signs the user's devices and sockets out of every workspace (src/index.ts). Must not throw.
+   */
+  onPasswordReset?: (userId: string) => Promise<void>;
 };
 
 /**
@@ -135,6 +144,18 @@ export const VERIFICATION_TTL_S = 24 * 60 * 60;
 export const VERIFICATION_RESEND_LIMIT = { window: 15 * 60, max: 3 };
 export const VERIFICATION_DAILY_LIMIT = { window: 24 * 60 * 60, max: 5 };
 export const VERIFICATION_IP_LIMIT = { window: 60, max: 3 };
+/** How long a password reset link works, in seconds (Better Auth's default, stated). */
+export const RESET_TTL_S = 60 * 60;
+/**
+ * Password reset emails per address (`/request-password-reset`), whether or not an account has it, so the answer
+ * never tells the two apart: 3 an hour and 5 a day, counted in D1's `rateLimit` table like verification's, on top of
+ * 3 per IP a minute (`RESET_IP_LIMIT`).
+ */
+export const RESET_ADDRESS_LIMIT = { window: 60 * 60, max: 3 };
+export const RESET_DAILY_LIMIT = { window: 24 * 60 * 60, max: 5 };
+export const RESET_IP_LIMIT = { window: 60, max: 3 };
+/** Attempts at setting the new password per IP a minute (`/reset-password`); its token cannot be guessed anyway. */
+export const RESET_SUBMIT_LIMIT = { window: 60, max: 10 };
 /** The answer when a verification email is asked for and email is not set up. */
 export const EMAIL_NOT_CONFIGURED_CODE = "EMAIL_NOT_CONFIGURED";
 /** Workspaces one user may belong to; bounds `POST /workspaces` (each one also provisions a shard). */
@@ -191,8 +212,47 @@ const beforeHook = (bindings: AuthBindings) =>
       }
       return;
     }
+    if (ctx.path === "/request-password-reset") return checkResetRequest(bindings, ctx);
     return checkName(ctx);
   });
+
+/**
+ * `/request-password-reset` (RFC 0002 "Auth"): the same answer for every address, account or not, except when email
+ * is not set up at all (`EMAIL_NOT_CONFIGURED`, the same for everyone) or the address asked too often (counted for
+ * any address, so a limit says nothing about whether it has an account). The link is always the dashboard's own
+ * page, so whatever `redirectTo` the request names is dropped.
+ */
+async function checkResetRequest(
+  bindings: AuthBindings,
+  ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0],
+) {
+  if (!bindings.email?.sender) {
+    throw APIError.from("SERVICE_UNAVAILABLE", {
+      code: EMAIL_NOT_CONFIGURED_CODE,
+      message: "Email is not set up",
+    });
+  }
+  const body: unknown = ctx.body;
+  if (typeof body !== "object" || body === null) return;
+  const email: unknown = Reflect.get(body, "email");
+  // Anything else is Better Auth's to refuse (400).
+  if (typeof email !== "string" || email.length > 254) return;
+  const address = email.trim().toLowerCase();
+  const now = Date.now();
+  for (const [key, limit] of [
+    [`reset:${address}`, RESET_ADDRESS_LIMIT],
+    [`reset-day:${address}`, RESET_DAILY_LIMIT],
+  ] as const) {
+    if ((await countRequest(bindings.database, key, limit.window, now)) > limit.max) {
+      throw APIError.from("TOO_MANY_REQUESTS", {
+        code: "TOO_MANY_REQUESTS",
+        message: "Too many password reset emails",
+      });
+    }
+  }
+  const { redirectTo: _dropped, ...rest } = body as Record<string, unknown>;
+  return { context: { body: rest } };
+}
 
 /**
  * Counts one more request under `key` in D1's `rateLimit` table and answers the count in the current window
@@ -264,7 +324,59 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
     database: bindings.database,
     // Unverified accounts sign in and use their own workspaces; verification gates email, inviting and joining
     // (RFC 0002 "Auth").
-    emailAndPassword: { enabled: true },
+    emailAndPassword: {
+      enabled: true,
+      // Password reset (RFC 0002 "Auth"): the link is the dashboard's `/reset-password?token=…`, and using it proves
+      // control of the address, so it also marks the address verified and ends every session. That is how an
+      // address someone else signed up with and never verified comes back to its owner.
+      resetPasswordTokenExpiresIn: RESET_TTL_S,
+      revokeSessionsOnPasswordReset: true,
+      // Run in `backgroundTasks` like the verification email, so the answer takes as long for an address without
+      // an account.
+      sendResetPassword: async ({ user, token }, request) => {
+        const sender = bindings.email?.sender;
+        if (!sender) return;
+        const link = dashboardLink(
+          "/reset-password",
+          { token },
+          bindings.email?.dashboardUrl,
+          linkFallback(sender, request ? new URL(request.url).origin : undefined),
+        );
+        if (!link) {
+          console.error(
+            JSON.stringify({ message: "password reset email not sent: DASHBOARD_URL is not set" }),
+          );
+          return;
+        }
+        const locale = Reflect.get(user, "locale");
+        // Never the name: on an account nobody verified, whoever signed up typed it.
+        const result = await sender.send(
+          renderPasswordResetEmail(
+            { email: user.email },
+            link,
+            resolveLocale(typeof locale === "string" ? locale : undefined),
+          ),
+        );
+        if (!result.ok) {
+          console.error(
+            JSON.stringify({
+              message: "password reset email refused",
+              sender: sender.id,
+              code: result.code,
+            }),
+          );
+        }
+      },
+      // After Better Auth set the password, consumed the token and deleted every session.
+      onPasswordReset: async ({ user }) => {
+        // The link reached the address: it is proven, as a verification link would.
+        await bindings.database
+          .prepare(`update "user" set "emailVerified" = 1, "updatedAt" = ? where id = ?`)
+          .bind(new Date().toISOString(), user.id)
+          .run();
+        await bindings.onPasswordReset?.(user.id);
+      },
+    },
     emailVerification: {
       sendOnSignUp: true,
       expiresIn: VERIFICATION_TTL_S,
@@ -331,6 +443,8 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
       customRules: {
         ...Object.fromEntries(UNLIMITED_READS.map((path) => [path, false as const])),
         "/send-verification-email": VERIFICATION_IP_LIMIT,
+        "/request-password-reset": RESET_IP_LIMIT,
+        "/reset-password": RESET_SUBMIT_LIMIT,
       },
     },
     databaseHooks: {

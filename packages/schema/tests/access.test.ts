@@ -94,6 +94,7 @@ test("every permission comes from the statement", () => {
     "incident:ack",
     "workspace:create",
     "workspace:read",
+    "workspace:manage",
     "members:manage",
     "monitor:read",
     "monitor:manage",

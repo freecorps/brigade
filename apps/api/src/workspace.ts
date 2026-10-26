@@ -8,6 +8,8 @@ import {
 import {
   encode,
   parseClientMessage,
+  PING_FRAME,
+  PONG_FRAME,
   PROTOCOL_VERSION,
   TOKEN,
   type ServerMessage,
@@ -116,6 +118,9 @@ export class WorkspaceDO extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    // The sync heartbeat (RFC 0004 "Heartbeat"): the runtime answers a client's ping on every socket itself,
+    // without waking the object or running `webSocketMessage`. Set on every wake; it is cheap.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING_FRAME, PONG_FRAME));
     const randomBytes = (length: number) => crypto.getRandomValues(new Uint8Array(length));
     // Runs on every wake from hibernation: only `create … if not exists`.
     this.shard = new Shard(ctx.storage, {
@@ -558,6 +563,8 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (!parsed.ok) return this.malformed(ws, state, data, parsed.reason);
     const message = parsed.message;
 
+    // A ping the auto-response did not catch (it matches only the exact text): answered here, before `hello` too.
+    if (message.type === "ping") return this.send(ws, { type: "pong" });
     if (message.type === "hello") {
       if (message.protocol !== PROTOCOL_VERSION) return this.refuse(ws, "Unsupported protocol");
       if (state.clientId !== null) return this.refuse(ws, "hello twice");

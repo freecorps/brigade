@@ -4,8 +4,15 @@
 
 import { ID_CLOCK_SKEW_MS } from "./incidents.ts";
 import { idTime } from "./id.ts";
-import { defineMutation, fail, ok, type Actor, type DomainEvent } from "./mutation.ts";
-import type { DeviceRow } from "./tables.ts";
+import {
+  defineMutation,
+  fail,
+  ok,
+  type Actor,
+  type DomainEvent,
+  type MutationStore,
+} from "./mutation.ts";
+import type { DeviceRow, DeviceSummaryRow } from "./tables.ts";
 import { v, type Validator } from "./validate.ts";
 
 export const DEVICE_PLATFORMS = ["ios", "android"] as const;
@@ -42,6 +49,32 @@ export type DeviceUnregistered = DomainEvent<
  * mutations are reachable only from the shard's own code, so its role grants no member anything.
  */
 export const NOTIFIER_ACTOR: Actor = { kind: "system", id: "sys_notifier", role: "admin" };
+
+/** What a member's device looks like to the rest of the workspace: no token, no key. */
+export function deviceSummary(
+  device: Pick<
+    DeviceRow,
+    "id" | "userId" | "platform" | "environment" | "voipToken" | "registeredAt"
+  >,
+  seenAt: number,
+  previous?: DeviceSummaryRow,
+): DeviceSummaryRow {
+  return {
+    id: device.id,
+    userId: device.userId,
+    platform: device.platform,
+    environment: device.environment,
+    voip: device.voipToken !== null,
+    registeredAt: device.registeredAt,
+    lastSeenAt: Math.max(seenAt, previous?.lastSeenAt ?? 0),
+  };
+}
+
+/** Deletes a device and the summary the workspace sees of it. */
+export function forgetDevice(store: MutationStore, id: string): void {
+  store.delete("devices", id);
+  if (store.get("member_devices", id)) store.delete("member_devices", id);
+}
 
 /** A native push token (APNs hex, FCM's own alphabet): printable ASCII without spaces, bounded. */
 const pushToken: Validator<string> = (input, path = "") =>
@@ -97,6 +130,7 @@ export const registerDevice = defineMutation({
         registeredAt: current?.registeredAt ?? ctx.now,
         updatedAt: ctx.now,
       };
+      const summary = store.get("member_devices", args.id);
       if (
         current &&
         current.platform === row.platform &&
@@ -105,12 +139,25 @@ export const registerDevice = defineMutation({
         current.voipToken === row.voipToken &&
         current.publicKey === row.publicKey
       ) {
-        return fail("conflict", "Device is up to date");
+        // A device registered before summaries existed gets its summary the next time the app registers it.
+        if (summary) return fail("conflict", "Device is up to date");
+        store.insert("member_devices", deviceSummary(current, ctx.now));
+        return ok({
+          type: "device.registered",
+          subject: args.id,
+          data: {
+            id: args.id,
+            userId,
+            platform: current.platform,
+            environment: current.environment,
+            voip: current.voipToken !== null,
+          },
+        } satisfies DeviceRegistered);
       }
       const mine = store.scan("devices").filter((device) => device.userId === userId);
       for (const other of mine) {
         if (other.id === args.id || other.pushToken !== args.pushToken) continue;
-        store.delete("devices", other.id);
+        forgetDevice(store, other.id);
         events.push({
           type: "device.unregistered",
           subject: other.id,
@@ -127,6 +174,8 @@ export const registerDevice = defineMutation({
         }
         store.insert("devices", row);
       }
+      if (summary) store.update("member_devices", args.id, deviceSummary(row, ctx.now, summary));
+      else store.insert("member_devices", deviceSummary(row, ctx.now));
     }
     events.push({
       type: "device.registered",
@@ -153,7 +202,7 @@ export const unregisterDevice = defineMutation({
       const current = store.get("devices", args.id);
       // Another member's device is indistinguishable from none: ids are not a way to probe.
       if (!current || current.userId !== ctx.actor.id) return fail("not_found", "Device not found");
-      store.delete("devices", args.id);
+      forgetDevice(store, args.id);
     }
     const event: DeviceUnregistered = {
       type: "device.unregistered",
@@ -180,7 +229,7 @@ export const expireDevice = defineMutation({
     if (current.pushToken !== args.pushToken) {
       return fail("conflict", "Device was registered again with another token");
     }
-    store.delete("devices", args.id);
+    forgetDevice(store, args.id);
     const event: DeviceUnregistered = {
       type: "device.unregistered",
       subject: args.id,

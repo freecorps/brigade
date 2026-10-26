@@ -4,7 +4,7 @@
 // first, then runs these, so they never decide a change on their own (apps/api/src/members.ts).
 
 import { can, ROLES, type Role } from "./access.ts";
-import type { DeviceUnregistered } from "./devices.ts";
+import { forgetDevice, type DeviceUnregistered } from "./devices.ts";
 import { defineMutation, fail, ok, type Actor, type DomainEvent } from "./mutation.ts";
 import type { MutationStore } from "./mutation.ts";
 import { dropFromSchedules } from "./schedules.ts";
@@ -73,7 +73,7 @@ function dropDevices(store: MutationStore, userId: string): DeviceUnregistered[]
   const events: DeviceUnregistered[] = [];
   for (const device of store.scan("devices")) {
     if (device.userId !== userId) continue;
-    store.delete("devices", device.id);
+    forgetDevice(store, device.id);
     events.push({
       type: "device.unregistered",
       subject: device.id,

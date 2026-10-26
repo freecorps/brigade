@@ -129,9 +129,38 @@ export type SyncClientOptions<Q extends QueryRegistry, M extends MutationRegistr
   heartbeat?: Heartbeat | false;
   /** Default `MAX_PENDING_MUTATIONS`. */
   maxPending?: number;
+  /**
+   * Where unconfirmed mutations are kept so they survive a restart; with `restore` and a `clientId` that is
+   * kept with them. Default: none (memory only).
+   */
+  pendingStorage?: PendingStorage;
   /** Malformed or stale frames, socket failures, listener errors. Default `console.warn` when there is one. */
   onWarning?(message: string, detail?: unknown): void;
 };
+
+/** An unconfirmed mutation as `PendingStorage` keeps it: enough to apply it again and re-send it as is. */
+export type SavedMutation = {
+  mutationId: string;
+  name: string;
+  args: unknown;
+  /** Epoch ms: the `ctx.now` of its optimistic run, and where its retention window starts. */
+  createdAt: number;
+};
+
+/**
+ * Keeps a shard's unconfirmed mutations across a restart (RFC 0004 "Clients"). The storage decides whose queue
+ * it is (a member in a workspace): the client only names the shard.
+ */
+export type PendingStorage = {
+  /**
+   * The shard's unconfirmed mutations, oldest first, whenever they change; `[]` once none is left. The client
+   * does not wait: writes must land in call order. A throw or a rejection is only logged.
+   */
+  save(shard: string, mutations: readonly SavedMutation[]): void | Promise<void>;
+};
+
+/** A mutation given back to `restore`, with the outcome a caller of `mutate` would have had. */
+export type RestoredMutation = SavedMutation & { outcome: Promise<MutationOutcome> };
 
 // ------------------------------------------------------------------------------------------------- results
 
@@ -276,6 +305,8 @@ type Shard = {
   misses: number;
   /** The shard refused a ping with a `protocol` error (an older shard): no pings to it any more. */
   noHeartbeat: boolean;
+  /** The ids of the unconfirmed mutations last given to `pendingStorage`, space-separated; unset forces a save. */
+  saved?: string;
 };
 
 const globals = globalThis as unknown as {
@@ -447,11 +478,105 @@ export class SyncClient<
     const shard = this.shard(shardId);
     return new Promise<MutationOutcome>((resolve) => {
       shard.pending.push({ mutationId, name, args: wireArgs, frame, ctx, resolve });
-      this.armExpiry(shard);
+      this.pendingChanged(shard);
       this.retain(shard);
       this.sendFrame(shard, frame);
       this.refresh(shard);
     });
+  }
+
+  /**
+   * Puts back what `pendingStorage` saved for `shard` before a restart: each mutation is applied optimistically
+   * again (as the current actor, at its creation time) and re-sent on connect with its own id, so the shard answers
+   * one it already ran from its stored result instead of running it twice. That needs the `clientId` it was sent
+   * with. Call it before any `mutate` on the shard: they queue after it. Never throws. One past the retention window
+   * fails with `expired`, like any other; entries that are not mutations, or already pending, are skipped.
+   */
+  restore(shardId: string, saved: readonly unknown[]): RestoredMutation[] {
+    if (this.closed) return [];
+    const shard = this.shard(shardId);
+    const restored: RestoredMutation[] = [];
+    // Whatever survives below, storage gets it back as it is now (skipped and expired ones gone).
+    if (saved.length > 0) shard.saved = undefined;
+    let unconfirmed = 0;
+    for (const other of this.shards.values()) unconfirmed += this.unconfirmed(other);
+    const max = this.options.maxPending ?? MAX_PENDING_MUTATIONS;
+    for (const entry of saved) {
+      const mutation = savedMutation(entry);
+      if (!mutation) {
+        this.warn(`Skipped a saved mutation for ${shardId} that is not one`);
+        continue;
+      }
+      const { mutationId, name, args, createdAt } = mutation;
+      if (shard.pending.some((m) => m.mutationId === mutationId)) continue;
+      let outcome: Promise<MutationOutcome>;
+      try {
+        const frame = encode({ type: "mutate", mutationId, name, args });
+        if (frame.length > MAX_CLIENT_MESSAGE_LENGTH) {
+          outcome = Promise.resolve(failure("invalid_args", "The change is too large to send"));
+        } else if (unconfirmed >= max) {
+          outcome = Promise.resolve(
+            failure("too_many_pending", "Too many changes are waiting to be sent"),
+          );
+        } else {
+          const actor = this.options.actor;
+          const ctx: MutationContext = {
+            actor: typeof actor === "function" ? actor() : actor,
+            now: createdAt,
+            server: false,
+          };
+          const wireArgs = (JSON.parse(frame) as { args?: unknown }).args;
+          outcome = new Promise<MutationOutcome>((resolve) => {
+            shard.pending.push({ mutationId, name, args: wireArgs, frame, ctx, resolve });
+          });
+          unconfirmed++;
+        }
+      } catch (error) {
+        // Args that are not JSON any more, or a throwing actor callback.
+        this.warn(`Could not restore ${name.slice(0, 64)}`, error);
+        outcome = Promise.resolve(failure("internal", "The change could not be restored"));
+      }
+      restored.push({ mutationId, name, args, createdAt, outcome });
+    }
+    // Too old to re-send: failed before anything goes out. Saves what is left.
+    this.expire(shard);
+    if (this.unconfirmed(shard) > 0) {
+      this.retain(shard);
+      if (shard.open) {
+        for (const m of shard.pending) {
+          if (m.confirmedAt === undefined && restored.some((r) => r.mutationId === m.mutationId)) {
+            this.sendFrame(shard, m.frame);
+          }
+        }
+      }
+    }
+    this.refresh(shard);
+    this.release(shard);
+    return restored;
+  }
+
+  /** After the unconfirmed mutations of a shard changed: their expiry, and what `pendingStorage` keeps. */
+  private pendingChanged(shard: Shard): void {
+    this.armExpiry(shard);
+    const storage = this.options.pendingStorage;
+    if (!storage) return;
+    const unconfirmed = shard.pending.filter((m) => m.confirmedAt === undefined);
+    const ids = unconfirmed.map((m) => m.mutationId).join(" ");
+    if (ids === shard.saved) return;
+    shard.saved = ids;
+    const saved = unconfirmed.map((m): SavedMutation => ({
+      mutationId: m.mutationId,
+      name: m.name,
+      args: m.args,
+      createdAt: m.ctx.now,
+    }));
+    try {
+      void Promise.resolve(storage.save(shard.id, saved)).catch((error: unknown) =>
+        this.warn(`Could not save the pending changes of ${shard.id}`, error),
+      );
+    } catch (error) {
+      this.warn(`Could not save the pending changes of ${shard.id}`, error);
+    }
   }
 
   /** The socket state of a shard, for an offline indicator. */
@@ -639,6 +764,7 @@ export class SyncClient<
         connection: 0,
         misses: 0,
         noHeartbeat: false,
+        saved: "",
       };
       this.shards.set(id, shard);
     }
@@ -894,7 +1020,7 @@ export class SyncClient<
       }
       this.refresh(shard);
     }
-    this.armExpiry(shard);
+    this.pendingChanged(shard);
     if (expired.length > 0) this.release(shard);
   }
 
@@ -967,7 +1093,7 @@ export class SyncClient<
           shard.pending.splice(index, 1);
           mutation.resolve({ ok: false, error: message.error });
         }
-        this.armExpiry(shard);
+        this.pendingChanged(shard);
         this.refresh(shard);
         this.release(shard);
         return;
@@ -1120,7 +1246,7 @@ export class SyncClient<
     }
     if (handled) {
       this.settle(shard); // A refused subscription no longer blocks dropping confirmed mutations.
-      this.armExpiry(shard);
+      this.pendingChanged(shard);
       this.refresh(shard);
       this.release(shard);
       return;
@@ -1267,6 +1393,16 @@ export class SyncClient<
       // A failing logger must not break the client.
     }
   }
+}
+
+/** A `SavedMutation` read back from storage, or null for anything else. */
+function savedMutation(value: unknown): SavedMutation | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { mutationId, name, args, createdAt } = value as Record<string, unknown>;
+  if (typeof mutationId !== "string" || !TOKEN.test(mutationId)) return null;
+  if (typeof name !== "string" || name === "" || name.length > 128) return null;
+  if (typeof createdAt !== "number" || !Number.isSafeInteger(createdAt)) return null;
+  return { mutationId, name, args, createdAt };
 }
 
 function refused(key: string, code: string, message: string): Subscription {

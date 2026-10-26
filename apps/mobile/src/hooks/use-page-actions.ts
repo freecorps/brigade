@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { BrigadePush } from "../../modules/brigade-push";
 import { authClient, server } from "@/lib/auth-client";
 import {
+  ACK_ACTION,
   ackFeedback,
   acknowledgeFromNotification,
   onceEach,
@@ -34,7 +35,14 @@ const firstTime = onceEach();
  */
 async function handle(response: ActionResponse): Promise<void> {
   const action = pageAction(response);
-  if (!action || !firstTime(action.notificationId)) return;
+  if (!action) {
+    // An Acknowledge tap this cannot act on still held background time.
+    if (response.actionIdentifier === ACK_ACTION) {
+      BrigadePush?.finishPageAction(response.notification.request.identifier);
+    }
+    return;
+  }
+  if (!firstTime(action.notificationId)) return;
   try {
     const outcome = await acknowledgeFromNotification(action, {
       url: (workspaceId, incidentId) => server?.ack(workspaceId, incidentId),

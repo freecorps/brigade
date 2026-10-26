@@ -129,16 +129,20 @@ describe("changeMember", () => {
 
 function render(
   as: { userId: string; role: Role },
-  options: { result?: { ok: true } | { ok: false; error: "last_owner" } } = {},
+  options: {
+    result?: { ok: true } | { ok: false; error: "last_owner" };
+    locale?: "en" | "pt-BR";
+  } = {},
 ) {
   const changes: [string, MemberChange][] = [];
   let leftCount = 0;
+  void setI18nLocale(options.locale ?? "en");
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
   act(() =>
     root!.render(
-      <PreferencesProvider>
+      <PreferencesProvider initialLocale={options.locale ?? "en"}>
         <MemberProvider workspaceId="ws_1" userId={as.userId} role={as.role}>
           <MembersList
             members={team}
@@ -236,11 +240,8 @@ describe("MembersList", () => {
     );
   });
 
-  test("reads in Portuguese", async () => {
-    await act(async () => {
-      await setI18nLocale("pt-BR");
-    });
-    const { container } = render({ userId: "usr_ana", role: "owner" });
+  test("reads in Portuguese", () => {
+    const { container } = render({ userId: "usr_ana", role: "owner" }, { locale: "pt-BR" });
     expect(container.textContent).toContain("Membros");
     expect(container.textContent).toContain("Proprietário");
   });

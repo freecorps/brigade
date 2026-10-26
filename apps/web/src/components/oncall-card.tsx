@@ -140,14 +140,20 @@ export function OnCallCard() {
     );
 
   const rows = schedules.rows;
-  const status = schedules.status;
-  const loading = status !== "ready" && status !== "error";
+  // Who is on call needs the overrides too: until both load, a rotation shift could show for an overridden one.
+  const status =
+    schedules.status === "error" || overrides.status === "error"
+      ? "error"
+      : schedules.status === "ready" && overrides.status === "ready"
+        ? "ready"
+        : "loading";
+  const loading = status === "loading";
   const choices = rotationChoices(members.rows);
   const usedZones = rows.map((row) => row.timeZone);
   return (
     <Card
       aria-labelledby="oncall-title"
-      className={cn(rows.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
+      className={cn(status === "ready" && rows.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
     >
       <div className="flex flex-col gap-1 px-4 sm:px-6">
         <div className="flex min-h-6 flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -171,7 +177,7 @@ export function OnCallCard() {
           ) : null}
         </div>
         {/* The empty state says "no schedules" already; the count is for when there are some. */}
-        {loading || rows.length > 0 ? (
+        {loading || (status === "ready" && rows.length > 0) ? (
           <div className="flex h-6 items-center text-sm text-muted-foreground tabular-nums">
             {loading ? (
               <span aria-hidden className="block h-4 w-24 rounded-sm bg-muted" />
@@ -222,10 +228,10 @@ export function OnCallCard() {
           </div>
         ) : null}
         {status === "error" ? (
-          <FormError>{queryErrorReason(schedules.error?.code)}</FormError>
+          <FormError>{queryErrorReason((schedules.error ?? overrides.error)?.code)}</FormError>
         ) : null}
 
-        {rows.length > 0 ? (
+        {status === "ready" && rows.length > 0 ? (
           <ul aria-labelledby="oncall-title" className="-mx-4 divide-y border-t sm:-mx-6">
             {rows.map((row) => (
               <li

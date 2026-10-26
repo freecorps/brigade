@@ -41,6 +41,9 @@ Entry points:
   `personName`, `severityName`, `formatAge`, `entryTime`, and refused changes (`noticeFor`, `noticeText`,
   `mutationErrorReason`, `queryErrorReason`). It reads `@freecorps/brigade-schema`'s rows, which makes schema a
   dependency of this package (the other entries import nothing from it).
+- `./oncall`: how on-call schedules read, shared by the dashboard's On-call card and the app's on-call screen:
+  `memberLabel`, `handoffTime` (in the schedule's zone), `viewerTime` (the viewer's, when it reads differently),
+  `fromNow`, `zoneLabel`, `offsetLabel`, `text` and `scheduleRefusal`. Like `./incident`, it reads schema's rows.
 - `./auth`: the sign-in form's checks (`checkSignIn`, `checkEmail`, `checkPassword`) and `authErrorMessage`.
 
 Messages are shipped one module per message and `m` is a real ESM namespace. Vite (Rolldown) tree-shakes

@@ -39,6 +39,10 @@
       "@freecorps/source": "./src/messages.ts",
       "default": "./dist/messages.mjs"
     },
+    "./oncall": {
+      "@freecorps/source": "./src/oncall.ts",
+      "default": "./dist/oncall.mjs"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -48,6 +52,7 @@
       "./incident": "./dist/incident.mjs",
       "./labels": "./dist/labels.mjs",
       "./messages": "./dist/messages.mjs",
+      "./oncall": "./dist/oncall.mjs",
       "./package.json": "./package.json"
     },
     "access": "public"

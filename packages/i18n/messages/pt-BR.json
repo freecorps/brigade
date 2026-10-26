@@ -1014,65 +1014,61 @@
       }
     }
   ],
-  "escalation_title": "Escalonamento",
-  "escalation_policies_count": [
+  "escalation_text": [
+    {
+      "declarations": ["input text", "input name", "input time", "input level", "input reason"],
+      "selectors": ["text"],
+      "match": {
+        "text=title": "Escalonamento",
+        "text=empty": "Ainda não há políticas de escalonamento. Sem uma política padrão, as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
+        "text=no_default": "Nenhuma política padrão: as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
+        "text=default_note": "Toda chamada, de um monitor ou declarada à mão, passa pela política padrão.",
+        "text=default_badge": "Padrão",
+        "text=level": "Nível {level}",
+        "text=level_empty": "Ninguém para chamar neste nível: ele é pulado até alguém ser adicionado",
+        "text=on_call": "{name} de plantão agora",
+        "text=add_target_placeholder": "Escolher…",
+        "text=delete_confirm": "Excluir {name}? Escalonamentos em andamento mantêm os níveis com que começaram.",
+        "text=delete_default": "É a política padrão: as chamadas voltam a ir para o comandante do incidente, ou para todos que podem responder.",
+        "text=change_failed": "Não foi possível alterar {name}: {reason}",
+        "text=gone": "A política não existe mais.",
+        "text=dropped": "Pessoas ou escalas que não existem mais foram retiradas desta política.",
+        "text=deleted_schedule": "Escala excluída",
+        "text=hint": "Os níveis chamam em ordem até alguém confirmar. Uma escala chama quem estiver de plantão quando o nível dispara; um nível em que ninguém pode ser alcançado é pulado na hora.",
+        "text=next_label": "Próximo",
+        "text=paged_at": "Chamado {time}",
+        "text=everyone": "Todos que podem responder",
+        "text=policy_named": "Política: {name}",
+        "text=nobody_reached": "Ninguém alcançado",
+        "text=target_schedule": "Escala",
+        "text=target_member": "Pessoa",
+        "text=group_schedules": "Escalas (quem estiver de plantão)",
+        "text=group_people": "Pessoas",
+        "text=*": "Escalonamento"
+      }
+    }
+  ],
+  "escalation_count": [
     {
       "declarations": [
+        "input kind",
         "input count",
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countPlural"],
+      "selectors": ["kind", "count", "countPlural"],
       "match": {
-        "countPlural=one": "{countFormatted} política",
-        "countPlural=*": "{countFormatted} políticas"
-      }
-    }
-  ],
-  "escalation_empty": "Ainda não há políticas de escalonamento. Sem uma política padrão, as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
-  "escalation_no_default": "Nenhuma política padrão: as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
-  "escalation_default_note": "Toda chamada, de um monitor ou declarada à mão, passa pela política padrão.",
-  "escalation_default_badge": "Padrão",
-  "escalation_level": "Nível {level}",
-  "escalation_timeout": [
-    {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural",
-        "local countFormatted = count: number"
-      ],
-      "selectors": ["countPlural"],
-      "match": {
-        "countPlural=one": "Próximo nível após {countFormatted} minuto",
-        "countPlural=*": "Próximo nível após {countFormatted} minutos"
-      }
-    }
-  ],
-  "escalation_repeat": [
-    {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural",
-        "local countFormatted = count: number"
-      ],
-      "selectors": ["count", "countPlural"],
-      "match": {
-        "count=0, countPlural=*": "Não se repete",
-        "count=*, countPlural=one": "Repete mais {countFormatted} vez",
-        "count=*, countPlural=*": "Repete mais {countFormatted} vezes"
-      }
-    }
-  ],
-  "escalation_level_empty": "Ninguém para chamar neste nível: ele é pulado até alguém ser adicionado",
-  "escalation_on_call": "{name} de plantão agora",
-  "escalation_target": [
-    {
-      "declarations": ["input kind"],
-      "selectors": ["kind"],
-      "match": {
-        "kind=schedule": "Escala",
-        "kind=member": "Pessoa",
-        "kind=*": "Destino"
+        "kind=policies, count=*, countPlural=one": "{countFormatted} política",
+        "kind=policies, count=*, countPlural=*": "{countFormatted} políticas",
+        "kind=timeout, count=*, countPlural=one": "Próximo nível após {countFormatted} minuto",
+        "kind=timeout, count=*, countPlural=*": "Próximo nível após {countFormatted} minutos",
+        "kind=repeat, count=0, countPlural=*": "Não se repete",
+        "kind=repeat, count=*, countPlural=one": "Repete mais {countFormatted} vez",
+        "kind=repeat, count=*, countPlural=*": "Repete mais {countFormatted} vezes",
+        "kind=repeat_choice, count=0, countPlural=*": "Não repetir",
+        "kind=repeat_choice, count=*, countPlural=one": "Mais {countFormatted} vez",
+        "kind=repeat_choice, count=*, countPlural=*": "Mais {countFormatted} vezes",
+        "kind=*, count=*, countPlural=*": "{countFormatted}"
       }
     }
   ],
@@ -1111,95 +1107,38 @@
   ],
   "escalation_field": [
     {
-      "declarations": ["input field"],
-      "selectors": ["field"],
+      "declarations": ["input field", "input form"],
+      "selectors": ["field", "form"],
       "match": {
-        "field=name": "Nome",
-        "field=timeout": "Minutos até o próximo nível",
-        "field=repeat": "Repetir os níveis",
-        "field=targets": "Quem é chamado",
-        "field=default": "Usar em toda chamada (política padrão)",
-        "field=add_target": "Adicionar uma escala ou pessoa",
-        "field=*": "Campo"
+        "field=name, form=label": "Nome",
+        "field=timeout, form=label": "Minutos até o próximo nível",
+        "field=repeat, form=label": "Repetir os níveis",
+        "field=targets, form=label": "Quem é chamado",
+        "field=default, form=label": "Usar em toda chamada (política padrão)",
+        "field=add_target, form=label": "Adicionar uma escala ou pessoa",
+        "field=name, form=invalid": "Informe um nome.",
+        "field=timeout, form=invalid": "Informe um número inteiro de minutos de 1 a 1440.",
+        "field=repeat, form=invalid": "Informe um número inteiro de 0 a 9.",
+        "field=targets, form=invalid": "Adicione pelo menos uma escala ou pessoa.",
+        "field=*, form=invalid": "Confira este campo.",
+        "field=*, form=*": "Campo"
       }
     }
   ],
-  "escalation_field_invalid": [
+  "escalation_progress": [
     {
-      "declarations": ["input field"],
-      "selectors": ["field"],
+      "declarations": ["input part", "input time", "input level"],
+      "selectors": ["part"],
       "match": {
-        "field=name": "Informe um nome.",
-        "field=timeout": "Informe um número inteiro de minutos de 1 a 1440.",
-        "field=repeat": "Informe um número inteiro de 0 a 9.",
-        "field=targets": "Adicione pelo menos uma escala ou pessoa.",
-        "field=*": "Confira este campo."
+        "part=running": "Escalonando",
+        "part=acknowledged": "Parado: confirmado {time}",
+        "part=resolved": "Parado: resolvido {time}",
+        "part=exhausted": "Ninguém confirmou: sem níveis restantes desde {time}",
+        "part=next_level": "Nível {level} {time}",
+        "part=next_repeat": "Nível 1 de novo {time}",
+        "part=next_end": "Desiste {time}",
+        "part=*": "Escalonamento"
       }
     }
-  ],
-  "escalation_add_target_placeholder": "Escolher…",
-  "escalation_group": [
-    {
-      "declarations": ["input group"],
-      "selectors": ["group"],
-      "match": {
-        "group=schedules": "Escalas (quem estiver de plantão)",
-        "group=people": "Pessoas",
-        "group=*": "Destinos"
-      }
-    }
-  ],
-  "escalation_repeat_choice": [
-    {
-      "declarations": [
-        "input count",
-        "local countPlural = count: plural",
-        "local countFormatted = count: number"
-      ],
-      "selectors": ["count", "countPlural"],
-      "match": {
-        "count=0, countPlural=*": "Não repetir",
-        "count=*, countPlural=one": "Mais {countFormatted} vez",
-        "count=*, countPlural=*": "Mais {countFormatted} vezes"
-      }
-    }
-  ],
-  "escalation_delete_confirm": "Excluir {name}? Escalonamentos em andamento mantêm os níveis com que começaram.",
-  "escalation_delete_default": "É a política padrão: as chamadas voltam a ir para o comandante do incidente, ou para todos que podem responder.",
-  "escalation_change_failed": "Não foi possível alterar {name}: {reason}",
-  "escalation_gone": "A política não existe mais.",
-  "escalation_dropped": "Pessoas ou escalas que não existem mais foram retiradas desta política.",
-  "escalation_deleted_schedule": "Escala excluída",
-  "escalation_hint": "Os níveis chamam em ordem até alguém confirmar. Uma escala chama quem estiver de plantão quando o nível dispara; um nível em que ninguém pode ser alcançado é pulado na hora.",
-  "escalation_progress_title": "Escalonamento",
-  "escalation_status": [
-    {
-      "declarations": ["input status", "input time"],
-      "selectors": ["status"],
-      "match": {
-        "status=running": "Escalonando",
-        "status=acknowledged": "Parado: confirmado {time}",
-        "status=resolved": "Parado: resolvido {time}",
-        "status=exhausted": "Ninguém confirmou: sem níveis restantes desde {time}",
-        "status=*": "Escalonamento"
-      }
-    }
-  ],
-  "escalation_next": [
-    {
-      "declarations": ["input kind", "input level", "input time"],
-      "selectors": ["kind"],
-      "match": {
-        "kind=level": "Nível {level} {time}",
-        "kind=repeat": "Nível 1 de novo {time}",
-        "kind=end": "Desiste {time}",
-        "kind=*": "{time}"
-      }
-    }
-  ],
-  "escalation_next_label": "Próximo",
-  "escalation_paged_at": "Chamado {time}",
-  "escalation_everyone": "Todos que podem responder",
-  "escalation_policy_named": "Política: {name}",
-  "escalation_nobody_reached": "Ninguém alcançado"
+  ]
 }

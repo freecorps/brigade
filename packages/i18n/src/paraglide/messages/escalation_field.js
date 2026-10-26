@@ -3,20 +3,25 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 
 /** @typedef {import('../runtime.js').LocalizedString} LocalizedString */
 
-/** @typedef {{ field: NonNullable<unknown> }} Escalation_FieldInputs */
+/** @typedef {{ field: NonNullable<unknown>, form: NonNullable<unknown> }} Escalation_FieldInputs */
 
 
 
 /**
-* | field | output |
-* | --- | --- |
-* | "name" | "Name" |
-* | "timeout" | "Minutes before the next level" |
-* | "repeat" | "Repeat the levels" |
-* | "targets" | "Who is paged" |
-* | "default" | "Use for every page (default policy)" |
-* | "add_target" | "Add a schedule or a person" |
-* | * | "Field" |
+* | field | form | output |
+* | --- | --- | --- |
+* | "name" | "label" | "Name" |
+* | "timeout" | "label" | "Minutes before the next level" |
+* | "repeat" | "label" | "Repeat the levels" |
+* | "targets" | "label" | "Who is paged" |
+* | "default" | "label" | "Use for every page (default policy)" |
+* | "add_target" | "label" | "Add a schedule or a person" |
+* | "name" | "invalid" | "Enter a name." |
+* | "timeout" | "invalid" | "Enter a whole number of minutes from 1 to 1440." |
+* | "repeat" | "invalid" | "Enter a whole number from 0 to 9." |
+* | "targets" | "invalid" | "Add at least one schedule or person." |
+* | * | "invalid" | "Check this field." |
+* | * | * | "Field" |
 *
 * @param {Escalation_FieldInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options
@@ -25,21 +30,31 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 export const escalation_field = /** @type {((inputs: Escalation_FieldInputs, options?: { locale?: "en" | "pt-BR" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Escalation_FieldInputs, { locale?: "en" | "pt-BR" }, {}>} */ ((i, options = {}) => {
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
-		if (i?.field === "name") return /** @type {LocalizedString} */ (`Nome`);
-		if (i?.field === "timeout") return /** @type {LocalizedString} */ (`Minutos até o próximo nível`);
-		if (i?.field === "repeat") return /** @type {LocalizedString} */ (`Repetir os níveis`);
-		if (i?.field === "targets") return /** @type {LocalizedString} */ (`Quem é chamado`);
-		if (i?.field === "default") return /** @type {LocalizedString} */ (`Usar em toda chamada (política padrão)`);
-		if (i?.field === "add_target") return /** @type {LocalizedString} */ (`Adicionar uma escala ou pessoa`);
+		if (i?.field === "name" && i?.form === "label") return /** @type {LocalizedString} */ (`Nome`);
+		if (i?.field === "timeout" && i?.form === "label") return /** @type {LocalizedString} */ (`Minutos até o próximo nível`);
+		if (i?.field === "repeat" && i?.form === "label") return /** @type {LocalizedString} */ (`Repetir os níveis`);
+		if (i?.field === "targets" && i?.form === "label") return /** @type {LocalizedString} */ (`Quem é chamado`);
+		if (i?.field === "default" && i?.form === "label") return /** @type {LocalizedString} */ (`Usar em toda chamada (política padrão)`);
+		if (i?.field === "add_target" && i?.form === "label") return /** @type {LocalizedString} */ (`Adicionar uma escala ou pessoa`);
+		if (i?.field === "name" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Informe um nome.`);
+		if (i?.field === "timeout" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Informe um número inteiro de minutos de 1 a 1440.`);
+		if (i?.field === "repeat" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Informe um número inteiro de 0 a 9.`);
+		if (i?.field === "targets" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Adicione pelo menos uma escala ou pessoa.`);
+		if (i?.form === "invalid") return /** @type {LocalizedString} */ (`Confira este campo.`);
 		return /** @type {LocalizedString} */ (`Campo`)
 	}
 	{
-		if (i?.field === "name") return /** @type {LocalizedString} */ (`Name`);
-		if (i?.field === "timeout") return /** @type {LocalizedString} */ (`Minutes before the next level`);
-		if (i?.field === "repeat") return /** @type {LocalizedString} */ (`Repeat the levels`);
-		if (i?.field === "targets") return /** @type {LocalizedString} */ (`Who is paged`);
-		if (i?.field === "default") return /** @type {LocalizedString} */ (`Use for every page (default policy)`);
-		if (i?.field === "add_target") return /** @type {LocalizedString} */ (`Add a schedule or a person`);
+		if (i?.field === "name" && i?.form === "label") return /** @type {LocalizedString} */ (`Name`);
+		if (i?.field === "timeout" && i?.form === "label") return /** @type {LocalizedString} */ (`Minutes before the next level`);
+		if (i?.field === "repeat" && i?.form === "label") return /** @type {LocalizedString} */ (`Repeat the levels`);
+		if (i?.field === "targets" && i?.form === "label") return /** @type {LocalizedString} */ (`Who is paged`);
+		if (i?.field === "default" && i?.form === "label") return /** @type {LocalizedString} */ (`Use for every page (default policy)`);
+		if (i?.field === "add_target" && i?.form === "label") return /** @type {LocalizedString} */ (`Add a schedule or a person`);
+		if (i?.field === "name" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Enter a name.`);
+		if (i?.field === "timeout" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Enter a whole number of minutes from 1 to 1440.`);
+		if (i?.field === "repeat" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Enter a whole number from 0 to 9.`);
+		if (i?.field === "targets" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Add at least one schedule or person.`);
+		if (i?.form === "invalid") return /** @type {LocalizedString} */ (`Check this field.`);
 		return /** @type {LocalizedString} */ (`Field`)
 	}
 });

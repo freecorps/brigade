@@ -1,19 +1,25 @@
 export type LocalizedString = import('../runtime.js').LocalizedString;
 export type Escalation_FieldInputs = {
     field: NonNullable<unknown>;
+    form: NonNullable<unknown>;
 };
 /** @typedef {import('../runtime.js').LocalizedString} LocalizedString */
-/** @typedef {{ field: NonNullable<unknown> }} Escalation_FieldInputs */
+/** @typedef {{ field: NonNullable<unknown>, form: NonNullable<unknown> }} Escalation_FieldInputs */
 /**
-* | field | output |
-* | --- | --- |
-* | "name" | "Name" |
-* | "timeout" | "Minutes before the next level" |
-* | "repeat" | "Repeat the levels" |
-* | "targets" | "Who is paged" |
-* | "default" | "Use for every page (default policy)" |
-* | "add_target" | "Add a schedule or a person" |
-* | * | "Field" |
+* | field | form | output |
+* | --- | --- | --- |
+* | "name" | "label" | "Name" |
+* | "timeout" | "label" | "Minutes before the next level" |
+* | "repeat" | "label" | "Repeat the levels" |
+* | "targets" | "label" | "Who is paged" |
+* | "default" | "label" | "Use for every page (default policy)" |
+* | "add_target" | "label" | "Add a schedule or a person" |
+* | "name" | "invalid" | "Enter a name." |
+* | "timeout" | "invalid" | "Enter a whole number of minutes from 1 to 1440." |
+* | "repeat" | "invalid" | "Enter a whole number from 0 to 9." |
+* | "targets" | "invalid" | "Add at least one schedule or person." |
+* | * | "invalid" | "Check this field." |
+* | * | * | "Field" |
 *
 * @param {Escalation_FieldInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

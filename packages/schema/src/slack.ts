@@ -55,7 +55,12 @@ const sealedToken: Validator<string> = (input, path = "") =>
  * - `rate_limited`: Slack kept answering 429 until the retries ran out;
  * - `undelivered`: Slack kept failing, or refused the message for another reason.
  */
-export const SLACK_FAILURES = ["no_channel", "not_authorized", "rate_limited", "undelivered"] as const;
+export const SLACK_FAILURES = [
+  "no_channel",
+  "not_authorized",
+  "rate_limited",
+  "undelivered",
+] as const;
 export type SlackFailure = (typeof SLACK_FAILURES)[number];
 
 export type SlackConnected = DomainEvent<

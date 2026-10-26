@@ -71,7 +71,9 @@ describe("slack.connect", () => {
   test("needs workspace:manage: responders and viewers cannot connect", () => {
     for (const role of ["responder", "viewer"] as const) {
       const store = createMemoryStore<BrigadeTables>();
-      expect(runMutation(serverMutations, "slack.connect", connect, store, ctx(role))).toMatchObject({
+      expect(
+        runMutation(serverMutations, "slack.connect", connect, store, ctx(role)),
+      ).toMatchObject({
         ok: false,
         error: { code: "forbidden" },
       });
@@ -92,9 +94,18 @@ describe("slack.connect", () => {
 
   test("a new token for the same team keeps the channel; another team starts over", () => {
     const store = connected();
-    runMutation(mutations, "slack.configure", { channelId: "C0CHAN0001", locale: "en" }, store, ctx());
+    runMutation(
+      mutations,
+      "slack.configure",
+      { channelId: "C0CHAN0001", locale: "en" },
+      store,
+      ctx(),
+    );
     runMutation(serverMutations, "slack.connect", connect, store, ctx());
-    expect(store.get("slack", SLACK_ROW_ID)).toMatchObject({ channelId: "C0CHAN0001", locale: "en" });
+    expect(store.get("slack", SLACK_ROW_ID)).toMatchObject({
+      channelId: "C0CHAN0001",
+      locale: "en",
+    });
     const other = runMutation(
       serverMutations,
       "slack.connect",
@@ -136,7 +147,13 @@ describe("slack.configure and slack.disconnect", () => {
   test("responders cannot change or disconnect it", () => {
     const store = connected();
     expect(
-      runMutation(mutations, "slack.configure", { channelId: null, locale: "en" }, store, ctx("responder")),
+      runMutation(
+        mutations,
+        "slack.configure",
+        { channelId: null, locale: "en" },
+        store,
+        ctx("responder"),
+      ),
     ).toMatchObject({ ok: false, error: { code: "forbidden" } });
     expect(runMutation(mutations, "slack.disconnect", {}, store, ctx("responder"))).toMatchObject({
       ok: false,
@@ -170,7 +187,13 @@ describe("notification.failSlack", () => {
     expect(Object.keys(mutations)).not.toContain("notification.failSlack");
     const store = createMemoryStore<BrigadeTables>();
     const id = newId("inc", T, (n) => new Uint8Array(n).fill(1));
-    runMutation(mutations, "incident.declare", { id, title: "Down", severity: "sev2" }, store, ctx());
+    runMutation(
+      mutations,
+      "incident.declare",
+      { id, title: "Down", severity: "sev2" },
+      store,
+      ctx(),
+    );
     const eventId = newId("evt", T, (n) => new Uint8Array(n).fill(2));
     const result = runMutation(
       serverMutations,
@@ -183,6 +206,9 @@ describe("notification.failSlack", () => {
       ok: true,
       events: [{ type: "notification.failed", data: { channel: "slack", reason: "no_channel" } }],
     });
-    expect(store.scan("timeline").at(-1)).toMatchObject({ kind: "slack_failed", reason: "no_channel" });
+    expect(store.scan("timeline").at(-1)).toMatchObject({
+      kind: "slack_failed",
+      reason: "no_channel",
+    });
   });
 });

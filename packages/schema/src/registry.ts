@@ -36,7 +36,13 @@ import {
   repageEscalation,
   startEscalation,
 } from "./escalation.ts";
-import { configureSlack, connectSlack, disconnectSlack, failSlack, slackConnection } from "./slack.ts";
+import {
+  configureSlack,
+  connectSlack,
+  disconnectSlack,
+  failSlack,
+  slackConnection,
+} from "./slack.ts";
 import { incidentTimeline } from "./timeline.ts";
 import { invitationMutations } from "./invitations.ts";
 import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";

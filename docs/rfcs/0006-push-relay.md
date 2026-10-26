@@ -238,9 +238,50 @@ D1: a D1 outage must not become a reason a page is late or missing. How the copy
     treating a 403 `not_a_member` as finished (the device is gone with the membership) would end that sooner and
     is left for the app. A removal made outside Brigade takes effect at the next sync upgrade into the workspace.
 
-Content: title `SEV1 · INC-142` (codes, so no locale is needed), body the incident's title, and the incident id,
-sealed per device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id, so a repeat replaces
+Content: title `SEV1 · INC-142` (codes, so no locale is needed), body the incident's title, the incident id and its
+workspace id (for the Acknowledge action), sealed per device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id, so a repeat replaces
 the notification. What happens when a page fails is RFC 0005 "Notifiers".
+
+## Acting from the notification
+
+A page that names its incident and the incident's workspace (both sealed in the content, `PushContent.incident` and
+`.workspace`) shows an **Acknowledge** action. Tapping it acknowledges without opening the app, with the same
+mutation, RBAC and event as acknowledging in the app (RFC 0004 "Acknowledging from a notification").
+
+- **Category, set on the phone.** The Notification Service Extension sets the category `brigade_page` and the ids
+  (`page: { incident, workspace }` in the user info) on a page it decrypted (`modules/brigade-push/ios/BrigadePage.swift`),
+  and so does the notification posted when CallKit refuses a call. The fallback text has no category: there is no
+  incident to acknowledge by, so the page only says to open Brigade. The relay never sees or sets the category.
+- **Localized title.** The app registers the category from JavaScript at launch and whenever its language changes
+  (`setNotificationCategoryAsync`, the title from `packages/i18n`), so the action reads in the app's language. Not in
+  `Localizable.strings`: a category's actions are registered by the app at run time anyway, and the extension cannot
+  register categories for it. Until the app has run once there is no category (it must run to sign in, so a phone
+  that is paged has run it).
+- **Runs in the app, in the background.** The session cookie is in the app's secure storage, which the extension
+  cannot read, so the ack runs in the app process. The action is not `opensAppToForeground`; iOS launches or resumes
+  the app in the background. expo-notifications tells iOS it is done with the tap at once (on a cold launch before
+  JavaScript has loaded), so the BrigadePush module joins its delegate list at launch and holds a background task from
+  the tap until JavaScript reports the ack finished, or iOS takes the time back (about 30 s). The app's handler
+  (`apps/mobile/src/lib/page-action.ts`, tested in Node) sends the request with one idempotency key, tries 3 times
+  (at once, after 2 s, after 5 s, 6 s each), and stays under 25 s.
+- **Authentication required on a locked phone** (`isAuthenticationRequired`). expo-secure-store keeps the session
+  readable only while the phone is unlocked, and a locked phone must not let whoever holds it acknowledge as its
+  owner. Face ID makes it one glance. The extension's device key stays readable after first unlock, so pages still
+  decrypt on a locked phone.
+- **What the phone says after**, as a quiet notification (no sound, `passive`) under the page's title:
+  acknowledged; already acknowledged (by anyone); no longer active; not found; can no longer acknowledge in this
+  workspace (a viewer, or removed); sign in first. The app does not open.
+- **Offline (the fallback).** When every try failed, the notification says Brigade could not be reached and is a page
+  again (`active`, the same category and ids), so trying again is one tap away. Nothing waits on the phone: an
+  unacknowledged page keeps escalating on the instance (its run fires the next level at its timeout, "Who is paged").
+  An ack that gets through is `incident.ack`, which ends the run, so a level already queued pages nobody. A tap in the foreground is handled the same way,
+  but pages show no banner while Brigade is open (it sets no foreground handler), and the incident on screen shows
+  the ack.
+- **Calls** (`kind: "call"`, RFC 0010) keep their own ack: 1 on CallKit's keypad or the call screen, over Brigade
+  Sync. Only the notification posted when CallKit refuses a call has the action.
+- **Android** gets the same JavaScript path (`page-action.ts`, `use-page-actions.ts`) with a notification action
+  button once pages reach Android (FCM); the hook registers nothing there yet. Its background time comes from the
+  notification's broadcast receiver, not a background task.
 
 ## Driver abstraction
 
@@ -263,7 +304,7 @@ Drivers: `relay` (default), `apns-direct`, `fcm-direct` (own app build), `unifie
 | ------------------------- | -------------------------------------------- | ------------------------------------------------- |
 | Break through Focus / DND | `interruption-level: time-sensitive`         | High-importance channel + DND access (user grant) |
 | Ring on silent            | Critical Alerts entitlement (apply to Apple) | Alarm-sound channel                               |
-| Act from the notification | Category actions: Ack / Escalate             | Action buttons                                    |
+| Act from the notification | Category actions: Ack (built) / Escalate     | Action buttons                                    |
 | Collapse repeats          | `apns-collapse-id`                           | Notification `tag`                                |
 | Full-screen alarm         | n/a                                          | `USE_FULL_SCREEN_INTENT` (Play policy review)     |
 
@@ -271,7 +312,8 @@ Drivers: `relay` (default), `apns-direct`, `fcm-direct` (own app build), `unifie
 
 - Development builds only (no Expo Go) — native modules + NSE.
 - NSE added by our own config plugin (`apps/mobile/plugins/notification-service.ts`): the extension target, the push,
-  App Group and time-sensitive entitlements, and the fallback strings for both targets.
+  App Group and time-sensitive entitlements, and the fallback strings for both targets. The extension compiles
+  `BrigadePushCrypto.swift` and `BrigadePage.swift` from the app's module.
 - Use `getDevicePushTokenAsync()` (native token), not Expo push tokens.
 
 ## APNs requires HTTP/2

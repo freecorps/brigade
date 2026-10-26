@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, test } from "vite-plus/test";
 import {
   APP_GROUP,
@@ -8,6 +8,7 @@ import {
   localizableStrings,
   NATIVE_LOCALES,
   NATIVE_STRING_KEYS,
+  NSE_SOURCES,
 } from "./notification-service.ts";
 
 const messages = (locale: string) =>
@@ -83,5 +84,16 @@ describe("extension plists", () => {
   test("the extension is in the App Group, and only that", () => {
     expect(EXTENSION_ENTITLEMENTS).toContain(`<string>${APP_GROUP}</string>`);
     expect(EXTENSION_ENTITLEMENTS).not.toContain("aps-environment");
+  });
+});
+
+describe("extension sources", () => {
+  test("every file the extension compiles exists, the Acknowledge action's category among them", () => {
+    for (const source of NSE_SOURCES) {
+      expect(existsSync(new URL(`../modules/brigade-push/${source}`, import.meta.url))).toBe(true);
+    }
+    expect(NSE_SOURCES).toContain("ios/BrigadePage.swift");
+    // The pod's other files need the app (ExpoModulesCore, expo-notifications) and stay out of the extension.
+    expect(NSE_SOURCES).not.toContain("ios/PageActions.swift");
   });
 });

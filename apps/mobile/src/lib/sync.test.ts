@@ -28,6 +28,9 @@ test("development builds sign in and sync through the dashboard's dev server on 
   const server = brigadeServer({ hostUri: "localhost:8081", dev: true });
   expect(server?.auth).toBe("http://localhost:5173/api/auth");
   expect(server?.sync("ws_1")).toBe("ws://localhost:5173/api/sync/ws_1");
+  expect(server?.ack("ws_1", "inc_1")).toBe(
+    "http://localhost:5173/api/workspaces/ws_1/incidents/inc_1/ack",
+  );
   expect(brigadeServer({ hostUri: "10.0.2.2:8081", dev: true })?.sync("a b")).toBe(
     "ws://10.0.2.2:5173/api/sync/a%20b",
   );
@@ -38,6 +41,9 @@ test("release builds never fall back to the Metro host", () => {
   expect(brigadeServer(release)).toBeUndefined();
   const server = brigadeServer({ ...release, override: "https://brigade.example.com" });
   expect(server?.auth).toBe("https://brigade.example.com/api/auth");
+  expect(server?.ack("ws_1", "a/b")).toBe(
+    "https://brigade.example.com/api/workspaces/ws_1/incidents/a%2Fb/ack",
+  );
   expect(server?.sync("ws_1")).toBe("wss://brigade.example.com/api/sync/ws_1");
 });
 

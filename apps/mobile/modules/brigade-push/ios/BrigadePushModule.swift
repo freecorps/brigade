@@ -9,6 +9,12 @@ public class BrigadePushModule: Module {
       return try BrigadePushCrypto.publicKey()
     }
 
+    /// The app's handler is done with the Acknowledge action on notification `id`: ends the background time held for
+    /// it (PageActions).
+    Function("finishPageAction") { (id: String) in
+      PageActions.shared.finish(id)
+    }
+
     /// Whether this OS can decrypt pushes in the extension (HPKE needs iOS 17).
     Constant("canDecrypt") { () -> Bool in
       if #available(iOS 17.0, *) { return true }

@@ -343,6 +343,7 @@ describe("the push notifier", () => {
         title: "SEV2 · INC-1",
         body: "Checkout is down",
         incident,
+        workspace: event.workspaceId,
       });
     }
     // The device's APNs environment travels with its push.

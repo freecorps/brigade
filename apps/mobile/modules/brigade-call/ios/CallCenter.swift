@@ -21,6 +21,8 @@ struct IncomingCall {
   var title: String
   var body: String
   var incident: String?
+  /// The incident's workspace, for the Acknowledge action on the page posted when CallKit refuses the call.
+  var workspace: String?
   var answered = false
   /// When CallKit confirmed the call (it started ringing); nil until then.
   var ringingSince: Date?
@@ -166,7 +168,8 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
     }
     do {
       let content = try BrigadePushCrypto.open(envelope: envelope)
-      update(id, title: content.title, body: content.body, incident: content.incident)
+      update(
+        id, title: content.title, body: content.body, incident: content.incident, workspace: content.workspace)
       log.info("voip push decrypted")
     } catch {
       log.error("voip push not decrypted: \(String(describing: error), privacy: .public)")
@@ -254,11 +257,12 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
     }
   }
 
-  private func update(_ id: UUID, title: String, body: String, incident: String?) {
+  private func update(_ id: UUID, title: String, body: String, incident: String?, workspace: String?) {
     guard calls[id] != nil else { return }
     calls[id]?.title = title
     calls[id]?.body = body
     calls[id]?.incident = incident
+    calls[id]?.workspace = workspace
     let update = CXCallUpdate()
     update.localizedCallerName = title
     provider.reportCall(with: id, updated: update)
@@ -425,6 +429,7 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
     content.body = call.body
     content.sound = .default
     content.interruptionLevel = .timeSensitive
+    BrigadePage.mark(content, incident: call.incident, workspace: call.workspace)
     let request = UNNotificationRequest(identifier: call.id.uuidString, content: content, trigger: nil)
     UNUserNotificationCenter.current().add(request) { [weak self] error in
       if let error { self?.log.error("page notification failed: \(String(describing: error), privacy: .public)") }

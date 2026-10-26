@@ -32,8 +32,8 @@
   // Inherited by the environments. Locally it never fires on its own: under `vp run dev` (the Vite plugin) run it with
   // POST /cdn-cgi/local/explorer/api/local/scheduled?worker=brigade-api (apps/api/README.md "Dead-man switch").
   "triggers": { "crons": ["* * * * *"] },
-  // Better Auth's tables (src/auth.ts); migrations/ holds their schema. No `database_id` for production and
-  // staging yet: those databases do not exist, and the first deploy (owner approval) creates and pins them.
+  // Better Auth's tables (src/auth.ts); migrations/ holds their schema. Production and staging databases exist with the
+  // migrations applied (apps/api/README.md "D1").
   "d1_databases": [
     {
       "binding": "DB",

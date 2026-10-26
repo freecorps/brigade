@@ -72,12 +72,12 @@ vp run --filter @freecorps/brigade-web db:migrate      # the local database `vp 
 wrangler d1 migrations apply DB --remote --env dev     # brigade-db-dev (in apps/api)
 ```
 
-| Environment | Database             | Status                                                     |
-| ----------- | -------------------- | ---------------------------------------------------------- |
-| local       | Miniflare's local D1 | `db:migrate` above                                         |
-| `dev`       | `brigade-db-dev`     | created on the Freecorps account, migrations applied       |
-| `staging`   | `brigade-db-staging` | not created; the first deploy provisions it (owner's call) |
-| production  | `brigade-db`         | not created; same                                          |
+| Environment | Database             | Status                                               |
+| ----------- | -------------------- | ---------------------------------------------------- |
+| local       | Miniflare's local D1 | `db:migrate` above                                   |
+| `dev`       | `brigade-db-dev`     | created on the Freecorps account, migrations applied |
+| `staging`   | `brigade-db-staging` | created on the Freecorps account, migrations applied |
+| production  | `brigade-db`         | created on the Freecorps account, migrations applied |
 
 `BETTER_AUTH_SECRET` is required in every environment (`secrets.required`): `wrangler secret put
 BETTER_AUTH_SECRET --env dev` for a deployed Worker, and for local runs a gitignored `apps/api/.dev.vars`:

@@ -81,7 +81,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     UI, closing open sockets on sign-out or role change (RFC 0004 "Session revocation"), mobile sign-in (PKCE via
     the system browser, QR pairing, bearer tokens on the upgrade), password reset (needs the email notifier),
     putting `/workspaces/:id` (the stack check) behind auth before `workers_dev` is turned on, and the production
-    and staging D1 databases and secrets (owner approval). Also: email verification (needs the email notifier), then
+    and staging secrets (owner approval). Also: email verification (needs the email notifier), then
     a uniform sign-up response (the same answer whether or not the email is taken, so sign-up cannot enumerate
     accounts; until then only rate limiting slows it); invitations, which need verified emails and Brigade's
     prefixed ids on the invitation rows they create, and which re-open the organization routes refused now, each

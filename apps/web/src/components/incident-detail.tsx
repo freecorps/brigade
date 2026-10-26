@@ -18,6 +18,7 @@ import { cn } from "cn";
 import {
   ArrowLeftIcon,
   BellOffIcon,
+  BellRingIcon,
   ChevronDownIcon,
   CircleAlertIcon,
   CirclePlusIcon,
@@ -27,6 +28,7 @@ import {
   MessageSquareTextIcon,
   PhoneMissedIcon,
   SendIcon,
+  TimerOffIcon,
   UserRoundIcon,
   XIcon,
   type LucideIcon,
@@ -574,6 +576,8 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
   update: MessageSquareTextIcon,
   alert_resolved: HeartPulseIcon,
   page_failed: PhoneMissedIcon,
+  escalated: BellRingIcon,
+  escalation_exhausted: TimerOffIcon,
 };
 
 /**

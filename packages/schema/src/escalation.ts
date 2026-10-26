@@ -219,6 +219,7 @@ export const startEscalation = defineMutation({
       levels: policy.levels,
       repeat: policy.repeat,
       eventId: args.eventId,
+      causedBy: args.causedBy,
       status: "running",
       startedAt: ctx.now,
       endedAt: null,
@@ -246,11 +247,8 @@ export const advanceEscalation = defineMutation({
   apply(store, args, ctx) {
     const incident = store.get("incidents", args.incidentId);
     const run = incident?.escalation;
+    // Nothing to escalate: the shard's alarm then drops the timer (src/escalation.ts).
     if (!incident || !run || run.status !== "running") {
-      // Nothing to escalate: the timer outlived its run (a bug, or a row from before this check). Drop it.
-      if (store.get("escalation_timers", args.incidentId)) {
-        store.delete("escalation_timers", args.incidentId);
-      }
       return fail("not_found", "No escalation under way");
     }
     const last = run.pages[run.pages.length - 1];

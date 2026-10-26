@@ -99,8 +99,23 @@ export function entryText(entry: TimelineRow, who: People): string {
       // Written by the notifier: the sentence is about who was not paged, not who wrote it.
       // A dead-lettered page is about the page, whoever it was for.
       if (entry.reason === "dead_lettered") return say("page_dead_lettered");
+      // An escalation level's schedule: by the name it had then.
+      if (entry.reason === "nobody_on_call")
+        return say("page_nobody_on_call", entry.schedule ?? "");
+      if (entry.reason === "schedule_missing") return say("page_schedule_missing");
       if (entry.userId === null) return say("page_nobody");
       return say(`page_failed_${entry.reason}`, personName(entry.userId, who, "object"));
+    case "escalated": {
+      if (entry.level === null) return say("escalated_everyone");
+      const level = m.escalation_level_round({
+        level: String(entry.level),
+        round: String(entry.round),
+      });
+      const names = entry.userIds.map((id) => personName(id, who)).join(", ");
+      return say(`escalated_${entry.reason}`, level, names);
+    }
+    case "escalation_exhausted":
+      return say("escalation_exhausted");
   }
 }
 

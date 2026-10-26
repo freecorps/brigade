@@ -29,6 +29,14 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "page_failed_over_limit" | "Couldn't page {a}: this page went to too many phones" |
 * | "page_nobody" | "Nobody was paged: no one who can respond has Brigade on their phone" |
 * | "page_dead_lettered" | "A page may not have gone out: Brigade kept failing to send it" |
+* | "page_failed_not_a_member" | "Couldn't page {a}: no longer someone who can respond" |
+* | "page_nobody_on_call" | "Couldn't page {a}: nobody on call" |
+* | "page_schedule_missing" | "Couldn't page a schedule that was deleted" |
+* | "escalated_started" | "Paged level {a}: {b}" |
+* | "escalated_timeout" | "Nobody acknowledged, so level {a} was paged: {b}" |
+* | "escalated_unreachable" | "Earlier levels couldn't reach anyone, so level {a} was paged: {b}" |
+* | "escalated_everyone" | "No level could reach anyone, so everyone who can respond was paged" |
+* | "escalation_exhausted" | "Nobody acknowledged after every level of the escalation policy" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs
@@ -57,6 +65,14 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "page_failed_over_limit") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: a chamada foi para celulares demais`);
 		if (i?.kind === "page_nobody") return /** @type {LocalizedString} */ (`Ninguém foi chamado: ninguém que pode responder tem o Brigade no celular`);
 		if (i?.kind === "page_dead_lettered") return /** @type {LocalizedString} */ (`Uma chamada pode não ter saído: o Brigade não conseguiu enviá-la`);
+		if (i?.kind === "page_failed_not_a_member") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: não é mais alguém que pode responder`);
+		if (i?.kind === "page_nobody_on_call") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: ninguém de plantão`);
+		if (i?.kind === "page_schedule_missing") return /** @type {LocalizedString} */ (`Não foi possível chamar uma escala que foi excluída`);
+		if (i?.kind === "escalated_started") return /** @type {LocalizedString} */ (`Nível ${i?.a} chamado: ${i?.b}`);
+		if (i?.kind === "escalated_timeout") return /** @type {LocalizedString} */ (`Ninguém confirmou, então o nível ${i?.a} foi chamado: ${i?.b}`);
+		if (i?.kind === "escalated_unreachable") return /** @type {LocalizedString} */ (`Os níveis anteriores não alcançaram ninguém, então o nível ${i?.a} foi chamado: ${i?.b}`);
+		if (i?.kind === "escalated_everyone") return /** @type {LocalizedString} */ (`Nenhum nível alcançou ninguém, então todos que podem responder foram chamados`);
+		if (i?.kind === "escalation_exhausted") return /** @type {LocalizedString} */ (`Ninguém confirmou depois de todos os níveis da política de escalonamento`);
 		return /** @type {LocalizedString} */ (`${i?.actor} alterou o incidente`)
 	}
 	{
@@ -79,6 +95,14 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "page_failed_over_limit") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: this page went to too many phones`);
 		if (i?.kind === "page_nobody") return /** @type {LocalizedString} */ (`Nobody was paged: no one who can respond has Brigade on their phone`);
 		if (i?.kind === "page_dead_lettered") return /** @type {LocalizedString} */ (`A page may not have gone out: Brigade kept failing to send it`);
+		if (i?.kind === "page_failed_not_a_member") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: no longer someone who can respond`);
+		if (i?.kind === "page_nobody_on_call") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: nobody on call`);
+		if (i?.kind === "page_schedule_missing") return /** @type {LocalizedString} */ (`Couldn't page a schedule that was deleted`);
+		if (i?.kind === "escalated_started") return /** @type {LocalizedString} */ (`Paged level ${i?.a}: ${i?.b}`);
+		if (i?.kind === "escalated_timeout") return /** @type {LocalizedString} */ (`Nobody acknowledged, so level ${i?.a} was paged: ${i?.b}`);
+		if (i?.kind === "escalated_unreachable") return /** @type {LocalizedString} */ (`Earlier levels couldn't reach anyone, so level ${i?.a} was paged: ${i?.b}`);
+		if (i?.kind === "escalated_everyone") return /** @type {LocalizedString} */ (`No level could reach anyone, so everyone who can respond was paged`);
+		if (i?.kind === "escalation_exhausted") return /** @type {LocalizedString} */ (`Nobody acknowledged after every level of the escalation policy`);
 		return /** @type {LocalizedString} */ (`${i?.actor} changed the incident`)
 	}
 });

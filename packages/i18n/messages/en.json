@@ -645,6 +645,14 @@
         "kind=page_failed_over_limit": "Couldn't page {a}: this page went to too many phones",
         "kind=page_nobody": "Nobody was paged: no one who can respond has Brigade on their phone",
         "kind=page_dead_lettered": "A page may not have gone out: Brigade kept failing to send it",
+        "kind=page_failed_not_a_member": "Couldn't page {a}: no longer someone who can respond",
+        "kind=page_nobody_on_call": "Couldn't page {a}: nobody on call",
+        "kind=page_schedule_missing": "Couldn't page a schedule that was deleted",
+        "kind=escalated_started": "Paged level {a}: {b}",
+        "kind=escalated_timeout": "Nobody acknowledged, so level {a} was paged: {b}",
+        "kind=escalated_unreachable": "Earlier levels couldn't reach anyone, so level {a} was paged: {b}",
+        "kind=escalated_everyone": "No level could reach anyone, so everyone who can respond was paged",
+        "kind=escalation_exhausted": "Nobody acknowledged after every level of the escalation policy",
         "kind=*": "{actor} changed the incident"
       }
     }
@@ -669,6 +677,8 @@
         "reason=not_configured, countPlural=*": "Couldn't page {countFormatted} people: push notifications aren't set up on this server",
         "reason=over_limit, countPlural=one": "Couldn't page {countFormatted} person: this page went to too many phones",
         "reason=over_limit, countPlural=*": "Couldn't page {countFormatted} people: this page went to too many phones",
+        "reason=not_a_member, countPlural=one": "Couldn't page {countFormatted} person: no longer someone who can respond",
+        "reason=not_a_member, countPlural=*": "Couldn't page {countFormatted} people: no longer someone who can respond",
         "reason=*, countPlural=one": "Couldn't page {countFormatted} person",
         "reason=*, countPlural=*": "Couldn't page {countFormatted} people"
       }
@@ -798,7 +808,7 @@
     }
   ],
   "oncall_empty": "No on-call schedules yet. A schedule says who is on call and when they hand off.",
-  "oncall_not_paging": "Schedules don't page anyone yet: pages still go to the incident's commander, or to everyone who can respond.",
+  "oncall_not_paging": "Schedules page people through an escalation policy (below); without a default policy, pages go to the incident's commander, or to everyone who can respond.",
   "oncall_nobody": "Nobody on call",
   "oncall_until": "until {time}",
   "oncall_override_badge": "Override",
@@ -993,5 +1003,203 @@
         "number=*": "Layer {number}"
       }
     }
-  ]
+  ],
+  "escalation_level_round": [
+    {
+      "declarations": ["input level", "input round"],
+      "selectors": ["round"],
+      "match": {
+        "round=0": "{level}",
+        "round=*": "{level} (repeat {round})"
+      }
+    }
+  ],
+  "escalation_title": "Escalation",
+  "escalation_policies_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} policy",
+        "countPlural=*": "{countFormatted} policies"
+      }
+    }
+  ],
+  "escalation_empty": "No escalation policies yet. Without a default policy, pages go to the incident's commander, or to everyone who can respond.",
+  "escalation_no_default": "No default policy: pages go to the incident's commander, or to everyone who can respond.",
+  "escalation_default_note": "Every page, from a monitor or declared by hand, goes through the default policy.",
+  "escalation_default_badge": "Default",
+  "escalation_level": "Level {level}",
+  "escalation_timeout": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Next level after {countFormatted} minute",
+        "countPlural=*": "Next level after {countFormatted} minutes"
+      }
+    }
+  ],
+  "escalation_repeat": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["count", "countPlural"],
+      "match": {
+        "count=0, countPlural=*": "Doesn't repeat",
+        "count=*, countPlural=one": "Repeats {countFormatted} more time",
+        "count=*, countPlural=*": "Repeats {countFormatted} more times"
+      }
+    }
+  ],
+  "escalation_level_empty": "Nobody to page at this level: it is skipped until someone is added",
+  "escalation_on_call": "{name} on call now",
+  "escalation_target": [
+    {
+      "declarations": ["input kind"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=schedule": "Schedule",
+        "kind=member": "Person",
+        "kind=*": "Target"
+      }
+    }
+  ],
+  "escalation_action": [
+    {
+      "declarations": ["input action"],
+      "selectors": ["action"],
+      "match": {
+        "action=add_policy": "New policy",
+        "action=edit": "Edit",
+        "action=save": "Save",
+        "action=create": "Create policy",
+        "action=cancel": "Cancel",
+        "action=delete_policy": "Delete policy",
+        "action=delete": "Delete",
+        "action=add_level": "Add a level",
+        "action=remove_level": "Remove level",
+        "action=remove_target": "Remove",
+        "action=move_up": "Move up",
+        "action=move_down": "Move down",
+        "action=*": "Change"
+      }
+    }
+  ],
+  "escalation_action_on": [
+    {
+      "declarations": ["input action", "input name"],
+      "selectors": ["action"],
+      "match": {
+        "action=edit": "Edit {name}",
+        "action=remove_target": "Remove {name}",
+        "action=remove_level": "Remove {name}",
+        "action=*": "{name}"
+      }
+    }
+  ],
+  "escalation_field": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=name": "Name",
+        "field=timeout": "Minutes before the next level",
+        "field=repeat": "Repeat the levels",
+        "field=targets": "Who is paged",
+        "field=default": "Use for every page (default policy)",
+        "field=add_target": "Add a schedule or a person",
+        "field=*": "Field"
+      }
+    }
+  ],
+  "escalation_field_invalid": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=name": "Enter a name.",
+        "field=timeout": "Enter a whole number of minutes from 1 to 1440.",
+        "field=repeat": "Enter a whole number from 0 to 9.",
+        "field=targets": "Add at least one schedule or person.",
+        "field=*": "Check this field."
+      }
+    }
+  ],
+  "escalation_add_target_placeholder": "Choose…",
+  "escalation_group": [
+    {
+      "declarations": ["input group"],
+      "selectors": ["group"],
+      "match": {
+        "group=schedules": "Schedules (whoever is on call)",
+        "group=people": "People",
+        "group=*": "Targets"
+      }
+    }
+  ],
+  "escalation_repeat_choice": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["count", "countPlural"],
+      "match": {
+        "count=0, countPlural=*": "Don't repeat",
+        "count=*, countPlural=one": "{countFormatted} more time",
+        "count=*, countPlural=*": "{countFormatted} more times"
+      }
+    }
+  ],
+  "escalation_delete_confirm": "Delete {name}? Runs under way keep the levels they started with.",
+  "escalation_delete_default": "It is the default: pages go back to the incident's commander, or to everyone who can respond.",
+  "escalation_change_failed": "Couldn't change {name}: {reason}",
+  "escalation_gone": "The policy no longer exists.",
+  "escalation_dropped": "People or schedules that are gone were taken out of this policy.",
+  "escalation_deleted_schedule": "Deleted schedule",
+  "escalation_hint": "Levels page in order until someone acknowledges. A schedule pages whoever is on call when its level fires; a level nobody can be reached at is skipped at once.",
+  "escalation_progress_title": "Escalation",
+  "escalation_status": [
+    {
+      "declarations": ["input status", "input time"],
+      "selectors": ["status"],
+      "match": {
+        "status=running": "Escalating",
+        "status=acknowledged": "Stopped: acknowledged {time}",
+        "status=resolved": "Stopped: resolved {time}",
+        "status=exhausted": "Nobody acknowledged: no levels left since {time}",
+        "status=*": "Escalation"
+      }
+    }
+  ],
+  "escalation_next": [
+    {
+      "declarations": ["input kind", "input level", "input time"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=level": "Level {level} {time}",
+        "kind=repeat": "Level 1 again {time}",
+        "kind=end": "Gives up {time}",
+        "kind=*": "{time}"
+      }
+    }
+  ],
+  "escalation_next_label": "Next",
+  "escalation_paged_at": "Paged {time}",
+  "escalation_everyone": "Everyone who can respond",
+  "escalation_policy_named": "Policy: {name}",
+  "escalation_nobody_reached": "Nobody reached"
 }

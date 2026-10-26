@@ -76,6 +76,8 @@ export type Escalation = {
   repeat: number;
   /** The event whose page started the run: a redelivery of it pages the same level again, never a new run. */
   eventId: string;
+  /** Who caused that event: not pushed (they know), and left out of the interim rule's fallback. */
+  causedBy: string;
   status: EscalationStatus;
   startedAt: number;
   /** When it stopped (acknowledged, resolved, exhausted); null while running. */

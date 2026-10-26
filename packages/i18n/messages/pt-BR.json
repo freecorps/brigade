@@ -645,6 +645,14 @@
         "kind=page_failed_over_limit": "Não foi possível chamar {a}: a chamada foi para celulares demais",
         "kind=page_nobody": "Ninguém foi chamado: ninguém que pode responder tem o Brigade no celular",
         "kind=page_dead_lettered": "Uma chamada pode não ter saído: o Brigade não conseguiu enviá-la",
+        "kind=page_failed_not_a_member": "Não foi possível chamar {a}: não é mais alguém que pode responder",
+        "kind=page_nobody_on_call": "Não foi possível chamar {a}: ninguém de plantão",
+        "kind=page_schedule_missing": "Não foi possível chamar uma escala que foi excluída",
+        "kind=escalated_started": "Nível {a} chamado: {b}",
+        "kind=escalated_timeout": "Ninguém confirmou, então o nível {a} foi chamado: {b}",
+        "kind=escalated_unreachable": "Os níveis anteriores não alcançaram ninguém, então o nível {a} foi chamado: {b}",
+        "kind=escalated_everyone": "Nenhum nível alcançou ninguém, então todos que podem responder foram chamados",
+        "kind=escalation_exhausted": "Ninguém confirmou depois de todos os níveis da política de escalonamento",
         "kind=*": "{actor} alterou o incidente"
       }
     }
@@ -669,6 +677,8 @@
         "reason=not_configured, countPlural=*": "Não foi possível chamar {countFormatted} pessoas: as notificações push não estão configuradas neste servidor",
         "reason=over_limit, countPlural=one": "Não foi possível chamar {countFormatted} pessoa: a chamada foi para celulares demais",
         "reason=over_limit, countPlural=*": "Não foi possível chamar {countFormatted} pessoas: a chamada foi para celulares demais",
+        "reason=not_a_member, countPlural=one": "Não foi possível chamar {countFormatted} pessoa: não é mais alguém que pode responder",
+        "reason=not_a_member, countPlural=*": "Não foi possível chamar {countFormatted} pessoas: não são mais pessoas que podem responder",
         "reason=*, countPlural=one": "Não foi possível chamar {countFormatted} pessoa",
         "reason=*, countPlural=*": "Não foi possível chamar {countFormatted} pessoas"
       }
@@ -798,7 +808,7 @@
     }
   ],
   "oncall_empty": "Ainda não há escalas de plantão. Uma escala diz quem está de plantão e quando passa o turno.",
-  "oncall_not_paging": "As escalas ainda não acionam ninguém: os alertas continuam indo para o comandante do incidente, ou para todos que podem responder.",
+  "oncall_not_paging": "As escalas chamam pessoas por meio de uma política de escalonamento (abaixo); sem uma política padrão, as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
   "oncall_nobody": "Ninguém de plantão",
   "oncall_until": "até {time}",
   "oncall_override_badge": "Substituição",
@@ -993,5 +1003,203 @@
         "number=*": "Camada {number}"
       }
     }
-  ]
+  ],
+  "escalation_level_round": [
+    {
+      "declarations": ["input level", "input round"],
+      "selectors": ["round"],
+      "match": {
+        "round=0": "{level}",
+        "round=*": "{level} (repetição {round})"
+      }
+    }
+  ],
+  "escalation_title": "Escalonamento",
+  "escalation_policies_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} política",
+        "countPlural=*": "{countFormatted} políticas"
+      }
+    }
+  ],
+  "escalation_empty": "Ainda não há políticas de escalonamento. Sem uma política padrão, as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
+  "escalation_no_default": "Nenhuma política padrão: as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
+  "escalation_default_note": "Toda chamada, de um monitor ou declarada à mão, passa pela política padrão.",
+  "escalation_default_badge": "Padrão",
+  "escalation_level": "Nível {level}",
+  "escalation_timeout": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Próximo nível após {countFormatted} minuto",
+        "countPlural=*": "Próximo nível após {countFormatted} minutos"
+      }
+    }
+  ],
+  "escalation_repeat": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["count", "countPlural"],
+      "match": {
+        "count=0, countPlural=*": "Não se repete",
+        "count=*, countPlural=one": "Repete mais {countFormatted} vez",
+        "count=*, countPlural=*": "Repete mais {countFormatted} vezes"
+      }
+    }
+  ],
+  "escalation_level_empty": "Ninguém para chamar neste nível: ele é pulado até alguém ser adicionado",
+  "escalation_on_call": "{name} de plantão agora",
+  "escalation_target": [
+    {
+      "declarations": ["input kind"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=schedule": "Escala",
+        "kind=member": "Pessoa",
+        "kind=*": "Destino"
+      }
+    }
+  ],
+  "escalation_action": [
+    {
+      "declarations": ["input action"],
+      "selectors": ["action"],
+      "match": {
+        "action=add_policy": "Nova política",
+        "action=edit": "Editar",
+        "action=save": "Salvar",
+        "action=create": "Criar política",
+        "action=cancel": "Cancelar",
+        "action=delete_policy": "Excluir política",
+        "action=delete": "Excluir",
+        "action=add_level": "Adicionar um nível",
+        "action=remove_level": "Remover nível",
+        "action=remove_target": "Remover",
+        "action=move_up": "Mover para cima",
+        "action=move_down": "Mover para baixo",
+        "action=*": "Alterar"
+      }
+    }
+  ],
+  "escalation_action_on": [
+    {
+      "declarations": ["input action", "input name"],
+      "selectors": ["action"],
+      "match": {
+        "action=edit": "Editar {name}",
+        "action=remove_target": "Remover {name}",
+        "action=remove_level": "Remover {name}",
+        "action=*": "{name}"
+      }
+    }
+  ],
+  "escalation_field": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=name": "Nome",
+        "field=timeout": "Minutos até o próximo nível",
+        "field=repeat": "Repetir os níveis",
+        "field=targets": "Quem é chamado",
+        "field=default": "Usar em toda chamada (política padrão)",
+        "field=add_target": "Adicionar uma escala ou pessoa",
+        "field=*": "Campo"
+      }
+    }
+  ],
+  "escalation_field_invalid": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=name": "Informe um nome.",
+        "field=timeout": "Informe um número inteiro de minutos de 1 a 1440.",
+        "field=repeat": "Informe um número inteiro de 0 a 9.",
+        "field=targets": "Adicione pelo menos uma escala ou pessoa.",
+        "field=*": "Confira este campo."
+      }
+    }
+  ],
+  "escalation_add_target_placeholder": "Escolher…",
+  "escalation_group": [
+    {
+      "declarations": ["input group"],
+      "selectors": ["group"],
+      "match": {
+        "group=schedules": "Escalas (quem estiver de plantão)",
+        "group=people": "Pessoas",
+        "group=*": "Destinos"
+      }
+    }
+  ],
+  "escalation_repeat_choice": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["count", "countPlural"],
+      "match": {
+        "count=0, countPlural=*": "Não repetir",
+        "count=*, countPlural=one": "Mais {countFormatted} vez",
+        "count=*, countPlural=*": "Mais {countFormatted} vezes"
+      }
+    }
+  ],
+  "escalation_delete_confirm": "Excluir {name}? Escalonamentos em andamento mantêm os níveis com que começaram.",
+  "escalation_delete_default": "É a política padrão: as chamadas voltam a ir para o comandante do incidente, ou para todos que podem responder.",
+  "escalation_change_failed": "Não foi possível alterar {name}: {reason}",
+  "escalation_gone": "A política não existe mais.",
+  "escalation_dropped": "Pessoas ou escalas que não existem mais foram retiradas desta política.",
+  "escalation_deleted_schedule": "Escala excluída",
+  "escalation_hint": "Os níveis chamam em ordem até alguém confirmar. Uma escala chama quem estiver de plantão quando o nível dispara; um nível em que ninguém pode ser alcançado é pulado na hora.",
+  "escalation_progress_title": "Escalonamento",
+  "escalation_status": [
+    {
+      "declarations": ["input status", "input time"],
+      "selectors": ["status"],
+      "match": {
+        "status=running": "Escalonando",
+        "status=acknowledged": "Parado: confirmado {time}",
+        "status=resolved": "Parado: resolvido {time}",
+        "status=exhausted": "Ninguém confirmou: sem níveis restantes desde {time}",
+        "status=*": "Escalonamento"
+      }
+    }
+  ],
+  "escalation_next": [
+    {
+      "declarations": ["input kind", "input level", "input time"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=level": "Nível {level} {time}",
+        "kind=repeat": "Nível 1 de novo {time}",
+        "kind=end": "Desiste {time}",
+        "kind=*": "{time}"
+      }
+    }
+  ],
+  "escalation_next_label": "Próximo",
+  "escalation_paged_at": "Chamado {time}",
+  "escalation_everyone": "Todos que podem responder",
+  "escalation_policy_named": "Política: {name}",
+  "escalation_nobody_reached": "Ninguém alcançado"
 }

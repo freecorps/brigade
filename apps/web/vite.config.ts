@@ -26,6 +26,18 @@ function themeColor(): Plugin {
   };
 }
 
+/**
+ * DEV ONLY: the API's optional secrets, from the shell (`DEAD_MAN_URL=… vp run dev`). `secrets.required` in
+ * apps/api/wrangler.jsonc makes wrangler load only the required ones from `.dev.vars`, so a local run gets these
+ * here instead; deployed Workers get them from `wrangler secret put`.
+ */
+function localSecrets(): Record<string, string> {
+  const names = ["DEAD_MAN_URL", "RELAY_URL", "RELAY_SEND_TOKEN"];
+  return Object.fromEntries(
+    names.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])),
+  );
+}
+
 export default defineConfig(({ command, mode }) => ({
   plugins:
     mode === "test"
@@ -46,7 +58,7 @@ export default defineConfig(({ command, mode }) => ({
                 ? [
                     {
                       configPath: "../api/wrangler.jsonc",
-                      config: { vars: { SYNC_DEV_ACTOR: "1" } },
+                      config: { vars: { SYNC_DEV_ACTOR: "1", ...localSecrets() } },
                     },
                   ]
                 : [],

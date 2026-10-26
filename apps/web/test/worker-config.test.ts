@@ -143,6 +143,16 @@ describe("apps/api wrangler.jsonc: the dev sync actor and auth", () => {
     ]);
     expect(config?.secrets?.required).toEqual(["BETTER_AUTH_SECRET"]);
   });
+
+  // The dead-man switch (apps/api src/watchdog.ts): its object is not inherited, so each environment binds it; its
+  // cron is, so it is set once, at the top level, and no environment replaces it.
+  test.each(environments)("%s binds the watchdog and keeps the minute cron", (_name, config) => {
+    expect(config?.durable_objects?.bindings).toContainEqual({
+      name: "WATCHDOG",
+      class_name: "WatchdogDO",
+    });
+    expect(config?.triggers).toEqual(config === api ? { crons: ["* * * * *"] } : undefined);
+  });
 });
 
 describe("wrangler.jsonc environments", () => {

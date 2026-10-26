@@ -1,4 +1,4 @@
-import { parseHeartbeatToken, workspaceName } from "@freecorps/brigade-schema";
+import { isRole, parseHeartbeatToken, workspaceName, type Role } from "@freecorps/brigade-schema";
 import { ACTOR_HEADER, MEMBER_NAME_HEADER, resolveActor } from "./actor.ts";
 import {
   AUTH_BASE_PATH,
@@ -8,9 +8,11 @@ import {
   type AuthBindings,
 } from "./auth.ts";
 import { consumeDeadLetters, consumeEvents } from "./notify.ts";
+import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
 import { WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
 
 export { ProbeDO } from "./probe.ts";
+export { WatchdogDO } from "./watchdog.ts";
 export { WorkspaceDO } from "./workspace.ts";
 
 const WORKSPACE_PATH = /^\/workspaces\/([^/]+)$/;
@@ -52,6 +54,8 @@ export default {
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
 
+    if (pathname === "/health/paging") return pagingHealth(request, env, auth);
+
     const workspace = WORKSPACE_PATH.exec(pathname)?.[1];
     if (pathname !== "/health" && workspace === undefined) return json({ error: "not_found" }, 404);
     if (!READ_METHODS.includes(request.method)) {
@@ -79,7 +83,81 @@ export default {
     if (batch.queue.startsWith("brigade-events-dlq")) await consumeDeadLetters(batch, env);
     else await consumeEvents(batch, env);
   },
+
+  /**
+   * The dead-man switch's clock (RFC 0007 "Watching the watcher"): one heartbeat a minute into the watchdog's outbox
+   * (src/watchdog.ts). A failure throws, so the Cron Trigger's past events show it, and the silence it leaves trips
+   * the external check.
+   */
+  async scheduled(_controller, env): Promise<void> {
+    await env.WATCHDOG.getByName(WATCHDOG_NAME).beat();
+  },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * `GET /health/paging`: whether the paging pipeline proved itself lately (src/watchdog.ts), for the dashboard. Never a
+ * URL or an id, and trimmed by who asks (`pagingHealthFor`). Answers 503 when the watchdog itself cannot be reached,
+ * which is also degraded.
+ */
+export async function pagingHealth(
+  request: Request,
+  env: Env,
+  auth: () => Auth,
+): Promise<Response> {
+  if (!READ_METHODS.includes(request.method)) {
+    return json({ error: "method_not_allowed" }, 405, { Allow: READ_METHODS.join(", ") });
+  }
+  let health: PagingHealth;
+  try {
+    health = await env.WATCHDOG.getByName(WATCHDOG_NAME).health();
+  } catch (error) {
+    console.error(JSON.stringify({ message: "WatchdogDO.health failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
+  // D1 or the session failing degrades the answer to `{ status }`, the same as no session, rather than a 500.
+  let roles: Role[] = [];
+  try {
+    const session = await auth().api.getSession({ headers: request.headers });
+    if (session) roles = await memberRoles(env.DB, session.user.id);
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "paging health: session lookup failed", error: String(error) }),
+    );
+  }
+  return json(pagingHealthFor(health, roles), 200, {
+    // Varies by the session's cookie, so no shared cache may keep it.
+    "Cache-Control": "private, no-store",
+  });
+}
+
+/**
+ * What `GET /health/paging` shows, by the asker's roles across workspaces. The pipeline is one per instance, so no
+ * single workspace owns it:
+ * - no session, or no workspace: `{ status }` only, like `/health`; why and since when would tell an outsider when
+ *   pages stop going out;
+ * - any member: the reasons and times too, since a responder needs to know they may not be paged.
+ * `external` (whether the dead-man check is set up and answering) is never sent: it is the instance operator's
+ * business, and with open sign-up any user can own a workspace, so no workspace role can stand in for that operator
+ * (Q19). Operators read it in the logs.
+ */
+export function pagingHealthFor(
+  health: PagingHealth,
+  roles: readonly Role[],
+): Pick<PagingHealth, "status"> & Partial<PagingHealth> {
+  if (roles.length === 0) return { status: health.status };
+  const { external: _external, ...rest } = health;
+  return rest;
+}
+
+/** The user's Brigade roles in every workspace they belong to (empty when none). */
+async function memberRoles(db: D1Database, userId: string): Promise<Role[]> {
+  const { results } = await db
+    .prepare(`select role from member where "userId" = ?`)
+    .bind(userId)
+    .all<{ role: string }>();
+  // Better Auth stores several roles comma-separated; Brigade gives each member one, as `memberRole` reads it.
+  return results.map((row) => row.role).filter(isRole);
+}
 
 /**
  * Better Auth on this Worker's D1 for one request; a new workspace gets its shard provisioned right away.

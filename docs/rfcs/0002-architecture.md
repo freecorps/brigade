@@ -27,14 +27,15 @@
 
 ## Where state lives
 
-| State                                                                             | Owner                                             | Why                                                      |
-| --------------------------------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------- |
-| Workspace config, services catalog, schedules, escalation policies, incident list | `WorkspaceDO`                                     | Single-threaded, strongly consistent, live subscriptions |
-| One incident's timeline, roles, fields, follow-ups, pending escalations (alarms)  | `IncidentDO`                                      | Hot spot during a SEV1; isolates load per incident       |
-| Alert dedupe window                                                               | `AlertGroupDO` (keyed by workspace + fingerprint) | Serializes bursts of the same alert                      |
-| Probe schedule and recent results per region                                      | `ProbeDO` (keyed by workspace + region)           | Placed with `locationHint`                               |
-| Users, sessions, workspace membership, cross-workspace search and reports         | D1                                                | Global queries DOs cannot answer                         |
-| Attachments, postmortem exports, DO backups                                       | R2                                                | Blobs                                                    |
+| State                                                                               | Owner                                             | Why                                                      |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------- |
+| Workspace config, services catalog, schedules, escalation policies, incident list   | `WorkspaceDO`                                     | Single-threaded, strongly consistent, live subscriptions |
+| One incident's timeline, roles, fields, follow-ups, pending escalations (alarms)    | `IncidentDO`                                      | Hot spot during a SEV1; isolates load per incident       |
+| Alert dedupe window                                                                 | `AlertGroupDO` (keyed by workspace + fingerprint) | Serializes bursts of the same alert                      |
+| Probe schedule and recent results per region                                        | `ProbeDO` (keyed by workspace + region)           | Placed with `locationHint`                               |
+| The paging pipeline's heartbeat and health (the external dead-man switch, RFC 0007) | `WatchdogDO` (one, named `watchdog`)              | One beat a minute from a Cron Trigger; tiny state        |
+| Users, sessions, workspace membership, cross-workspace search and reports           | D1                                                | Global queries DOs cannot answer                         |
+| Attachments, postmortem exports, DO backups                                         | R2                                                | Blobs                                                    |
 
 **Consistency rule:** a DO is the source of truth for what it owns. Anything copied elsewhere (D1 index,
 `WorkspaceDO` incident list) is a projection, updated through the transactional outbox described in RFC 0005,

@@ -32,11 +32,13 @@ import {
   QUEUE_MAX_RETRIES,
   retryDelay,
   type Fetch,
+  type NotifyEnv,
 } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { asksForPage, MAX_PAGE_DEVICES, pageTargets } from "../src/paging.ts";
 import worker from "../src/index.ts";
 import { Shard } from "../src/shard.ts";
+import { HEARTBEAT_EVENT, PING_TIMEOUT_MS, SYSTEM_WORKSPACE } from "../src/watchdog.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
 
 const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
@@ -829,6 +831,111 @@ describe("queue routing", () => {
     expect((await ws.timeline(incident)).filter((row) => row.kind === "page_failed")).toEqual([
       expect.objectContaining({ reason: "dead_lettered" }),
     ]);
+  });
+});
+
+// The dead-man switch's heartbeat shares the Queue, and so batches, with pages (apps/api src/watchdog.ts). Whatever
+// happens to the heartbeat, the page next to it goes out.
+describe("a heartbeat in the same batch as a page", () => {
+  const heartbeat = (): BrigadeEvent => ({
+    id: newId("evt", Date.now(), random),
+    type: HEARTBEAT_EVENT,
+    source: `brigade://${SYSTEM_WORKSPACE}/watchdog`,
+    workspaceId: SYSTEM_WORKSPACE,
+    time: new Date().toISOString(),
+    actor: { kind: "system", id: "sys_watchdog" },
+    data: { beat: 1 },
+    specversion: "1.0",
+  });
+
+  /** A relay that takes the send token (an empty `POST /send` is `400 invalid_body`) and the pages. */
+  function relayWithTokenCheck() {
+    const pages: string[] = [];
+    const send: Fetch = async (request) => {
+      const text = await request.text();
+      if (text === "") return Response.json({ error: "invalid_body" }, { status: 400 });
+      pages.push((JSON.parse(text) as RelayBody).deviceToken);
+      return Response.json({ status: 200 });
+    };
+    return { pages, send };
+  }
+
+  async function deliverBoth(page: BrigadeEvent, watchdog: unknown, send: Fetch) {
+    const batch = createMessageBatch("brigade-events", [
+      { id: "beat", timestamp: new Date(), attempts: 1, body: heartbeat() },
+      { id: "page", timestamp: new Date(), attempts: 1, body: page },
+    ]);
+    const ctx = createExecutionContext();
+    await consumeEvents(
+      batch,
+      { ...relayEnv, WATCHDOG: watchdog as NonNullable<NotifyEnv["WATCHDOG"]> },
+      send,
+    );
+    return getQueueResult(batch, ctx);
+  }
+
+  test("the page goes out and both are acked", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    const proofs: string[] = [];
+    const watchdog = {
+      getByName: () => ({
+        proved: async (_time: string, relay: string) => {
+          proofs.push(relay);
+        },
+      }),
+    };
+    const fake = relayWithTokenCheck();
+    const result = await deliverBoth(event, watchdog, fake.send);
+    expect(result.explicitAcks.sort()).toEqual(["beat", "page"]);
+    expect(fake.pages).toEqual([phone.pushToken]);
+    expect(proofs).toEqual(["ok"]);
+  });
+
+  test("a watchdog whose RPC throws: the page still goes out", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    const watchdog = {
+      getByName: () => ({
+        proved: async () => {
+          throw new Error("Durable Object reset");
+        },
+      }),
+    };
+    const fake = relayWithTokenCheck();
+    const result = await deliverBoth(event, watchdog, fake.send);
+    expect(result.explicitAcks.sort()).toEqual(["beat", "page"]);
+    expect(result.retryMessages).toEqual([]);
+    expect(fake.pages).toEqual([phone.pushToken]);
+    expect(logged()).toContainEqual(
+      expect.objectContaining({ message: "heartbeat could not be recorded" }),
+    );
+  });
+
+  test("an external check that never answers: the page still goes out, without waiting on it", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    // The real watchdog, pinging a check that hangs until its timeout aborts it.
+    const ping = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        (_input, init) =>
+          new Promise((_resolve, reject) =>
+            init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)),
+          ),
+      );
+    const stub = env.WATCHDOG.getByName(`notify-test-${++names}`);
+    const watchdog = { getByName: () => stub };
+    const fake = relayWithTokenCheck();
+    const started = Date.now();
+    const result = await deliverBoth(event, watchdog, fake.send);
+    expect(Date.now() - started).toBeLessThan(PING_TIMEOUT_MS);
+    expect(ping).toHaveBeenCalledTimes(1);
+    expect(result.explicitAcks.sort()).toEqual(["beat", "page"]);
+    expect(fake.pages).toEqual([phone.pushToken]);
   });
 });
 

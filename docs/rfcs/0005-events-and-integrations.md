@@ -49,6 +49,12 @@ gone) and `notification.failed` (`incidentId`, `eventId` of the event that asked
 `userId` or null, `reason`: `no_devices`, `undelivered`, `unsupported`, `not_configured`), with actor
 `sys_notifier` for what the notifier records. `notification.failed` rides with a `page_failed` timeline entry.
 
+The paging pipeline's own watchdog (RFC 0007 "Watching the watcher") writes events too, through its own outbox and
+the same Queue, with `workspaceId` `_system` (no workspace can have it; `source` `brigade://_system/watchdog`, actor
+`sys_watchdog`): `brigade.heartbeat` (`beat`, a counter) once a minute, which the consumer proves and never sends to
+a shard, and `brigade.status_changed` (`status`, `previous`, `reasons`) when the pipeline turns `ok`, `degraded` or
+`unknown`. Consumers that only care about workspaces skip `_system`.
+
 ## Delivery: transactional outbox
 
 1. A mutation writes its rows **and** its events to an `outbox` table in the same DO SQLite transaction.

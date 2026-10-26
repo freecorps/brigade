@@ -15,6 +15,7 @@ import {
   type PageTarget,
   type SendFailure,
 } from "./paging.ts";
+import { HEARTBEAT_EVENT, isSystemEvent, WATCHDOG_NAME, type RelayHealth } from "./watchdog.ts";
 import { WORKSPACE_ID } from "./workspace.ts";
 
 /**
@@ -32,10 +33,14 @@ export const PAGE_RETRY_FIRST_SECONDS = 5;
 export const PAGE_RETRY_MAX_SECONDS = 60;
 /** How long the relay gets per send. */
 export const RELAY_TIMEOUT_MS = 10_000;
+/** How long the relay's token check gets when the dead-man switch's heartbeat comes through. */
+export const RELAY_HEALTH_TIMEOUT_MS = 5000;
 
 /** Optional: an instance without a relay still runs, and every page it would send is recorded as failed. */
 export type NotifyEnv = {
   WORKSPACE: Env["WORKSPACE"];
+  /** The dead-man switch's watchdog (src/watchdog.ts); without it a heartbeat is logged and dropped. */
+  WATCHDOG?: Env["WATCHDOG"];
   /** The relay's base URL, e.g. a `brigade-relay-<env>` Worker. A secret, so hostnames stay out of the repo. */
   RELAY_URL?: string;
   /** Bearer token for the relay's `POST /send`. */
@@ -53,6 +58,11 @@ export async function consumeEvents(
   const seen = new Set<string>();
   await Promise.all(
     batch.messages.map(async (message) => {
+      // The dead-man switch's own events (src/watchdog.ts): never a shard's, never a page.
+      if (isSystemEvent(message.body)) {
+        await proveHeartbeat(message.body, env, send);
+        return message.ack();
+      }
       const event = parseEvent(message.body);
       if (!event) {
         log("event dropped: not a Brigade event", { messageId: message.id });
@@ -120,6 +130,64 @@ export async function consumeDeadLetters(
       }
     }),
   );
+}
+
+/**
+ * A `brigade.heartbeat` came through the outbox and the Queue: checks the relay is up and takes the send token, and
+ * tells the watchdog, which pings the external check. Never throws, and the message is acked either way: a lost heartbeat is a minute of
+ * silence, and the next one is already on its way. Other system events (`brigade.status_changed`) have no notifier
+ * yet.
+ */
+export async function proveHeartbeat(
+  event: BrigadeEvent,
+  env: Pick<NotifyEnv, "WATCHDOG" | "RELAY_URL" | "RELAY_SEND_TOKEN">,
+  send: Fetch,
+): Promise<void> {
+  if (event.type !== HEARTBEAT_EVENT) return;
+  if (!env.WATCHDOG) {
+    log("heartbeat dropped: no watchdog binding", { event: event.id });
+    return;
+  }
+  const relay = await relayHealth(env, send);
+  try {
+    await env.WATCHDOG.getByName(WATCHDOG_NAME).proved(event.time, relay);
+  } catch (error) {
+    log("heartbeat could not be recorded", { event: event.id, error: String(error) });
+  }
+}
+
+/**
+ * Whether a page could get past this Worker right now: `POST /send` with the send token and an empty body. The relay
+ * checks the token before it reads the body (apps/relay src/index.ts), so `400 invalid_body` means it took the token
+ * without calling APNs or logging anything, `401` that it refused it (a rotated or mistyped `RELAY_SEND_TOKEN`), and
+ * anything else that it is not answering as a relay. Its `/health` would say nothing about the token.
+ */
+async function relayHealth(
+  env: Pick<NotifyEnv, "RELAY_URL" | "RELAY_SEND_TOKEN">,
+  send: Fetch,
+): Promise<RelayHealth> {
+  // No token is the same as no relay for paging (`pushOne` says `not_configured`), so say that, not "refused".
+  if (!env.RELAY_URL || !env.RELAY_SEND_TOKEN) return "not_configured";
+  try {
+    const response = await send(
+      new Request(new URL("/send", env.RELAY_URL), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${env.RELAY_SEND_TOKEN ?? ""}` },
+        signal: AbortSignal.timeout(RELAY_HEALTH_TIMEOUT_MS),
+      }),
+    );
+    const status = response.status;
+    const body: unknown = await response.json().catch(() => null);
+    if (status === 400 && Reflect.get(Object(body), "error") === "invalid_body") return "ok";
+    if (status === 401) {
+      log("relay refused the send token", { status });
+      return "unauthorized";
+    }
+    log("relay token check failed", { status });
+  } catch (error) {
+    log("relay health unreachable", { error: String(error) });
+  }
+  return "unreachable";
 }
 
 /** How long the dead-letter consumer waits before trying a shard again. */

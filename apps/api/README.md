@@ -4,13 +4,15 @@ The Brigade API: a Cloudflare Worker (HTTP entry) and its Durable Objects. See
 [RFC 0002](../../docs/rfcs/0002-architecture.md) for the runtime map and [RFC 0004](../../docs/rfcs/0004-sync-engine.md)
 for the shards.
 
-It has two SQLite-backed Durable Objects: `WorkspaceDO`, the workspace's shard and its sync endpoint (Brigade
-Sync, RFC 0004), and `ProbeDO`, one per workspace and region, which runs HTTP monitors (RFC 0007). Every write is a
+It has three SQLite-backed Durable Objects: `WorkspaceDO`, the workspace's shard and its sync endpoint (Brigade
+Sync, RFC 0004), `ProbeDO`, one per workspace and region, which runs HTTP monitors (RFC 0007), and `WatchdogDO`, the
+one object behind the external dead-man switch (below). Every write is a
 named mutation from `@freecorps/brigade-schema`, run in the shard.
 
 | Route                 | Response                                                                            |
 | --------------------- | ----------------------------------------------------------------------------------- |
 | `GET /health`         | `200 {"ok":true}` (`HEAD` too)                                                      |
+| `GET /health/paging`  | `200` with the paging pipeline's state (below); `503` if the watchdog cannot answer |
 | `/auth/*`             | Better Auth (`src/auth.ts`): `POST /auth/sign-up/email`, `/auth/sign-in/email`,     |
 |                       | `/auth/sign-out`, `GET /auth/get-session`, the dashboard's organization routes, …   |
 |                       | `429` past the rate limit; `404` for organization routes that are refused (below)   |
@@ -175,6 +177,40 @@ heartbeat token's SHA-256); `monitor.*` mutations need `monitor:manage` (owners 
   interval plus grace as down, re-pushes probe configs every 10 minutes or when a region stops reporting (which
   re-arms a probe whose alarm was lost), turns monitors whose results went stale `unknown` (`monitor.evaluate`), and
   retries failed pushes.
+
+## Dead-man switch
+
+RFC 0007 "Watching the watcher" (`src/watchdog.ts`). A Cron Trigger (`* * * * *`, `scheduled`) asks the one
+`WatchdogDO` for a beat: a `brigade.heartbeat` event in its own `outbox`, drained by its alarm through the same
+`OutboxDrain` to `brigade-events`. The consumer sends the watchdog's events (`workspaceId` `_system`) to
+`proveHeartbeat` instead of a shard: it proves the relay takes the send token (`POST /send` with the token and no
+body: `400 invalid_body` is accepted, `401` refused) and reports to `WatchdogDO.proved()`, which pings `DEAD_MAN_URL`
+(in `waitUntil`, 5 s timeout) when the beat is the newest yet, took at most 2 minutes and the relay took the token. The external check
+(any service or self-hosted checker that alerts on a missed URL ping; period 1 minute, grace about 5) pages the
+operators when the pings stop.
+
+`GET /health/paging` answers `{ status }` without a session (or to a user in no workspace); `{ status, reasons,
+lastBeatAt, lastProvedAt, lastOkAt }` to a member; never `external` (operators read the logs).
+`degraded` after 3 minutes with no beat (`no_beat`), with the newest proved beat older than 3 minutes
+(`pipeline_stalled`), with the last proof over 2 minutes late (`pipeline_slow`), or with the relay
+`relay_unauthorized`, `relay_unreachable` or `relay_not_configured` on the last proof; `unknown` before the first
+proof. The dashboard shows a notice while it is not `ok`. Changes of status or reasons write `brigade.status_changed`
+and log `paging pipeline degraded`.
+
+`DEAD_MAN_URL` is an optional secret (`wrangler secret put DEAD_MAN_URL --env dev`; `https:` only, `http:` on
+loopback). Locally the cron never fires on its own, and `secrets.required` keeps optional secrets out of `.dev.vars`,
+so pass them from the shell (apps/web's `vite.config.ts` hands them to the local API) and run the cron by hand:
+
+```bash
+RELAY_SEND_TOKEN=local node scripts/dead-man-double.mjs   # from the root: the check's (and relay's) stand-in, port 8790
+DEAD_MAN_URL=http://127.0.0.1:8790/ping RELAY_URL=http://127.0.0.1:8790 RELAY_SEND_TOKEN=local vp run dev
+# The cron, by hand: the Vite plugin's local explorer (GET /cdn-cgi/handler/scheduled reaches the web Worker instead).
+curl -X POST "http://localhost:5173/cdn-cgi/local/explorer/api/local/scheduled?worker=brigade-api" \
+  -H 'Content-Type: application/json' -d '{"cron":"* * * * *"}'
+```
+
+Each run pings the double; start `vp run dev` with another `RELAY_SEND_TOKEN` and the next run shows
+`relay_unauthorized` on the dashboard and pings nothing.
 
 ## Run it
 

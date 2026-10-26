@@ -665,6 +665,7 @@ describe("GET /sync/:workspaceId: the actor", () => {
       WORKSPACE: env.WORKSPACE,
       EVENTS: env.EVENTS,
       PROBE: env.PROBE,
+      WATCHDOG: env.WATCHDOG,
       DB: env.DB,
       BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
     };

@@ -31,6 +31,33 @@ public enum BrigadePushCrypto {
     public let incident: String?
     /// The incident's workspace (`PushContent.workspace`), for the Acknowledge action; nil from older instances.
     public let workspace: String?
+    /// Where to report that this page was opened, and its single-page token (packages/push `PushReceipt`); nil when
+    /// the page carries none or one the extension would not send.
+    public let receipt: Receipt?
+  }
+
+  /// A delivery receipt (RFC 0006 "Delivery receipts"): an https URL and an opaque token, each at most
+  /// `PUSH_RECEIPT_MAX_LENGTH` (packages/push `parseReceipt`, which this mirrors).
+  public struct Receipt {
+    public let url: URL
+    public let token: String
+
+    static let maxLength = 512
+
+    init?(_ value: Any?) {
+      guard
+        let value = value as? [String: Any],
+        let raw = value["url"] as? String,
+        let token = value["token"] as? String,
+        raw.count <= Self.maxLength, token.count <= Self.maxLength, !token.isEmpty,
+        token.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "._~-".contains($0)) }),
+        let url = URL(string: raw), let host = url.host, url.user == nil, url.password == nil
+      else { return nil }
+      let loopback = host == "localhost" || host == "127.0.0.1"
+      guard url.scheme == "https" || (url.scheme == "http" && loopback) else { return nil }
+      self.url = url
+      self.token = token
+    }
   }
 
   /// The device public key as the instance needs it: uncompressed P-256 (65 bytes), base64url. Creates the key
@@ -61,7 +88,8 @@ public enum BrigadePushCrypto {
       let body = json["body"] as? String
     else { throw Failure.malformedContent }
     return Content(
-      title: title, body: body, incident: json["incident"] as? String, workspace: json["workspace"] as? String)
+      title: title, body: body, incident: json["incident"] as? String, workspace: json["workspace"] as? String,
+      receipt: Receipt(json["receipt"]))
   }
 
   // MARK: - Keychain

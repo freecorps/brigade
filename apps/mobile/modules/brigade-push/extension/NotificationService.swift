@@ -27,6 +27,8 @@ final class NotificationService: UNNotificationServiceExtension {
       content.body = decrypted.body
       BrigadePage.mark(content, incident: decrypted.incident, workspace: decrypted.workspace)
       log.info("push decrypted")
+      // Started before the page shows and never waited on: the page is what matters (RFC 0006 "Delivery receipts").
+      if let receipt = decrypted.receipt { Self.sendReceipt(receipt, log: log) }
       deliver(content)
     } catch {
       // The error names the step (no key, malformed envelope, AEAD failure), never content.
@@ -51,5 +53,40 @@ final class NotificationService: UNNotificationServiceExtension {
     content.title = NSLocalizedString("push_fallback_title", comment: "")
     content.body = NSLocalizedString("push_fallback_body", comment: "")
     return content
+  }
+}
+
+// MARK: - Delivery receipts
+
+extension NotificationService {
+  /// How long a receipt may take. The extension has about 30 seconds in all, and the page is already on screen.
+  static let receiptTimeout: TimeInterval = 5
+
+  /// Tells the server this phone opened the page: `POST <url>` with `{ "token": … }`, the token sealed in the page
+  /// for this device alone, so no session is needed or sent. Fire and forget: no retry, no cookies, no cache, and a
+  /// failure is only logged (the page is shown either way). The token is never logged.
+  static func sendReceipt(_ receipt: BrigadePushCrypto.Receipt, log: Logger) {
+    guard let body = try? JSONSerialization.data(withJSONObject: ["token": receipt.token]) else { return }
+    var request = URLRequest(url: receipt.url, timeoutInterval: receiptTimeout)
+    request.httpMethod = "POST"
+    request.httpBody = body
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.timeoutIntervalForRequest = receiptTimeout
+    configuration.timeoutIntervalForResource = receiptTimeout
+    configuration.waitsForConnectivity = false
+    configuration.httpShouldSetCookies = false
+    configuration.urlCache = nil
+    let session = URLSession(configuration: configuration)
+    session.dataTask(with: request) { _, response, error in
+      if let error {
+        log.error("receipt not sent: \(String(describing: error), privacy: .public)")
+      } else if let status = (response as? HTTPURLResponse)?.statusCode {
+        log.info("receipt answered \(status, privacy: .public)")
+      }
+    }.resume()
+    // The running task keeps the session alive; it goes once the task ends.
+    session.finishTasksAndInvalidate()
   }
 }

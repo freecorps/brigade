@@ -23,6 +23,14 @@
       "@freecorps/source": "./src/index.ts",
       "default": "./dist/index.mjs"
     },
+    "./auth": {
+      "@freecorps/source": "./src/auth.ts",
+      "default": "./dist/auth.mjs"
+    },
+    "./incident": {
+      "@freecorps/source": "./src/incident.ts",
+      "default": "./dist/incident.mjs"
+    },
     "./labels": {
       "@freecorps/source": "./src/labels.ts",
       "default": "./dist/labels.mjs"
@@ -36,6 +44,8 @@
   "publishConfig": {
     "exports": {
       ".": "./dist/index.mjs",
+      "./auth": "./dist/auth.mjs",
+      "./incident": "./dist/incident.mjs",
       "./labels": "./dist/labels.mjs",
       "./messages": "./dist/messages.mjs",
       "./package.json": "./package.json"
@@ -49,8 +59,10 @@
     "test": "vp test",
     "check": "vp check"
   },
+  "dependencies": {
+    "@freecorps/brigade-schema": "workspace:*"
+  },
   "devDependencies": {
-    "@freecorps/brigade-schema": "workspace:*",
     "@inlang/paraglide-js": "2.29.1",
     "@inlang/plugin-message-format": "4.5.5",
     "@inlang/sdk": "4.0.4",

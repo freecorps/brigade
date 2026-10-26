@@ -34,6 +34,13 @@ const ORGANIZATION_ROUTES = new Set([
   "/organization/list",
 ]);
 
+/**
+ * Other Better Auth routes refused. `/expo-authorization-proxy` (the `expo()` plugin's) redirects to any HTTPS URL it
+ * is given, for social sign-in through the system browser; until that sign-in exists it would only be an open
+ * redirect on Brigade's host.
+ */
+const REFUSED_ROUTES = new Set(["/expo-authorization-proxy"]);
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const { pathname } = new URL(request.url);
@@ -43,7 +50,10 @@ export default {
     const auth = () => workerAuth(env, ctx, request);
     if (pathname === AUTH_BASE_PATH || pathname.startsWith(`${AUTH_BASE_PATH}/`)) {
       const route = pathname.slice(AUTH_BASE_PATH.length);
-      if (route.startsWith("/organization/") && !ORGANIZATION_ROUTES.has(route)) {
+      if (
+        (route.startsWith("/organization/") && !ORGANIZATION_ROUTES.has(route)) ||
+        REFUSED_ROUTES.has(route)
+      ) {
         return json({ error: "not_found" }, 404);
       }
       return auth().handler(request);

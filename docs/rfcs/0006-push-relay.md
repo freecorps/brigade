@@ -65,10 +65,13 @@ relay's bearer token):
   its token is still the one the push went to (a device registered again with a new token meanwhile is kept).
 - **Server-only.** Devices live in the workspace shard's `devices` table, which is never synced: no member sees
   another's tokens or key, and the `device.*` events carry neither.
-- **The app** registers from the development `/push` screen once it has permission, a token and a key, through
-  Brigade Sync (as the dev actor until mobile sign-in exists). Its device id is derived from the device key, so a
-  relaunch registers the same id (a no-op). Registration from sign-in, and unregistering on sign-out, come with
-  mobile sign-in.
+- **The app** registers the phone on the signed-in member's workspace each time a session opens it (sign-in, or a
+  launch already signed in), once it has permission, a token and a key, through Brigade Sync as that member. Its
+  device id is derived from the device key, so a relaunch registers the same id (a no-op, `conflict`). Sign out
+  unregisters it first (`device.unregister`, given up after 5 s so signing out offline still works; the device then
+  stays registered until someone signs out on it online or APNs drops its token), then ends the session. The account
+  section says whether the phone is paged: on, notifications off, no device key yet (Android until FCM), taken by the
+  last member signed in on it, or failed. Registering into one workspace only: the active one.
 - **The relay** takes the device's `environment` with each push and picks the APNs host from it (one provider token
   signs for both).
 
@@ -95,8 +98,9 @@ socket. So someone who never opened Brigade is not paged (they have no device ei
   member (`device.unregistered` for each). Until they exist, an out-of-band D1 edit is not reflected in who is
   paged. The page path does not re-read D1: a D1 outage would then become a reason a page is late or missing.
 - **A handed-over phone** (same install, so the same device id, signed in as another member) keeps paging the first
-  member until it unregisters: `device.register` refuses another member's device id (`forbidden`). Registering on
-  sign-in and unregistering on sign-out (mobile sign-in) settle it.
+  member until it unregisters: `device.register` refuses another member's device id (`forbidden`). Signing out
+  unregisters it, so the next member's sign-in registers it for them; if the first member's sign-out could not reach
+  the shard, the app tells the next one the phone is still the other member's ("taken") rather than claiming pages.
 
 Content: title `SEV1 · INC-142` (codes, so no locale is needed), body the incident's title, and the incident id,
 sealed per device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id, so a repeat replaces

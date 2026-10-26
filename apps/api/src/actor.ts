@@ -39,7 +39,8 @@ function isLocalHost(hostname: string): boolean {
  * local runs and the tests set it, in their Vite configs, never a deployed environment; apps/web
  * test/worker-config.test.ts checks every environment in wrangler.jsonc), and the request is for a local host, so a
  * deployment that sets the variable by mistake still refuses it. A private LAN address counts as local, so a
- * phone can use `vp dev` over Wi-Fi. The mobile app relies on it until it can sign in.
+ * phone can use `vp dev` over Wi-Fi. No app relies on it since the mobile app signs in; it stays for local tools
+ * and the tests.
  */
 export function devActorEnabled(env: object, request: Request): boolean {
   return Reflect.get(env, DEV_ACTOR_VAR) === "1" && isLocalHost(new URL(request.url).hostname);
@@ -56,8 +57,11 @@ export async function resolveActor(
   workspaceId: string,
 ): Promise<ActorResult> {
   // Browsers send cookies on a cross-site WebSocket upgrade and CORS does not apply to it, so a page on another
-  // site could open a socket as the signed-in user (cross-site WebSocket hijacking). Native clients send no
-  // Origin.
+  // site could open a socket as the signed-in user (cross-site WebSocket hijacking). A browser always sends the
+  // page's Origin on an upgrade, so this refuses every other site. The mobile app is no browser: it sets the
+  // session's `Cookie` header itself (apps/mobile/src/lib/sync-client.ts), and React Native sends either no
+  // Origin or, by default, the socket URL's own origin, which passes. No other origin is accepted here, the app's
+  // `brigade://` included: it never sends it on a socket.
   const origin = request.headers.get("Origin");
   if (origin !== null && origin !== new URL(request.url).origin) {
     return refuse(403, "forbidden_origin");

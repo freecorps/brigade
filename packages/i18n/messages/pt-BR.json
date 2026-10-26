@@ -176,6 +176,32 @@
   "mobile_sync_retrying": "O app continua tentando sozinho.",
   "mobile_sync_offline_hint": "Não foi possível conectar ao Brigade agora. Suas alterações são enviadas quando a conexão voltar, desde que o app continue aberto.",
   "mobile_change_hint": "Abre as opções",
+  "mobile_session": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=sign_in_hint": "Novo no Brigade? Crie uma conta no painel e depois entre aqui.",
+        "part=no_server": "Este build não diz a qual Brigade se conectar.",
+        "part=account": "Conta",
+        "part=no_workspace": "Sua conta ainda não está em um espaço de trabalho. Crie um no painel e abra o Brigade de novo.",
+        "part=sign_out_title": "Sair do Brigade?",
+        "part=sign_out_body": "Este telefone deixa de receber chamados até você entrar de novo.",
+        "part=cancel": "Cancelar",
+        "part=signing_out": "Saindo…",
+        "part=pages": "Chamados neste telefone",
+        "part=pages_pending": "Configurando…",
+        "part=pages_on": "Ativados",
+        "part=pages_off": "As notificações estão desativadas. Ative-as nos Ajustes para receber chamados aqui.",
+        "part=pages_unsupported": "Ainda não neste telefone",
+        "part=pages_failed": "Não foi possível registrar este telefone. O Brigade tenta de novo na próxima vez que abrir.",
+        "part=pages_taken": "Este telefone ainda chama a última pessoa que entrou nele. Ela precisa sair nele primeiro.",
+        "part=open_hint": "Abre o incidente",
+        "part=assign_hint": "Abre os membros que podem assumir",
+        "part=*": "Brigade"
+      }
+    }
+  ],
   "push_fallback_title": "Novo alerta",
   "push_fallback_body": "Abra o Brigade para ver.",
   "push_title": "Push",
@@ -186,7 +212,6 @@
   "push_unavailable": "Ainda não disponível nesta plataforma.",
   "push_error": "Falhou: {error}",
   "push_paging": "Chamados",
-  "push_registered": "Registrado em {shard}",
   "auth_sign_in_title": "Entrar no Brigade",
   "auth_sign_in_description": "Use o e-mail e a senha do seu cadastro.",
   "auth_sign_up_title": "Crie sua conta",

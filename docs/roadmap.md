@@ -78,8 +78,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     that would skip events refused, and a failed shard provision undone. D1 `brigade-db-dev` exists with the
     migrations applied.
   - Left: invitations and member management (roles, removal, with `member.*` events), switching workspaces in the
-    UI, closing open sockets on sign-out or role change (RFC 0004 "Session revocation"), mobile sign-in (PKCE via
-    the system browser, QR pairing, bearer tokens on the upgrade), password reset (needs the email notifier),
+    UI, closing open sockets on sign-out or role change (RFC 0004 "Session revocation"), mobile OAuth/OIDC with PKCE
+    via the system browser and QR pairing (mobile email and password sign-in is done, see the Mobile item), password reset (needs the email notifier),
     putting `/workspaces/:id` (the stack check) behind auth before `workers_dev` is turned on, and the production
     and staging secrets (owner approval). Also: email verification (needs the email notifier), then
     a uniform sign-up response (the same answer whether or not the email is taken, so sign-up cannot enumerate
@@ -114,13 +114,27 @@ Validate the risky assumptions before writing product code. Each spike produces 
     updates, three incident roles checked against the shard's member list, and an incident page in the dashboard
     (`/incidents/<number>`) to change status and severity, assign roles and post updates (RFC 0003).
   - Left for later items: publishing an update to a status page (Phase 3), role definitions (Phase 3), editing an
-    update, member names from invitations (members appear once they open Brigade), and the mobile incident detail.
+    update, and member names from invitations (members appear once they open Brigade). The mobile incident screen is done (Mobile item).
 - [ ] Brigade Sync in production for web + mobile
   - Done so far: D1 `brigade-db` and `brigade-db-staging` exist with the migrations applied. Left: production and
     staging queues, the first deploy, and the relay's production secrets.
 - [ ] Web dashboard: incident list/detail, monitors
   - Done so far: the incident list, the incident page (`/incidents/<number>`) and the Monitors card.
 - [ ] Mobile: login, incident list/detail, push via relay, ack from notification
+  - Done: email and password sign-in and sign-out with Better Auth's Expo integration (`@better-auth/expo`: the
+    session in secure storage, sent as a `Cookie` header on Better Auth's routes and on the sync upgrade; the app's
+    `brigade://` a trusted origin; the plugin's open-redirect proxy refused), one sync client per member and
+    workspace, closed on sign-out; the member's workspace as the incident list (read-only for viewers) with an
+    account section; an incident screen (`/incidents/<number>`) with severity and status, roles, written updates and
+    the timeline, as on the dashboard; the phone registered with `device.register` on sign-in and unregistered on
+    sign-out, with whether it is paged shown; incident and sign-in wording shared with the dashboard through
+    `packages/i18n` and `packages/sync` (#20) (RFC 0002 "Auth", RFC 0004 "Socket topology", RFC 0006 "Device
+    registration").
+  - Left: ack from the notification (a notification action over HTTPS, RFC 0004 "Clients"); the iOS end to end on
+    a phone (sign in, registered, a page received and opened on its incident); FCM for Android (until then Android
+    says it is not paged); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
+    session's active one); creating an account or workspace from the app; editing and deleting updates; keeping
+    unsent changes across a restart; a tablet layout.
 - [ ] Event outbox + queue + push notifier
   - Done: the shard alarm drains the outbox to `brigade-events` (`-dev`, `-staging`) in commit order, in bounded
     batches, deleting rows only after the send, with exponential backoff; a consumer in the API Worker routes events
@@ -130,18 +144,15 @@ Validate the risky assumptions before writing product code. Each spike produces 
     20, 40 s), then `notification.failed` and a "Couldn't page …" entry on the incident's timeline, also for each
     member the page was for without a device (a commander without one falls back to everyone who can respond) and
     for a page the Queue dead-lettered (the same Worker consumes `brigade-events-dlq` once); devices register
-    with `device.register` (server-only, own devices only) and the `/push` dev screen registers the phone
+    with `device.register` (server-only, own devices only) and the app registers the phone on sign-in
     (RFC 0005 "Notifiers", RFC 0006 "Device registration", "Who is paged"). Queue `brigade-events-dev` and its
     dead-letter queue `brigade-events-dlq-dev` exist; the dead-letter consumer is created on the next deploy.
   - Left: the production and staging queues (owner approval); `RELAY_URL` and `RELAY_SEND_TOKEN` on the deployed API;
-    a real push end to end from the deployed API to a device; registering from mobile sign-in (and unregistering on
-    sign-out) instead of the dev screen; the local dev actor is not in the shard's member list, so a phone on
-    `vp dev` registers but is not paged; VoIP call pages (`kind: "call"`, Phase 2 with RFC 0010); FCM for Android
+    a real push end to end from the deployed API to a device; VoIP call pages (`kind: "call"`, Phase 2 with RFC 0010); FCM for Android
     (Android devices are recorded as `unsupported`); replaying dead-lettered pages (today they are recorded, not
     re-sent); the `member.*` mutations must update the shard's member cache (role changed; removed: row and devices
     deleted), since until then a member removed or demoted in D1 outside Brigade is still paged (RFC 0006 "Who is
-    paged"); a handed-over phone (same install id, another member) keeps paging the first member until mobile
-    sign-in and sign-out register and unregister it; delivery receipts
+    paged"); delivery receipts
     and "why wasn't I paged" (Phase 2); holding back lower-urgency pushes while a page may be undelivered (RFC 0006
     "Offline phones"); who is paged before schedules (Q18).
 - [x] External dead-man switch

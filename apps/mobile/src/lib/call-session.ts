@@ -3,7 +3,7 @@
 // Pure: the native module and the sync client come in as `CallDeps`, so tests run it in Node.
 import { m, type Locale } from "@freecorps/brigade-i18n";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
-import { reasonText } from "@/lib/incidents";
+import { mutationErrorReason } from "@freecorps/brigade-i18n/incident";
 
 export type ActiveCall = {
   id: string;
@@ -99,7 +99,7 @@ export class CallSession {
       const locale = this.locale();
       this.deps.speak(m.call_script_acked({}, { locale }), speechLanguage(locale));
     } else {
-      this.#update({ kind: "failed", reason: reasonText(outcome.error.code) });
+      this.#update({ kind: "failed", reason: mutationErrorReason(outcome.error.code) });
     }
   }
 

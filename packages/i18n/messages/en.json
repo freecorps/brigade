@@ -176,6 +176,32 @@
   "mobile_sync_retrying": "The app keeps trying on its own.",
   "mobile_sync_offline_hint": "Can't reach Brigade right now. Changes you make are sent when the connection is back, as long as the app stays open.",
   "mobile_change_hint": "Opens the choices",
+  "mobile_session": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=sign_in_hint": "New to Brigade? Create an account on the dashboard, then sign in here.",
+        "part=no_server": "This build doesn't say which Brigade to connect to.",
+        "part=account": "Account",
+        "part=no_workspace": "Your account isn't in a workspace yet. Create one on the dashboard, then open Brigade again.",
+        "part=sign_out_title": "Sign out of Brigade?",
+        "part=sign_out_body": "This phone stops getting pages until you sign in again.",
+        "part=cancel": "Cancel",
+        "part=signing_out": "Signing out…",
+        "part=pages": "Pages on this phone",
+        "part=pages_pending": "Setting up…",
+        "part=pages_on": "On",
+        "part=pages_off": "Notifications are off. Turn them on in Settings to be paged here.",
+        "part=pages_unsupported": "Not on this phone yet",
+        "part=pages_failed": "Couldn't register this phone. Brigade tries again the next time it opens.",
+        "part=pages_taken": "This phone still pages the last person signed in on it. They need to sign out on it first.",
+        "part=open_hint": "Opens the incident",
+        "part=assign_hint": "Opens the members who can hold it",
+        "part=*": "Brigade"
+      }
+    }
+  ],
   "push_fallback_title": "New alert",
   "push_fallback_body": "Open Brigade to see it.",
   "push_title": "Push",
@@ -186,7 +212,6 @@
   "push_unavailable": "Not available on this platform yet.",
   "push_error": "Failed: {error}",
   "push_paging": "Paging",
-  "push_registered": "Registered on {shard}",
   "auth_sign_in_title": "Sign in to Brigade",
   "auth_sign_in_description": "Use the email and password you signed up with.",
   "auth_sign_up_title": "Create your account",

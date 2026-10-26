@@ -6,7 +6,7 @@ import { workspaceSource } from "../../vite.workspace.ts";
 /**
  * DEV ONLY: lets a sync upgrade without a session act as the dev responder (src/actor.ts) in local runs, which
  * use the top-level (production) config. Only `vp dev` and the tests set it, never a build or a deployed
- * environment; the mobile app relies on it until it can sign in.
+ * environment. No app relies on it since the mobile app signs in; it stays for local tools and the tests.
  */
 export const LOCAL_VARS = { SYNC_DEV_ACTOR: "1" };
 

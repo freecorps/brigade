@@ -1643,7 +1643,7 @@
         "part=save": "Salvar nova senha",
         "part=saving": "Salvando…",
         "part=done_title": "Senha alterada",
-        "part=done_body": "Entre com a nova senha. Todas as sessões foram encerradas, e seu endereço de e-mail está confirmado.",
+        "part=done_body": "Entre com a nova senha. Todas as sessões foram encerradas, e seu endereço de e-mail está confirmado. Seus celulares não recebem acionamentos até você entrar no app de novo.",
         "part=sign_in": "Entrar",
         "part=invalid_title": "Este link não funciona",
         "part=invalid_body": "Ele pode ter expirado (os links valem por 1 hora), já ter sido usado ou ter sido cortado. Peça um novo.",

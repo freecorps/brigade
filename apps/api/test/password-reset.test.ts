@@ -398,29 +398,40 @@ async function workspaceOf(person: { cookie: string }) {
 
 type Workspace = Awaited<ReturnType<typeof workspaceOf>>;
 
-/** Registers a device for `actor` straight in the shard, as `device.register` from their phone would. */
-const device = (w: Workspace, actor: Actor) =>
+/** What a phone sends to `device.register`: a new device id and push token. */
+const registration = () => ({
+  id: newId("dev", Date.now(), random),
+  platform: "ios",
+  environment: "sandbox",
+  pushToken: `token${newId("tok", Date.now(), random)}`.replace(/_/g, ""),
+  voipToken: null,
+  publicKey: `B${"a".repeat(86)}`,
+});
+
+/**
+ * Runs `device.register` with `args` straight in the shard, as the phone would; answers the result's code (`ok`, or
+ * the error's). The app counts a `conflict` (nothing changed) as registered.
+ */
+const register = (w: Workspace, actor: Actor, args: ReturnType<typeof registration>) =>
   w.withShard((shard) => {
-    const id = newId("dev", Date.now(), random);
     const { result } = shard.mutate({
       clientId: "test",
       mutationId: newId("mut", Date.now(), random),
       actor,
       name: "device.register",
-      args: {
-        id,
-        platform: "ios",
-        environment: "sandbox",
-        pushToken: `token${newId("tok", Date.now(), random)}`.replace(/_/g, ""),
-        voipToken: null,
-        publicKey: `B${"a".repeat(86)}`,
-      },
+      args,
       now: Date.now(),
       internal: true,
     });
-    expect(result).toMatchObject({ ok: true });
-    return id;
+    return result.ok ? "ok" : result.error.code;
   });
+
+/** Registers a new device for `actor` straight in the shard, as `device.register` from their phone would. */
+const device = async (w: Workspace, actor: Actor) => {
+  const args = registration();
+  expect(await register(w, actor, args)).toBe("ok");
+  return args.id;
+};
 
 /** Runs `name` in the shard as `actor`, as their client would. */
 const run = (w: Workspace, actor: Actor, name: string, args: Record<string, unknown>) =>
@@ -502,6 +513,39 @@ const pagedState = (w: Workspace) =>
       .filter((event) => event.type === "device.unregistered")
       .map((event) => event.data),
   }));
+
+/** The `device.*` events in the shard's outbox, oldest first. */
+const deviceEvents = (w: Workspace) =>
+  w.withShard((_shard, state) =>
+    state.storage.sql
+      .exec<{ event: string }>("select event from outbox order by seq")
+      .toArray()
+      .map((row) => JSON.parse(row.event) as BrigadeEvent)
+      .filter((event) => event.type.startsWith("device."))
+      .map((event) => [event.type, event.subject]),
+  );
+
+/**
+ * Opens a socket as `cookie`'s user without the member reconcile its upgrade starts, so the test decides when that
+ * runs (`w.stub.reconcileMembers`). Answers the upgrade's status.
+ */
+const upgradeAlone = (w: Workspace, cookie: string) =>
+  runInDurableObject(w.stub, async (instance: WorkspaceDO) => {
+    const membership = Reflect.get(instance, "membership") as { upgraded(id: string): unknown };
+    const upgraded = vi.spyOn(membership, "upgraded").mockResolvedValue(undefined);
+    try {
+      const response = await exports.default.fetch(`${ORIGIN}/sync/${w.id}`, {
+        headers: { Upgrade: "websocket", Cookie: cookie, Origin: ORIGIN },
+      });
+      if (response.webSocket) {
+        response.webSocket.accept();
+        open.push(response.webSocket);
+      }
+      return response.status;
+    } finally {
+      upgraded.mockRestore();
+    }
+  });
 
 /** Opens a socket as `cookie`'s user; resolves with a promise of its close code. */
 async function connect(w: Workspace, cookie: string) {
@@ -623,6 +667,43 @@ describe("an address someone else signed up with", () => {
     expect(await (await notice(cookie)).json()).toEqual({ notice: null });
   });
 
+  test("the shard takes nothing over when someone else is a member there after all", async () => {
+    const wes = await signUp("Wes");
+    const w = await workspaceOf(wes);
+    const actor: Actor = { kind: "user", id: wes.id, role: "owner" };
+    const planted = await plantMonitors(w, actor);
+    // Joined after the Worker counted the members in D1, and opened Brigade here.
+    const joiner = `usr_${crypto.randomUUID().replace(/-/g, "")}`;
+    await run(w, { kind: "user", id: joiner, role: "responder" }, "member.sync", {
+      id: joiner,
+      name: "Joiner",
+      role: "responder",
+    });
+
+    expect(await w.stub.signOutUser(w.id, wes.id, { takeOver: true })).toEqual({ ok: true });
+    const paused = await w.withShard((shard) =>
+      shard.store.scan("monitors").map((row) => row.paused),
+    );
+    expect(paused).toEqual([false, false]);
+    expect((await planted.ping()).status).toBe(202);
+  });
+
+  test("two takeovers at once leave one notice with what either of them paused", async () => {
+    const xia = await signUp("Xia");
+    const w = await workspaceOf(xia);
+    await plantMonitors(w, { kind: "user", id: xia.id, role: "owner" });
+    const signOut = signOutWith(env, 0);
+    // The second finds the monitors paused already, and pauses nothing itself.
+    await signOut(xia.id, { takeOver: true, at: Date.now() });
+    await signOut(xia.id, { takeOver: true, at: Date.now() });
+    const row = await env.DB.prepare(`select workspaces from takeover_notice where "userId" = ?`)
+      .bind(xia.id)
+      .first<{ workspaces: string }>();
+    expect(JSON.parse(row!.workspaces)).toEqual([
+      { id: w.id, name: "Squat", paused: ["Their host", "Their cron"], revoked: 1, failed: false },
+    ]);
+  });
+
   test("a reset deletes the account's other links: none of them resets the password again", async () => {
     const otto = await signUp("Otto");
     const first = tokenOf(await resetLink(otto.email));
@@ -693,6 +774,100 @@ describe("an address someone else signed up with", () => {
     const after = await pagedState(w);
     expect(after.devices).toEqual([own]);
     expect(after.unregistered).toEqual([{ id: phone, userId: rui.id, reason: "password_reset" }]);
+  });
+
+  // A paging path (AGENTS.md): the app registers the same device id with the same tokens after signing in again, and
+  // a register that changes nothing is a `conflict` the app counts as paging on.
+  test("after a sign-out that failed, the phone registered again as it was is kept and paged; the other one is not", async () => {
+    const tia = await signUp("Tia");
+    const w = await workspaceOf(tia);
+    const actor: Actor = { kind: "user", id: tia.id, role: "owner" };
+    const own = registration();
+    expect(await register(w, actor, own)).toBe("ok");
+    // Someone else's phone, registered as the account before the reset and never again.
+    const theirs = await device(w, actor);
+    await failSignOut(w);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await reset(tokenOf(await resetLink(tia.email)))).status).toBe(200);
+    vi.restoreAllMocks();
+    expect((await pagedState(w)).devices).toEqual([own.id, theirs]);
+
+    // Signed in again, the app connects and registers the same device, unchanged, before any reconcile runs.
+    const cookie = cookieOf(await signIn(tia.email, NEW_PASSWORD));
+    expect(await upgradeAlone(w, cookie)).toBe(101);
+    expect(await register(w, actor, own)).toBe("ok");
+    await w.stub.reconcileMembers();
+    const after = await pagedState(w);
+    expect(after.devices).toEqual([own.id]);
+    expect(after.noDevices).toEqual([]);
+    const targets = await w.withShard(
+      (shard) => pageTargets(shard.store, { roles: {} }, "sys_monitors").targets,
+    );
+    expect(targets.map((target) => target.deviceId)).toEqual([own.id]);
+    expect(after.unregistered).toEqual([
+      { id: own.id, userId: tia.id, reason: "password_reset" },
+      { id: theirs, userId: tia.id, reason: "password_reset" },
+    ]);
+
+    // Every later launch: the same register changes nothing and emits nothing, and neither does the upgrade.
+    const events = await deviceEvents(w);
+    expect(await upgradeAlone(w, cookie)).toBe(101);
+    expect(await register(w, actor, own)).toBe("conflict");
+    await w.stub.reconcileMembers();
+    expect(await deviceEvents(w)).toEqual(events);
+    expect((await pagedState(w)).devices).toEqual([own.id]);
+  });
+
+  test("after a sign-out that failed, a reconcile first and the same register after still leave the phone paged", async () => {
+    const uli = await signUp("Uli");
+    const w = await workspaceOf(uli);
+    const actor: Actor = { kind: "user", id: uli.id, role: "owner" };
+    const own = registration();
+    expect(await register(w, actor, own)).toBe("ok");
+    await failSignOut(w);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await reset(tokenOf(await resetLink(uli.email)))).status).toBe(200);
+    vi.restoreAllMocks();
+
+    await w.stub.reconcileMembers();
+    expect((await pagedState(w)).devices).toEqual([]);
+    const cookie = cookieOf(await signIn(uli.email, NEW_PASSWORD));
+    expect(await upgradeAlone(w, cookie)).toBe(101);
+    expect(await register(w, actor, own)).toBe("ok");
+    await w.stub.reconcileMembers();
+    const after = await pagedState(w);
+    expect(after.devices).toEqual([own.id]);
+    expect(after.noDevices).toEqual([]);
+  });
+
+  test("an upgrade that cannot drop the devices from before the reset is refused, and the repair drops them", async () => {
+    const vic = await signUp("Vic");
+    const w = await workspaceOf(vic);
+    const actor: Actor = { kind: "user", id: vic.id, role: "owner" };
+    const phone = await device(w, actor);
+    await failSignOut(w);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await reset(tokenOf(await resetLink(vic.email)))).status).toBe(200);
+    await w.withShard((_shard, state) =>
+      state.storage.sql.exec("delete from member_repair where key = 'at'"),
+    );
+
+    const cookie = cookieOf(await signIn(vic.email, NEW_PASSWORD));
+    // The app tries again: no socket means it never shows paging as on.
+    expect(await upgradeAlone(w, cookie)).toBe(503);
+    const repairAt = await w.withShard(
+      (_shard, state) =>
+        state.storage.sql
+          .exec<{ value: number }>("select value from member_repair where key = 'at'")
+          .toArray()[0]?.value,
+    );
+    expect(repairAt).toBeGreaterThan(0);
+    vi.restoreAllMocks();
+    await w.stub.reconcileMembers();
+    expect((await pagedState(w)).unregistered).toEqual([
+      { id: phone, userId: vic.id, reason: "password_reset" },
+    ]);
+    expect(await upgradeAlone(w, cookie)).toBe(101);
   });
 
   test("a reset never fails for a shard that cannot sign the account out: it is logged", async () => {

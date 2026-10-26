@@ -20,7 +20,7 @@ import {
   type ServerMessage,
   type SubscriptionChanges,
 } from "@freecorps/brigade-sync/protocol";
-import { readActor, readMemberName } from "./actor.ts";
+import { readActor, readMemberName, readResetAt } from "./actor.ts";
 import {
   MEMBER_REPAIR_RETRY_MS,
   Membership,
@@ -129,7 +129,7 @@ export type SocketState = {
 
 /**
  * What `signOutUser` did. With `takeOver`, `paused`: the names of the monitors it paused; `revoked`: how many heartbeat
- * URLs stopped working.
+ * URLs stopped working. Both absent when it took nothing over (another member is here after all).
  */
 export type SignOutResult =
   | { ok: true; paused?: string[]; revoked?: number }
@@ -471,8 +471,9 @@ export class WorkspaceDO extends DurableObject<Env> {
    * this is what keeps a phone or a socket of whoever held the account before from going on as them. With `takeOver`
    * (the owner of the address took back an account someone else signed up with, and it is the only member here),
    * also pauses every monitor and revokes every heartbeat URL (`monitor.takeOver`), so whoever set them up cannot page
-   * the owner through them; answers the names of the monitors it paused and how many heartbeat URLs it revoked.
-   * Nothing to change is fine. A shard that serves another workspace, or none yet, answers `not_found`.
+   * the owner through them; answers the names of the monitors it paused and how many heartbeat URLs it revoked. The
+   * shard checks its own member list again first: with anyone else in it, nothing is taken over. Nothing to change
+   * is fine. A shard that serves another workspace, or none yet, answers `not_found`.
    *
    * The sockets close whatever happens. A storage failure throws, after arming the member repair: its reconcile
    * drops every device registered before D1's `user.passwordResetAt` (`member.reconcile`), so the phone stops being
@@ -486,7 +487,10 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
     try {
       this.serverMutation("device.signOut", { userId });
-      if (!options.takeOver) return { ok: true };
+      // The Worker counted the members in D1 a moment ago; someone who joined since may have opened Brigade here.
+      // Their monitors are not the account's to pause.
+      const others = this.shard.store.scan("members").some((member) => member.id !== userId);
+      if (!options.takeOver || others) return { ok: true };
       const paused = this.shard.store
         .scan("monitors")
         .filter((monitor) => !monitor.paused)
@@ -800,6 +804,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (name !== undefined && (await this.membership.refuses(workspace, actor.id, Date.now()))) {
       return Response.json({ error: "not_a_member" }, { status: 403 });
     }
+    // Before the socket exists, so no `device.register` of this session can come first: a register that changes
+    // nothing is a `conflict` that leaves `updatedAt` alone, and the reconcile would then drop the phone the member
+    // just signed in on again.
+    const resetAt = readResetAt(request.headers);
+    if (name !== undefined && resetAt !== undefined && !this.signOutStale(actor.id, resetAt)) {
+      return Response.json({ error: "unavailable" }, { status: 503 });
+    }
     if (name !== undefined) this.syncMember(actor, name);
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server);
@@ -811,6 +822,32 @@ export class WorkspaceDO extends DurableObject<Env> {
     // alarm does it. Only a signed-in member's upgrade (the dev actor has no name and no D1 row).
     if (name !== undefined) void this.membership.upgraded(workspace);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /**
+   * A signed-in member's upgrade after their password was reset at `resetAt` (D1's `user.passwordResetAt`, which the
+   * Worker read): drops their devices last registered before it (`device.signOut` as `ACCOUNT_ACTOR`), left behind
+   * when the reset's own sign-out failed here (RFC 0002 "Auth"). Only the first upgrade after such a failure finds
+   * any, so no other one writes or emits anything. False when it failed, after arming the member repair, whose
+   * reconcile drops them instead.
+   *
+   * `resetAt` is the Worker's clock and `updatedAt` the shard's. Both are Cloudflare's, kept within milliseconds of
+   * each other, far less than it takes a person to sign in again after a reset, so a device registered after the
+   * reset never reads as older than it.
+   */
+  private signOutStale(userId: string, resetAt: number): boolean {
+    const stale = this.shard.store
+      .scan("devices")
+      .some((device) => device.userId === userId && device.updatedAt < resetAt);
+    if (!stale) return true;
+    try {
+      this.serverMutation("device.signOut", { userId, before: resetAt });
+      return true;
+    } catch (error) {
+      this.log("signing out devices from before a password reset failed", { error });
+      this.membership.armRepair(Date.now());
+      return false;
+    }
   }
 
   /**

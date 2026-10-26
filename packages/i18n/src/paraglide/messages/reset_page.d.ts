@@ -28,7 +28,7 @@ export type Reset_PageInputs = {
 * | "save" | "Save new password" |
 * | "saving" | "Saving…" |
 * | "done_title" | "Password changed" |
-* | "done_body" | "Sign in with your new password. Every session was signed out, and your email address is confirmed." |
+* | "done_body" | "Sign in with your new password. Every session was signed out, and your email address is confirmed. Your phones get no pages until you sign in to the app again." |
 * | "sign_in" | "Sign in" |
 * | "invalid_title" | "This link doesn't work" |
 * | "invalid_body" | "It may have expired (links work for 1 hour), been used already, or been cut off. Ask for a new one." |

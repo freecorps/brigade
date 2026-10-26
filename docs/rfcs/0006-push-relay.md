@@ -181,7 +181,10 @@ D1: a D1 outage must not become a reason a page is late or missing. How the copy
   If a shard fails it, its repair alarm is armed, and every reconcile (`member.reconcile`, which reads
   `user.passwordResetAt` with each member) drops the member's devices last registered before the reset
   (`device.unregistered`, `password_reset`) and closes their sockets opened before it, so the phone of whoever held
-  the account is not paged for good. A phone the member registers again after the reset stays.
+  the account is not paged for good. The member's own next sync upgrade drops those devices before its socket opens
+  (`device.signOut` with the reset's time), so the app's register after signing in again, even one that changes
+  nothing (same device id and tokens), never precedes the drop: the phone it registers stays. If that drop fails,
+  the upgrade is refused (503) and the repair alarm is armed.
 - **Edits made outside Brigade** (straight in D1): reconciled on the next sync upgrade into the workspace by anyone
   (`member.reconcile`): a removed member's row and devices go, a changed role is copied, and their open sockets
   close. Until somebody opens Brigade, a member removed or demoted outside it is still paged (Q18).

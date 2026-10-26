@@ -203,6 +203,10 @@ describe("the reset page", () => {
       { token: "Ab3xQwErTyUiOpAsDfGhJkLz", newPassword: "correct horse battery staple" },
     ]);
     expect(heading()).toBe("Password changed");
+    // Paging stops with the sessions: said before the person walks away from a phone that is now quiet.
+    expect(document.body.textContent).toContain(
+      "Your phones get no pages until you sign in to the app again.",
+    );
     expect(document.querySelector('a[href="/sign-in"]')).not.toBeNull();
   });
 

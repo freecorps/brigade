@@ -4,7 +4,7 @@
 // first, then runs these, so they never decide a change on their own (apps/api/src/members.ts).
 
 import { can, ROLES, type Role } from "./access.ts";
-import { dropDevices, forgetDevice, type DeviceUnregistered } from "./devices.ts";
+import { dropDevices } from "./devices.ts";
 import { defineMutation, fail, ok, type Actor, type DomainEvent } from "./mutation.ts";
 import { dropFromSchedules } from "./schedules.ts";
 import { v } from "./validate.ts";
@@ -165,19 +165,7 @@ export const reconcileMembers = defineMutation({
     // Devices last registered before their member's password was reset: the reset's own `device.signOut` failed in
     // this shard, and they may be someone else's phone (RFC 0002 "Auth"). The app registers again after signing in.
     for (const { id, resetAt } of members) {
-      if (resetAt === null) continue;
-      const stale = store
-        .scan("devices")
-        .filter((device) => device.userId === id && device.updatedAt < resetAt);
-      for (const device of stale) {
-        forgetDevice(store, device.id);
-        const event: DeviceUnregistered = {
-          type: "device.unregistered",
-          subject: device.id,
-          data: { id: device.id, userId: id, reason: "password_reset" },
-        };
-        events.push(event);
-      }
+      if (resetAt !== null) events.push(...dropDevices(store, id, "password_reset", resetAt));
     }
     for (const current of store.scan("members")) {
       const role = roles.get(current.id);

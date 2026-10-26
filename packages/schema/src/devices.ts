@@ -83,15 +83,19 @@ export function forgetDevice(store: MutationStore, id: string): void {
   if (store.get("member_devices", id)) store.delete("member_devices", id);
 }
 
-/** Forgets every device of `userId`, with a `device.unregistered` for each. */
+/**
+ * Forgets every device of `userId`, or only those last registered before `before`, with a `device.unregistered` for
+ * each.
+ */
 export function dropDevices(
   store: MutationStore,
   userId: string,
   reason: DeviceRemoval,
+  before = Infinity,
 ): DeviceUnregistered[] {
   const events: DeviceUnregistered[] = [];
   for (const device of store.scan("devices")) {
-    if (device.userId !== userId) continue;
+    if (device.userId !== userId || device.updatedAt >= before) continue;
     forgetDevice(store, device.id);
     events.push({
       type: "device.unregistered",
@@ -269,18 +273,22 @@ export const expireDevice = defineMutation({
  * Server only, as `ACCOUNT_ACTOR`: stops paging every device of `userId` in this workspace, after their password was
  * reset (RFC 0002 "Auth"). A reset ends every session, and a phone still registered would keep getting the
  * account's pages without one: the phone of whoever held the account before (someone who signed up with another
- * person's address, or took over the password). The app registers again when its member next signs in. Nothing to
- * drop is a `conflict`.
+ * person's address, or took over the password). The app registers again when its member next signs in. `before`:
+ * only the devices last registered before then (the reset's time, when the shard catches up on a sign-out that
+ * failed: `WorkspaceDO.fetch`). Nothing to drop is a `conflict`.
  */
 export const signOutDevices = defineMutation({
   name: "device.signOut",
-  args: v.object({ userId: v.string({ min: 1, max: 64 }) }),
+  args: v.object({
+    userId: v.string({ min: 1, max: 64 }),
+    before: v.optional(v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER })),
+  }),
   permission: "incident:update",
   apply(store, args, ctx) {
     if (ctx.actor.kind !== ACCOUNT_ACTOR.kind || ctx.actor.id !== ACCOUNT_ACTOR.id) {
       return fail("forbidden", "Only the server signs devices out");
     }
-    const events = dropDevices(store, args.userId, "password_reset");
+    const events = dropDevices(store, args.userId, "password_reset", args.before ?? Infinity);
     if (events.length === 0) return fail("conflict", "No devices to sign out");
     return ok(...events);
   },

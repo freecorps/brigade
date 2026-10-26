@@ -30,7 +30,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "save" | "Save new password" |
 * | "saving" | "Saving…" |
 * | "done_title" | "Password changed" |
-* | "done_body" | "Sign in with your new password. Every session was signed out, and your email address is confirmed." |
+* | "done_body" | "Sign in with your new password. Every session was signed out, and your email address is confirmed. Your phones get no pages until you sign in to the app again." |
 * | "sign_in" | "Sign in" |
 * | "invalid_title" | "This link doesn't work" |
 * | "invalid_body" | "It may have expired (links work for 1 hour), been used already, or been cut off. Ask for a new one." |
@@ -65,7 +65,7 @@ export const reset_page = /** @type {((inputs: Reset_PageInputs, options?: { loc
 		if (i?.part === "save") return /** @type {LocalizedString} */ (`Salvar nova senha`);
 		if (i?.part === "saving") return /** @type {LocalizedString} */ (`Salvando…`);
 		if (i?.part === "done_title") return /** @type {LocalizedString} */ (`Senha alterada`);
-		if (i?.part === "done_body") return /** @type {LocalizedString} */ (`Entre com a nova senha. Todas as sessões foram encerradas, e seu endereço de e-mail está confirmado.`);
+		if (i?.part === "done_body") return /** @type {LocalizedString} */ (`Entre com a nova senha. Todas as sessões foram encerradas, e seu endereço de e-mail está confirmado. Seus celulares não recebem acionamentos até você entrar no app de novo.`);
 		if (i?.part === "sign_in") return /** @type {LocalizedString} */ (`Entrar`);
 		if (i?.part === "invalid_title") return /** @type {LocalizedString} */ (`Este link não funciona`);
 		if (i?.part === "invalid_body") return /** @type {LocalizedString} */ (`Ele pode ter expirado (os links valem por 1 hora), já ter sido usado ou ter sido cortado. Peça um novo.`);
@@ -94,7 +94,7 @@ export const reset_page = /** @type {((inputs: Reset_PageInputs, options?: { loc
 		if (i?.part === "save") return /** @type {LocalizedString} */ (`Save new password`);
 		if (i?.part === "saving") return /** @type {LocalizedString} */ (`Saving…`);
 		if (i?.part === "done_title") return /** @type {LocalizedString} */ (`Password changed`);
-		if (i?.part === "done_body") return /** @type {LocalizedString} */ (`Sign in with your new password. Every session was signed out, and your email address is confirmed.`);
+		if (i?.part === "done_body") return /** @type {LocalizedString} */ (`Sign in with your new password. Every session was signed out, and your email address is confirmed. Your phones get no pages until you sign in to the app again.`);
 		if (i?.part === "sign_in") return /** @type {LocalizedString} */ (`Sign in`);
 		if (i?.part === "invalid_title") return /** @type {LocalizedString} */ (`This link doesn't work`);
 		if (i?.part === "invalid_body") return /** @type {LocalizedString} */ (`It may have expired (links work for 1 hour), been used already, or been cut off. Ask for a new one.`);

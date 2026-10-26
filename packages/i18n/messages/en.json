@@ -1643,7 +1643,7 @@
         "part=save": "Save new password",
         "part=saving": "Saving…",
         "part=done_title": "Password changed",
-        "part=done_body": "Sign in with your new password. Every session was signed out, and your email address is confirmed.",
+        "part=done_body": "Sign in with your new password. Every session was signed out, and your email address is confirmed. Your phones get no pages until you sign in to the app again.",
         "part=sign_in": "Sign in",
         "part=invalid_title": "This link doesn't work",
         "part=invalid_body": "It may have expired (links work for 1 hour), been used already, or been cut off. Ask for a new one.",

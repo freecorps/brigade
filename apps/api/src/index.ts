@@ -9,7 +9,13 @@ import {
   type MemberChange,
   type Role,
 } from "@freecorps/brigade-schema";
-import { ACTOR_HEADER, MEMBER_NAME_HEADER, memberRole, resolveActor } from "./actor.ts";
+import {
+  ACTOR_HEADER,
+  MEMBER_NAME_HEADER,
+  memberRole,
+  RESET_AT_HEADER,
+  resolveActor,
+} from "./actor.ts";
 import {
   AUTH_BASE_PATH,
   createAuth,
@@ -335,8 +341,9 @@ export function signOutWith(
               break;
             }
             failure = undefined;
-            if (!sole) return undefined;
-            const { paused = [], revoked = 0 } = result;
+            // The shard found another member after all, and took nothing over.
+            if (!sole || result.paused === undefined) return undefined;
+            const { paused, revoked = 0 } = result;
             return { id: workspace.id, name: workspace.name, paused, revoked, failed: false };
           } catch (error) {
             failure = error;
@@ -357,18 +364,72 @@ export function signOutWith(
     const notice = inherited.filter((workspace) => workspace !== undefined);
     if (notice.length === 0) return;
     try {
-      await env.DB.prepare(
-        `insert into takeover_notice ("userId", workspaces, "createdAt") values (?, ?, ?)
-         on conflict ("userId") do update set workspaces = excluded.workspaces, "createdAt" = excluded."createdAt"`,
-      )
-        .bind(userId, JSON.stringify(notice), at)
-        .run();
+      await recordNotice(env.DB, userId, notice, at);
     } catch (error) {
       console.error(
         JSON.stringify({ message: "recording the takeover notice failed", error: String(error) }),
       );
     }
   };
+}
+
+/** Tries at recording a takeover notice while another reset of the same account records its own. */
+const NOTICE_ATTEMPTS = 3;
+
+/**
+ * Records the takeover notice, merged into one already there: two resets of the account at once both take it over,
+ * and the second finds the monitors already paused, so its list alone would hide what the first paused. Per
+ * workspace, the paused names are joined, the larger revoked count kept, and it failed only if both failed. Written
+ * only over the row it read, so a reset never overwrites one that wrote in between.
+ */
+async function recordNotice(
+  db: D1Database,
+  userId: string,
+  notice: InheritedWorkspace[],
+  at: number,
+): Promise<void> {
+  for (let attempt = 1; attempt <= NOTICE_ATTEMPTS; attempt++) {
+    const row = await db
+      .prepare(`select workspaces from takeover_notice where "userId" = ?`)
+      .bind(userId)
+      .first<{ workspaces: string }>();
+    if (row === null) {
+      const inserted = await db
+        .prepare(
+          `insert into takeover_notice ("userId", workspaces, "createdAt") values (?, ?, ?)
+           on conflict ("userId") do nothing`,
+        )
+        .bind(userId, JSON.stringify(notice), at)
+        .run();
+      if (inserted.meta.changes === 1) return;
+      continue;
+    }
+    const merged = mergeNotice(JSON.parse(row.workspaces) as InheritedWorkspace[], notice);
+    const updated = await db
+      .prepare(`update takeover_notice set workspaces = ? where "userId" = ? and workspaces = ?`)
+      .bind(JSON.stringify(merged), userId, row.workspaces)
+      .run();
+    if (updated.meta.changes === 1) return;
+  }
+  throw new Error("the takeover notice kept changing");
+}
+
+function mergeNotice(
+  recorded: InheritedWorkspace[],
+  notice: InheritedWorkspace[],
+): InheritedWorkspace[] {
+  const merged = recorded.map((workspace) => ({ ...workspace }));
+  for (const workspace of notice) {
+    const same = merged.find((one) => one.id === workspace.id);
+    if (!same) {
+      merged.push(workspace);
+      continue;
+    }
+    same.paused = [...new Set([...same.paused, ...workspace.paused])];
+    same.revoked = Math.max(same.revoked, workspace.revoked);
+    same.failed = same.failed && workspace.failed;
+  }
+  return merged;
 }
 
 /**
@@ -840,7 +901,8 @@ const ACK_STATUS: Partial<Record<Exclude<AckResult, { ok: true }>["code"], numbe
  * `GET /sync/:workspaceId` with `Upgrade: websocket`: hands the socket to the workspace's shard (RFC 0004
  * "Socket topology"). The Worker authenticates the upgrade (`resolveActor`: 401 without a session, 403 for a
  * non-member or another site's page) and forwards a request it builds itself, carrying only the upgrade, the
- * workspace id and the verified actor (with the member's name), so no client header reaches the shard.
+ * workspace id and the verified actor (with the member's name and when their password was last reset), so no client
+ * header reaches the shard.
  */
 async function openSync(
   request: Request,
@@ -864,6 +926,7 @@ async function openSync(
   if (resolved.name !== undefined) {
     headers.set(MEMBER_NAME_HEADER, encodeURIComponent(resolved.name));
   }
+  if (resolved.resetAt !== undefined) headers.set(RESET_AT_HEADER, String(resolved.resetAt));
   try {
     return await env.WORKSPACE.getByName(workspace).fetch(request.url, { headers });
   } catch (error) {

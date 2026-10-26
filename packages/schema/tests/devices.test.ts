@@ -280,4 +280,28 @@ describe("device.signOut", () => {
       error: { code: "conflict" },
     });
   });
+
+  test("with `before`, only the devices last registered before it", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const [old, fresh] = [deviceId(), deviceId()];
+    run(store, ana, "device.register", args(old));
+    run(
+      store,
+      ana,
+      "device.register",
+      args(fresh, { pushToken: "b".repeat(64), publicKey: OTHER_KEY }),
+    );
+    store.update("devices", fresh, { updatedAt: T + 10 });
+    expect(
+      run(store, ACCOUNT_ACTOR, "device.signOut", { userId: "usr_ana", before: T }),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    const result = run(store, ACCOUNT_ACTOR, "device.signOut", {
+      userId: "usr_ana",
+      before: T + 1,
+    });
+    expect(result.ok && result.events.map((event) => event.data)).toEqual([
+      { id: old, userId: "usr_ana", reason: "password_reset" },
+    ]);
+    expect(store.get("devices", fresh)).toBeDefined();
+  });
 });

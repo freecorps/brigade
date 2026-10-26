@@ -183,9 +183,15 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
     logged, the reset stands, and its member reconcile catches up: the failure arms the shard's repair alarm, and
     every reconcile (that alarm, or any member's next sync upgrade) drops a member's devices last registered before
     their `passwordResetAt` and closes their sockets opened before it (`member.reconcile`, RFC 0006 "Who is paged").
-    If the server fails after the password may have been saved, the page says so instead of suggesting the link
-    again. The app registers its phone again at the next sign-in; until then a page that would have reached it
-    takes the `no_devices` path (the member, now verified, is emailed for SEV1 and SEV2, and the escalation falls
+    The member's own next sync upgrade does the device part first, before the socket opens (the Worker passes
+    `passwordResetAt` with the actor): the app registers the same device id with the same tokens after signing in,
+    a register that changes nothing is a `conflict` that leaves the device as it was, and a reconcile after it would
+    drop a phone the app shows as paged. `passwordResetAt` is the Worker's clock and a device's last registration
+    the shard's; both are Cloudflare's, far closer than the time a person takes to sign in again. If the server
+    fails after the password may have been saved, the page says so instead of suggesting the link again. The page
+    that confirms the new password says the member's phones get no pages until they sign in to the app again. The
+    app registers its phone again at the next sign-in; until then a page that would have reached it takes the
+    `no_devices` path (the member, now verified, is emailed for SEV1 and SEV2, and the escalation falls
     back as for anyone without a phone).
     **Taking back an address.** This is how the owner of an address someone else signed up with (and never
     verified) gets it back: they reset the password and the account is theirs, with its address verified. A reset
@@ -196,11 +202,12 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
     0003), and removing the account from them would leave shards with nobody to own them. But what was set up in
     them can still reach the owner: a heartbeat whose URL the other person kept, or an HTTP or TCP check on a host
     they control, would page the owner whenever they chose. So on a takeover, in every workspace where the account
-    is the only member, the shard also pauses every monitor and revokes every heartbeat URL (`monitor.takeOver`,
-    server only, as `ACCOUNT_ACTOR`: `monitor.paused` with any firing alert resolved, and
-    `monitor.heartbeat_revoked`, whose hash becomes random bytes nobody holds a token for), and the dashboard
-    tells the owner once which workspaces came with the account and what was paused, or that a shard could not be
-    reached (`takeover_notice` in D1, `GET`/`DELETE /account/takeover`, en and pt-BR). The owner resumes what they
+    is the only member (the shard checks its own member list again, in case someone joined since), the shard also
+    pauses every monitor and revokes every heartbeat URL (`monitor.takeOver`, server only, as `ACCOUNT_ACTOR`:
+    `monitor.paused` with any firing alert resolved, and `monitor.heartbeat_revoked`, whose hash becomes random
+    bytes nobody holds a token for), and the dashboard tells the owner once which workspaces came with the account
+    and what was paused, or that a shard could not be reached (`takeover_notice` in D1,
+    `GET`/`DELETE /account/takeover`, en and pt-BR; two resets at once merge into one notice). The owner resumes what they
     want to keep; a heartbeat needs a new monitor for a new URL. Schedules and escalation policies stay: they page
     only members, and only for incidents, which in such a workspace only the owner or a monitor can open. What is
     left is in Q21. The account's name and language are whatever the person who signed up chose; the owner changes

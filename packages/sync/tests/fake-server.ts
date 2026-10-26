@@ -252,8 +252,6 @@ export class ShardServer {
   /** Pings received; with `silent` set, they get no pong (a half-open socket, or a stuck shard). */
   pings = 0;
   silent = false;
-  /** Every frame received. */
-  received = 0;
   /** Frames the parser refused. */
   readonly refused: string[] = [];
 
@@ -296,7 +294,6 @@ export class ShardServer {
       return;
     }
     const message = parsed.message;
-    this.received++;
     // The shard's runtime answers a ping itself, before `hello` too (a WebSocket auto-response).
     if (message.type === "ping") {
       this.pings++;

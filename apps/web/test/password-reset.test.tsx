@@ -121,8 +121,8 @@ const input = (label: string) =>
 
 async function type(element: HTMLInputElement, value: string) {
   await act(async () => {
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    setter.call(element, value);
+    // The prototype's setter, with the input as receiver, as React's value tracker listens for it.
+    Reflect.set(HTMLInputElement.prototype, "value", value, element);
     element.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }

@@ -254,6 +254,8 @@ export class WatchdogDO extends DurableObject<Env> {
     } catch (error) {
       log("dead-man ping failed", { error: String(error) });
     }
+    // Pings run in `waitUntil` and can overlap; an older one finishing late must not overwrite a newer result.
+    if (Number(this.get("last_ping_at") ?? 0) > now) return;
     this.set("last_ping_at", String(now));
     this.set("last_ping_ok", ok ? "1" : "0");
   }

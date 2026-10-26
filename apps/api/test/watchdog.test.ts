@@ -390,6 +390,28 @@ describe("the heartbeat, end to end", () => {
     expect((await stub.health(NOW + MINUTE + 3000)).status).toBe("ok");
   });
 
+  test("an older ping finishing after a newer one does not overwrite its result", async () => {
+    const { stub, heartbeats } = watchdog();
+    await stub.beat(NOW);
+    await stub.beat(NOW + MINUTE);
+    const [first, second] = await heartbeats();
+    // The first ping answers OK, but only after the second one has failed.
+    let release: () => void = () => {};
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    vi.mocked(globalThis.fetch)
+      .mockImplementationOnce(async () => {
+        await slow;
+        return new Response("OK");
+      })
+      .mockImplementationOnce(async () => new Response(null, { status: 500 }));
+    await stub.proved(first!.time, "ok", NOW + 1000);
+    await stub.proved(second!.time, "ok", NOW + MINUTE + 1000);
+    await pinged(stub, false);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect((await stub.health()).external.lastPingOk).toBe(false);
+  });
+
   test("an external check that refuses the ping is recorded, not thrown", async () => {
     const { stub, heartbeats } = watchdog();
     await stub.beat(NOW);

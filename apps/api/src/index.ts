@@ -114,8 +114,16 @@ export async function pagingHealth(
     console.error(JSON.stringify({ message: "WatchdogDO.health failed", error: String(error) }));
     return json({ error: "unavailable" }, 503);
   }
-  const session = await auth().api.getSession({ headers: request.headers });
-  const roles = session ? await memberRoles(env.DB, session.user.id) : [];
+  // D1 or the session failing degrades the answer to `{ status }`, the same as no session, rather than a 500.
+  let roles: Role[] = [];
+  try {
+    const session = await auth().api.getSession({ headers: request.headers });
+    if (session) roles = await memberRoles(env.DB, session.user.id);
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "paging health: session lookup failed", error: String(error) }),
+    );
+  }
   return json(pagingHealthFor(health, roles), 200, {
     // Varies by the session's cookie, so no shared cache may keep it.
     "Cache-Control": "private, no-store",

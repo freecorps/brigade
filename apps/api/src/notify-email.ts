@@ -42,8 +42,7 @@ export function emailRetryDelay(attempts: number): number {
 
 /**
  * The email notifier for one event. Returns true when it should be tried again later (some email failed in a way
- * that may pass and attempts remain, or another delivery holds an email it asks for); what was sent is recorded
- * either way. Without a sender (email not set up) it does nothing. Throws only when the shard cannot be reached.
+ * that may pass and attempts remain); what was sent is recorded either way. Without a sender (email not set up) it does nothing. Throws only when the shard cannot be reached.
  */
 export async function notifyEmail(
   event: BrigadeEvent,
@@ -54,10 +53,7 @@ export async function notifyEmail(
   if (!sender) return false;
   const workspace = env.WORKSPACE.getByName(event.workspaceId);
   const plan = await workspace.planEmail(event);
-  if (!plan.send) {
-    // Another delivery is sending it; this one comes back to find it done (or to take it over if that one died).
-    return plan.reason === "busy" && attempts < MAX_EMAIL_ATTEMPTS;
-  }
+  if (!plan.send) return false;
   const retries = await Promise.all(
     plan.jobs.map(async (job) => {
       const outcomes = await sendJob(event, job, plan, env, sender);

@@ -21,9 +21,10 @@ import type { Shard } from "./shard.ts";
 import type { RowChange } from "./store.ts";
 
 /**
- * How long a plan holds an email for the consumer that asked: another event asking for the same email meanwhile
- * (two members' failures of one page, in one batch) waits and finds it done. Longer than a send can take (each is
- * cut at `EMAIL_TIMEOUT_MS`, all of a plan's in parallel, plus the D1 read).
+ * How long a plan holds an email for the delivery that asked: another event asking for the same email meanwhile (two
+ * members' failures of one page, in one batch) leaves it to that one, which sends it, lets it go to retry, or is
+ * redelivered by the Queue if its Worker died (by then the hold has passed). Longer than a send can take (each is cut
+ * at `EMAIL_TIMEOUT_MS`, all of a plan's in parallel, plus the D1 read).
  */
 export const EMAIL_CLAIM_MS = 60_000;
 
@@ -62,10 +63,10 @@ export type EmailJob = {
 export type EmailPlan =
   | { send: true; incident: EmailIncident; workspace: string; jobs: EmailJob[] }
   /**
-   * `busy`: an email this event asks for is being sent for another event; try again later. Otherwise nothing to send:
-   * not a page's failure, the incident moved on (or is gone), or each email it asks for is off, done or not called for.
+   * Nothing to send: not a page's failure, the incident moved on (or is gone), or each email it asks for is off, not
+   * called for, done, or being sent for another event (whose delivery sends it, or is redelivered if it dies).
    */
-  | { send: false; reason: "not_an_email" | "not_found" | "moved_on" | "nothing" | "busy" };
+  | { send: false; reason: "not_an_email" | "not_found" | "moved_on" | "nothing" };
 
 /** What one recipient's send did, as the consumer reports it. */
 export type EmailOutcome = { userId: string; ok: boolean };
@@ -134,7 +135,6 @@ export class Mailer {
     }
 
     const jobs: EmailJob[] = [];
-    let busy = false;
     for (const job of wanted) {
       const claim = this.options.storage.sql
         .exec<{ done: number; claimed_until: number }>(
@@ -142,11 +142,7 @@ export class Mailer {
           job.key,
         )
         .toArray()[0];
-      if (claim?.done) continue;
-      if (claim && claim.claimed_until > now) {
-        busy = true;
-        continue;
-      }
+      if (claim?.done || (claim && claim.claimed_until > now)) continue;
       this.options.storage.sql.exec(
         `insert into email_keys (key, done, claimed_until, at) values (?, 0, ?, ?)
          on conflict (key) do update set claimed_until = excluded.claimed_until`,
@@ -156,7 +152,7 @@ export class Mailer {
       );
       jobs.push({ ...job, sent: this.sent(job.key) });
     }
-    if (jobs.length === 0) return { send: false, reason: busy ? "busy" : "nothing" };
+    if (jobs.length === 0) return { send: false, reason: "nothing" };
     return {
       send: true,
       incident: {

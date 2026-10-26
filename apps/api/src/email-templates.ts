@@ -88,7 +88,13 @@ export function renderEmail(
     content.about === "unpaged"
       ? text("unpaged_intro", { reason: text(`unpaged_reason_${content.reason}`) })
       : text("nobody_intro");
-  const facts = [text("fact_incident", { incident: `${code} (${severity})` }), text("fact_title")];
+  const facts = [
+    // "INC-142 · SEV1 Critical": the severity by name here, once.
+    text("fact_incident", {
+      incident: [formatIncidentNumber(incident.number), severity].filter(Boolean).join(" · "),
+    }),
+    text("fact_title"),
+  ];
   const after =
     content.about === "unpaged"
       ? content.reason === "no_devices"

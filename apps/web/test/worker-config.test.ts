@@ -51,9 +51,9 @@ describe("web Worker → API Worker → WorkspaceDO, with the real configs", () 
   test("/api/workspaces/demo round-trips through the WorkspaceDO", async () => {
     const response = await get("/api/workspaces/demo");
     expect(response.status).toBe(200);
-    // The shard's sync tables, its outbox drain and page ledger, its probe pushes and its member repair
+    // The shard's sync tables, its outbox drain, page and email ledgers, its probe pushes and its member repair
     // (apps/api/README.md).
-    expect(await response.json()).toMatchObject({ workspace: "demo", tables: 10 });
+    expect(await response.json()).toMatchObject({ workspace: "demo", tables: 12 });
   });
 
   test("bare /api runs the Worker first too (the API answers its own 404)", async () => {
@@ -117,6 +117,14 @@ describe("apps/api wrangler.jsonc: the dev sync actor and auth", () => {
   // TEST ONLY (apps/api/src/workspace.ts): a deployment with it would never send its events, so never page.
   test.each(environments)("%s does not pause the outbox drain", (_name, config) => {
     expect(config?.vars?.OUTBOX_DRAIN).toBeUndefined();
+  });
+
+  // The email notifier (apps/api/src/email.ts): Email Sending through its binding, never sent from a local run
+  // (`remote`), with the sender a secret (EMAIL_FROM) rather than a domain in the repo, and never the dev double.
+  test.each(environments)("%s sends email through the EMAIL binding only", (_name, config) => {
+    expect(config?.send_email).toEqual([{ name: "EMAIL" }]);
+    expect(config?.vars?.EMAIL_LOG).toBeUndefined();
+    expect(config?.vars?.EMAIL_FROM).toBeUndefined();
   });
 
   // The outbox drain's Queue and its consumer are not inherited either.

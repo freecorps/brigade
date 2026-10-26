@@ -672,6 +672,10 @@
         "kind=email_failed_unpaged": "Couldn't email {a} that the page didn't reach them",
         "kind=email_failed_nobody_paged": "Couldn't email {a} that nobody could be paged",
         "kind=email_capped": "Didn't email {a}: the limit on Brigade's emails was reached",
+        "kind=slack_failed_no_channel": "Couldn't post to Slack: the channel is gone, or Brigade isn't in it",
+        "kind=slack_failed_not_authorized": "Couldn't post to Slack: Slack refused Brigade's access",
+        "kind=slack_failed_rate_limited": "Couldn't post to Slack: Slack kept asking Brigade to slow down",
+        "kind=slack_failed_undelivered": "Couldn't post to Slack",
         "kind=*": "{actor} changed the incident"
       }
     }
@@ -1695,6 +1699,81 @@
       "match": {
         "countPlural=one": "{countFormatted} heartbeat URL turned off",
         "countPlural=*": "{countFormatted} heartbeat URLs turned off"
+      }
+    }
+  ],
+  "slack_text": [
+    {
+      "declarations": [
+        "input part",
+        "input incident",
+        "input title",
+        "input name",
+        "input workspace",
+        "input list"
+      ],
+      "selectors": ["part"],
+      "match": {
+        "part=message_declared_by": "Declared by {name}",
+        "part=message_acknowledged_by": "Acknowledged by {name}",
+        "part=message_not_acknowledged": "Nobody has acknowledged it yet",
+        "part=message_ack_button": "Acknowledge",
+        "part=message_open_button": "Open in Brigade",
+        "part=message_monitors": "Brigade monitors",
+        "part=message_unnamed": "an unnamed member",
+        "part=message_teammate": "a teammate",
+        "part=reply_declared": "Declared {incident}: {title}",
+        "part=reply_acknowledged": "Acknowledged {incident}: {title}. Paging has stopped.",
+        "part=reply_already": "{incident} is already acknowledged.",
+        "part=reply_not_active": "{incident} is no longer active.",
+        "part=reply_not_found": "There's no such incident in {workspace}.",
+        "part=reply_ambiguous": "More than one incident is waiting to be acknowledged: {list}. Say which one, for example /inc ack {incident}.",
+        "part=reply_none": "No active incident is waiting to be acknowledged.",
+        "part=reply_forbidden": "Your role in {workspace} can't do that. Ask an owner or admin.",
+        "part=reply_unmapped": "Your Slack email isn't the email of a member of {workspace} in Brigade, so Brigade can't act for you. Use the same email in both, or ask an owner to add you.",
+        "part=reply_unconfirmed": "Slack hasn't confirmed your email address, so Brigade can't tell who you are.",
+        "part=reply_not_connected": "This Slack workspace isn't connected to Brigade. An owner or admin can connect it from the Brigade dashboard.",
+        "part=reply_invalid_title": "An incident needs a title of 1 to 200 characters, with no invisible characters.",
+        "part=reply_failed": "Brigade couldn't do that right now. Try again in a moment.",
+        "part=reply_unknown": "Unknown command.",
+        "part=usage": "Declare an incident: /inc declare <title> [sev1, sev2, sev3 or sev4]. Acknowledge one: /inc ack [INC-12].",
+        "part=*": "Brigade"
+      }
+    }
+  ],
+  "slack_card": [
+    {
+      "declarations": ["input part", "input team", "input channel"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Slack",
+        "part=description": "Declare and acknowledge incidents from Slack with /inc, and keep one message per incident in a channel.",
+        "part=add": "Add to Slack",
+        "part=adding": "Opening Slack…",
+        "part=connected": "Connected to {team}",
+        "part=not_connected": "Not connected to a Slack workspace.",
+        "part=channel_label": "Channel ID",
+        "part=channel_hint": "In Slack, open the channel's details and copy the ID at the bottom. It starts with C, or G for a private channel, where Brigade must be invited.",
+        "part=channel_invalid": "A channel ID starts with C or G, followed by capital letters and numbers.",
+        "part=channel_none": "No channel yet, so incidents aren't posted to Slack.",
+        "part=channel_current": "Incidents are posted in {channel}.",
+        "part=language_label": "Language of channel messages",
+        "part=save": "Save",
+        "part=saving": "Saving…",
+        "part=saved": "Saved.",
+        "part=save_failed": "Couldn't save. Try again.",
+        "part=disconnect": "Disconnect",
+        "part=disconnecting": "Disconnecting…",
+        "part=disconnect_confirm": "Disconnect {team}? /inc stops working there and incidents are no longer posted. To revoke Brigade's access, also remove the app in Slack's settings.",
+        "part=disconnect_cancel": "Keep connected",
+        "part=disconnect_failed": "Couldn't disconnect. Try again.",
+        "part=manage_only": "Only owners and admins can connect Slack or change where incidents are posted.",
+        "part=result_connected": "Slack is connected. Pick a channel for incidents.",
+        "part=result_cancelled": "Connecting Slack was cancelled.",
+        "part=result_team_taken": "That Slack workspace is already connected to another Brigade workspace.",
+        "part=result_not_configured": "Slack isn't set up on this Brigade server.",
+        "part=result_failed": "Couldn't connect Slack. Try again.",
+        "part=*": "Slack"
       }
     }
   ]

@@ -28,6 +28,7 @@ import {
   LoaderCircleIcon,
   MessageSquareTextIcon,
   MailWarningIcon,
+  MessageSquareWarningIcon,
   PhoneMissedIcon,
   SendIcon,
   TimerOffIcon,
@@ -704,6 +705,7 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
   alert_resolved: HeartPulseIcon,
   page_failed: PhoneMissedIcon,
   email_failed: MailWarningIcon,
+  slack_failed: MessageSquareWarningIcon,
   escalated: BellRingIcon,
   escalation_exhausted: TimerOffIcon,
 };
@@ -761,7 +763,9 @@ function Timeline({
                   className={cn(
                     "flex size-8 shrink-0 items-center justify-center rounded-full border bg-card",
                     entry.kind === "update" && "border-primary/40 text-primary",
-                    (entry.kind === "page_failed" || entry.kind === "email_failed") &&
+                    (entry.kind === "page_failed" ||
+                      entry.kind === "email_failed" ||
+                      entry.kind === "slack_failed") &&
                       "border-destructive/50 text-destructive",
                   )}
                 >

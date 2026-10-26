@@ -51,9 +51,9 @@ describe("web Worker → API Worker → WorkspaceDO, with the real configs", () 
   test("/api/workspaces/demo round-trips through the WorkspaceDO", async () => {
     const response = await get("/api/workspaces/demo");
     expect(response.status).toBe(200);
-    // The shard's sync tables, its outbox drain, page and email ledgers, its probe pushes and its member repair
+    // The shard's sync tables, its outbox drain, page, receipt and email ledgers, its probe pushes and its member repair
     // (apps/api/README.md).
-    expect(await response.json()).toMatchObject({ workspace: "demo", tables: 12 });
+    expect(await response.json()).toMatchObject({ workspace: "demo", tables: 14 });
   });
 
   test("bare /api runs the Worker first too (the API answers its own 404)", async () => {

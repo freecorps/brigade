@@ -3,10 +3,12 @@
 // tests, as a responder or a viewer.
 import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
 import {
+  deliveryId,
   MONITOR_ACTOR,
   newId,
   UPDATE_BODY_MAX,
   type Actor,
+  type DeliveryRow,
   type MemberRow,
   type Role,
 } from "@freecorps/brigade-schema";
@@ -15,7 +17,7 @@ import { SyncProvider } from "@freecorps/brigade-sync/react";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, test, vi } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { FakeNetwork, FakeServer, FakeTimers } from "../../../packages/sync/tests/fake-server.ts";
 import { PreferencesProvider } from "../src/components/preferences";
 import { StackStatusProvider } from "../src/components/stack-status";
@@ -80,7 +82,8 @@ const member = (id: string, name: string | null, memberRole: Role = "responder")
   updatedAt: T0,
 });
 
-async function mount(path: string) {
+async function mount(path: string, locale: "en" | "pt-BR" = "en") {
+  void setI18nLocale(locale);
   vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("offline"));
   const dev: Actor = { kind: "user", id: "usr_dev", role };
   const timers = new FakeTimers();
@@ -121,7 +124,7 @@ async function mount(path: string) {
   act(() => {
     root = createRoot(container);
     root.render(
-      <PreferencesProvider initialLocale="en">
+      <PreferencesProvider initialLocale={locale}>
         <SyncProvider client={syncClient} shard={SHARD}>
           <StackStatusProvider>
             <RouterProvider router={router} />
@@ -407,4 +410,109 @@ test("a run under way: what fires next and whom, the latest page first, misses a
   expect(earlier.textContent).toContain(LONG_NAME);
   // While it escalates, phones show it before the roles.
   expect(escalation.parentElement!.className).toContain("max-md:order-first");
+});
+
+describe("who was paged, and why not", () => {
+  const DEV = "dev_01JBAAAAAAAAAAAAAAAAAAAAAA";
+  /** One delivery row for Bia's phone on the incident's declaration. */
+  const deliver = (
+    view: Awaited<ReturnType<typeof incidentPage>>,
+    fields: Partial<DeliveryRow>,
+  ) => {
+    const eventId = "evt_01JBAAAAAAAAAAAAAAAAAAAAAA";
+    view.shard.store.insert("member_devices", {
+      id: DEV,
+      userId: "usr_bia",
+      platform: "ios",
+      environment: "production",
+      voip: false,
+      registeredAt: T0 - 86_400_000,
+      lastSeenAt: T0 - 60_000,
+    });
+    view.shard.store.insert("deliveries", {
+      id: deliveryId(view.id, eventId, DEV),
+      incidentId: view.id,
+      eventId,
+      deviceId: DEV,
+      userId: "usr_bia",
+      platform: "ios",
+      environment: "production",
+      run: null,
+      step: null,
+      plannedAt: T0,
+      sentAt: T0 + 300,
+      acceptedAt: T0 + 600,
+      deliveredAt: null,
+      attempts: 1,
+      error: null,
+      reason: null,
+      updatedAt: T0,
+      ...fields,
+    });
+  };
+
+  test("the incident page lists each member's outcome, with a link to why", async () => {
+    const view = await mount("/incidents/1");
+    view.declare("Checkout down");
+    const id = view.shard.store.scan("incidents")[0]!.id;
+    deliver({ ...view, id } as Awaited<ReturnType<typeof incidentPage>>, { deliveredAt: T0 + 900 });
+    await act(() => view.router.load());
+    await view.flush();
+    const paging = card("Who was paged")!;
+    expect(paging).toBeTruthy();
+    const rows = $$("li", paging);
+    const bia = rows.find((row) => row.textContent?.includes(LONG_NAME))!;
+    expect(bia.textContent).toContain("Delivered");
+    // Who a page touched comes first.
+    expect(rows[0]).toBe(bia);
+    const link = $$("a", bia).find((a) => a.textContent === "Why?")!;
+    expect(link.getAttribute("href")).toBe("/incidents/1?why=usr_bia");
+    expect(link.getAttribute("aria-label")).toBe(`Why? ${LONG_NAME}`);
+    expect($$("a", paging).some((a) => a.textContent === "Why wasn't I paged?")).toBe(true);
+  });
+
+  test("step by step: the phone, each stage with its time, and Apple's error", async () => {
+    const view = await mount("/incidents/1?why=usr_bia");
+    view.declare("Checkout down");
+    const id = view.shard.store.scan("incidents")[0]!.id;
+    deliver({ ...view, id } as Awaited<ReturnType<typeof incidentPage>>, {
+      acceptedAt: null,
+      error: "token_invalid",
+      reason: "BadDeviceToken",
+      attempts: 3,
+    });
+    await act(() => view.router.load());
+    await view.flush();
+    const text = document.body.textContent ?? "";
+    expect($("h1")?.textContent).toBe(`Why wasn't ${LONG_NAME} paged?`);
+    expect(text).toContain(`No page got through to ${LONG_NAME}'s phone`);
+    expect(text).toContain("No escalation policy");
+    expect(text).toContain("iPhone · App Store build");
+    expect(text).toContain("Handed to the relay");
+    expect(text).toContain("Apple said this phone's token is no longer valid");
+    expect(text).toContain("Apple said: BadDeviceToken");
+    expect(text).toContain("Attempts: 3");
+    expect(text).toContain("Only members of this workspace see");
+    const back = $$("a").find((a) => a.textContent?.startsWith("Back to INC-1"));
+    expect(back?.getAttribute("href")).toBe("/incidents/1");
+  });
+
+  test("a member with no phone is told how to get one, in Portuguese too", async () => {
+    for (const locale of ["en", "pt-BR"] as const) {
+      const view = await mount("/incidents/1?why=usr_dev", locale);
+      view.declare("Checkout down");
+      await act(() => view.router.load());
+      await view.flush();
+      const [title, devices] =
+        locale === "en"
+          ? ["Why wasn't I paged?", "No phone registered."]
+          : ["Por que não fui acionado?", "Nenhum celular registrado."];
+      expect($("h1")?.textContent).toBe(title);
+      expect(document.body.textContent).toContain(devices);
+      act(() => root?.unmount());
+      client?.close();
+      document.body.innerHTML = "";
+      localStorage.clear();
+    }
+  });
 });

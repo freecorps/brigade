@@ -25,10 +25,16 @@ export function useStackStatus(): StackStatus {
 }
 
 /**
- * Runs the stack check once on load and again on demand. It sits above the locale-keyed part of the
- * tree, so switching language re-renders the result instead of checking again.
+ * Runs the stack check for the member's workspace once on mount and again on demand. Switching language
+ * re-renders the result in place (the dashboard route is not remounted), so it does not check again.
  */
-export function StackStatusProvider({ children }: { children: ReactNode }) {
+export function StackStatusProvider({
+  workspaceId,
+  children,
+}: {
+  workspaceId: string;
+  children: ReactNode;
+}) {
   const [report, setReport] = useState<StackReport>();
   const [run, setRun] = useState(0);
   const [checking, setChecking] = useState(true);
@@ -38,13 +44,13 @@ export function StackStatusProvider({ children }: { children: ReactNode }) {
     // flight, and their results are dropped.
     const controller = new AbortController();
     setChecking(true);
-    void checkStack(fetch, controller.signal).then((next) => {
+    void checkStack(workspaceId, fetch, controller.signal).then((next) => {
       if (controller.signal.aborted) return;
       setReport(next);
       setChecking(false);
     });
     return () => controller.abort();
-  }, [run]);
+  }, [run, workspaceId]);
 
   const recheck = useCallback(() => setRun((count) => count + 1), []);
   const value = useMemo(() => ({ report, checking, recheck }), [report, checking, recheck]);

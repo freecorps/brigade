@@ -3,7 +3,6 @@ import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { PreferencesProvider } from "@/components/preferences";
-import { StackStatusProvider } from "@/components/stack-status";
 import { readLocale } from "@/lib/locale";
 import { getStorage } from "@/lib/storage";
 import { routeTree } from "./routeTree.gen";
@@ -29,9 +28,7 @@ createRoot(root).render(
   <StrictMode>
     <PreferencesProvider initialLocale={locale}>
       {/* The workspace's shard opens inside the dashboard route, once the session says which one (session.tsx). */}
-      <StackStatusProvider>
-        <RouterProvider router={router} />
-      </StackStatusProvider>
+      <RouterProvider router={router} />
     </PreferencesProvider>
   </StrictMode>,
 );

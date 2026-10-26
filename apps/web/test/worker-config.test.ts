@@ -48,12 +48,11 @@ describe("web Worker → API Worker → WorkspaceDO, with the real configs", () 
     expect(await response.json()).toEqual({ ok: true });
   });
 
-  test("/api/workspaces/demo round-trips through the WorkspaceDO", async () => {
-    const response = await get("/api/workspaces/demo");
-    expect(response.status).toBe(200);
-    // The shard's sync tables, its outbox drain, page, receipt, email and Slack ledgers, its probe pushes, its member
-    // repair and its invitation ledger and repair (apps/api/README.md).
-    expect(await response.json()).toMatchObject({ workspace: "demo", tables: 20 });
+  // The harness's D1 has no migrations, so this stops at the session; apps/api test/index.test.ts covers a member.
+  test("/api/workspaces/:id reaches the API Worker and needs a session", async () => {
+    const response = await get("/api/workspaces/ws_01J00000000000000000000000");
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "unauthenticated" });
   });
 
   test("bare /api runs the Worker first too (the API answers its own 404)", async () => {
@@ -161,6 +160,30 @@ describe("apps/api wrangler.jsonc: the dev sync actor and auth", () => {
       class_name: "WatchdogDO",
     });
     expect(config?.triggers).toEqual(config === api ? { crons: ["* * * * *"] } : undefined);
+  });
+});
+
+describe("public URLs", () => {
+  const api = experimental_readRawConfig({ config: "../api/wrangler.jsonc" }).rawConfig;
+
+  // Only the dashboard's dev environment is public (workers.dev, for testing on a phone); the API is reached through
+  // the `API` binding alone, and no Worker has preview URLs.
+  test("only the web Worker's dev environment has a workers.dev URL", () => {
+    expect(rawConfig.workers_dev).toBe(false);
+    expect(rawConfig.env?.dev?.workers_dev).toBe(true);
+    expect(rawConfig.env?.staging?.workers_dev).toBeUndefined();
+    expect(api.workers_dev).toBe(false);
+    for (const config of [api.env?.dev, api.env?.staging]) {
+      expect(config?.workers_dev).toBeUndefined();
+    }
+  });
+
+  test("no Worker has preview URLs", () => {
+    for (const config of [rawConfig, api]) {
+      expect(config.preview_urls).toBe(false);
+      expect(config.env?.dev?.preview_urls).toBeUndefined();
+      expect(config.env?.staging?.preview_urls).toBeUndefined();
+    }
   });
 });
 

@@ -6,8 +6,9 @@
   "main": "./worker/index.ts",
   // Same as apps/api: matches the installed workerd so local and deployed behaviour agree.
   "compatibility_date": "2026-10-19",
-  // No public workers.dev or preview URLs yet: the API still has an open dev route (`/workspaces/:id`, the stack
-  // check). Both keys are inherited by environments.
+  // No public workers.dev or preview URLs for production or staging; only `dev` turns on its workers.dev URL (below),
+  // for testing on a phone. Both keys are inherited by environments. Every API route behind /api/* checks its own
+  // session or token (apps/api/src/index.ts).
   "workers_dev": false,
   "preview_urls": false,
   "observability": {
@@ -28,6 +29,9 @@
   // Service bindings are not inherited, so each environment names its own API Worker.
   "env": {
     "dev": {
+      // The dashboard at https://brigade-web-dev.<subdomain>.workers.dev (the subdomain names the account, so it is
+      // never written here); the API stays private behind the `API` binding. Preview URLs stay off.
+      "workers_dev": true,
       // No SLACK binding is committed: a service binding to a Worker that does not exist fails the deploy. Add
       // `{ "binding": "SLACK", "service": "brigade-slack-<env>" }` here with the Slack Worker's first deploy
       // (integrations/slack/README.md); without it /slack/* answers 404.

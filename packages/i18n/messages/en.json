@@ -210,7 +210,7 @@
         "part=offline": "Offline",
         "part=incident_stale_hint": "Showing this incident as last received. Changes you make are sent once the connection is back, as long as Brigade stays open.",
         "part=update_sending": "Sending…",
-        "part=update_waiting": "Not sent yet. Keep Brigade open until it's back online.",
+        "part=update_waiting": "Not sent yet. Keep Brigade open: it sends once Brigade is reachable again.",
         "part=show_password": "Show password",
         "part=hide_password": "Hide password",
         "part=*": "Brigade"

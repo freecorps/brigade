@@ -66,7 +66,9 @@ export function finishDeps(server: Server): FinishDeps {
         if (!body?.session) return false;
         const expiresAt = Date.parse(String(body.session.expiresAt));
         // An expiry it cannot read: as long as the server could keep it.
-        return { expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + SESSION_LIFETIME_MS };
+        return {
+          expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + SESSION_LIFETIME_MS,
+        };
       } catch {
         return null;
       }

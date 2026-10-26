@@ -136,7 +136,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     says it is not paged); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
     session's active one); creating an account or workspace from the app; editing and deleting updates; persisting
     pending mutations across a restart (they are memory-only in `src/lib/sync-client.ts`, so an update queued
-    offline is lost if the app is killed; the timeline says to keep Brigade open); a tablet layout.
+    offline is lost if the app is killed; the timeline says to keep Brigade open); a socket heartbeat, so a
+    half-open socket (the network gone without a close) is not shown as Live; a tablet layout.
 - [ ] Event outbox + queue + push notifier
   - Done: the shard alarm drains the outbox to `brigade-events` (`-dev`, `-staging`) in commit order, in bounded
     batches, deleting rows only after the send, with exponential backoff; a consumer in the API Worker routes events

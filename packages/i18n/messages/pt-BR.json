@@ -210,7 +210,7 @@
         "part=offline": "Sem conexão",
         "part=incident_stale_hint": "Mostrando este incidente como recebido por último. Suas alterações são enviadas quando a conexão voltar, desde que o Brigade continue aberto.",
         "part=update_sending": "Enviando…",
-        "part=update_waiting": "Ainda não enviada. Mantenha o Brigade aberto até a conexão voltar.",
+        "part=update_waiting": "Ainda não enviada. Mantenha o Brigade aberto: ela será enviada quando o Brigade voltar a responder.",
         "part=show_password": "Mostrar senha",
         "part=hide_password": "Ocultar senha",
         "part=*": "Brigade"

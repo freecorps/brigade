@@ -50,6 +50,7 @@ import {
   createContext,
   use,
   useCallback,
+  useEffect,
   useRef,
   useState,
   type ComponentRef,
@@ -161,6 +162,8 @@ function Screen({ title, children }: { title: string; children: ReactNode }) {
   const header = useHeaderHeight();
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
   const offset = useRef(0);
+  // Keyboard listeners and scrolls still waiting: leaving the page drops them.
+  const pending = useRef(new Set<() => void>());
   const reveal = useCallback((node: ComponentRef<typeof View> | null) => {
     const scrollTo = () => {
       const page = scroll.current;
@@ -176,13 +179,33 @@ function Screen({ title, children }: { title: string; children: ReactNode }) {
       });
     };
     // After the keyboard is up and the page has been laid out above it.
-    const settle = () => setTimeout(scrollTo, 50);
-    if (Keyboard.isVisible()) return void settle();
-    const shown = Keyboard.addListener("keyboardDidShow", () => {
+    const settle = () => {
+      const timer = setTimeout(() => {
+        pending.current.delete(cancel);
+        scrollTo();
+      }, 50);
+      const cancel = () => clearTimeout(timer);
+      pending.current.add(cancel);
+    };
+    if (Keyboard.isVisible()) return settle();
+    const stop = () => {
       shown.remove();
+      clearTimeout(expiry);
+      pending.current.delete(stop);
+    };
+    const shown = Keyboard.addListener("keyboardDidShow", () => {
+      stop();
       settle();
     });
-    setTimeout(() => shown.remove(), 1_000);
+    const expiry = setTimeout(stop, 1_000);
+    pending.current.add(stop);
+  }, []);
+  useEffect(() => {
+    const waiting = pending.current;
+    return () => {
+      for (const cancel of waiting) cancel();
+      waiting.clear();
+    };
   }, []);
   const page = (
     <ScrollView
@@ -353,7 +376,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
             {m.incident_declared({ time: formatAge(row.declaredAt, now, locale) })}
           </ThemedText>
           {saving ? (
-            <ThemedText variant="caption" style={{ color: colors.primary }}>
+            <ThemedText variant="caption" style={{ color: colors.mutedForeground }}>
               {online ? m.incident_change_saving() : m.incident_change_queued()}
             </ThemedText>
           ) : null}
@@ -523,6 +546,7 @@ function UpdateForm({
   const [invalid, setInvalid] = useState<UpdateProblem | null>(null);
   const reveal = use(RevealContext);
   const form = useRef<ComponentRef<typeof View>>(null);
+  const focused = useRef(false);
   // No `maxLength`: it would cut a pasted update short without a word. The count shows near the limit instead.
   const length = updateLength(body);
   const counting = length >= UPDATE_COUNT_FROM;
@@ -544,7 +568,17 @@ function UpdateForm({
     <View ref={form} style={{ gap: spacing[2] }}>
       <TextInput
         value={body}
-        onFocus={() => reveal(form.current)}
+        onFocus={() => {
+          focused.current = true;
+          reveal(form.current);
+        }}
+        onBlur={() => {
+          focused.current = false;
+        }}
+        // A growing draft pushes Post down: keep all of the form above the keyboard while typing.
+        onContentSizeChange={() => {
+          if (focused.current) reveal(form.current);
+        }}
         onChangeText={(text) => {
           setBody(text);
           if (invalid) setInvalid(null);
@@ -706,7 +740,7 @@ function Timeline({
                   <ThemedText
                     variant="caption"
                     accessibilityLiveRegion="polite"
-                    style={{ color: colors.primary }}
+                    style={{ color: colors.mutedForeground }}
                   >
                     {m.mobile_session({ part: online ? "update_sending" : "update_waiting" })}
                   </ThemedText>
@@ -734,17 +768,24 @@ function FailedNames({
   item: Extract<TimelineItem, { kind: "pages_failed" }>;
   who: People;
 }) {
+  const { locale } = useLocale();
   const [open, setOpen] = useState(false);
   return (
     <View style={{ alignItems: "flex-start" }}>
-      {open ? (
-        <ThemedText selectable variant="caption" style={{ alignSelf: "stretch" }}>
-          {pagesFailedNames(item, who).join("\n")}
-        </ThemedText>
-      ) : null}
+      {/* Above the list, so closing a long one leaves the button where it was tapped. */}
       <TextButton expanded={open} onPress={() => setOpen((shown) => !shown)}>
         {m.incident_page({ part: open ? "hide_names" : "show_names" })}
       </TextButton>
+      {/* One text per name, spaced apart, so a name that wraps never reads as two people. */}
+      {open ? (
+        <View style={{ alignSelf: "stretch", gap: spacing[1] }}>
+          {pagesFailedNames(item, who, locale).map(({ id, name }) => (
+            <ThemedText key={id} selectable variant="caption">
+              {name}
+            </ThemedText>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }

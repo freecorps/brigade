@@ -78,7 +78,9 @@ export function PagingNotice() {
       ) : (
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ busy: retrying, disabled: retrying }}
+          // Named outright and without `busy`: TalkBack otherwise reads the spinner's "busy" as the button's name.
+          accessibilityLabel={m.mobile_session({ part: "try_again" })}
+          accessibilityState={{ disabled: retrying }}
           disabled={retrying}
           onPress={retry}
           style={({ pressed }) => ({

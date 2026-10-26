@@ -233,7 +233,17 @@ test("pages one run could not send for the same reason are one line, with the na
   const group = items[1] as Extract<TimelineItem, { kind: "pages_failed" }>;
   expect(group).toMatchObject({ key: `${ID}:8`, at: 5, reason: "no_devices" });
   expect(itemText(group, who)).toBe("Couldn't page 3 people: no registered device");
-  expect(pagesFailedNames(group, who)).toEqual(["You", "Bia Lima", "A teammate"]);
+  // Alphabetical in the reader's language, not the timeline's order.
+  expect(pagesFailedNames(group, who, "en").map(({ name }) => name)).toEqual([
+    "A teammate",
+    "Bia Lima",
+    "You",
+  ]);
+  expect(pagesFailedNames(group, who, "en").map(({ id }) => id)).toEqual([
+    `${ID}:6`,
+    `${ID}:7`,
+    `${ID}:8`,
+  ]);
   expect(itemText(items[0]!, who)).toBe(entryText(update, who));
   await setLocale("pt-BR");
   expect(

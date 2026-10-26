@@ -127,6 +127,8 @@ const CONNECTION: Record<
   SyncView,
   { text: () => string; glyph?: Glyph; tone: "ok" | "muted" | "bad" }
 > = {
+  // From the socket's state: with no heartbeat yet, a half-open socket (the network gone without a close) stays
+  // Live until the OS times it out (roadmap, Mobile).
   live: { text: m.sync_live, tone: "ok" },
   connecting: { text: m.sync_connecting, tone: "muted" },
   reconnecting: {

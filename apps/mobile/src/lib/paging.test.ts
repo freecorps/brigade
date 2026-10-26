@@ -160,7 +160,7 @@ test("a stopped cycle neither reports nor tries again", async () => {
   const time = clock();
   const p = phone({ finish: ["pending"], register: ["taken"] });
   const cycle = pagingCycle({ ...p, setTimer: time.setTimer });
-  cycle.stop();
+  void cycle.stop();
   await time.settle();
   expect(p.shown).toEqual([]);
   expect(time.pending()).toEqual([]);

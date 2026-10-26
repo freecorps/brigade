@@ -666,16 +666,11 @@ function FailedNames({
   who: People;
 }) {
   const id = useId();
+  const { locale } = usePreferences();
   const [open, setOpen] = useState(false);
   return (
     <div className="flex flex-col items-start gap-1">
-      {open ? (
-        <ul id={id} className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-          {pagesFailedNames(item, who).map((name, index) => (
-            <li key={item.entries[index]!.id}>{name}</li>
-          ))}
-        </ul>
-      ) : null}
+      {/* Above the list, so closing a long one leaves the button where it was tapped. */}
       <Button
         variant="link"
         aria-expanded={open}
@@ -685,6 +680,16 @@ function FailedNames({
       >
         {m.incident_page({ part: open ? "hide_names" : "show_names" })}
       </Button>
+      {/* A wrapped name hangs under its first line and names are spaced apart, so one never reads as two. */}
+      {open ? (
+        <ul id={id} className="space-y-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+          {pagesFailedNames(item, who, locale).map(({ id: key, name }) => (
+            <li key={key} className="pl-4 -indent-4">
+              {name}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }

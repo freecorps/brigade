@@ -35,7 +35,7 @@ export type Mobile_SessionInputs = {
 * | "offline" | "Offline" |
 * | "incident_stale_hint" | "Showing this incident as last received. Changes you make are sent once the connection is back, as long as Brigade stays open." |
 * | "update_sending" | "Sending…" |
-* | "update_waiting" | "Not sent yet. Keep Brigade open until it's back online." |
+* | "update_waiting" | "Not sent yet. Keep Brigade open: it sends once Brigade is reachable again." |
 * | "show_password" | "Show password" |
 * | "hide_password" | "Hide password" |
 * | * | "Brigade" |

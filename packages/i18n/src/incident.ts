@@ -108,7 +108,7 @@ export function entryText(entry: TimelineRow, who: People): string {
 type PagesFailed = {
   kind: "pages_failed";
   reason: PageFailure;
-  entries: readonly { userId: string }[];
+  entries: readonly { id: string; userId: string }[];
 };
 
 /**
@@ -123,9 +123,19 @@ export function itemText(
   return m.timeline_pages_failed({ reason: item.reason, count: item.entries.length });
 }
 
-/** Who a group of failed pages was for, in the timeline's order. */
-export function pagesFailedNames(item: PagesFailed, who: People): string[] {
-  return item.entries.map((entry) => personName(entry.userId, who));
+/**
+ * Who a group of failed pages was for, by name in `locale`'s alphabetical order (`Intl.Collator`), so a long list
+ * can be scanned for someone; `id` is the entry's, for a list key.
+ */
+export function pagesFailedNames(
+  item: PagesFailed,
+  who: People,
+  locale: Locale,
+): { id: string; name: string }[] {
+  const collator = new Intl.Collator(locale, { sensitivity: "base" });
+  return item.entries
+    .map((entry) => ({ id: entry.id, name: personName(entry.userId, who) }))
+    .sort((a, b) => collator.compare(a.name, b.name));
 }
 
 /**

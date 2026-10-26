@@ -53,9 +53,10 @@ export function Field({
 }
 
 /** A form-level failure (the server refused, the network is down), announced when it appears. */
-export function FormError({ children }: { children: string }) {
+export function FormError({ id, children }: { id?: string; children: string }) {
   return (
     <p
+      id={id}
       role="alert"
       className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
     >

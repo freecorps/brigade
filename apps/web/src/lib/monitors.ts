@@ -214,13 +214,14 @@ const DRAFT_FIELDS: readonly DraftField[] = [
 ];
 
 /**
- * The `monitor_field_invalid` key for a refused TCP field when it has its own wording: a port Cloudflare blocks, or an
- * address of Cloudflare's own (`tcpTargetProblems`). Null for every other field and reason.
+ * The `monitor_field_invalid` key for a refused TCP field when it has its own wording: a port Cloudflare blocks, an
+ * address of Cloudflare's own (`tcpTargetProblems`), or a host with an underscore, which no host name may have
+ * (`db_1.example.com`). Null for every other field and reason.
  */
 export function tcpFieldReason(
   field: DraftField,
   draft: Pick<MonitorDraft, "kind" | "host" | "port">,
-): "port_blocked" | "host_cloudflare" | null {
+): "port_blocked" | "host_cloudflare" | "host_underscore" | null {
   if (draft.kind !== "tcp") return null;
   if (field === "port" && TCP_BLOCKED_PORTS.includes(wholeNumber(draft.port))) {
     return "port_blocked";
@@ -228,18 +229,23 @@ export function tcpFieldReason(
   if (field === "host") {
     const host = normalizeTcpHost(draft.host.trim());
     if (host !== undefined && isCloudflareAddress(host)) return "host_cloudflare";
+    if (draft.host.includes("_")) return "host_underscore";
   }
   return null;
 }
 
 /**
- * A pasted `host:port`, `[v6]:port` or `scheme://host:port/path` split into the TCP form's two fields; the port is
- * null when the paste has none. Null when the paste is a bare host already (or not a host at all), so it pastes as
- * typed.
+ * A pasted `host:port`, `[v6]:port` or `scheme://user:password@host:port/path` split into the TCP form's two
+ * fields; the port is null when the paste has none, and the credentials of a connection string are dropped, never
+ * filled in. Null when the paste is a bare host already (or not a host at all), so it pastes as typed.
  */
 export function splitHostPort(text: string): { host: string; port: string | null } | null {
   const trimmed = text.trim();
-  const rest = trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/[/?#].*$/, "");
+  const unschemed = trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  const rest = (unschemed === trimmed ? unschemed : unschemed.replace(/^[^/?#]*@/, "")).replace(
+    /[/?#].*$/,
+    "",
+  );
   const match =
     /^\[([0-9a-f:.]+)\](?::(\d{1,5}))?$/i.exec(rest) ?? /^([^\s:[\]@]+):(\d{1,5})$/.exec(rest);
   if (match) return { host: match[1]!, port: match[2] ?? null };

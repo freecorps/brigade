@@ -184,6 +184,10 @@ describe("tcpCheck", () => {
     });
     expect(fake.calls).toEqual([{ hostname: "db.example.com", port: 5432 }]);
     expect(fake.closedCount()).toBe(1);
+
+    // An IPv6 address, stored bare, reaches connect() in brackets.
+    await tcpCheck(fake.connector, tcpConfig({ host: "2620:fe::fe", port: 22 }));
+    expect(fake.calls.at(-1)).toEqual({ hostname: "[2620:fe::fe]", port: 22 });
   });
 
   test("refused, failing or timed out: down with its reason, and always closed", async () => {
@@ -222,11 +226,30 @@ describe("tcpCheck", () => {
       ok: true,
       error: null,
     });
-    expect(await tcpCheck(to(inject("tcpClosedPort")), tcpConfig())).toMatchObject({
-      ok: false,
-      error: "network",
-    });
+    // Refused at once on a dev machine or a runner (`network`); a firewall that drops loopback makes it `timeout`.
+    const closed = await tcpCheck(to(inject("tcpClosedPort")), tcpConfig({ timeoutSeconds: 2 }));
+    expect(closed.ok).toBe(false);
+    expect(["network", "timeout"]).toContain(closed.error);
   });
+
+  // Skipped on a machine with no IPv6 loopback (test/setup/tcp-listener.ts).
+  test.runIf(inject("tcpOpenPortV6") > 0)(
+    "a real socket to an IPv6 address: the check passes it to connect() in brackets, which a bare one fails",
+    async () => {
+      const port = inject("tcpOpenPortV6");
+      // A public address, as the target rules require; the connector swaps it for the IPv6 loopback, keeping
+      // whatever brackets the check put around it.
+      const swap: Connector = (address) =>
+        defaultConnector({ hostname: address.hostname.replace("2620:fe::fe", "::1"), port });
+      expect(await tcpCheck(swap, tcpConfig({ host: "2620:fe::fe" }))).toMatchObject({
+        ok: true,
+        error: null,
+      });
+      // Why the brackets: workerd's connect() does not take an IPv6 address without them.
+      const bare: Connector = () => defaultConnector({ hostname: "::1", port });
+      expect(await tcpCheck(bare, tcpConfig({ timeoutSeconds: 2 }))).toMatchObject({ ok: false });
+    },
+  );
 
   test("refuses a private host or port 25 without connecting", async () => {
     const fake = fakeConnect(() => "open");

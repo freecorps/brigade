@@ -218,16 +218,17 @@ test("a TCP draft becomes createTcp's args; a private host, port 25 and a host w
   );
 });
 
-test("a refused TCP port or host has its own wording when Cloudflare is the reason", () => {
+test("a refused TCP port or host has its own wording when Cloudflare or an underscore is the reason", () => {
   const tcp = { kind: "tcp" as const, host: "db.example.com", port: "5432" };
   expect(tcpFieldReason("port", { ...tcp, port: "25" })).toBe("port_blocked");
   expect(tcpFieldReason("port", { ...tcp, port: "70000" })).toBeNull();
   expect(tcpFieldReason("host", { ...tcp, host: " 104.16.0.1 " })).toBe("host_cloudflare");
   expect(tcpFieldReason("host", { ...tcp, host: "[2606:4700::1111]" })).toBe("host_cloudflare");
   expect(tcpFieldReason("host", { ...tcp, host: "10.0.0.5" })).toBeNull();
+  expect(tcpFieldReason("host", { ...tcp, host: "db_1.example.com" })).toBe("host_underscore");
   expect(tcpFieldReason("port", { ...tcp, kind: "http", port: "25" })).toBeNull();
   for (const locale of ["en", "pt-BR"] as const) {
-    for (const field of ["port_blocked", "host_cloudflare"]) {
+    for (const field of ["port_blocked", "host_cloudflare", "host_underscore"]) {
       expect(m.monitor_field_invalid({ field }, { locale })).not.toBe(
         m.monitor_field_invalid({ field: "other" }, { locale }),
       );
@@ -249,6 +250,20 @@ test("a pasted host:port or URL splits into host and port; a bare host pastes as
   expect(splitHostPort("db.example.com")).toBeNull();
   expect(splitHostPort("2001:db8::1")).toBeNull();
   expect(splitHostPort("not a host:22")).toBeNull();
+});
+
+test("a pasted connection string fills in its host and port, never its credentials", () => {
+  for (const [text, host, port] of [
+    ["postgres://admin:hunter2@db.example.com:5432/app", "db.example.com", "5432"],
+    ["redis://:hunter2@cache.example.com:6379", "cache.example.com", "6379"],
+    // An unescaped `@` in the password: everything up to the last one before the path is credentials.
+    ["mysql://admin:hun@ter2@db.example.com:3306/app?ssl=true", "db.example.com", "3306"],
+    ["amqp://admin@[2001:db8::1]:5672", "2001:db8::1", "5672"],
+  ] as const) {
+    const split = splitHostPort(text);
+    expect(split).toEqual({ host, port });
+    expect(JSON.stringify(split)).not.toMatch(/hunter2|hun@ter2|admin/);
+  }
 });
 
 test("a TCP host reads as itself before its port, an IPv6 address in brackets", () => {

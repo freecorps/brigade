@@ -81,7 +81,13 @@
     workspace until plans exist; a per-plan or configurable cap comes later (roadmap). `connect()` counts toward the six connections a Worker may have opening at once (the pool above);
     an open socket keeps a Durable Object alive for up to 15 minutes, which a check never needs since it closes at
     once. Locally (workerd under `vp dev` and the tests) `connect()` reaches loopback, so
-    `apps/api/test/monitors.test.ts` checks a real listener and a closed port as well as stubbed sockets.
+    `apps/api/test/monitors.test.ts` checks a real listener and a closed port as well as stubbed sockets. A closed
+    port is refused at once there (`network`), but a firewall that drops loopback makes it `timeout`, so the test
+    takes either.
+  - **IPv6:** the host is stored without brackets, but `connect()` takes an IPv6 address only in brackets
+    (`{ hostname: "[2001:db8::1]" }`); a bare one fails like a refused port. Settled in workerd by the same test
+    file, which connects to a listener on `::1` both ways (skipped on a machine without an IPv6 loopback), so
+    `tcpCheck` adds the brackets. Not yet confirmed against a deployed Worker.
 - Heartbeat (push-based): the monitored system calls Brigade; missing beats raise an alert. Covers cron jobs and internal hosts.
   Built: `POST /heartbeat/<workspace id>.<monitor id>.<secret>` (also under the dashboard's `/api`). The secret is
   32 random bytes made by the client, which shows the URL once and sends only its SHA-256; the shard stores the hash

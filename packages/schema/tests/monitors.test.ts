@@ -244,6 +244,27 @@ describe("TCP targets (SSRF)", () => {
     expect(normalizeTcpHost("Bücher.Example")).toBe("xn--bcher-kva.example");
   });
 
+  test("takes a name only within DNS limits, counted after punycode, and with no empty label", () => {
+    const label63 = "a".repeat(63);
+    // 63 + 1 + 63 + 1 + 63 + 1 + 57 + ".com" = 253.
+    const longest = `${label63}.${label63}.${label63}.${"a".repeat(57)}.com`;
+    expect(longest).toHaveLength(253);
+    expect(normalizeTcpHost(longest)).toBe(longest);
+    expect(normalizeTcpHost(`${label63}.example.com`)).toBe(`${label63}.example.com`);
+    for (const host of [
+      `a${longest}`,
+      `${"a".repeat(64)}.example.com`,
+      // 60 characters typed, 67 in punycode (`xn--…`).
+      `${"ü".repeat(4)}${"a".repeat(56)}.example.com`,
+      "foo..com",
+      ".example.com",
+      "example.com..",
+    ]) {
+      expect(normalizeTcpHost(host), host).toBeUndefined();
+      expect(tcpTargetProblems(host, 22), host).toMatchObject([{ path: "host" }]);
+    }
+  });
+
   test("refuses Cloudflare's own addresses, which a Worker's connect() never reaches", () => {
     for (const host of [
       "104.16.0.1",

@@ -419,6 +419,7 @@
         "field=url": "Use a public http or https address, on a web port such as 80, 443, 8080 or 8443.",
         "field=host": "Use a public host name or IP address, without http:// or a port.",
         "field=host_cloudflare": "Cloudflare doesn't allow TCP checks of its own addresses. Use your server's address.",
+        "field=host_underscore": "Host names can't contain underscores (_). Use a public host name or IP address.",
         "field=port": "Use a port from 1 to 65535.",
         "field=port_blocked": "Cloudflare blocks port 25. Use another port.",
         "field=expected_status": "Use a status from 100 to 599, or leave it empty.",

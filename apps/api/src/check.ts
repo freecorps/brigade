@@ -66,7 +66,10 @@ export async function tcpCheck(connector: Connector, config: TcpCheckConfig): Pr
   const start = Date.now();
   let socket: Socket;
   try {
-    socket = connector({ hostname: config.host, port: config.port });
+    // An IPv6 address is stored bare (`normalizeTcpHost`); `connect()` takes it only in brackets, and fails a bare
+    // one as it fails a refused port (test/monitors.test.ts, RFC 0007).
+    const hostname = config.host.includes(":") ? `[${config.host}]` : config.host;
+    socket = connector({ hostname, port: config.port });
   } catch {
     return { ok: false, latencyMs: null, httpStatus: null, error: "network" };
   }

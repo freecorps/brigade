@@ -69,7 +69,7 @@ const FIELD_KEYS: Record<DraftField, string> = {
 export type MonitorFormMode =
   | {
       kind: "create";
-      /** The workspace has as many monitors as it may (`monitorsFull`): submitting says so, and sends nothing. */
+      /** The workspace has as many monitors as it may (`monitorsFull`): the form says so from the start, and sends nothing. */
       full: boolean;
       onCreate: (checked: Extract<CheckedDraft, { ok: true }>) => Promise<boolean>;
     }
@@ -113,8 +113,8 @@ export function MonitorForm({
   const [draft, setDraft] = useState<MonitorDraft>(initial);
   const [invalid, setInvalid] = useState<ReadonlySet<DraftField>>(new Set());
   const [sending, setSending] = useState(false);
-  /** Said above the buttons when a new monitor cannot be added at all. */
-  const [blocked, setBlocked] = useState<string | null>(null);
+  /** A new monitor cannot be added at all: said at the top as the form opens, not after it is filled in. */
+  const full = mode.kind === "create" && mode.full;
   const formRef = useRef<HTMLFormElement>(null);
   const kindId = useId();
   const regionsId = useId();
@@ -125,6 +125,7 @@ export function MonitorForm({
   const targetHintId = useId();
   const headingId = useId();
   const restartId = useId();
+  const fullId = useId();
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => nameRef.current?.focus(), []);
   const changed = draftChanged(draft, initial);
@@ -168,8 +169,9 @@ export function MonitorForm({
     const checked = checkDraft(draft, client.newId("mon"));
     if (!checked.ok) return refuse(checked.fields);
     // The shard would refuse it (`limit_reached`); the draft stays, in case one is deleted.
-    if (mode.full) return setBlocked(monitorLimitReached());
-    setBlocked(null);
+    if (mode.full) {
+      return document.getElementById(fullId)?.scrollIntoView({ block: "nearest" });
+    }
     setSending(true);
     // `onCreate` can throw (no WebCrypto outside a secure context): the form must not stay busy.
     void mode
@@ -204,6 +206,7 @@ export function MonitorForm({
       aria-labelledby={editing ? headingId : undefined}
       className="flex min-w-0 flex-col gap-4 rounded-md border bg-muted/40 p-4"
     >
+      {full ? <FormError id={fullId}>{monitorLimitReached()}</FormError> : null}
       {discard ? (
         <DiscardChanges
           name={editing?.name ?? null}
@@ -318,9 +321,10 @@ export function MonitorForm({
       ) : null}
 
       {tcp ? (
-        // Host and port on one row at every width; their errors and the hint run under both, full width.
+        // Host and port on one row at every width, the port narrower on a phone so the host keeps the room; their
+        // errors and the hint run under both, full width.
         <div className="flex flex-col gap-1.5">
-          <div className="grid grid-cols-[minmax(0,1fr)_6.5rem] gap-3">
+          <div className="grid grid-cols-[minmax(0,1fr)_4.75rem] gap-3 sm:grid-cols-[minmax(0,1fr)_6.5rem]">
             <Field
               label={m.monitor_field_label({ field: "host" })}
               placeholder="db.example.com"
@@ -486,16 +490,11 @@ export function MonitorForm({
           ) : null}
         </div>
 
-        {blocked ? (
-          <div className="mb-4">
-            <FormError>{blocked}</FormError>
-          </div>
-        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           <Button
             type="submit"
             disabled={sending}
-            aria-describedby={restarts ? restartId : undefined}
+            aria-describedby={restarts ? restartId : full ? fullId : undefined}
           >
             {editing ? m.monitor_edit({ part: "save", name: "" }) : m.monitor_create()}
           </Button>

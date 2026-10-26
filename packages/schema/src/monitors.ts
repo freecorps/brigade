@@ -331,7 +331,8 @@ export function isCloudflareAddress(host: string): boolean {
  * `host` as a TCP check connects to it: lower case, an internationalised name in punycode (`bücher.example` is
  * `xn--bcher-kva.example`, as the URL parser turns it for an HTTP check), an IPv4 address in dotted decimal (any
  * spelling the URL parser takes), an IPv6 address without brackets. Undefined if it is not a bare host name or
- * address (a scheme, a port, a path, credentials, a percent escape or spaces are no host).
+ * address (a scheme, a port, a path, credentials, a percent escape or spaces are no host), or a name DNS cannot
+ * look up (an empty label, a label over 63 characters or a name over 253, counted in punycode).
  */
 export function normalizeTcpHost(host: string): string | undefined {
   const ipv6 = /^\[?([0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*)\]?$/.exec(host)?.[1];
@@ -344,7 +345,11 @@ export function normalizeTcpHost(host: string): string | undefined {
   }
   const hostname = url.hostname.replace(/\.$/, "");
   if (hostname.startsWith("[")) return hostname.slice(1, -1);
-  return /^[a-z0-9.-]+$/.test(hostname) ? hostname : undefined;
+  // DNS limits, on the name as it is looked up (in punycode): 253 characters, labels of 1 to 63 (no `a..b`).
+  const fits =
+    hostname.length <= 253 &&
+    hostname.split(".").every((label) => label.length >= 1 && label.length <= 63);
+  return fits && /^[a-z0-9.-]+$/.test(hostname) ? hostname : undefined;
 }
 
 /**

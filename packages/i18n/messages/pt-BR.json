@@ -419,6 +419,7 @@
         "field=url": "Use um endereço http ou https público, numa porta web como 80, 443, 8080 ou 8443.",
         "field=host": "Use um nome de host ou endereço IP público, sem http:// nem porta.",
         "field=host_cloudflare": "A Cloudflare não permite verificações TCP dos próprios endereços. Use o endereço do seu servidor.",
+        "field=host_underscore": "Nomes de host não podem ter sublinhado (_). Use um nome de host ou endereço IP público.",
         "field=port": "Use uma porta de 1 a 65535.",
         "field=port_blocked": "A Cloudflare bloqueia a porta 25. Use outra porta.",
         "field=expected_status": "Use um status de 100 a 599, ou deixe vazio.",

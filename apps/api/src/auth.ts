@@ -128,8 +128,8 @@ export const INVALID_LOCALE_CODE = "INVALID_LOCALE";
  * Checks a name before Better Auth stores it, with the rule the shard's member list keeps names by (`memberName`:
  * no bidi or other invisible characters, joiners only between letters, at most `MEMBER_NAME_MAX`), and stores it
  * trimmed. Better Auth itself takes any string. Likewise the user's `locale` (the language emails are written in,
- * RFC 0008): one of Brigade's locales exactly; a sign-up without one takes the closest to the request's first
- * `Accept-Language`, if any.
+ * RFC 0008): one of Brigade's locales exactly, or null on `/update-user` to unset it; a sign-up without one takes
+ * the closest to the request's first `Accept-Language`, if any.
  */
 const checkName = createAuthMiddleware(async (ctx) => {
   if (!(NAME_PATHS as readonly string[]).includes(ctx.path)) return;
@@ -144,7 +144,9 @@ const checkName = createAuthMiddleware(async (ctx) => {
     checked.name = name.value;
   }
   if ("locale" in body && body.locale !== undefined) {
-    if (!isLocale(body.locale)) {
+    // null on `/update-user` unsets it (back to English); a sign-up without one leaves it out.
+    const unset = body.locale === null && ctx.path === "/update-user";
+    if (!unset && !isLocale(body.locale)) {
       throw APIError.from("BAD_REQUEST", { code: INVALID_LOCALE_CODE, message: "Invalid locale" });
     }
   } else if (ctx.path === "/sign-up/email") {

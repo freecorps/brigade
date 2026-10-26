@@ -662,6 +662,7 @@
         "kind=page_escalation_stalled": "Um nível de escalonamento não pôde ser disparado. O Brigade continua tentando e chama todos que podem responder se ainda falhar",
         "kind=email_failed_unpaged": "Não foi possível enviar email para {a} avisando que a chamada não chegou",
         "kind=email_failed_nobody_paged": "Não foi possível enviar email para {a} avisando que ninguém pôde ser chamado",
+        "kind=email_capped": "Não foi enviado email para {a}: o limite de emails do Brigade foi atingido",
         "kind=*": "{actor} alterou o incidente"
       }
     }

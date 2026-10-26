@@ -197,7 +197,9 @@ Which sender is used:
 (`EMAIL_FROM="Brigade <brigade@example.com>" vp run dev`) uses the binding instead, which wrangler simulates locally:
 it logs the message and writes it to a local file, and never sends. Never set `remote: true` on the binding.
 
-**To send for real** (owner's call, per environment):
+**To send for real** (owner's call, per environment). Blocked on every deployed environment until email
+verification lands (RFC 0005 "Email", "Abuse"): the caps bound what a sign-up can make Brigade send, but do not stop
+it.
 
 1. Onboard a sending domain to Cloudflare Email Sending in the account (dashboard: Compute & AI > Email Service >
    Email Sending > Onboard Domain; it adds the SPF and DKIM records). Add a DMARC record if the domain has none.
@@ -209,7 +211,7 @@ it logs the message and writes it to a local file, and never sends. Never set `r
 
 Emails go to the address each user signed up with: email verification does not exist yet (RFC 0002), so an address
 is not proven to be theirs. What an email carries is the incident's number, severity and title and the workspace's
-name.
+name. At most 5 emails go to one user from a workspace in an hour, and 200 from a workspace in a day.
 
 ## Monitoring
 

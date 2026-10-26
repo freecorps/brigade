@@ -191,28 +191,42 @@ It is the base for invitations, email verification and password reset (RFC 0002)
   turning them off is a workspace's decision for now; a member preference arrives with notification preferences.
 - **Addresses and language.** The shard keeps no email addresses. The consumer reads each recipient's address, name
   and `locale` from D1 (Better Auth's `user`, joined with `member` so a member removed since is not emailed). D1 is
-  read only here, off the page path; a D1 failure is retried like a failed send. Each email is rendered in the
+  read only here, off the page path; a D1 failure is retried like a failed send, and given up after the last attempt
+  (for the owners' email only logged, since who the owners are is what could not be read). Each email is rendered in the
   recipient's locale (RFC 0008, `email_text` in `packages/i18n`), plain text plus simple HTML. Every line is rendered
   as text and escaped as a whole in the HTML, so an incident's title, a workspace's or a person's name never becomes
   markup; the subject and display names are made single-line. A link to the incident needs `DASHBOARD_URL` (an
   http(s) origin, a secret).
 - **Idempotency.** The shard keeps an email ledger: emails by key (`unpaged:<incident>:<member>`,
   `nobody:<page event>`) and who each reached. A plan holds each email it returns for 60 s (`EMAIL_CLAIM_MS`), so the
-  failures of one page in one batch (one event per member) send the owners' email once: the others leave it to the
-  delivery holding it, which sends it, lets it go to retry, or is redelivered by the Queue if its Worker died. A
-  redelivery skips whoever an email reached and does nothing once the email is done. The ledger lives 15 days, like
-  the page ledger.
+  failures of one page in one batch (one event per member) send the owners' email once. A delivery that finds an
+  email held is never acked for it: the plan says `held` with when the hold ends, and the consumer retries the message
+  no sooner than that (and never under 60 s). By then the email is done, and the retry finds nothing to send; or the
+  holder died, or its report to the shard failed after it sent (the message is then retried, and its redelivery is
+  held by its own claim), and the retry takes the email. So an email is never lost to a hold; one whose report was
+  lost may go twice (at least once, like every delivery here). A redelivery skips whoever an email reached and does
+  nothing once the email is done. The ledger lives 15 days, like the page ledger.
 - **Failure.** A failed send is retried with the message: 30 s, 1, 2, 4 minutes. After 5 attempts, or at once for a
   refusal retrying cannot fix, each recipient the email never reached gets an `email_failed` entry and a
   `notification.failed` (`channel: "email"`), which no notifier acts on (nothing loops). The shard being unreachable
   retries the message like any event and, past the Queue's retries, it is dead-lettered and dropped (logged): only
   pages are recorded from there.
+- **Abuse.** Until email verification exists, an address is whatever someone signed up with, and the incident's
+  title (in the subject and the body) is whatever a member typed: anyone can sign up with someone else's address,
+  declare incidents in their own workspace and have Brigade email that address their words, from Brigade's domain.
+  The ledger caps it: at most 5 emails to one user from a workspace in an hour (`EMAIL_USER_HOURLY_CAP`), and 200
+  from a workspace in a day (`EMAIL_WORKSPACE_DAILY_CAP`), counted from the emails that went out. Over either, the
+  email is dropped, logged, and noted on the timeline (`email_failed`, `capped`) with `notification.failed`; it is
+  not retried. The caps are read when the plan is made, so deliveries running at once can overshoot by a batch.
+  They bound the damage, not the abuse (a new sign-up per address, ten workspaces per user), so the plan is that
+  verification gates email: only a verified address is emailed. Until then `EMAIL_FROM` is set on no deployed
+  environment (apps/api/README.md "Email").
 - **Push first.** Email only acts on failures push already recorded, so it can never delay or stop a page. The
   consumer handles a batch's messages in parallel and acks each on its own: a page in the same batch as an email
   goes to the relay without waiting for it (tested). Every wait on the email side is bounded (10 s a send, 5 s the
   D1 read).
 - **Not yet.** Emails go to the address a user signed up with, which is not verified until email verification
-  exists. No email to Brigade's operators when the paging pipeline degrades (Q19), to owners when a rotation
+  exists (see "Abuse"). No email to Brigade's operators when the paging pipeline degrades (Q19), to owners when a rotation
   changes (Q20), or for invitations; each can now build on the `EmailSender`.
 
 ## Provider interfaces (published in `packages/sdk`, MIT)

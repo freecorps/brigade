@@ -1,9 +1,9 @@
 // The `brigade-events` consumer (RFC 0005 "Delivery", RFC 0002 runtime map): routes each event to its notifiers:
-// a page that failed to email (src/notify-email.ts), everything else to push. Push: for an event that pages, the workspace shard plans who gets it, each device's push is sealed
-// to its own key (HPKE, `packages/push`) and sent through the relay (RFC 0006), and the outcomes go back to the
-// shard. Delivery is at-least-once, so the shard's page ledger, keyed by `event.id`, makes a redelivery page nobody
-// twice. What the Queue gives up on lands in `brigade-events-dlq`, whose consumer (`consumeDeadLetters`) records it
-// on the incident's timeline.
+// a page that failed to email (src/notify-email.ts), everything else to push. Push: for an event that pages, the
+// workspace shard plans who gets it, each device's push is sealed to its own key (HPKE, `packages/push`) and sent
+// through the relay (RFC 0006), and the outcomes go back to the shard. Delivery is at-least-once, so the shard's page
+// ledger, keyed by `event.id`, makes a redelivery page nobody twice. What the Queue gives up on lands in
+// `brigade-events-dlq`, whose consumer (`consumeDeadLetters`) records it on the incident's timeline.
 
 import { sealPush } from "@freecorps/brigade-push";
 import { formatIncidentNumber } from "@freecorps/brigade-schema";
@@ -83,10 +83,12 @@ export async function consumeEvents(
       const email = asksForEmail(event);
       const delay = email ? emailRetryDelay : retryDelay;
       try {
-        const retry = email
+        const delaySeconds = email
           ? await notifyEmail(event, message.attempts, env, mail)
-          : await notifyPush(event, message.attempts, env, send);
-        if (retry) message.retry({ delaySeconds: delay(message.attempts) });
+          : (await notifyPush(event, message.attempts, env, send))
+            ? retryDelay(message.attempts)
+            : undefined;
+        if (delaySeconds !== undefined) message.retry({ delaySeconds });
         else message.ack();
       } catch (error) {
         // The shard was unreachable or threw: nothing was recorded, so the whole page runs again.

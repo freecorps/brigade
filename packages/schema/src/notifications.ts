@@ -55,9 +55,10 @@ export type PageFailure = (typeof PAGE_FAILURES)[number];
 
 /**
  * Why the email notifier could not email a member (RFC 0005 "Email"): `undelivered`, the email service kept failing
- * until the notifier gave up, or refused the message (a suppressed address, a sender the service does not accept).
+ * until the notifier gave up, or refused the message (a suppressed address, a sender the service does not accept);
+ * `capped`, not sent because the member or the workspace already got as many emails as Brigade sends in a while.
  */
-export const EMAIL_FAILURES = ["undelivered"] as const;
+export const EMAIL_FAILURES = ["undelivered", "capped"] as const;
 export type EmailFailure = (typeof EMAIL_FAILURES)[number];
 
 /**

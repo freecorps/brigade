@@ -212,10 +212,14 @@ Validate the risky assumptions before writing product code. Each spike produces 
     per incident) and the owners when a page reached nobody and nothing else will page (Q18), both on by default
     (`workspace.setEmail`). Emails are plain text and escaped HTML in each user's language (a new `user.locale`, set
     by the dashboard), go out from the queue consumer with an email ledger in the shard, are retried with backoff,
-    and a failure is an `email_failed` entry on the timeline. Push never waits on email.
+    and a failure is an `email_failed` entry on the timeline. Push never waits on email. Capped at 5 emails per user
+    per hour and 200 per workspace per day.
   - Left: onboarding a sending domain and setting `EMAIL_FROM` (and `DASHBOARD_URL`) per environment, and applying
-    migration 0003 to the deployed databases (owner's call, apps/api/README.md "Email"); a dashboard switch for the
-    two settings; a per-member opt-out; the mobile app sending the user's language. Unblocked by it and next:
+    migration 0003 to the deployed databases (owner's call, apps/api/README.md "Email"). Setting `EMAIL_FROM` on any
+    deployed environment is blocked until email verification lands: the per-user and per-workspace caps bound what an
+    unverified sign-up can make Brigade send to someone else's address, but are not judged enough (RFC 0005
+    "Email", "Abuse"). A dashboard switch for the two settings; a per-member opt-out; the mobile app sending the
+    user's language. Unblocked by it and next:
     invitations (`member.added`), email verification and password reset (RFC 0002 "Auth"), an email to operators
     when the paging pipeline degrades (Q19) and to owners when rotations change (Q20). VoIP call paging and the PSTN
     notifier are still to come.

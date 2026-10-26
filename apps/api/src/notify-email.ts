@@ -8,7 +8,14 @@
 import { resolveLocale } from "@freecorps/brigade-i18n";
 import { renderEmail } from "./email-templates.ts";
 import type { EmailSender } from "./email.ts";
-import type { EmailJob, EmailOutcome, EmailPlan } from "./mailer.ts";
+import {
+  EMAIL_CLAIM_MS,
+  EMAIL_USER_HOURLY_CAP,
+  type EmailBudget,
+  type EmailJob,
+  type EmailOutcome,
+  type EmailPlan,
+} from "./mailer.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 
 /**
@@ -40,47 +47,74 @@ export function emailRetryDelay(attempts: number): number {
   );
 }
 
+/** Seconds before retrying an event whose email another delivery holds until `until`: never less than a hold. */
+export function heldDelay(attempts: number, until: number, now: number): number {
+  return Math.max(
+    emailRetryDelay(attempts),
+    Math.ceil(Math.max(EMAIL_CLAIM_MS, until - now) / 1000),
+  );
+}
+
 /**
- * The email notifier for one event. Returns true when it should be tried again later (some email failed in a way
- * that may pass and attempts remain); what was sent is recorded either way. Without a sender (email not set up) it does nothing. Throws only when the shard cannot be reached.
+ * The email notifier for one event. Returns the seconds to wait before trying it again, or undefined when it is
+ * done: retried when some email failed in a way that may pass and attempts remain, or when an email it asks for is
+ * held by another delivery (which may die); what was sent is recorded either way. Without a sender (email not set
+ * up) it does nothing. Throws only when the shard cannot be reached.
  */
 export async function notifyEmail(
   event: BrigadeEvent,
   attempts: number,
   env: EmailNotifyEnv,
   sender: EmailSender | undefined,
-): Promise<boolean> {
-  if (!sender) return false;
+): Promise<number | undefined> {
+  if (!sender) return undefined;
   const workspace = env.WORKSPACE.getByName(event.workspaceId);
   const plan = await workspace.planEmail(event);
-  if (!plan.send) return false;
+  if (!plan.send) {
+    return plan.reason === "held" ? heldDelay(attempts, plan.until, Date.now()) : undefined;
+  }
+  // Shared by the plan's jobs, so one user in two of them (an owner the page missed) counts once per email.
+  const budget: EmailBudget = { workspace: plan.budget.workspace, users: { ...plan.budget.users } };
   const retries = await Promise.all(
     plan.jobs.map(async (job) => {
-      const outcomes = await sendJob(event, job, plan, env, sender);
-      const final = !outcomes.some((one) => one.retry) || attempts >= MAX_EMAIL_ATTEMPTS;
+      const { outcomes, unread } = await sendJob(event, job, plan, budget, env, sender);
+      const final =
+        (!unread && !outcomes.some((one) => one.retry)) || attempts >= MAX_EMAIL_ATTEMPTS;
+      if (final && unread && "owners" in job.to) {
+        // Nobody to put on the timeline: the owners are only known from D1.
+        log("email failed", { event: event.id, incident: plan.incident.id, about: job.about });
+      }
       await workspace.recordEmail(
         event,
         job.key,
         job.about,
-        outcomes.map(({ userId, ok }): EmailOutcome => ({ userId, ok })),
+        outcomes.map(({ userId, ok, capped }): EmailOutcome =>
+          capped ? { userId, ok, capped } : { userId, ok },
+        ),
         final,
       );
       return !final;
     }),
   );
-  return retries.some(Boolean);
+  if (plan.heldUntil !== undefined) return heldDelay(attempts, plan.heldUntil, Date.now());
+  return retries.some(Boolean) ? emailRetryDelay(attempts) : undefined;
 }
 
 type Sent = EmailOutcome & { retry: boolean };
 
-/** Sends one planned email to each of its recipients not reached yet. Never throws. */
+/**
+ * Sends one planned email to each of its recipients not reached yet, within `budget` (which it spends). `unread`:
+ * the recipients could not be read from D1, so it is worth retrying even when nobody is known to have missed it.
+ * Never throws.
+ */
 async function sendJob(
   event: BrigadeEvent,
   job: EmailJob,
   plan: Extract<EmailPlan, { send: true }>,
+  budget: EmailBudget,
   env: EmailNotifyEnv,
   sender: EmailSender,
-): Promise<Sent[]> {
+): Promise<{ outcomes: Sent[]; unread: boolean }> {
   let recipients: Recipient[];
   try {
     recipients = await lookUp(env.DB, event.workspaceId, job.to);
@@ -92,13 +126,21 @@ async function sendJob(
     });
     // Known recipients count as failed (and are recorded if this was the last try); owners are only known from D1.
     const ids = "userIds" in job.to ? job.to.userIds : [];
-    return ids
+    const outcomes = ids
       .filter((userId) => !job.sent.includes(userId))
       .map((userId) => ({ userId, ok: false, retry: true }));
+    return { outcomes, unread: true };
   }
   const pending = recipients.filter((recipient) => !job.sent.includes(recipient.userId));
-  return Promise.all(
+  const outcomes = await Promise.all(
     pending.map(async (recipient): Promise<Sent> => {
+      // Spent before the first await, so the plan's jobs, sending in parallel, never overdraw it.
+      const sends = budget.users[recipient.userId] ?? 0;
+      if (budget.workspace <= 0 || sends >= EMAIL_USER_HOURLY_CAP) {
+        return { userId: recipient.userId, ok: false, capped: true, retry: false };
+      }
+      budget.workspace--;
+      budget.users[recipient.userId] = sends + 1;
       const email = renderEmail(
         job.about === "unpaged"
           ? { about: "unpaged", reason: job.reason ?? "undelivered" }
@@ -121,6 +163,7 @@ async function sendJob(
       return { userId: recipient.userId, ok: false, retry: result.retry };
     }),
   );
+  return { outcomes, unread: false };
 }
 
 type Recipient = { userId: string; email: string; name: string | null; locale: string | null };

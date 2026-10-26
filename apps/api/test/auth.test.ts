@@ -395,6 +395,11 @@ describe("Better Auth routes", () => {
     expect((await change("de")).status).toBe(400);
     expect((await change("en")).status).toBe(200);
     expect(await locale(none.cookie)).toBe("en");
+    // Unset: English again, with nothing stored.
+    expect((await change(null)).status).toBe(200);
+    expect(await locale(none.cookie)).toBeNull();
+    // A sign-up cannot send null.
+    expect((await given({ locale: null })).response.status).toBe(400);
   });
 
   test("a POST from another site is refused", async () => {

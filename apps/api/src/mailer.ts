@@ -10,6 +10,7 @@ import {
   isActive,
   NOTIFIER_ACTOR,
   type EmailAbout,
+  type EmailFailure,
   type NotificationFailed,
   type Store,
   type BrigadeTables,
@@ -21,18 +22,29 @@ import type { Shard } from "./shard.ts";
 import type { RowChange } from "./store.ts";
 
 /**
- * How long a plan holds an email for the delivery that asked: another event asking for the same email meanwhile (two
- * members' failures of one page, in one batch) leaves it to that one, which sends it, lets it go to retry, or is
- * redelivered by the Queue if its Worker died (by then the hold has passed). Longer than a send can take (each is cut
- * at `EMAIL_TIMEOUT_MS`, all of a plan's in parallel, plus the D1 read).
+ * How long a plan holds an email for the delivery that asked. Another delivery asking for the same email meanwhile
+ * (two members' failures of one page in one batch, or a redelivery of this event after its Worker died or its
+ * report to the shard failed) is told it is `held` until then and retried after it, never acked: by then the email
+ * is done (and it finds nothing to send) or the hold has passed (and it takes the email). Longer than a send can take
+ * (each is cut at `EMAIL_TIMEOUT_MS`, all of a plan's in parallel, plus the D1 read).
  */
 export const EMAIL_CLAIM_MS = 60_000;
+/**
+ * The most emails one user gets from a workspace in an hour, and a workspace sends in a day (RFC 0005 "Email",
+ * "Abuse"): until email verification exists, an address is whatever someone signed up with, and the incident's
+ * title is whatever its declarer typed. Over either, the email is dropped, logged and noted on the timeline.
+ */
+export const EMAIL_USER_HOURLY_CAP = 5;
+export const EMAIL_WORKSPACE_DAILY_CAP = 200;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 
 const SCHEMA = `
   create table if not exists email_sends (
     key text not null,
     user_id text not null,
     at integer not null,
+    capped integer not null default 0,
     primary key (key, user_id)
   ) without rowid;
   create table if not exists email_keys (
@@ -60,16 +72,38 @@ export type EmailJob = {
   reason?: UnpagedReason;
 };
 
+/**
+ * What the caps leave (`EMAIL_USER_HOURLY_CAP`, `EMAIL_WORKSPACE_DAILY_CAP`), from the ledger when the plan was made:
+ * the emails the workspace may still send today, and how many each user got in the last hour (those with any).
+ */
+export type EmailBudget = { workspace: number; users: Record<string, number> };
+
 export type EmailPlan =
-  | { send: true; incident: EmailIncident; workspace: string; jobs: EmailJob[] }
+  | {
+      send: true;
+      incident: EmailIncident;
+      workspace: string;
+      jobs: EmailJob[];
+      budget: EmailBudget;
+      /** Another email this event asks for is held by another delivery until then: retry after it. */
+      heldUntil?: number;
+    }
+  /**
+   * Each email it asks for is held by another delivery (another event's, or an earlier one of this event that may
+   * have died) until `until`: retry after it, so the email is neither sent twice nor lost.
+   */
+  | { send: false; reason: "held"; until: number }
   /**
    * Nothing to send: not a page's failure, the incident moved on (or is gone), or each email it asks for is off, not
-   * called for, done, or being sent for another event (whose delivery sends it, or is redelivered if it dies).
+   * called for, or done.
    */
   | { send: false; reason: "not_an_email" | "not_found" | "moved_on" | "nothing" };
 
-/** What one recipient's send did, as the consumer reports it. */
-export type EmailOutcome = { userId: string; ok: boolean };
+/**
+ * What one recipient's send did, as the consumer reports it. `capped`: not sent, because the recipient or the
+ * workspace was over its cap; final at once, and never retried.
+ */
+export type EmailOutcome = { userId: string; ok: boolean; capped?: boolean };
 
 export type MailerOptions = {
   storage: DurableObjectStorage;
@@ -135,6 +169,7 @@ export class Mailer {
     }
 
     const jobs: EmailJob[] = [];
+    let heldUntil: number | undefined;
     for (const job of wanted) {
       const claim = this.options.storage.sql
         .exec<{ done: number; claimed_until: number }>(
@@ -142,7 +177,13 @@ export class Mailer {
           job.key,
         )
         .toArray()[0];
-      if (claim?.done || (claim && claim.claimed_until > now)) continue;
+      if (claim?.done) continue;
+      if (claim && claim.claimed_until > now) {
+        heldUntil = Math.max(heldUntil ?? 0, claim.claimed_until);
+        continue;
+      }
+      // `at` is when the email was first asked for and is not refreshed by a later claim: the ledger is pruned from
+      // it, and `LEDGER_RETENTION_MS` outlasts every retry of an email by far.
       this.options.storage.sql.exec(
         `insert into email_keys (key, done, claimed_until, at) values (?, 0, ?, ?)
          on conflict (key) do update set claimed_until = excluded.claimed_until`,
@@ -152,7 +193,11 @@ export class Mailer {
       );
       jobs.push({ ...job, sent: this.sent(job.key) });
     }
-    if (jobs.length === 0) return { send: false, reason: "nothing" };
+    if (jobs.length === 0) {
+      return heldUntil === undefined
+        ? { send: false, reason: "nothing" }
+        : { send: false, reason: "held", until: heldUntil };
+    }
     return {
       send: true,
       incident: {
@@ -163,14 +208,17 @@ export class Mailer {
       },
       workspace: workspace.name,
       jobs,
+      budget: this.budget(now),
+      ...(heldUntil === undefined ? {} : { heldUntil }),
     };
   }
 
   /**
-   * Records what one email's sends did. Sent recipients go in the ledger (a retry skips them). When `final` (retries
-   * spent, or nothing left worth retrying), each recipient in `outcomes` it never reached gets an `email_failed` entry
-   * on the incident's timeline and `notification.failed` (`channel: "email"`), and the email is done; otherwise its
-   * claim is let go, so the retry can take it at once.
+   * Records what one email's sends did. Sent recipients go in the ledger (a retry skips them, and they count toward
+   * the caps). A capped recipient is final at once: in the ledger as capped (skipped, not counted) with an
+   * `email_failed` entry (`capped`). When `final` (retries spent, or nothing left worth retrying), each recipient in
+   * `outcomes` it never reached gets an `email_failed` entry on the incident's timeline and `notification.failed`
+   * (`channel: "email"`), and the email is done; otherwise its claim is let go, so the retry can take it at once.
    */
   record(
     event: BrigadeEvent,
@@ -186,39 +234,79 @@ export class Mailer {
       .exec<{ done: number }>("select done from email_keys where key = ?", key)
       .toArray()[0];
     if (!claim || claim.done) return;
+    const data = event.data as PushFailed;
     for (const outcome of outcomes) {
-      if (!outcome.ok) continue;
+      if (!outcome.ok && !outcome.capped) continue;
       sql.exec(
-        "insert into email_sends (key, user_id, at) values (?, ?, ?) on conflict do nothing",
+        "insert into email_sends (key, user_id, at, capped) values (?, ?, ?, ?) on conflict do nothing",
         key,
         outcome.userId,
         now,
+        outcome.ok ? 0 : 1,
       );
+      if (outcome.ok) continue;
+      this.options.log("email capped", {
+        event: event.id,
+        incident: data.incidentId,
+        about,
+        recipient: recipientHash(key, outcome.userId),
+      });
+      this.fail(event, key, about, outcome.userId, "capped", now);
     }
     if (!final) {
       sql.exec("update email_keys set claimed_until = 0 where key = ?", key);
       return;
     }
     const sent = new Set(this.sent(key));
-    const data = event.data as PushFailed;
     for (const { userId } of outcomes) {
       if (sent.has(userId)) continue;
       sent.add(userId);
-      this.options.log("email failed", { event: event.id, incident: data.incidentId, about });
-      this.run(
-        `emailfail:${key}:${userId}`,
-        "notification.failEmail",
-        {
-          incidentId: data.incidentId,
-          eventId: event.id,
-          userId,
-          reason: "undelivered",
-          about,
-        },
-        now,
-      );
+      this.options.log("email failed", {
+        event: event.id,
+        incident: data.incidentId,
+        about,
+        recipient: recipientHash(key, userId),
+      });
+      this.fail(event, key, about, userId, "undelivered", now);
     }
     sql.exec("update email_keys set done = 1, claimed_until = 0 where key = ?", key);
+  }
+
+  /** `email_failed` on the incident's timeline and `notification.failed` (`channel: "email"`), once per recipient. */
+  private fail(
+    event: BrigadeEvent,
+    key: string,
+    about: EmailAbout,
+    userId: string,
+    reason: EmailFailure,
+    now: number,
+  ): void {
+    const data = event.data as PushFailed;
+    this.run(
+      `emailfail:${key}:${userId}`,
+      "notification.failEmail",
+      { incidentId: data.incidentId, eventId: event.id, userId, reason, about },
+      now,
+    );
+  }
+
+  /** What the caps leave now (see `EmailBudget`); capped recipients do not count. */
+  private budget(now: number): EmailBudget {
+    const { sql } = this.options.storage;
+    const today = sql
+      .exec<{ sends: number }>(
+        "select count(*) as sends from email_sends where capped = 0 and at > ?",
+        now - DAY_MS,
+      )
+      .one().sends;
+    const users: Record<string, number> = {};
+    for (const row of sql.exec<{ user_id: string; sends: number }>(
+      "select user_id, count(*) as sends from email_sends where capped = 0 and at > ? group by user_id",
+      now - HOUR_MS,
+    )) {
+      users[row.user_id] = row.sends;
+    }
+    return { workspace: Math.max(0, EMAIL_WORKSPACE_DAILY_CAP - today), users };
   }
 
   /**
@@ -292,4 +380,17 @@ export class Mailer {
 
 function isUnpagedReason(reason: string): reason is UnpagedReason {
   return (UNPAGED_REASONS as readonly string[]).includes(reason);
+}
+
+/**
+ * A short, stable tag for one email's recipient in logs (FNV-1a of the key and user id): enough to follow one through
+ * retries, without the user id or the address.
+ */
+export function recipientHash(key: string, userId: string): string {
+  let hash = 0x811c9dc5;
+  for (const char of `${key}:${userId}`) {
+    hash ^= char.codePointAt(0)!;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
 }

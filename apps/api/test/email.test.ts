@@ -16,7 +16,12 @@ import {
   type OutgoingEmail,
 } from "../src/email.ts";
 import { escapeHtml, incidentLink, renderEmail } from "../src/email-templates.ts";
-import { asksForEmail } from "../src/mailer.ts";
+import {
+  asksForEmail,
+  EMAIL_CLAIM_MS,
+  EMAIL_USER_HOURLY_CAP,
+  EMAIL_WORKSPACE_DAILY_CAP,
+} from "../src/mailer.ts";
 import { consumeEvents, type Fetch, type NotifyEnv } from "../src/notify.ts";
 import { emailRetryDelay, MAX_EMAIL_ATTEMPTS } from "../src/notify-email.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
@@ -217,6 +222,8 @@ describe("the senders", () => {
     expect(parseSender(" brigade@example.com ")).toEqual({ email: "brigade@example.com" });
     expect(parseSender("<brigade@example.com>")).toEqual({ email: "brigade@example.com" });
     expect(parseSender("brigade")).toBeUndefined();
+    expect(parseSender("a@b@example.com")).toBeUndefined();
+    expect(parseSender("Brigade <a@b@example.com>")).toBeUndefined();
   });
 
   test("the log double writes what would be sent and sends nothing", async () => {
@@ -365,7 +372,38 @@ async function workspace(locales: Partial<Record<string, string>> = {}) {
     );
   const timeline = (incident: string) =>
     withShard((shard) => shard.store.scan("timeline").filter((row) => row.incidentId === incident));
-  return { id, people, address, run, device, events, declare, failures, timeline, withShard };
+  /** The `notification.failed` push event for `actor`. */
+  const failureOf = async (actor: Actor) =>
+    (await failures()).find((e) => (e.data as { userId: string | null }).userId === actor.id)!;
+  return {
+    id,
+    people,
+    address,
+    run,
+    device,
+    events,
+    declare,
+    failures,
+    failureOf,
+    timeline,
+    withShard,
+  };
+}
+
+/** The consumer's env with a shard whose `recordEmail` throws the first `times` times (a reset, a lost reply). */
+function failingRecord(times: number): NotifyEnv {
+  let left = times;
+  const getByName = (name: string) => {
+    const stub = env.WORKSPACE.getByName(name);
+    return {
+      planEmail: (event: BrigadeEvent) => stub.planEmail(event),
+      recordEmail: async (...args: Parameters<WorkspaceDO["recordEmail"]>) => {
+        if (left-- > 0) throw new Error("the shard was reset");
+        return stub.recordEmail(...args);
+      },
+    };
+  };
+  return { ...baseEnv, WORKSPACE: { getByName } as unknown as NotifyEnv["WORKSPACE"] };
 }
 
 /** Delivers `events` to the consumer in one batch as attempt `attempts`; what it acked and retried. */
@@ -456,9 +494,21 @@ describe("who is emailed when paging fails", () => {
     expect(unpaged.map((one) => one.to.email).sort()).toEqual(
       [ws.address(ws.people.ana), ws.address(ws.people.bia)].sort(),
     );
-    // The delivery that found the owners' email taken by the other is acked: the one holding it sends it, or is
-    // redelivered by the Queue if it dies.
-    expect(first).toEqual({ acked: ["msg-0", "msg-1"], retried: [] });
+    // The delivery that found the owners' email held by the other is retried once the hold is over, not acked: the
+    // one holding it might die. By then the email is done, and it is acked.
+    expect(first.acked).toHaveLength(1);
+    expect(first.retried).toEqual([
+      {
+        msgId: first.acked[0] === "msg-0" ? "msg-1" : "msg-0",
+        delaySeconds: EMAIL_CLAIM_MS / 1000,
+      },
+    ]);
+    expect(mail.sent).toHaveLength(4);
+    const held = failures[first.acked[0] === "msg-0" ? 1 : 0]!;
+    expect(await deliver([held], mail.sender, { attempts: 2 })).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
     expect(mail.sent).toHaveLength(4);
   });
 
@@ -672,6 +722,56 @@ describe("the email ledger and retries", () => {
     ]);
   });
 
+  test("a report to the shard that fails after the sends is retried after the hold, and recorded exactly once", async () => {
+    const ws = await workspace();
+    await ws.device(ws.people.ana);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    await deliver([event], undefined);
+    const failed = await ws.failureOf(ws.people.bia);
+    // Bia's address is refused, so the email is final at once; the report of it is lost the first time.
+    const mail = recorder(() => ({ ok: false, retry: false, code: "E_RECIPIENT_SUPPRESSED" }));
+    const environment = failingRecord(1);
+    expect(await deliver([failed], mail.sender, { environment })).toEqual({
+      acked: [],
+      retried: [{ msgId: "msg-0", delaySeconds: emailRetryDelay(1) }],
+    });
+    // Redelivered before the hold is over: it waits for the hold instead of being acked with nothing recorded.
+    expect(await deliver([failed], mail.sender, { environment, attempts: 2 })).toEqual({
+      acked: [],
+      retried: [{ msgId: "msg-0", delaySeconds: EMAIL_CLAIM_MS / 1000 }],
+    });
+    expect(mail.sent).toHaveLength(1);
+    // The hold is over by the time it is delivered again: it sends, and the failure is recorded once.
+    await ws.withShard((_shard, sql) => sql.exec("update email_keys set claimed_until = 0"));
+    expect(await deliver([failed], mail.sender, { environment, attempts: 3 })).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
+    expect(mail.sent).toHaveLength(2);
+    await deliver([failed], mail.sender, { environment, attempts: 4 });
+    expect(mail.sent).toHaveLength(2);
+    expect((await ws.timeline(incident)).filter((row) => row.kind === "email_failed")).toEqual([
+      expect.objectContaining({ userId: ws.people.bia.id, reason: "undelivered" }),
+    ]);
+
+    // An email that went out but whose report was lost is not lost: it goes again (at least once), then never more.
+    const sent = await workspace();
+    await sent.device(sent.people.ana);
+    const declared = await sent.declare(MONITOR_ACTOR);
+    await deliver([declared.event], undefined);
+    const biaFailed = await sent.failureOf(sent.people.bia);
+    const ok = recorder();
+    const lost = failingRecord(1);
+    await deliver([biaFailed], ok.sender, { environment: lost });
+    expect(
+      (await deliver([biaFailed], ok.sender, { environment: lost, attempts: 2 })).acked,
+    ).toEqual([]);
+    await sent.withShard((_shard, sql) => sql.exec("update email_keys set claimed_until = 0"));
+    await deliver([biaFailed], ok.sender, { environment: lost, attempts: 3 });
+    await deliver([biaFailed], ok.sender, { environment: lost, attempts: 4 });
+    expect(ok.to()).toEqual([sent.address(sent.people.bia), sent.address(sent.people.bia)]);
+  });
+
   test("D1 failing is retried like a failed send", async () => {
     const ws = await workspace();
     await ws.device(ws.people.ana);
@@ -686,6 +786,153 @@ describe("the email ledger and retries", () => {
     expect(mail.sent).toEqual([]);
     await deliver(await ws.failures(), mail.sender, { attempts: 2 });
     expect(mail.to()).toEqual([ws.address(ws.people.bia)]);
+  });
+
+  test("D1 failing on the owners' email is retried, and only given up (logged) after the last attempt", async () => {
+    const setUp = async () => {
+      const ws = await workspace();
+      await ws.run(ws.people.ana, "workspace.setEmail", { unpaged: false, nobodyPaged: true });
+      const { incident, event } = await ws.declare(MONITOR_ACTOR);
+      await deliver([event], undefined);
+      return { ws, incident, failed: await ws.failureOf(ws.people.ana) };
+    };
+    const noDb = { ...baseEnv, DB: undefined };
+    const { ws, failed } = await setUp();
+    const mail = recorder();
+    expect(await deliver([failed], mail.sender, { environment: noDb })).toEqual({
+      acked: [],
+      retried: [{ msgId: "msg-0", delaySeconds: emailRetryDelay(1) }],
+    });
+    await deliver([failed], mail.sender, { attempts: 2 });
+    expect(mail.to()).toEqual([ws.address(ws.people.ana), ws.address(ws.people.olga)].sort());
+
+    // D1 down on every attempt: given up on the last, logged (nobody to put on the timeline), done.
+    const down = await setUp();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const gaveUp = await deliver([down.failed], mail.sender, {
+      environment: noDb,
+      attempts: MAX_EMAIL_ATTEMPTS,
+    });
+    expect(gaveUp).toEqual({ acked: ["msg-0"], retried: [] });
+    const logged = errors.mock.calls.map(
+      ([line]) => JSON.parse(String(line)) as { message: string; about?: string },
+    );
+    expect(logged).toContainEqual(
+      expect.objectContaining({ message: "email failed", about: "nobody_paged" }),
+    );
+    const before = mail.sent.length;
+    await deliver([down.failed], mail.sender, { attempts: MAX_EMAIL_ATTEMPTS + 1 });
+    expect(mail.sent).toHaveLength(before);
+    expect((await down.ws.timeline(down.incident)).map((row) => row.kind)).not.toContain(
+      "email_failed",
+    );
+  });
+});
+
+describe("who must not be emailed", () => {
+  test("a member removed from the workspace after the page failed gets nothing", async () => {
+    const ws = await workspace();
+    await ws.device(ws.people.ana);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    await deliver([event], undefined);
+    await env.DB.prepare(`delete from member where "userId" = ?`).bind(ws.people.bia.id).run();
+    const mail = recorder();
+    expect(await deliver(await ws.failures(), mail.sender)).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
+    expect(mail.sent).toEqual([]);
+    expect((await ws.timeline(incident)).map((row) => row.kind)).not.toContain("email_failed");
+  });
+
+  test("a user of another workspace, even an owner there, is never picked", async () => {
+    const ws = await workspace();
+    const other = await workspace();
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    await deliver([event], undefined);
+    // Bia leaves this workspace and owns the other one; the other one's owners stay there.
+    await env.DB.prepare(`delete from member where "userId" = ?`).bind(ws.people.bia.id).run();
+    await env.DB.prepare(
+      `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, 'owner', ?)`,
+    )
+      .bind(newId("mem", Date.now(), random), other.id, ws.people.bia.id, new Date().toISOString())
+      .run();
+    const mail = recorder();
+    await deliver([await ws.failureOf(ws.people.ana)], mail.sender);
+    await deliver([await ws.failureOf(ws.people.bia)], mail.sender);
+    // The owners' email and Ana's own: never Bia, never the other workspace's people.
+    expect(mail.to()).toEqual(
+      [ws.address(ws.people.ana), ws.address(ws.people.ana), ws.address(ws.people.olga)].sort(),
+    );
+  });
+});
+
+describe("the caps on emails", () => {
+  /** Ledger rows as if `count` emails had gone to `userId` (or to as many users) `ago` ms back. */
+  const seed = (
+    ws: Awaited<ReturnType<typeof workspace>>,
+    count: number,
+    ago: number,
+    userId?: string,
+  ) =>
+    ws.withShard((_shard, sql) => {
+      for (let i = 0; i < count; i++) {
+        sql.exec(
+          "insert into email_sends (key, user_id, at) values (?, ?, ?)",
+          `seed:${i}`,
+          userId ?? `usr_seed${i}`,
+          Date.now() - ago,
+        );
+      }
+    });
+
+  test("a user who got as many emails as an hour allows gets no more, noted on the timeline", async () => {
+    const ws = await workspace();
+    await ws.device(ws.people.ana);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    await deliver([event], undefined);
+    await seed(ws, EMAIL_USER_HOURLY_CAP, 60_000, ws.people.bia.id);
+    const mail = recorder();
+    expect(await deliver([await ws.failureOf(ws.people.bia)], mail.sender)).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
+    expect(mail.sent).toEqual([]);
+    expect((await ws.timeline(incident)).filter((row) => row.kind === "email_failed")).toEqual([
+      expect.objectContaining({ userId: ws.people.bia.id, reason: "capped", about: "unpaged" }),
+    ]);
+    expect(
+      (await ws.events("notification.failed")).filter(
+        (e) => (e.data as { channel: string }).channel === "email",
+      )[0]!.data,
+    ).toMatchObject({ userId: ws.people.bia.id, reason: "capped" });
+
+    // An hour later the same number no longer counts.
+    const later = await workspace();
+    await later.device(later.people.ana);
+    const declared = await later.declare(MONITOR_ACTOR);
+    await deliver([declared.event], undefined);
+    await seed(later, EMAIL_USER_HOURLY_CAP, 61 * 60_000, later.people.bia.id);
+    await deliver([await later.failureOf(later.people.bia)], mail.sender);
+    expect(mail.to()).toEqual([later.address(later.people.bia)]);
+  });
+
+  test("a workspace that sent its day's emails sends no more; each recipient is noted", async () => {
+    const ws = await workspace();
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    await deliver([event], undefined);
+    await seed(ws, EMAIL_WORKSPACE_DAILY_CAP - 1, 2 * 60 * 60_000);
+    const mail = recorder();
+    // One left: Ana's own email or the owners' to Ana (one of the two); everyone else's is dropped.
+    await deliver([await ws.failureOf(ws.people.ana)], mail.sender);
+    await deliver([await ws.failureOf(ws.people.bia)], mail.sender);
+    expect(mail.to()).toEqual([ws.address(ws.people.ana)]);
+    const capped = (await ws.timeline(incident))
+      .filter((row) => row.kind === "email_failed")
+      .map((row) => (row.kind === "email_failed" ? [row.userId, row.about, row.reason] : []));
+    expect(capped).toHaveLength(3);
+    expect(capped).toContainEqual([ws.people.olga.id, "nobody_paged", "capped"]);
+    expect(capped).toContainEqual([ws.people.bia.id, "unpaged", "capped"]);
   });
 });
 

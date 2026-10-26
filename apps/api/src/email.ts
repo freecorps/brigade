@@ -123,7 +123,7 @@ export function emailSender(env: EmailEnv): EmailSender | undefined {
 
 /** `Name <address>` or a bare address; undefined when it is neither. */
 export function parseSender(value: string): { email: string; name?: string } | undefined {
-  const named = /^\s*([^<>]*?)\s*<([^<>\s]+@[^<>\s]+)>\s*$/.exec(value);
+  const named = /^\s*([^<>]*?)\s*<([^<>\s@]+@[^<>\s@]+)>\s*$/.exec(value);
   if (named) {
     const name = singleLine(named[1] ?? "");
     return name ? { email: named[2]!, name } : { email: named[2]! };

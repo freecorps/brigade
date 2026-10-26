@@ -42,7 +42,10 @@ without a policy keeps the interim rule (commander, then every owner, admin and 
   page on its own; both on by default, `workspace.setEmail` turns either off. Still open: a dashboard switch for it;
   whether a member may opt out of their own emails (deferred to notification preferences); whether the owners'
   email should also go to admins, or skip an owner who declared the incident; and whether the external dead-man
-  switch should hear of it too.
+  switch should hear of it too. Until email verification lands, any sign-up can make Brigade email an address it
+  does not own with words it chose (RFC 0005 "Email", "Abuse"): the ledger caps it (5 emails per user per hour, 200
+  per workspace per day), and the plan is that verification gates email, so no deployed environment sets
+  `EMAIL_FROM` before it. Are those caps right once it does?
 - Should a level whose pushes all fail escalate before its timeout (needs delivery receipts)? An exhausted run
   already falls back to everyone who can respond once (RFC 0006 "Who is paged"); should a workspace be able to turn
   that off, or point it at a smaller group?

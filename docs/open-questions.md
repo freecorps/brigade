@@ -114,9 +114,13 @@ to confirm in production:
   teams at once (a consultant, an onboarding day)? Should an address be able to opt out of invitations altogether?
 - **Verification**: one at sign-up, then at most 3 per user in 15 minutes and 5 a day. An address someone else
   signed up with and never verified stays taken (RFC 0002 "Auth"): no timed release, since a verification link holds
-  only the address and an instance without email can never verify. The way back is password reset, not built yet:
-  its link must also mark the address verified and end the account's other sessions. Until it exists, should an
-  operator have a manual way to free an address?
+  only the address and an instance without email can never verify. Its owner takes it back with a password reset,
+  which marks the address verified and signs everyone else out (RFC 0002 "Auth"), so no manual release is planned
+  where email is set up. Left: an instance without email, where nobody can reset; should its operator have a way to
+  free an address, or is no sign-up by others (closed sign-up) the answer there?
+- **Password reset**: at most 3 per address an hour and 5 a day (counted for any address, account or not), and 3 per
+  IP a minute. Is 3 an hour too few for someone who mistypes, or 5 a day too many for an inbox someone else keeps
+  filling?
 - None of these counts the sender's own quota (Cloudflare Email Sending's limits answer `E_RATE_LIMIT_EXCEEDED`,
   retried); a Brigade-wide daily ceiling may be needed before open sign-up on a shared instance.
 

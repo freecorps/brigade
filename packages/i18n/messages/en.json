@@ -196,9 +196,18 @@
         "part=pages_off": "Notifications are off. Turn them on in Settings to be paged here.",
         "part=pages_unsupported": "Not on this phone yet",
         "part=pages_failed": "Couldn't register this phone. Brigade tries again the next time it opens.",
-        "part=pages_taken": "This phone still pages the last person signed in on it. They need to sign out on it first.",
+        "part=pages_taken": "This phone still pages the person signed in on it before you, who signed out without a connection. Brigade frees it for you once it can finish their sign-out.",
         "part=open_hint": "Opens the incident",
         "part=assign_hint": "Opens the members who can hold it",
+        "part=pages_notice_title": "This phone isn't paging you",
+        "part=open_settings": "Open Settings",
+        "part=sign_out_body_unpaged": "You'll need to sign in again to see incidents here.",
+        "part=sign_out_kept_title": "This phone may still get pages for you",
+        "part=sign_out_kept_body": "Brigade couldn't reach the server, so this phone keeps getting your pages until it's back online. Brigade finishes signing you out then, on its own.",
+        "part=update_sending": "Sending…",
+        "part=update_waiting": "Waiting for a connection",
+        "part=show_password": "Show password",
+        "part=hide_password": "Hide password",
         "part=*": "Brigade"
       }
     }

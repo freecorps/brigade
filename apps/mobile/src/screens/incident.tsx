@@ -29,20 +29,25 @@ import {
   assignable,
   bodyParts,
   checkUpdate,
+  nextFailed,
   nextStatuses,
+  syncView,
   UPDATE_COUNT_FROM,
   updateLength,
   type MutationOutcome,
+  type SyncView,
   type UpdateProblem,
 } from "@freecorps/brigade-sync";
 import { useConnectionState, useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { fontSize, radius, spacing } from "@freecorps/brigade-ui";
 import { Stack } from "expo-router";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import { SymbolView } from "expo-symbols";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import {
   AccessibilityInfo,
   ActivityIndicator,
+  KeyboardAvoidingView,
   Linking,
   Pressable,
   ScrollView,
@@ -51,9 +56,18 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { useGlyphSize } from "@/components/badge";
 import { useChoiceSheet } from "@/components/choice-sheet";
 import { STATUS_GLYPHS, type Glyph } from "@/components/glyphs";
-import { Choice, Notice, SeverityBadge, StatusBadge, useNow } from "@/components/incident-parts";
+import {
+  Choice,
+  ConnectionStatus,
+  Notice,
+  SeverityBadge,
+  StatePanel,
+  StatusBadge,
+  useNow,
+} from "@/components/incident-parts";
 import { Row, Section } from "@/components/section";
 import { useMember } from "@/components/session";
 import { ThemedText } from "@/components/themed-text";
@@ -78,17 +92,32 @@ export function parseIncidentNumber(raw: string): number | null {
  * shows at once and settles when the shard confirms it.
  */
 export function IncidentScreen({ number }: { number: number | null }) {
+  // A refused incident is asked for again only by a new subscriber: "Reload" remounts it.
+  const [attempt, setAttempt] = useState(0);
   return number === null ? (
     <Problem text={m.incident_page({ part: "not_found" })} />
   ) : (
-    <ByNumber number={number} />
+    <ByNumber key={attempt} number={number} onReload={() => setAttempt((n) => n + 1)} />
   );
 }
 
-function ByNumber({ number }: { number: number }) {
+function ByNumber({ number, onReload }: { number: number; onReload: () => void }) {
   const { rows, status, error } = useQuery("incident.byNumber", { number });
+  const connection = useConnectionState();
+  const [failed, setFailed] = useState(false);
+  const latched = nextFailed(failed, status, connection);
+  if (latched !== failed) setFailed(latched);
+  const view = syncView(status, connection, latched);
   const row = rows[0];
-  if (row) return <Incident row={row} />;
+  if (row) {
+    return (
+      <Incident
+        row={row}
+        view={view}
+        state={<StatePanel view={view} errorCode={error?.code} onReload={onReload} />}
+      />
+    );
+  }
   if (status === "error") {
     return (
       <Problem
@@ -101,12 +130,18 @@ function ByNumber({ number }: { number: number }) {
   return <Loading />;
 }
 
-function Screen({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * The incident's scrolling page. The keyboard never covers the update box or Post: iOS insets the scroll view by
+ * the keyboard; Android draws edge to edge (the window no longer resizes for it), so the page shrinks above it.
+ */
+function Screen({ title, children }: { title: string; children: ReactNode }) {
   const colors = useTheme();
   const padding = useScreenPadding();
-  return (
+  const header = useHeaderHeight();
+  const page = (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
+      automaticallyAdjustKeyboardInsets
       keyboardShouldPersistTaps="handled"
       style={{ backgroundColor: colors.background }}
       contentContainerStyle={[padding, { gap: spacing[6] }]}
@@ -114,6 +149,16 @@ function Screen({ title, children }: { title: string; children: React.ReactNode 
       <Stack.Screen options={{ title }} />
       {children}
     </ScrollView>
+  );
+  if (process.env.EXPO_OS !== "android") return page;
+  return (
+    <KeyboardAvoidingView
+      behavior="padding"
+      keyboardVerticalOffset={header}
+      style={{ flex: 1, backgroundColor: colors.background }}
+    >
+      {page}
+    </KeyboardAvoidingView>
   );
 }
 
@@ -146,12 +191,11 @@ function Problem({
 /** Busy keys: `status`, `severity`, `update`, `role/<role>`. */
 type Busy = ReadonlyMap<string, number>;
 
-function Incident({ row }: { row: IncidentRow }) {
+function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; state: ReactNode }) {
   const colors = useTheme();
   const { locale } = useLocale();
   const member = useMember();
-  const connection = useConnectionState();
-  const online = connection === "open";
+  const online = view === "live";
   const editable = can(member.role, "incident:update");
   const members = useQuery("members.all", {});
   const who = people(member.userId, members.rows);
@@ -251,6 +295,8 @@ function Incident({ row }: { row: IncidentRow }) {
   return (
     <Screen title={number}>
       <View style={{ gap: spacing[3] }}>
+        <ConnectionStatus view={view} />
+        {state}
         <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: spacing[2] }}>
           <ThemedText variant="caption">
             {m.incident_declared({ time: formatAge(row.declaredAt, now, locale) })}
@@ -322,7 +368,13 @@ function Incident({ row }: { row: IncidentRow }) {
           />
         ) : null}
         {noticesFor(["update"])}
-        <Timeline incidentId={row.id} who={who} now={now} />
+        <Timeline
+          incidentId={row.id}
+          who={who}
+          now={now}
+          unsent={busy.get("update") ?? 0}
+          online={online}
+        />
       </View>
       {sheet}
     </Screen>
@@ -330,6 +382,11 @@ function Incident({ row }: { row: IncidentRow }) {
 }
 
 const PERSON_GLYPH: Glyph = { ios: "person", android: "person", web: "person" };
+const CHANGE_GLYPH: Glyph = {
+  ios: "chevron.up.chevron.down",
+  android: "unfold_more",
+  web: "unfold_more",
+};
 
 function RoleRow({
   first,
@@ -349,26 +406,27 @@ function RoleRow({
   onPress: () => void;
 }) {
   const colors = useTheme();
+  const glyph = useGlyphSize(fontSize.sm.size);
   const label = m.incident_role({ role, form: "title" });
   const name = holder === null ? m.incident_page({ part: "nobody" }) : personName(holder, who);
   const content = (
     <Row first={first}>
       <ThemedText variant="label">{label}</ThemedText>
       <View style={{ flexDirection: "row", alignItems: "center", gap: spacing[2] }}>
-        <SymbolView
-          name={PERSON_GLYPH}
-          tintColor={colors.mutedForeground}
-          size={fontSize.sm.size}
-        />
+        <SymbolView name={PERSON_GLYPH} tintColor={colors.mutedForeground} size={glyph} />
         <ThemedText
           style={{
-            flexShrink: 1,
+            flex: 1,
             color: holder === null ? colors.mutedForeground : colors.foreground,
           }}
         >
           {name}
         </ThemedText>
         {pending ? <ActivityIndicator size="small" color={colors.mutedForeground} /> : null}
+        {/* Opens a choice, as the badges' chevron says. */}
+        {editable ? (
+          <SymbolView name={CHANGE_GLYPH} tintColor={colors.mutedForeground} size={glyph} />
+        ) : null}
       </View>
     </Row>
   );
@@ -520,17 +578,41 @@ const ENTRY_GLYPHS: Record<Exclude<TimelineRow["kind"], "status_changed">, Glyph
   page_failed: { ios: "phone.down", android: "phone_missed", web: "phone_missed" },
 };
 
-/** The incident's timeline, newest first: one line per change, and an update's text under its line. */
-function Timeline({ incidentId, who, now }: { incidentId: string; who: People; now: number }) {
+/**
+ * The incident's timeline, newest first: one line per change, and an update's text under its line. The member's
+ * `unsent` newest updates are still on their way (applied here, not yet confirmed by the shard), and say so.
+ */
+function Timeline({
+  incidentId,
+  who,
+  now,
+  unsent,
+  online,
+}: {
+  incidentId: string;
+  who: People;
+  now: number;
+  unsent: number;
+  online: boolean;
+}) {
   const colors = useTheme();
+  const glyphSize = useGlyphSize(fontSize.base.size);
   const { locale, timeZone } = useLocale();
-  const { rows, status } = useQuery("incident.timeline", { id: incidentId });
+  const { rows, status, pending } = useQuery("incident.timeline", { id: incidentId });
   if (rows.length === 0) {
     return status === "ready" ? (
       <ThemedText variant="caption">{m.incident_page({ part: "timeline_empty" })}</ThemedText>
     ) : null;
   }
   const entries = [...rows].reverse();
+  // Unconfirmed changes are re-applied after the shard's rows, so the member's unsent updates are the newest ones.
+  const waiting = new Set<string>();
+  if (pending) {
+    for (const entry of entries) {
+      if (waiting.size >= unsent) break;
+      if (entry.kind === "update" && entry.actor === who.self) waiting.add(entry.id);
+    }
+  }
   return (
     <View
       style={{
@@ -555,13 +637,23 @@ function Timeline({ incidentId, who, now }: { incidentId: string; who: People; n
           <Row key={entry.id} first={index === 0}>
             <View style={{ flexDirection: "row", gap: spacing[3] }}>
               <View style={{ paddingTop: spacing[0.5] }}>
-                <SymbolView name={glyph} tintColor={tint} size={fontSize.base.size} />
+                <SymbolView name={glyph} tintColor={tint} size={glyphSize} />
               </View>
               <View style={{ flex: 1, gap: spacing[1] }}>
                 <ThemedText selectable>{entryText(entry, who)}</ThemedText>
-                <ThemedText variant="caption" style={{ fontVariant: ["tabular-nums"] }}>
-                  {entryTime(entry.at, now, locale, timeZone)}
-                </ThemedText>
+                {waiting.has(entry.id) ? (
+                  <ThemedText
+                    variant="caption"
+                    accessibilityLiveRegion="polite"
+                    style={{ color: colors.primary }}
+                  >
+                    {m.mobile_session({ part: online ? "update_sending" : "update_waiting" })}
+                  </ThemedText>
+                ) : (
+                  <ThemedText variant="caption" style={{ fontVariant: ["tabular-nums"] }}>
+                    {entryTime(entry.at, now, locale, timeZone)}
+                  </ThemedText>
+                )}
                 {entry.kind === "update" ? <UpdateBody body={entry.body} /> : null}
               </View>
             </View>
@@ -580,6 +672,20 @@ function UpdateBody({ body }: { body: string }) {
   const colors = useTheme();
   const [expanded, setExpanded] = useState(false);
   const [long, setLong] = useState(false);
+  const parts = bodyParts(body).map((part, index) =>
+    "url" in part ? (
+      <Text
+        key={index}
+        accessibilityRole="link"
+        onPress={() => void Linking.openURL(part.url)}
+        style={{ color: colors.primary, textDecorationLine: "underline" }}
+      >
+        {part.url}
+      </Text>
+    ) : (
+      part.text
+    ),
+  );
   return (
     <View style={{ gap: spacing[1], alignItems: "flex-start" }}>
       <View
@@ -592,27 +698,26 @@ function UpdateBody({ body }: { body: string }) {
           paddingVertical: spacing[2],
         }}
       >
+        {/* Laid out unclamped and unseen, to count its lines: a clamped text reports at most the clamp, so a
+            text of exactly UPDATE_LINES lines could not be told from a longer one. */}
         <ThemedText
-          selectable
-          numberOfLines={expanded ? undefined : UPDATE_LINES}
-          onTextLayout={(event) => {
-            if (!expanded) setLong(event.nativeEvent.lines.length >= UPDATE_LINES);
+          aria-hidden
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          pointerEvents="none"
+          onTextLayout={(event) => setLong(event.nativeEvent.lines.length > UPDATE_LINES)}
+          style={{
+            position: "absolute",
+            opacity: 0,
+            left: spacing[3],
+            right: spacing[3],
+            top: spacing[2],
           }}
         >
-          {bodyParts(body).map((part, index) =>
-            "url" in part ? (
-              <Text
-                key={index}
-                accessibilityRole="link"
-                onPress={() => void Linking.openURL(part.url)}
-                style={{ color: colors.primary, textDecorationLine: "underline" }}
-              >
-                {part.url}
-              </Text>
-            ) : (
-              part.text
-            ),
-          )}
+          {body}
+        </ThemedText>
+        <ThemedText selectable numberOfLines={expanded ? undefined : UPDATE_LINES}>
+          {parts}
         </ThemedText>
       </View>
       {long || expanded ? (

@@ -35,7 +35,7 @@ import { fontSize, radius, spacing } from "@freecorps/brigade-ui";
 import { Link } from "expo-router";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { AccessibilityInfo, Pressable, ScrollView, TextInput, View } from "react-native";
-import { Account } from "@/components/account";
+import { Account, PagingNotice } from "@/components/account";
 import {
   Choice,
   ConnectionStatus,
@@ -188,6 +188,7 @@ function IncidentList({ onReload }: { onReload: () => void }) {
       style={{ backgroundColor: colors.background }}
       contentContainerStyle={[padding, { gap: spacing[6] }]}
     >
+      <PagingNotice />
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing[3] }}>
         <ConnectionStatus view={view} />
         {status === "ready" ? (

@@ -70,6 +70,7 @@ function SignInForm() {
   const [errors, setErrors] = useState<FieldErrors<SignInField>>({});
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const email = useRef<ComponentRef<typeof TextInput>>(null);
   const password = useRef<ComponentRef<typeof TextInput>>(null);
 
   const change = (field: SignInField) => (text: string) => {
@@ -82,7 +83,13 @@ function SignInForm() {
     if (busy) return;
     const found = checkSignIn(values);
     setErrors(found);
-    if (Object.keys(found).length > 0) return;
+    if (Object.keys(found).length > 0) {
+      // To the first field to fix: TalkBack reads its label and error; VoiceOver hears the error once.
+      (found.email ? email : password).current?.focus();
+      const first = found.email ?? found.password;
+      if (process.env.EXPO_OS === "ios" && first) AccessibilityInfo.announceForAccessibility(first);
+      return;
+    }
     setBusy(true);
     setFailure(null);
     let error: Parameters<typeof authErrorMessage>[0] = null;
@@ -107,6 +114,7 @@ function SignInForm() {
     <View style={{ gap: spacing[5] }}>
       <ThemedText>{m.auth_sign_in_description()}</ThemedText>
       <Field
+        ref={email}
         label={m.auth_email_label()}
         value={values.email}
         error={errors.email}
@@ -126,7 +134,7 @@ function SignInForm() {
         value={values.password}
         error={errors.password}
         onChangeText={change("password")}
-        secureTextEntry
+        secret
         autoComplete="current-password"
         textContentType="password"
         maxLength={PASSWORD_MAX}
@@ -169,35 +177,73 @@ function SignInForm() {
   );
 }
 
+/** A labelled text field with its error under it; `secret` hides the text, with Show password beside it. */
 function Field({
   label,
   error,
   ref,
+  secret = false,
   ...input
-}: TextInputProps & { label: string; error?: string; ref?: Ref<ComponentRef<typeof TextInput>> }) {
+}: TextInputProps & {
+  label: string;
+  error?: string;
+  secret?: boolean;
+  ref?: Ref<ComponentRef<typeof TextInput>>;
+}) {
   const colors = useTheme();
+  const [shown, setShown] = useState(false);
   return (
     <View style={{ gap: spacing[2] }}>
       <ThemedText variant="label">{label}</ThemedText>
-      <TextInput
-        ref={ref}
-        accessibilityLabel={label}
-        accessibilityHint={error}
-        placeholderTextColor={colors.mutedForeground}
+      <View
         style={{
+          flexDirection: "row",
+          alignItems: "center",
           minHeight: spacing[12],
-          paddingHorizontal: spacing[3],
           borderRadius: radius.md,
           borderCurve: "continuous",
           borderWidth: 1,
           borderColor: error ? colors.destructive : colors.input,
-          color: colors.foreground,
-          fontSize: fontSize.base.size,
         }}
-        {...input}
-      />
+      >
+        <TextInput
+          ref={ref}
+          accessibilityLabel={label}
+          accessibilityHint={error}
+          placeholderTextColor={colors.mutedForeground}
+          secureTextEntry={secret && !shown}
+          style={{
+            flex: 1,
+            minHeight: spacing[12],
+            paddingHorizontal: spacing[3],
+            color: colors.foreground,
+            fontSize: fontSize.base.size,
+          }}
+          {...input}
+        />
+        {secret ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setShown((value) => !value)}
+            style={({ pressed }) => ({
+              minHeight: spacing[12],
+              justifyContent: "center",
+              paddingHorizontal: spacing[3],
+              opacity: pressed ? 0.6 : 1,
+            })}
+          >
+            <ThemedText style={{ color: colors.primary }}>
+              {m.mobile_session({ part: shown ? "hide_password" : "show_password" })}
+            </ThemedText>
+          </Pressable>
+        ) : null}
+      </View>
       {error ? (
-        <ThemedText selectable style={{ color: colors.destructive }}>
+        <ThemedText
+          selectable
+          accessibilityLiveRegion="polite"
+          style={{ color: colors.destructive }}
+        >
           {error}
         </ThemedText>
       ) : null}

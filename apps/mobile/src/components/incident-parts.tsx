@@ -8,7 +8,7 @@ import { fontFamily, fontSize, radius, spacing } from "@freecorps/brigade-ui";
 import { SymbolView } from "expo-symbols";
 import { useEffect, useState, type ReactNode } from "react";
 import { Platform, Pressable, StyleSheet, View } from "react-native";
-import { Badge } from "@/components/badge";
+import { Badge, useGlyphSize } from "@/components/badge";
 import { SEV1_GLYPH, STATUS_GLYPHS, type Glyph } from "@/components/glyphs";
 import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
@@ -58,6 +58,7 @@ export function Choice({
   children: ReactNode;
 }) {
   const colors = useTheme();
+  const glyph = useGlyphSize(fontSize.sm.size);
   return (
     <Pressable
       accessibilityRole="button"
@@ -77,11 +78,7 @@ export function Choice({
     >
       {children}
       {disabled ? null : (
-        <SymbolView
-          name={CHANGE_GLYPH}
-          tintColor={colors.mutedForeground}
-          size={fontSize.sm.size}
-        />
+        <SymbolView name={CHANGE_GLYPH} tintColor={colors.mutedForeground} size={glyph} />
       )}
     </Pressable>
   );
@@ -139,6 +136,7 @@ const CONNECTION: Record<
 /** Calm by design: a word and a small glyph, never a banner, since a reconnect usually fixes itself. */
 export function ConnectionStatus({ view }: { view: SyncView }) {
   const colors = useTheme();
+  const glyphSize = useGlyphSize(fontSize.sm.size);
   const { text, glyph, tone } = CONNECTION[view];
   const color =
     tone === "ok" ? colors.primary : tone === "bad" ? colors.destructive : colors.mutedForeground;
@@ -150,7 +148,7 @@ export function ConnectionStatus({ view }: { view: SyncView }) {
       style={{ flexDirection: "row", alignItems: "center", gap: spacing[2] }}
     >
       {glyph ? (
-        <SymbolView name={glyph} tintColor={color} size={fontSize.sm.size} />
+        <SymbolView name={glyph} tintColor={color} size={glyphSize} />
       ) : (
         <View
           style={{

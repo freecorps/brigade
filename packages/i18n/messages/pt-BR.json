@@ -196,9 +196,18 @@
         "part=pages_off": "As notificações estão desativadas. Ative-as nos Ajustes para receber chamados aqui.",
         "part=pages_unsupported": "Ainda não neste telefone",
         "part=pages_failed": "Não foi possível registrar este telefone. O Brigade tenta de novo na próxima vez que abrir.",
-        "part=pages_taken": "Este telefone ainda chama a última pessoa que entrou nele. Ela precisa sair nele primeiro.",
+        "part=pages_taken": "Este telefone ainda chama a pessoa que entrou nele antes de você e saiu sem conexão. O Brigade libera o telefone para você assim que conseguir concluir a saída dela.",
         "part=open_hint": "Abre o incidente",
         "part=assign_hint": "Abre os membros que podem assumir",
+        "part=pages_notice_title": "Este telefone não está chamando você",
+        "part=open_settings": "Abrir Ajustes",
+        "part=sign_out_body_unpaged": "Você vai precisar entrar de novo para ver os incidentes aqui.",
+        "part=sign_out_kept_title": "Este telefone ainda pode receber seus chamados",
+        "part=sign_out_kept_body": "O Brigade não conseguiu falar com o servidor, então este telefone continua recebendo seus chamados até voltar a ficar online. Aí o Brigade conclui sua saída sozinho.",
+        "part=update_sending": "Enviando…",
+        "part=update_waiting": "Aguardando conexão",
+        "part=show_password": "Mostrar senha",
+        "part=hide_password": "Ocultar senha",
         "part=*": "Brigade"
       }
     }

@@ -10,9 +10,13 @@ import {
   type Role,
 } from "@freecorps/brigade-schema";
 
-/** Why a change failed: the API's `error` codes, `network` when it never answered, `internal` for anything else. */
+/**
+ * Why a change failed: the API's `error` codes, `network` when it never answered, `internal` for anything else.
+ * `not_a_member`: the API does not count the caller as a member (removed meanwhile, or a role Brigade does not know).
+ */
 export type MemberChangeError =
   | "forbidden"
+  | "not_a_member"
   | "last_owner"
   | "not_found"
   | "conflict"
@@ -23,6 +27,7 @@ export type MemberChangeError =
 
 const KNOWN: readonly MemberChangeError[] = [
   "forbidden",
+  "not_a_member",
   "last_owner",
   "not_found",
   "conflict",
@@ -55,8 +60,6 @@ export async function changeMember(
   if (response.ok) return { ok: true };
   const body: unknown = await response.json().catch(() => null);
   const code = typeof body === "object" && body !== null ? Reflect.get(body, "error") : undefined;
-  // The Worker answers `not_a_member` when the caller was removed meanwhile.
-  if (code === "not_a_member") return { ok: false, error: "forbidden" };
   return {
     ok: false,
     error: KNOWN.includes(code as MemberChangeError) ? (code as MemberChangeError) : "internal",
@@ -64,7 +67,7 @@ export async function changeMember(
 }
 
 export function memberChangeReason(error: MemberChangeError): string {
-  return m.member_change_failed({ reason: error });
+  return m.member_change_failed({ reason: error === "not_a_member" ? "forbidden" : error });
 }
 
 /** A member as the dashboard lists them (Better Auth's full organization: name and email from D1). */

@@ -38,8 +38,10 @@ export function MembersCard() {
       change={(userId, change) => changeMember(workspaceId, userId, change)}
       refresh={async () => {
         // `set-active` (not a refetch of one hook) refreshes the session, the workspace and the signed-in
-        // member's own role together, as `openWorkspace` relies on.
-        await authClient.organization.setActive({ organizationId: workspaceId });
+        // member's own role together, as `openWorkspace` relies on. It refuses (403) someone D1 no longer has
+        // in the workspace, and clears it from their session.
+        const { error } = await authClient.organization.setActive({ organizationId: workspaceId });
+        return error?.status !== 403;
       }}
       left={() => window.location.assign("/")}
     />
@@ -79,7 +81,8 @@ export function MembersList({
     userId: string,
     change: MemberChange,
   ) => Promise<{ ok: true } | { ok: false; error: MemberChangeError }>;
-  refresh: () => Promise<void>;
+  /** Reloads the list; resolves false when the signed-in user is no longer a member of the workspace. */
+  refresh: () => Promise<boolean>;
   /** After the signed-in member left: the workspace is gone from their session. */
   left: () => void;
 }) {
@@ -128,15 +131,19 @@ export function MembersList({
     setTouched(target.userId);
     const result = await change(target.userId, request);
     const self = target.userId === userId;
-    // `not_found` or `forbidden` (the API's `not_a_member`) on one's own leave: an earlier attempt already went
-    // through. A leave is otherwise refused only for the last owner (`last_owner`).
-    if (
-      request.kind === "remove" &&
-      self &&
-      (result.ok || result.error === "not_found" || result.error === "forbidden")
-    ) {
-      left();
-      return;
+    if (request.kind === "remove" && self) {
+      // Gone from D1 already: done (`not_applied`: the shard catches up on its own), or `not_found`, an earlier
+      // attempt went through. A leave is otherwise refused only for the last owner (`last_owner`).
+      if (result.ok || result.error === "not_applied" || result.error === "not_found") {
+        left();
+        return;
+      }
+      // An earlier attempt went through, or D1 has them with a role Brigade does not know: still a member, whom
+      // the start page would open this workspace for again. D1 tells which.
+      if (result.error === "not_a_member" && !(await refresh().catch(() => true))) {
+        left();
+        return;
+      }
     }
     const retry = !result.ok && RETRYABLE.includes(result.error) ? request : null;
     if (!result.ok) {

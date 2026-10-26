@@ -140,6 +140,14 @@ describe("changeMember", () => {
         "ws_1",
         "usr_ana",
         { kind: "remove" },
+        answer(403, { error: "not_a_member" }) as typeof fetch,
+      ),
+    ).toEqual({ ok: false, error: "not_a_member" });
+    expect(
+      await changeMember(
+        "ws_1",
+        "usr_ana",
+        { kind: "remove" },
         answer(500, "nope") as typeof fetch,
       ),
     ).toEqual({ ok: false, error: "internal" });
@@ -162,6 +170,8 @@ function render(
     result?: Answer | Answer[];
     locale?: "en" | "pt-BR";
     members?: ListedMember[];
+    /** What reloading the list finds: whether D1 still has the signed-in user in the workspace. */
+    member?: boolean;
   } = {},
 ) {
   const changes: [string, MemberChange][] = [];
@@ -182,7 +192,7 @@ function render(
               const answers = [options.result ?? { ok: true }].flat();
               return answers[Math.min(changes.length, answers.length) - 1]!;
             }}
-            refresh={async () => {}}
+            refresh={async () => options.member ?? true}
             left={() => leftCount++}
           />
         </MemberProvider>
@@ -362,17 +372,44 @@ describe("MembersList", () => {
     expect(row("usr_caio").querySelector('[role="alert"]')).toBeNull();
   });
 
-  test("one's own leave answered not_a_member (an earlier attempt went through) goes back to the start", async () => {
-    const { row, button, left } = render(
-      { userId: "usr_caio", role: "responder" },
-      { result: { ok: false, error: "forbidden" } },
-    );
-    act(() => button(row("usr_caio"), "Leave workspace").click());
-    const confirm = [...row("usr_caio").querySelectorAll("button")].find(
+  const leave = async (rendered: ReturnType<typeof render>, userId: string) => {
+    const { row, button } = rendered;
+    act(() => button(row(userId), "Leave workspace").click());
+    const confirm = [...row(userId).querySelectorAll("button")].find(
       (b) => b.textContent === "Leave workspace" && b.getAttribute("aria-expanded") === null,
     )!;
     await act(async () => confirm.click());
-    expect(left()).toBe(1);
+  };
+
+  test("one's own leave answered not_a_member (an earlier attempt went through) goes back to the start", async () => {
+    const rendered = render(
+      { userId: "usr_caio", role: "responder" },
+      { result: { ok: false, error: "not_a_member" }, member: false },
+    );
+    await leave(rendered, "usr_caio");
+    expect(rendered.left()).toBe(1);
+  });
+
+  test("one's own leave answered not_applied is done: D1 has it, and the shard catches up on its own", async () => {
+    const rendered = render(
+      { userId: "usr_caio", role: "responder" },
+      { result: { ok: false, error: "not_applied" } },
+    );
+    await leave(rendered, "usr_caio");
+    expect(rendered.left()).toBe(1);
+  });
+
+  test("not_a_member for someone D1 still has (a role Brigade does not know) stays put and says so", async () => {
+    const rendered = render(
+      { userId: "usr_caio", role: "responder" },
+      { result: { ok: false, error: "not_a_member" }, member: true },
+    );
+    await leave(rendered, "usr_caio");
+    // Going back to the start would open this same workspace again.
+    expect(rendered.left()).toBe(0);
+    expect(rendered.row("usr_caio").querySelector('[role="alert"]')?.textContent).toContain(
+      "You can't make this change.",
+    );
   });
 
   test("after a removal, focus moves to the next member's first control", async () => {

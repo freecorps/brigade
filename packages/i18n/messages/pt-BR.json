@@ -175,7 +175,7 @@
   "severity_named": "{code} {name}",
   "declare_submit_severity": "Declarar {severity}",
   "mobile_sync_retrying": "O app continua tentando sozinho.",
-  "mobile_sync_offline_hint": "Não foi possível conectar ao Brigade agora. Suas alterações são enviadas quando a conexão voltar, desde que o app continue aberto.",
+  "mobile_sync_offline_hint": "Não foi possível conectar ao Brigade agora. Suas alterações são enviadas quando a conexão voltar, mesmo que o app seja fechado até lá.",
   "mobile_change_hint": "Abre as opções",
   "mobile_session": [
     {

@@ -17,7 +17,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "stops" | "The current URL stops working at once; update whatever pings it." |
 * | "restart" | "The monitor starts over from Waiting, with a full interval and grace before a missed ping counts." |
 * | "restart_alert" | "Its firing alert stays until the new URL is pinged." |
-* | "unsaved" | "Your other changes in this form aren't saved." |
+* | "unsaved" | "Your other changes in this form won't be saved." |
 * | "confirm" | "Make new URL" |
 * | "keep" | "Keep current URL" |
 * | "shown" | "New URL for {name}, shown only once" |
@@ -37,7 +37,7 @@ export const monitor_rotate = /** @type {((inputs: Monitor_RotateInputs, options
 		if (i?.part === "stops") return /** @type {LocalizedString} */ (`A URL atual para de funcionar na hora; atualize o que envia pings para ela.`);
 		if (i?.part === "restart") return /** @type {LocalizedString} */ (`O monitor recomeça em Aguardando, com um intervalo e uma tolerância inteiros antes de um ping perdido contar.`);
 		if (i?.part === "restart_alert") return /** @type {LocalizedString} */ (`O alerta ativo continua até a nova URL receber um ping.`);
-		if (i?.part === "unsaved") return /** @type {LocalizedString} */ (`As outras alterações neste formulário não são salvas.`);
+		if (i?.part === "unsaved") return /** @type {LocalizedString} */ (`As outras alterações neste formulário não serão salvas.`);
 		if (i?.part === "confirm") return /** @type {LocalizedString} */ (`Criar nova URL`);
 		if (i?.part === "keep") return /** @type {LocalizedString} */ (`Manter a URL atual`);
 		if (i?.part === "shown") return /** @type {LocalizedString} */ (`Nova URL de ${i?.name}, mostrada só uma vez`);
@@ -51,7 +51,7 @@ export const monitor_rotate = /** @type {((inputs: Monitor_RotateInputs, options
 		if (i?.part === "stops") return /** @type {LocalizedString} */ (`The current URL stops working at once; update whatever pings it.`);
 		if (i?.part === "restart") return /** @type {LocalizedString} */ (`The monitor starts over from Waiting, with a full interval and grace before a missed ping counts.`);
 		if (i?.part === "restart_alert") return /** @type {LocalizedString} */ (`Its firing alert stays until the new URL is pinged.`);
-		if (i?.part === "unsaved") return /** @type {LocalizedString} */ (`Your other changes in this form aren't saved.`);
+		if (i?.part === "unsaved") return /** @type {LocalizedString} */ (`Your other changes in this form won't be saved.`);
 		if (i?.part === "confirm") return /** @type {LocalizedString} */ (`Make new URL`);
 		if (i?.part === "keep") return /** @type {LocalizedString} */ (`Keep current URL`);
 		if (i?.part === "shown") return /** @type {LocalizedString} */ (`New URL for ${i?.name}, shown only once`);

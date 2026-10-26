@@ -561,7 +561,7 @@
         "part=stops": "The current URL stops working at once; update whatever pings it.",
         "part=restart": "The monitor starts over from Waiting, with a full interval and grace before a missed ping counts.",
         "part=restart_alert": "Its firing alert stays until the new URL is pinged.",
-        "part=unsaved": "Your other changes in this form aren't saved.",
+        "part=unsaved": "Your other changes in this form won't be saved.",
         "part=confirm": "Make new URL",
         "part=keep": "Keep current URL",
         "part=shown": "New URL for {name}, shown only once",
@@ -1684,7 +1684,7 @@
       "match": {
         "part=title": "You took this account back",
         "part=body": "Someone signed up with your email address before you confirmed it, and created the workspaces below. They're yours now. So nobody else can page you through what they set up, Brigade paused every monitor there and turned off their heartbeat URLs.",
-        "part=after": "Resume the monitors you want to keep. Give each heartbeat you keep a new URL with New URL in its Edit form. Check each workspace's on-call schedules and escalation policies too.",
+        "part=after": "Resume the monitors you want to keep. Give each heartbeat you keep a new URL (New URL in its Edit form) before you resume it. Check each workspace's on-call schedules and escalation policies too.",
         "part=failed": "Brigade couldn't reach this workspace, so nothing in it was paused. Check its monitors now.",
         "part=nothing": "It had no monitors.",
         "part=dismiss": "Got it",

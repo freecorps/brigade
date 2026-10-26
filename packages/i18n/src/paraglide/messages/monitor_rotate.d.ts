@@ -15,7 +15,7 @@ export type Monitor_RotateInputs = {
 * | "stops" | "The current URL stops working at once; update whatever pings it." |
 * | "restart" | "The monitor starts over from Waiting, with a full interval and grace before a missed ping counts." |
 * | "restart_alert" | "Its firing alert stays until the new URL is pinged." |
-* | "unsaved" | "Your other changes in this form aren't saved." |
+* | "unsaved" | "Your other changes in this form won't be saved." |
 * | "confirm" | "Make new URL" |
 * | "keep" | "Keep current URL" |
 * | "shown" | "New URL for {name}, shown only once" |

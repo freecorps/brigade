@@ -805,6 +805,38 @@ describe("monitor.rotateHeartbeat", () => {
     expect(db.scan("alerts")).toEqual([expect.objectContaining({ status: "resolved" })]);
   });
 
+  test("a miss after the rotation's window still pages; while firing it keeps the one alert and incident", () => {
+    const db = store();
+    const id = createBeat(db);
+    const late = (3600 + 300) * 1000;
+    const rotate = (at: number, tokenHash: string) =>
+      runMutation(mutations, "monitor.rotateHeartbeat", { id, tokenHash }, db, as("admin", at));
+
+    // Never pinged after a rotation: the shard's miss pages like any other.
+    const rotated = T + 60_000;
+    expect(rotate(rotated, NEW_HASH).ok).toBe(true);
+    const missed = beat(db, id, false, rotated + late + 1);
+    expect(types(missed)).toContain("alert.fired");
+    const down = db.get("monitors", id)!;
+    expect(down).toMatchObject({ status: "down", alertId: expect.any(String) });
+
+    // Rotated again while firing, and missed again: still down, the same alert, nothing fired twice.
+    const again = rotated + late + 60_000;
+    expect(rotate(again, "d".repeat(64)).ok).toBe(true);
+    const still = beat(db, id, false, again + late + 1);
+    expect(still.ok).toBe(true);
+    expect(types(still)).not.toContain("alert.fired");
+    expect(db.get("monitors", id)).toMatchObject({
+      status: "down",
+      alertId: down.alertId,
+      incidentId: down.incidentId,
+    });
+    expect(db.scan("alerts")).toEqual([
+      expect.objectContaining({ id: down.alertId, status: "firing" }),
+    ]);
+    expect(db.get("incidents", down.incidentId!)?.status).not.toBe("resolved");
+  });
+
   test("a paused monitor only gets the new hash: resuming starts it over", () => {
     const db = store();
     const id = createBeat(db);
@@ -824,7 +856,7 @@ describe("monitor.rotateHeartbeat", () => {
       restartedAt: paused.restartedAt,
       updatedAt: T + 60_000,
     });
-    expect(db.get("heartbeats", id)).toMatchObject({ tokenHash: NEW_HASH });
+    expect(db.get("heartbeats", id)).toMatchObject({ tokenHash: NEW_HASH, lastPingAt: null });
   });
 });
 

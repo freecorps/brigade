@@ -71,8 +71,16 @@ function monitor(overrides: Partial<MonitorRow>): MonitorRow {
   };
 }
 
-/** `rows` go straight into the shard's store; `created` through `monitor.createHttp`, as a member would. */
-async function mount(rows: MonitorRow[] = [], created: MonitorRow[] = [], member: Actor = owner) {
+/**
+ * `rows` go straight into the shard's store; `created` through `monitor.createHttp`, as a member would. `shown` is
+ * the role the page offers actions for, `member`'s own unless a test needs the shard to refuse what the page offers.
+ */
+async function mount(
+  rows: MonitorRow[] = [],
+  created: MonitorRow[] = [],
+  member: Actor = owner,
+  shown: Actor["role"] = member.role,
+) {
   const timers = new FakeTimers();
   const server = new FakeServer(() => T0 + timers.now);
   const network = new FakeNetwork(server);
@@ -119,7 +127,7 @@ async function mount(rows: MonitorRow[] = [], created: MonitorRow[] = [], member
     root.render(
       <PreferencesProvider initialLocale="en">
         <SyncProvider client={syncClient} shard={SHARD}>
-          <MemberProvider workspaceId={SHARD} userId={member.id} role={member.role}>
+          <MemberProvider workspaceId={SHARD} userId={member.id} role={shown}>
             <MonitorsCard />
           </MemberProvider>
         </SyncProvider>
@@ -632,7 +640,7 @@ test("a heartbeat's New URL asks first, then shows the new URL once with Copy, a
     "The current URL stops working at once; update whatever pings it.",
   );
   expect(prompt.textContent).toContain("starts over from Waiting");
-  expect(prompt.textContent).not.toContain("aren't saved");
+  expect(prompt.textContent).not.toContain("won't be saved");
   expect(document.activeElement).toBe(button("Keep current URL", item()));
   // Escape closes the prompt, not the form, and sends nothing.
   await key(document.activeElement!, "Escape");
@@ -644,7 +652,7 @@ test("a heartbeat's New URL asks first, then shows the new URL once with Copy, a
   // Unsaved edits are said to be dropped.
   act(() => setValue(field("Name"), "Nightly backup (db)"));
   await click(button("New URL", item()));
-  expect(item().textContent).toContain("Your other changes in this form aren't saved.");
+  expect(item().textContent).toContain("Your other changes in this form won't be saved.");
   await click(button("Make new URL", item()));
   const readonly = () => document.querySelector<HTMLInputElement>("input[readonly]");
   for (let tries = 0; !readonly() && tries < 50; tries++) {
@@ -677,6 +685,55 @@ test("a heartbeat's New URL asks first, then shows the new URL once with Copy, a
   expect(readonly()).toBeNull();
   await frame();
   expect(document.activeElement).toBe(button("Edit", item()));
+});
+
+/** A heartbeat row, and New URL run on it through its Edit form until the new URL's panel has focus. */
+const quietBeat = () =>
+  monitor({
+    name: "Nightly backup",
+    kind: "heartbeat",
+    url: null,
+    method: null,
+    timeoutSeconds: null,
+    regions: [],
+    graceSeconds: 300,
+  });
+const shownUrl = () => document.querySelector<HTMLInputElement>("input[readonly]");
+async function rotate(item: () => Element | null) {
+  await click(button("Edit", item()!));
+  await click(button("New URL", item()!));
+  await click(button("Make new URL", item()!));
+  for (let tries = 0; !shownUrl() && tries < 50; tries++) {
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
+  }
+  expect(document.activeElement).toBe(button("Copy URL"));
+}
+
+test("a New URL the shard refuses takes the panel back, and focus goes to the row's Edit", async () => {
+  clipboard(async () => {});
+  // The page offers it to a stale admin role; the shard sees a responder.
+  const responder: Actor = { kind: "user", id: "usr_resp", role: "responder" };
+  const row = quietBeat();
+  const { flush } = await mount([row], [], responder, "admin");
+  const item = () => document.querySelector(`[data-monitor="${row.id}"]`);
+  await rotate(item);
+  await flush();
+  expect(shownUrl()).toBeNull();
+  expect(document.body.textContent).toContain("Couldn't change Nightly backup");
+  expect(document.activeElement).toBe(button("Edit", item()!));
+});
+
+test("a New URL for a monitor deleted meanwhile takes the panel back, and focus goes to Add monitor", async () => {
+  clipboard(async () => {});
+  const row = quietBeat();
+  const { shard, flush } = await mount([row]);
+  const item = () => document.querySelector(`[data-monitor="${row.id}"]`);
+  await rotate(item);
+  expect(shard.write(owner, "monitor.delete", { id: row.id }).ok).toBe(true);
+  await flush();
+  expect(shownUrl()).toBeNull();
+  expect(item()).toBeNull();
+  expect(document.activeElement).toBe(button("Add monitor"));
 });
 
 test("New URL is only for heartbeats", async () => {

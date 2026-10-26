@@ -34,6 +34,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import {
   CONFIRM_DESTRUCTIVE,
   MonitorForm,
@@ -244,9 +245,11 @@ export function MonitorsCard() {
       return;
     }
     void rotateHeartbeat({ id: row.id, tokenHash: heartbeat.tokenHash }).then((outcome) => {
-      if (!report(row.name)(outcome)) {
-        setPing((shown) => (shown?.url === heartbeat.url ? null : shown));
-      }
+      if (report(row.name)(outcome)) return;
+      flushSync(() => setPing((shown) => (shown?.url === heartbeat.url ? null : shown)));
+      // The panel held focus (its Copy button) and is gone: back to the row, or to the card's action.
+      const active = document.activeElement;
+      if (active === null || active === document.body) focusRow(row.id);
     });
     changed.current = false;
     setPending(null);
@@ -256,6 +259,13 @@ export function MonitorsCard() {
       interval: row.intervalSeconds,
       rotated: { id: row.id, name: row.name },
     });
+  };
+  /** Focuses the row's Edit button, or the card's action when there is no such row. */
+  const focusRow = (id: string | undefined) => {
+    const edit = id
+      ? document.querySelector<HTMLElement>(`[data-monitor="${id}"] [data-action="edit"]`)
+      : null;
+    (edit ?? addRef.current)?.focus();
   };
   const editMode = (row: MonitorRow): MonitorFormMode => ({
     kind: "edit",
@@ -335,14 +345,7 @@ export function MonitorsCard() {
               const id = ping.rotated?.id;
               setPing(null);
               // Back to the row whose URL it was, or to the card's action.
-              requestAnimationFrame(() => {
-                const edit = id
-                  ? document.querySelector<HTMLElement>(
-                      `[data-monitor="${id}"] [data-action="edit"]`,
-                    )
-                  : null;
-                (edit ?? addRef.current)?.focus();
-              });
+              requestAnimationFrame(() => focusRow(id));
             }}
           />
         ) : null}

@@ -266,7 +266,7 @@ export async function createWorkspace(request: Request, lazyAuth: () => Auth): P
  * own id, leaves the workspace (RFC 0003 "Members"). The Worker checks the origin, the session and that the caller
  * is a member; the workspace's shard checks the rules against D1, writes D1, then its own copy and the outbox, and
  * closes the member's sockets (src/members.ts). `not_applied` (503): D1 has the change and the shard not yet; the
- * same request again finishes it.
+ * shard's alarm reconciles it within seconds, and the same request again finishes it sooner.
  */
 export async function changeMember(
   request: Request,
@@ -301,10 +301,16 @@ export async function changeMember(
     change = { kind: "role", role };
   }
 
-  // Checked here first, so a made-up workspace or an outsider never wakes (or creates) a shard.
+  // Checked here first, so a made-up workspace or an outsider never wakes (or creates) a shard. One exception: a
+  // leave D1 already has but the shard missed (`not_applied`) may be sent again by the leaver, so they stop being
+  // paged without waiting for the shard's repair; the shard refuses it unless it still has their copy or devices.
   try {
     if ((await memberRole(env.DB, workspaceId, session.user.id)) === undefined) {
-      return json({ error: "not_a_member" }, 403);
+      const retryingLeave =
+        request.method === "DELETE" &&
+        userId === session.user.id &&
+        (await workspaceExists(env.DB, workspaceId));
+      if (!retryingLeave) return json({ error: "not_a_member" }, 403);
     }
   } catch (error) {
     console.error(JSON.stringify({ message: "member lookup failed", error: String(error) }));

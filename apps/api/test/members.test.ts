@@ -2,11 +2,11 @@
 // Worker, D1 first and then the shard's copy, its events and its sockets; what paging sees afterwards; and both
 // sides of a failure (D1 failing, the shard failing after D1 committed) with their repair.
 import { env, exports } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { newId, type Actor, type Role } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, describe, expect, test } from "vite-plus/test";
-import { Membership } from "../src/members.ts";
+import { MEMBER_REPAIR_RETRY_MS, Membership } from "../src/members.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { pageTargets } from "../src/paging.ts";
 import { Shard } from "../src/shard.ts";
@@ -358,6 +358,48 @@ describe("DELETE /workspaces/:id/members/:userId: removing and leaving", () => {
     expect(active.results.every((row) => row.active !== t.id)).toBe(true);
   });
 
+  test("leaving moves only the sessions that had this workspace open", async () => {
+    const t = await team();
+    // Duda also owns a workspace of her own, then joins a third one.
+    const own = await api("/workspaces", {
+      method: "POST",
+      headers: { Cookie: t.duda.cookie },
+      body: JSON.stringify({ name: "Duda's" }),
+    });
+    expect(own.status).toBe(201);
+    const { id: second } = (await own.json()) as { id: string };
+    const third = (await (
+      await api("/workspaces", {
+        method: "POST",
+        headers: { Cookie: t.ana.cookie },
+        body: JSON.stringify({ name: "Beta" }),
+      })
+    ).json()) as { id: string };
+    await addMember(third.id, t.duda.id, "viewer");
+    // Two sessions: one with this workspace open, one with the third.
+    await env.DB.prepare(`update session set "activeOrganizationId" = ? where "userId" = ?`)
+      .bind(t.id, t.duda.id)
+      .run();
+    const now = new Date().toISOString();
+    const other = newId("ses", Date.now(), random);
+    await env.DB.prepare(
+      `insert into session (id, "expiresAt", token, "createdAt", "updatedAt", "userId", "activeOrganizationId")
+       values (?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(other, now, `tok${other}`, now, now, t.duda.id, third.id)
+      .run();
+
+    expect((await remove(t, t.duda, t.duda)).status).toBe(200);
+    const active = await env.DB.prepare(
+      `select id, "activeOrganizationId" as active from session where "userId" = ?`,
+    )
+      .bind(t.duda.id)
+      .all<{ id: string; active: string | null }>();
+    // The one on the left workspace moves to her oldest remaining; the other is left alone.
+    expect(active.results.find((row) => row.id !== other)?.active).toBe(second);
+    expect(active.results.find((row) => row.id === other)?.active).toBe(third.id);
+  });
+
   test("the last owner cannot leave or be removed; admins cannot remove owners", async () => {
     const t = await team();
     expect((await remove(t, t.ana, t.ana)).status).toBe(409);
@@ -390,9 +432,11 @@ describe("when one side fails", () => {
       db: options.db ?? env.DB,
       shard: options.shardFails ? failing : shard,
       randomBytes: random,
+      sql: state.storage.sql,
       log: () => {},
       committed: () => {},
       closeSockets: () => {},
+      wake: (at) => void state.storage.setAlarm(at),
     });
   };
   const brokenDb = {
@@ -431,9 +475,87 @@ describe("when one side fails", () => {
 
     expect((await remove(t, t.ana, t.caio)).status).toBe(200);
     expect(await paged(t)).toEqual([]);
+    // The catch-up is the members' system actor reconciling, never the caller.
     expect(await events(t, "member.removed")).toMatchObject([
-      { data: { userId: t.caio.id, reason: "removed" } },
+      { actor: { id: "sys_members" }, data: { userId: t.caio.id, reason: "reconciled" } },
     ]);
+    // Nothing left to catch up: a third DELETE is a 404.
+    expect((await remove(t, t.ana, t.caio)).status).toBe(404);
+  });
+
+  test("a failed leave: the leaver's own retry stops their pages, though D1 no longer has them", async () => {
+    const t = await team();
+    const caio = await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    const result = await runInDurableObject(t.stub, (_instance: WorkspaceDO, state) =>
+      membership(t, state, { shardFails: true }).change(t.id, t.caio.id, t.caio.id, {
+        kind: "remove",
+      }),
+    );
+    expect(result).toEqual({ ok: false, code: "not_applied" });
+    expect(await roleIn(t.id, t.caio.id)).toBeNull();
+    expect(await paged(t)).toEqual([t.caio.id]);
+    // The repair alarm is armed, whether or not anyone connects.
+    expect(await t.withShard((_shard, state) => state.storage.getAlarm())).not.toBeNull();
+
+    const retry = await remove(t, t.caio, t.caio);
+    expect(retry.status).toBe(200);
+    expect(await paged(t)).toEqual([]);
+    expect(await events(t, "member.removed")).toMatchObject([
+      { actor: { id: t.caio.id }, data: { userId: t.caio.id, role: "responder", reason: "left" } },
+    ]);
+    expect(await caio.closed).toBe(1008);
+    // Done: once more is a 404, and only the leaver may finish their own leave.
+    expect((await remove(t, t.caio, t.caio)).status).toBe(404);
+    expect((await remove(t, t.caio, t.duda)).status).toBe(403);
+  });
+
+  test("a failed change is repaired by the shard's alarm, with nobody connecting or retrying", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    const result = await runInDurableObject(t.stub, (_instance: WorkspaceDO, state) =>
+      membership(t, state, { shardFails: true }).change(t.id, t.caio.id, t.caio.id, {
+        kind: "remove",
+      }),
+    );
+    expect(result).toEqual({ ok: false, code: "not_applied" });
+    expect(await paged(t)).toEqual([t.caio.id]);
+
+    // As if MEMBER_REPAIR_DELAY_MS passed.
+    await t.withShard((_shard, state) =>
+      state.storage.sql.exec("update member_repair set value = ?", Date.now() - 1),
+    );
+    expect(await runDurableObjectAlarm(t.stub)).toBe(true);
+    expect(await paged(t)).toEqual([]);
+    expect(await events(t, "member.removed")).toMatchObject([
+      { actor: { id: "sys_members" }, data: { userId: t.caio.id, reason: "reconciled" } },
+    ]);
+    expect(
+      await t.withShard((_shard, state) =>
+        state.storage.sql.exec("select * from member_repair").toArray(),
+      ),
+    ).toEqual([]);
+  });
+
+  test("a repair that cannot read D1 stays due and tries again", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    const now = Date.now();
+    const next = await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec(
+        "insert into member_repair (key, value) values ('at', ?) on conflict (key) do update set value = excluded.value",
+        now - 1,
+      );
+      return membership(t, state, { db: brokenDb }).repairDue(t.id, now);
+    });
+    expect(next).toBe(now + MEMBER_REPAIR_RETRY_MS);
+    expect(
+      await t.withShard(
+        (_shard, state) =>
+          state.storage.sql.exec<{ value: number }>("select value from member_repair").one().value,
+      ),
+    ).toBe(now + MEMBER_REPAIR_RETRY_MS);
   });
 
   test("the shard failing after D1 is repaired by the next sync upgrade into the workspace, without a retry", async () => {
@@ -471,6 +593,67 @@ describe("when one side fails", () => {
         data: { userId: t.duda.id, from: "viewer", to: "responder" },
       },
     ]);
+  });
+});
+
+describe("rules come before any repair", () => {
+  test("an admin cannot 'make' an owner D1 already has, and the catch-up never names the caller", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    await env.DB.prepare(
+      `update member set role = 'owner' where "organizationId" = ? and "userId" = ?`,
+    )
+      .bind(t.id, t.caio.id)
+      .run();
+    expect((await patchRole(t, t.bia, t.caio, "owner")).status).toBe(403);
+    expect(await events(t, "member.role_changed")).toEqual([]);
+
+    expect((await patchRole(t, t.ana, t.caio, "owner")).status).toBe(200);
+    expect(await t.withShard((shard) => shard.store.get("members", t.caio.id)?.role)).toBe("owner");
+    expect(await events(t, "member.role_changed")).toMatchObject([
+      { actor: { id: "sys_members" }, data: { userId: t.caio.id, from: "responder", to: "owner" } },
+    ]);
+  });
+
+  test("a viewer asking for a role a member already has is forbidden, not a conflict", async () => {
+    const t = await team();
+    const response = await patchRole(t, t.duda, t.caio, "responder");
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "forbidden" });
+  });
+
+  test("removing someone already gone from D1: forbidden without the right, reconciled with it", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    await env.DB.prepare(`delete from member where "organizationId" = ? and "userId" = ?`)
+      .bind(t.id, t.caio.id)
+      .run();
+    expect((await remove(t, t.duda, t.caio)).status).toBe(403);
+    expect(await paged(t)).toEqual([t.caio.id]);
+
+    expect((await remove(t, t.bia, t.caio)).status).toBe(200);
+    expect(await paged(t)).toEqual([]);
+    expect(await events(t, "member.removed")).toMatchObject([
+      { actor: { id: "sys_members" }, data: { userId: t.caio.id, reason: "reconciled" } },
+    ]);
+  });
+
+  test("removing someone who was never a member is a 404, and emits nothing", async () => {
+    const t = await team();
+    const outsider = await signUp("Eva");
+    expect((await remove(t, t.ana, outsider)).status).toBe(404);
+    expect(
+      (
+        await api(`/workspaces/${t.id}/members/usr_nobody`, {
+          method: "DELETE",
+          headers: { Cookie: t.ana.cookie },
+        })
+      ).status,
+    ).toBe(404);
+    // An outsider cannot use their own id to reach the shard either.
+    expect((await remove(t, outsider, outsider)).status).toBe(404);
+    expect(await events(t, "member.removed")).toEqual([]);
   });
 });
 

@@ -136,9 +136,11 @@ export class WorkspaceDO extends DurableObject<Env> {
       db: env.DB,
       shard: this.shard,
       randomBytes,
+      sql: ctx.storage.sql,
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
       closeSockets: (judge) => this.closeSockets(judge),
+      wake: (at) => this.wake(at, "member repair"),
     });
     // Events left in the outbox (an alarm that failed to arm, a restart) arm the drain again whenever the object
     // wakes, so a backlog never waits for an unrelated change.
@@ -146,6 +148,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (!this.drainPaused && this.drain.backlog() > 0) this.armDrain();
     } catch (error) {
       this.log("arming the outbox drain failed", { error: String(error) });
+    }
+    // Likewise a member repair whose alarm failed to arm.
+    try {
+      const repairAt = this.membership.repairAt();
+      if (repairAt !== null) this.wake(repairAt, "member repair");
+    } catch (error) {
+      this.log("arming the member repair failed", { error: String(error) });
     }
   }
 
@@ -234,9 +243,9 @@ export class WorkspaceDO extends DurableObject<Env> {
    * Makes this shard's member list agree with D1 and closes sockets D1 no longer backs (src/members.ts). Every sync
    * upgrade starts one; exposed so a repair can be asked for directly.
    */
-  reconcileMembers(): Promise<void> {
+  async reconcileMembers(): Promise<void> {
     const workspace = this.shard.workspace();
-    return workspace === undefined ? Promise.resolve() : this.membership.reconcile(workspace);
+    if (workspace !== undefined) await this.membership.reconcile(workspace);
   }
 
   /**
@@ -298,9 +307,10 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
-   * The shard's one alarm (RFC 0005, RFC 0007): monitor upkeep (`Monitoring.tick`), then draining the outbox to the
-   * Queue, so events the tick wrote go out in the same run. A fallback a tick from now is set first, so a failure
-   * never ends the chain; then the alarm moves to the earliest either needs, or goes when neither needs it.
+   * The shard's one alarm (RFC 0005, RFC 0007, RFC 0006 "Who is paged"): monitor upkeep (`Monitoring.tick`), a due
+   * member repair (`Membership.repairDue`: a member change D1 has and the shard missed), then draining the outbox to
+   * the Queue, so events either wrote go out in the same run. A fallback a tick from now is set first, so a failure
+   * never ends the chain; then the alarm moves to the earliest any of them needs, or goes when none needs it.
    */
   override async alarm(): Promise<void> {
     const now = Date.now();
@@ -310,6 +320,12 @@ export class WorkspaceDO extends DurableObject<Env> {
       monitors = await this.monitoring.tick(now);
     } catch (error) {
       this.log("monitor tick failed", { error });
+    }
+    let repair: number | null = now + MONITOR_TICK_MS;
+    try {
+      repair = await this.membership.repairDue(this.shard.workspace(), Date.now());
+    } catch (error) {
+      this.log("member repair failed", { error });
     }
     if (!this.drainPaused) {
       try {
@@ -324,7 +340,10 @@ export class WorkspaceDO extends DurableObject<Env> {
       }
     }
     // Read and set in one turn: a mutation committing meanwhile arms the drain after this, never before.
-    const next = earliest(monitors, this.drainPaused ? null : this.drain.nextWake(Date.now()));
+    const next = earliest(
+      earliest(monitors, repair),
+      this.drainPaused ? null : this.drain.nextWake(Date.now()),
+    );
     if (next === null) await this.ctx.storage.deleteAlarm();
     else await this.ctx.storage.setAlarm(next);
   }
@@ -344,11 +363,16 @@ export class WorkspaceDO extends DurableObject<Env> {
       this.log("arming the outbox drain failed", { error: String(error) });
       return;
     }
+    this.wake(at, "outbox drain");
+  }
+
+  /** Brings the alarm forward to `at` unless it is already set sooner. Fire and forget; a failure is logged. */
+  private wake(at: number, what: string): void {
     const { storage } = this.ctx;
     storage
       .getAlarm()
       .then((current) => (current === null || current > at ? storage.setAlarm(at) : undefined))
-      .catch((error: unknown) => this.log("arming the outbox drain failed", { error }));
+      .catch((error: unknown) => this.log(`arming the ${what} failed`, { error }));
   }
 
   /** Accepts a sync socket the Worker forwarded (`GET /sync/:workspaceId`). */

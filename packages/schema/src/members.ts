@@ -51,7 +51,6 @@ export function checkMemberChange(
   owners: number,
 ): { ok: true } | { ok: false; code: MemberChangeRefusal } {
   const self = actor.id === target.id;
-  if (change.kind === "role" && change.role === target.role) return { ok: false, code: "conflict" };
   if (!(self && change.kind === "remove")) {
     if (!can(actor.role, "members:manage")) return { ok: false, code: "forbidden" };
     if (
@@ -61,11 +60,13 @@ export function checkMemberChange(
       return { ok: false, code: "forbidden" };
     }
   }
+  // After the rules: a caller who may not make the change learns nothing from it already being made.
+  if (change.kind === "role" && change.role === target.role) return { ok: false, code: "conflict" };
   if (target.role === "owner" && owners <= 1) return { ok: false, code: "last_owner" };
   return { ok: true };
 }
 
-/** Deletes every device of `userId` (they stop being paged at once), with a `device.unregistered` each. */
+/** Deletes every device of `userId` (they stop being paged right away), with a `device.unregistered` each. */
 function dropDevices(store: MutationStore, userId: string): DeviceUnregistered[] {
   const events: DeviceUnregistered[] = [];
   for (const device of store.scan("devices")) {

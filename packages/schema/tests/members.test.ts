@@ -122,8 +122,22 @@ describe("checkMemberChange", () => {
     }
   });
 
-  test("the same role is a conflict", () => {
+  test("the same role is a conflict, but only for someone allowed to make the change", () => {
     expect(checkMemberChange(owner, admin, { kind: "role", role: "admin" }, 1)).toEqual({
+      ok: false,
+      code: "conflict",
+    });
+    // The rules come first: an admin learns nothing about an owner, nor a viewer about anyone.
+    expect(checkMemberChange(admin, owner, { kind: "role", role: "owner" }, 1)).toEqual({
+      ok: false,
+      code: "forbidden",
+    });
+    expect(checkMemberChange(viewer, admin, { kind: "role", role: "admin" }, 1)).toEqual({
+      ok: false,
+      code: "forbidden",
+    });
+    // The last owner asked to stay owner is a conflict, not last_owner.
+    expect(checkMemberChange(owner, owner, { kind: "role", role: "owner" }, 1)).toEqual({
       ok: false,
       code: "conflict",
     });

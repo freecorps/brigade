@@ -56,7 +56,10 @@ export type InviteRefusal = "forbidden";
  * same rule for the invitation's role. The API checks it against D1; the dashboard uses it to offer only the roles
  * that will be accepted.
  */
-export function checkInvite(actor: { role: Role }, role: Role): { ok: true } | { ok: false; code: InviteRefusal } {
+export function checkInvite(
+  actor: { role: Role },
+  role: Role,
+): { ok: true } | { ok: false; code: InviteRefusal } {
   if (!can(actor.role, "members:manage")) return { ok: false, code: "forbidden" };
   if (role === "owner" && actor.role !== "owner") return { ok: false, code: "forbidden" };
   return { ok: true };
@@ -109,7 +112,10 @@ export const inviteMember = defineMutation({
   }),
   permission: "members:manage",
   apply(_store, args, ctx) {
-    if (!isMembersActor(ctx.actor) && (!manages(ctx.actor, args.role) || ctx.actor.id !== args.invitedBy)) {
+    if (
+      !isMembersActor(ctx.actor) &&
+      (!manages(ctx.actor, args.role) || ctx.actor.id !== args.invitedBy)
+    ) {
       return fail("forbidden", "Not allowed to invite as this role");
     }
     const event: MemberInvited = {
@@ -133,7 +139,10 @@ export const revokeInvitation = defineMutation({
   args: v.object({ id: invitationId, role: v.picklist(ROLES), revokedBy: userId }),
   permission: "members:manage",
   apply(_store, args, ctx) {
-    if (!isMembersActor(ctx.actor) && (!manages(ctx.actor, args.role) || ctx.actor.id !== args.revokedBy)) {
+    if (
+      !isMembersActor(ctx.actor) &&
+      (!manages(ctx.actor, args.role) || ctx.actor.id !== args.revokedBy)
+    ) {
       return fail("forbidden", "Not allowed to revoke this invitation");
     }
     const event: InvitationRevoked = {

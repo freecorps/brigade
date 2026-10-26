@@ -85,18 +85,22 @@ paged instead. Every member the page was for who has no device (the commander in
 (`no_devices`, "Couldn't page Ana: no registered device"), and so is one none of whose devices fit in a page's 200
 (`over_limit`); RFC 0005 "Notifiers".
 
-Members are the shard's member list (RFC 0003), a cache of D1's that `member.sync` writes when a member opens a sync
-socket. So someone who never opened Brigade is not paged (they have no device either), and the cache can lag D1:
+Members are the shard's member list (RFC 0003), a copy of D1's that `member.sync` fills when a member opens a sync
+socket, so someone who never opened Brigade is not paged (they have no device either). The page path never reads
+D1: a D1 outage must not become a reason a page is late or missing. How the copy follows D1 (RFC 0003 "Members"):
 
-- **Demoted** (to viewer) in D1: still paged as before until they next open Brigade, when `member.sync` copies the new
-  role.
-- **Removed** in D1: their row and their devices stay in the shard, and they keep being paged, since a removed
-  member's socket is refused and never syncs again. No API path removes or demotes a member yet (the organization
-  member routes are refused), so this takes an edit made outside Brigade.
-- **To do with member management:** the `member.*` mutations (`member.role_changed`, `member.removed`) must update
-  the shard's cache in the same transaction: change the row's role, or delete the row and every device of that
-  member (`device.unregistered` for each). Until they exist, an out-of-band D1 edit is not reflected in who is
-  paged. The page path does not re-read D1: a D1 outage would then become a reason a page is late or missing.
+- **Through Brigade** (the dashboard's Members section): D1 first, then, in one shard transaction, the role changes
+  (`member.role_changed`; demoted to viewer, they are no longer paged) or the member's row and every device of theirs
+  are deleted (`member.removed`, `device.unregistered` with `member_removed` each), so no page planned after that
+  reaches them. If the shard step fails after D1 committed, the request answers `not_applied`; it is repaired by
+  sending it again or by the next sync upgrade into the workspace (below). Until one of those, the member is still
+  paged as before (the API said so: never silent).
+- **Edits made outside Brigade** (straight in D1): reconciled on the next sync upgrade into the workspace by anyone
+  (`member.reconcile`): a removed member's row and devices go, a changed role is copied, and their open sockets
+  close. Until somebody opens Brigade, a member removed or demoted outside it is still paged (Q18).
+- Tests: `apps/api/test/members.test.ts` ("a removed member is deleted from D1 and the shard with every device, and is
+  no longer paged", "a demoted member stops being paged at once", the "when one side fails" and "edits made outside
+  Brigade" cases).
 - **A handed-over phone** (same install, so the same device id, signed in as another member) keeps paging the first
   member until it unregisters: `device.register` refuses another member's device id (`forbidden`). Signing out
   unregisters it, so the next member's sign-in registers it for them. Signing out does not wait for a registration
@@ -138,16 +142,18 @@ socket. So someone who never opened Brigade is not paged (they have no device ei
   - **The kept session is gone** (it expired, or was revoked from elsewhere, before the phone came back): nothing
     can take the device off as that member, so the leftover is dropped and the device stays theirs on that shard.
     Taking over a device id on proof of the device key (a signature over a server nonce) would close this, but the
-    key is HPKE-only today (P-256 key agreement in the Keychain) and Android has none; it waits for FCM. Member
-    removal, once it exists (above), will drop a removed member's devices.
-  - **Removed from the workspace before the phone came back**: the session is alive, but the socket's upgrade
-    answers 403 `not_a_member`, so `device.unregister` never reaches the shard. A socket that closes before it
-    ever opens ends that try at once (no 10 s wait); the record stays pending and is tried on the backoff, since
-    the shard still pages the removed member on this phone (Q18) and re-adding them lets it finish. Each try still
-    renews the session (`/get-session` sees it alive and the upgrade renews it before the 403), so its expiry never
-    comes: the record is dropped a lifetime after it was kept, revoking the session on the way out, which bounds
-    both the record (one of the 10) and the removed member's credential. Until then the next member sees "taken";
-    after it the device stays the removed member's on that shard, as for a kept session that is gone.
+    key is HPKE-only today (P-256 key agreement in the Keychain) and Android has none; it waits for FCM. Removing the
+    member from the workspace (above) drops their devices, which frees the phone for the next member.
+  - **Removed from the workspace before the phone came back**: the removal already deleted every device of theirs
+    in the shard (above), so the phone no longer pages them and the next member's `device.register` for the same
+    device id succeeds. The kept record still cannot finish (the socket's upgrade answers 403 `not_a_member`, so
+    `device.unregister` never reaches the shard; a socket that closes before it ever opens ends that try at once),
+    and stays pending on the backoff. Each try still renews the session (`/get-session` sees it alive and the
+    upgrade renews it before the 403), so its expiry never comes: the record is dropped a lifetime after it was
+    kept, revoking the session on the way out, which bounds both the record (one of the 10) and the removed
+    member's credential. Meanwhile the app shows the next member "taken" although the shard would accept them;
+    treating a 403 `not_a_member` as finished (the device is gone with the membership) would end that sooner and
+    is left for the app. A removal made outside Brigade takes effect at the next sync upgrade into the workspace.
 
 Content: title `SEV1 · INC-142` (codes, so no locale is needed), body the incident's title, and the incident id,
 sealed per device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id, so a repeat replaces

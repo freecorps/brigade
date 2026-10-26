@@ -63,9 +63,8 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   D1's membership, so a shard can check an assignee without leaving its synchronous mutation and the dashboard can
   show names. The Worker already reads the member in D1 when it authenticates a sync upgrade; it passes their
   name along, and the shard runs the server-only `member.sync` (RFC 0004 "Server-side writes") when its copy is
-  missing or stale. So a member appears once they have opened a socket, and a role change shows on their next
-  one. When invitations and member management land, their `member.*` mutations write this table as well, and
-  removing a member must delete their `members` row in the same transaction (or they stay assignable).
+  missing or stale. So a member appears once they have opened a socket. Member management (below) writes it too,
+  and every sync upgrade reconciles it with D1.
 - **Member names** (`memberName`): the title rules of RFC 0004, except that ZWNJ and ZWJ may stand between two
   letters (Persian, Arabic and Indic names need them). The rule does not check the script, so a joiner between two
   Latin letters passes and looks like the plain name; accepted on purpose, since names are not identifiers (roles
@@ -74,6 +73,46 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   (sign-up, `update-user`: `INVALID_NAME`). A name already in D1 that predates the rule is trimmed and cut to the
   cap at a grapheme by the Worker; if that still fails, the shard stores `name: null` and the dashboard shows the
   member as unnamed, so they stay listed and assignable instead of being refused on every socket.
+
+## Members
+
+Changing a member's role, removing a member and leaving (`PATCH`/`DELETE /workspaces/:id/members/:userId`, the
+dashboard's Members section). Better Auth's own organization routes for these stay refused (RFC 0002 "Auth"): they
+would change D1 without the shard's copy or an event.
+
+- **Rules** (`checkMemberChange`, `packages/schema`, used by the API and the dashboard): owners and admins
+  (`members:manage`) change roles and remove members. An admin never touches an owner and never makes anyone an
+  owner. Anyone may leave; responders and viewers change no role, their own included. Nobody demotes or removes the
+  last owner, themselves included. **An owner may step down (or leave) while another owner remains**: requiring a
+  hand-over first would add a step without protecting anything the last-owner rule does not. Setting the role a
+  member already has is no change. Every role sees the list, with names, emails and roles (`workspace:read`); the
+  dashboard reads it from Better Auth's `get-full-organization` (D1), which returns at most 100 members, so a larger
+  workspace needs a paged list.
+- **Order: D1 first, then the shard.** D1 is the authority, so an event never announces a change D1 refused. The
+  Worker checks the session and that the caller is a member, then calls the workspace shard
+  (`WorkspaceDO.changeMember`), which does the rest under a per-shard member lock (so two changes, or a change and a
+  reconcile, never interleave between reading and writing D1): it reads the workspace's members in D1, checks the
+  rules, writes D1 (one conditional statement, or a batch that also moves the member's sessions with this workspace
+  active to their oldest remaining one; the SQL re-checks that the last owner is kept, in case D1 was edited
+  outside Brigade meanwhile), then runs a server-only mutation in its own store: `member.changeRole`
+  (`member.role_changed`: `userId`, `from`, `to`) or `member.remove` (`member.removed`: `userId`, `role`, `reason`
+  `removed` or `left`), which deletes the member's copy and every device of theirs in the same transaction
+  (`device.unregistered`, `reason: member_removed`). It emits even for a member the shard never knew (who never
+  opened Brigade). Then it closes the member's sockets (below).
+- **Failure.** D1 failing changes nothing (`503 unavailable`). The shard failing after D1 committed answers
+  `503 not_applied` and logs `member change not applied to the shard`: the same request again finds D1 already
+  changed and only applies the shard step (and the dashboard says to try again). Without a retry, **every sync
+  upgrade into the workspace reconciles** the shard with D1 (`member.reconcile`, run by `sys_members` after the
+  socket is accepted, never holding it up): a copy D1 no longer has is deleted with its devices
+  (`member.removed`, `reconciled`), a copy whose role differs takes D1's (`member.role_changed`), and a device whose
+  member D1 no longer has is dropped. Members D1 has and the shard does not are left to `member.sync`. An empty
+  read changes nothing (a workspace always has an owner). A removal whose shard step failed for a member the shard
+  never knew emits no event: nothing in the shard is wrong, and nothing records that it is owed (accepted).
+- **Open sockets.** After a change the shard closes the target's sockets: `1008` when removed (the client reconnects
+  and the upgrade answers `403 not_a_member`), `1012` on a role change (it reconnects with the new role). The
+  reconcile after every upgrade also closes any socket whose actor D1 no longer backs (gone, or another role),
+  which covers an upgrade the Worker authenticated just before a change landed. What is left is RFC 0004
+  "Session revocation".
 
 ## Alert → incident flow
 

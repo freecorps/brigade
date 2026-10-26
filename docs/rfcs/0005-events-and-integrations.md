@@ -36,16 +36,19 @@ the same transaction (RFC 0003 "Timeline, updates and roles"); the monitor recov
 
 Users, sessions and membership live in D1, written by Better Auth (RFC 0002), not by a shard. A change there that
 integrations care about is announced by the workspace shard: creating a workspace runs `workspace.create` in its
-new `WorkspaceDO` (`workspace.created`, subject the workspace id). Membership changes (`member.added`,
-`member.role_changed`, `member.removed`) follow the same path when invitations land; until then the creator's
-membership is part of `workspace.created` (`createdBy`). Until then the API refuses Better Auth's routes that
-would change a workspace or its members without an event (update, delete, member roles, removing or adding
-members, invitations, teams, leaving); see RFC 0002 "Auth". The shard's own copy of a member (`members`, written
-by `member.sync` when they open a socket) is a cache of D1 and emits nothing.
+new `WorkspaceDO` (`workspace.created`, subject the workspace id). Member changes made through Brigade emit
+`member.role_changed` (`userId`, `from`, `to`) and `member.removed` (`userId`, `role`, `reason`: `removed`, `left`,
+or `reconciled` when the shard caught up with a change D1 had and it missed, actor `sys_members`), subject the
+member, after D1 committed (RFC 0003 "Members"); a removal also emits `device.unregistered` (`member_removed`) for
+each of the member's devices. `member.added` waits for invitations; until then the creator's membership is part of
+`workspace.created` (`createdBy`). The API still refuses Better Auth's routes that would change a workspace or its
+members without an event (update, delete, member roles, removing or adding members, invitations, teams, leaving);
+see RFC 0002 "Auth". The shard's own copy of a member (`members`, written by `member.sync` when they open a socket)
+is a cache of D1, and `member.sync` emits nothing.
 
 Devices and paging emit `device.registered` (`id`, `userId`, `platform`, `environment`, `voip`: never the tokens or
 the key), `device.unregistered` (`reason`: `unregistered` by the member, `token_invalid` when APNs said the token is
-gone) and `notification.failed` (`incidentId`, `eventId` of the event that asked for the page, `channel: "push"`,
+gone, `member_removed` when its member left or was removed) and `notification.failed` (`incidentId`, `eventId` of the event that asked for the page, `channel: "push"`,
 `userId` or null, `reason`: `no_devices`, `undelivered`, `unsupported`, `not_configured`), with actor
 `sys_notifier` for what the notifier records. `notification.failed` rides with a `page_failed` timeline entry.
 

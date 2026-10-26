@@ -9,26 +9,28 @@ Sync, RFC 0004), `ProbeDO`, one per workspace and region, which runs HTTP monito
 one object behind the external dead-man switch (below). Every write is a
 named mutation from `@freecorps/brigade-schema`, run in the shard.
 
-| Route                 | Response                                                                            |
-| --------------------- | ----------------------------------------------------------------------------------- |
-| `GET /health`         | `200 {"ok":true}` (`HEAD` too)                                                      |
-| `GET /health/paging`  | `200` with the paging pipeline's state (below); `503` if the watchdog cannot answer |
-| `/auth/*`             | Better Auth (`src/auth.ts`): `POST /auth/sign-up/email`, `/auth/sign-in/email`,     |
-|                       | `/auth/sign-out`, `GET /auth/get-session`, the dashboard's organization routes, …   |
-|                       | `429` past the rate limit; `404` for organization routes that are refused (below)   |
-| `POST /workspaces`    | `201 {"id","name"}`: a workspace owned by the signed-in user, active in the session |
-|                       | `401` without a session, `400` for a bad name or a body over 4 KiB, `403` from      |
-|                       | another site, `405`; `500` if the shard could not be provisioned (nothing is kept)  |
-| `GET /workspaces/:id` | `200` with the `WorkspaceDO` info read from its SQLite storage                      |
-|                       | `400` if `:id` is not a workspace id (see `WORKSPACE_ID` in `src/workspace.ts`)     |
-|                       | `503` if the object is overloaded or the error is retryable, `500` otherwise        |
-| `GET /sync/:id`       | `101`: a Brigade Sync WebSocket to the workspace's shard, as the signed-in member   |
-|                       | `401` without a session, `403` for a non-member or a cross-site `Origin`            |
-|                       | `426` without `Upgrade: websocket`, `400` for a bad id, `405` for other methods     |
-| `POST /heartbeat/:t`  | `202 {"ok":true}`: a heartbeat monitor's ping; the token names workspace, monitor   |
-|                       | and secret (`404` for any wrong or unknown token or workspace, alike; `405` other)  |
-| other methods         | `405` with `Allow: GET, HEAD`                                                       |
-| anything else         | `404`                                                                               |
+| Route                                    | Response                                                                                                                                                                                                                                       |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /health`                            | `200 {"ok":true}` (`HEAD` too)                                                                                                                                                                                                                 |
+| `GET /health/paging`                     | `200` with the paging pipeline's state (below); `503` if the watchdog cannot answer                                                                                                                                                            |
+| `/auth/*`                                | Better Auth (`src/auth.ts`): `POST /auth/sign-up/email`, `/auth/sign-in/email`,                                                                                                                                                                |
+|                                          | `/auth/sign-out`, `GET /auth/get-session`, the dashboard's organization routes, …                                                                                                                                                              |
+|                                          | `429` past the rate limit; `404` for organization routes that are refused (below)                                                                                                                                                              |
+| `POST /workspaces`                       | `201 {"id","name"}`: a workspace owned by the signed-in user, active in the session                                                                                                                                                            |
+|                                          | `401` without a session, `400` for a bad name or a body over 4 KiB, `403` from                                                                                                                                                                 |
+|                                          | another site, `405`; `500` if the shard could not be provisioned (nothing is kept)                                                                                                                                                             |
+| `GET /workspaces/:id`                    | `200` with the `WorkspaceDO` info read from its SQLite storage                                                                                                                                                                                 |
+|                                          | `400` if `:id` is not a workspace id (see `WORKSPACE_ID` in `src/workspace.ts`)                                                                                                                                                                |
+|                                          | `503` if the object is overloaded or the error is retryable, `500` otherwise                                                                                                                                                                   |
+| `PATCH /workspaces/:id/members/:userId`  | `200`: `{ "role" }` set as D1 and the shard's member list say (RFC 0003 "Members")                                                                                                                                                             |
+| `DELETE /workspaces/:id/members/:userId` | `200`: removed (own id: left), with their devices; `401`, `403` (other site, not a member, the rules), `404`, `409 last_owner`, `503 unavailable` (D1 failed, nothing changed) or `not_applied` (D1 changed, the shard not yet: send it again) |
+| `GET /sync/:id`                          | `101`: a Brigade Sync WebSocket to the workspace's shard, as the signed-in member                                                                                                                                                              |
+|                                          | `401` without a session, `403` for a non-member or a cross-site `Origin`                                                                                                                                                                       |
+|                                          | `426` without `Upgrade: websocket`, `400` for a bad id, `405` for other methods                                                                                                                                                                |
+| `POST /heartbeat/:t`                     | `202 {"ok":true}`: a heartbeat monitor's ping; the token names workspace, monitor                                                                                                                                                              |
+|                                          | and secret (`404` for any wrong or unknown token or workspace, alike; `405` other)                                                                                                                                                             |
+| other methods                            | `405` with `Allow: GET, HEAD`                                                                                                                                                                                                                  |
+| anything else                            | `404`                                                                                                                                                                                                                                          |
 
 ## Auth and workspaces
 
@@ -44,9 +46,10 @@ Workers never set `NODE_ENV`, so `src/auth.ts` sets what Better Auth would deriv
 `__Secure-` prefixed when the request came over HTTPS, and rate limiting is on, counted per client IP
 (`cf-connecting-ip`) and path in D1's `rateLimit` table so every isolate shares the counts: 3 per 10 s for sign-in
 and sign-up, 100 per minute for the rest, `/get-session` exempt. The organization plugin's routes are refused
-(`404`) except `get-full-organization`, `get-active-member`, `list` and `set-active`, until the others (update,
-member roles and removal, invitations, …) emit their `workspace.*` / `member.*` events through the outbox
-(RFC 0005); deleting a workspace is off.
+(`404`) except `get-full-organization`, `get-active-member`, `list` and `set-active`: the others (update, member
+roles and removal, invitations, …) would change D1 without the shard's member list or a `workspace.*` / `member.*`
+event in the outbox (RFC 0005). Member roles, removal and leaving go through `/workspaces/:id/members/:userId`
+(below); deleting a workspace is off.
 
 A sync upgrade is authenticated by the Worker (`src/actor.ts`): it checks `Origin`, reads the session, looks up the
 member's role in D1, and forwards a request it builds itself carrying the actor (`Brigade-Actor`) and the workspace

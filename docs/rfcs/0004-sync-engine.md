@@ -395,9 +395,12 @@ SyncClient (web/mobile)┤
   `patch` or `mutationResult`) closes, unless it ended with a `protocol` error. An upgrade refused for auth,
   or a shard answering `protocol` errors, keeps backing off. On reconnect the client replays as described under
   "Protocol".
-- Session revocation (not built yet): the Worker records active sockets per session in the shard; revoking a
-  session (Better Auth hook) broadcasts a close to those sockets. Until then, signing out or a role change takes
-  effect on the next upgrade, not on an open socket.
+- Session revocation: member changes made through Brigade close the member's open sockets on that shard (`1008`
+  removed, `1012` role changed), and every upgrade's reconcile closes sockets whose actor D1 no longer backs
+  (RFC 0003 "Members"), so an open socket never keeps a role or a membership D1 took away for longer than until the
+  next change or upgrade into the workspace. Not built yet: closing sockets on sign-out or a revoked session (the
+  Worker would record active sockets per session in the shard and a Better Auth hook would close them), and an edit
+  made in D1 outside Brigade reaching sockets before the next upgrade.
 
 **Upgrade path (only if spike S3 or production metrics show a need):** a `SessionDO` per client session holding the
 single client socket and fanning out to shards over DO RPC, with shards pushing patches back via RPC. It costs an

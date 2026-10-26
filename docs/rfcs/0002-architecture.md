@@ -100,8 +100,9 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
   and rate limiting is on, counted in D1 (the `rateLimit` table, so every isolate sees the same counts) per client
   IP from `cf-connecting-ip`: 3 per 10 s for sign-in and sign-up, 100 per minute for the other routes,
   `/get-session` exempt. The organization plugin's routes are refused except the ones the dashboard reads
-  (`get-full-organization`, `get-active-member`, `list`) and `set-active`, until the others emit their events
-  (RFC 0005); deleting a workspace is off. D1 schema changes are checked-in SQL in `apps/api/migrations/`
+  (`get-full-organization`, `get-active-member`, `list`) and `set-active`, since the others would change D1
+  without the shard or an event (RFC 0005); member roles, removal and leaving go through the API's own
+  `/workspaces/:id/members/:userId` instead (RFC 0003 "Members"); deleting a workspace is off. D1 schema changes are checked-in SQL in `apps/api/migrations/`
   (`wrangler d1 migrations apply`); `apps/api/test/migrations.test.ts` fails, printing the SQL, when Better Auth
   needs more than they create. The secret `BETTER_AUTH_SECRET` comes from `wrangler secret put` or a local
   `apps/api/.dev.vars`.

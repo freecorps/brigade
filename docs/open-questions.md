@@ -37,13 +37,13 @@ outside the incident (an email to owners, the external dead-man switch) when nob
 member the page was for without a device gets their own "Couldn't page …" line: right for a small team, noisy for a
 large one where most never install the app.
 
-Who counts as a member is the shard's cached member list, not D1 (RFC 0006 "Who is paged"): a member removed in D1
-keeps being paged, and one demoted keeps being paged until they next open Brigade, until the `member.*` mutations
-(member management) delete the row and the member's devices, or change the role, in the shard. No API path removes or
-demotes a member today, so only an edit made outside Brigade hits this. It also leaves a phone that member signed
-out of offline unable to come off the shard (their socket is refused), so the next member on it stays "taken" until
-the app drops the kept sign-out a session lifetime after keeping it, and the device stays theirs on that shard after
-that (RFC 0006 "A handed-over phone").
+Who counts as a member is the shard's copy of the member list, not D1 (RFC 0006 "Who is paged"). Member changes made
+through Brigade (roles, removal, leaving) update it with D1 and drop a removed member's devices at once (RFC 0003
+"Members"), and every sync upgrade into the workspace reconciles it with D1. What is left is an edit made in D1
+outside Brigade while nobody opens Brigade: that member is paged as before until someone does. Should the shard
+also reconcile on a timer (its alarm reading D1 every few minutes, off the page path), or is the next upgrade enough?
+And should the app treat `403 not_a_member` on a kept sign-out as finished, since the removal already freed the
+phone (RFC 0006 "A handed-over phone")?
 
 ## Q19 — What else the dead-man switch should prove (RFC 0007)
 

@@ -77,8 +77,12 @@ Validate the risky assumptions before writing product code. Each spike produces 
     Secure cookies over HTTPS, rate limiting in D1 (sign-in and sign-up 3 per 10 s per IP), organization routes
     that would skip events refused, and a failed shard provision undone. D1 `brigade-db-dev` exists with the
     migrations applied.
-  - Left: invitations and member management (roles, removal, with `member.*` events), switching workspaces in the
-    UI, closing open sockets on sign-out or role change (RFC 0004 "Session revocation"), mobile OAuth/OIDC with PKCE
+  - Done: member management: changing roles, removing members and leaving (`/workspaces/:id/members/:userId` and
+    the dashboard's Members section), D1 first and then the shard's member list and devices with
+    `member.role_changed` / `member.removed`, a reconcile with D1 on every sync upgrade, and the member's open
+    sockets closed on a change (RFC 0003 "Members").
+  - Left: invitations (with `member.added`; they need verified email), switching workspaces in the
+    UI, closing open sockets on sign-out or a revoked session (RFC 0004 "Session revocation"), mobile OAuth/OIDC with PKCE
     via the system browser and QR pairing (mobile email and password sign-in is done, see the Mobile item), password reset (needs the email notifier),
     putting `/workspaces/:id` (the stack check) behind auth before `workers_dev` is turned on, and the production
     and staging secrets (owner approval). Also: email verification (needs the email notifier), then
@@ -155,9 +159,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Left: the production and staging queues (owner approval); `RELAY_URL` and `RELAY_SEND_TOKEN` on the deployed API;
     a real push end to end from the deployed API to a device; VoIP call pages (`kind: "call"`, Phase 2 with RFC 0010); FCM for Android
     (Android devices are recorded as `unsupported`); replaying dead-lettered pages (today they are recorded, not
-    re-sent); the `member.*` mutations must update the shard's member cache (role changed; removed: row and devices
-    deleted), since until then a member removed or demoted in D1 outside Brigade is still paged (RFC 0006 "Who is
-    paged"); delivery receipts
+    re-sent); a member removed or demoted in D1 outside Brigade is still paged until the next sync upgrade
+    reconciles the shard (RFC 0006 "Who is paged", Q18); delivery receipts
     and "why wasn't I paged" (Phase 2); holding back lower-urgency pushes while a page may be undelivered (RFC 0006
     "Offline phones"); who is paged before schedules (Q18).
 - [x] External dead-man switch

@@ -118,7 +118,9 @@ async function interaction(request: Request, deps: Deps): Promise<Response> {
       deps,
       { teamId, userId, responseUrl },
       { kind: "ack", incidentId },
-      await sha256Hex(`click:${userId}:${actionTs}`),
+      // The incident is part of the key: Slack's `action_ts` is per click, and the key must never match another
+      // incident's acknowledgement.
+      await sha256Hex(`click:${userId}:${incidentId}:${actionTs}`),
     ).catch((error: unknown) => log("slack button failed", { error: String(error) })),
   );
   return acknowledged();

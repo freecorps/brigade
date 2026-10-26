@@ -4,9 +4,15 @@
 // the incident's timeline through `notification.fail`.
 
 import {
+  defaultPolicy,
+  ESCALATION_ACTOR,
   isActive,
   NOTIFIER_ACTOR,
+  type Actor,
   type BrigadeTables,
+  type EscalationMiss,
+  type EscalationPage,
+  type EscalationPaged,
   type DevicePlatform,
   type IncidentRow,
   type PageFailure,
@@ -53,8 +59,16 @@ export type PageTarget = {
   publicKey: string;
 };
 
-/** A member the page is for but is not sent to; recorded as not paged once the page settles. */
-export type SkippedMember = { userId: string; reason: "no_devices" | "over_limit" };
+/**
+ * A member the page is for but is not sent to, or an escalation level's schedule nobody was on call for (`userId`
+ * null, `schedule` its name); recorded as not paged once the page settles.
+ */
+export type SkippedMember = {
+  userId: string | null;
+  reason: PageFailure;
+  scheduleId?: string | null;
+  schedule?: string | null;
+};
 
 export type PagePlan =
   | {
@@ -91,12 +105,16 @@ export type DeviceOutcome =
 
 /**
  * Whether an event asks for a page (RFC 0006 "Who is paged"), from the event alone: a declared incident (any
- * severity; SEV1 and SEV2 at `page` urgency), or a severity raised into SEV1 or SEV2. Monitors open incidents with
+ * severity; SEV1 and SEV2 at `page` urgency), a severity raised into SEV1 or SEV2, or an escalation level fired by
+ * the shard's alarm (the level a run starts with is sent on the event that started it). Monitors open incidents with
  * `incident.declared` as `sys_monitors` (SEV2), so they page through the same rule.
  */
 export function asksForPage(event: BrigadeEvent): boolean {
   if (event.subject === undefined) return false;
   if (event.type === "incident.declared") return true;
+  if (event.type === "escalation.paged") {
+    return (event.data as Partial<EscalationPaged["data"]> | null)?.started === false;
+  }
   if (event.type !== "incident.severity_changed") return false;
   const { from, to } = (event.data ?? {}) as { from?: Severity; to?: Severity };
   return (
@@ -165,7 +183,19 @@ export type PagerOptions = {
   shard: Shard;
   log: (message: string, fields: Record<string, unknown>) => void;
   committed: (version: number, changes: readonly RowChange[]) => void;
+  /** Brings the shard's alarm forward to `at` (an escalation's next level). Must not throw. */
+  wake: (at: number) => void;
 };
+
+/** Who an escalation page is for: the members a level reached, or the interim rule (`level` null). */
+type Recipients = { targets: PageTarget[]; noDevices: string[]; skipped: SkippedMember[] };
+
+const fromMiss = (miss: EscalationMiss): SkippedMember => ({
+  userId: miss.userId,
+  reason: miss.reason,
+  scheduleId: miss.scheduleId,
+  schedule: miss.schedule,
+});
 
 /** What the dead-letter consumer's record did, so its log says what happened. */
 export type DeadLetterResult =
@@ -196,12 +226,17 @@ export class Pager {
     if (!isActive(incident.status)) return { send: false, reason: "inactive" };
     if (incident.acknowledgedAt != null) return { send: false, reason: "acknowledged" };
 
-    const { targets: all, noDevices } = pageTargets(
-      this.options.shard.store,
-      incident,
-      event.actor.id,
-    );
-    const skipped: SkippedMember[] = noDevices.map((userId) => ({ userId, reason: "no_devices" }));
+    const recipients =
+      this.escalated(event, incident, now) ??
+      ({
+        ...pageTargets(this.options.shard.store, incident, event.actor.id),
+        skipped: [],
+      } satisfies Recipients);
+    const { targets: all, noDevices } = recipients;
+    const skipped: SkippedMember[] = [
+      ...recipients.skipped,
+      ...noDevices.map((userId): SkippedMember => ({ userId, reason: "no_devices" })),
+    ];
     if (all.length === 0) {
       // Each member the page was for is told apart; with none at all, a member who declared it by hand knows, and a
       // monitor's incident says nobody was paged.
@@ -249,6 +284,82 @@ export class Pager {
   }
 
   /**
+   * Who an event's page goes to under the incident's escalation run (RFC 0006 "Who is paged"), or undefined when no
+   * run applies (no default policy): the interim rule then. A level fired by the alarm pages the members the level
+   * reached; the first page of an incident starts a run (`escalation.start`, de-duplicated by the event) and pages
+   * its first level here, on the same event; a severity raised while a run is under way pages the level paged last
+   * again. A level that reached nobody pages everyone who can respond (`level` null).
+   */
+  private escalated(
+    event: BrigadeEvent,
+    incident: IncidentRow,
+    now: number,
+  ): Recipients | undefined {
+    const { store } = this.options.shard;
+    if (event.type === "escalation.paged") {
+      const data = event.data as EscalationPaged["data"];
+      const missed = (data.missed ?? []).map(fromMiss);
+      // The interim rule as the last fallback: whoever caused the run's first page still knows.
+      if (data.level === null) return this.interim(incident, missed);
+      return { ...this.devicesOf(data.userIds ?? [], null), skipped: missed };
+    }
+    let run = incident.escalation;
+    let page: EscalationPage | undefined;
+    let missed: SkippedMember[] = [];
+    if (run?.eventId !== event.id && run?.status !== "running") {
+      if (!defaultPolicy(store)) return undefined;
+      this.run(
+        ESCALATION_ACTOR,
+        "escalation",
+        `start:${event.id}`,
+        "escalation.start",
+        { incidentId: incident.id, eventId: event.id, causedBy: event.actor.id },
+        now,
+      );
+      run = store.get("incidents", incident.id)?.escalation;
+      if (run?.status === "running" && run.nextAt !== null) this.options.wake(run.nextAt);
+    }
+    if (run?.eventId === event.id) {
+      // This event started the run (now, or before a redelivery): its first page, and what that level missed.
+      page = run.pages[0];
+      missed = (page?.missed ?? []).map(fromMiss);
+    } else if (run?.status === "running") {
+      page = run.pages[run.pages.length - 1];
+    }
+    if (!page) return undefined;
+    if (page.level === null) return this.interim(incident, missed);
+    return { ...this.devicesOf(page.userIds, event.actor.id), skipped: missed };
+  }
+
+  /** RFC 0006's interim rule, excluding whoever caused the run's first page (they know). */
+  private interim(incident: IncidentRow, skipped: SkippedMember[]): Recipients {
+    const causedBy = incident.escalation?.causedBy ?? "";
+    return { ...pageTargets(this.options.shard.store, incident, causedBy), skipped };
+  }
+
+  /** The devices of `userIds` who are still members who can respond; `except` (who caused the page) is not sent to. */
+  private devicesOf(
+    userIds: readonly string[],
+    except: string | null,
+  ): { targets: PageTarget[]; noDevices: string[] } {
+    const { store } = this.options.shard;
+    const targets: PageTarget[] = [];
+    const noDevices: string[] = [];
+    const devices = store.scan("devices");
+    for (const userId of new Set(userIds)) {
+      if (userId === except) continue;
+      const member = store.get("members", userId);
+      if (!member || member.role === "viewer") continue;
+      const mine = devices.filter((device) => device.userId === userId);
+      if (mine.length === 0) noDevices.push(userId);
+      for (const { id, platform, environment, pushToken, publicKey } of mine) {
+        targets.push({ deviceId: id, userId, platform, environment, pushToken, publicKey });
+      }
+    }
+    return { targets, noDevices };
+  }
+
+  /**
    * Records what a send did. Delivered devices go in the ledger (a retry skips them); expired ones are dropped.
    * When `final` (retries spent, or nothing left worth retrying), every member who got the page on none of their
    * devices, and every member in `skipped` (the plan's) not reached, gets a `page_failed` entry and
@@ -275,6 +386,8 @@ export class Pager {
         );
       } else if (outcome.expiredToken !== undefined) {
         this.run(
+          NOTIFIER_ACTOR,
+          "notifier",
           `expire:${event.id}:${outcome.deviceId}`,
           "device.expire",
           { id: outcome.deviceId, pushToken: outcome.expiredToken },
@@ -288,19 +401,17 @@ export class Pager {
       if (outcome.ok) continue;
       failures.set(outcome.userId, [...(failures.get(outcome.userId) ?? []), outcome.reason]);
     }
-    const missed: { userId: string; reason: PageFailure }[] = [...failures].map(
-      ([userId, reasons]) => ({
-        userId,
-        // The most telling reason: a missing relay or an unsupported platform explains more than "undelivered".
-        reason: reasons.includes("not_configured")
-          ? "not_configured"
-          : reasons.every((r) => r === "unsupported")
-            ? "unsupported"
-            : "undelivered",
-      }),
-    );
+    const missed: SkippedMember[] = [...failures].map(([userId, reasons]) => ({
+      userId,
+      // The most telling reason: a missing relay or an unsupported platform explains more than "undelivered".
+      reason: reasons.includes("not_configured")
+        ? "not_configured"
+        : reasons.every((r) => r === "unsupported")
+          ? "unsupported"
+          : "undelivered",
+    }));
     for (const one of skipped) {
-      if (!failures.has(one.userId)) missed.push(one);
+      if (one.userId === null || !failures.has(one.userId)) missed.push(one);
     }
     this.settle(event, event.subject!, missed, now);
     this.finish(event.id, now);
@@ -326,7 +437,7 @@ export class Pager {
   private settle(
     event: BrigadeEvent,
     incidentId: string,
-    missed: readonly { userId: string; reason: PageFailure }[],
+    missed: readonly SkippedMember[],
     now: number,
   ): void {
     const reached = new Set(
@@ -338,8 +449,13 @@ export class Pager {
         .toArray()
         .map((row) => row.user_id),
     );
-    for (const { userId, reason } of missed) {
-      if (!reached.has(userId)) this.fail(event, incidentId, userId, reason, now);
+    const seen = new Set<string>();
+    for (const { userId, reason, scheduleId, schedule } of missed) {
+      if (userId !== null && (reached.has(userId) || seen.has(userId))) continue;
+      if (userId !== null) seen.add(userId);
+      const where =
+        scheduleId === undefined ? undefined : { id: scheduleId ?? null, name: schedule ?? null };
+      this.fail(event, incidentId, userId, reason, now, where);
     }
   }
 
@@ -349,24 +465,42 @@ export class Pager {
     userId: string | null,
     reason: PageFailure,
     now: number,
+    schedule?: { id: string | null; name: string | null },
   ): void {
     this.options.log("page failed", { event: event.id, incident: incidentId, userId, reason });
+    // One entry per member, and per schedule nobody was on call for.
+    const key = schedule?.id && userId === null ? `-:${schedule.id}` : (userId ?? "-");
     this.run(
-      `fail:${event.id}:${userId ?? "-"}`,
+      NOTIFIER_ACTOR,
+      "notifier",
+      `fail:${event.id}:${key}`,
       "notification.fail",
-      { incidentId, eventId: event.id, userId, reason },
+      {
+        incidentId,
+        eventId: event.id,
+        userId,
+        reason,
+        ...(schedule ? { schedule: schedule.name } : {}),
+      },
       now,
     );
   }
 
-  /** A server-only mutation as the notifier, de-duplicated by `mutationId`. */
-  private run(mutationId: string, name: string, args: unknown, now: number): void {
+  /** A server-only mutation as `actor`, de-duplicated by `mutationId`. */
+  private run(
+    actor: Actor,
+    clientId: string,
+    mutationId: string,
+    name: string,
+    args: unknown,
+    now: number,
+  ): void {
     const { shard } = this.options;
-    if (shard.storedResult(NOTIFIER_ACTOR.id, "notifier", mutationId, now)) return;
+    if (shard.storedResult(actor.id, clientId, mutationId, now)) return;
     const { result, changes } = shard.mutate({
-      clientId: "notifier",
+      clientId,
       mutationId,
-      actor: NOTIFIER_ACTOR,
+      actor,
       name,
       args,
       now,
@@ -374,7 +508,7 @@ export class Pager {
     });
     if (result.ok) this.options.committed(result.version, changes);
     else if (result.error.code !== "not_found") {
-      this.options.log("notifier mutation refused", { mutation: name, code: result.error.code });
+      this.options.log(`${clientId} mutation refused`, { mutation: name, code: result.error.code });
     }
   }
 

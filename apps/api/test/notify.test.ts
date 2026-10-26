@@ -445,6 +445,7 @@ describe("when paging fails (the paging path's fallback)", () => {
           channel: "push",
           userId: phone.userId,
           reason: "undelivered",
+          schedule: null,
         },
       }),
     ]);

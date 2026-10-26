@@ -31,7 +31,8 @@ without it, a release build has no server and sign-in says so.
 
 - **Better Auth's Expo client** (`@better-auth/expo`, `src/lib/auth-client.ts`) signs in with email and password and
   keeps the session in secure storage (`expo-secure-store`: the Keychain on iOS, the Keystore on Android), so the app
-  opens signed in offline. It sends the session back as a `Cookie` header it sets itself, and the app's scheme as
+  opens signed in offline; the workspace and role are remembered too (`brigade_workspace`) and read again once
+  online. It sends the session back as a `Cookie` header it sets itself, and the app's scheme as
   `expo-origin` (`brigade://`), which the API trusts (`apps/api/src/auth.ts`). OAuth through the system browser and QR
   pairing come later (RFC 0002).
 - **The sync socket** (`src/lib/sync-client.ts`) sends the same `Cookie` header on the upgrade; the API checks it like
@@ -39,8 +40,9 @@ without it, a release build has no server and sign-in says so.
   (`src/components/session.tsx`), closed on sign-out, so no socket or row outlives its session.
 - **Pages:** after sign-in the app registers the phone with `device.register` (its key, permission and APNs token,
   `src/lib/device.ts`); Sign out asks first, unregisters it (`device.unregister`, giving up after 5 s offline) and then
-  ends the session, clearing it on the phone even if the server cannot be reached. Android has no device key until FCM,
-  so it shows "Not on this phone yet".
+  ends the session. Offline it signs out on the phone only, keeps the session aside and finishes both once it is back
+  online, before anyone else registers the phone (`src/lib/sign-out.ts`, RFC 0006 "A handed-over phone"). Android has
+  no device key until FCM, so it shows "Not on this phone yet", muted.
 
 ## Run it
 

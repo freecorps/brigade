@@ -99,8 +99,20 @@ socket. So someone who never opened Brigade is not paged (they have no device ei
   paged. The page path does not re-read D1: a D1 outage would then become a reason a page is late or missing.
 - **A handed-over phone** (same install, so the same device id, signed in as another member) keeps paging the first
   member until it unregisters: `device.register` refuses another member's device id (`forbidden`). Signing out
-  unregisters it, so the next member's sign-in registers it for them; if the first member's sign-out could not reach
-  the shard, the app tells the next one the phone is still the other member's ("taken") rather than claiming pages.
+  unregisters it, so the next member's sign-in registers it for them.
+  - **Signed out offline** (`device.unregister` did not answer within 5 s): the app signs out on the phone only and
+    keeps the member's session, unrevoked, in secure storage with their user and workspace ids
+    (`brigade_signed_out`, apps/mobile/src/lib/sign-out.ts), and tells them the phone may still get their pages
+    until it is back online. At launch, whenever the phone reconnects, and before any member's `device.register`,
+    the app finishes it: `/get-session` with that cookie, `device.unregister` over a socket of its own as that
+    member, then `/sign-out`, and only then forgets it. The session is not revoked first because only it can say
+    whose device this is. Until it finishes, a next member who signs in sees "taken" (the phone still pages the
+    other one) instead of a claim that it pages them; once finished, the phone registers for them.
+  - **The kept session is gone** (it expired, or was revoked from elsewhere, before the phone came back): nothing
+    can take the device off as that member, so the leftover is dropped and the device stays theirs on that shard.
+    Taking over a device id on proof of the device key (a signature over a server nonce) would close this, but the
+    key is HPKE-only today (P-256 key agreement in the Keychain) and Android has none; it waits for FCM. Member
+    removal, once it exists (above), will drop a removed member's devices.
 
 Content: title `SEV1 · INC-142` (codes, so no locale is needed), body the incident's title, and the incident id,
 sealed per device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id, so a repeat replaces

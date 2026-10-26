@@ -113,7 +113,12 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
     it to `Origin` when there is none; `brigade://` is a trusted origin (`APP_ORIGIN`), so Better Auth's origin check
     passes for the app and still refuses other sites, whose browsers always send their own `Origin`. The plugin's
     `/expo-authorization-proxy` (for social sign-in through the system browser) redirects to any HTTPS URL, so it is
-    refused until that sign-in exists. The app signs in against the dashboard's origin (`EXPO_PUBLIC_BRIGADE_URL`, or
+    refused until that sign-in exists. Trusting `brigade://` also makes a `callbackURL` or `redirectTo` to
+    `brigade://…` valid, and the plugin's after-hook appends the session as `?cookie=` to redirects from
+    `/callback*`, `/magic-link/verify*` and `/verify-email*`; none of those is configured now, so any app on the
+    phone that claims the scheme gets nothing. Before OAuth, magic links, email verification or password reset are
+    enabled, those redirects need PKCE or verified App Links / Universal Links instead of a custom scheme. The
+    plugin also trusts `exp://` (Expo Go), but only when `NODE_ENV` is `development`. The app signs in against the dashboard's origin (`EXPO_PUBLIC_BRIGADE_URL`, or
     the dev server on the Metro host in development). Still to come: OAuth/OIDC with PKCE via the system browser and
     QR pairing.
 - **Workers tooling:** `wrangler` per app, invoked through `vp run` tasks. The Cloudflare Vite plugin

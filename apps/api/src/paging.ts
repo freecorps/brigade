@@ -5,6 +5,8 @@
 
 import {
   defaultPolicy,
+  deliveryId,
+  type DeliveryError,
   ESCALATION_ACTOR,
   isActive,
   NOTIFIER_ACTOR,
@@ -58,6 +60,8 @@ export type PageTarget = {
   environment: PushEnvironment;
   pushToken: string;
   publicKey: string;
+  /** This page's delivery receipt token for the device (src/receipts.ts); absent when none could be minted. */
+  receipt?: string;
 };
 
 /**
@@ -99,10 +103,17 @@ export type PagePlan =
 /** Why one device's push failed, as the notifier reports it. */
 export type SendFailure = Extract<PageFailure, "undelivered" | "unsupported" | "not_configured">;
 
+/**
+ * What the relay's answer says about one device, for its delivery row (RFC 0006 "Delivery receipts"): `ms` is how
+ * long the relay took; `error` and APNs' `apnsReason` say why it failed. Absent from a consumer of the version
+ * before receipts (during a deploy).
+ */
+export type DeliveryDetail = { ms?: number; error?: DeliveryError; apnsReason?: string };
+
 /** One device's outcome, as the notifier reports it. */
 export type DeviceOutcome =
-  | { deviceId: string; userId: string; ok: true }
-  | {
+  | ({ deviceId: string; userId: string; ok: true } & DeliveryDetail)
+  | ({
       deviceId: string;
       userId: string;
       ok: false;
@@ -112,7 +123,7 @@ export type DeviceOutcome =
        */
       expiredToken?: string;
       reason: SendFailure;
-    };
+    } & DeliveryDetail);
 
 /**
  * Whether an event asks for a page (RFC 0006 "Who is paged"), from the event alone: a declared incident (any
@@ -343,6 +354,7 @@ export class Pager {
       });
       for (const userId of missed) skipped.push({ userId, reason: "over_limit" });
     }
+    this.planDeliveries(event, incident.id, targets, now);
     return {
       send: true,
       incident: {
@@ -355,6 +367,83 @@ export class Pager {
       targets,
       skipped,
     };
+  }
+
+  /**
+   * Records the devices a page is about to go to (`delivery.plan`), each a `planned` delivery row, so the incident
+   * can say what happened on each. Never in the page's way: a failure is logged and the page goes out regardless.
+   */
+  private planDeliveries(
+    event: BrigadeEvent,
+    incidentId: string,
+    targets: readonly PageTarget[],
+    now: number,
+  ): void {
+    try {
+      const { store } = this.options.shard;
+      const fresh = targets.filter(
+        (target) => !store.get("deliveries", deliveryId(incidentId, event.id, target.deviceId)),
+      );
+      if (fresh.length === 0) return;
+      this.run(
+        NOTIFIER_ACTOR,
+        "notifier",
+        `plan:${event.id}:${fresh[0]!.deviceId}:${fresh.length}`,
+        "delivery.plan",
+        {
+          incidentId,
+          eventId: event.id,
+          page: this.pageOf(event, incidentId) ?? null,
+          devices: fresh.map(({ deviceId, userId, platform, environment }) => ({
+            deviceId,
+            userId,
+            platform,
+            environment,
+          })),
+        },
+        now,
+      );
+    } catch (error) {
+      this.options.log("recording a page's deliveries failed", {
+        event: event.id,
+        incident: incidentId,
+        error: String(error),
+      });
+    }
+  }
+
+  /** Records what the relay answered for each device of one attempt (`delivery.report`); never throws. */
+  private reportDeliveries(
+    event: BrigadeEvent,
+    outcomes: readonly DeviceOutcome[],
+    now: number,
+  ): void {
+    if (outcomes.length === 0) return;
+    try {
+      this.run(
+        NOTIFIER_ACTOR,
+        "notifier",
+        `report:${event.id}:${now}`,
+        "delivery.report",
+        {
+          incidentId: event.subject!,
+          eventId: event.id,
+          outcomes: outcomes.map((outcome) => ({
+            deviceId: outcome.deviceId,
+            ok: outcome.ok,
+            error: outcome.ok ? null : (outcome.error ?? null),
+            reason: outcome.ok ? null : (outcome.apnsReason ?? null),
+            ms: Math.min(60_000, Math.max(0, Math.round(outcome.ms ?? 0))),
+          })),
+        },
+        now,
+      );
+    } catch (error) {
+      this.options.log("recording a page's sends failed", {
+        event: event.id,
+        error: String(error),
+      });
+    }
   }
 
   /**
@@ -482,6 +571,7 @@ export class Pager {
   ): void {
     const { sql } = this.options.storage;
     if (this.done(event.id)) return;
+    this.reportDeliveries(event, outcomes, now);
     for (const outcome of outcomes) {
       if (outcome.ok) {
         sql.exec(

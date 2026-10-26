@@ -5,8 +5,8 @@
 // ledger, keyed by `event.id`, makes a redelivery page nobody twice. What the Queue gives up on lands in
 // `brigade-events-dlq`, whose consumer (`consumeDeadLetters`) records it on the incident's timeline.
 
-import { sealPush } from "@freecorps/brigade-push";
-import { formatIncidentNumber } from "@freecorps/brigade-schema";
+import { sealPush, type PushReceipt } from "@freecorps/brigade-push";
+import { formatIncidentNumber, type DeliveryError } from "@freecorps/brigade-schema";
 import { emailSender, type EmailEnv, type EmailSender } from "./email.ts";
 import { asksForEmail } from "./mailer.ts";
 import { emailRetryDelay, notifyEmail, type EmailNotifyEnv } from "./notify-email.ts";
@@ -226,11 +226,14 @@ export async function notifyPush(
   env: NotifyEnv,
   send: Fetch,
 ): Promise<boolean> {
+  // Most events page nobody (the delivery rows' own `notification.*` among them): no shard call for those.
+  if (!asksForPage(event)) return false;
   const workspace = env.WORKSPACE.getByName(event.workspaceId);
   const plan = await workspace.planPage(event);
   if (!plan.send) return false;
+  const receipts = receiptUrl(env.DASHBOARD_URL);
   const sent = await Promise.all(
-    plan.targets.map((target) => pushOne(event.workspaceId, plan, target, env, send)),
+    plan.targets.map((target) => pushOne(event.workspaceId, plan, target, env, send, receipts)),
   );
   const final = !sent.some((one) => one.retry) || attempts >= MAX_PAGE_ATTEMPTS;
   await workspace.recordPage(
@@ -240,6 +243,21 @@ export async function notifyPush(
     plan.skipped,
   );
   return !final;
+}
+
+/**
+ * Where phones post delivery receipts: the dashboard's origin (`DASHBOARD_URL`, which proxies `/api` to this Worker)
+ * plus `/api/receipts`. Undefined without an http(s) origin: pages then carry no receipt.
+ */
+export function receiptUrl(dashboard: string | undefined): string | undefined {
+  if (!dashboard) return undefined;
+  try {
+    const url = new URL(dashboard);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    return new URL("/api/receipts", url.origin).href;
+  } catch {
+    return undefined;
+  }
 }
 
 /** One device's outcome, and whether trying again may help. */
@@ -252,11 +270,14 @@ async function pushOne(
   target: PageTarget,
   env: NotifyEnv,
   send: Fetch,
+  receipts: string | undefined,
 ): Promise<Sent> {
   const { deviceId, userId } = target;
+  let ms: number | undefined;
   const failed = (
     reason: SendFailure,
-    more: { retry?: boolean; expired?: boolean } = {},
+    error: DeliveryError,
+    more: { retry?: boolean; expired?: boolean; apnsReason?: string } = {},
   ): Sent => ({
     outcome: {
       deviceId,
@@ -265,33 +286,46 @@ async function pushOne(
       reason,
       // The token this push went to, so a device registered again meanwhile is not dropped.
       ...(more.expired ? { expiredToken: target.pushToken } : {}),
+      error,
+      ...(more.apnsReason === undefined ? {} : { apnsReason: more.apnsReason }),
+      ...(ms === undefined ? {} : { ms }),
     },
     retry: more.retry ?? false,
   });
-  if (!env.RELAY_URL || !env.RELAY_SEND_TOKEN) return failed("not_configured");
+  if (!env.RELAY_URL || !env.RELAY_SEND_TOKEN) return failed("not_configured", "not_configured");
   // The relay speaks APNs only; Android needs FCM (RFC 0006).
-  if (target.platform !== "ios") return failed("unsupported");
+  if (target.platform !== "ios") return failed("unsupported", "unsupported");
 
   const { incident } = plan;
+  const content = {
+    // Codes, not words, so the title needs no locale; the body is the incident's own title.
+    title: [incident.severity.toUpperCase(), formatIncidentNumber(incident.number)]
+      .filter(Boolean)
+      .join(" · "),
+    body: incident.title,
+    incident: incident.id,
+    // For the notification's Acknowledge action (RFC 0004 "Clients").
+    workspace: workspaceId,
+  };
+  const receipt: PushReceipt | undefined =
+    receipts && target.receipt ? { url: receipts, token: target.receipt } : undefined;
   let envelope;
   try {
-    envelope = await sealPush(target.publicKey, {
-      // Codes, not words, so the title needs no locale; the body is the incident's own title.
-      title: [incident.severity.toUpperCase(), formatIncidentNumber(incident.number)]
-        .filter(Boolean)
-        .join(" · "),
-      body: incident.title,
-      incident: incident.id,
-      // For the notification's Acknowledge action (RFC 0004 "Clients").
-      workspace: workspaceId,
-    });
+    envelope = await sealPush(target.publicKey, receipt ? { ...content, receipt } : content);
   } catch (error) {
-    // A key `device.register` accepted but WebCrypto refuses (not on the curve): retrying cannot help.
-    log("sealing a push failed", { device: deviceId, error: String(error) });
-    return failed("undelivered");
+    try {
+      // The receipt must never cost the page: a title too long to fit both goes without it.
+      if (!receipt) throw error;
+      envelope = await sealPush(target.publicKey, content);
+    } catch (again) {
+      // A key `device.register` accepted but WebCrypto refuses (not on the curve): retrying cannot help.
+      log("sealing a push failed", { device: deviceId, error: String(again) });
+      return failed("undelivered", "seal_failed");
+    }
   }
 
   let response: Response;
+  const started = Date.now();
   try {
     response = await send(
       new Request(new URL("/send", env.RELAY_URL), {
@@ -312,13 +346,15 @@ async function pushOne(
       }),
     );
   } catch (error) {
+    ms = Date.now() - started;
     // The relay is down or slow: the paging path's first fallback is trying again.
     log("relay unreachable", { device: deviceId, error: String(error) });
-    return failed("undelivered", { retry: true });
+    return failed("undelivered", "relay_unreachable", { retry: true });
   }
+  ms = Date.now() - started;
   if (response.ok) {
     await response.body?.cancel();
-    return { outcome: { deviceId, userId, ok: true }, retry: false };
+    return { outcome: { deviceId, userId, ok: true, ms }, retry: false };
   }
   const answer = (await response.json().catch(() => ({}))) as {
     error?: string;
@@ -335,27 +371,38 @@ async function pushOne(
   });
   // APNs says the token is gone: drop the device, and retry the page while attempts remain, so the next plan sees
   // this member without that device (a commander's page then falls back to everyone who can respond).
+  // APNs' own reason, for the delivery row: letters only, as APNs sends them.
+  const apnsReason =
+    typeof answer.reason === "string" && /^[A-Za-z]{1,64}$/.test(answer.reason)
+      ? answer.reason
+      : undefined;
   if (
     answer.status === 410 ||
     answer.reason === "BadDeviceToken" ||
     answer.reason === "Unregistered" ||
     answer.reason === "DeviceTokenNotForTopic"
   ) {
-    return failed("undelivered", { expired: true, retry: true });
+    return failed("undelivered", "token_invalid", { expired: true, retry: true, apnsReason });
   }
   // A request the relay or APNs will refuse again (bad body, bad credentials, a wrong relay URL) is not retried, so
   // the failure reaches the timeline at once; the relay being unreachable, APNs throttling or failing, or anything
   // unknown is.
-  const permanent =
-    response.status === 400 ||
-    response.status === 401 ||
-    response.status === 403 ||
-    response.status === 404 ||
-    (answer.status !== undefined &&
-      answer.status >= 400 &&
-      answer.status < 500 &&
-      answer.status !== 429);
-  return failed("undelivered", permanent ? {} : { retry: true });
+  const apnsRefused =
+    answer.status !== undefined &&
+    answer.status >= 400 &&
+    answer.status < 500 &&
+    answer.status !== 429;
+  const permanent = [400, 401, 403, 404].includes(response.status) || apnsRefused;
+  // For the delivery row: who said no. APNs (with its status), the relay itself (its token, the body, its own
+  // configuration), APNs out of the relay's reach, or something in front of the relay.
+  const error: DeliveryError = apnsRefused
+    ? "apns_refused"
+    : answer.status !== undefined || answer.error === "apns_unreachable"
+      ? "apns_unavailable"
+      : permanent || answer.error === "relay_misconfigured"
+        ? "relay_refused"
+        : "relay_unreachable";
+  return failed("undelivered", error, { ...(permanent ? {} : { retry: true }), apnsReason });
 }
 
 /** An event off the queue: the envelope's fields the consumer relies on, checked. */

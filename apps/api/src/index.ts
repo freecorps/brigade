@@ -17,6 +17,7 @@ import {
 } from "./auth.ts";
 import type { MemberChangeResult } from "./members.ts";
 import { consumeDeadLetters, consumeEvents } from "./notify.ts";
+import { receiptWorkspace, type ReceiptResult } from "./receipts.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
 import {
   IDEMPOTENCY_KEY_HEADER,
@@ -87,6 +88,7 @@ export default {
     if (ack) return acknowledgeIncident(request, env, auth, ack[1]!, ack[2]!);
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
+    if (pathname === "/receipts") return receiveReceipt(request, env);
 
     if (pathname === "/health/paging") return pagingHealth(request, env, auth);
 
@@ -499,6 +501,64 @@ export async function receiveHeartbeat(
     return accepted ? json({ ok: true }, 202) : json({ error: "not_found" }, 404);
   } catch (error) {
     return failed("WorkspaceDO.heartbeat failed", parsed.workspaceId, error);
+  }
+}
+
+/** Largest `POST /receipts` body read, in bytes: a token and its JSON. */
+const MAX_RECEIPT_BODY = 1024;
+
+/** How each receipt result answers the phone: it only logs the status, and never retries a 4xx. */
+const RECEIPT_STATUS: Record<ReceiptResult, number> = {
+  recorded: 200,
+  already: 200,
+  invalid: 403,
+  expired: 410,
+  not_found: 404,
+  rate_limited: 429,
+};
+
+/**
+ * `POST /receipts` with `{ "token": "…" }`: the phone's Notification Service Extension says it opened a page (RFC
+ * 0006 "Delivery receipts"). No session: the token, sealed inside that page for that device alone, is the proof,
+ * and only the shard that minted it can check it. The Worker reads only the workspace the token names, checks that
+ * workspace exists (a made-up one costs a D1 read, no Durable Object; a D1 outage asks the shard anyway, as for a
+ * heartbeat) and hands the token over. Answers say only whether it was recorded, never whose page it was.
+ */
+export async function receiveReceipt(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return json({ error: "method_not_allowed" }, 405, { Allow: "POST" });
+  }
+  const length = Number(request.headers.get("Content-Length") ?? "0");
+  if (length > MAX_RECEIPT_BODY) return json({ error: "too_large" }, 413);
+  let token: unknown;
+  try {
+    const text = await request.text();
+    if (text.length > MAX_RECEIPT_BODY) return json({ error: "too_large" }, 413);
+    token = Reflect.get(Object(JSON.parse(text)), "token");
+  } catch {
+    return json({ error: "invalid_body" }, 400);
+  }
+  const workspace = receiptWorkspace(token);
+  if (workspace === undefined) return json({ error: "invalid" }, RECEIPT_STATUS.invalid);
+  try {
+    if (!(await workspaceExists(env.DB, workspace))) {
+      return json({ error: "invalid" }, RECEIPT_STATUS.invalid);
+    }
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        message: "workspace lookup failed; asking the shard",
+        workspace,
+        error: String(error),
+      }),
+    );
+  }
+  try {
+    const result = await env.WORKSPACE.getByName(workspace).receipt(token as string);
+    const status = RECEIPT_STATUS[result];
+    return status === 200 ? json({ ok: true }) : json({ error: result }, status);
+  } catch (error) {
+    return failed("WorkspaceDO.receipt failed", workspace, error);
   }
 }
 

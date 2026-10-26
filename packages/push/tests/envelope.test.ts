@@ -4,6 +4,7 @@ import {
   openPush,
   parseDevicePublicKey,
   parsePushEnvelope,
+  parseReceipt,
   PUSH_PLAINTEXT_MAX_BYTES,
   sealPush,
 } from "../src/envelope.ts";
@@ -32,6 +33,38 @@ describe("sealPush and openPush", () => {
     };
     const envelope = await sealPush(toBase64url(recipient.publicKey), content);
     expect(await openPush(recipient, envelope)).toEqual(content);
+  });
+
+  test("a page carries its delivery receipt, sealed", async () => {
+    const recipient = await generateRecipient();
+    const content = {
+      title: "SEV1",
+      body: "Checkout down",
+      incident: "inc_01JB8Z0000000000000000000",
+      receipt: { url: "https://brigade.example/api/receipts", token: "v1.abc-DEF_123" },
+    };
+    const envelope = await sealPush(toBase64url(recipient.publicKey), content);
+    expect(JSON.stringify(envelope)).not.toContain("v1.abc");
+    expect(await openPush(recipient, envelope)).toEqual(content);
+  });
+
+  test("a receipt the extension would not send is no receipt, and the page still opens", async () => {
+    const ok = { url: "https://brigade.example/api/receipts", token: "v1.abc" };
+    expect(parseReceipt(ok)).toEqual(ok);
+    expect(parseReceipt({ ...ok, url: "http://localhost:5173/api/receipts" })).toBeDefined();
+    for (const bad of [
+      { ...ok, url: "http://brigade.example/api/receipts" },
+      { ...ok, url: "ftp://brigade.example/receipts" },
+      { ...ok, url: "https://user:pass@brigade.example/receipts" },
+      { ...ok, url: "not a url" },
+      { ...ok, token: "has space" },
+      { ...ok, token: "x".repeat(513) },
+      { url: ok.url },
+      "https://brigade.example",
+      null,
+    ]) {
+      expect(parseReceipt(bad)).toBeUndefined();
+    }
   });
 
   test("another device cannot open it", async () => {

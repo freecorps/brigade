@@ -15,7 +15,21 @@ export interface PushContent {
    * "Clients"). The app offers the action only on a page that carries both.
    */
   workspace?: string;
+  /**
+   * Where the extension reports that it opened this page, and the token that proves it (RFC 0006 "Delivery
+   * receipts"). Sealed, so only this device ever sees the token.
+   */
+  receipt?: PushReceipt;
 }
+
+/** A delivery receipt's address (`https://…/receipts`) and its single-page token. */
+export interface PushReceipt {
+  url: string;
+  token: string;
+}
+
+/** Longest receipt URL and token the extension accepts; a longer one is never sealed. */
+export const PUSH_RECEIPT_MAX_LENGTH = 512;
 
 /** The encrypted push as it travels: HPKE's encapsulated key and ciphertext, base64url. */
 export interface PushEnvelope {
@@ -43,9 +57,17 @@ export async function sealPush(
   devicePublicKey: string,
   content: PushContent,
 ): Promise<PushEnvelope> {
-  const { title, body, incident, workspace } = content;
+  const { title, body, incident, workspace, receipt } = content;
   // Only the fields set, in a fixed order.
-  const plaintext = encoder.encode(JSON.stringify({ title, body, incident, workspace }));
+  const plaintext = encoder.encode(
+    JSON.stringify({
+      title,
+      body,
+      incident,
+      workspace,
+      receipt: receipt && { url: receipt.url, token: receipt.token },
+    }),
+  );
   if (plaintext.length > PUSH_PLAINTEXT_MAX_BYTES) {
     throw new Error(`push content is ${plaintext.length} bytes, over ${PUSH_PLAINTEXT_MAX_BYTES}`);
   }
@@ -71,12 +93,39 @@ export async function openPush(
     (value.incident !== undefined && typeof value.incident !== "string") ||
     (value.workspace !== undefined && typeof value.workspace !== "string")
   ) {
-    throw new Error("push content is not { title, body, incident?, workspace? }");
+    throw new Error("push content is not { title, body, incident?, workspace?, receipt? }");
   }
   const content: PushContent = { title: value.title, body: value.body };
   if (typeof value.incident === "string") content.incident = value.incident;
   if (typeof value.workspace === "string") content.workspace = value.workspace;
+  const receipt = parseReceipt(value.receipt);
+  if (receipt) content.receipt = receipt;
   return content;
+}
+
+/**
+ * A sealed receipt as the extension takes it: an https URL (http only for a loopback development server) and a
+ * token, each at most `PUSH_RECEIPT_MAX_LENGTH`. Anything else is no receipt: the page still shows.
+ */
+export function parseReceipt(value: unknown): PushReceipt | undefined {
+  if (!isRecord(value) || typeof value.url !== "string" || typeof value.token !== "string") {
+    return undefined;
+  }
+  const { url, token } = value;
+  if (url.length > PUSH_RECEIPT_MAX_LENGTH || token.length > PUSH_RECEIPT_MAX_LENGTH) {
+    return undefined;
+  }
+  if (!/^[A-Za-z0-9._~-]+$/.test(token)) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return undefined;
+  }
+  const loopback = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) return undefined;
+  if (parsed.username || parsed.password) return undefined;
+  return { url, token };
 }
 
 /** Accepts an envelope from untrusted JSON (a relay request), or returns null. */

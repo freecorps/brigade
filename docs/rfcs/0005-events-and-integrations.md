@@ -39,7 +39,8 @@ On-call schedules (RFC 0003 "Schedules") emit `schedule.created` (`id`, `name`, 
 rotations), `schedule.deleted` (`id`, `overrides` deleted with it), `schedule.override_added` (`id`, `scheduleId`,
 `userId`, `start`, `end`) and `schedule.override_removed` (`id`, `scheduleId`, `userId`, `reason`: `removed`,
 `member_removed` or `expired`). A member removal or a change to viewer carries the schedule events with
-`member.removed` or `member.role_changed`, in the same transaction.
+`member.removed` or `member.role_changed`, in the same transaction; a viewer role copied from D1 by `member.sync`
+carries them alone (no `member.*` event: that change happened outside Brigade).
 
 Users, sessions and membership live in D1, written by Better Auth (RFC 0002), not by a shard. A change there that
 integrations care about is announced by the workspace shard: creating a workspace runs `workspace.create` in its
@@ -53,7 +54,8 @@ each of the member's devices. `member.added` waits for invitations; until then t
 `workspace.created` (`createdBy`). The API still refuses Better Auth's routes that would change a workspace or its
 members without an event (update, delete, member roles, removing or adding members, invitations, teams, leaving);
 see RFC 0002 "Auth". The shard's own copy of a member (`members`, written by `member.sync` when they open a socket)
-is a cache of D1, and `member.sync` emits nothing.
+is a cache of D1, and `member.sync` emits nothing of its own; when it copies a viewer role it emits the schedule
+events of taking that member out of the rotations (above).
 
 Devices and paging emit `device.registered` (`id`, `userId`, `platform`, `environment`, `voip`: never the tokens or
 the key), `device.unregistered` (`reason`: `unregistered` by the member, `token_invalid` when APNs said the token is

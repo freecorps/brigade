@@ -183,7 +183,7 @@ escalation policies exist).
   rotations; viewers read. Members of a layer and of an override must be in the shard's member list and not
   viewers (viewers only read, so they never hold a shift).
 - **Members leaving.** `member.remove` (removed, left or reconciled) and a change to `viewer` (`member.changeRole`,
-  `member.reconcile`) take the member out of every layer and delete their overrides in the same transaction
+  `member.reconcile`, or `member.sync` copying a viewer role D1 got outside Brigade) take the member out of every layer and delete their overrides in the same transaction
   (`schedule.updated` with `reason: member_removed`, `schedule.override_removed` with `member_removed`). The rest
   of each layer keeps its order and the rotation counts again from its start, so later shifts move up (as PagerDuty
   does); the alternative, leaving their shifts as holes, keeps everyone else's dates but leaves time nobody covers,

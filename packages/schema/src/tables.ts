@@ -219,7 +219,7 @@ export type ScheduleRow = {
 
 /** Someone covers a schedule over `[start, end)`, over every layer (RFC 0003 "Schedules"). */
 export type OverrideRow = {
-  id: string; // ovr_<ULID>, made by the client; of overlapping overrides the highest id wins
+  id: string; // ovr_<ULID>, made by the client; of overlapping overrides the latest `createdAt` wins, the id breaks a tie
   scheduleId: string;
   userId: string;
   start: number;

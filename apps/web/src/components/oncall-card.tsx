@@ -924,6 +924,12 @@ function ScheduleForm({
           role="alertdialog"
           aria-label={m.oncall_action({ action: "delete_schedule" })}
           className="flex flex-col gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
+          onKeyDown={(event) => {
+            // Escape backs out of deleting only; the form's own Escape would close the editor, edits and all.
+            if (event.key !== "Escape") return;
+            event.stopPropagation();
+            setConfirming(false);
+          }}
         >
           <p className="font-medium [overflow-wrap:anywhere]">
             {m.oncall_delete_confirm({ name: editing.name })}

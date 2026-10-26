@@ -32,12 +32,18 @@ function pagingProblem(paging: Paging): boolean {
 
 /**
  * At the top of the incident list when this phone does not page the member and they should know: notifications
- * off (with a way to Settings), the phone still another member's, or registering failed.
+ * off (with a way to Settings), the phone still another member's, or registering failed. The app keeps trying the
+ * last two on its own (src/lib/paging.ts); Try again does it now.
  */
 export function PagingNotice() {
-  const { paging } = useMember();
+  const { paging, retryPaging } = useMember();
   const colors = useTheme();
+  const [retrying, setRetrying] = useState(false);
   if (!pagingProblem(paging)) return null;
+  const retry = () => {
+    setRetrying(true);
+    void retryPaging().finally(() => setRetrying(false));
+  };
   return (
     <View
       accessibilityLiveRegion="polite"
@@ -69,7 +75,27 @@ export function PagingNotice() {
             {m.mobile_session({ part: "open_settings" })}
           </ThemedText>
         </Pressable>
-      ) : null}
+      ) : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ busy: retrying, disabled: retrying }}
+          disabled={retrying}
+          onPress={retry}
+          style={({ pressed }) => ({
+            minHeight: spacing[12],
+            flexDirection: "row",
+            alignItems: "center",
+            gap: spacing[2],
+            alignSelf: "flex-start",
+            opacity: pressed ? 0.6 : 1,
+          })}
+        >
+          {retrying ? <ActivityIndicator color={colors.primary} /> : null}
+          <ThemedText style={{ color: colors.primary }}>
+            {m.mobile_session({ part: "try_again" })}
+          </ThemedText>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -87,12 +113,15 @@ export function Account() {
       : undefined;
 
   // Signing out stops this phone's pages, so it asks first, with the consequence in the question; a phone that
-  // is not paging them only loses the incidents.
+  // is not paging them only loses the incidents. Still setting up counts as paging: it may be registered already.
   const confirm = () =>
     Alert.alert(
       m.mobile_session({ part: "sign_out_title" }),
       m.mobile_session({
-        part: member.paging === "on" ? "sign_out_body" : "sign_out_body_unpaged",
+        part:
+          member.paging === "on" || member.paging === "pending"
+            ? "sign_out_body"
+            : "sign_out_body_unpaged",
       }),
       [
         { text: m.mobile_session({ part: "cancel" }), style: "cancel" },
@@ -104,11 +133,17 @@ export function Account() {
             void member
               .signOut()
               .then((result) => {
-                // Offline: the shard still pages this phone for them until the app finishes it online.
+                // Offline: the shard still pages this phone for them until the app finishes it online, or, with
+                // nothing kept to finish it with, until they sign in and out again.
                 if (result === "kept") {
                   Alert.alert(
                     m.mobile_session({ part: "sign_out_kept_title" }),
                     m.mobile_session({ part: "sign_out_kept_body" }),
+                  );
+                } else if (result === "stuck") {
+                  Alert.alert(
+                    m.mobile_session({ part: "sign_out_stuck_title" }),
+                    m.mobile_session({ part: "sign_out_stuck_body" }),
                   );
                 }
               })

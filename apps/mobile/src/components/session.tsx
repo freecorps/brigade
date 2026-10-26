@@ -2,6 +2,7 @@ import type { Role } from "@freecorps/brigade-schema";
 import { SyncProvider } from "@freecorps/brigade-sync/react";
 import { useNetworkState } from "expo-network";
 import * as SecureStore from "expo-secure-store";
+import { AppState } from "react-native";
 import {
   createContext,
   use,
@@ -14,8 +15,9 @@ import {
 } from "react";
 import { authClient, forgetSession, server } from "@/lib/auth-client";
 import { registerPhone, unregisterPhone, type Paging } from "@/lib/device";
-import { finishDeps, phoneDeps, saveLeftover } from "@/lib/phone";
-import { finishSignOut, signOutPhone } from "@/lib/sign-out";
+import { pagingCycle } from "@/lib/paging";
+import { finishDeps, keptSignOuts, phoneDeps } from "@/lib/phone";
+import { finishSignOut, signOutPhone, type FinishResult } from "@/lib/sign-out";
 import { knownWorkspace, memberActor, WORKSPACE_KEY, type Server } from "@/lib/sync";
 import { createWorkspaceSync, setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
 
@@ -29,8 +31,13 @@ export type Member = {
   role: Role;
   /** Whether this phone gets pages (registered on sign-in). */
   paging: Paging;
-  /** `kept`: the shard could not be told, so the phone may page them until it is next online. */
-  signOut: () => Promise<"released" | "kept">;
+  /** Finishes a kept sign-out and registers again now, instead of at the next try; resolves when done. */
+  retryPaging: () => Promise<void>;
+  /**
+   * `kept`: the shard could not be told, so the phone may page them until it is next online. `stuck`: nor could
+   * their session be kept to tell it later.
+   */
+  signOut: () => Promise<"released" | "kept" | "stuck">;
 };
 
 /** What the app shows before a member is ready: the sign-in screen draws all of these. */
@@ -57,7 +64,7 @@ export function useMember(): Member {
 }
 
 /** False only when the phone knows it has no connection; unknown counts as online, so nothing waits on it. */
-function useOnline(): boolean {
+export function useOnline(): boolean {
   const network = useNetworkState();
   return (network.isInternetReachable ?? network.isConnected) !== false;
 }
@@ -71,10 +78,10 @@ function useLatest<T>(value: T): { readonly current: T } {
   return ref;
 }
 
-let finishing: Promise<"none" | "finished" | "pending"> | null = null;
+let finishing: Promise<FinishResult> | null = null;
 
-/** One try at finishing a sign-out kept from offline (src/lib/sign-out.ts), shared by everyone who asks meanwhile. */
-function finishLeftover(target: Server): Promise<"none" | "finished" | "pending"> {
+/** One try at finishing the sign-outs kept from offline (src/lib/sign-out.ts), shared by everyone who asks meanwhile. */
+function finishLeftover(target: Server): Promise<FinishResult> {
   finishing ??= finishSignOut(finishDeps(target))
     .catch(() => "pending" as const)
     .finally(() => {
@@ -84,23 +91,61 @@ function finishLeftover(target: Server): Promise<"none" | "finished" | "pending"
 }
 
 /**
+ * Finishing kept sign-outs, then registering the phone with `register` (src/lib/paging.ts), while `enabled`: again on
+ * a backoff while something is left undone, and right away when the phone is back online or the app comes back to
+ * the foreground. A new `register` starts over.
+ */
+function usePaging(
+  enabled: boolean,
+  online: boolean,
+  register: (() => Promise<Paging>) | null,
+): { paging: Paging; retry: () => Promise<void> } {
+  const [paging, setPaging] = useState<Paging>("pending");
+  const cycle = useRef<ReturnType<typeof pagingCycle> | null>(null);
+  useEffect(() => {
+    const target = server;
+    if (!enabled || !target) return;
+    setPaging("pending");
+    const made = pagingCycle({
+      finish: () => finishLeftover(target),
+      register,
+      onPaging: setPaging,
+      setTimer: (run, ms) => {
+        const timer = setTimeout(run, ms);
+        return () => clearTimeout(timer);
+      },
+    });
+    cycle.current = made;
+    const foreground = AppState.addEventListener("change", (state) => {
+      if (state === "active") void made.retry();
+    });
+    return () => {
+      foreground.remove();
+      made.stop();
+      if (cycle.current === made) cycle.current = null;
+    };
+  }, [enabled, register]);
+  // Back online: no waiting out the backoff. The first run is the cycle's own.
+  const wasOnline = useRef(online);
+  useEffect(() => {
+    const back = online && !wasOnline.current;
+    wasOnline.current = online;
+    if (back) void cycle.current?.retry();
+  }, [online]);
+  const retry = useCallback(() => cycle.current?.retry() ?? Promise.resolve(), []);
+  return { paging, retry };
+}
+
+/**
  * Who is signed in, from Better Auth's session (kept in secure storage, so the app opens signed in offline). With a
  * session and an active workspace it opens the workspace's shard as the member and registers the phone for pages;
- * `children` gets whether a member is ready, for the signed-in screens' guard. At launch and whenever the phone is
- * back online it finishes a sign-out that could not reach the shard, so a phone signed out offline stops paging the
- * person who left before the next one registers it.
+ * `children` gets whether a member is ready, for the signed-in screens' guard. At launch, whenever the phone is
+ * back online and until it is done, it finishes a sign-out that could not reach the shard, so a phone signed out
+ * offline stops paging the person who left before the next one registers it.
  */
 export function Session({ children }: { children: (ready: boolean) => ReactNode }) {
   const session = authClient.useSession();
   const online = useOnline();
-  // Bumped when a kept sign-out is finished: the phone is free, so it registers again for whoever is signed in.
-  const [released, setReleased] = useState(0);
-  useEffect(() => {
-    if (!server || !online) return;
-    void finishLeftover(server).then((result) => {
-      if (result === "finished") setReleased((n) => n + 1);
-    });
-  }, [online]);
   // Better Auth does not ask again by itself: a session it could not read is read again on reconnect.
   const refetch = useLatest(session.refetch);
   const failed = Boolean(session.error);
@@ -110,6 +155,8 @@ export function Session({ children }: { children: (ready: boolean) => ReactNode 
 
   const data = session.data;
   const workspaceId = data?.session.activeOrganizationId;
+  // With nobody in a workspace to register for, kept sign-outs are still finished; ActiveWorkspace does both.
+  usePaging(!(data && workspaceId), online, null);
   let view: SessionView;
   if (!server) view = { kind: "no-server" };
   else if (data && workspaceId) {
@@ -121,7 +168,6 @@ export function Session({ children }: { children: (ready: boolean) => ReactNode 
         workspaceId={workspaceId}
         sessionToken={data.session.token}
         online={online}
-        released={released}
       >
         {children}
       </ActiveWorkspace>
@@ -160,7 +206,6 @@ function ActiveWorkspace({
   workspaceId,
   sessionToken,
   online,
-  released,
   children,
 }: {
   userId: string;
@@ -169,7 +214,6 @@ function ActiveWorkspace({
   workspaceId: string;
   sessionToken: string;
   online: boolean;
-  released: number;
   children: (ready: boolean) => ReactNode;
 }) {
   const workspace = authClient.useActiveOrganization();
@@ -253,22 +297,9 @@ function ActiveWorkspace({
     };
   }, [userId, workspaceId]);
 
-  const [paging, setPaging] = useState<Paging>("pending");
-  useEffect(() => {
-    const target = server;
-    if (!sync || !target) return;
-    let live = true;
-    setPaging("pending");
-    // Someone who signed out offline first: their device has to come off the shard before this one can take it.
-    void finishLeftover(target)
-      .then(() => registerPhone(phoneDeps(sync)))
-      .then((result) => {
-        if (live) setPaging(result);
-      });
-    return () => {
-      live = false;
-    };
-  }, [sync, released]);
+  // Someone who signed out offline first: their device has to come off the shard before this one can take it.
+  const register = useMemo(() => (sync ? () => registerPhone(phoneDeps(sync)) : null), [sync]);
+  const { paging, retry: retryPaging } = usePaging(register !== null, online, register);
 
   const leave = useCallback(async () => {
     const result = await signOutPhone(
@@ -279,7 +310,9 @@ function ActiveWorkspace({
         unregister: sync ? () => unregisterPhone(phoneDeps(sync)) : null,
         signOut: signOutHere,
         forget: () => forgetSession(authClient),
-        save: saveLeftover,
+        add: keptSignOuts.add,
+        origin: server?.auth ?? "",
+        now: Date.now,
       },
     );
     await SecureStore.deleteItemAsync(WORKSPACE_KEY).catch(() => {});
@@ -299,6 +332,7 @@ function ActiveWorkspace({
           workspaceName: workspaceName!,
           role: actor.role,
           paging,
+          retryPaging,
           signOut: leave,
         },
       };
@@ -326,6 +360,7 @@ function ActiveWorkspace({
     member,
     actor.role,
     paging,
+    retryPaging,
     leave,
   ]);
 

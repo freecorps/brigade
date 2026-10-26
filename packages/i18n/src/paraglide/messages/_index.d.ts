@@ -252,6 +252,7 @@ export * from './theme_light.js';
 export * from './theme_system.js';
 export * from './time_just_now.js';
 export * from './timeline_entry.js';
+export * from './timeline_pages_failed.js';
 export * from './workspace_create_description.js';
 export * from './workspace_create_submit.js';
 export * from './workspace_create_title.js';

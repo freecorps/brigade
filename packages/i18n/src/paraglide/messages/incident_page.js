@@ -35,6 +35,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "unnamed" | "Unnamed member" |
 * | "show_more" | "Show more" |
 * | "show_less" | "Show less" |
+* | "show_names" | "Show names" |
+* | "hide_names" | "Hide names" |
 * | * | "Incident" |
 *
 * @param {Incident_PageInputs} inputs
@@ -69,6 +71,8 @@ export const incident_page = /** @type {((inputs: Incident_PageInputs, options?:
 		if (i?.part === "unnamed") return /** @type {LocalizedString} */ (`Membro sem nome`);
 		if (i?.part === "show_more") return /** @type {LocalizedString} */ (`Mostrar mais`);
 		if (i?.part === "show_less") return /** @type {LocalizedString} */ (`Mostrar menos`);
+		if (i?.part === "show_names") return /** @type {LocalizedString} */ (`Mostrar nomes`);
+		if (i?.part === "hide_names") return /** @type {LocalizedString} */ (`Ocultar nomes`);
 		return /** @type {LocalizedString} */ (`Incidente`)
 	}
 	{
@@ -97,6 +101,8 @@ export const incident_page = /** @type {((inputs: Incident_PageInputs, options?:
 		if (i?.part === "unnamed") return /** @type {LocalizedString} */ (`Unnamed member`);
 		if (i?.part === "show_more") return /** @type {LocalizedString} */ (`Show more`);
 		if (i?.part === "show_less") return /** @type {LocalizedString} */ (`Show less`);
+		if (i?.part === "show_names") return /** @type {LocalizedString} */ (`Show names`);
+		if (i?.part === "hide_names") return /** @type {LocalizedString} */ (`Hide names`);
 		return /** @type {LocalizedString} */ (`Incident`)
 	}
 });

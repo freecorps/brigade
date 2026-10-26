@@ -10,6 +10,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Platform, Pressable, StyleSheet, View } from "react-native";
 import { Badge, useGlyphSize } from "@/components/badge";
 import { SEV1_GLYPH, STATUS_GLYPHS, type Glyph } from "@/components/glyphs";
+import { useOnline } from "@/components/session";
 import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
 
@@ -103,7 +104,19 @@ export function Notice({ children, onDismiss }: { children: string; onDismiss: (
       <ThemedText selectable style={{ flex: 1, color: colors.destructive }}>
         {children}
       </ThemedText>
-      <Pressable accessibilityRole="button" onPress={onDismiss} hitSlop={spacing[3]}>
+      {/* 48 dp tall and wide, centred on the first line of the message. */}
+      <Pressable
+        accessibilityRole="button"
+        onPress={onDismiss}
+        style={({ pressed }) => ({
+          minHeight: spacing[12],
+          minWidth: spacing[12],
+          marginVertical: -spacing[3],
+          alignItems: "center",
+          justifyContent: "center",
+          opacity: pressed ? 0.6 : 1,
+        })}
+      >
         <ThemedText style={{ color: colors.primary }}>{m.dismiss()}</ThemedText>
       </Pressable>
     </View>
@@ -133,11 +146,20 @@ const CONNECTION: Record<
   },
 };
 
+/** Not live because the phone itself has no network: said as that, not as Brigade being unavailable. */
+const OFFLINE = {
+  text: () => m.mobile_session({ part: "offline" }),
+  glyph: { ios: "wifi.slash", android: "wifi_off", web: "wifi_off" } satisfies Glyph,
+  tone: "muted" as const,
+};
+
 /** Calm by design: a word and a small glyph, never a banner, since a reconnect usually fixes itself. */
 export function ConnectionStatus({ view }: { view: SyncView }) {
   const colors = useTheme();
   const glyphSize = useGlyphSize(fontSize.sm.size);
-  const { text, glyph, tone } = CONNECTION[view];
+  const online = useOnline();
+  const { text, glyph, tone } =
+    online || view === "live" || view === "refused" ? CONNECTION[view] : OFFLINE;
   const color =
     tone === "ok" ? colors.primary : tone === "bad" ? colors.destructive : colors.mutedForeground;
   return (
@@ -166,19 +188,28 @@ export function ConnectionStatus({ view }: { view: SyncView }) {
   );
 }
 
-/** Below the list: why it is stale or missing, and what happens next. */
+/** Below the list or above the incident: why it is stale or missing, and what happens next. */
 export function StatePanel({
   view,
   errorCode,
   onReload,
+  subject = "list",
 }: {
   view: SyncView;
   errorCode: string | undefined;
   onReload: () => void;
+  /** What is on screen: the incident list, or one incident. */
+  subject?: "list" | "incident";
 }) {
   const colors = useTheme();
   if (view === "reconnecting") {
-    return <ThemedText variant="caption">{m.sync_reconnecting_hint()}</ThemedText>;
+    return (
+      <ThemedText variant="caption">
+        {subject === "incident"
+          ? m.mobile_session({ part: "incident_stale_hint" })
+          : m.sync_reconnecting_hint()}
+      </ThemedText>
+    );
   }
   if (view !== "unavailable" && view !== "refused") return null;
   return (

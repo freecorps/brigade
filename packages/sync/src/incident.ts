@@ -12,7 +12,9 @@ import {
   type IncidentRow,
   type IncidentStatus,
   type MemberRow,
+  type PageFailure,
   type Severity,
+  type TimelineRow,
 } from "@freecorps/brigade-schema";
 
 /** The statuses `from` may move to, in lifecycle order (never `from` itself). */
@@ -129,4 +131,56 @@ export function bodyParts(body: string): BodyPart[] {
   }
   if (last < body.length) parts.push({ text: body.slice(last) });
   return parts;
+}
+
+type PageFailed = Extract<TimelineRow, { kind: "page_failed" }> & { userId: string };
+
+/**
+ * A timeline line: one entry, or the pages one notifier run could not send for the same reason (consecutive
+ * `page_failed` entries for members, at the same time), so a SEV1 that reached nobody in a large workspace is one
+ * line, not one per member above the first update.
+ */
+export type TimelineItem =
+  | { kind: "entry"; entry: TimelineRow }
+  | {
+      kind: "pages_failed";
+      key: string;
+      at: number;
+      reason: PageFailure;
+      entries: [PageFailed, ...PageFailed[]];
+    };
+
+const forMember = (entry: TimelineRow): entry is PageFailed =>
+  entry.kind === "page_failed" && entry.userId !== null && entry.reason !== "dead_lettered";
+
+/** `entries` in the order given, with runs of two or more of the same page failure grouped. */
+export function timelineItems(entries: readonly TimelineRow[]): TimelineItem[] {
+  const items: TimelineItem[] = [];
+  let run: PageFailed[] = [];
+  const flush = () => {
+    const [first, ...rest] = run;
+    if (first && rest.length === 0) items.push({ kind: "entry", entry: first });
+    else if (first) {
+      items.push({
+        kind: "pages_failed",
+        key: first.id,
+        at: first.at,
+        reason: first.reason,
+        entries: [first, ...rest],
+      });
+    }
+    run = [];
+  };
+  for (const entry of entries) {
+    const first = run[0];
+    if (forMember(entry) && (!first || (first.at === entry.at && first.reason === entry.reason))) {
+      run.push(entry);
+      continue;
+    }
+    flush();
+    if (forMember(entry)) run.push(entry);
+    else items.push({ kind: "entry", entry });
+  }
+  flush();
+  return items;
 }

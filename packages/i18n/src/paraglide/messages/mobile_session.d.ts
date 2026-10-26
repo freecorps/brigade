@@ -20,7 +20,7 @@ export type Mobile_SessionInputs = {
 * | "pages_on" | "On" |
 * | "pages_off" | "Notifications are off. Turn them on in Settings to be paged here." |
 * | "pages_unsupported" | "Not on this phone yet" |
-* | "pages_failed" | "Couldn't register this phone. Brigade tries again the next time it opens." |
+* | "pages_failed" | "Couldn't register this phone. Brigade keeps trying." |
 * | "pages_taken" | "This phone still pages the person signed in on it before you, who signed out without a connection. Brigade frees it for you once it can finish their sign-out." |
 * | "open_hint" | "Opens the incident" |
 * | "assign_hint" | "Opens the members who can hold it" |
@@ -29,8 +29,13 @@ export type Mobile_SessionInputs = {
 * | "sign_out_body_unpaged" | "You'll need to sign in again to see incidents here." |
 * | "sign_out_kept_title" | "This phone may still get pages for you" |
 * | "sign_out_kept_body" | "Brigade couldn't reach the server, so this phone keeps getting your pages until it's back online. Brigade finishes signing you out then, on its own." |
+* | "sign_out_stuck_title" | "This phone may keep getting your pages" |
+* | "sign_out_stuck_body" | "Brigade couldn't reach the server, nor keep your session to finish signing you out later, so it can't free this phone on its own. To stop the pages, sign in ..." |
+* | "try_again" | "Try again" |
+* | "offline" | "Offline" |
+* | "incident_stale_hint" | "Showing this incident as last received. Changes you make are sent once the connection is back, as long as Brigade stays open." |
 * | "update_sending" | "Sending…" |
-* | "update_waiting" | "Waiting for a connection" |
+* | "update_waiting" | "Not sent yet. Keep Brigade open until it's back online." |
 * | "show_password" | "Show password" |
 * | "hide_password" | "Hide password" |
 * | * | "Brigade" |

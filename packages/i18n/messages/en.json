@@ -195,7 +195,7 @@
         "part=pages_on": "On",
         "part=pages_off": "Notifications are off. Turn them on in Settings to be paged here.",
         "part=pages_unsupported": "Not on this phone yet",
-        "part=pages_failed": "Couldn't register this phone. Brigade tries again the next time it opens.",
+        "part=pages_failed": "Couldn't register this phone. Brigade keeps trying.",
         "part=pages_taken": "This phone still pages the person signed in on it before you, who signed out without a connection. Brigade frees it for you once it can finish their sign-out.",
         "part=open_hint": "Opens the incident",
         "part=assign_hint": "Opens the members who can hold it",
@@ -204,8 +204,13 @@
         "part=sign_out_body_unpaged": "You'll need to sign in again to see incidents here.",
         "part=sign_out_kept_title": "This phone may still get pages for you",
         "part=sign_out_kept_body": "Brigade couldn't reach the server, so this phone keeps getting your pages until it's back online. Brigade finishes signing you out then, on its own.",
+        "part=sign_out_stuck_title": "This phone may keep getting your pages",
+        "part=sign_out_stuck_body": "Brigade couldn't reach the server, nor keep your session to finish signing you out later, so it can't free this phone on its own. To stop the pages, sign in here again with a connection and sign out.",
+        "part=try_again": "Try again",
+        "part=offline": "Offline",
+        "part=incident_stale_hint": "Showing this incident as last received. Changes you make are sent once the connection is back, as long as Brigade stays open.",
         "part=update_sending": "Sending…",
-        "part=update_waiting": "Waiting for a connection",
+        "part=update_waiting": "Not sent yet. Keep Brigade open until it's back online.",
         "part=show_password": "Show password",
         "part=hide_password": "Hide password",
         "part=*": "Brigade"
@@ -513,6 +518,8 @@
         "part=unnamed": "Unnamed member",
         "part=show_more": "Show more",
         "part=show_less": "Show less",
+        "part=show_names": "Show names",
+        "part=hide_names": "Hide names",
         "part=*": "Incident"
       }
     }
@@ -573,6 +580,31 @@
         "kind=page_nobody": "Nobody was paged: no one who can respond has Brigade on their phone",
         "kind=page_dead_lettered": "A page may not have gone out: Brigade kept failing to send it",
         "kind=*": "{actor} changed the incident"
+      }
+    }
+  ],
+  "timeline_pages_failed": [
+    {
+      "declarations": [
+        "input reason",
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["reason", "countPlural"],
+      "match": {
+        "reason=no_devices, countPlural=one": "Couldn't page {countFormatted} person: no registered device",
+        "reason=no_devices, countPlural=*": "Couldn't page {countFormatted} people: no registered device",
+        "reason=undelivered, countPlural=one": "Couldn't page {countFormatted} person: the push didn't go through",
+        "reason=undelivered, countPlural=*": "Couldn't page {countFormatted} people: the push didn't go through",
+        "reason=unsupported, countPlural=one": "Couldn't page {countFormatted} person: Brigade can't push to Android phones yet",
+        "reason=unsupported, countPlural=*": "Couldn't page {countFormatted} people: Brigade can't push to Android phones yet",
+        "reason=not_configured, countPlural=one": "Couldn't page {countFormatted} person: push notifications aren't set up on this server",
+        "reason=not_configured, countPlural=*": "Couldn't page {countFormatted} people: push notifications aren't set up on this server",
+        "reason=over_limit, countPlural=one": "Couldn't page {countFormatted} person: this page went to too many phones",
+        "reason=over_limit, countPlural=*": "Couldn't page {countFormatted} people: this page went to too many phones",
+        "reason=*, countPlural=one": "Couldn't page {countFormatted} person",
+        "reason=*, countPlural=*": "Couldn't page {countFormatted} people"
       }
     }
   ],

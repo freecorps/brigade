@@ -9,6 +9,7 @@ import {
   memberName,
   newId,
   roles,
+  SESSION_LIFETIME_S,
   statement,
   workspaceName,
   type RandomBytes,
@@ -147,6 +148,8 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
     // The dashboard is same-origin (Better Auth trusts its own base URL); the mobile app is `APP_ORIGIN`.
     trustedOrigins: [APP_ORIGIN],
     hooks: { before: checkName },
+    // Stated, not left to the default: the mobile app keeps a session from an offline sign-out this long at most.
+    session: { expiresIn: SESSION_LIFETIME_S },
     // Off by default on Workers (Better Auth enables it only when NODE_ENV is "production"). The in-memory store
     // would count per isolate, so the counts live in D1.
     rateLimit: {

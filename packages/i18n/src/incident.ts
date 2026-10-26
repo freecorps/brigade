@@ -8,6 +8,7 @@ import {
   type IncidentRole,
   type IncidentStatus,
   type MemberRow,
+  type PageFailure,
   type Severity,
   type TimelineRow,
 } from "@freecorps/brigade-schema";
@@ -101,6 +102,30 @@ export function entryText(entry: TimelineRow, who: People): string {
       if (entry.userId === null) return say("page_nobody");
       return say(`page_failed_${entry.reason}`, personName(entry.userId, who, "object"));
   }
+}
+
+/** Pages that failed together, as `timelineItems` groups them (only what the wording needs). */
+type PagesFailed = {
+  kind: "pages_failed";
+  reason: PageFailure;
+  entries: readonly { userId: string }[];
+};
+
+/**
+ * A timeline line from `timelineItems` (`@freecorps/brigade-sync`): an entry's sentence, or for pages that failed
+ * together, "Couldn't page 21 people: no registered device" (who they were is `pagesFailedNames`).
+ */
+export function itemText(
+  item: { kind: "entry"; entry: TimelineRow } | PagesFailed,
+  who: People,
+): string {
+  if (item.kind === "entry") return entryText(item.entry, who);
+  return m.timeline_pages_failed({ reason: item.reason, count: item.entries.length });
+}
+
+/** Who a group of failed pages was for, in the timeline's order. */
+export function pagesFailedNames(item: PagesFailed, who: People): string[] {
+  return item.entries.map((entry) => personName(entry.userId, who));
 }
 
 /**

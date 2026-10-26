@@ -29,6 +29,8 @@ export function Badge({
   label: string;
 }) {
   const glyph = useGlyphSize(fontSize.sm.size);
+  // The gap grows with the text, as the glyph does.
+  const gap = useGlyphSize(spacing[1]);
   return (
     <View
       accessible
@@ -36,7 +38,7 @@ export function Badge({
       style={{
         flexDirection: "row",
         alignItems: "center",
-        gap: spacing[1],
+        gap,
         paddingHorizontal: spacing[2],
         paddingVertical: spacing[1],
         borderRadius: radius.md,

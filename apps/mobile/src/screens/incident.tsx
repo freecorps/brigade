@@ -1,10 +1,11 @@
 import { formatNumber, m } from "@freecorps/brigade-i18n";
 import {
-  entryText,
   entryTime,
   formatAge,
+  itemText,
   noticeFor,
   noticeText,
+  pagesFailedNames,
   people,
   personName,
   queryErrorReason,
@@ -32,10 +33,12 @@ import {
   nextFailed,
   nextStatuses,
   syncView,
+  timelineItems,
   UPDATE_COUNT_FROM,
   updateLength,
   type MutationOutcome,
   type SyncView,
+  type TimelineItem,
   type UpdateProblem,
 } from "@freecorps/brigade-sync";
 import { useConnectionState, useMutation, useQuery } from "@freecorps/brigade-sync/react";
@@ -43,10 +46,19 @@ import { fontSize, radius, spacing } from "@freecorps/brigade-ui";
 import { Stack } from "expo-router";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import { SymbolView } from "expo-symbols";
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  use,
+  useCallback,
+  useRef,
+  useState,
+  type ComponentRef,
+  type ReactNode,
+} from "react";
 import {
   AccessibilityInfo,
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Linking,
   Pressable,
@@ -114,7 +126,9 @@ function ByNumber({ number, onReload }: { number: number; onReload: () => void }
       <Incident
         row={row}
         view={view}
-        state={<StatePanel view={view} errorCode={error?.code} onReload={onReload} />}
+        state={
+          <StatePanel view={view} errorCode={error?.code} onReload={onReload} subject="incident" />
+        }
       />
     );
   }
@@ -130,16 +144,53 @@ function ByNumber({ number, onReload }: { number: number; onReload: () => void }
   return <Loading />;
 }
 
+/** Scrolls the page so all of a view is above the keyboard, once the keyboard is up. */
+const RevealContext = createContext<(node: ComponentRef<typeof View> | null) => void>(() => {});
+
+/** Space kept between what is revealed and the keyboard. */
+const REVEAL_MARGIN = spacing[3];
+
 /**
  * The incident's scrolling page. The keyboard never covers the update box or Post: iOS insets the scroll view by
  * the keyboard; Android draws edge to edge (the window no longer resizes for it), so the page shrinks above it.
+ * Either way only the focused field is scrolled into view, so the form asks for all of itself (`RevealContext`).
  */
 function Screen({ title, children }: { title: string; children: ReactNode }) {
   const colors = useTheme();
   const padding = useScreenPadding();
   const header = useHeaderHeight();
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  const offset = useRef(0);
+  const reveal = useCallback((node: ComponentRef<typeof View> | null) => {
+    const scrollTo = () => {
+      const page = scroll.current;
+      const keyboard = Keyboard.metrics();
+      if (!node || !page || !keyboard) return;
+      page.getNativeScrollRef()?.measureInWindow((_x, top, _width, height) => {
+        // The visible part of the page ends at the keyboard, or above it where the page shrank (Android).
+        const bottom = Math.min(keyboard.screenY, top + height);
+        node.measureInWindow((_nx, nodeTop, _nwidth, nodeHeight) => {
+          const below = nodeTop + nodeHeight + REVEAL_MARGIN - bottom;
+          if (below > 0) page.scrollTo({ y: offset.current + below, animated: true });
+        });
+      });
+    };
+    // After the keyboard is up and the page has been laid out above it.
+    const settle = () => setTimeout(scrollTo, 50);
+    if (Keyboard.isVisible()) return void settle();
+    const shown = Keyboard.addListener("keyboardDidShow", () => {
+      shown.remove();
+      settle();
+    });
+    setTimeout(() => shown.remove(), 1_000);
+  }, []);
   const page = (
     <ScrollView
+      ref={scroll}
+      onScroll={(event) => {
+        offset.current = event.nativeEvent.contentOffset.y;
+      }}
+      scrollEventThrottle={16}
       contentInsetAdjustmentBehavior="automatic"
       automaticallyAdjustKeyboardInsets
       keyboardShouldPersistTaps="handled"
@@ -147,7 +198,7 @@ function Screen({ title, children }: { title: string; children: ReactNode }) {
       contentContainerStyle={[padding, { gap: spacing[6] }]}
     >
       <Stack.Screen options={{ title }} />
-      {children}
+      <RevealContext value={reveal}>{children}</RevealContext>
     </ScrollView>
   );
   if (process.env.EXPO_OS !== "android") return page;
@@ -361,7 +412,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
         {editable ? (
           <UpdateForm
             incidentId={row.id}
-            pending={busy.has("update")}
+            pending={busy.has("update") && online}
             onPost={(body) =>
               track(postUpdate({ id: row.id, body }), { ...base, kind: "update" }, "update")
             }
@@ -412,8 +463,11 @@ function RoleRow({
   const content = (
     <Row first={first}>
       <ThemedText variant="label">{label}</ThemedText>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing[2] }}>
-        <SymbolView name={PERSON_GLYPH} tintColor={colors.mutedForeground} size={glyph} />
+      {/* Top-aligned, as the timeline's glyphs: a long name wraps under itself, not around the icon. */}
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing[2] }}>
+        <View style={{ paddingTop: spacing[0.5] }}>
+          <SymbolView name={PERSON_GLYPH} tintColor={colors.mutedForeground} size={glyph} />
+        </View>
         <ThemedText
           style={{
             flex: 1,
@@ -451,7 +505,8 @@ function RoleRow({
 
 /**
  * A text box and Post. Text the shard would refuse is caught here and stays; a refusal from the shard gives the
- * text back unless something new was typed.
+ * text back unless something new was typed. `pending`: a post is on its way (offline, the timeline says it waits
+ * instead). Focused, the whole form scrolls above the keyboard, Post included.
  */
 function UpdateForm({
   incidentId,
@@ -466,6 +521,8 @@ function UpdateForm({
   const { locale } = useLocale();
   const [body, setBody] = useState("");
   const [invalid, setInvalid] = useState<UpdateProblem | null>(null);
+  const reveal = use(RevealContext);
+  const form = useRef<ComponentRef<typeof View>>(null);
   // No `maxLength`: it would cut a pasted update short without a word. The count shows near the limit instead.
   const length = updateLength(body);
   const counting = length >= UPDATE_COUNT_FROM;
@@ -484,9 +541,10 @@ function UpdateForm({
   };
 
   return (
-    <View style={{ gap: spacing[2] }}>
+    <View ref={form} style={{ gap: spacing[2] }}>
       <TextInput
         value={body}
+        onFocus={() => reveal(form.current)}
         onChangeText={(text) => {
           setBody(text);
           if (invalid) setInvalid(null);
@@ -605,6 +663,8 @@ function Timeline({
     ) : null;
   }
   const entries = [...rows].reverse();
+  // Pages one run could not send for the same reason are one line (a SEV1 can fail for most of the workspace).
+  const items = timelineItems(entries);
   // Unconfirmed changes are re-applied after the shard's rows, so the member's unsent updates are the newest ones.
   const waiting = new Set<string>();
   if (pending) {
@@ -624,7 +684,8 @@ function Timeline({
         overflow: "hidden",
       }}
     >
-      {entries.map((entry, index) => {
+      {items.map((item, index) => {
+        const entry = item.kind === "entry" ? item.entry : item.entries[0];
         const glyph =
           entry.kind === "status_changed" ? STATUS_GLYPHS[entry.to] : ENTRY_GLYPHS[entry.kind];
         const tint =
@@ -634,13 +695,13 @@ function Timeline({
               ? colors.primary
               : colors.mutedForeground;
         return (
-          <Row key={entry.id} first={index === 0}>
+          <Row key={item.kind === "entry" ? entry.id : item.key} first={index === 0}>
             <View style={{ flexDirection: "row", gap: spacing[3] }}>
               <View style={{ paddingTop: spacing[0.5] }}>
                 <SymbolView name={glyph} tintColor={tint} size={glyphSize} />
               </View>
               <View style={{ flex: 1, gap: spacing[1] }}>
-                <ThemedText selectable>{entryText(entry, who)}</ThemedText>
+                <ThemedText selectable>{itemText(item, who)}</ThemedText>
                 {waiting.has(entry.id) ? (
                   <ThemedText
                     variant="caption"
@@ -655,12 +716,63 @@ function Timeline({
                   </ThemedText>
                 )}
                 {entry.kind === "update" ? <UpdateBody body={entry.body} /> : null}
+                {item.kind === "pages_failed" ? <FailedNames item={item} who={who} /> : null}
               </View>
             </View>
           </Row>
         );
       })}
     </View>
+  );
+}
+
+/** Who a group of failed pages was for, behind Show names. */
+function FailedNames({
+  item,
+  who,
+}: {
+  item: Extract<TimelineItem, { kind: "pages_failed" }>;
+  who: People;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={{ alignItems: "flex-start" }}>
+      {open ? (
+        <ThemedText selectable variant="caption" style={{ alignSelf: "stretch" }}>
+          {pagesFailedNames(item, who).join("\n")}
+        </ThemedText>
+      ) : null}
+      <TextButton expanded={open} onPress={() => setOpen((shown) => !shown)}>
+        {m.incident_page({ part: open ? "hide_names" : "show_names" })}
+      </TextButton>
+    </View>
+  );
+}
+
+/** A link-styled button that opens or closes something, 48 dp tall however short its text. */
+function TextButton({
+  expanded,
+  onPress,
+  children,
+}: {
+  expanded: boolean;
+  onPress: () => void;
+  children: string;
+}) {
+  const colors = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded }}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        minHeight: spacing[12],
+        justifyContent: "center",
+        opacity: pressed ? 0.6 : 1,
+      })}
+    >
+      <ThemedText style={{ color: colors.primary }}>{children}</ThemedText>
+    </Pressable>
   );
 }
 
@@ -721,16 +833,9 @@ function UpdateBody({ body }: { body: string }) {
         </ThemedText>
       </View>
       {long || expanded ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ expanded }}
-          onPress={() => setExpanded((open) => !open)}
-          hitSlop={spacing[3]}
-        >
-          <ThemedText style={{ color: colors.primary }}>
-            {m.incident_page({ part: expanded ? "show_less" : "show_more" })}
-          </ThemedText>
-        </Pressable>
+        <TextButton expanded={expanded} onPress={() => setExpanded((open) => !open)}>
+          {m.incident_page({ part: expanded ? "show_less" : "show_more" })}
+        </TextButton>
       ) : null}
     </View>
   );

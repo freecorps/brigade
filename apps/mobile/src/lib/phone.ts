@@ -5,7 +5,8 @@ import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import { unregisterPhone, type DeviceDeps } from "@/lib/device";
-import { parseLeftover, SIGNED_OUT_KEY, type FinishDeps, type Leftover } from "@/lib/sign-out";
+import { SESSION_LIFETIME_S } from "@freecorps/brigade-schema";
+import { leftovers, SIGNED_OUT_KEY, type FinishDeps } from "@/lib/sign-out";
 import { memberActor, type Server } from "@/lib/sync";
 import { createWorkspaceSync, type WorkspaceSync } from "@/lib/sync-client";
 import { BrigadePush } from "../../modules/brigade-push";
@@ -28,23 +29,33 @@ export function phoneDeps(sync: WorkspaceSync): DeviceDeps {
   };
 }
 
-export const saveLeftover = (leftover: Leftover) =>
-  SecureStore.setItemAsync(SIGNED_OUT_KEY, JSON.stringify(leftover));
+/** The sign-outs kept from offline, in secure storage: one list for the app, so its changes run in turn. */
+export const keptSignOuts = leftovers({
+  read: () => SecureStore.getItemAsync(SIGNED_OUT_KEY),
+  write: (raw) =>
+    raw === null
+      ? SecureStore.deleteItemAsync(SIGNED_OUT_KEY)
+      : SecureStore.setItemAsync(SIGNED_OUT_KEY, raw),
+});
 
 /**
- * Finishing a kept sign-out against `server`, as the member who left: Better Auth's `/get-session` and `/sign-out`
- * with their `Cookie` (and the app's `expo-origin`, as `@better-auth/expo` sends it), and a sync client of their own
- * for `device.unregister`, closed when it answers.
+ * Finishing kept sign-outs against `server`, as the member who left: Better Auth's `/get-session` (without
+ * refreshing the session, so asking does not keep it alive) and `/sign-out` with their `Cookie` (and the app's
+ * `expo-origin`, as `@better-auth/expo` sends it), and a sync client of their own for `device.unregister`, closed
+ * when it answers.
  */
 export function finishDeps(server: Server): FinishDeps {
   const headers = (cookie: string) => ({ cookie, "expo-origin": "brigade://" });
   return {
-    load: async () => parseLeftover(await SecureStore.getItemAsync(SIGNED_OUT_KEY)),
-    save: saveLeftover,
-    clear: () => SecureStore.deleteItemAsync(SIGNED_OUT_KEY),
+    leftovers: keptSignOuts,
+    origin: server.auth,
+    now: Date.now,
+    lifetime: SESSION_LIFETIME_S * 1000,
     session: async (cookie) => {
       try {
-        const response = await fetch(`${server.auth}/get-session`, { headers: headers(cookie) });
+        const response = await fetch(`${server.auth}/get-session?disableRefresh=true`, {
+          headers: headers(cookie),
+        });
         if (response.status === 401) return false;
         if (!response.ok) return null;
         const body = (await response.json()) as { session?: unknown } | null;

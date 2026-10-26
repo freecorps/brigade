@@ -9,9 +9,13 @@ import {
   checkUpdate,
   entryText,
   entryTime,
+  itemText,
+  pagesFailedNames,
   people,
   personName,
+  timelineItems,
   updateLength,
+  type TimelineItem,
 } from "../src/lib/timeline";
 
 afterEach(() => setLocale("en"));
@@ -205,4 +209,38 @@ test("incident numbers in the URL", () => {
   for (const bad of ["0", "012", "-1", "1.5", "INC-12", "", "99999999999999999"]) {
     expect(parseIncidentNumber(bad), bad).toBeNull();
   }
+});
+
+test("pages one run could not send for the same reason are one line, with the names behind it", async () => {
+  const failed = (n: number, userId: string | null, reason = "no_devices", at = 5) =>
+    entry({ id: `${ID}:${n}`, kind: "page_failed", actor: "sys_notifier", userId, reason, at });
+  const update = entry({ id: `${ID}:9`, kind: "update", body: "On it" });
+  const entries = [
+    update,
+    failed(8, "usr_me"),
+    failed(7, "usr_bia"),
+    failed(6, "usr_gone"),
+    // Another reason, a later run, nobody and a dead letter each stand alone.
+    failed(5, "usr_cai", "undelivered"),
+    failed(4, "usr_dan", "no_devices", 1),
+    failed(3, null),
+    failed(2, null, "dead_lettered"),
+  ];
+  const items = timelineItems(entries);
+  expect(
+    items.map((item) => (item.kind === "entry" ? item.entry.id : item.entries.length)),
+  ).toEqual([`${ID}:9`, 3, `${ID}:5`, `${ID}:4`, `${ID}:3`, `${ID}:2`]);
+  const group = items[1] as Extract<TimelineItem, { kind: "pages_failed" }>;
+  expect(group).toMatchObject({ key: `${ID}:8`, at: 5, reason: "no_devices" });
+  expect(itemText(group, who)).toBe("Couldn't page 3 people: no registered device");
+  expect(pagesFailedNames(group, who)).toEqual(["You", "Bia Lima", "A teammate"]);
+  expect(itemText(items[0]!, who)).toBe(entryText(update, who));
+  await setLocale("pt-BR");
+  expect(
+    itemText({ ...group, entries: Array(21).fill(group.entries[0]) as typeof group.entries }, who),
+  ).toBe("Não foi possível chamar 21 pessoas: nenhum aparelho registrado");
+  // One failure is never grouped.
+  expect(timelineItems([failed(1, "usr_bia")])).toEqual([
+    { kind: "entry", entry: failed(1, "usr_bia") },
+  ]);
 });

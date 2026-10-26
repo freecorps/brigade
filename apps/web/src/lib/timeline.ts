@@ -4,6 +4,8 @@
 export {
   entryText,
   entryTime,
+  itemText,
+  pagesFailedNames,
   people,
   personName,
   severityName,
@@ -13,8 +15,10 @@ export {
   assignable,
   bodyParts,
   checkUpdate,
+  timelineItems,
   UPDATE_COUNT_FROM,
   updateLength,
   type BodyPart,
+  type TimelineItem,
   type UpdateProblem,
 } from "@freecorps/brigade-sync";

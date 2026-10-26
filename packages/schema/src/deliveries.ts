@@ -6,6 +6,7 @@
 
 import { isId } from "./id.ts";
 import { DEVICE_PLATFORMS, PUSH_ENVIRONMENTS } from "./devices.ts";
+import { MAX_ESCALATION_PAGES } from "./escalation.ts";
 import { defineMutation, fail, ok, type DomainEvent } from "./mutation.ts";
 import { defineQuery, prefixRange } from "./query.ts";
 import type { DeliveryRow } from "./tables.ts";
@@ -13,6 +14,13 @@ import { v, type Validator } from "./validate.ts";
 
 /** A page goes to at most this many devices (`MAX_PAGE_DEVICES` in the API): one plan or report names no more. */
 export const MAX_DELIVERY_DEVICES = 200;
+
+/**
+ * Delivery rows an incident keeps per device: as many pages as its escalation run keeps (`MAX_ESCALATION_PAGES`),
+ * so a long-running incident that pages every few minutes does not grow without bound. Planning a page past it drops
+ * that device's oldest rows on the incident; the timeline still records every page and every miss.
+ */
+export const MAX_DELIVERIES_PER_DEVICE = MAX_ESCALATION_PAGES;
 
 /**
  * Why a device's push did not get past the relay, as the notifier classifies the relay's answer:
@@ -84,7 +92,14 @@ const memberId = v.string({ min: 1, max: 64 });
 
 export type NotificationPlanned = DomainEvent<
   "notification.planned",
-  { incidentId: string; eventId: string; devices: number; page?: { run: string; step: number } }
+  {
+    incidentId: string;
+    eventId: string;
+    devices: number;
+    page?: { run: string; step: number };
+    /** Older rows dropped to keep `MAX_DELIVERIES_PER_DEVICE` per device; absent when none. */
+    dropped?: number;
+  }
 >;
 export type NotificationSent = DomainEvent<
   "notification.sent",
@@ -97,7 +112,8 @@ export type NotificationDelivered = DomainEvent<
 
 /**
  * Server only, as the notifier: the devices a page is about to go to (`Pager.plan`), one `planned` row each. A device
- * the page already planned (a retry) keeps its row; with none new it is a `conflict`.
+ * the page already planned (a retry) keeps its row; with none new it is a `conflict`. Each device planned keeps its
+ * latest `MAX_DELIVERIES_PER_DEVICE` rows on the incident; older ones are dropped.
  */
 export const planDeliveries = defineMutation({
   name: "delivery.plan",
@@ -143,6 +159,12 @@ export const planDeliveries = defineMutation({
       planned++;
     }
     if (planned === 0) return fail("conflict", "Every device is planned already");
+    const { from, to } = prefixRange(`${args.incidentId}:`);
+    const dropped = dropOldest(
+      store.range("deliveries", from, to),
+      new Set(args.devices.map((device: { deviceId: string }) => device.deviceId)),
+      (id) => store.delete("deliveries", id),
+    );
     const event: NotificationPlanned = {
       type: "notification.planned",
       subject: args.incidentId,
@@ -151,11 +173,35 @@ export const planDeliveries = defineMutation({
         eventId: args.eventId,
         devices: planned,
         ...(args.page && { page: args.page }),
+        ...(dropped > 0 && { dropped }),
       },
     };
     return ok(event);
   },
 });
+
+/** Drops each of `devices`' rows beyond its latest `MAX_DELIVERIES_PER_DEVICE` (by plan time); returns how many. */
+function dropOldest(
+  rows: readonly DeliveryRow[],
+  devices: ReadonlySet<string>,
+  drop: (id: string) => void,
+): number {
+  const byDevice = new Map<string, DeliveryRow[]>();
+  for (const row of rows) {
+    if (!devices.has(row.deviceId)) continue;
+    byDevice.set(row.deviceId, [...(byDevice.get(row.deviceId) ?? []), row]);
+  }
+  let dropped = 0;
+  for (const list of byDevice.values()) {
+    if (list.length <= MAX_DELIVERIES_PER_DEVICE) continue;
+    list.sort((a, b) => b.plannedAt - a.plannedAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+    for (const row of list.slice(MAX_DELIVERIES_PER_DEVICE)) {
+      drop(row.id);
+      dropped++;
+    }
+  }
+  return dropped;
+}
 
 /**
  * Server only, as the notifier: what the relay answered for each device of one attempt (`Pager.record`). `ms` is how

@@ -13,6 +13,7 @@ import { expect, test } from "vite-plus/test";
 import {
   deviceId,
   deviceRegistration,
+  instanceOrigin,
   pushEnvironment,
   registerPhone,
   unregisterPhone,
@@ -87,6 +88,38 @@ test("signing in registers the phone, and signing in again changes nothing", asy
   expect(await registerPhone(phone(as(ANA)))).toBe("on");
   expect(await registerPhone(phone(as(ANA)))).toBe("on");
   expect(store.scan("devices")).toMatchObject([{ id: deviceId(KEY), userId: ANA.id }]);
+});
+
+test("a registered phone keeps its instance's origin for the extension's receipts, and only then", async () => {
+  const store = createMemoryStore<BrigadeTables>();
+  const as = shard(store);
+  const kept: string[] = [];
+  const receiptOrigin = {
+    origin: "https://brigade.example/api/auth",
+    keep: (origin: string) => void kept.push(origin),
+  };
+  expect(await registerPhone(phone(as(ANA), { receiptOrigin }))).toBe("on");
+  // The origin only: the extension compares a receipt URL's scheme, host and port with it.
+  expect(kept).toEqual(["https://brigade.example"]);
+  // Registered already: kept again, so an app updated to receipts keeps it on its next launch.
+  expect(await registerPhone(phone(as(ANA), { receiptOrigin }))).toBe("on");
+  expect(kept).toHaveLength(2);
+
+  // Refused (another member's phone), or never sent: nothing kept.
+  expect(await registerPhone(phone(as(BIA), { receiptOrigin }))).toBe("taken");
+  expect(await registerPhone(phone(as(ANA), { receiptOrigin }), () => false)).toBe("pending");
+  expect(kept).toHaveLength(2);
+
+  // An app binary without the call, or an origin it cannot read, never fails the registration.
+  const throwing = {
+    origin: "https://brigade.example",
+    keep: () => {
+      throw new Error("no such function");
+    },
+  };
+  expect(await registerPhone(phone(as(ANA), { receiptOrigin: throwing }))).toBe("on");
+  expect(instanceOrigin("brigade://callback")).toBeUndefined();
+  expect(instanceOrigin("http://localhost:8787/api/auth")).toBe("http://localhost:8787");
 });
 
 test("signing out unregisters it, so the next member to sign in on the phone is paged on it", async () => {

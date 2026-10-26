@@ -8,6 +8,12 @@ interface BrigadePushModule {
    * again. Native code held background time for it from the tap (modules/brigade-push/ios/PageActions.swift).
    */
   finishPageAction(id: string): void;
+  /**
+   * Keeps the instance's origin (`https://brigade.example.com`) in the App Group, where the Notification Service
+   * Extension reads it: it posts delivery receipts to that origin only. False for an origin it could not read. Absent
+   * from an app binary built before receipts.
+   */
+  setReceiptOrigin?(origin: string): boolean;
   /** Whether the Notification Service Extension can decrypt on this OS (HPKE needs iOS 17). */
   readonly canDecrypt: boolean;
 }

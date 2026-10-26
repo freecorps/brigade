@@ -1,0 +1,124 @@
+import { setLocale } from "@freecorps/brigade-i18n";
+import type { DeliveryRow } from "@freecorps/brigade-schema";
+import { beforeEach, describe, expect, test } from "vite-plus/test";
+import {
+  byUrgency,
+  pageGroups,
+  stageTimes,
+  verdictText,
+  type WhyPage,
+  type WhyVerdict,
+} from "../src/lib/why-paged";
+
+beforeEach(() => {
+  void setLocale("en");
+});
+
+const T = Date.UTC(2026, 9, 26, 3, 0, 0);
+const row = (fields: Partial<DeliveryRow> = {}): DeliveryRow => ({
+  id: "inc_1:evt_1:dev_1",
+  incidentId: "inc_1",
+  eventId: "evt_1",
+  deviceId: "dev_1",
+  userId: "usr_bia",
+  platform: "ios",
+  environment: "production",
+  run: null,
+  step: null,
+  plannedAt: T,
+  sentAt: T + 200,
+  acceptedAt: T + 400,
+  deliveredAt: null,
+  attempts: 1,
+  error: null,
+  reason: null,
+  updatedAt: T,
+  ...fields,
+});
+const page = (step: number, fields: Partial<WhyPage> = {}): WhyPage => ({
+  step,
+  level: 1,
+  round: step - 1,
+  at: T + step * 60_000,
+  reason: "timeout",
+  again: false,
+  targeted: "paged",
+  schedules: [],
+  reached: [],
+  deliveries: [],
+  misses: [{ reason: "no_devices", at: T + step * 60_000, schedule: null }],
+  ...fields,
+});
+
+describe("the incident page's list", () => {
+  test("whoever needs a look comes first", () => {
+    const verdicts: WhyVerdict[] = [
+      "none",
+      "delivered",
+      "accepted",
+      "not_targeted",
+      "sending",
+      "stuck",
+      "missed",
+      "declarer",
+      "failed",
+    ];
+    const sorted = byUrgency(verdicts.map((verdict, index) => ({ id: index, verdict })));
+    expect(sorted.map((one) => one.verdict)).toEqual([
+      "failed",
+      "missed",
+      "stuck",
+      "sending",
+      "accepted",
+      "delivered",
+      // The rest keep their order.
+      "none",
+      "not_targeted",
+      "declarer",
+    ]);
+  });
+});
+
+describe("the step-by-step view", () => {
+  test("a page that missed them says why, from the latest miss", () => {
+    const why = {
+      verdict: "missed" as const,
+      pages: [page(1, { misses: [{ reason: "nobody_on_call", at: T, schedule: null }] }), page(2)],
+    };
+    expect(verdictText(why, "Inês")).toBe("Brigade couldn't page Inês: no phone registered");
+    void setLocale("pt-BR");
+    expect(verdictText(why, "Inês")).toBe(
+      "O Brigade não conseguiu acionar Inês: nenhum celular registrado",
+    );
+  });
+
+  test("twenty pages with the same outcome read as one, the latest per level", () => {
+    const pages = [
+      ...Array.from({ length: 19 }, (_, index) => page(index + 1)),
+      page(20, { level: 2 }),
+    ];
+    const groups = pageGroups(pages);
+    expect(groups.map(({ page: one, earlier }) => [one.step, earlier])).toEqual([
+      [19, 18],
+      [20, 0],
+    ]);
+    // A different outcome on the same level starts a group of its own.
+    const changed = pageGroups([page(1), page(2, { misses: [] }), page(3)]);
+    expect(changed.map(({ earlier }) => earlier)).toEqual([0, 0, 0]);
+  });
+
+  test("after an error, the first stage not reached is where it stopped", () => {
+    const refused = stageTimes(row({ acceptedAt: null, error: "apns_refused" }));
+    expect(refused.map(({ stage, stopped }) => [stage, stopped])).toEqual([
+      ["planned", false],
+      ["sent", false],
+      ["accepted", true],
+      ["delivered", false],
+    ]);
+    // On its way, or only no receipt yet: nothing stopped.
+    expect(stageTimes(row()).some(({ stopped }) => stopped)).toBe(false);
+    // Stuck before it was sent.
+    const stuck = stageTimes(row({ sentAt: null, acceptedAt: null }), true);
+    expect(stuck.find(({ stopped }) => stopped)?.stage).toBe("sent");
+  });
+});

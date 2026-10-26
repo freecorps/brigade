@@ -10,7 +10,7 @@ import type {
   TimelineEntry,
   TimelineRow,
 } from "@freecorps/brigade-schema";
-import { whyPaged, type WhyInput } from "../src/paging.ts";
+import { PAGE_STUCK_MS, whyPaged, type WhyInput } from "../src/paging.ts";
 
 const T = Date.UTC(2026, 9, 26, 3, 0, 0);
 const INC = "inc_01JBAAAAAAAAAAAAAAAAAAAAAA";
@@ -143,6 +143,7 @@ function input(overrides: Partial<WhyInput> = {}): WhyInput {
     deliveries: [],
     timeline: [],
     schedules,
+    now: T + 1000,
     ...overrides,
   };
 }
@@ -171,6 +172,34 @@ describe("whyPaged", () => {
   test("still on its way", () => {
     const planned = delivery({ sentAt: null, acceptedAt: null, attempts: 0 });
     expect(whyPaged(input({ deliveries: [planned] })).verdict).toBe("sending");
+  });
+
+  test("planned and never sent past the retry window: stuck, not sending forever", () => {
+    const planned = delivery({ sentAt: null, acceptedAt: null, attempts: 0 });
+    const at = (now: number) => whyPaged(input({ deliveries: [planned], now }));
+    expect(at(T + PAGE_STUCK_MS - 1).verdict).toBe("sending");
+    const stuck = at(T + PAGE_STUCK_MS);
+    expect(stuck.verdict).toBe("stuck");
+    expect(stuck.pages[0]?.deliveries).toMatchObject([{ stage: "planned", stuck: true }]);
+    // Another phone still on its way is sending; one that took the page is accepted, whatever else is stuck.
+    const fresh = delivery({
+      id: `${INC}:${RUN}:dev_01JBCCCCCCCCCCCCCCCCCCCCCC`,
+      deviceId: "dev_01JBCCCCCCCCCCCCCCCCCCCCCC",
+      plannedAt: T + PAGE_STUCK_MS,
+      sentAt: null,
+      acceptedAt: null,
+    });
+    const both = (other: DeliveryRow) =>
+      whyPaged(input({ deliveries: [planned, other], now: T + PAGE_STUCK_MS })).verdict;
+    expect(both(fresh)).toBe("sending");
+    expect(both({ ...fresh, sentAt: T + PAGE_STUCK_MS, acceptedAt: T + PAGE_STUCK_MS })).toBe(
+      "accepted",
+    );
+    // A failed attempt was sent: failed, not stuck.
+    const failed = delivery({ acceptedAt: null, error: "relay_unreachable" });
+    expect(whyPaged(input({ deliveries: [failed], now: T + PAGE_STUCK_MS * 10 })).verdict).toBe(
+      "failed",
+    );
   });
 
   test("APNs refused the token: failed, with the error on the device's row", () => {

@@ -308,7 +308,8 @@ function ActiveWorkspace({
 
   // Someone who signed out offline first: their device has to come off the shard before this one can take it.
   const register = useMemo(
-    () => (sync ? (proceed: () => boolean) => registerPhone(phoneDeps(sync), proceed) : null),
+    () =>
+      sync ? (proceed: () => boolean) => registerPhone(phoneDeps(sync, server), proceed) : null,
     [sync],
   );
   const {

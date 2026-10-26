@@ -58,6 +58,46 @@ public enum BrigadePushCrypto {
       self.url = url
       self.token = token
     }
+
+    /// `scheme://host[:port]`, lowercased, as JavaScript's `URL.origin` says it (the default port left out); nil
+    /// without a scheme or host.
+    static func origin(of url: URL) -> String? {
+      guard let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased(), !host.isEmpty else {
+        return nil
+      }
+      let defaultPort = scheme == "https" ? 443 : scheme == "http" ? 80 : nil
+      guard let port = url.port, port != defaultPort else { return "\(scheme)://\(host)" }
+      return "\(scheme)://\(host):\(port)"
+    }
+
+    /// Whether this receipt goes to the instance the app registered the phone with (`receiptOrigin()`). A page names
+    /// its own receipt URL; only one on that origin is ever posted to, so a page sealed by anyone else holding the
+    /// device's public key cannot make the phone call out elsewhere.
+    public var isForRegisteredInstance: Bool {
+      guard let registered = BrigadePushCrypto.receiptOrigin(), let origin = Self.origin(of: url) else { return false }
+      return origin == registered
+    }
+  }
+
+  // MARK: - Receipt origin
+
+  private static let receiptOriginKey = "receipt-origin-v1"
+
+  /// Keeps the origin of the instance the app registered this phone with, in the App Group's defaults, where the
+  /// extension reads it (RFC 0006 "Delivery receipts"). False for anything but an http(s) origin.
+  public static func setReceiptOrigin(_ value: String) -> Bool {
+    guard
+      let url = URL(string: value), url.scheme == "https" || url.scheme == "http",
+      let origin = Receipt.origin(of: url),
+      let defaults = UserDefaults(suiteName: appGroup)
+    else { return false }
+    defaults.set(origin, forKey: receiptOriginKey)
+    return true
+  }
+
+  /// The registered instance's origin; nil until the app registered the phone since it learned to keep it.
+  public static func receiptOrigin() -> String? {
+    return UserDefaults(suiteName: appGroup)?.string(forKey: receiptOriginKey)
   }
 
   /// The device public key as the instance needs it: uncompressed P-256 (65 bytes), base64url. Creates the key

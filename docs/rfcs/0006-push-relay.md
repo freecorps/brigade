@@ -304,25 +304,50 @@ paged, without logs.
 
 Shown and acted on (the person saw it, tapped Acknowledge) are not stages yet: the ack is on the incident already,
 and "shown" needs the app, not the extension. Each write emits its event through the outbox (RFC 0005), actor
-`sys_notifier`. Rows are kept with the incident, like its timeline.
+`sys_notifier`. **Retention**: rows are kept with the incident, like its timeline, but an incident keeps at most 20
+rows per device (`MAX_DELIVERIES_PER_DEVICE`, the pages an escalation run keeps): planning a page past that drops
+that device's oldest rows on the incident (`notification.planned` says how many, `dropped`). The timeline still
+records every page and every miss. Tests: `packages/schema/tests/deliveries.test.ts`.
 
 **How the phone reports, without a session.** The extension has the device key (App Group Keychain) but not the
 member's session cookie, and must not need one. So the page carries its own proof: when the shard plans a page it
-mints a token per device, `v1.<workspace>.<incident>.<event>.<device>.<expiry>.<mac>`, the MAC an HMAC-SHA256 under a
-random key only that shard holds (`receipt_key`, made on first use, never sent anywhere), and the notifier seals the
+mints a token per device, `v1.<key id>.<workspace>.<incident>.<event>.<device>.<expiry>.<mac>`, the MAC an
+HMAC-SHA256 (over every field before it) under a random key only that shard holds (`receipt_key`, made on first use,
+never sent anywhere, key id `k1`), and the notifier seals the
 token inside that device's page with the receipt URL (`DASHBOARD_URL` + `/api/receipts`; no URL, no receipt). Only
 that device can open the page, so only it ever sees the token; the relay sees ciphertext. The extension posts
-`{ "token" }` to the URL; the Worker reads only the workspace the token names, checks it exists in D1 (a made-up
-one costs a D1 read, no Durable Object; a D1 outage asks the shard anyway) and hands the token to that shard, which
+`{ "token" }` to the URL; the Worker reads at most 1 KiB of body (a longer one, declared or streamed, is `413`) and
+only the workspace the token names, checks it exists in D1 (a made-up one costs a D1 read, no Durable Object; a D1
+outage asks the shard anyway), holds the workspace and the caller's address (`cf-connecting-ip`) to 120 receipts a
+minute with a Workers Rate Limiting binding (`RECEIPT_LIMIT`, wrangler.jsonc, one namespace per environment;
+`429` before the shard wakes; a limiter that fails lets the receipt through) and hands the token to that shard, which
 checks the MAC (constant time), the expiry (30 minutes, `RECEIPT_TTL_MS`: APNs keeps a page 15), a per-device rate
 (30 a minute) and that the page was planned for that device. So a token cannot be forged or altered, names one
 page on one device (another page, device or workspace is refused, `403`), expires (`410`), and records once: a
 replay answers `200` and changes nothing. Answers say only whether it was recorded. A key never rotates today; a
-restore keeps it with the shard's storage. Tests: `apps/api/test/receipts.test.ts`.
+restore keeps it with the shard's storage. The key id is in the token (and under its MAC) so a later rotation can
+tell keys apart; until then a token naming any key but `k1`, or none, is refused. Tests:
+`apps/api/test/receipts.test.ts`.
+
+**Accepted residual risk: junk that wakes a shard.** A well-formed token for a real workspace looks like a genuine
+one until its shard checks the MAC, so junk can wake that shard. The Worker's rate limit bounds it per workspace and
+address, but Workers Rate Limiting is approximate and counted per Cloudflare location, and many addresses are many
+keys: a distributed caller who knows a workspace id can still wake its shard repeatedly. Each wake costs one MAC check
+and no write (an invalid token records nothing), and the shard serves paging regardless. The same exposure exists on
+`POST /heartbeat/:token` (RFC 0007), which has no rate limit yet. Accepted for now; a strict limit would need a
+Durable Object of its own per workspace, which is what a flood would wake anyway.
+
+**The extension posts only to the registered instance.** A page names its own receipt URL, and anyone holding the
+device's public key could seal a page. So when the app registers the phone (`registerPhone`,
+apps/mobile/src/lib/device.ts) it keeps the instance's origin in the App Group (`setReceiptOrigin`, user defaults
+`receipt-origin-v1`), and the extension posts a receipt only when its URL has that origin (scheme, host, port); a
+phone registered before this sends none until the app registers it again (every launch). Tests:
+`apps/mobile/src/lib/device.test.ts` (the JavaScript side; the Swift is type-checked, not unit tested).
 
 **Never in a page's way** (the paging path's rule). Minting a token, recording a plan or an outcome each fail
 open: logged, and the page goes out without a token or a row (tested: a shard that cannot mint still pages). The
-token rides in the sealed plaintext only when it fits; a page that would not fit with it goes without. The
+token rides in the sealed plaintext only when it fits; a page that would not fit with it is sealed again without
+it (tested: one envelope reaches the relay, with no receipt inside, and the row reaches `accepted`). The
 extension starts the receipt request and shows the page at once, without waiting for it (5 s timeout, ephemeral
 session, no cookies, no retry, the token never logged), and only for a page it decrypted: the fallback text has no
 token. So receipts are **best effort**: iOS may end the extension before the request leaves, a phone offline after
@@ -330,7 +355,9 @@ showing the page never reports, and VoIP call pushes (RFC 0010) and Android send
 "not confirmed", never "not shown", and the dashboard says so.
 
 **Privacy.** A receipt says when a phone was reachable. Rows and device summaries are synced only within the
-workspace (every member, viewers included, as for the timeline), carry no token, key or content, and the event
+workspace (every member, viewers included, as for the timeline): **every member sees each colleague's phones and when
+Brigade last heard from each**. Decided acceptable within a workspace (it is what tells a team why someone was not
+paged), and the dashboard says so under the explanation. They carry no token, key or content, and the event
 data names only ids. Devices themselves stay server-only; a token-free summary of each (`member_devices`: platform,
 APNs environment, whether it takes calls, registered, last heard from: the latest registration or receipt) is kept
 with it by `device.register` and dropped with it. A device registered before summaries gets one the next time the
@@ -338,7 +365,10 @@ app registers it.
 
 **"Why wasn't I paged?"** The dashboard's incident page lists everyone who can respond (and anyone a page touched)
 with the outcome in a word, and `/incidents/<n>?why=<member>` explains one member step by step from what members
-already hold (`whyPaged` in packages/sync, pure; wording in en and pt-BR): whether they can be paged (a viewer, gone),
+already hold (`whyPaged` in packages/sync, pure; wording in en and pt-BR). The list puts whoever needs a look first
+(failed, couldn't page, stuck, sending, accepted, delivered, then the rest). A page planned and not sent within 2
+minutes (`PAGE_STUCK_MS`; the notifier sends within seconds) is `stuck`, "Planned but never sent", not "Sending"
+forever. Pages to the same level with the same outcome in a row fold into the latest. The view says: whether they can be paged (a viewer, gone),
 which rule paged (the policy, or the interim rule), each page (were they on it, and if not why: not on call for its
 schedule and who was, a level that names others, the commander paged first, they declared it), each device's stages
 with times and errors, the phones they have now and when each was last heard from, the email about a missed page

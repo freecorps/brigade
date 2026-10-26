@@ -721,6 +721,7 @@ describe("GET /sync/:workspaceId: the actor", () => {
       WATCHDOG: env.WATCHDOG,
       DB: env.DB,
       EMAIL: env.EMAIL,
+      RECEIPT_LIMIT: env.RECEIPT_LIMIT,
       BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
     };
     const request = new Request(`${ORIGIN}/sync/${workspace.id}`, {

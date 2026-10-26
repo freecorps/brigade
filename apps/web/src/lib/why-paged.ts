@@ -9,7 +9,7 @@ import type {
   MemberRow,
   PageFailure,
 } from "@freecorps/brigade-schema";
-import type { WhyEmail, WhyPage, WhyPaged, WhyVerdict } from "@freecorps/brigade-sync";
+import type { WhyEmail, WhyMiss, WhyPage, WhyPaged, WhyVerdict } from "@freecorps/brigade-sync";
 
 export { whyPaged, type WhyPaged, type WhyPage, type WhyVerdict } from "@freecorps/brigade-sync";
 
@@ -32,9 +32,21 @@ export function memberName(id: string, who: People): string {
   return personName(id, { ...who, self: "" });
 }
 
-/** The answer in one line, for the full view. */
-export function verdictText(verdict: WhyVerdict, name: string): string {
-  return say(`verdict_${verdict}`, { name });
+/**
+ * The answer in one line, for the full view. A page that missed them says why, from the latest miss: "Brigade
+ * couldn't page Inês: no phone registered".
+ */
+export function verdictText(why: Pick<WhyPaged, "verdict" | "pages">, name: string): string {
+  if (why.verdict === "missed") {
+    const latest = why.pages
+      .flatMap((page) => page.misses)
+      .reduce<WhyMiss | null>(
+        (last, miss) => (last === null || miss.at >= last.at ? miss : last),
+        null,
+      );
+    if (latest) return say("verdict_missed_reason", { name, detail: say(`miss_${latest.reason}`) });
+  }
+  return say(`verdict_${why.verdict}`, { name });
 }
 
 /** The answer in a word or two, for the incident page's list. */
@@ -45,8 +57,62 @@ export function shortVerdict(verdict: WhyVerdict): string {
 /** How a verdict looks: good news, a warning, or neutral. */
 export function verdictTone(verdict: WhyVerdict): "ok" | "warn" | "neutral" {
   if (verdict === "delivered") return "ok";
-  if (verdict === "failed" || verdict === "missed") return "warn";
+  if (verdict === "failed" || verdict === "missed" || verdict === "stuck") return "warn";
   return "neutral";
+}
+
+/** The incident page lists whoever needs a look first: failed, couldn't page, stuck, sending, accepted, delivered. */
+const URGENCY: readonly WhyVerdict[] = [
+  "failed",
+  "missed",
+  "stuck",
+  "sending",
+  "accepted",
+  "delivered",
+];
+
+/** Members by how urgently their paging needs a look (`URGENCY`, then the rest), each keeping its order otherwise. */
+export function byUrgency<T extends { verdict: WhyVerdict }>(rows: readonly T[]): T[] {
+  const rank = (verdict: WhyVerdict) => {
+    const index = URGENCY.indexOf(verdict);
+    return index === -1 ? URGENCY.length : index;
+  };
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => rank(a.row.verdict) - rank(b.row.verdict) || a.index - b.index)
+    .map(({ row }) => row);
+}
+
+/**
+ * The pages to show in full: of each run of consecutive pages to the same level with the same outcome for the
+ * member, the latest, with how many came before it. Twenty identical "Level 1 · Round 4" pages read as one.
+ */
+export function pageGroups(pages: readonly WhyPage[]): { page: WhyPage; earlier: number }[] {
+  const groups: { page: WhyPage; earlier: number; key: string }[] = [];
+  for (const page of pages) {
+    const key = outcomeKey(page);
+    const last = groups[groups.length - 1];
+    if (last && last.key === key)
+      groups[groups.length - 1] = { page, earlier: last.earlier + 1, key };
+    else groups.push({ page, earlier: 0, key });
+  }
+  return groups.map(({ page, earlier }) => ({ page, earlier }));
+}
+
+function outcomeKey(page: WhyPage): string {
+  return JSON.stringify([
+    page.step === null ? "interim" : page.level,
+    page.targeted,
+    page.deliveries
+      .map(({ row, stage, stuck }) => [row.deviceId, stage, row.error, row.reason, stuck].join("/"))
+      .sort(),
+    page.misses.map((miss) => miss.reason).sort(),
+  ]);
+}
+
+/** "Same outcome as the 3 pages before it". */
+export function sameOutcomeText(earlier: number): string {
+  return earlier === 1 ? say("pages_same_one") : say("pages_same", { detail: String(earlier) });
 }
 
 export function memberText(status: WhyPaged["member"]["status"], name: string): string {
@@ -96,14 +162,23 @@ export function missText(reason: PageFailure, name: string): string {
 
 export const STAGES: readonly DeliveryStage[] = ["planned", "sent", "accepted", "delivered"];
 
-/** Each stage of one device's page and when it happened (null: not reached). */
-export function stageTimes(row: DeliveryRow): { stage: DeliveryStage; at: number | null }[] {
-  return [
-    { stage: "planned", at: row.plannedAt },
-    { stage: "sent", at: row.sentAt },
-    { stage: "accepted", at: row.acceptedAt },
-    { stage: "delivered", at: row.deliveredAt },
+/**
+ * Each stage of one device's page and when it happened (null: not reached). After a failed attempt or a page stuck
+ * unsent, the first stage not reached is where it `stopped`.
+ */
+export function stageTimes(
+  row: DeliveryRow,
+  stuck = false,
+): { stage: DeliveryStage; at: number | null; stopped: boolean }[] {
+  const times = [
+    { stage: "planned" as const, at: row.plannedAt },
+    { stage: "sent" as const, at: row.sentAt },
+    { stage: "accepted" as const, at: row.acceptedAt },
+    { stage: "delivered" as const, at: row.deliveredAt },
   ];
+  const halted = row.error !== null || stuck;
+  const first = times.findIndex(({ at }) => at === null);
+  return times.map((time, index) => ({ ...time, stopped: halted && index === first }));
 }
 
 export function stageText(stage: DeliveryStage): string {

@@ -11,15 +11,15 @@ export type Page_WhyInputs = {
 * | text | output |
 * | --- | --- |
 * | "title" | "Who was paged" |
-* | "why_title" | "Why wasn't {name} paged?" |
-* | "why_title_you" | "Why wasn't I paged?" |
+* | "why_title" | "Paging for {name}" |
+* | "why_title_you" | "My paging" |
 * | "why_link" | "Why?" |
 * | "explain" | "Explain step by step" |
 * | "back" | "Back to {name}" |
 * | "pick_member" | "Member" |
 * | "loading" | "Loading delivery details…" |
 * | "empty" | "No page has gone out for this incident yet." |
-* | "privacy" | "Only members of this workspace see when a phone received a page." |
+* | "privacy" | "Everyone in this workspace sees each member's phones, when Brigade last heard from them, and when a phone received a page." |
 * | "verdict_delivered" | "The page reached {name}'s phone" |
 * | "verdict_accepted" | "Sent to {name}'s phone, but the phone hasn't confirmed it" |
 * | "verdict_sending" | "A page is on its way to {name}" |
@@ -33,7 +33,7 @@ export type Page_WhyInputs = {
 * | "short_accepted" | "Sent, no receipt" |
 * | "short_sending" | "Sending" |
 * | "short_failed" | "Failed" |
-* | "short_missed" | "Not paged" |
+* | "short_missed" | "Couldn't page" |
 * | "short_declarer" | "Declared it" |
 * | "short_excluded" | "Can't be paged" |
 * | "short_not_targeted" | "Not paged" |
@@ -65,7 +65,7 @@ export type Page_WhyInputs = {
 * | "seen" | "Last heard from {time}" |
 * | "calls" | "Takes calls" |
 * | "stage_planned" | "Planned" |
-* | "stage_sent" | "Handed to the relay" |
+* | "stage_sent" | "Sent by Brigade" |
 * | "stage_accepted" | "Accepted by Apple" |
 * | "stage_delivered" | "Opened on the phone" |
 * | "no_receipt" | "No receipt from the phone. Receipts are best effort: the page may still have shown." |
@@ -73,17 +73,38 @@ export type Page_WhyInputs = {
 * | "error_not_configured" | "Push notifications aren't set up on this server" |
 * | "error_unsupported" | "Brigade can't push to Android phones yet" |
 * | "error_seal_failed" | "The page couldn't be encrypted for this phone" |
-* | "error_relay_unreachable" | "The push relay didn't answer" |
-* | "error_relay_refused" | "The push relay refused the request" |
+* | "error_relay_unreachable" | "Brigade's sending service didn't answer" |
+* | "error_relay_refused" | "Brigade's sending service refused the request" |
 * | "error_token_invalid" | "Apple said this phone's token is no longer valid, so the phone was removed" |
 * | "error_apns_refused" | "Apple refused the push" |
 * | "error_apns_unavailable" | "Apple was busy or failing" |
 * | "apns_reason" | "Apple said: {detail}" |
-* | "email_expected" | "Brigade emails {name} once about a page that missed them." |
+* | "email_expected" | "Brigade will email {name} once about a page that missed them." |
 * | "email_failed" | "Couldn't email {name} about the missed page." |
 * | "email_capped" | "Not emailed: the limit on Brigade's emails was reached." |
 * | "email_off" | "Emails about missed pages are off in this workspace." |
 * | "acknowledged" | "{name} acknowledged it {time}, which stopped paging." |
+* | "why_link_label" | "Was {name} paged?" |
+* | "verdict_missed_reason" | "Brigade couldn't page {name}: {detail}" |
+* | "verdict_stuck" | "A page to {name} was planned but never sent" |
+* | "short_stuck" | "Planned but never sent" |
+* | "stage_none" | "Not reached" |
+* | "stage_stopped" | "Stopped here" |
+* | "stuck_note" | "Brigade planned this page but never sent it. Pages go out within seconds, so it's stuck." |
+* | "pages_same" | "Same outcome as the {detail} pages before it" |
+* | "pages_same_one" | "Same outcome as the page before it" |
+* | "pages_show_all" | "Show all {detail} pages" |
+* | "miss_no_devices" | "no phone registered" |
+* | "miss_undelivered" | "the page didn't go through" |
+* | "miss_unsupported" | "Brigade can't page Android phones yet" |
+* | "miss_not_configured" | "notifications aren't set up on this server" |
+* | "miss_over_limit" | "the page went to too many phones" |
+* | "miss_dead_lettered" | "the page was lost on the way" |
+* | "miss_nobody_on_call" | "nobody was on call" |
+* | "miss_schedule_missing" | "the level's schedule was deleted" |
+* | "miss_not_a_member" | "they can no longer respond" |
+* | "miss_escalation_stalled" | "the escalation stalled" |
+* | "miss_nobody_else" | "nobody else could respond" |
 * | * | "Who was paged" |
 *
 * @param {Page_WhyInputs} inputs

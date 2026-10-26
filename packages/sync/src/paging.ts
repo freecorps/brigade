@@ -18,9 +18,15 @@ import {
 } from "@freecorps/brigade-schema";
 
 /**
+ * How long a planned page may go unsent before it is reported `stuck`: the notifier sends within seconds, and the
+ * Queue's first retries are within this; a page planned longer ago with nothing sent is not on its way.
+ */
+export const PAGE_STUCK_MS = 2 * 60 * 1000;
+
+/**
  * The answer in a word, best outcome first: a phone said it opened a page (`delivered`); APNs took one but no phone
  * said so yet (`accepted`, not proof it was not shown: receipts are best effort); a page is on its way (`sending`);
- * every push failed (`failed`); a page was for them but reached no device (`missed`); they declared it, so nobody
+ * a page was planned but nothing was sent within `PAGE_STUCK_MS` (`stuck`); every push failed (`failed`); a page was for them but reached no device (`missed`); they declared it, so nobody
  * pushed them (`declarer`); they cannot be paged (`excluded`: a viewer, or no longer a member); paging went to others
  * (`not_targeted`); or nothing paged at all yet (`none`).
  */
@@ -28,6 +34,7 @@ export type WhyVerdict =
   | "delivered"
   | "accepted"
   | "sending"
+  | "stuck"
   | "failed"
   | "missed"
   | "declarer"
@@ -74,7 +81,8 @@ export type WhyPage = {
   misses: WhyMiss[];
 };
 
-export type WhyDelivery = { row: DeliveryRow; stage: DeliveryStage };
+/** One device's page: its furthest stage, and whether it was planned but never sent (`PAGE_STUCK_MS`). */
+export type WhyDelivery = { row: DeliveryRow; stage: DeliveryStage; stuck: boolean };
 
 /** What became of the email Brigade sends a member a SEV1 or SEV2 page missed (RFC 0005 "Email"). */
 export type WhyEmail = "expected" | "failed" | "capped" | "off";
@@ -103,6 +111,8 @@ export type WhyInput = {
   schedules: readonly ScheduleRow[];
   /** The workspace's email settings; absent: on. */
   email?: EmailSettings;
+  /** The time now, to tell a page still on its way from one that never went out. */
+  now: number;
 };
 
 const PAGING_SEVERITIES = new Set(["sev1", "sev2"]);
@@ -122,7 +132,12 @@ const STAGE_RANK: Record<DeliveryStage, number> = {
 };
 
 export function whyPaged(input: WhyInput): WhyPaged {
-  const { incident, userId } = input;
+  const { incident, userId, now } = input;
+  const withStage = (row: DeliveryRow): WhyDelivery => ({
+    row,
+    stage: deliveryStage(row),
+    stuck: row.sentAt === null && row.error === null && now - row.plannedAt >= PAGE_STUCK_MS,
+  });
   const member = input.members.find((row) => row.id === userId);
   const status = !member ? "gone" : member.role === "viewer" ? "viewer" : "responder";
   const mine = input.deliveries.filter((row) => row.userId === userId);
@@ -215,7 +230,8 @@ export function whyPaged(input: WhyInput): WhyPaged {
   );
   let verdict: WhyVerdict;
   if (best === "delivered" || best === "accepted") verdict = best;
-  else if (deliveries.some(({ row }) => row.error === null)) verdict = "sending";
+  else if (deliveries.some(({ row, stuck }) => row.error === null && !stuck)) verdict = "sending";
+  else if (deliveries.some(({ stuck }) => stuck)) verdict = "stuck";
   else if (deliveries.length > 0) verdict = "failed";
   else if (misses.length > 0) verdict = "missed";
   else if (pages.some((page) => page.targeted === "declarer")) verdict = "declarer";
@@ -237,10 +253,6 @@ export function whyPaged(input: WhyInput): WhyPaged {
         ? { by: incident.acknowledgedBy, at: incident.acknowledgedAt }
         : null,
   };
-}
-
-function withStage(row: DeliveryRow): WhyDelivery {
-  return { row, stage: deliveryStage(row) };
 }
 
 function targeted(

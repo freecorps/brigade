@@ -1,8 +1,8 @@
 // Delivery receipts (RFC 0006 "Delivery receipts"): the shard's side. Each page sealed for a device carries a token
 // the shard minted for that one page and device; the phone's Notification Service Extension posts it back after it
 // opened the page (`POST /receipts`, src/index.ts), with no session. The token is an HMAC under a key only this shard
-// holds (random, made on first use, never leaves its storage), over the workspace, incident, page event, device and
-// an expiry: it cannot be forged, names exactly one page on one device, and is useless after `RECEIPT_TTL_MS`. A
+// holds (random, made on first use, never leaves its storage), over the key's id, the workspace, incident, page event,
+// device and an expiry: it cannot be forged, names exactly one page on one device, and is useless after `RECEIPT_TTL_MS`. A
 // receipt is recorded once (`delivery.confirm`); a replay changes nothing. Nothing here is on the paging path: a
 // failure to mint a token sends the page without one.
 
@@ -20,6 +20,11 @@ export const RECEIPT_RATE_PER_MINUTE = 30;
 export const RECEIPT_TOKEN_MAX_LENGTH = 300;
 
 const VERSION = "v1";
+/**
+ * The id of the key a token was minted under, so a key can rotate later without guessing which one signed a token.
+ * One key today: a token naming any other is refused.
+ */
+const KEY_ID = "k1";
 const RATE_WINDOW_MS = 60 * 1000;
 
 const SCHEMA = `
@@ -33,6 +38,7 @@ const SCHEMA = `
 
 /** What a receipt's token names. `expiresAt` in whole seconds, as the token carries it. */
 export type ReceiptClaim = {
+  keyId: string;
   workspaceId: string;
   incidentId: string;
   eventId: string;
@@ -51,8 +57,9 @@ export function parseReceiptToken(
 ): { claim: ReceiptClaim; mac: Uint8Array } | undefined {
   if (typeof token !== "string" || token.length > RECEIPT_TOKEN_MAX_LENGTH) return undefined;
   const parts = token.split(".");
-  if (parts.length !== 7 || parts[0] !== VERSION) return undefined;
-  const [, workspaceId, incidentId, eventId, deviceId, expires, mac] = parts as [
+  if (parts.length !== 8 || parts[0] !== VERSION) return undefined;
+  const [, keyId, workspaceId, incidentId, eventId, deviceId, expires, mac] = parts as [
+    string,
     string,
     string,
     string,
@@ -62,6 +69,7 @@ export function parseReceiptToken(
     string,
   ];
   if (
+    !/^k[1-9][0-9]{0,3}$/.test(keyId) ||
     !WORKSPACE_ID.test(workspaceId) ||
     !ID.test(incidentId) ||
     !incidentId.startsWith("inc_") ||
@@ -82,7 +90,7 @@ export function parseReceiptToken(
   }
   if (bytes.length !== 32) return undefined;
   return {
-    claim: { workspaceId, incidentId, eventId, deviceId, expiresAt: Number(expires) },
+    claim: { keyId, workspaceId, incidentId, eventId, deviceId, expiresAt: Number(expires) },
     mac: bytes,
   };
 }
@@ -97,6 +105,7 @@ const signed = (claim: ReceiptClaim) =>
     [
       "brigade receipt",
       VERSION,
+      claim.keyId,
       claim.workspaceId,
       claim.incidentId,
       claim.eventId,
@@ -107,7 +116,7 @@ const signed = (claim: ReceiptClaim) =>
 
 /**
  * What a receipt did: `recorded` the first time, `already` for a replay; `invalid` for a token this shard did not
- * mint (forged, altered, another workspace's) or that is malformed, `expired`, `not_found` when the page was never
+ * mint (forged, altered, another workspace's, under a key it does not hold) or that is malformed, `expired`, `not_found` when the page was never
  * planned for that device (or its row is gone), `rate_limited` past `RECEIPT_RATE_PER_MINUTE`.
  */
 export type ReceiptResult =
@@ -135,7 +144,7 @@ export class Receipts {
 
   /** A token for each device of one page, good for `RECEIPT_TTL_MS` from `now`. */
   async mint(
-    claim: Omit<ReceiptClaim, "deviceId" | "expiresAt">,
+    claim: Omit<ReceiptClaim, "keyId" | "deviceId" | "expiresAt">,
     deviceIds: readonly string[],
     now: number,
   ): Promise<Map<string, string>> {
@@ -143,12 +152,13 @@ export class Receipts {
     const expiresAt = Math.ceil((now + RECEIPT_TTL_MS) / 1000);
     const tokens = new Map<string, string>();
     for (const deviceId of deviceIds) {
-      const full = { ...claim, deviceId, expiresAt };
+      const full = { ...claim, keyId: KEY_ID, deviceId, expiresAt };
       const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, signed(full)));
       tokens.set(
         deviceId,
         [
           VERSION,
+          full.keyId,
           full.workspaceId,
           full.incidentId,
           full.eventId,
@@ -164,7 +174,13 @@ export class Receipts {
   /** Checks a receipt's token and records the delivery once. Never throws for a bad token. */
   async receive(token: unknown, now: number): Promise<ReceiptResult> {
     const parsed = parseReceiptToken(token);
-    if (!parsed || parsed.claim.workspaceId !== this.options.shard.workspace()) return "invalid";
+    if (
+      !parsed ||
+      parsed.claim.keyId !== KEY_ID ||
+      parsed.claim.workspaceId !== this.options.shard.workspace()
+    ) {
+      return "invalid";
+    }
     const { claim, mac } = parsed;
     // `verify` compares in constant time.
     const genuine = await crypto.subtle.verify(

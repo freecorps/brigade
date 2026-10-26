@@ -19,6 +19,7 @@ import {
   CircleDashedIcon,
   CircleDotIcon,
   CircleHelpIcon,
+  CircleOffIcon,
   MailIcon,
   ShieldIcon,
   SmartphoneIcon,
@@ -28,15 +29,18 @@ import {
 import { useId, useState } from "react";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import {
+  byUrgency,
   deliveryError,
   deviceLabel,
   emailText,
   memberName,
   memberText,
   missText,
+  pageGroups,
   pageLabel,
   pagingMembers,
   ruleText,
+  sameOutcomeText,
   shortVerdict,
   stageText,
   stageTimes,
@@ -62,12 +66,18 @@ export type PagingData = {
   timeline: readonly TimelineRow[];
   schedules: readonly ScheduleRow[];
   email?: EmailSettings;
+  /** The time now: a page planned long ago and never sent is stuck, not on its way. */
+  now: number;
 };
+
+/** Phones on one page past which each shows only its furthest stage: a team with many phones stays readable. */
+const COMPACT_DEVICES = 3;
 
 const VERDICT_ICONS: Record<WhyVerdict, LucideIcon> = {
   delivered: CircleCheckIcon,
   accepted: CircleDotIcon,
   sending: CircleDashedIcon,
+  stuck: CircleOffIcon,
   failed: CircleAlertIcon,
   missed: CircleAlertIcon,
   declarer: UserRoundIcon,
@@ -88,8 +98,9 @@ function explain(data: PagingData, userId: string): WhyPaged {
 
 /**
  * The incident page's compact list: every member who can respond (and anyone else a page touched), with what
- * paging did with them in a word, each a link to the step-by-step view. The signed-in member gets their own
- * "Why wasn't I paged?" link at the top.
+ * paging did with them in a word, whoever needs a look first (`byUrgency`), each a link to the step-by-step view.
+ * The signed-in member gets their own "My paging" link at the top. On a phone each name has its own line, the
+ * outcome and the link below it, so a long name in pt-BR never loses to them.
  */
 export function PagingCard({
   data,
@@ -105,7 +116,8 @@ export function PagingCard({
     entry.kind === "page_failed" && entry.userId !== null ? [entry.userId] : [],
   );
   const ids = pagingMembers(data.members, data.deliveries, touched);
-  const shown = all ? ids : ids.slice(0, LIST_LIMIT);
+  const rows = byUrgency(ids.map((id) => ({ id, verdict: explain(data, id).verdict })));
+  const shown = all ? rows : rows.slice(0, LIST_LIMIT);
   const titleId = useId();
   return (
     <Card aria-labelledby={titleId}>
@@ -116,31 +128,38 @@ export function PagingCard({
         <WhyLink number={number} userId={who.self} className="self-start">
           {whyText("why_title_you")}
         </WhyLink>
-        {ids.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">{whyText("empty")}</p>
         ) : (
           <ul className="flex flex-col">
-            {shown.map((id) => {
-              const why = explain(data, id);
-              const Icon = VERDICT_ICONS[why.verdict];
+            {shown.map(({ id, verdict }) => {
+              const Icon = VERDICT_ICONS[verdict];
+              const name = memberName(id, who);
               return (
-                <li key={id} className="flex min-h-11 items-center gap-3 text-sm">
-                  <span className="min-w-0 flex-1 truncate font-medium" title={memberName(id, who)}>
-                    {memberName(id, who)}
+                <li
+                  key={id}
+                  className="flex flex-wrap items-center gap-x-3 border-b border-border/60 py-1.5 text-sm last:border-b-0 sm:min-h-11 sm:flex-nowrap sm:border-b-0 sm:py-0"
+                >
+                  <span
+                    className="min-w-0 basis-full font-medium [overflow-wrap:anywhere] sm:flex-1 sm:basis-auto sm:truncate"
+                    title={name}
+                  >
+                    {name}
                   </span>
                   <span
                     className={cn(
-                      "flex shrink-0 items-center gap-1.5 text-xs",
-                      TONE[verdictTone(why.verdict)],
+                      "flex min-w-0 items-center gap-1.5 text-xs sm:shrink-0",
+                      TONE[verdictTone(verdict)],
                     )}
                   >
-                    <Icon aria-hidden className="size-3.5" />
-                    {shortVerdict(why.verdict)}
+                    <Icon aria-hidden className="size-3.5 shrink-0" />
+                    {shortVerdict(verdict)}
                   </span>
                   <WhyLink
                     number={number}
                     userId={id}
-                    label={`${whyText("why_link")} ${memberName(id, who)}`}
+                    label={whyText("why_link_label", { name })}
+                    className="ml-auto"
                   >
                     {whyText("why_link")}
                   </WhyLink>
@@ -149,7 +168,7 @@ export function PagingCard({
             })}
           </ul>
         )}
-        {ids.length > LIST_LIMIT ? (
+        {rows.length > LIST_LIMIT ? (
           <button
             type="button"
             onClick={() => setAll((current) => !current)}
@@ -158,7 +177,7 @@ export function PagingCard({
           >
             {all
               ? m.incident_page({ part: "show_less" })
-              : m.members_show_all({ count: ids.length })}
+              : m.members_show_all({ count: rows.length })}
           </button>
         ) : null}
       </CardContent>
@@ -224,7 +243,15 @@ export function WhyPagedView({
   const name = memberName(userId, who);
   const Icon = VERDICT_ICONS[why.verdict];
   const pickId = useId();
-  const options = pagingMembers(data.members, data.deliveries, [userId]);
+  const [allPages, setAllPages] = useState(false);
+  const groups = pageGroups(why.pages);
+  const grouped = groups.length < why.pages.length;
+  const pages = allPages ? why.pages.map((page) => ({ page, earlier: 0 })) : groups;
+  // By name, numbers in order ("Ana 2" before "Ana 10").
+  const collator = new Intl.Collator(locale, { numeric: true, sensitivity: "base" });
+  const options = pagingMembers(data.members, data.deliveries, [userId])
+    .map((id) => ({ id, name: memberName(id, who) }))
+    .sort((a, b) => collator.compare(a.name, b.name));
   const time = (at: number) => entryTime(at, now, locale, timeZone);
   return (
     <div className="flex flex-col gap-6">
@@ -240,7 +267,7 @@ export function WhyPagedView({
         <h1 className="text-2xl font-semibold text-balance [overflow-wrap:anywhere]">
           {userId === who.self ? whyText("why_title_you") : whyText("why_title", { name })}
         </h1>
-        <MemberPicker id={pickId} number={number} options={options} value={userId} who={who} />
+        <MemberPicker id={pickId} number={number} options={options} value={userId} />
         <p
           role="status"
           className={cn(
@@ -249,17 +276,18 @@ export function WhyPagedView({
           )}
         >
           <Icon aria-hidden className="mt-1 size-4 shrink-0" />
-          <span className="min-w-0 [overflow-wrap:anywhere]">{verdictText(why.verdict, name)}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere]">{verdictText(why, name)}</span>
         </p>
       </header>
 
       <ol className="flex flex-col gap-4">
         <Step icon={UserRoundIcon}>{memberText(why.member.status, name)}</Step>
         <Step icon={CircleDotIcon}>{ruleText(why.rule)}</Step>
-        {why.pages.map((page, index) => (
+        {pages.map(({ page, earlier }, index) => (
           <PageStep
             key={page.step ?? `interim-${index}`}
             page={page}
+            earlier={earlier}
             name={name}
             who={who}
             time={time}
@@ -267,6 +295,20 @@ export function WhyPagedView({
             timeZone={timeZone}
           />
         ))}
+        {grouped ? (
+          <li className="pl-7">
+            <button
+              type="button"
+              onClick={() => setAllPages((current) => !current)}
+              aria-expanded={allPages}
+              className="min-h-11 rounded-md px-1 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring"
+            >
+              {allPages
+                ? m.incident_page({ part: "show_less" })
+                : whyText("pages_show_all", { detail: String(why.pages.length) })}
+            </button>
+          </li>
+        ) : null}
         <Step icon={SmartphoneIcon} title={whyText("devices_title")}>
           {why.devices.length === 0 ? (
             <p>{whyText("devices_none")}</p>
@@ -305,13 +347,11 @@ function MemberPicker({
   number,
   options,
   value,
-  who,
 }: {
   id: string;
   number: number;
-  options: readonly string[];
+  options: readonly { id: string; name: string }[];
   value: string;
-  who: People;
 }) {
   const navigate = useNavigate();
   return (
@@ -332,8 +372,8 @@ function MemberPicker({
         className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring sm:text-sm"
       >
         {options.map((option) => (
-          <option key={option} value={option}>
-            {memberName(option, who)}
+          <option key={option.id} value={option.id}>
+            {option.name}
           </option>
         ))}
       </select>
@@ -363,6 +403,7 @@ function Step({
 
 function PageStep({
   page,
+  earlier,
   name,
   who,
   time,
@@ -370,12 +411,24 @@ function PageStep({
   timeZone,
 }: {
   page: WhyPage;
+  /** Pages before this one with the same outcome, folded into it. */
+  earlier: number;
   name: string;
   who: People;
   time: (at: number) => string;
   locale: Locale;
   timeZone: string;
 }) {
+  const compact = page.deliveries.length > COMPACT_DEVICES;
+  const at = (value: number) => (
+    <time
+      className="shrink-0 tabular-nums"
+      dateTime={new Date(value).toISOString()}
+      title={formatDateTime(value, locale, timeZone)}
+    >
+      {formatDateTime(value, locale, timeZone, { timeStyle: "medium" })}
+    </time>
+  );
   return (
     <li className="flex gap-3 text-sm">
       <CircleDotIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
@@ -390,6 +443,7 @@ function PageStep({
             {time(page.at)}
           </time>
         </p>
+        {earlier > 0 ? <p className="text-muted-foreground">{sameOutcomeText(earlier)}</p> : null}
         {targetedText(page, name, who).map((line) => (
           <p key={line}>{line}</p>
         ))}
@@ -399,43 +453,64 @@ function PageStep({
           </p>
         ))}
         {page.deliveries.length > 0 ? (
-          <ul className="flex flex-col gap-3">
-            {page.deliveries.map(({ row, stage }) => (
-              <li key={row.id} className="flex flex-col gap-1.5 rounded-md bg-muted/60 p-3">
-                <span className="font-medium">{deviceLabel(row)}</span>
-                <ol className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
-                  {stageTimes(row).map(({ stage: one, at }) => (
-                    <li
-                      key={one}
-                      className={cn(
-                        "flex items-baseline justify-between gap-3",
-                        at === null && "text-muted-foreground",
-                      )}
-                    >
-                      <span>{stageText(one)}</span>
-                      <span className="shrink-0 tabular-nums">
-                        {at === null
-                          ? "-"
-                          : formatDateTime(at, locale, timeZone, { timeStyle: "medium" })}
-                      </span>
-                    </li>
+          <ul className={cn("flex flex-col", compact ? "gap-1.5" : "gap-3")}>
+            {page.deliveries.map(({ row, stage, stuck }) => {
+              const reached = stageTimes(row, stuck);
+              const furthest = reached.filter((one) => one.at !== null).at(-1)!;
+              return (
+                <li
+                  key={row.id}
+                  className={cn(
+                    "flex flex-col rounded-md bg-muted/60",
+                    compact ? "gap-0.5 px-3 py-2" : "gap-1.5 p-3",
+                  )}
+                >
+                  <span className="font-medium">{deviceLabel(row)}</span>
+                  {compact ? (
+                    // Many phones: each one's furthest stage only, still with its time.
+                    <p className="flex flex-wrap items-baseline justify-between gap-x-3">
+                      <span>{stageText(furthest.stage)}</span>
+                      {at(furthest.at!)}
+                    </p>
+                  ) : (
+                    <ol className="flex flex-col gap-y-1">
+                      {reached.map(({ stage: one, at: when, stopped }) => (
+                        <li
+                          key={one}
+                          className={cn(
+                            "flex flex-wrap items-baseline justify-between gap-x-3",
+                            when === null && "text-muted-foreground",
+                          )}
+                        >
+                          <span>{stageText(one)}</span>
+                          {when !== null ? (
+                            at(when)
+                          ) : (
+                            <span className={cn("shrink-0", stopped && TONE.warn)}>
+                              {whyText(stopped ? "stage_stopped" : "stage_none")}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                  {stuck ? <p className={TONE.warn}>{whyText("stuck_note")}</p> : null}
+                  {deliveryError(row).map((line) => (
+                    <p key={line} className={TONE.warn}>
+                      {line}
+                    </p>
                   ))}
-                </ol>
-                {deliveryError(row).map((line) => (
-                  <p key={line} className={TONE.warn}>
-                    {line}
-                  </p>
-                ))}
-                {stage === "accepted" ? (
-                  <p className="text-muted-foreground">{whyText("no_receipt")}</p>
-                ) : null}
-                {row.attempts > 1 ? (
-                  <p className="text-muted-foreground">
-                    {whyText("attempts", { detail: String(row.attempts) })}
-                  </p>
-                ) : null}
-              </li>
-            ))}
+                  {stage === "accepted" && !compact ? (
+                    <p className="text-muted-foreground">{whyText("no_receipt")}</p>
+                  ) : null}
+                  {row.attempts > 1 ? (
+                    <p className="text-muted-foreground">
+                      {whyText("attempts", { detail: String(row.attempts) })}
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         ) : null}
       </div>

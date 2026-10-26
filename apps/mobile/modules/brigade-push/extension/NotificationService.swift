@@ -62,10 +62,15 @@ extension NotificationService {
   /// How long a receipt may take. The extension has about 30 seconds in all, and the page is already on screen.
   static let receiptTimeout: TimeInterval = 5
 
-  /// Tells the server this phone opened the page: `POST <url>` with `{ "token": … }`, the token sealed in the page
-  /// for this device alone, so no session is needed or sent. Fire and forget: no retry, no cookies, no cache, and a
+  /// Tells the server this phone opened the page: `POST <url>` with `{ "token": … }`, only when `<url>` is on the
+  /// instance the app registered with; the token sealed in the page for this device alone, so no session is needed or sent. Fire and forget: no retry, no cookies, no cache, and a
   /// failure is only logged (the page is shown either way). The token is never logged.
   static func sendReceipt(_ receipt: BrigadePushCrypto.Receipt, log: Logger) {
+    // Only to the instance the app registered with: a page naming any other origin gets no receipt.
+    guard receipt.isForRegisteredInstance else {
+      log.error("receipt not sent: not the registered instance")
+      return
+    }
     guard let body = try? JSONSerialization.data(withJSONObject: ["token": receipt.token]) else { return }
     var request = URLRequest(url: receipt.url, timeoutInterval: receiptTimeout)
     request.httpMethod = "POST"

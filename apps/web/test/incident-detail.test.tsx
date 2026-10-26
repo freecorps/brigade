@@ -467,8 +467,44 @@ describe("who was paged, and why not", () => {
     expect(rows[0]).toBe(bia);
     const link = $$("a", bia).find((a) => a.textContent === "Why?")!;
     expect(link.getAttribute("href")).toBe("/incidents/1?why=usr_bia");
-    expect(link.getAttribute("aria-label")).toBe(`Why? ${LONG_NAME}`);
-    expect($$("a", paging).some((a) => a.textContent === "Why wasn't I paged?")).toBe(true);
+    expect(link.getAttribute("aria-label")).toBe(`Was ${LONG_NAME} paged?`);
+    expect($$("a", paging).some((a) => a.textContent === "My paging")).toBe(true);
+    // The name has a line of its own on a phone; the full name stays in a tooltip where it is cut on wide screens.
+    const name = $$("span", bia).find((span) => span.textContent === LONG_NAME)!;
+    expect(name.className).toContain("basis-full");
+    expect(name.getAttribute("title")).toBe(LONG_NAME);
+  });
+
+  test("a page planned and never sent is stuck, not sending forever", async () => {
+    const view = await mount("/incidents/1");
+    view.declare("Checkout down");
+    const id = view.shard.store.scan("incidents")[0]!.id;
+    // Planned at T0, long before now: nothing sent since.
+    deliver({ ...view, id } as Awaited<ReturnType<typeof incidentPage>>, {
+      sentAt: null,
+      acceptedAt: null,
+      attempts: 0,
+    });
+    await act(() => view.router.load());
+    await view.flush();
+    const bia = $$("li", card("Who was paged")!).find((row) =>
+      row.textContent?.includes(LONG_NAME),
+    )!;
+    expect(bia.textContent).toContain("Planned but never sent");
+    expect(bia.textContent).not.toContain("Sending");
+
+    await act(() =>
+      view.router.navigate({
+        to: "/incidents/$number",
+        params: { number: "1" },
+        search: { why: "usr_bia" },
+      }),
+    );
+    await view.flush();
+    const text = document.body.textContent ?? "";
+    expect(text).toContain(`A page to ${LONG_NAME} was planned but never sent`);
+    expect(text).toContain("Brigade planned this page but never sent it");
+    expect(text).toContain("Stopped here");
   });
 
   test("step by step: the phone, each stage with its time, and Apple's error", async () => {
@@ -484,15 +520,22 @@ describe("who was paged, and why not", () => {
     await act(() => view.router.load());
     await view.flush();
     const text = document.body.textContent ?? "";
-    expect($("h1")?.textContent).toBe(`Why wasn't ${LONG_NAME} paged?`);
+    expect($("h1")?.textContent).toBe(`Paging for ${LONG_NAME}`);
     expect(text).toContain(`No page got through to ${LONG_NAME}'s phone`);
     expect(text).toContain("No escalation policy");
     expect(text).toContain("iPhone · App Store build");
-    expect(text).toContain("Handed to the relay");
+    expect(text).toContain("Sent by Brigade");
+    // The page stopped where Apple refused it; the stage after it was never reached.
+    expect(text).toContain("Stopped here");
+    expect(text).toContain("Not reached");
+    const planned = $$("time").find(
+      (time) => time.getAttribute("datetime") === new Date(T0).toISOString(),
+    );
+    expect(planned).toBeTruthy();
     expect(text).toContain("Apple said this phone's token is no longer valid");
     expect(text).toContain("Apple said: BadDeviceToken");
     expect(text).toContain("Attempts: 3");
-    expect(text).toContain("Only members of this workspace see");
+    expect(text).toContain("Everyone in this workspace sees each member's phones");
     const back = $$("a").find((a) => a.textContent?.startsWith("Back to INC-1"));
     expect(back?.getAttribute("href")).toBe("/incidents/1");
   });
@@ -505,8 +548,8 @@ describe("who was paged, and why not", () => {
       await view.flush();
       const [title, devices] =
         locale === "en"
-          ? ["Why wasn't I paged?", "No phone registered."]
-          : ["Por que não fui acionado?", "Nenhum celular registrado."];
+          ? ["My paging", "No phone registered."]
+          : ["Meus acionamentos", "Nenhum celular registrado."];
       expect($("h1")?.textContent).toBe(title);
       expect(document.body.textContent).toContain(devices);
       act(() => root?.unmount());

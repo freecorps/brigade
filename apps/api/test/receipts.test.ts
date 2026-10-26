@@ -14,6 +14,7 @@ import {
   generateRecipient,
   openPush,
   parsePushEnvelope,
+  PUSH_PLAINTEXT_MAX_BYTES,
   toBase64url,
   type HpkeRecipient,
 } from "@freecorps/brigade-push";
@@ -24,6 +25,7 @@ import {
   type DeliveryRow,
   type Role,
 } from "@freecorps/brigade-schema";
+import { receiveReceipt } from "../src/index.ts";
 import { consumeEvents, receiptUrl, type Fetch } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import {
@@ -246,20 +248,24 @@ describe("a page's receipt", () => {
     const parts = token.split(".");
     const swap = (index: number, value: string) =>
       parts.map((part, i) => (i === index ? value : part)).join(".");
-    const flipped = parts[6]!.startsWith("A") ? `B${parts[6]!.slice(1)}` : `A${parts[6]!.slice(1)}`;
+    const flipped = parts[7]!.startsWith("A") ? `B${parts[7]!.slice(1)}` : `A${parts[7]!.slice(1)}`;
 
+    // v1.<key>.<workspace>.<incident>.<event>.<device>.<expiry>.<mac>
+    expect(parts.slice(0, 2)).toEqual(["v1", "k1"]);
     const forged = [
-      swap(6, flipped), // the MAC altered
-      swap(6, toBase64url(random(32))), // a made-up MAC
-      swap(4, newId("dev", Date.now(), random)), // another device
-      swap(3, newId("evt", Date.now(), random)), // another page
-      swap(5, String(Number(parts[5]) + 3600)), // a later expiry
-      swap(1, other.id), // another workspace
+      swap(7, flipped), // the MAC altered
+      swap(7, toBase64url(random(32))), // a made-up MAC
+      swap(5, newId("dev", Date.now(), random)), // another device
+      swap(4, newId("evt", Date.now(), random)), // another page
+      swap(6, String(Number(parts[6]) + 3600)), // a later expiry
+      swap(2, other.id), // another workspace
+      swap(1, "k2"), // a key this shard does not hold
+      parts.filter((_, i) => i !== 1).join("."), // no key id
     ];
     for (const bad of forged) expect((await receipt(bad)).status, bad).toBe(403);
     // A token another workspace's shard minted for this page is not this shard's either.
     const theirs = (await other.mint(incident, event.id, [phone.deviceId])).get(phone.deviceId)!;
-    expect((await receipt(swap(6, theirs.split(".")[6]!))).status).toBe(403);
+    expect((await receipt(swap(7, theirs.split(".")[7]!))).status).toBe(403);
     expect(
       (await ws.delivery(deliveryId(incident, event.id, phone.deviceId)))?.deliveredAt,
     ).toBeNull();
@@ -312,6 +318,7 @@ describe("a page's receipt", () => {
     const ghost = newId("ws", Date.now(), random);
     const made = [
       "v1",
+      "k1",
       ghost,
       newId("inc", Date.now(), random),
       newId("evt", Date.now(), random),
@@ -320,6 +327,111 @@ describe("a page's receipt", () => {
       toBase64url(random(32)),
     ].join(".");
     expect((await receipt(made)).status).toBe(403);
+  });
+
+  test("a body streamed without a length is read only up to its limit", async () => {
+    let pulled = 0;
+    const chunk = new TextEncoder().encode(" ".repeat(512));
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        // Far more than the limit if it were all read: the Worker must stop after about 1 KiB.
+        if (++pulled > 64) controller.close();
+        else controller.enqueue(chunk);
+      },
+    });
+    const response = await receiveReceipt(
+      new Request("http://api.test/receipts", {
+        method: "POST",
+        body,
+        duplex: "half",
+      } as RequestInit),
+      env,
+    );
+    expect(response.status).toBe(413);
+    expect(pulled).toBeLessThan(8);
+  });
+});
+
+describe("the Worker's rate limit", () => {
+  /** The Worker's env with a stand-in limiter and a shard namespace that records every wake. */
+  function limited(success: boolean | (() => never)) {
+    const keys: string[] = [];
+    const woken: string[] = [];
+    const limiter = {
+      limit: async ({ key }: { key: string }) => {
+        keys.push(key);
+        if (typeof success === "function") success();
+        return { success: success as boolean };
+      },
+    };
+    const namespace = new Proxy(env.WORKSPACE, {
+      get(target, property) {
+        if (property !== "getByName") return Reflect.get(target, property);
+        return (name: string) => {
+          woken.push(name);
+          return target.getByName(name);
+        };
+      },
+    });
+    const limitedEnv = { ...env, RECEIPT_LIMIT: limiter, WORKSPACE: namespace } as unknown as Env;
+    return { keys, woken, env: limitedEnv };
+  }
+
+  test("refuses before waking the shard, keyed on the workspace and the caller", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    await deliver(event, relay().send);
+    const token = (await ws.mint(incident, event.id, [phone.deviceId])).get(phone.deviceId)!;
+    const request = () =>
+      new Request("http://api.test/receipts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "cf-connecting-ip": "caller-1" },
+        body: JSON.stringify({ token }),
+      });
+
+    const refused = limited(false);
+    const response = await receiveReceipt(request(), refused.env);
+    expect(response.status).toBe(429);
+    expect(refused.keys).toEqual([`${ws.id}:caller-1`]);
+    expect(refused.woken).toEqual([]);
+    expect(
+      (await ws.delivery(deliveryId(incident, event.id, phone.deviceId)))?.deliveredAt,
+    ).toBeNull();
+
+    // Under the limit the receipt goes through; a limiter that fails lets it through too.
+    const allowed = limited(true);
+    expect((await receiveReceipt(request(), allowed.env)).status).toBe(200);
+    expect(allowed.woken).toEqual([ws.id]);
+    const broken = limited(() => {
+      throw new Error("limiter down");
+    });
+    expect((await receiveReceipt(request(), broken.env)).status).toBe(200);
+    expect(logged().some((line) => line.message === "receipt rate limit failed")).toBe(true);
+  });
+
+  test("a token for a made-up workspace never reaches the limiter or a shard", async () => {
+    const check = limited(true);
+    const ghost = [
+      "v1",
+      "k1",
+      newId("ws", Date.now(), random),
+      newId("inc", Date.now(), random),
+      newId("evt", Date.now(), random),
+      newId("dev", Date.now(), random),
+      "9999999999",
+      toBase64url(random(32)),
+    ].join(".");
+    const response = await receiveReceipt(
+      new Request("http://api.test/receipts", {
+        method: "POST",
+        body: JSON.stringify({ token: ghost }),
+      }),
+      check.env,
+    );
+    expect(response.status).toBe(403);
+    expect(check.keys).toEqual([]);
+    expect(check.woken).toEqual([]);
   });
 });
 
@@ -340,6 +452,34 @@ describe("receipts never stop a page", () => {
     expect(logged().some((line) => line.message === "minting receipt tokens failed")).toBe(true);
     expect(await ws.delivery(deliveryId(incident, event.id, phone.deviceId))).toMatchObject({
       acceptedAt: expect.any(Number),
+    });
+  });
+
+  test("a page too big to carry its receipt is sealed again without it, and still accepted", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    // Longer than a title can be today, as a later field or limit could make a page: the content alone fits the
+    // 2048 bytes a page may seal, the content and its receipt do not.
+    const title = "x".repeat(1900);
+    await ws.withShard((shard) => shard.store.update("incidents", incident, { title }));
+    const { envelopes, send } = relay();
+    const result = await deliver(event, send);
+
+    expect(result.explicitAcks).toEqual(["msg-0"]);
+    expect(envelopes).toHaveLength(1);
+    const page = await openPush(phone.recipient, parsePushEnvelope(envelopes[0])!);
+    expect(page.body).toBe(title);
+    expect(page.receipt).toBeUndefined();
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
+    const token = (await ws.mint(incident, event.id, [phone.deviceId])).get(phone.deviceId)!;
+    expect(bytes(page)).toBeLessThanOrEqual(PUSH_PLAINTEXT_MAX_BYTES);
+    expect(
+      bytes({ ...page, receipt: { url: `${DASHBOARD}/api/receipts`, token } }),
+    ).toBeGreaterThan(PUSH_PLAINTEXT_MAX_BYTES);
+    expect(await ws.delivery(deliveryId(incident, event.id, phone.deviceId))).toMatchObject({
+      acceptedAt: expect.any(Number),
+      error: null,
     });
   });
 

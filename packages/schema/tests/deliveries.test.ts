@@ -8,6 +8,7 @@ import {
   evaluateQuery,
   incidentDeliveries,
   allDevices,
+  MAX_DELIVERIES_PER_DEVICE,
   mutations,
   newId,
   NOTIFIER_ACTOR,
@@ -89,6 +90,45 @@ describe("delivery ids", () => {
 });
 
 describe("delivery.plan, report and confirm", () => {
+  test(`an incident keeps each device's latest ${MAX_DELIVERIES_PER_DEVICE} rows`, () => {
+    const { store, incidentId, deviceId } = setup();
+    const other = newId("dev", T, random);
+    const device = (id: string) => ({
+      deviceId: id,
+      userId: ana.id,
+      platform: "ios",
+      environment: "production",
+    });
+    const events: string[] = [];
+    const page = (devices: string[], now: number) => {
+      const eventId = newId("evt", now, random);
+      events.push(eventId);
+      return run(
+        store,
+        NOTIFIER_ACTOR,
+        "delivery.plan",
+        { incidentId, eventId, page: null, devices: devices.map(device) },
+        now,
+      );
+    };
+    // The other device is on the first page only: it keeps that row however often this one is paged.
+    page([deviceId, other], T);
+    for (let i = 1; i < MAX_DELIVERIES_PER_DEVICE; i++) page([deviceId], T + i * 60_000);
+    const rows = () => store.scan("deliveries").filter((row) => row.deviceId === deviceId);
+    expect(rows()).toHaveLength(MAX_DELIVERIES_PER_DEVICE);
+
+    const over = page([deviceId], T + MAX_DELIVERIES_PER_DEVICE * 60_000);
+    expect(over).toMatchObject({
+      ok: true,
+      events: [{ type: "notification.planned", data: { devices: 1, dropped: 1 } }],
+    });
+    expect(rows()).toHaveLength(MAX_DELIVERIES_PER_DEVICE);
+    // The oldest went; the newest is there.
+    expect(store.get("deliveries", deliveryId(incidentId, events[0]!, deviceId))).toBeUndefined();
+    expect(store.get("deliveries", deliveryId(incidentId, events.at(-1)!, deviceId))).toBeDefined();
+    expect(store.get("deliveries", deliveryId(incidentId, events[0]!, other))).toBeDefined();
+  });
+
   test("are server only", () => {
     for (const name of ["delivery.plan", "delivery.report", "delivery.confirm"]) {
       expect(Object.keys(mutations)).not.toContain(name);

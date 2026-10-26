@@ -11,15 +11,15 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | text | output |
 * | --- | --- |
 * | "title" | "Who was paged" |
-* | "why_title" | "Why wasn't {name} paged?" |
-* | "why_title_you" | "Why wasn't I paged?" |
+* | "why_title" | "Paging for {name}" |
+* | "why_title_you" | "My paging" |
 * | "why_link" | "Why?" |
 * | "explain" | "Explain step by step" |
 * | "back" | "Back to {name}" |
 * | "pick_member" | "Member" |
 * | "loading" | "Loading delivery details…" |
 * | "empty" | "No page has gone out for this incident yet." |
-* | "privacy" | "Only members of this workspace see when a phone received a page." |
+* | "privacy" | "Everyone in this workspace sees each member's phones, when Brigade last heard from them, and when a phone received a page." |
 * | "verdict_delivered" | "The page reached {name}'s phone" |
 * | "verdict_accepted" | "Sent to {name}'s phone, but the phone hasn't confirmed it" |
 * | "verdict_sending" | "A page is on its way to {name}" |
@@ -33,7 +33,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "short_accepted" | "Sent, no receipt" |
 * | "short_sending" | "Sending" |
 * | "short_failed" | "Failed" |
-* | "short_missed" | "Not paged" |
+* | "short_missed" | "Couldn't page" |
 * | "short_declarer" | "Declared it" |
 * | "short_excluded" | "Can't be paged" |
 * | "short_not_targeted" | "Not paged" |
@@ -65,7 +65,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "seen" | "Last heard from {time}" |
 * | "calls" | "Takes calls" |
 * | "stage_planned" | "Planned" |
-* | "stage_sent" | "Handed to the relay" |
+* | "stage_sent" | "Sent by Brigade" |
 * | "stage_accepted" | "Accepted by Apple" |
 * | "stage_delivered" | "Opened on the phone" |
 * | "no_receipt" | "No receipt from the phone. Receipts are best effort: the page may still have shown." |
@@ -73,17 +73,38 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "error_not_configured" | "Push notifications aren't set up on this server" |
 * | "error_unsupported" | "Brigade can't push to Android phones yet" |
 * | "error_seal_failed" | "The page couldn't be encrypted for this phone" |
-* | "error_relay_unreachable" | "The push relay didn't answer" |
-* | "error_relay_refused" | "The push relay refused the request" |
+* | "error_relay_unreachable" | "Brigade's sending service didn't answer" |
+* | "error_relay_refused" | "Brigade's sending service refused the request" |
 * | "error_token_invalid" | "Apple said this phone's token is no longer valid, so the phone was removed" |
 * | "error_apns_refused" | "Apple refused the push" |
 * | "error_apns_unavailable" | "Apple was busy or failing" |
 * | "apns_reason" | "Apple said: {detail}" |
-* | "email_expected" | "Brigade emails {name} once about a page that missed them." |
+* | "email_expected" | "Brigade will email {name} once about a page that missed them." |
 * | "email_failed" | "Couldn't email {name} about the missed page." |
 * | "email_capped" | "Not emailed: the limit on Brigade's emails was reached." |
 * | "email_off" | "Emails about missed pages are off in this workspace." |
 * | "acknowledged" | "{name} acknowledged it {time}, which stopped paging." |
+* | "why_link_label" | "Was {name} paged?" |
+* | "verdict_missed_reason" | "Brigade couldn't page {name}: {detail}" |
+* | "verdict_stuck" | "A page to {name} was planned but never sent" |
+* | "short_stuck" | "Planned but never sent" |
+* | "stage_none" | "Not reached" |
+* | "stage_stopped" | "Stopped here" |
+* | "stuck_note" | "Brigade planned this page but never sent it. Pages go out within seconds, so it's stuck." |
+* | "pages_same" | "Same outcome as the {detail} pages before it" |
+* | "pages_same_one" | "Same outcome as the page before it" |
+* | "pages_show_all" | "Show all {detail} pages" |
+* | "miss_no_devices" | "no phone registered" |
+* | "miss_undelivered" | "the page didn't go through" |
+* | "miss_unsupported" | "Brigade can't page Android phones yet" |
+* | "miss_not_configured" | "notifications aren't set up on this server" |
+* | "miss_over_limit" | "the page went to too many phones" |
+* | "miss_dead_lettered" | "the page was lost on the way" |
+* | "miss_nobody_on_call" | "nobody was on call" |
+* | "miss_schedule_missing" | "the level's schedule was deleted" |
+* | "miss_not_a_member" | "they can no longer respond" |
+* | "miss_escalation_stalled" | "the escalation stalled" |
+* | "miss_nobody_else" | "nobody else could respond" |
 * | * | "Who was paged" |
 *
 * @param {Page_WhyInputs} inputs
@@ -94,15 +115,15 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.text === "title") return /** @type {LocalizedString} */ (`Quem foi acionado`);
-		if (i?.text === "why_title") return /** @type {LocalizedString} */ (`Por que ${i?.name} não foi acionado?`);
-		if (i?.text === "why_title_you") return /** @type {LocalizedString} */ (`Por que não fui acionado?`);
+		if (i?.text === "why_title") return /** @type {LocalizedString} */ (`Acionamentos de ${i?.name}`);
+		if (i?.text === "why_title_you") return /** @type {LocalizedString} */ (`Meus acionamentos`);
 		if (i?.text === "why_link") return /** @type {LocalizedString} */ (`Por quê?`);
 		if (i?.text === "explain") return /** @type {LocalizedString} */ (`Explicar passo a passo`);
 		if (i?.text === "back") return /** @type {LocalizedString} */ (`Voltar para ${i?.name}`);
 		if (i?.text === "pick_member") return /** @type {LocalizedString} */ (`Membro`);
 		if (i?.text === "loading") return /** @type {LocalizedString} */ (`Carregando detalhes da entrega…`);
 		if (i?.text === "empty") return /** @type {LocalizedString} */ (`Nenhum acionamento saiu para este incidente ainda.`);
-		if (i?.text === "privacy") return /** @type {LocalizedString} */ (`Só membros deste espaço de trabalho veem quando um celular recebeu um acionamento.`);
+		if (i?.text === "privacy") return /** @type {LocalizedString} */ (`Todos neste espaço de trabalho veem os celulares de cada membro, quando o Brigade teve sinal deles pela última vez e quando um celular recebeu um acionamento.`);
 		if (i?.text === "verdict_delivered") return /** @type {LocalizedString} */ (`O acionamento chegou ao celular de ${i?.name}`);
 		if (i?.text === "verdict_accepted") return /** @type {LocalizedString} */ (`Enviado ao celular de ${i?.name}, mas o celular ainda não confirmou`);
 		if (i?.text === "verdict_sending") return /** @type {LocalizedString} */ (`Um acionamento está a caminho de ${i?.name}`);
@@ -116,7 +137,7 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "short_accepted") return /** @type {LocalizedString} */ (`Enviado, sem confirmação`);
 		if (i?.text === "short_sending") return /** @type {LocalizedString} */ (`Enviando`);
 		if (i?.text === "short_failed") return /** @type {LocalizedString} */ (`Falhou`);
-		if (i?.text === "short_missed") return /** @type {LocalizedString} */ (`Não acionado`);
+		if (i?.text === "short_missed") return /** @type {LocalizedString} */ (`Não foi possível acionar`);
 		if (i?.text === "short_declarer") return /** @type {LocalizedString} */ (`Declarou`);
 		if (i?.text === "short_excluded") return /** @type {LocalizedString} */ (`Não acionável`);
 		if (i?.text === "short_not_targeted") return /** @type {LocalizedString} */ (`Não acionado`);
@@ -148,38 +169,59 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "seen") return /** @type {LocalizedString} */ (`Último sinal ${i?.time}`);
 		if (i?.text === "calls") return /** @type {LocalizedString} */ (`Recebe chamadas`);
 		if (i?.text === "stage_planned") return /** @type {LocalizedString} */ (`Planejado`);
-		if (i?.text === "stage_sent") return /** @type {LocalizedString} */ (`Entregue ao relay`);
+		if (i?.text === "stage_sent") return /** @type {LocalizedString} */ (`Enviado pelo Brigade`);
 		if (i?.text === "stage_accepted") return /** @type {LocalizedString} */ (`Aceito pela Apple`);
 		if (i?.text === "stage_delivered") return /** @type {LocalizedString} */ (`Aberto no celular`);
 		if (i?.text === "no_receipt") return /** @type {LocalizedString} */ (`O celular não confirmou. A confirmação é feita sem garantia: o acionamento pode ter aparecido mesmo assim.`);
 		if (i?.text === "attempts") return /** @type {LocalizedString} */ (`Tentativas: ${i?.detail}`);
-		if (i?.text === "error_not_configured") return /** @type {LocalizedString} */ (`As notificações push não estão configuradas neste servidor`);
-		if (i?.text === "error_unsupported") return /** @type {LocalizedString} */ (`O Brigade ainda não envia push para celulares Android`);
+		if (i?.text === "error_not_configured") return /** @type {LocalizedString} */ (`As notificações não estão configuradas neste servidor`);
+		if (i?.text === "error_unsupported") return /** @type {LocalizedString} */ (`O Brigade ainda não aciona celulares Android`);
 		if (i?.text === "error_seal_failed") return /** @type {LocalizedString} */ (`Não foi possível criptografar o acionamento para este celular`);
-		if (i?.text === "error_relay_unreachable") return /** @type {LocalizedString} */ (`O relay de push não respondeu`);
-		if (i?.text === "error_relay_refused") return /** @type {LocalizedString} */ (`O relay de push recusou o pedido`);
+		if (i?.text === "error_relay_unreachable") return /** @type {LocalizedString} */ (`O serviço de envio do Brigade não respondeu`);
+		if (i?.text === "error_relay_refused") return /** @type {LocalizedString} */ (`O serviço de envio do Brigade recusou o pedido`);
 		if (i?.text === "error_token_invalid") return /** @type {LocalizedString} */ (`A Apple disse que o token deste celular não vale mais, então o celular foi removido`);
-		if (i?.text === "error_apns_refused") return /** @type {LocalizedString} */ (`A Apple recusou o push`);
+		if (i?.text === "error_apns_refused") return /** @type {LocalizedString} */ (`A Apple recusou a notificação`);
 		if (i?.text === "error_apns_unavailable") return /** @type {LocalizedString} */ (`A Apple estava ocupada ou falhando`);
 		if (i?.text === "apns_reason") return /** @type {LocalizedString} */ (`A Apple disse: ${i?.detail}`);
-		if (i?.text === "email_expected") return /** @type {LocalizedString} */ (`O Brigade envia um email a ${i?.name} uma vez sobre um acionamento que não chegou.`);
+		if (i?.text === "email_expected") return /** @type {LocalizedString} */ (`O Brigade vai enviar um email a ${i?.name}, uma vez, sobre um acionamento que não chegou.`);
 		if (i?.text === "email_failed") return /** @type {LocalizedString} */ (`Não foi possível enviar o email a ${i?.name} sobre o acionamento perdido.`);
 		if (i?.text === "email_capped") return /** @type {LocalizedString} */ (`Sem email: o limite de emails do Brigade foi atingido.`);
 		if (i?.text === "email_off") return /** @type {LocalizedString} */ (`Os emails sobre acionamentos perdidos estão desligados neste espaço de trabalho.`);
 		if (i?.text === "acknowledged") return /** @type {LocalizedString} */ (`${i?.name} reconheceu ${i?.time}, o que parou os acionamentos.`);
+		if (i?.text === "why_link_label") return /** @type {LocalizedString} */ (`Ver acionamentos de ${i?.name}`);
+		if (i?.text === "verdict_missed_reason") return /** @type {LocalizedString} */ (`O Brigade não conseguiu acionar ${i?.name}: ${i?.detail}`);
+		if (i?.text === "verdict_stuck") return /** @type {LocalizedString} */ (`Um acionamento para ${i?.name} foi planejado, mas nunca enviado`);
+		if (i?.text === "short_stuck") return /** @type {LocalizedString} */ (`Planejado, nunca enviado`);
+		if (i?.text === "stage_none") return /** @type {LocalizedString} */ (`Não chegou aqui`);
+		if (i?.text === "stage_stopped") return /** @type {LocalizedString} */ (`Parou aqui`);
+		if (i?.text === "stuck_note") return /** @type {LocalizedString} */ (`O Brigade planejou este acionamento, mas nunca o enviou. Acionamentos saem em segundos, então ele travou.`);
+		if (i?.text === "pages_same") return /** @type {LocalizedString} */ (`Mesmo resultado dos ${i?.detail} acionamentos anteriores`);
+		if (i?.text === "pages_same_one") return /** @type {LocalizedString} */ (`Mesmo resultado do acionamento anterior`);
+		if (i?.text === "pages_show_all") return /** @type {LocalizedString} */ (`Mostrar todos os ${i?.detail} acionamentos`);
+		if (i?.text === "miss_no_devices") return /** @type {LocalizedString} */ (`nenhum celular registrado`);
+		if (i?.text === "miss_undelivered") return /** @type {LocalizedString} */ (`o acionamento não foi entregue`);
+		if (i?.text === "miss_unsupported") return /** @type {LocalizedString} */ (`o Brigade ainda não aciona celulares Android`);
+		if (i?.text === "miss_not_configured") return /** @type {LocalizedString} */ (`as notificações não estão configuradas neste servidor`);
+		if (i?.text === "miss_over_limit") return /** @type {LocalizedString} */ (`o acionamento foi para celulares demais`);
+		if (i?.text === "miss_dead_lettered") return /** @type {LocalizedString} */ (`o acionamento se perdeu no caminho`);
+		if (i?.text === "miss_nobody_on_call") return /** @type {LocalizedString} */ (`ninguém estava de plantão`);
+		if (i?.text === "miss_schedule_missing") return /** @type {LocalizedString} */ (`a escala do nível foi apagada`);
+		if (i?.text === "miss_not_a_member") return /** @type {LocalizedString} */ (`não pode mais responder`);
+		if (i?.text === "miss_escalation_stalled") return /** @type {LocalizedString} */ (`o escalonamento travou`);
+		if (i?.text === "miss_nobody_else") return /** @type {LocalizedString} */ (`ninguém mais podia responder`);
 		return /** @type {LocalizedString} */ (`Quem foi acionado`)
 	}
 	{
 		if (i?.text === "title") return /** @type {LocalizedString} */ (`Who was paged`);
-		if (i?.text === "why_title") return /** @type {LocalizedString} */ (`Why wasn't ${i?.name} paged?`);
-		if (i?.text === "why_title_you") return /** @type {LocalizedString} */ (`Why wasn't I paged?`);
+		if (i?.text === "why_title") return /** @type {LocalizedString} */ (`Paging for ${i?.name}`);
+		if (i?.text === "why_title_you") return /** @type {LocalizedString} */ (`My paging`);
 		if (i?.text === "why_link") return /** @type {LocalizedString} */ (`Why?`);
 		if (i?.text === "explain") return /** @type {LocalizedString} */ (`Explain step by step`);
 		if (i?.text === "back") return /** @type {LocalizedString} */ (`Back to ${i?.name}`);
 		if (i?.text === "pick_member") return /** @type {LocalizedString} */ (`Member`);
 		if (i?.text === "loading") return /** @type {LocalizedString} */ (`Loading delivery details…`);
 		if (i?.text === "empty") return /** @type {LocalizedString} */ (`No page has gone out for this incident yet.`);
-		if (i?.text === "privacy") return /** @type {LocalizedString} */ (`Only members of this workspace see when a phone received a page.`);
+		if (i?.text === "privacy") return /** @type {LocalizedString} */ (`Everyone in this workspace sees each member's phones, when Brigade last heard from them, and when a phone received a page.`);
 		if (i?.text === "verdict_delivered") return /** @type {LocalizedString} */ (`The page reached ${i?.name}'s phone`);
 		if (i?.text === "verdict_accepted") return /** @type {LocalizedString} */ (`Sent to ${i?.name}'s phone, but the phone hasn't confirmed it`);
 		if (i?.text === "verdict_sending") return /** @type {LocalizedString} */ (`A page is on its way to ${i?.name}`);
@@ -193,7 +235,7 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "short_accepted") return /** @type {LocalizedString} */ (`Sent, no receipt`);
 		if (i?.text === "short_sending") return /** @type {LocalizedString} */ (`Sending`);
 		if (i?.text === "short_failed") return /** @type {LocalizedString} */ (`Failed`);
-		if (i?.text === "short_missed") return /** @type {LocalizedString} */ (`Not paged`);
+		if (i?.text === "short_missed") return /** @type {LocalizedString} */ (`Couldn't page`);
 		if (i?.text === "short_declarer") return /** @type {LocalizedString} */ (`Declared it`);
 		if (i?.text === "short_excluded") return /** @type {LocalizedString} */ (`Can't be paged`);
 		if (i?.text === "short_not_targeted") return /** @type {LocalizedString} */ (`Not paged`);
@@ -225,7 +267,7 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "seen") return /** @type {LocalizedString} */ (`Last heard from ${i?.time}`);
 		if (i?.text === "calls") return /** @type {LocalizedString} */ (`Takes calls`);
 		if (i?.text === "stage_planned") return /** @type {LocalizedString} */ (`Planned`);
-		if (i?.text === "stage_sent") return /** @type {LocalizedString} */ (`Handed to the relay`);
+		if (i?.text === "stage_sent") return /** @type {LocalizedString} */ (`Sent by Brigade`);
 		if (i?.text === "stage_accepted") return /** @type {LocalizedString} */ (`Accepted by Apple`);
 		if (i?.text === "stage_delivered") return /** @type {LocalizedString} */ (`Opened on the phone`);
 		if (i?.text === "no_receipt") return /** @type {LocalizedString} */ (`No receipt from the phone. Receipts are best effort: the page may still have shown.`);
@@ -233,17 +275,38 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "error_not_configured") return /** @type {LocalizedString} */ (`Push notifications aren't set up on this server`);
 		if (i?.text === "error_unsupported") return /** @type {LocalizedString} */ (`Brigade can't push to Android phones yet`);
 		if (i?.text === "error_seal_failed") return /** @type {LocalizedString} */ (`The page couldn't be encrypted for this phone`);
-		if (i?.text === "error_relay_unreachable") return /** @type {LocalizedString} */ (`The push relay didn't answer`);
-		if (i?.text === "error_relay_refused") return /** @type {LocalizedString} */ (`The push relay refused the request`);
+		if (i?.text === "error_relay_unreachable") return /** @type {LocalizedString} */ (`Brigade's sending service didn't answer`);
+		if (i?.text === "error_relay_refused") return /** @type {LocalizedString} */ (`Brigade's sending service refused the request`);
 		if (i?.text === "error_token_invalid") return /** @type {LocalizedString} */ (`Apple said this phone's token is no longer valid, so the phone was removed`);
 		if (i?.text === "error_apns_refused") return /** @type {LocalizedString} */ (`Apple refused the push`);
 		if (i?.text === "error_apns_unavailable") return /** @type {LocalizedString} */ (`Apple was busy or failing`);
 		if (i?.text === "apns_reason") return /** @type {LocalizedString} */ (`Apple said: ${i?.detail}`);
-		if (i?.text === "email_expected") return /** @type {LocalizedString} */ (`Brigade emails ${i?.name} once about a page that missed them.`);
+		if (i?.text === "email_expected") return /** @type {LocalizedString} */ (`Brigade will email ${i?.name} once about a page that missed them.`);
 		if (i?.text === "email_failed") return /** @type {LocalizedString} */ (`Couldn't email ${i?.name} about the missed page.`);
 		if (i?.text === "email_capped") return /** @type {LocalizedString} */ (`Not emailed: the limit on Brigade's emails was reached.`);
 		if (i?.text === "email_off") return /** @type {LocalizedString} */ (`Emails about missed pages are off in this workspace.`);
 		if (i?.text === "acknowledged") return /** @type {LocalizedString} */ (`${i?.name} acknowledged it ${i?.time}, which stopped paging.`);
+		if (i?.text === "why_link_label") return /** @type {LocalizedString} */ (`Was ${i?.name} paged?`);
+		if (i?.text === "verdict_missed_reason") return /** @type {LocalizedString} */ (`Brigade couldn't page ${i?.name}: ${i?.detail}`);
+		if (i?.text === "verdict_stuck") return /** @type {LocalizedString} */ (`A page to ${i?.name} was planned but never sent`);
+		if (i?.text === "short_stuck") return /** @type {LocalizedString} */ (`Planned but never sent`);
+		if (i?.text === "stage_none") return /** @type {LocalizedString} */ (`Not reached`);
+		if (i?.text === "stage_stopped") return /** @type {LocalizedString} */ (`Stopped here`);
+		if (i?.text === "stuck_note") return /** @type {LocalizedString} */ (`Brigade planned this page but never sent it. Pages go out within seconds, so it's stuck.`);
+		if (i?.text === "pages_same") return /** @type {LocalizedString} */ (`Same outcome as the ${i?.detail} pages before it`);
+		if (i?.text === "pages_same_one") return /** @type {LocalizedString} */ (`Same outcome as the page before it`);
+		if (i?.text === "pages_show_all") return /** @type {LocalizedString} */ (`Show all ${i?.detail} pages`);
+		if (i?.text === "miss_no_devices") return /** @type {LocalizedString} */ (`no phone registered`);
+		if (i?.text === "miss_undelivered") return /** @type {LocalizedString} */ (`the page didn't go through`);
+		if (i?.text === "miss_unsupported") return /** @type {LocalizedString} */ (`Brigade can't page Android phones yet`);
+		if (i?.text === "miss_not_configured") return /** @type {LocalizedString} */ (`notifications aren't set up on this server`);
+		if (i?.text === "miss_over_limit") return /** @type {LocalizedString} */ (`the page went to too many phones`);
+		if (i?.text === "miss_dead_lettered") return /** @type {LocalizedString} */ (`the page was lost on the way`);
+		if (i?.text === "miss_nobody_on_call") return /** @type {LocalizedString} */ (`nobody was on call`);
+		if (i?.text === "miss_schedule_missing") return /** @type {LocalizedString} */ (`the level's schedule was deleted`);
+		if (i?.text === "miss_not_a_member") return /** @type {LocalizedString} */ (`they can no longer respond`);
+		if (i?.text === "miss_escalation_stalled") return /** @type {LocalizedString} */ (`the escalation stalled`);
+		if (i?.text === "miss_nobody_else") return /** @type {LocalizedString} */ (`nobody else could respond`);
 		return /** @type {LocalizedString} */ (`Who was paged`)
 	}
 });

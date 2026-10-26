@@ -288,6 +288,7 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
     deliveries: deliveries.rows,
     timeline: timeline.rows,
     schedules: schedules.rows,
+    now,
   };
 
   if (why !== undefined && row.number !== null) {
@@ -407,7 +408,8 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
         </Card>
 
         <div className="flex min-w-0 flex-col gap-6 max-md:order-first">
-          <Card aria-labelledby="roles-title">
+          {/* While a run is on, the escalation and who it paged come first on wide screens, the roles after. */}
+          <Card aria-labelledby="roles-title" className={cn(row.escalation && "md:order-last")}>
             <CardTitle id="roles-title" className="px-4 sm:px-6">
               {m.incident_page({ part: "roles" })}
             </CardTitle>

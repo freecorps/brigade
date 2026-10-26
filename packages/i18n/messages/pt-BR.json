@@ -1034,12 +1034,25 @@
         "part=status_none": "Sem plantão nas próximas 4 semanas",
         "part=open_hint": "Abre seus turnos e quem está de plantão",
         "part=you_name": "{name} (você)",
-        "part=schedules": "Escalas",
         "part=next": "Seus próximos turnos",
         "part=next_none": "Nenhum turno nas próximas 4 semanas",
         "part=overrides": "Suas substituições",
         "part=remove_mine": "Remover sua substituição em {name}?",
         "part=*": "Escalas e rodízios são editados no painel."
+      }
+    }
+  ],
+  "oncall_status_many": [
+    {
+      "declarations": [
+        "input time",
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=*": "De plantão até {time} ({countFormatted} escalas)"
       }
     }
   ],

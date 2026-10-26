@@ -17,7 +17,6 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "status_none" | "Not on call in the next 4 weeks" |
 * | "open_hint" | "Opens your shifts and who is on call" |
 * | "you_name" | "{name} (you)" |
-* | "schedules" | "Schedules" |
 * | "next" | "Your next shifts" |
 * | "next_none" | "No shifts in the next 4 weeks" |
 * | "overrides" | "Your overrides" |
@@ -38,7 +37,6 @@ export const oncall_mine = /** @type {((inputs: Oncall_MineInputs, options?: { l
 		if (i?.part === "status_none") return /** @type {LocalizedString} */ (`Sem plantão nas próximas 4 semanas`);
 		if (i?.part === "open_hint") return /** @type {LocalizedString} */ (`Abre seus turnos e quem está de plantão`);
 		if (i?.part === "you_name") return /** @type {LocalizedString} */ (`${i?.name} (você)`);
-		if (i?.part === "schedules") return /** @type {LocalizedString} */ (`Escalas`);
 		if (i?.part === "next") return /** @type {LocalizedString} */ (`Seus próximos turnos`);
 		if (i?.part === "next_none") return /** @type {LocalizedString} */ (`Nenhum turno nas próximas 4 semanas`);
 		if (i?.part === "overrides") return /** @type {LocalizedString} */ (`Suas substituições`);
@@ -53,7 +51,6 @@ export const oncall_mine = /** @type {((inputs: Oncall_MineInputs, options?: { l
 		if (i?.part === "status_none") return /** @type {LocalizedString} */ (`Not on call in the next 4 weeks`);
 		if (i?.part === "open_hint") return /** @type {LocalizedString} */ (`Opens your shifts and who is on call`);
 		if (i?.part === "you_name") return /** @type {LocalizedString} */ (`${i?.name} (you)`);
-		if (i?.part === "schedules") return /** @type {LocalizedString} */ (`Schedules`);
 		if (i?.part === "next") return /** @type {LocalizedString} */ (`Your next shifts`);
 		if (i?.part === "next_none") return /** @type {LocalizedString} */ (`No shifts in the next 4 weeks`);
 		if (i?.part === "overrides") return /** @type {LocalizedString} */ (`Your overrides`);

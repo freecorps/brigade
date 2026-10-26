@@ -1,6 +1,13 @@
 import type { OverrideRow, ScheduleLayer, ScheduleRow } from "@freecorps/brigade-schema";
 import { expect, test } from "vite-plus/test";
-import { coverArgs, NEXT_SHOWN, onCallStatus, onCallView, statusTime } from "./oncall";
+import {
+  coverArgs,
+  NEXT_SHOWN,
+  onCallStatus,
+  onCallView,
+  queriesStatus,
+  statusTime,
+} from "./oncall";
 
 const ME = "usr_me";
 const HOUR = 3_600_000;
@@ -114,7 +121,7 @@ test("an override puts the member on call, shows as theirs, and one that ended o
   expect(view.overrides.map((item) => item.row.id)).toEqual([mine.id]);
 });
 
-test("on call on several schedules: until the last one hands off; one with no end keeps it open", () => {
+test("on call on several schedules: until the first one hands off; one with no end leaves it to the others", () => {
   const other = schedule({
     id: "sch_01JB0000000000000000000002",
     name: "Database",
@@ -130,7 +137,7 @@ test("on call on several schedules: until the last one hands off; one with no en
   expect(view.current.map((shift) => shift.schedule.name)).toEqual(["Database", "Platform"]);
   expect(onCallStatus(view)).toEqual({
     kind: "on",
-    until: Date.UTC(2026, 10, 2, 12),
+    until: Date.UTC(2026, 9, 27, 23),
     schedules: 2,
   });
 
@@ -140,9 +147,27 @@ test("on call on several schedules: until the last one hands off; one with no en
   });
   expect(onCallStatus(onCallView([solo, other], [], ME, NOW))).toEqual({
     kind: "on",
-    until: null,
+    until: Date.UTC(2026, 9, 27, 23),
     schedules: 2,
   });
+  expect(onCallStatus(onCallView([solo], [], ME, NOW))).toEqual({
+    kind: "on",
+    until: null,
+    schedules: 1,
+  });
+});
+
+test("a stretch that runs from the member's rotation shift into their override shows as an override", () => {
+  // The member's week (from Monday Oct 19), then an override of theirs past its handoff on Monday Oct 26.
+  const now = Date.UTC(2026, 9, 20, 12);
+  const extend = override({ start: Date.UTC(2026, 9, 26, 12), end: Date.UTC(2026, 9, 26, 16) });
+  const view = onCallView([schedule()], [extend], ME, now);
+  expect(view.current).toEqual([
+    expect.objectContaining({ end: Date.UTC(2026, 9, 26, 16), override: true }),
+  ]);
+  expect(view.schedules[0]).toMatchObject({ userId: ME, override: true });
+  // Without it, the week is the rotation's alone.
+  expect(onCallView([schedule()], [], ME, now).current[0]?.override).toBe(false);
 });
 
 test("handoffs follow the schedule's clock across a daylight saving change, and a far zone's calendar", () => {
@@ -174,6 +199,26 @@ test("a fast rotation lists only the member's next few shifts", () => {
   expect(view.next.every((shift) => shift.end !== null && shift.end - shift.start === HOUR)).toBe(
     true,
   );
+});
+
+test("in a fast rotation, the last shift worked out still ends at its handoff", () => {
+  // Hourly between two others; the member covers half an hour from the 60th segment on, the last one worked out.
+  const hourly = schedule({
+    layers: [
+      layer({ members: ["usr_bia", "usr_caio"], unit: "hours", count: 1, startDate: "2026-10-27" }),
+    ],
+  });
+  const cover = override({ start: NOW + 59 * HOUR, end: NOW + 59.5 * HOUR });
+  const view = onCallView([hourly], [cover], ME, NOW);
+  expect(view.next).toEqual([
+    expect.objectContaining({ start: NOW + 59 * HOUR, end: NOW + 59.5 * HOUR, override: true }),
+  ]);
+});
+
+test("the picture is ready once every query is, and failed once any has", () => {
+  expect(queriesStatus("ready", "ready")).toBe("ready");
+  expect(queriesStatus("ready", "loading")).toBe("loading");
+  expect(queriesStatus("loading", "error")).toBe("error");
 });
 
 test("status times are as short as still clear, on the viewer's clock", () => {

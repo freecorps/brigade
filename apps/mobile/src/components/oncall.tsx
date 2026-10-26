@@ -14,7 +14,7 @@ import { useMember } from "@/components/session";
 import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
 import { useTheme } from "@/hooks/use-theme";
-import { onCallStatus, onCallView, statusTime } from "@/lib/oncall";
+import { onCallStatus, onCallView, queriesStatus, statusTime } from "@/lib/oncall";
 
 const ON_CALL_GLYPH: Glyph = {
   ios: "bell.badge.fill",
@@ -34,12 +34,18 @@ export function useOnCall() {
     () => onCallView(schedules.rows, overrides.rows, userId, now),
     [schedules.rows, overrides.rows, userId, now],
   );
-  return { view, now, status: schedules.status, error: schedules.error };
+  return {
+    view,
+    now,
+    status: queriesStatus(schedules.status, overrides.status),
+    error: schedules.error ?? overrides.error,
+  };
 }
 
 /**
- * "On call until Tue, 9:00 AM" (or when the next shift is) on the viewer's clock, opening the on-call screen. Loud
- * only while the member is on call; nothing until the schedules have loaded.
+ * "On call until Tue, 9:00 AM" (or when the next shift is) on the viewer's clock, opening the on-call screen. On
+ * several schedules, until the first hands off, with the count, and each schedule's end below. Loud only while the
+ * member is on call; nothing until the schedules and overrides have loaded.
  */
 export function OnCallStatus() {
   const colors = useTheme();
@@ -54,7 +60,9 @@ export function OnCallStatus() {
     state.kind === "on"
       ? state.until === null
         ? m.oncall_mine({ part: "on_call", name: "", time: "" })
-        : m.oncall_mine({ part: "status_until", name: "", time: time(state.until) })
+        : state.schedules > 1
+          ? m.oncall_status_many({ time: time(state.until), count: state.schedules })
+          : m.oncall_mine({ part: "status_until", name: "", time: time(state.until) })
       : state.kind === "off"
         ? state.next === null
           ? m.oncall_mine({ part: "status_none", name: "", time: "" })
@@ -103,7 +111,13 @@ export function OnCallStatus() {
                   numberOfLines={2}
                   style={{ color: colors.accentForeground }}
                 >
-                  {view.current.map((shift) => shift.schedule.name).join(" · ")}
+                  {view.current
+                    .map((shift) =>
+                      shift.end === null || state.schedules === 1
+                        ? shift.schedule.name
+                        : `${shift.schedule.name} ${m.oncall_until({ time: time(shift.end) })}`,
+                    )
+                    .join(" · ")}
                 </ThemedText>
               ) : null}
             </View>

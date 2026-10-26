@@ -1034,12 +1034,25 @@
         "part=status_none": "Not on call in the next 4 weeks",
         "part=open_hint": "Opens your shifts and who is on call",
         "part=you_name": "{name} (you)",
-        "part=schedules": "Schedules",
         "part=next": "Your next shifts",
         "part=next_none": "No shifts in the next 4 weeks",
         "part=overrides": "Your overrides",
         "part=remove_mine": "Remove your override on {name}?",
         "part=*": "Schedules and rotations are edited on the dashboard."
+      }
+    }
+  ],
+  "oncall_status_many": [
+    {
+      "declarations": [
+        "input time",
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=*": "On call until {time} ({countFormatted} schedules)"
       }
     }
   ],

@@ -26,7 +26,7 @@ import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
-import { COVER_HOURS, coverArgs, type Shift } from "@/lib/oncall";
+import { COVER_HOURS, coverArgs, queriesStatus, type Shift } from "@/lib/oncall";
 
 const GAP_GLYPH: Glyph = {
   ios: "exclamationmark.triangle.fill",
@@ -34,8 +34,19 @@ const GAP_GLYPH: Glyph = {
   web: "warning",
 };
 
-const mine = (part: string, inputs: { name?: string; time?: string } = {}) =>
-  m.oncall_mine({ part, name: "", time: "", ...inputs });
+/** `oncall_mine` with only the inputs the variant uses. */
+const mine = (
+  part:
+    | "on_call"
+    | "off_call"
+    | "you_name"
+    | "next"
+    | "next_none"
+    | "overrides"
+    | "remove_mine"
+    | "on_dashboard",
+  inputs: { name?: string; time?: string } = {},
+) => m.oncall_mine({ part, name: "", time: "", ...inputs });
 
 /**
  * The member's on call (RFC 0003 "Schedules"): whether they are on call now and until when, their next shifts and
@@ -49,8 +60,12 @@ export function OnCall() {
   const { locale, timeZone } = useLocale();
   const { userId, role } = useMember();
   const client = useSyncClient();
-  const { view, now, status, error } = useOnCall();
-  const members = useQuery("members.all", {}).rows;
+  const picture = useOnCall();
+  const { view, now } = picture;
+  const members = useQuery("members.all", {});
+  // Wait for the members too: until they load, everyone would read as unnamed.
+  const status = queriesStatus(picture.status, members.status);
+  const error = picture.error ?? members.error;
   const addOverride = useMutation("schedule.addOverride");
   const removeOverride = useMutation("schedule.removeOverride");
   const { choose, sheet } = useChoiceSheet();
@@ -83,7 +98,9 @@ export function OnCall() {
       },
     ]);
   const name = (id: string) =>
-    id === userId ? mine("you_name", { name: memberLabel(members, id) }) : memberLabel(members, id);
+    id === userId
+      ? mine("you_name", { name: memberLabel(members.rows, id) })
+      : memberLabel(members.rows, id);
 
   const loading = status !== "ready" && status !== "error";
   const onCall = view.current.length > 0;

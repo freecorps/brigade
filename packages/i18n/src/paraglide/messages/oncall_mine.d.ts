@@ -16,7 +16,6 @@ export type Oncall_MineInputs = {
 * | "status_none" | "Not on call in the next 4 weeks" |
 * | "open_hint" | "Opens your shifts and who is on call" |
 * | "you_name" | "{name} (you)" |
-* | "schedules" | "Schedules" |
 * | "next" | "Your next shifts" |
 * | "next_none" | "No shifts in the next 4 weeks" |
 * | "overrides" | "Your overrides" |

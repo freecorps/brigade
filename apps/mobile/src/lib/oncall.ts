@@ -2,7 +2,13 @@
 // has now, from the shard's schedules and overrides through `nextHandoffs`. String-free except `statusTime`; the
 // wording shared with the dashboard is in `@freecorps/brigade-i18n/oncall`.
 import { formatDateTime, type Locale } from "@freecorps/brigade-i18n";
-import { nextHandoffs, type OverrideRow, type ScheduleRow } from "@freecorps/brigade-schema";
+import {
+  nextHandoffs,
+  type OnCallSegment,
+  type OverrideRow,
+  type ScheduleRow,
+} from "@freecorps/brigade-schema";
+import type { QueryStatus } from "@freecorps/brigade-sync";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -19,11 +25,12 @@ export const COVER_HOURS = [1, 4, 12, 24] as const;
 
 /**
  * A stretch on call: `end` is the handoff that ends it, or null when there is none within `UPCOMING_MS` (only the
- * screen's look-ahead ends it, which is no time to show). `override`: an override puts them there.
+ * screen's look-ahead ends it, which is no time to show). `override`: an override of theirs covers some of it (a
+ * stretch is one person's, so it can run from an override straight into their rotation shift, or the other way).
  */
 export type Shift = { schedule: ScheduleRow; start: number; end: number | null; override: boolean };
 
-/** Who a schedule has on call now (null: nobody, a gap), and until when. */
+/** Who a schedule has on call now (null: nobody, a gap), and until when; `override` as in `Shift`. */
 export type ScheduleNow = {
   schedule: ScheduleRow;
   userId: string | null;
@@ -51,15 +58,29 @@ export function onCallView(
 ): OnCallView {
   const view: OnCallView = { schedules: [], current: [], next: [], overrides: [] };
   for (const schedule of schedules) {
-    const segments = nextHandoffs(schedule, overrides, now, now + UPCOMING_MS, SEGMENTS);
-    // The last segment ends where the look-ahead (or the walk) stopped, not at a handoff.
+    // One more than shown: when the walk stops at the limit, the last shown segment ends at a real handoff.
+    const segments = nextHandoffs(schedule, overrides, now, now + UPCOMING_MS, SEGMENTS + 1);
+    const capped = segments.length > SEGMENTS;
+    if (capped) segments.pop();
+    // Otherwise the last segment ends where the look-ahead (or the walk) stopped, not at a handoff.
     const end = (index: number) =>
-      index < segments.length - 1 ? (segments[index]?.end ?? null) : null;
+      capped || index < segments.length - 1 ? (segments[index]?.end ?? null) : null;
+    // Any override of theirs on this schedule overlapping the stretch: nobody else is on call in the overlap, so
+    // they are there by an override for that part of it.
+    const override = (segment: OnCallSegment) =>
+      segment.userId !== null &&
+      overrides.some(
+        (row) =>
+          row.scheduleId === schedule.id &&
+          row.userId === segment.userId &&
+          row.start < segment.end &&
+          row.end > segment.start,
+      );
     const first = segments[0];
     view.schedules.push({
       schedule,
       userId: first?.userId ?? null,
-      override: first?.source?.kind === "override",
+      override: first ? override(first) : false,
       until: end(0),
     });
     segments.forEach((segment, index) => {
@@ -68,7 +89,7 @@ export function onCallView(
         schedule,
         start: segment.start,
         end: end(index),
-        override: segment.source?.kind === "override",
+        override: override(segment),
       };
       (index === 0 ? view.current : view.next).push(shift);
     });
@@ -89,8 +110,9 @@ export function onCallView(
 }
 
 /**
- * What the incident list says about the member: on call (until the last of their current shifts ends, or with no
- * end in sight), off with a next shift, off with none coming, or no schedules at all.
+ * What the incident list says about the member: on call (until the first of their current shifts ends, or with no
+ * end in sight when none does within `UPCOMING_MS`; `schedules` counts their current shifts), off with a next
+ * shift, off with none coming, or no schedules at all.
  */
 export type OnCallStatus =
   | { kind: "on"; until: number | null; schedules: number }
@@ -100,11 +122,16 @@ export type OnCallStatus =
 export function onCallStatus(view: OnCallView): OnCallStatus {
   if (view.schedules.length === 0) return { kind: "none" };
   if (view.current.length > 0) {
-    const open = view.current.some((shift) => shift.end === null);
-    const until = open ? null : Math.max(...view.current.map((shift) => shift.end ?? 0));
-    return { kind: "on", until, schedules: view.current.length };
+    // `current` is ordered by end, the open ones last.
+    return { kind: "on", until: view.current[0]?.end ?? null, schedules: view.current.length };
   }
   return { kind: "off", next: view.next[0]?.start ?? null };
+}
+
+/** Ready once every query is, failed once any has: the picture needs them all. */
+export function queriesStatus(...statuses: QueryStatus[]): QueryStatus {
+  if (statuses.includes("error")) return "error";
+  return statuses.every((status) => status === "ready") ? "ready" : "loading";
 }
 
 /**

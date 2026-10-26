@@ -91,13 +91,14 @@ export const connectSlack = defineMutation({
   permission: "workspace:manage",
   apply(store, args, ctx) {
     const current = store.get("slack", SLACK_ROW_ID);
-    const same = current?.teamId === args.teamId;
+    // The same team again (a new token): its channel and language stay.
+    const same = current?.teamId === args.teamId ? current : undefined;
     const row: SlackRow = {
       id: SLACK_ROW_ID,
       teamId: args.teamId,
       teamName: args.teamName,
-      channelId: same ? current.channelId : null,
-      locale: same ? current.locale : args.locale,
+      channelId: same ? same.channelId : null,
+      locale: same ? same.locale : args.locale,
       connectedAt: ctx.now,
       connectedBy: ctx.actor.id,
       updatedAt: ctx.now,

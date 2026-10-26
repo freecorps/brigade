@@ -28,7 +28,7 @@ const FIELDS = ["name", "email", "password", "workspace"] as const;
  * taken).
  */
 function SignUp() {
-  usePreferences();
+  const { locale } = usePreferences();
   usePageTitle(m.page_title_sign_up());
   const navigate = useNavigate();
   const session = authClient.useSession();
@@ -69,6 +69,8 @@ function SignUp() {
         name: values.name.trim(),
         email: values.email.trim(),
         password: values.password,
+        // The language the dashboard is in: emails to them are written in it.
+        locale,
       });
       if (error) {
         setFailure(authErrorMessage(error, "sign-up"));

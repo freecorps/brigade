@@ -7,6 +7,7 @@ import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import {
   APP_ORIGIN,
+  INVALID_LOCALE_CODE,
   INVALID_NAME_CODE,
   RATE_LIMIT,
   UNLIMITED_READS,
@@ -353,6 +354,47 @@ describe("Better Auth routes", () => {
       body: JSON.stringify({ image: "https://example.com/n.png" }),
     });
     expect(image.status).toBe(200);
+  });
+
+  test("the language Brigade writes to a user in: one of its locales, given or taken from Accept-Language", async () => {
+    const locale = async (cookie: string) => {
+      const id = (await session(cookie))?.user.id;
+      const row = await env.DB.prepare(`select locale from "user" where id = ?`)
+        .bind(id)
+        .first<{ locale: string | null }>();
+      return row?.locale;
+    };
+    const given = async (body: Record<string, unknown>, headers: Record<string, string> = {}) => {
+      const response = await api("/auth/sign-up/email", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ email: email("lang"), password: PASSWORD, name: "Lu", ...body }),
+      });
+      return { response, cookie: cookies(response) };
+    };
+    const portuguese = await given({ locale: "pt-BR" });
+    expect(portuguese.response.status).toBe(200);
+    expect(await locale(portuguese.cookie)).toBe("pt-BR");
+    // None given: the closest to the browser's first language, or none (English).
+    const browser = await given({}, { "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8" });
+    expect(await locale(browser.cookie)).toBe("pt-BR");
+    const none = await given({});
+    expect(await locale(none.cookie)).toBeNull();
+    for (const wrong of ["fr", "pt", "PT-br", 3, ""]) {
+      const { response } = await given({ locale: wrong });
+      expect(response.status, String(wrong)).toBe(400);
+      expect(await response.json()).toMatchObject({ code: INVALID_LOCALE_CODE });
+    }
+    // Changed later (the dashboard's language switch).
+    const change = (value: unknown) =>
+      api("/auth/update-user", {
+        method: "POST",
+        headers: { Cookie: none.cookie },
+        body: JSON.stringify({ locale: value }),
+      });
+    expect((await change("de")).status).toBe(400);
+    expect((await change("en")).status).toBe(200);
+    expect(await locale(none.cookie)).toBe("en");
   });
 
   test("a POST from another site is refused", async () => {

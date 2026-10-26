@@ -36,7 +36,9 @@ export type Timeline_EntryInputs = {
 * | "escalated_timeout" | "Nobody acknowledged, so level {a} was paged: {b}" |
 * | "escalated_unreachable" | "Earlier levels couldn't reach anyone, so level {a} was paged: {b}" |
 * | "escalated_everyone" | "No level could reach anyone, so everyone who can respond was paged" |
-* | "escalation_exhausted" | "Nobody acknowledged after every level of the escalation policy" |
+* | "escalation_exhausted" | "Nobody acknowledged after every level, so everyone who can respond was paged" |
+* | "escalated_everyone_stalled" | "An escalation level kept failing to fire, so everyone who can respond was paged" |
+* | "page_escalation_stalled" | "An escalation level couldn't fire. Brigade keeps trying, and pages everyone who can respond if it still can't" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs

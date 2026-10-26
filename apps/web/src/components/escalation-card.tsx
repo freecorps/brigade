@@ -42,6 +42,7 @@ import {
   policyRefusal,
   POLICY_NAME_MAX,
   targetLabel,
+  timeoutKind,
   type CheckedPolicy,
   type LevelDraft,
   type PolicyDraft,
@@ -53,6 +54,8 @@ import { memberLabel, rotationChoices } from "@/lib/oncall";
 const SELECT =
   "h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
 const LABEL = "text-xs font-medium tracking-wide text-muted-foreground uppercase";
+/** Levels a policy shows before "Show all N levels". */
+const LEVELS_SHOWN = 3;
 /** Forms run edge to edge on phones (the card's padding is room enough) and as a box from `sm` up. */
 const FORM =
   "-mx-4 flex min-w-0 flex-col gap-4 border-y bg-muted/40 px-4 py-4 sm:mx-0 sm:rounded-md sm:border";
@@ -99,6 +102,7 @@ export function EscalationCard() {
     schedules: schedules.rows,
     members: members.rows,
     loaded,
+    currentDefault: rows.find((row) => row.isDefault) ?? null,
   };
   return (
     <Card
@@ -272,6 +276,9 @@ function PolicyItem({
   onEdit: () => void;
 }) {
   const nameId = useId();
+  const listId = useId();
+  const [all, setAll] = useState(false);
+  const shown = all ? row.levels : row.levels.slice(0, LEVELS_SHOWN);
   return (
     <>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
@@ -297,8 +304,8 @@ function PolicyItem({
           </Button>
         ) : null}
       </div>
-      <ol aria-labelledby={nameId} className="flex flex-col gap-3 text-sm">
-        {row.levels.map((level, index) => (
+      <ol id={listId} aria-labelledby={nameId} className="flex flex-col gap-3 text-sm">
+        {shown.map((level, index) => (
           <li key={level.id} className="flex gap-3">
             <span
               aria-hidden
@@ -328,15 +335,29 @@ function PolicyItem({
                   ))}
                 </ul>
               )}
-              {index < row.levels.length - 1 || row.repeat > 0 ? (
-                <p className="text-xs text-muted-foreground tabular-nums">
-                  {m.escalation_count({ kind: "timeout", count: level.timeoutMinutes })}
-                </p>
-              ) : null}
+              <p className="text-xs text-muted-foreground tabular-nums">
+                {m.escalation_count({
+                  kind: timeoutKind(index, row.levels.length, row.repeat),
+                  count: level.timeoutMinutes,
+                })}
+              </p>
             </div>
           </li>
         ))}
       </ol>
+      {row.levels.length > LEVELS_SHOWN ? (
+        <Button
+          variant="ghost"
+          className="-ml-2 self-start px-2 text-muted-foreground"
+          aria-expanded={all}
+          aria-controls={listId}
+          onClick={() => setAll((current) => !current)}
+        >
+          {all
+            ? m.escalation_action({ action: "show_fewer" })
+            : m.escalation_count({ kind: "show_levels", count: row.levels.length })}
+        </Button>
+      ) : null}
       <p className="text-sm text-muted-foreground tabular-nums">
         {m.escalation_count({ kind: "repeat", count: row.repeat })}
       </p>
@@ -388,12 +409,15 @@ function PolicyForm({
   loaded,
   schedules,
   members,
+  currentDefault,
   onCancel,
   onSubmit,
   onDelete,
 }: {
   initial: PolicyDraft;
   editing?: EscalationPolicyRow;
+  /** The workspace's default policy as saved, if any: the form says when this one would replace it or drop it. */
+  currentDefault: EscalationPolicyRow | null;
   /** Whether the schedules and members are the shard's whole lists yet (so what is gone can be dropped). */
   loaded: boolean;
   schedules: readonly ScheduleRow[];
@@ -415,9 +439,26 @@ function PolicyForm({
   const repeatId = useId();
   const defaultId = useId();
   const nameRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const deleteRef = useRef<HTMLButtonElement>(null);
+  const addLevelRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     nameRef.current?.focus();
   }, []);
+  /** Focus after a change that removes the focused control: once React has drawn the change. */
+  const focusLater = (find: () => HTMLElement | null | undefined) =>
+    requestAnimationFrame(() => find()?.focus());
+  const levelControl = (id: string, control: "add" | "remove") =>
+    formRef.current?.querySelector<HTMLElement>(`[data-level="${id}"] [data-control="${control}"]`);
+  const closeConfirm = () => {
+    setConfirming(false);
+    focusLater(() => deleteRef.current);
+  };
+  const replaces =
+    draft.isDefault && currentDefault !== null && currentDefault.id !== editing?.id
+      ? currentDefault
+      : null;
+  const dropsDefault = editing?.isDefault === true && !draft.isDefault;
   const people = rotationChoices(members);
   const setLevel = (index: number, patch: Partial<LevelDraft>) =>
     setDraft((current) => ({
@@ -438,6 +479,7 @@ function PolicyForm({
   };
   return (
     <form
+      ref={formRef}
       aria-labelledby={titleId}
       noValidate
       onSubmit={submit}
@@ -477,31 +519,42 @@ function PolicyForm({
             level={level}
             index={index}
             errors={errors?.levels[index]}
+            last={index === draft.levels.length - 1 && draft.repeat === 0}
             schedules={schedules}
             people={people}
             members={members}
             removable={draft.levels.length > 1}
             onChange={(patch) => setLevel(index, patch)}
-            onRemove={() =>
+            onRemoved={(next) => focusLater(() => next ?? levelControl(level.id, "add"))}
+            onRemove={() => {
+              const neighbour = draft.levels[index + 1] ?? draft.levels[index - 1];
               setDraft((current) => ({
                 ...current,
                 levels: current.levels.filter((_, i) => i !== index),
-              }))
-            }
+              }));
+              // Its own controls go with it: the neighbour's remove button (gone when one level is left), else
+              // "Add a level".
+              focusLater(
+                () =>
+                  (neighbour && levelControl(neighbour.id, "remove")) ??
+                  addLevelRef.current ??
+                  nameRef.current,
+              );
+            }}
           />
         ))}
       </ol>
       {canAddLevel(draft.levels.length) ? (
         <Button
+          ref={addLevelRef}
           type="button"
           variant="outline"
           className="self-start"
-          onClick={() =>
-            setDraft((current) => ({
-              ...current,
-              levels: [...current.levels, newLevel(Date.now())],
-            }))
-          }
+          onClick={() => {
+            const added = newLevel(Date.now());
+            setDraft((current) => ({ ...current, levels: [...current.levels, added] }));
+            focusLater(() => levelControl(added.id, "add"));
+          }}
         >
           <PlusIcon aria-hidden />
           {m.escalation_action({ action: "add_level" })}
@@ -539,6 +592,19 @@ function PolicyForm({
           <span className="min-w-0">{m.escalation_field({ field: "default", form: "label" })}</span>
         </label>
       </div>
+      {replaces ? (
+        <p role="status" className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
+          {escalationText("replaces_default", { name: replaces.name })}
+        </p>
+      ) : dropsDefault ? (
+        <p
+          role="status"
+          className="flex items-start gap-1.5 text-sm text-amber-700 dark:text-amber-400"
+        >
+          <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <span className="min-w-0">{escalationText("no_default")}</span>
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit">
           {m.escalation_action({ action: editing ? "save" : "create" })}
@@ -546,11 +612,13 @@ function PolicyForm({
         <Button type="button" variant="outline" onClick={onCancel}>
           {m.escalation_action({ action: "cancel" })}
         </Button>
-        {editing && onDelete && !confirming ? (
+        {editing && onDelete ? (
           <Button
+            ref={deleteRef}
             type="button"
             variant="ghost"
             className="ml-auto text-destructive"
+            hidden={confirming}
             onClick={() => setConfirming(true)}
           >
             <Trash2Icon aria-hidden />
@@ -565,8 +633,10 @@ function PolicyForm({
           className="flex flex-col gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
           onKeyDown={(event) => {
             if (event.key !== "Escape") return;
+            // Only the confirmation closes: the form's own Escape (close the editor) must not see it.
             event.stopPropagation();
-            setConfirming(false);
+            event.preventDefault();
+            closeConfirm();
           }}
         >
           <p className="font-medium [overflow-wrap:anywhere]">
@@ -583,7 +653,7 @@ function PolicyForm({
             >
               {m.escalation_action({ action: "delete" })}
             </Button>
-            <Button type="button" variant="outline" onClick={() => setConfirming(false)}>
+            <Button type="button" variant="outline" onClick={closeConfirm}>
               {m.escalation_action({ action: "cancel" })}
             </Button>
           </div>
@@ -596,6 +666,7 @@ function PolicyForm({
 function LevelFields({
   level,
   index,
+  last,
   errors,
   schedules,
   people,
@@ -603,9 +674,12 @@ function LevelFields({
   removable,
   onChange,
   onRemove,
+  onRemoved,
 }: {
   level: LevelDraft;
   index: number;
+  /** The last level, with no repeat: its timeout is how long before everyone who can respond is paged. */
+  last: boolean;
   errors?: { timeout: boolean; targets: boolean };
   schedules: readonly ScheduleRow[];
   people: readonly MemberRow[];
@@ -613,6 +687,8 @@ function LevelFields({
   removable: boolean;
   onChange: (patch: Partial<LevelDraft>) => void;
   onRemove: () => void;
+  /** A target chip went: focus moves to `next` (the neighbouring chip's remove button), else the level's picker. */
+  onRemoved: (next: HTMLElement | null) => void;
 }) {
   const headingId = useId();
   const addId = useId();
@@ -623,6 +699,7 @@ function LevelFields({
   const full = level.targets.length >= MAX_LEVEL_TARGETS;
   return (
     <li
+      data-level={level.id}
       aria-labelledby={headingId}
       className="flex min-w-0 flex-col gap-3 rounded-md border bg-card p-3"
     >
@@ -635,6 +712,7 @@ function LevelFields({
             type="button"
             variant="ghost"
             size="icon"
+            data-control="remove"
             aria-label={m.escalation_action_on({ action: "remove_level", name: levelName })}
             onClick={onRemove}
           >
@@ -646,7 +724,7 @@ function LevelFields({
         <p className={LABEL}>{m.escalation_field({ field: "targets", form: "label" })}</p>
         {level.targets.length > 0 ? (
           <ul className="flex flex-wrap gap-1.5">
-            {level.targets.map((target) => {
+            {level.targets.map((target, targetIndex) => {
               const label = targetLabel(target, schedules, members);
               const Icon = target.kind === "schedule" ? CalendarClockIcon : UserRoundIcon;
               return (
@@ -660,15 +738,24 @@ function LevelFields({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="shrink-0"
+                    // Above the next chip, so its focus ring is not drawn under it.
+                    className="relative shrink-0 focus-visible:z-10"
+                    data-target-index={targetIndex}
                     aria-label={m.escalation_action_on({ action: "remove_target", name: label })}
-                    onClick={() =>
+                    onClick={(event) => {
+                      const list = event.currentTarget.closest("ul");
                       onChange({
                         targets: level.targets.filter(
                           (one) => !(one.kind === target.kind && one.id === target.id),
                         ),
-                      })
-                    }
+                      });
+                      // The chip that takes this one's place, or the one before it when it was the last.
+                      onRemoved(
+                        list?.querySelector<HTMLElement>(
+                          `[data-target-index="${targetIndex < level.targets.length - 1 ? targetIndex + 1 : targetIndex - 1}"]`,
+                        ) ?? null,
+                      );
+                    }}
                   >
                     <XIcon aria-hidden />
                   </Button>
@@ -682,6 +769,7 @@ function LevelFields({
         </label>
         <select
           id={addId}
+          data-control="add"
           className={SELECT}
           value=""
           disabled={full}
@@ -718,11 +806,16 @@ function LevelFields({
           <p id={errorId} className="text-sm text-destructive">
             {m.escalation_field({ field: "targets", form: "invalid" })}
           </p>
+        ) : level.targets.length === 0 ? (
+          <p className="flex items-start gap-1.5 text-sm text-amber-700 dark:text-amber-400">
+            <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+            <span className="min-w-0">{escalationText("level_empty_draft")}</span>
+          </p>
         ) : null}
       </div>
       <Field
         className="sm:max-w-64"
-        label={m.escalation_field({ field: "timeout", form: "label" })}
+        label={m.escalation_field({ field: last ? "timeout_last" : "timeout", form: "label" })}
         inputMode="numeric"
         value={level.timeout}
         error={

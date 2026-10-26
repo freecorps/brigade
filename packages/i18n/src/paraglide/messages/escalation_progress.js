@@ -11,12 +11,13 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | part | output |
 * | --- | --- |
 * | "running" | "Escalating" |
-* | "acknowledged" | "Stopped: acknowledged {time}" |
 * | "resolved" | "Stopped: resolved {time}" |
-* | "exhausted" | "Nobody acknowledged: no levels left since {time}" |
 * | "next_level" | "Level {level} at {time}" |
 * | "next_repeat" | "Level 1 again at {time}" |
-* | "next_end" | "Gives up at {time}" |
+* | "next_end" | "Everyone who can respond at {time}" |
+* | "fallback_unreachable" | "No level could reach anyone: paged everyone who can respond" |
+* | "fallback_exhausted" | "Nobody acknowledged after every level: paged everyone who can respond" |
+* | "fallback_stalled" | "A level kept failing to fire: paged everyone who can respond" |
 * | * | "Escalation" |
 *
 * @param {Escalation_ProgressInputs} inputs
@@ -27,22 +28,24 @@ export const escalation_progress = /** @type {((inputs: Escalation_ProgressInput
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.part === "running") return /** @type {LocalizedString} */ (`Escalonando`);
-		if (i?.part === "acknowledged") return /** @type {LocalizedString} */ (`Parado: confirmado ${i?.time}`);
 		if (i?.part === "resolved") return /** @type {LocalizedString} */ (`Parado: resolvido ${i?.time}`);
-		if (i?.part === "exhausted") return /** @type {LocalizedString} */ (`Ninguém confirmou: sem níveis restantes desde ${i?.time}`);
 		if (i?.part === "next_level") return /** @type {LocalizedString} */ (`Nível ${i?.level} às ${i?.time}`);
 		if (i?.part === "next_repeat") return /** @type {LocalizedString} */ (`Nível 1 de novo às ${i?.time}`);
-		if (i?.part === "next_end") return /** @type {LocalizedString} */ (`Desiste às ${i?.time}`);
+		if (i?.part === "next_end") return /** @type {LocalizedString} */ (`Todos que podem responder às ${i?.time}`);
+		if (i?.part === "fallback_unreachable") return /** @type {LocalizedString} */ (`Nenhum nível alcançou ninguém: todos que podem responder foram chamados`);
+		if (i?.part === "fallback_exhausted") return /** @type {LocalizedString} */ (`Ninguém confirmou depois de todos os níveis: todos que podem responder foram chamados`);
+		if (i?.part === "fallback_stalled") return /** @type {LocalizedString} */ (`Um nível continuou falhando: todos que podem responder foram chamados`);
 		return /** @type {LocalizedString} */ (`Escalonamento`)
 	}
 	{
 		if (i?.part === "running") return /** @type {LocalizedString} */ (`Escalating`);
-		if (i?.part === "acknowledged") return /** @type {LocalizedString} */ (`Stopped: acknowledged ${i?.time}`);
 		if (i?.part === "resolved") return /** @type {LocalizedString} */ (`Stopped: resolved ${i?.time}`);
-		if (i?.part === "exhausted") return /** @type {LocalizedString} */ (`Nobody acknowledged: no levels left since ${i?.time}`);
 		if (i?.part === "next_level") return /** @type {LocalizedString} */ (`Level ${i?.level} at ${i?.time}`);
 		if (i?.part === "next_repeat") return /** @type {LocalizedString} */ (`Level 1 again at ${i?.time}`);
-		if (i?.part === "next_end") return /** @type {LocalizedString} */ (`Gives up at ${i?.time}`);
+		if (i?.part === "next_end") return /** @type {LocalizedString} */ (`Everyone who can respond at ${i?.time}`);
+		if (i?.part === "fallback_unreachable") return /** @type {LocalizedString} */ (`No level could reach anyone: paged everyone who can respond`);
+		if (i?.part === "fallback_exhausted") return /** @type {LocalizedString} */ (`Nobody acknowledged after every level: paged everyone who can respond`);
+		if (i?.part === "fallback_stalled") return /** @type {LocalizedString} */ (`A level kept failing to fire: paged everyone who can respond`);
 		return /** @type {LocalizedString} */ (`Escalation`)
 	}
 });

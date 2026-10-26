@@ -20,8 +20,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "add_level" | "Add a level" |
 * | "remove_level" | "Remove level" |
 * | "remove_target" | "Remove" |
-* | "move_up" | "Move up" |
-* | "move_down" | "Move down" |
+* | "show_fewer" | "Show fewer levels" |
 * | * | "Change" |
 *
 * @param {Escalation_ActionInputs} inputs
@@ -41,8 +40,7 @@ export const escalation_action = /** @type {((inputs: Escalation_ActionInputs, o
 		if (i?.action === "add_level") return /** @type {LocalizedString} */ (`Adicionar um nível`);
 		if (i?.action === "remove_level") return /** @type {LocalizedString} */ (`Remover nível`);
 		if (i?.action === "remove_target") return /** @type {LocalizedString} */ (`Remover`);
-		if (i?.action === "move_up") return /** @type {LocalizedString} */ (`Mover para cima`);
-		if (i?.action === "move_down") return /** @type {LocalizedString} */ (`Mover para baixo`);
+		if (i?.action === "show_fewer") return /** @type {LocalizedString} */ (`Mostrar menos níveis`);
 		return /** @type {LocalizedString} */ (`Alterar`)
 	}
 	{
@@ -56,8 +54,7 @@ export const escalation_action = /** @type {((inputs: Escalation_ActionInputs, o
 		if (i?.action === "add_level") return /** @type {LocalizedString} */ (`Add a level`);
 		if (i?.action === "remove_level") return /** @type {LocalizedString} */ (`Remove level`);
 		if (i?.action === "remove_target") return /** @type {LocalizedString} */ (`Remove`);
-		if (i?.action === "move_up") return /** @type {LocalizedString} */ (`Move up`);
-		if (i?.action === "move_down") return /** @type {LocalizedString} */ (`Move down`);
+		if (i?.action === "show_fewer") return /** @type {LocalizedString} */ (`Show fewer levels`);
 		return /** @type {LocalizedString} */ (`Change`)
 	}
 });

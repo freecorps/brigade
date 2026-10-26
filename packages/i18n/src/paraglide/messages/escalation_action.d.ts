@@ -17,8 +17,7 @@ export type Escalation_ActionInputs = {
 * | "add_level" | "Add a level" |
 * | "remove_level" | "Remove level" |
 * | "remove_target" | "Remove" |
-* | "move_up" | "Move up" |
-* | "move_down" | "Move down" |
+* | "show_fewer" | "Show fewer levels" |
 * | * | "Change" |
 *
 * @param {Escalation_ActionInputs} inputs

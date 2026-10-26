@@ -3,6 +3,7 @@ import {
   can,
   formatIncidentNumber,
   INCIDENT_ROLES,
+  isActive,
   UPDATE_BODY_MAX,
   type IncidentRole,
   type IncidentRow,
@@ -64,6 +65,7 @@ import {
 import {
   adjustBusy,
   formatAge,
+  mutationErrorReason,
   noticeFor,
   noticeText,
   queryErrorReason,
@@ -192,11 +194,16 @@ function Incident({ row }: { row: IncidentRow }) {
 
   const members = useQuery("members.all", {});
   const who = people(member.userId, members.rows);
+  const timeline = useQuery("incident.timeline", { id: row.id });
+  // What the escalation card forecasts the next level from (whoever is on call now).
+  const schedules = useQuery("schedules.all", {});
+  const overrides = useQuery("overrides.all", {});
 
   const setStatus = useMutation("incident.setStatus");
   const setSeverity = useMutation("incident.setSeverity");
   const postUpdate = useMutation("incident.postUpdate");
   const assignRole = useMutation("incident.assignRole");
+  const acknowledge = useMutation("incident.ack");
 
   const [busy, setBusy] = useState<Busy>(new Map());
   const [notices, setNotices] = useState<Notice[]>([]);
@@ -232,6 +239,26 @@ function Incident({ row }: { row: IncidentRow }) {
       { ...base, kind: "role", role },
       `role/${role}`,
     );
+  const [ackRefused, setAckRefused] = useState<string | null>(null);
+  // Optimistic like every change here: the row says who acknowledged at once; a refusal puts it back and says why.
+  const onAck = () => {
+    setAckRefused(null);
+    setBusy((current) => adjustBusy(current, ["ack"], 1));
+    void acknowledge({ id: row.id }).then((outcome) => {
+      setBusy((current) => adjustBusy(current, ["ack"], -1));
+      if (outcome.ok) return;
+      setAckRefused(
+        outcome.error.code === "conflict"
+          ? m.incident_ack({ part: "already", name: "", time: "", reason: "" })
+          : m.incident_ack({
+              part: "failed",
+              name: "",
+              time: "",
+              reason: mutationErrorReason(outcome.error.code),
+            }),
+      );
+    });
+  };
   const onPost = (body: string) =>
     track(postUpdate({ id: row.id, body }), { ...base, kind: "update" }, "update");
   const dismiss = (key: string) =>
@@ -245,7 +272,10 @@ function Incident({ row }: { row: IncidentRow }) {
 
   const now = useNow(20_000);
   const declared = formatAge(Math.min(row.declaredAt, now), now, locale);
-  const saving = busy.has("status") || busy.has("severity");
+  const saving = busy.has("status") || busy.has("severity") || busy.has("ack");
+  const acked = row.acknowledgedAt != null && row.acknowledgedBy != null;
+  const canAck = can(member.role, "incident:ack") && isActive(row.status) && !acked;
+  const escalating = row.escalation?.status === "running" && !acked;
 
   return (
     <Shell>
@@ -284,6 +314,35 @@ function Incident({ row }: { row: IncidentRow }) {
             onChange={onStatus}
           />
         </div>
+        {canAck ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <Button onClick={onAck} className="max-sm:w-full">
+              <BellOffIcon aria-hidden />
+              {m.incident_ack({ part: "action", name: "", time: "", reason: "" })}
+            </Button>
+            <p className="text-sm text-muted-foreground">
+              {m.incident_ack({ part: "hint", name: "", time: "", reason: "" })}
+            </p>
+          </div>
+        ) : acked ? (
+          <p className="flex items-start gap-2 text-sm font-medium">
+            <BellOffIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 [overflow-wrap:anywhere]">
+              {m.incident_ack({
+                part: "by",
+                name: personName(row.acknowledgedBy!, who),
+                time: formatAge(Math.min(row.acknowledgedAt!, now), now, locale),
+                reason: "",
+              })}
+            </span>
+          </p>
+        ) : null}
+        {ackRefused ? (
+          <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive">
+            <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+            <span className="min-w-0">{ackRefused}</span>
+          </p>
+        ) : null}
         {noticesFor(["status", "severity"])}
         {editable ? null : (
           <p className="text-sm text-muted-foreground">{m.incident_page({ part: "read_only" })}</p>
@@ -307,7 +366,13 @@ function Incident({ row }: { row: IncidentRow }) {
               />
             ) : null}
             {noticesFor(["update"])}
-            <Timeline incidentId={row.id} who={who} locale={locale} now={now} />
+            <Timeline
+              rows={timeline.rows}
+              ready={timeline.status === "ready"}
+              who={who}
+              locale={locale}
+              now={now}
+            />
           </CardContent>
         </Card>
 
@@ -340,13 +405,21 @@ function Incident({ row }: { row: IncidentRow }) {
             </CardContent>
           </Card>
           {row.escalation ? (
-            <EscalationProgress
-              run={row.escalation}
-              who={who}
-              locale={locale}
-              timeZone={TIME_ZONE}
-              now={now}
-            />
+            // While it is escalating, phones show it above the roles: "Level 2 in 59 seconds" is what matters then.
+            <div className={cn("min-w-0", escalating && "max-md:order-first")}>
+              <EscalationProgress
+                run={row.escalation}
+                incident={row}
+                who={who}
+                members={members.rows}
+                schedules={schedules.rows}
+                overrides={overrides.rows}
+                timeline={timeline.rows}
+                locale={locale}
+                timeZone={TIME_ZONE}
+                now={now}
+              />
+            </div>
           ) : null}
         </div>
       </div>
@@ -598,18 +671,19 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
  * member's own, are not.
  */
 function Timeline({
-  incidentId,
+  rows,
+  ready,
   who,
   locale,
   now,
 }: {
-  incidentId: string;
+  rows: readonly TimelineRow[];
+  ready: boolean;
   who: People;
   locale: Locale;
   now: number;
 }) {
-  const { rows, status } = useQuery("incident.timeline", { id: incidentId });
-  const announcements = useAnnouncements(rows, status === "ready", who);
+  const announcements = useAnnouncements(rows, ready, who);
   const announcer = (
     <div aria-live="polite" className="sr-only">
       {announcements.map(({ key, text }) => (
@@ -618,7 +692,7 @@ function Timeline({
     </div>
   );
   if (rows.length === 0) {
-    return status === "ready" ? (
+    return ready ? (
       <p className="text-sm text-muted-foreground">{m.incident_page({ part: "timeline_empty" })}</p>
     ) : null;
   }

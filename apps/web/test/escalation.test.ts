@@ -1,14 +1,26 @@
 // The dashboard's side of escalation policies: the editor's checks, dropping targets that went away, what a run
-// fires next, and how its timeline entries read in both languages.
+// fires next and whom it would page, how its status reads, whose push failed, and how its timeline entries read in
+// both languages.
 import { setLocale } from "@freecorps/brigade-i18n";
 import { entryText, people } from "@freecorps/brigade-i18n/incident";
-import type { Escalation, MemberRow, ScheduleRow, TimelineRow } from "@freecorps/brigade-schema";
+import type {
+  Escalation,
+  EscalationPage,
+  MemberRow,
+  OverrideRow,
+  ScheduleRow,
+  TimelineRow,
+} from "@freecorps/brigade-schema";
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import {
   checkPolicy,
   draftTargets,
   emptyPolicy,
+  failedDeliveries,
+  forecast,
   nextStep,
+  runStatus,
+  timeoutKind,
   type PolicyDraft,
 } from "../src/lib/escalation.ts";
 
@@ -103,14 +115,105 @@ describe("a run on the incident page", () => {
     startedAt: 0,
     endedAt: null,
     nextAt: 1,
+    paged: pages.length,
     pages,
   });
-  const page = (level: number, round = 0) => ({ level, round, at: 0, userIds: [], missed: [] });
+  const page = (level: number | null, round = 0, fields: Partial<EscalationPage> = {}) => ({
+    level,
+    round,
+    at: 0,
+    userIds: [],
+    missed: [],
+    missedCount: 0,
+    reason: "timeout" as const,
+    ...fields,
+  });
 
   test("says what fires next: the next level, level 1 again, or the end", () => {
     expect(nextStep(run([page(1)]))).toEqual({ kind: "level", level: 2 });
     expect(nextStep(run([page(1), page(2)], 1))).toEqual({ kind: "repeat", level: 1 });
     expect(nextStep(run([page(1), page(2)]))).toEqual({ kind: "end", level: 2 });
+  });
+
+  test("forecasts the next level: its people, and each schedule with whoever is on call now", () => {
+    const schedule = {
+      id: SCH,
+      name: "Primary",
+      timeZone: "UTC",
+      layers: [
+        {
+          id: "lyr_01JB0000000000000000000001",
+          name: "",
+          members: ["usr_caio"],
+          startDate: "2026-01-01",
+          handoffTime: "09:00",
+          unit: "weeks",
+          count: 1,
+        },
+      ],
+      createdAt: 0,
+      createdBy: "usr_ana",
+      updatedAt: 0,
+    } as ScheduleRow;
+    const now = Date.UTC(2026, 9, 26, 12);
+    const withTargets = run([page(1)]);
+    withTargets.levels[1] = {
+      ...withTargets.levels[1]!,
+      targets: [
+        { kind: "member", id: "usr_eva" },
+        { kind: "schedule", id: SCH },
+        { kind: "schedule", id: "sch_01JB0000000000000000000009" },
+      ],
+    };
+    expect(forecast(withTargets, [schedule], [] as OverrideRow[], now)).toEqual([
+      { kind: "member", id: "usr_eva" },
+      { kind: "schedule", id: SCH, name: "Primary", onCall: "usr_caio" },
+      { kind: "schedule", id: "sch_01JB0000000000000000000009", name: null, onCall: null },
+    ]);
+    // The end of the run pages everyone who can respond: nothing to forecast by name.
+    expect(forecast(run([page(1), page(2)]), [schedule], [], now)).toEqual([]);
+  });
+
+  test("an ack reads first whatever the run's status; a fallback says why it paged everyone", () => {
+    const acked = { acknowledgedAt: 50, acknowledgedBy: "usr_ana" };
+    const open = { acknowledgedAt: null, acknowledgedBy: null };
+    const ended = (reason: EscalationPage["reason"]): Escalation => ({
+      ...run([page(1), page(null, 0, { reason })]),
+      status: "exhausted",
+      endedAt: 40,
+    });
+    expect(runStatus(ended("exhausted"), acked)).toEqual({
+      kind: "acknowledged",
+      by: "usr_ana",
+      at: 50,
+    });
+    expect(runStatus(run([page(1)]), open)).toEqual({ kind: "running" });
+    for (const reason of ["unreachable", "exhausted", "stalled"] as const) {
+      expect(runStatus(ended(reason), open)).toEqual({ kind: "fallback", reason, at: 40 });
+    }
+  });
+
+  test("a reached member whose push failed is marked on the page that reached them", () => {
+    const failed = (at: number, userId: string, reason: string) =>
+      ({ kind: "page_failed", at, userId, reason }) as TimelineRow;
+    const pages = [
+      page(1, 0, { at: 10, userIds: ["usr_ana", "usr_bia"] }),
+      page(2, 0, { at: 20, userIds: ["usr_eva"] }),
+    ];
+    const marked = failedDeliveries(pages, [
+      failed(12, "usr_ana", "undelivered"),
+      // A member a level could not page at all is the page's miss, not a failed push.
+      failed(12, "usr_bia", "no_devices"),
+      failed(25, "usr_eva", "not_configured"),
+      failed(26, "usr_ana", "undelivered"),
+    ]);
+    expect(marked.map((set) => [...set])).toEqual([["usr_ana"], ["usr_eva"]]);
+  });
+
+  test("a level's timeout says what comes after it", () => {
+    expect(timeoutKind(0, 2, 0)).toBe("timeout");
+    expect(timeoutKind(1, 2, 1)).toBe("timeout_repeat");
+    expect(timeoutKind(1, 2, 0)).toBe("timeout_end");
   });
 
   test("escalation entries read in English and Portuguese", async () => {
@@ -150,7 +253,7 @@ describe("a run on the incident page", () => {
     await setLocale("pt-BR");
     expect(entryText(gap, who)).toBe("Não foi possível chamar Primary: ninguém de plantão");
     expect(entryText(entry({ kind: "escalation_exhausted", levels: 2, rounds: 1 }), who)).toBe(
-      "Ninguém confirmou depois de todos os níveis da política de escalonamento",
+      "Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados",
     );
   });
 });

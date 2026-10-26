@@ -1018,7 +1018,14 @@
   ],
   "escalation_text": [
     {
-      "declarations": ["input text", "input name", "input time", "input level", "input reason"],
+      "declarations": [
+        "input text",
+        "input name",
+        "input time",
+        "input level",
+        "input reason",
+        "input who"
+      ],
       "selectors": ["text"],
       "match": {
         "text=title": "Escalation",
@@ -1029,7 +1036,6 @@
         "text=level": "Level {level}",
         "text=level_empty": "Nobody to page at this level: it is skipped until someone is added",
         "text=on_call": "{name} on call now",
-        "text=add_target_placeholder": "Choose…",
         "text=delete_confirm": "Delete {name}? Runs under way keep the levels they started with.",
         "text=delete_default": "It is the default: pages go back to the incident's commander, or to everyone who can respond.",
         "text=change_failed": "Couldn't change {name}: {reason}",
@@ -1038,7 +1044,7 @@
         "text=deleted_schedule": "Deleted schedule",
         "text=hint": "Levels page in order until someone acknowledges. A schedule pages whoever is on call when its level fires; a level nobody can be reached at is skipped at once.",
         "text=next_label": "Next",
-        "text=paged_at": "Paged {time}",
+        "text=paged_at": "Paged at {time}",
         "text=everyone": "Everyone who can respond",
         "text=policy_named": "Policy: {name}",
         "text=nobody_reached": "Nobody reached",
@@ -1046,6 +1052,15 @@
         "text=target_member": "Person",
         "text=group_schedules": "Schedules (whoever is on call)",
         "text=group_people": "People",
+        "text=forecast": "Who it would page now",
+        "text=schedule_now": "{name} ({who} on call now)",
+        "text=schedule_gap": "{name} (nobody on call now)",
+        "text=latest_label": "Latest",
+        "text=missed": "Couldn't page",
+        "text=declarer_you": "You (declared it)",
+        "text=declarer": "{name} (declared it)",
+        "text=replaces_default": "Replaces {name} as the default.",
+        "text=level_empty_draft": "Nobody to page yet: add a schedule or a person, or remove this level.",
         "text=*": "Escalation"
       }
     }
@@ -1070,6 +1085,13 @@
         "kind=repeat_choice, count=0, countPlural=*": "Don't repeat",
         "kind=repeat_choice, count=*, countPlural=one": "{countFormatted} more time",
         "kind=repeat_choice, count=*, countPlural=*": "{countFormatted} more times",
+        "kind=timeout_repeat, count=*, countPlural=one": "Level 1 again after {countFormatted} minute",
+        "kind=timeout_repeat, count=*, countPlural=*": "Level 1 again after {countFormatted} minutes",
+        "kind=timeout_end, count=*, countPlural=one": "Everyone who can respond after {countFormatted} minute",
+        "kind=timeout_end, count=*, countPlural=*": "Everyone who can respond after {countFormatted} minutes",
+        "kind=earlier, count=*, countPlural=*": "Earlier levels ({countFormatted})",
+        "kind=show_levels, count=*, countPlural=*": "Show all {countFormatted} levels",
+        "kind=more_missed, count=*, countPlural=*": "and {countFormatted} more",
         "kind=*, count=*, countPlural=*": "{countFormatted}"
       }
     }
@@ -1089,8 +1111,7 @@
         "action=add_level": "Add a level",
         "action=remove_level": "Remove level",
         "action=remove_target": "Remove",
-        "action=move_up": "Move up",
-        "action=move_down": "Move down",
+        "action=show_fewer": "Show fewer levels",
         "action=*": "Change"
       }
     }
@@ -1114,13 +1135,13 @@
       "match": {
         "field=name, form=label": "Name",
         "field=timeout, form=label": "Minutes before the next level",
+        "field=timeout_last, form=label": "Minutes before paging everyone who can respond",
         "field=repeat, form=label": "Repeat the levels",
         "field=targets, form=label": "Who is paged",
         "field=default, form=label": "Use for every page (default policy)",
         "field=add_target, form=label": "Add a schedule or a person",
         "field=name, form=invalid": "Enter a name.",
         "field=timeout, form=invalid": "Enter a whole number of minutes from 1 to 1440.",
-        "field=repeat, form=invalid": "Enter a whole number from 0 to 9.",
         "field=targets, form=invalid": "Add at least one schedule or person.",
         "field=*, form=invalid": "Check this field.",
         "field=*, form=*": "Field"
@@ -1133,13 +1154,42 @@
       "selectors": ["part"],
       "match": {
         "part=running": "Escalating",
-        "part=acknowledged": "Stopped: acknowledged {time}",
         "part=resolved": "Stopped: resolved {time}",
-        "part=exhausted": "Nobody acknowledged: no levels left since {time}",
         "part=next_level": "Level {level} at {time}",
         "part=next_repeat": "Level 1 again at {time}",
-        "part=next_end": "Gives up at {time}",
+        "part=next_end": "Everyone who can respond at {time}",
+        "part=fallback_unreachable": "No level could reach anyone: paged everyone who can respond",
+        "part=fallback_exhausted": "Nobody acknowledged after every level: paged everyone who can respond",
+        "part=fallback_stalled": "A level kept failing to fire: paged everyone who can respond",
         "part=*": "Escalation"
+      }
+    }
+  ],
+  "escalation_miss": [
+    {
+      "declarations": ["input reason", "input name"],
+      "selectors": ["reason"],
+      "match": {
+        "reason=no_devices": "{name} (no phone registered)",
+        "reason=nobody_on_call": "{name} (nobody on call)",
+        "reason=schedule_missing": "A deleted schedule",
+        "reason=not_a_member": "{name} (can no longer respond)",
+        "reason=failed": "{name} (push failed)",
+        "reason=*": "{name}"
+      }
+    }
+  ],
+  "incident_ack": [
+    {
+      "declarations": ["input part", "input name", "input time", "input reason"],
+      "selectors": ["part"],
+      "match": {
+        "part=action": "Acknowledge",
+        "part=hint": "Stops paging: no further escalation level fires.",
+        "part=by": "Acknowledged by {name}, {time}",
+        "part=already": "Someone else acknowledged it first.",
+        "part=failed": "Couldn't acknowledge it. {reason}",
+        "part=*": "Acknowledge"
       }
     }
   ]

@@ -826,7 +826,7 @@ describe("queue routing", () => {
         { id: "dlq-r", timestamp: new Date(), attempts: 1, body: event },
       ]);
       const ctx = createExecutionContext();
-      await worker.queue!(batch, env as never);
+      await worker.queue!(batch, env as never, ctx);
       expect((await getQueueResult(batch, ctx)).explicitAcks, name).toEqual(["dlq-r"]);
     }
     // Recorded as dead-lettered (by the first; the rest found it settled), not paged again as a fresh event.

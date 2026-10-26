@@ -35,7 +35,10 @@ export const MAX_KEPT = 10;
 
 function parseOne(value: unknown): Leftover | null {
   if (typeof value !== "object" || value === null) return null;
-  const { cookie, userId, workspaceId, origin, expiresAt, keptAt } = value as Record<string, unknown>;
+  const { cookie, userId, workspaceId, origin, expiresAt, keptAt } = value as Record<
+    string,
+    unknown
+  >;
   if (typeof cookie !== "string" || cookie === "" || typeof userId !== "string") return null;
   if (workspaceId !== null && typeof workspaceId !== "string") return null;
   if (typeof origin !== "string" || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) {

@@ -11,6 +11,7 @@ export type Monitor_EditInputs = {
 * | "action" | "Edit" |
 * | "form" | "Edit {name}" |
 * | "restart" | "Saving starts its checks over: the last results are dropped and it shows Waiting until its regions report again." |
+* | "restart_alert" | "Its firing alert stays until its checks pass again." |
 * | * | "Save changes" |
 *
 * @param {Monitor_EditInputs} inputs

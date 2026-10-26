@@ -378,7 +378,8 @@
       "selectors": ["action"],
       "match": {
         "action=pause": "Pause",
-        "action=prompt": "Pause checks? A firing alert resolves.",
+        "action=prompt": "Pause this monitor? Its checks stop until you resume it.",
+        "action=prompt_alert": "Pause this monitor? Its checks stop until you resume it, and its firing alert resolves.",
         "action=*": "Resume"
       }
     }
@@ -496,6 +497,7 @@
         "part=action": "Edit",
         "part=form": "Edit {name}",
         "part=restart": "Saving starts its checks over: the last results are dropped and it shows Waiting until its regions report again.",
+        "part=restart_alert": "Its firing alert stays until its checks pass again.",
         "part=*": "Save changes"
       }
     }
@@ -507,14 +509,27 @@
       "match": {
         "part=action": "Delete monitor",
         "part=prompt": "Delete {name}? Its checks stop and its results are gone for good.",
-        "part=alert": "Its firing alert resolves. The incident it opened stays open until someone resolves it.",
+        "part=alert": "Its firing alert resolves. The incident it opened is left for people to close.",
         "part=incidents": "Incidents it opened before stay as they are.",
         "part=heartbeat": "Its heartbeat URL stops working.",
+        "part=keep": "Keep monitor",
         "part=*": "Delete"
       }
     }
   ],
   "monitor_gone": "It was deleted.",
+  "monitor_discard": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=prompt": "Discard your changes to {name}?",
+        "part=prompt_new": "Discard this new monitor?",
+        "part=discard": "Discard changes",
+        "part=*": "Keep editing"
+      }
+    }
+  ],
   "incident_page": [
     {
       "declarations": ["input part"],

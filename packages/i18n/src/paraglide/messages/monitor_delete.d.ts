@@ -10,9 +10,10 @@ export type Monitor_DeleteInputs = {
 * | --- | --- |
 * | "action" | "Delete monitor" |
 * | "prompt" | "Delete {name}? Its checks stop and its results are gone for good." |
-* | "alert" | "Its firing alert resolves. The incident it opened stays open until someone resolves it." |
+* | "alert" | "Its firing alert resolves. The incident it opened is left for people to close." |
 * | "incidents" | "Incidents it opened before stay as they are." |
 * | "heartbeat" | "Its heartbeat URL stops working." |
+* | "keep" | "Keep monitor" |
 * | * | "Delete" |
 *
 * @param {Monitor_DeleteInputs} inputs

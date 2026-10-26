@@ -199,13 +199,15 @@ test("pausing asks first; cancel keeps it running and returns focus", async () =
   const item = () => document.querySelector(`[data-monitor="${row.id}"]`)!;
   const pause = button("Pause", item())!;
   await click(pause);
-  expect(item().textContent).toContain("Pause checks? A firing alert resolves.");
+  expect(item().textContent).toContain("Pause this monitor? Its checks stop until you resume it.");
+  // Nothing is firing: the prompt says nothing about an alert.
+  expect(item().textContent).not.toContain("firing alert");
   // The confirm button has focus; Escape cancels.
   expect(document.activeElement?.textContent).toBe("Pause");
   expect(document.activeElement).not.toBe(pause);
   await key(document.activeElement!, "Escape");
   await frame();
-  expect(item().textContent).not.toContain("Pause checks?");
+  expect(item().textContent).not.toContain("Pause this monitor?");
   expect(document.activeElement).toBe(button("Pause", item()));
 
   await click(button("Pause", item()));
@@ -472,6 +474,11 @@ test("a numbered incident links to its page, by number", async () => {
   expect(link.textContent).toBe("Open INC-1");
 });
 
+/** A form's accessible name: its own label, or the heading it is labelled by. */
+const formName = (form: Element) =>
+  form.getAttribute("aria-label") ??
+  document.getElementById(form.getAttribute("aria-labelledby") ?? "")?.textContent;
+
 /** The input labelled `text` in the open form. */
 const field = (text: string) =>
   $$("form input").find(
@@ -484,7 +491,9 @@ test("editing opens the monitor's values in place, says when saving starts it ov
   const item = () => document.querySelector(`[data-monitor="${row.id}"]`)!;
   await click(button("Edit", item()));
   const form = item().querySelector("form")!;
-  expect(form.getAttribute("aria-label")).toBe("Edit Checkout");
+  // Its name is the visible heading.
+  expect(formName(form)).toBe("Edit Checkout");
+  expect(form.querySelector("h3")?.textContent).toBe("Edit Checkout");
   // The kind is said, not offered, and focus is on the name.
   expect(form.querySelector('input[type="radio"]')).toBeNull();
   expect(form.textContent).toContain("HTTP check");
@@ -495,6 +504,11 @@ test("editing opens the monitor's values in place, says when saving starts it ov
   expect(form.textContent).not.toContain("starts its checks over");
   act(() => setValue(field("URL"), "https://example.com/ready"));
   expect(form.textContent).toContain("Saving starts its checks over");
+  // Announced as it appears, and read with Save.
+  const note = $$("p", form).find((p) => p.textContent?.startsWith("Saving starts"))!;
+  expect(note.parentElement?.getAttribute("aria-live")).toBe("polite");
+  expect(button("Save changes", form)?.getAttribute("aria-describedby")).toBe(note.id);
+  expect(note.textContent).not.toContain("firing alert");
 
   await click(button("Save changes", form));
   await view.flush();
@@ -551,15 +565,19 @@ test("deleting asks first, says what happens to its alert and incident, and Esca
     "Delete Checkout? Its checks stop and its results are gone for good.",
   );
   expect(item().textContent).toContain(
-    "Its firing alert resolves. The incident it opened stays open until someone resolves it.",
+    "Its firing alert resolves. The incident it opened is left for people to close.",
   );
-  // Cancel has focus; Escape closes the prompt, not the form.
-  expect(document.activeElement?.textContent).toBe("Cancel");
+  const ask = button("Delete monitor", item())!;
+  const prompt = document.getElementById(ask.getAttribute("aria-controls") ?? "");
+  expect(prompt?.getAttribute("role")).toBe("group");
+  // Keep monitor has focus; Escape closes the prompt, not the form.
+  expect(document.activeElement?.textContent).toBe("Keep monitor");
   await key(document.activeElement!, "Escape");
-  await frame();
   expect(item().textContent).not.toContain("gone for good");
   expect(item().querySelector("form")).not.toBeNull();
+  // At once, not a frame later: focus never falls to the page in between.
   expect(document.activeElement).toBe(button("Delete monitor", item()));
+  expect(ask.getAttribute("aria-controls")).toBeNull();
 
   await click(button("Delete monitor", item()));
   await click(button("Delete", item()));
@@ -608,8 +626,113 @@ test("opening one form closes the other", async () => {
   const item = () => document.querySelector(`[data-monitor="${row.id}"]`)!;
   await click(button("Add monitor"));
   await click(button("Edit", item()));
-  expect($$("form").map((form) => form.getAttribute("aria-label"))).toEqual(["Edit Checkout"]);
+  expect($$("form").map(formName)).toEqual(["Edit Checkout"]);
   expect(button("Add monitor")).toBeTruthy();
   await click(button("Add monitor"));
-  expect($$("form").map((form) => form.getAttribute("aria-label"))).toEqual(["Add monitor"]);
+  expect($$("form").map(formName)).toEqual(["Add monitor"]);
+});
+
+test("opening another form while one has changes asks first; Keep editing stays, Discard opens the other", async () => {
+  const first = monitor({ id: newId("mon", T0 - 2, randomBytes), name: "Alpha" });
+  const second = monitor({ id: newId("mon", T0 - 1, randomBytes), name: "Bravo" });
+  await mount([], [first, second]);
+  const item = (row: MonitorRow) => document.querySelector(`[data-monitor="${row.id}"]`)!;
+  await click(button("Edit", item(first)));
+  act(() => setValue(field("Name"), "Alpha API"));
+
+  await click(button("Edit", item(second)));
+  expect($$("form").map(formName)).toEqual(["Edit Alpha"]);
+  expect(item(first).textContent).toContain("Discard your changes to Alpha?");
+  expect(document.activeElement).toBe(button("Keep editing", item(first)));
+  // Escape is Keep editing, and leaves the form open with the draft.
+  await key(document.activeElement!, "Escape");
+  expect(item(first).textContent).not.toContain("Discard your changes");
+  expect(field("Name").value).toBe("Alpha API");
+  expect(document.activeElement).toBe(field("Name"));
+
+  await click(button("Add monitor"));
+  expect(item(first).textContent).toContain("Discard your changes to Alpha?");
+  await click(button("Keep editing", item(first)));
+  expect($$("form").map(formName)).toEqual(["Edit Alpha"]);
+  expect(document.activeElement).toBe(field("Name"));
+
+  await click(button("Edit", item(second)));
+  await click(button("Discard changes", item(first)));
+  expect($$("form").map(formName)).toEqual(["Edit Bravo"]);
+  expect(document.activeElement).toBe(field("Name"));
+  // The new form has no changes yet: Add monitor opens at once.
+  await click(button("Add monitor"));
+  expect($$("form").map(formName)).toEqual(["Add monitor"]);
+
+  // A new monitor's draft asks too.
+  act(() => setValue(field("Name"), "Search"));
+  await click(button("Edit", item(first)));
+  expect(document.body.textContent).toContain("Discard this new monitor?");
+  await click(button("Discard changes"));
+  expect($$("form").map(formName)).toEqual(["Edit Alpha"]);
+  expect(field("Name").value).toBe("Alpha");
+});
+
+test("a pause prompt left open does not come back after Edit and Cancel", async () => {
+  const row = monitor({ id: newId("mon", T0, randomBytes) });
+  await mount([], [row]);
+  const item = () => document.querySelector(`[data-monitor="${row.id}"]`)!;
+  await click(button("Pause", item()));
+  expect(item().textContent).toContain("Pause this monitor?");
+  await click(button("Edit", item()));
+  await click(button("Cancel", item()));
+  await frame();
+  expect(item().querySelector("form")).toBeNull();
+  expect(item().textContent).not.toContain("Pause this monitor?");
+  expect(button("Pause", item())?.getAttribute("aria-expanded")).toBe("false");
+});
+
+test("pausing an alerting monitor says its alert resolves; restarting one says the alert stays", async () => {
+  const row = monitor({
+    id: newId("mon", T0, randomBytes),
+    status: "down",
+    alertId: newId("alt", T0, randomBytes),
+    incidentId: newId("inc", T0, randomBytes),
+  });
+  await mount([row]);
+  const item = () => document.querySelector(`[data-monitor="${row.id}"]`)!;
+  await click(button("Pause", item()));
+  expect(item().textContent).toContain(
+    "Pause this monitor? Its checks stop until you resume it, and its firing alert resolves.",
+  );
+  await key(document.activeElement!, "Escape");
+
+  await click(button("Edit", item()));
+  act(() => setValue(field("URL"), "https://example.com/ready"));
+  expect(item().textContent).toContain("Its firing alert stays until its checks pass again.");
+});
+
+test("Escape after closing the delete prompt closes the editor", async () => {
+  const row = monitor({ id: newId("mon", T0, randomBytes) });
+  await mount([], [row]);
+  const item = () => document.querySelector(`[data-monitor="${row.id}"]`)!;
+  await click(button("Edit", item()));
+  await click(button("Delete monitor", item()));
+  // Synchronously, before any frame: focus is back on Delete in the same update, never on the page.
+  act(() => {
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+  });
+  expect(document.activeElement).toBe(button("Delete monitor", item()));
+  // Inside the form, so the next Escape is the form's.
+  await key(document.activeElement!, "Escape");
+  expect(item().querySelector("form")).toBeNull();
+});
+
+test("when the monitor being edited is deleted elsewhere, focus goes to Add monitor", async () => {
+  const row = monitor({ id: newId("mon", T0, randomBytes) });
+  const view = await mount([], [row]);
+  await click(button("Edit", document.querySelector(`[data-monitor="${row.id}"]`)!));
+  expect(document.activeElement).toBe(field("Name"));
+  expect(view.shard.write(owner, "monitor.delete", { id: row.id }).ok).toBe(true);
+  await view.flush();
+  await frame();
+  expect(document.querySelector("form")).toBeNull();
+  expect(document.activeElement).toBe(button("Add monitor"));
 });

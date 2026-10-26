@@ -11,6 +11,7 @@ import {
   checkDraft,
   checkEdit,
   checkErrorReason,
+  draftChanged,
   draftFromRow,
   editRestarts,
   EMPTY_DRAFT,
@@ -228,9 +229,9 @@ const row = (overrides: Partial<MonitorRow> = {}): MonitorRow => ({
   ...overrides,
 });
 
-test("owners and admins can edit, pause or resume and delete; responders and viewers only read", () => {
-  expect(monitorActions("owner", { paused: false })).toEqual(["edit", "pause", "delete"]);
-  expect(monitorActions("admin", { paused: true })).toEqual(["edit", "resume", "delete"]);
+test("owners and admins can edit and pause or resume (Delete is in the edit form); others only read", () => {
+  expect(monitorActions("owner", { paused: false })).toEqual(["edit", "pause"]);
+  expect(monitorActions("admin", { paused: true })).toEqual(["edit", "resume"]);
   expect(monitorActions("responder", { paused: false })).toEqual([]);
   expect(monitorActions("viewer", { paused: true })).toEqual([]);
 });
@@ -316,4 +317,16 @@ test("a refused monitor change uses the shared wording, except a monitor that is
   expect(monitorRefusal("conflict")).toBe(m.sync_error_conflict());
   expect(monitorRefusal("not_found")).toBe("It was deleted.");
   expect(m.monitor_gone({}, { locale: "pt-BR" })).toBe("Ele foi excluído.");
+});
+
+test("a draft has changes once it differs from what it opened with; region order does not count", () => {
+  const initial = draftFromRow(row({}));
+  expect(draftChanged(initial, initial)).toBe(false);
+  expect(draftChanged({ ...initial, name: `${initial.name} API` }, initial)).toBe(true);
+  expect(draftChanged({ ...initial, regions: [...initial.regions].reverse() }, initial)).toBe(
+    false,
+  );
+  expect(draftChanged({ ...initial, regions: initial.regions.slice(1) }, initial)).toBe(true);
+  expect(draftChanged(EMPTY_DRAFT, EMPTY_DRAFT)).toBe(false);
+  expect(draftChanged({ ...EMPTY_DRAFT, kind: "heartbeat" }, EMPTY_DRAFT)).toBe(true);
 });

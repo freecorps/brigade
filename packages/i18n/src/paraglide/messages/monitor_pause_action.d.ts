@@ -8,7 +8,8 @@ export type Monitor_Pause_ActionInputs = {
 * | action | output |
 * | --- | --- |
 * | "pause" | "Pause" |
-* | "prompt" | "Pause checks? A firing alert resolves." |
+* | "prompt" | "Pause this monitor? Its checks stop until you resume it." |
+* | "prompt_alert" | "Pause this monitor? Its checks stop until you resume it, and its firing alert resolves." |
 * | * | "Resume" |
 *
 * @param {Monitor_Pause_ActionInputs} inputs

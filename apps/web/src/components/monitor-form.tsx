@@ -23,6 +23,7 @@ import { Field } from "@/components/ui/field";
 import {
   checkDraft,
   checkEdit,
+  draftChanged,
   draftFromRow,
   editRestarts,
   EMPTY_DRAFT,
@@ -37,6 +38,13 @@ const SEGMENT =
   "flex min-h-11 cursor-pointer items-center justify-center gap-1.5 px-3 py-2 text-sm leading-tight select-none has-focus-visible:ring-3 has-focus-visible:ring-ring has-focus-visible:ring-inset";
 const SELECTED = "bg-primary text-primary-foreground";
 const UNSELECTED = "text-muted-foreground hover:bg-muted";
+
+/**
+ * A confirming destructive button. The variant is a red tint on dark, which reads lighter than the trigger that
+ * opened the prompt: the last step gets a solid fill in both themes.
+ */
+export const CONFIRM_DESTRUCTIVE =
+  "dark:bg-destructive dark:text-destructive-foreground dark:hover:bg-destructive/90";
 
 /** The `monitor_field_invalid` / `monitor_field_hint` key for a draft field. */
 const FIELD_KEYS: Record<DraftField, string> = {
@@ -64,19 +72,32 @@ export type MonitorFormMode =
       onDelete: () => void;
     };
 
+/** Set while another form was asked for and this one has changes: it asks whether to drop them. */
+export type DiscardPrompt = { onDiscard: () => void; onKeep: () => void };
+
 /**
  * A new HTTP check or heartbeat, or an existing one's settings. Checked on submit with the mutation's own validator,
  * so a value the shard would refuse is marked in its field, with what to fix, and the draft stays. Creating:
  * `onCreate` sends it, and the form closes when it resolves true. Editing: the values are the monitor's, an edit
  * that changes nothing just closes, saving says when it starts the checks over, and Delete asks first, saying what
- * happens to its alert and incidents. The name field takes focus when the form opens; Escape cancels.
+ * happens to its alert and incidents. The name field takes focus when the form opens; Escape cancels. `onChanged`
+ * hears whether the draft differs from what it opened with, and `discard` asks, at the top, before it is dropped.
  */
-export function MonitorForm({ mode, onCancel }: { mode: MonitorFormMode; onCancel: () => void }) {
+export function MonitorForm({
+  mode,
+  onCancel,
+  onChanged,
+  discard,
+}: {
+  mode: MonitorFormMode;
+  onCancel: () => void;
+  onChanged?: (changed: boolean) => void;
+  discard?: DiscardPrompt | null;
+}) {
   const client = useSyncClient();
   const editing = mode.kind === "edit" ? mode.row : null;
-  const [draft, setDraft] = useState<MonitorDraft>(() =>
-    editing ? draftFromRow(editing) : EMPTY_DRAFT,
-  );
+  const [initial] = useState<MonitorDraft>(() => (editing ? draftFromRow(editing) : EMPTY_DRAFT));
+  const [draft, setDraft] = useState<MonitorDraft>(initial);
   const [invalid, setInvalid] = useState<ReadonlySet<DraftField>>(new Set());
   const [sending, setSending] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
@@ -84,8 +105,12 @@ export function MonitorForm({ mode, onCancel }: { mode: MonitorFormMode; onCance
   const regionsId = useId();
   const methodId = useId();
   const regionsErrorId = useId();
+  const headingId = useId();
+  const restartId = useId();
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => nameRef.current?.focus(), []);
+  const changed = draftChanged(draft, initial);
+  useEffect(() => onChanged?.(changed), [changed, onChanged]);
 
   const set = <K extends keyof MonitorDraft>(key: K, value: MonitorDraft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -129,7 +154,7 @@ export function MonitorForm({ mode, onCancel }: { mode: MonitorFormMode; onCance
       .catch(() => false)
       .then((done) => {
         setSending(false);
-        if (done) setDraft(EMPTY_DRAFT);
+        if (done) setDraft(initial);
       });
   };
 
@@ -149,14 +174,32 @@ export function MonitorForm({ mode, onCancel }: { mode: MonitorFormMode; onCance
       onSubmit={submit}
       onKeyDown={onKeyDown}
       noValidate
-      aria-label={editing ? m.monitor_edit({ part: "form", name: editing.name }) : m.monitor_add()}
+      aria-label={editing ? undefined : m.monitor_add()}
+      aria-labelledby={editing ? headingId : undefined}
       className="flex min-w-0 flex-col gap-4 rounded-md border bg-muted/40 p-4"
     >
+      {discard ? (
+        <DiscardChanges
+          name={editing?.name ?? null}
+          {...discard}
+          onKeep={() => {
+            nameRef.current?.focus();
+            discard.onKeep();
+          }}
+        />
+      ) : null}
       {editing ? (
         // The kind is fixed once a monitor exists: said, not offered.
-        <p className="text-sm font-medium text-muted-foreground">
-          {m.monitor_kind({ kind: editing.kind })}
-        </p>
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <h3
+            id={headingId}
+            className="line-clamp-2 font-medium [overflow-wrap:anywhere]"
+            title={editing.name}
+          >
+            {m.monitor_edit({ part: "form", name: editing.name })}
+          </h3>
+          <p className="text-sm text-muted-foreground">{m.monitor_kind({ kind: editing.kind })}</p>
+        </div>
       ) : (
         <div className="flex flex-col gap-1.5">
           <span id={kindId} className="sr-only">
@@ -337,32 +380,88 @@ export function MonitorForm({ mode, onCancel }: { mode: MonitorFormMode; onCance
         )}
       </div>
 
-      {restarts ? (
-        <p className="rounded-md bg-card px-3 py-2 text-sm text-muted-foreground">
-          {m.monitor_edit({ part: "restart", name: "" })}
-        </p>
-      ) : null}
+      <div>
+        {/* Always there, so the note is announced when an edit starts to restart the checks. */}
+        <div aria-live="polite">
+          {restarts ? (
+            <p
+              id={restartId}
+              className="mb-4 rounded-md bg-card px-3 py-2 text-sm text-muted-foreground"
+            >
+              {m.monitor_edit({ part: "restart", name: "" })}
+              {/* `monitor.updateHttp` starts it over from Waiting but keeps its alert and incident. */}
+              {editing && monitorAlerting(editing)
+                ? ` ${m.monitor_edit({ part: "restart_alert", name: "" })}`
+                : null}
+            </p>
+          ) : null}
+        </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit" disabled={sending}>
-          {editing ? m.monitor_edit({ part: "save", name: "" }) : m.monitor_create()}
-        </Button>
-        <Button type="button" variant="ghost" onClick={onCancel}>
-          {m.declare_cancel()}
-        </Button>
-        {mode.kind === "edit" ? <DeleteMonitor row={mode.row} onDelete={mode.onDelete} /> : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="submit"
+            disabled={sending}
+            aria-describedby={restarts ? restartId : undefined}
+          >
+            {editing ? m.monitor_edit({ part: "save", name: "" }) : m.monitor_create()}
+          </Button>
+          <Button type="button" variant="ghost" onClick={onCancel}>
+            {m.declare_cancel()}
+          </Button>
+          {mode.kind === "edit" ? <DeleteMonitor row={mode.row} onDelete={mode.onDelete} /> : null}
+        </div>
       </div>
     </form>
   );
 }
 
 /**
+ * Asked when another monitor's form was opened while this one has changes: Keep editing (focused, and Escape)
+ * stays here, Discard changes opens the other one.
+ */
+function DiscardChanges({ name, onDiscard, onKeep }: { name: string | null } & DiscardPrompt) {
+  const promptId = useId();
+  const keepRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => keepRef.current?.focus(), []);
+  return (
+    <div
+      role="group"
+      aria-labelledby={promptId}
+      onKeyDown={(event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          // The form's own Escape would close it, changes and all.
+          event.preventDefault();
+          event.stopPropagation();
+          onKeep();
+        }
+      }}
+      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md bg-card px-3 py-2 text-sm"
+    >
+      <p id={promptId} className="min-w-0 flex-1 basis-48 font-medium [overflow-wrap:anywhere]">
+        {name === null
+          ? m.monitor_discard({ part: "prompt_new", name: "" })
+          : m.monitor_discard({ part: "prompt", name })}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button ref={keepRef} type="button" variant="outline" onClick={onKeep}>
+          {m.monitor_discard({ part: "keep", name: "" })}
+        </Button>
+        <Button type="button" variant="ghost" onClick={onDiscard}>
+          {m.monitor_discard({ part: "discard", name: "" })}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Delete, at the end of the edit form and away from Save, asking first in place: what goes (the checks and their
- * results, a heartbeat's URL) and what stays (a firing alert resolves, its incident stays open for people to close,
+ * results, a heartbeat's URL) and what stays (a firing alert resolves, its incident is left for people to close,
  * as `monitor.delete` does). Escape in the prompt closes only the prompt.
  */
 function DeleteMonitor({ row, onDelete }: { row: MonitorRow; onDelete: () => void }) {
   const promptId = useId();
+  const groupId = useId();
   const [asking, setAsking] = useState(false);
   const askRef = useRef<HTMLButtonElement>(null);
   const keepRef = useRef<HTMLButtonElement>(null);
@@ -370,8 +469,9 @@ function DeleteMonitor({ row, onDelete }: { row: MonitorRow; onDelete: () => voi
     if (asking) keepRef.current?.focus();
   }, [asking]);
   const cancel = () => {
+    // Delete stays mounted while the prompt is open: focus moves before the prompt goes, never to the page.
+    askRef.current?.focus();
     setAsking(false);
-    requestAnimationFrame(() => askRef.current?.focus());
   };
   const alerting = monitorAlerting(row);
   return (
@@ -381,7 +481,9 @@ function DeleteMonitor({ row, onDelete }: { row: MonitorRow; onDelete: () => voi
         type="button"
         variant="ghost"
         aria-expanded={asking}
-        className="text-destructive sm:ml-auto"
+        aria-controls={asking ? groupId : undefined}
+        // Away from Save, and still at the end when it wraps under it on a phone.
+        className="ml-auto text-destructive"
         onClick={() => setAsking(true)}
       >
         <Trash2Icon aria-hidden />
@@ -389,6 +491,7 @@ function DeleteMonitor({ row, onDelete }: { row: MonitorRow; onDelete: () => voi
       </Button>
       {asking ? (
         <div
+          id={groupId}
           role="group"
           aria-labelledby={promptId}
           onKeyDown={(event: KeyboardEvent) => {
@@ -411,12 +514,17 @@ function DeleteMonitor({ row, onDelete }: { row: MonitorRow; onDelete: () => voi
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="destructive" onClick={onDelete}>
+            <Button
+              type="button"
+              variant="destructive"
+              className={CONFIRM_DESTRUCTIVE}
+              onClick={onDelete}
+            >
               <Trash2Icon aria-hidden />
               {m.monitor_delete({ part: "confirm", name: "" })}
             </Button>
             <Button ref={keepRef} type="button" variant="ghost" onClick={cancel}>
-              {m.declare_cancel()}
+              {m.monitor_delete({ part: "keep", name: "" })}
             </Button>
           </div>
         </div>

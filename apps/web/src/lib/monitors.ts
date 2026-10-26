@@ -183,11 +183,11 @@ const DRAFT_FIELDS: readonly DraftField[] = [
 ];
 
 /** What an owner or admin can do to a monitor from its row; everyone else reads it (`monitor:manage`). */
-export type MonitorAction = "edit" | "pause" | "resume" | "delete";
+export type MonitorAction = "edit" | "pause" | "resume";
 
 export function monitorActions(role: Role, row: Pick<MonitorRow, "paused">): MonitorAction[] {
   if (!can(role, "monitor:manage")) return [];
-  return ["edit", row.paused ? "resume" : "pause", "delete"];
+  return ["edit", row.paused ? "resume" : "pause"];
 }
 
 /** The edit form as it opens: the monitor's own values, typed back into strings. */
@@ -206,6 +206,18 @@ export function draftFromRow(row: MonitorRow): MonitorDraft {
     graceSeconds: number(row.graceSeconds, EMPTY_DRAFT.graceSeconds),
     regions: row.kind === "http" ? [...row.regions] : EMPTY_DRAFT.regions,
   };
+}
+
+/**
+ * Whether `draft` differs from the values its form opened with, so closing it would lose something. Regions compare
+ * as a set: unticking one and ticking it again changes nothing.
+ */
+export function draftChanged(draft: MonitorDraft, initial: MonitorDraft): boolean {
+  const normal = (value: MonitorDraft) => ({
+    ...value,
+    regions: PROBE_REGIONS.filter((region) => value.regions.includes(region)),
+  });
+  return JSON.stringify(normal(draft)) !== JSON.stringify(normal(initial));
 }
 
 export type CheckedEdit =

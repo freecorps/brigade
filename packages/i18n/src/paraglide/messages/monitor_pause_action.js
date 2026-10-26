@@ -11,7 +11,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | action | output |
 * | --- | --- |
 * | "pause" | "Pause" |
-* | "prompt" | "Pause checks? A firing alert resolves." |
+* | "prompt" | "Pause this monitor? Its checks stop until you resume it." |
+* | "prompt_alert" | "Pause this monitor? Its checks stop until you resume it, and its firing alert resolves." |
 * | * | "Resume" |
 *
 * @param {Monitor_Pause_ActionInputs} inputs
@@ -22,12 +23,14 @@ export const monitor_pause_action = /** @type {((inputs: Monitor_Pause_ActionInp
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.action === "pause") return /** @type {LocalizedString} */ (`Pausar`);
-		if (i?.action === "prompt") return /** @type {LocalizedString} */ (`Pausar as verificações? Um alerta ativo é resolvido.`);
+		if (i?.action === "prompt") return /** @type {LocalizedString} */ (`Pausar este monitor? As verificações param até você retomá-lo.`);
+		if (i?.action === "prompt_alert") return /** @type {LocalizedString} */ (`Pausar este monitor? As verificações param até você retomá-lo, e o alerta ativo é resolvido.`);
 		return /** @type {LocalizedString} */ (`Retomar`)
 	}
 	{
 		if (i?.action === "pause") return /** @type {LocalizedString} */ (`Pause`);
-		if (i?.action === "prompt") return /** @type {LocalizedString} */ (`Pause checks? A firing alert resolves.`);
+		if (i?.action === "prompt") return /** @type {LocalizedString} */ (`Pause this monitor? Its checks stop until you resume it.`);
+		if (i?.action === "prompt_alert") return /** @type {LocalizedString} */ (`Pause this monitor? Its checks stop until you resume it, and its firing alert resolves.`);
 		return /** @type {LocalizedString} */ (`Resume`)
 	}
 });

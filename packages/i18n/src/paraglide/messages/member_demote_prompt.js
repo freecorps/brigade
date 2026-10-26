@@ -11,6 +11,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | kind | output |
 * | --- | --- |
 * | "owner" | "Change your role to {role}? You can no longer manage owners; only an owner can give it back." |
+* | "all" | "Change your role to {role}? You can no longer manage members or owners; only an owner can give it back." |
 * | * | "Change your role to {role}? You can no longer manage members; only an owner or admin can give it back." |
 *
 * @param {Member_Demote_PromptInputs} inputs
@@ -21,10 +22,12 @@ export const member_demote_prompt = /** @type {((inputs: Member_Demote_PromptInp
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.kind === "owner") return /** @type {LocalizedString} */ (`Mudar seu papel para ${i?.role}? Você deixa de gerenciar proprietários; só um proprietário pode devolvê-lo.`);
+		if (i?.kind === "all") return /** @type {LocalizedString} */ (`Mudar seu papel para ${i?.role}? Você deixa de gerenciar membros e proprietários; só um proprietário pode devolvê-lo.`);
 		return /** @type {LocalizedString} */ (`Mudar seu papel para ${i?.role}? Você deixa de gerenciar membros; só um proprietário ou admin pode devolvê-lo.`)
 	}
 	{
 		if (i?.kind === "owner") return /** @type {LocalizedString} */ (`Change your role to ${i?.role}? You can no longer manage owners; only an owner can give it back.`);
+		if (i?.kind === "all") return /** @type {LocalizedString} */ (`Change your role to ${i?.role}? You can no longer manage members or owners; only an owner can give it back.`);
 		return /** @type {LocalizedString} */ (`Change your role to ${i?.role}? You can no longer manage members; only an owner or admin can give it back.`)
 	}
 });

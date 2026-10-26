@@ -737,6 +737,7 @@
       "selectors": ["kind"],
       "match": {
         "kind=owner": "Mudar seu papel para {role}? Você deixa de gerenciar proprietários; só um proprietário pode devolvê-lo.",
+        "kind=all": "Mudar seu papel para {role}? Você deixa de gerenciar membros e proprietários; só um proprietário pode devolvê-lo.",
         "kind=*": "Mudar seu papel para {role}? Você deixa de gerenciar membros; só um proprietário ou admin pode devolvê-lo."
       }
     }

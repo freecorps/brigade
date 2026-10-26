@@ -9,6 +9,7 @@ export type Member_Demote_PromptInputs = {
 * | kind | output |
 * | --- | --- |
 * | "owner" | "Change your role to {role}? You can no longer manage owners; only an owner can give it back." |
+* | "all" | "Change your role to {role}? You can no longer manage members or owners; only an owner can give it back." |
 * | * | "Change your role to {role}? You can no longer manage members; only an owner or admin can give it back." |
 *
 * @param {Member_Demote_PromptInputs} inputs

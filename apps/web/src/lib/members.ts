@@ -111,11 +111,13 @@ export function sortMembers(members: readonly ListedMember[]): ListedMember[] {
 /**
  * Whether moving one's own role from `from` to `to` gives up something only someone else can give back: any step
  * down. Asked first, like leaving (the card's confirm); null when it is not a step down, else what is lost:
- * `owner` (owner to admin: owners), `manage` (to responder or viewer: managing members).
+ * `owner` (owner to admin: owners), `all` (owner to responder or viewer: owners and members, which only an owner
+ * gives back), `manage` (admin to responder or viewer: managing members).
  */
-export function selfDemotion(from: Role, to: Role): "owner" | "manage" | null {
+export function selfDemotion(from: Role, to: Role): "owner" | "all" | "manage" | null {
   if (rank(to) <= rank(from)) return null;
-  return to === "admin" ? "owner" : "manage";
+  if (from === "owner") return to === "admin" ? "owner" : "all";
+  return "manage";
 }
 
 /** Members a collapsed list shows: the first ones (owners and admins come first), and only when it saves rows. */

@@ -91,7 +91,7 @@ describe("sortMembers and selfDemotion", () => {
 
   test("only a step down is a demotion, and it says what is lost", () => {
     expect(selfDemotion("owner", "admin")).toBe("owner");
-    expect(selfDemotion("owner", "viewer")).toBe("manage");
+    expect(selfDemotion("owner", "viewer")).toBe("all");
     expect(selfDemotion("admin", "responder")).toBe("manage");
     expect(selfDemotion("admin", "owner")).toBeNull();
     expect(selfDemotion("admin", "admin")).toBeNull();

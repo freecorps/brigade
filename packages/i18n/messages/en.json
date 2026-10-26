@@ -737,6 +737,7 @@
       "selectors": ["kind"],
       "match": {
         "kind=owner": "Change your role to {role}? You can no longer manage owners; only an owner can give it back.",
+        "kind=all": "Change your role to {role}? You can no longer manage members or owners; only an owner can give it back.",
         "kind=*": "Change your role to {role}? You can no longer manage members; only an owner or admin can give it back."
       }
     }

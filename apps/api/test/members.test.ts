@@ -702,6 +702,28 @@ describe("when one side fails", () => {
     expect(result.finished).toBe(false);
   });
 
+  test("an alarm whose due repair hangs on D1 ends after its budget and comes back for the repair", async () => {
+    const t = await team();
+    const result = await runInDurableObject(t.stub, async (instance: WorkspaceDO, state) => {
+      const real: unknown = Reflect.get(instance, "membership");
+      state.storage.sql.exec(
+        "insert into member_repair (key, value) values ('at', ?) on conflict (key) do update set value = excluded.value",
+        Date.now() - 1,
+      );
+      Reflect.set(instance, "membership", membership(t, state, { db: hangingDb }));
+      Reflect.set(instance, "repairBudgetMs", 20);
+      const before = Date.now();
+      await instance.alarm();
+      const alarm = await state.storage.getAlarm();
+      Reflect.set(instance, "membership", real);
+      Reflect.set(instance, "drainPaused", true);
+      return { before, alarm };
+    });
+    // The alarm returned (the next drain is not held) and is set to try the repair again.
+    expect(result.alarm).not.toBeNull();
+    expect(result.alarm!).toBeLessThanOrEqual(result.before + MEMBER_REPAIR_RETRY_MS + 1000);
+  });
+
   test("events a due repair writes go out in the same alarm", async () => {
     const t = await team();
     await connect(t, t.caio);

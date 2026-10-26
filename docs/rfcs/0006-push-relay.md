@@ -103,7 +103,8 @@ D1: a D1 outage must not become a reason a page is late or missing. How the copy
   upgrade arriving after the 60 s tombstone (RFC 0003 "Stale upgrades"): it restores their copy and nothing there
   removes it, and a role changed outside Brigade closes none of that member's sockets. A sync upgrade whose
   reconcile fails arms the same alarm. The alarm drains the outbox before it runs a due repair (and again after, if
-  the repair wrote events), so a page never waits behind the repair's D1 read.
+  the repair wrote events), so a page never waits behind the repair's D1 read; and it waits at most 5 s for the
+  repair (`REPAIR_BUDGET_MS`), which then finishes in the background, so a hanging D1 call never holds the next alarm.
 - **Edits made outside Brigade** (straight in D1): reconciled on the next sync upgrade into the workspace by anyone
   (`member.reconcile`): a removed member's row and devices go, a changed role is copied, and their open sockets
   close. Until somebody opens Brigade, a member removed or demoted outside it is still paged (Q18).

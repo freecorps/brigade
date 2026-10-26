@@ -14,7 +14,12 @@ import {
   type SubscriptionChanges,
 } from "@freecorps/brigade-sync/protocol";
 import { readActor, readMemberName } from "./actor.ts";
-import { Membership, type MemberChangeResult, type SocketVerdict } from "./members.ts";
+import {
+  MEMBER_REPAIR_RETRY_MS,
+  Membership,
+  type MemberChangeResult,
+  type SocketVerdict,
+} from "./members.ts";
 import { isProbeRegion, MONITOR_TICK_MS, Monitoring } from "./monitors.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
 import {
@@ -96,7 +101,12 @@ const MAX_SALVAGE_LENGTH = 1024 * 1024;
  * Hibernation API; every handler is synchronous, so a socket's frames are handled strictly in arrival order and
  * frames from different sockets never interleave.
  */
+/** How long the alarm waits on a due member repair before it lets the repair finish in the background. */
+export const REPAIR_BUDGET_MS = 5 * 1000;
+
 export class WorkspaceDO extends DurableObject<Env> {
+  /** `REPAIR_BUDGET_MS`; a field so tests can shorten it. */
+  private repairBudgetMs = REPAIR_BUDGET_MS;
   private readonly shard: Shard;
   private readonly monitoring: Monitoring;
   private readonly drain: OutboxDrain;
@@ -344,7 +354,16 @@ export class WorkspaceDO extends DurableObject<Env> {
     const before = this.backlog();
     let repair: number | null = now + MONITOR_TICK_MS;
     try {
-      repair = await this.membership.repairDue(this.shard.workspace(), Date.now());
+      // D1 calls have no deadline of their own: a repair that hangs must not hold the alarm (and with it the next
+      // drain). Past `REPAIR_BUDGET_MS` it carries on in the background and the alarm comes back for it.
+      const due = this.membership.repairDue(this.shard.workspace(), Date.now());
+      due.catch((error: unknown) => this.log("member repair failed", { error }));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<"late">((resolve) => {
+        timer = setTimeout(() => resolve("late"), this.repairBudgetMs);
+      });
+      const outcome = await Promise.race([due, late]).finally(() => clearTimeout(timer));
+      repair = outcome === "late" ? Date.now() + MEMBER_REPAIR_RETRY_MS : outcome;
     } catch (error) {
       this.log("member repair failed", { error });
     }

@@ -427,12 +427,22 @@ function PolicyForm({
   onDelete?: () => void;
 }) {
   // A deleted schedule or a member who left, still in a level, would make every save fail: dropped once, at open.
-  const [opened] = useState(() =>
+  const [opened, setOpened] = useState(() =>
     loaded && editing
       ? draftTargets(initial, schedules, members)
       : { draft: initial, dropped: false },
   );
   const [draft, setDraft] = useState(opened.draft);
+  // Opened before schedules and members had loaded: drop stale targets once they have, so saving doesn't fail.
+  const checked = useRef(loaded);
+  useEffect(() => {
+    if (checked.current || !loaded || !editing) return;
+    checked.current = true;
+    const next = draftTargets(draft, schedules, members);
+    if (!next.dropped) return;
+    setOpened(next);
+    setDraft(next.draft);
+  }, [loaded, editing, draft, schedules, members]);
   const [errors, setErrors] = useState<PolicyErrors | null>(null);
   const [confirming, setConfirming] = useState(false);
   const titleId = useId();

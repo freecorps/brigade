@@ -264,9 +264,11 @@ export function runStatus(
       last?.reason === "exhausted" || last?.reason === "stalled" ? last.reason : "unreachable";
     const later = run.pages.some((page) => page.level !== null) || run.paged > run.pages.length;
     const failed = pageFailures(run, timeline, run.paged);
-    // Nobody to page (an empty list) counts as nobody reached.
     const everyone = everyoneWhoCanRespond(members, run.causedBy);
-    const nobody = failed.nobody || everyone.every((member) => failed.users.has(member.id));
+    // An empty list is members not loaded yet, not "nobody reached".
+    const nobody =
+      failed.nobody ||
+      (everyone.length > 0 && everyone.every((member) => failed.users.has(member.id)));
     return { kind: "fallback", reason, later, nobody, at };
   }
   return { kind: "resolved", at };

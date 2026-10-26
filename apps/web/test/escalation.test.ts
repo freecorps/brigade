@@ -202,8 +202,17 @@ describe("a run on the incident page", () => {
     // No level at all could reach anyone: not "later".
     const first = ended([page(null, 0, { reason: "unreachable" })]);
     expect(runStatus(first, open, members, [])).toMatchObject({ later: false, nobody: false });
-    // Nobody to page, or nobody the page could reach: "tried everyone, nobody could be paged".
-    expect(runStatus(first, open, [], [])).toMatchObject({ nobody: true });
+    // Members not loaded yet (an empty list) is not "nobody reached"; the server's own entry for nobody to page is.
+    expect(runStatus(first, open, [], [])).toMatchObject({ nobody: false });
+    const nobodyToPage = {
+      kind: "page_failed",
+      at: 1,
+      userId: null,
+      reason: "nobody_else",
+      run: first.eventId,
+      step: 1,
+    } as TimelineRow;
+    expect(runStatus(first, open, [], [nobodyToPage])).toMatchObject({ nobody: true });
     const failed = {
       kind: "page_failed",
       at: 1,

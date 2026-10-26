@@ -38,7 +38,16 @@ On-call schedules (RFC 0003 "Schedules") emit `schedule.created` (`id`, `name`, 
 `schedule.updated` (the same, plus `reason`: `edited`, or `member_removed` with the `userId` taken out of the
 rotations), `schedule.deleted` (`id`, `overrides` deleted with it), `schedule.override_added` (`id`, `scheduleId`,
 `userId`, `start`, `end`) and `schedule.override_removed` (`id`, `scheduleId`, `userId`, `reason`: `removed`,
-`member_removed` or `expired`). A member removal or a change to viewer carries the schedule events with
+`member_removed` or `expired`). Escalation policies (RFC 0003 "Escalation policies") emit `escalation_policy.created` (`id`, `name`, `levels`: how many,
+`repeat`, `isDefault`), `escalation_policy.updated` (the same, plus `reason`: `edited`, `default_changed` when another
+policy became the default, `member_removed` with the `userId` or `schedule_deleted` with the `scheduleId` taken out of
+the levels) and `escalation_policy.deleted` (`id`, `wasDefault`). Escalation runs, actor `sys_escalation`, emit
+`escalation.paged` for every level fired (`incidentId`, `policyId`, `level`, 1-based or null for everyone who can
+respond, `round`, `userIds`, `missed`: the targets that could not be paged, `reason`: `started`, `timeout` or
+`unreachable`, and `started`, true for the level a run started with, which is paged on the event that started it)
+and `escalation.exhausted` (`incidentId`, `policyId`, `levels`, `rounds`). An ack or a resolve stops a run with no
+event of its own: `incident.acknowledged` and `incident.status_changed` say it. A member removal or a change to
+viewer carries the schedule and policy events with
 `member.removed` or `member.role_changed`, in the same transaction; a viewer role copied from D1 by `member.sync`
 carries them alone (no `member.*` event: that change happened outside Brigade).
 
@@ -60,7 +69,9 @@ events of taking that member out of the rotations (above).
 Devices and paging emit `device.registered` (`id`, `userId`, `platform`, `environment`, `voip`: never the tokens or
 the key), `device.unregistered` (`reason`: `unregistered` by the member, `token_invalid` when APNs said the token is
 gone, `member_removed` when its member left or was removed) and `notification.failed` (`incidentId`, `eventId` of the event that asked for the page, `channel: "push"`,
-`userId` or null, `reason`: `no_devices`, `undelivered`, `unsupported`, `not_configured`), with actor
+`userId` or null, `reason`: `no_devices`, `undelivered`, `unsupported`, `not_configured`, `over_limit`,
+`dead_lettered`, and for escalation levels `nobody_on_call`, `schedule_missing`, `not_a_member`; `schedule`: the
+name of the schedule nobody was on call for, else null), with actor
 `sys_notifier` for what the notifier records. `notification.failed` rides with a `page_failed` timeline entry.
 
 The paging pipeline's own watchdog (RFC 0007 "Watching the watcher") writes events too, through its own outbox and
@@ -105,8 +116,10 @@ Decided with the drain (`apps/api/src/outbox.ts`):
 The first consumer is the API Worker's own `queue` handler (`apps/api/src/notify.ts`); RFC 0002's notifier Worker
 splits off when there is more than push to run. It routes each event to its notifiers; push is the only one so far.
 
-- **What pages** (until escalation policies, Phase 2): `incident.declared` (urgency `page` for SEV1 and SEV2,
-  `high` otherwise) and `incident.severity_changed` raised into SEV1 or SEV2 (`page`). Monitors open incidents with
+- **What pages**: `incident.declared` (urgency `page` for SEV1 and SEV2, `high` otherwise),
+  `incident.severity_changed` raised into SEV1 or SEV2 (`page`), and `escalation.paged` for a level the shard's
+  alarm fired (urgency from the incident's severity). With a default escalation policy the first of those starts a
+  run and pages its first level (RFC 0006 "Who is paged"). Monitors open incidents with
   `incident.declared` as `sys_monitors` (SEV2), so they page through the same rule. A page is not sent for an
   incident already acknowledged or no longer active.
 - **Who** is RFC 0006 "Who is paged".
@@ -133,8 +146,8 @@ splits off when there is more than push to run. It routes each event to its noti
 - **The outbox.** A row the drain cannot read (not JSON) or too large for the Queue is logged and dropped, so it
   never blocks the events after it; any drain that throws (storage) backs off like a failed send.
 - **Not yet.** Delivery receipts (did the phone show it, did anyone see it) and the "why wasn't I paged" view are
-  Phase 2; until then "delivered" means the relay and APNs accepted the push. Escalation (re-paging the next person
-  when nobody acknowledges) needs on-call schedules (Phase 2). A failed page alerts nobody outside the incident yet:
+  Phase 2; until then "delivered" means the relay and APNs accepted the push. Escalating early when a level's pushes all
+  fail (rather than at its timeout) waits for delivery receipts. A failed page alerts nobody outside the incident yet:
   the timeline entry and the log line are what surfaces it.
 
 ## Provider interfaces (published in `packages/sdk`, MIT)

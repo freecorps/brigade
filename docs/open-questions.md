@@ -26,16 +26,22 @@ An incident a monitor opens is titled "<name> is down" in English: data is not t
 default locale yet. Add a workspace locale (set at sign-up, editable by owners) and render server-written titles in
 it?
 
-## Q18 — Who is paged before on-call schedules (RFC 0005, RFC 0006)
+## Q18 — Who is paged, what is left after escalation policies (RFC 0005, RFC 0006)
 
-Until Phase 2's schedules, a page goes to the incident commander if assigned, otherwise to every owner, admin and
-responder with a registered device (except whoever caused it), and every declared incident notifies, SEV3 and SEV4
-at `high` urgency. For a small team that is what we want; for a larger one it wakes everybody. Should SEV3 and SEV4
-notify at all, and should a workspace be able to narrow the interim rule (owners and admins only) before schedules
-land? Also: a failed page is surfaced only on the incident's timeline and in logs; should it also reach someone
-outside the incident (an email to owners, the external dead-man switch) when nobody at all was paged? And every
-member the page was for without a device gets their own "Couldn't page …" line: right for a small team, noisy for a
-large one where most never install the app.
+Mostly answered by escalation policies (RFC 0003 "Escalation policies", RFC 0006 "Who is paged"): a workspace that
+sets a default policy pages whoever is on call, level by level, and a larger team no longer wakes everybody; one
+without a policy keeps the interim rule (commander, then every owner, admin and responder with a device). Still open:
+
+- Should SEV3 and SEV4 escalate at all (today a run starts for every declared incident, at `high` urgency below
+  SEV2), or should a policy say from which severity it runs?
+- Should a monitor (and later an alert route) pick its own policy? Runs already record theirs; only the default is
+  used in this slice.
+- A failed page is surfaced on the timeline and in logs. When even the interim fallback reached nobody, should it
+  also reach someone outside the incident (an email to owners, the external dead-man switch)?
+- Should a level whose pushes all fail escalate before its timeout (needs delivery receipts), and should an
+  exhausted run fall back to everyone who can respond instead of stopping?
+- Every member without a device the page was for still gets their own "Couldn't page …" line: right for a small
+  team, noisy for a large one where most never install the app.
 
 Who counts as a member is the shard's copy of the member list, not D1 (RFC 0006 "Who is paged"). Member changes made
 through Brigade (roles, removal, leaving) update it with D1 and drop a removed member's devices at once (RFC 0003

@@ -42,10 +42,10 @@ without a policy keeps the interim rule (commander, then every owner, admin and 
   page on its own; both on by default, `workspace.setEmail` turns either off. Still open: a dashboard switch for it;
   whether a member may opt out of their own emails (deferred to notification preferences); whether the owners'
   email should also go to admins, or skip an owner who declared the incident; and whether the external dead-man
-  switch should hear of it too. Until email verification lands, any sign-up can make Brigade email an address it
-  does not own with words it chose (RFC 0005 "Email", "Abuse"): the ledger caps it (5 emails per user per hour, 200
-  per workspace per day), and the plan is that verification gates email, so no deployed environment sets
-  `EMAIL_FROM` before it. Are those caps right once it does?
+  switch should hear of it too. Email verification gates these emails now: only verified addresses get them (RFC
+  0005 "Email", "Abuse"), and the ledger still caps them (5 per user per hour, 200 per workspace per day). Invitations
+  are the one email to an unproven address, bounded by a verified inviter, 30 invitation emails per workspace per
+  day, one send per 5 minutes and 50 pending (RFC 0003 "Invitations"). Are those caps right in production?
 - Should a level whose pushes all fail escalate before its timeout? Delivery receipts now say per device whether
   APNs refused a push and whether the phone opened it (RFC 0006 "Delivery receipts"), but a missing receipt is not
   proof a page was not shown (receipts are best effort), so only refusals could trigger it. An exhausted run

@@ -140,6 +140,55 @@ would change D1 without the shard's copy or an event.
   which covers an upgrade the Worker authenticated just before a change landed. What is left is RFC 0004
   "Session revocation".
 
+## Invitations
+
+Owners and admins invite people by email (`/workspaces/:id/invitations`, the dashboard's Members card); the invitee
+accepts or declines on the dashboard's `/invitations/:id`, where the email links. Better Auth's own invitation routes
+stay refused (RFC 0002 "Auth"). The code is `apps/api/src/invitations.ts`; the rules are in `packages/schema`
+(`checkInvite`, `inviteRoles`, `invitationEmail`).
+
+- **Rules.** Owners and admins (`members:manage`) invite, resend and revoke; an admin never invites anyone as an
+  owner nor touches an invitation to be one, as an admin never makes anyone an owner. Responders and viewers see no
+  invitations (the list is for those who manage them). Inviting needs the inviter's own address verified: an
+  invitation is an email from Brigade's domain to an address the inviter typed. An address that is already a member,
+  or already has a pending invitation in the workspace, is refused (`already_member`, `already_invited`); D1 holds the
+  second itself, with a unique index on pending invitations per workspace and address (migration 0004). Addresses
+  are stored trimmed and lower-cased.
+- **Accepting.** Signed in with the invited address (compared case-insensitively), and that address verified, read
+  again from D1 (`wrong_email`, `unverified`). Someone signed in with another address learns only that the
+  invitation is not for them, never the invited address. Accepting adds the member with the invitation's role. Also
+  refused: an invitation no longer pending (`not_found`), one that ran out (`expired`, 410), a workspace at 100
+  members (`MAX_WORKSPACE_MEMBERS`, the most the dashboard lists), an invitee already in `WORKSPACE_LIMIT`
+  workspaces. Declining has the same checks, so an unproven account with someone else's address cannot decline for
+  them. An account may be created from the invitation without a workspace of its own (sign-up skips the workspace
+  name when it comes from an invitation).
+- **Expiry and resending.** An invitation lasts 7 days (`INVITATION_TTL_MS`). Resend sends it again and restarts the
+  7 days, including for one that ran out (it is still pending in D1). Inviting an address whose invitation ran out
+  marks the old row `expired` and creates a new one.
+- **Limits** (RFC 0005 "Abuse"): at most 50 pending invitations per workspace (`MAX_PENDING_INVITATIONS`), 30
+  invitation emails (invitations and resends) per workspace per day (`INVITATIONS_DAILY_CAP`), and one send of an
+  invitation per 5 minutes (`INVITATION_RESEND_INTERVAL_MS`, `too_soon`). The daily count and the resend interval are
+  the shard's own ledger (`invitation_sends`), counted under the member lock.
+- **Order: D1 first, then the shard,** as for member changes. The Worker checks the origin, the session and that the
+  caller is a member (and, to invite or resend, that their address is verified), then calls the workspace shard
+  (`WorkspaceDO.invite`, `resendInvitation`, `revokeInvitation`, `acceptInvitation`, `declineInvitation`), which
+  reads D1, checks the rules and writes D1 under the same member lock as member changes and reconciles. Every
+  write re-checks in SQL (still pending, not run out); accepting is one batch that marks the invitation accepted and
+  inserts the member only when that update changed the row. Then a server-only mutation runs in the shard:
+  `invitation.create` (`member.invited`: `invitationId`, `role`, `invitedBy`, `expiresAt`, `send`, 1 then one more
+  per resend; never the address), `invitation.revoke` (`invitation.revoked`: `invitationId`, `revokedBy`),
+  `invitation.decline` (`invitation.declined`: `invitationId`, `userId`) or `member.add` (`member.added`: `userId`,
+  `role`, `invitationId`), which also writes the shard's copy of the new member, so they can be put on call before
+  they first open Brigade. The last two run as `sys_members`, since the invitee is not a member yet. Invitation rows
+  get Brigade's prefixed ids (`inv_`, and `mem_` for the member), written by the shard with `authId`.
+- **Failure.** D1 failing changes nothing (`503 unavailable`). The shard failing after D1 committed answers `503
+  not_applied` and records the mutation it owes (`invitation_repair`), then arms the member repair alarm, which runs
+  every owed mutation again as `sys_members` until it is in (the same alarm and retry as member changes, run even
+  when the members reconcile fails, since it needs no D1). An acceptance that answered `not_applied` did join: the
+  dashboard opens the workspace.
+- **The email.** `member.invited` goes through the outbox like every event; the email notifier sends the invitation
+  from it (RFC 0005 "Email"), once per `send`, skipping one no longer pending.
+
 ## Schedules
 
 First slice of on-call (Phase 2), in `packages/schema` (`schedules.ts`, `zoned.ts`), stored in `WorkspaceDO`. It
@@ -254,7 +303,8 @@ How a page uses them is RFC 0006 "Who is paged".
 ## Tenancy and access control
 
 - **Workspace = Better Auth organization** (`organization` plugin). Users can belong to many workspaces and switch
-  between them; invitations, membership and the active workspace come from Better Auth.
+  between them; invitations, membership and the active workspace live in Better Auth's D1 tables (invitations are
+  written by the workspace shard, "Invitations" above).
 - **Teams** use the plugin's teams support (on-call schedules and service ownership point at teams).
 - **Roles** are defined with Better Auth access control (`createAccessControl`) in `packages/schema`, so the same
   permission table is used by the API, the sync engine (mutation RBAC) and the UI (hide what you cannot do):
@@ -299,5 +349,6 @@ Exact columns are defined in code (`packages/schema`) rather than duplicated her
 
 ULIDs, prefixed by type (`inc_…`, `svc_…`, `usr_…`) for readable logs and URLs. Better Auth's rows use them too
 (`advanced.database.generateId`): `usr_` users, `ses_` sessions, `acc_` accounts, `ver_` verifications, `ws_`
-workspaces (organizations), `mem_` members, `inv_` invitations. A workspace id names its shard. Incidents also get a short
+workspaces (organizations), `mem_` members, `inv_` invitations (the shard writes invitation and accepted-member rows
+itself with the same `authId`). A workspace id names its shard. Incidents also get a short
 human number per workspace (`INC-142`), assigned by `WorkspaceDO`.

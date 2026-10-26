@@ -102,7 +102,9 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
   `/get-session` exempt. The organization plugin's routes are refused except the ones the dashboard reads
   (`get-full-organization`, `get-active-member`, `list`) and `set-active`, since the others would change D1
   without the shard or an event (RFC 0005); member roles, removal and leaving go through the API's own
-  `/workspaces/:id/members/:userId` instead (RFC 0003 "Members"); deleting a workspace is off. D1 schema changes are checked-in SQL in `apps/api/migrations/`
+  `/workspaces/:id/members/:userId` instead (RFC 0003 "Members"), and invitations through
+  `/workspaces/:id/invitations` and `/invitations/:id` (RFC 0003 "Invitations"), so the plugin's invitation routes
+  stay refused; deleting a workspace is off. D1 schema changes are checked-in SQL in `apps/api/migrations/`
   (`wrangler d1 migrations apply`); `apps/api/test/migrations.test.ts` fails, printing the SQL, when Better Auth
   needs more than they create. The secret `BETTER_AUTH_SECRET` comes from `wrangler secret put` or a local
   `apps/api/.dev.vars`.
@@ -117,18 +119,30 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
     refused until that sign-in exists. Trusting `brigade://` also makes a `callbackURL` or `redirectTo` to
     `brigade://…` valid, and the plugin's after-hook appends the session as `?cookie=` to redirects from
     `/callback*`, `/magic-link/verify*` and `/verify-email*`; none of those is configured now, so any app on the
-    phone that claims the scheme gets nothing. Before OAuth, magic links, email verification or password reset are
-    enabled, those redirects need PKCE or verified App Links / Universal Links instead of a custom scheme.
-    Email verification, password reset and invitations needed a way to send email: the email notifier's
-    `EmailSender` (RFC 0005 "Email", Cloudflare Email Sending) is that, so they are unblocked, and Better Auth's
-    `sendVerificationEmail`, `sendResetPassword` and the organization plugin's `sendInvitationEmail` can call it
-    (with templates in `packages/i18n`). None is built yet: until verification, an email goes to the address a user
-    signed up with, unproven. Each user has a `locale` (`en`, `pt-BR`; D1 `user.locale`), the language Brigade
-    writes to them in: set at sign-up (from the dashboard, else `Accept-Language`) and by the dashboard's language
-    switch; the mobile app does not send it yet. The
-    plugin also trusts `exp://` (Expo Go), but only when `NODE_ENV` is `development`. The app signs in against the dashboard's origin (`EXPO_PUBLIC_BRIGADE_URL`, or
-    the dev server on the Metro host in development). Still to come: OAuth/OIDC with PKCE via the system browser and
-    QR pairing.
+    phone that claims the scheme gets nothing. Email verification never redirects there: its link opens the
+    dashboard's `/verify-email` page, which calls `verify-email` without a `callbackURL`, so the plugin has no
+    redirect to append a session to. Before OAuth, magic links or password reset are enabled, those redirects need
+    PKCE or verified App Links / Universal Links instead of a custom scheme. The plugin also trusts `exp://` (Expo
+    Go), but only when `NODE_ENV` is `development`. The app signs in against the dashboard's origin
+    (`EXPO_PUBLIC_BRIGADE_URL`, or the dev server on the Metro host in development). Still to come: OAuth/OIDC with
+    PKCE via the system browser and QR pairing.
+  - **Email verification (built):** Better Auth's, sent through the email notifier's `EmailSender` (RFC 0005
+    "Email"; templates `email_verify` in `packages/i18n`, en and pt-BR, plain text and escaped HTML) at sign-up and
+    when the dashboard asks again. The link is the dashboard's `/verify-email?token=…` (from `DASHBOARD_URL`, else the
+    origin the request came through, never the API Worker's own `/auth` path) and works 24 hours; when the user was
+    answering an invitation it carries `next=/invitations/inv_…`, the only place it may lead (`safeNext`). Asking
+    again (`/send-verification-email`) needs a session and is for one's own address only (Better Auth would otherwise
+    email any unverified address it is given): at most 3 per user in 15 minutes, counted in D1's `rateLimit` table,
+    and 3 per IP a minute; it answers `503 EMAIL_NOT_CONFIGURED` when no sender is set up. **Unverified accounts sign
+    in** and create and use their own workspaces (sign-up creates the first one, and an unproven address harms nobody
+    there); what needs a verified address is everything that reaches someone else's inbox or depends on owning the
+    address: being emailed by the notifier, inviting (and resending), and accepting or declining an invitation. An
+    unverified address can be invited (the invitation email is how its owner learns of it); its owner verifies before
+    accepting. The dashboard shows a notice with a resend button until the address is verified; the shared sign-in
+    wording (`authErrorMessage`, used by the dashboard and the mobile app) explains `EMAIL_NOT_VERIFIED` in case a
+    server requires verification to sign in. Password reset is still to come, on the same sender. Each user has a
+    `locale` (`en`, `pt-BR`; D1 `user.locale`), the language Brigade writes to them in: set at sign-up (from the
+    dashboard, else `Accept-Language`) and by the dashboard's language switch; the mobile app does not send it yet.
 - **Workers tooling:** `wrangler` per app, invoked through `vp run` tasks. The Cloudflare Vite plugin
   (`@cloudflare/vite-plugin`) runs Workers inside the Vite dev server; validated with Vite+ in spike S5: the
   api Worker runs as an `auxiliaryWorkers` entry of apps/web in dev; apps/api tests use `@cloudflare/vitest-plugin`

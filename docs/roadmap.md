@@ -81,15 +81,19 @@ Validate the risky assumptions before writing product code. Each spike produces 
     the dashboard's Members section), D1 first and then the shard's member list and devices with
     `member.role_changed` / `member.removed`, a reconcile with D1 on every sync upgrade and from the shard's alarm
     after a failed shard step, and the member's open sockets closed on a change (RFC 0003 "Members").
-  - Left: invitations (with `member.added`; they need verified email), switching workspaces in the
+  - Done: email verification (sent at sign-up and on request, rate-limited per user and IP; the dashboard's notice
+    and `/verify-email` page) and workspace invitations: owners and admins invite by email with a role, resend and
+    revoke from the Members card, and the invitee accepts or declines on `/invitations/:id`, signed in with that
+    address and verified. D1 first (prefixed `inv_` rows, one pending per address, migration 0004), then the shard's
+    `member.invited` / `member.added` / `invitation.revoked` / `invitation.declined` with the members' repair, the
+    invitation email from the outbox, 7-day expiry and per-workspace caps (RFC 0002 "Auth", RFC 0003 "Invitations").
+  - Left: switching workspaces in the
     UI, closing open sockets on sign-out or a revoked session (RFC 0004 "Session revocation"), mobile OAuth/OIDC with PKCE
     via the system browser and QR pairing (mobile email and password sign-in is done, see the Mobile item), password reset (needs the email notifier),
     putting `/workspaces/:id` (the stack check) behind auth before `workers_dev` is turned on, and the production
-    and staging secrets (owner approval). Also: email verification (needs the email notifier), then
-    a uniform sign-up response (the same answer whether or not the email is taken, so sign-up cannot enumerate
-    accounts; until then only rate limiting slows it); invitations, which need verified emails and Brigade's
-    prefixed ids on the invitation rows they create, and which re-open the organization routes refused now, each
-    with its `member.*` event; a `baseURL` per environment (`BETTER_AUTH_URL`, the dashboard's `/api/auth` origin)
+    and staging secrets (owner approval). Also: a uniform sign-up response (the same answer whether or not the email
+    is taken, so sign-up cannot enumerate accounts; until then only rate limiting slows it); applying migration 0004
+    to the deployed databases; a `baseURL` per environment (`BETTER_AUTH_URL`, the dashboard's `/api/auth` origin)
     once deployed hostnames exist, so email links point at the dashboard rather than the API Worker; repairing a
     workspace whose shard was never provisioned because the Worker died between the D1 write and the RPC, or whose
     undo failed, and a shard that committed `workspace.create` before its RPC failed and was undone (it would
@@ -126,7 +130,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     updates, three incident roles checked against the shard's member list, and an incident page in the dashboard
     (`/incidents/<number>`) to change status and severity, assign roles and post updates (RFC 0003).
   - Left for later items: publishing an update to a status page (Phase 3), role definitions (Phase 3), editing an
-    update, and member names from invitations (members appear once they open Brigade). The mobile incident screen is done (Mobile item).
+    update. Members who join by invitation are in the shard's member list from the moment they accept. The mobile incident screen is done (Mobile item).
 - [ ] Brigade Sync in production for web + mobile
   - Done so far: D1 `brigade-db` and `brigade-db-staging` exist with the migrations applied. Left: production and
     staging queues, the first deploy, and the relay's production secrets.
@@ -219,13 +223,12 @@ Validate the risky assumptions before writing product code. Each spike produces 
     by the dashboard), go out from the queue consumer with an email ledger in the shard, are retried with backoff,
     and a failure is an `email_failed` entry on the timeline. Push never waits on email. Capped at 5 emails per user
     per hour and 200 per workspace per day.
+  - Done since: the notifier emails verified addresses only, and the same sender sends email verification and
+    invitations (RFC 0005 "Email", "Abuse").
   - Left: onboarding a sending domain and setting `EMAIL_FROM` (and `DASHBOARD_URL`) per environment, and applying
-    migration 0003 to the deployed databases (owner's call, apps/api/README.md "Email"). Setting `EMAIL_FROM` on any
-    deployed environment is blocked until email verification lands: the per-user and per-workspace caps bound what an
-    unverified sign-up can make Brigade send to someone else's address, but are not judged enough (RFC 0005
-    "Email", "Abuse"). A dashboard switch for the two settings; a per-member opt-out; the mobile app sending the
-    user's language. Unblocked by it and next:
-    invitations (`member.added`), email verification and password reset (RFC 0002 "Auth"), an email to operators
+    migrations 0003 and 0004 to the deployed databases (owner's call, apps/api/README.md "Email"); verification no
+    longer blocks it. A dashboard switch for the two settings; a per-member opt-out; the mobile app sending the
+    user's language. Next on the same sender: password reset (RFC 0002 "Auth"), an email to operators
     when the paging pipeline degrades (Q19) and to owners when rotations change (Q20). VoIP call paging and the PSTN
     notifier are still to come.
 - [ ] Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup

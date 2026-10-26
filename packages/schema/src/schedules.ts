@@ -1,7 +1,6 @@
 // On-call schedules (RFC 0003 "Schedules"): a schedule's layers (rotations) and overrides, the mutations that
 // change them, and the pure functions that say who is on call at an instant (`onCallAt`) and when it changes
-// (`nextHandoffs`). Nothing here changes who is paged yet: that waits for escalation policies (RFC 0006 "Who is
-// paged").
+// (`nextHandoffs`). Escalation policies page whoever `onCallAt` says (escalation.ts, RFC 0006 "Who is paged").
 
 import { can } from "./access.ts";
 import { idTime } from "./id.ts";
@@ -15,6 +14,7 @@ import {
   type MutationResult,
   type MutationStore,
 } from "./mutation.ts";
+import { dropFromPolicies } from "./policies.ts";
 import { defineQuery } from "./query.ts";
 import type { OverrideRow, ScheduleLayer, ScheduleRow } from "./tables.ts";
 import { v, type Issue, type Validator } from "./validate.ts";
@@ -498,12 +498,15 @@ export const updateSchedule = defineMutation({
   },
 });
 
-/** Deletes the schedule and its overrides (the event counts them). */
+/**
+ * Deletes the schedule and its overrides (the event counts them), and takes it out of every escalation policy's
+ * levels (`escalation_policy.updated`, `schedule_deleted`).
+ */
 export const deleteSchedule = defineMutation({
   name: "schedule.delete",
   args: v.object({ id: scheduleId }),
   permission: "schedule:manage",
-  apply(store, args) {
+  apply(store, args, ctx) {
     if (!store.get("schedules", args.id)) return fail("not_found", "Schedule not found");
     store.delete("schedules", args.id);
     let overrides = 0;
@@ -517,7 +520,7 @@ export const deleteSchedule = defineMutation({
       subject: args.id,
       data: { id: args.id, overrides },
     };
-    return ok(event);
+    return ok(event, ...dropFromPolicies(store, { kind: "schedule", id: args.id }, ctx));
   },
 });
 
@@ -620,8 +623,9 @@ export const removeOverride = defineMutation({
 });
 
 /**
- * Takes `userId` out of every rotation and deletes their overrides, in the transaction that removed them from the
- * workspace or made them a viewer (`member.remove`, `member.changeRole`, `member.reconcile`). The rest of each
+ * Takes `userId` out of every rotation and every escalation policy's levels (`dropFromPolicies`) and deletes their
+ * overrides, in the transaction that removed them from the workspace or made them a viewer (`member.remove`,
+ * `member.changeRole`, `member.reconcile`, `member.sync`). The rest of each
  * layer keeps its order and the rotation is counted again from its start, so the shifts after them move up; a
  * layer left with nobody is a gap the dashboard shows ("Nobody on call") until someone edits it.
  */
@@ -657,6 +661,7 @@ export function dropFromSchedules(
     store.delete("overrides", row.id);
     events.push(removed(row, "member_removed"));
   }
+  events.push(...dropFromPolicies(store, { kind: "member", id: userId }, ctx));
   return events;
 }
 

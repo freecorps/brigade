@@ -233,6 +233,7 @@ describe("notification.fail", () => {
             userId: "usr_ana",
             reason: "undelivered",
             channel: "push",
+            schedule: null,
           },
         },
       ],

@@ -3,7 +3,22 @@
 
 import { defineMutation, fail, ok, type DomainEvent } from "./mutation.ts";
 import { appendTimeline } from "./timeline.ts";
-import { v } from "./validate.ts";
+import { v, type Validator } from "./validate.ts";
+
+/** The schedule's name on an escalation's failed page; absent (older callers) or null on every other. */
+const scheduleName: Validator<string | null | undefined> = (input, path = "") =>
+  input === undefined
+    ? { ok: true, value: undefined }
+    : v.nullable(v.string({ max: 80 }))(input, path);
+
+/** The escalation page a failure belongs to; absent outside a run. */
+const pageRef: Validator<{ run: string; step: number } | undefined> = (input, path = "") =>
+  input === undefined
+    ? { ok: true, value: undefined }
+    : v.object({ run: v.id("evt"), step: v.integer({ min: 1, max: Number.MAX_SAFE_INTEGER }) })(
+        input,
+        path,
+      );
 
 /**
  * Why a page reached nobody (or not one member):
@@ -14,7 +29,13 @@ import { v } from "./validate.ts";
  * - `over_limit`: the page went to more devices than one page sends to (`MAX_PAGE_DEVICES`), and none of the
  *   member's were among them;
  * - `dead_lettered`: the event kept failing before anything was recorded (the shard was unreachable or threw) and
- *   the Queue gave up on it, so whether anyone was paged is unknown (`userId: null`).
+ *   the Queue gave up on it, so whether anyone was paged is unknown (`userId: null`);
+ * - `nobody_on_call`: an escalation level's schedule had nobody on call when it fired (`userId: null`, `schedule`);
+ * - `schedule_missing`: an escalation level's schedule was deleted after the run started (`userId: null`);
+ * - `not_a_member`: an escalation level's member left the workspace or became a viewer;
+ * - `escalation_stalled`: an escalation level is due but could not fire (`userId: null`); the shard tries again every
+ *   minute, and `ESCALATION_STALL_MS` after the first failure pages everyone who can respond (`escalation.fallback`);
+ * - `nobody_else`: everyone who can respond was paged, and the only one who can is whoever declared it (`userId: null`).
  */
 export const PAGE_FAILURES = [
   "no_devices",
@@ -23,6 +44,11 @@ export const PAGE_FAILURES = [
   "not_configured",
   "over_limit",
   "dead_lettered",
+  "nobody_on_call",
+  "schedule_missing",
+  "not_a_member",
+  "escalation_stalled",
+  "nobody_else",
 ] as const;
 export type PageFailure = (typeof PAGE_FAILURES)[number];
 
@@ -36,6 +62,8 @@ export type NotificationFailed = DomainEvent<
     /** The member who was not paged; null when the page had nobody to go to. */
     userId: string | null;
     reason: PageFailure;
+    /** The schedule nobody was on call for (`nobody_on_call`); null otherwise. */
+    schedule: string | null;
   }
 >;
 
@@ -50,6 +78,8 @@ export const failNotification = defineMutation({
     eventId: v.id("evt"),
     userId: v.nullable(v.string({ min: 1, max: 64 })),
     reason: v.picklist(PAGE_FAILURES),
+    schedule: scheduleName,
+    page: pageRef,
   }),
   permission: "incident:update",
   apply(store, args, ctx) {
@@ -59,13 +89,26 @@ export const failNotification = defineMutation({
     appendTimeline(
       store,
       incident,
-      { kind: "page_failed", userId: args.userId, reason: args.reason },
+      {
+        kind: "page_failed",
+        userId: args.userId,
+        reason: args.reason,
+        ...(args.schedule == null ? {} : { schedule: args.schedule }),
+        ...(args.page && { run: args.page.run, step: args.page.step }),
+      },
       ctx,
     );
     const event: NotificationFailed = {
       type: "notification.failed",
       subject: incident.id,
-      data: { ...args, channel: "push" },
+      data: {
+        incidentId: args.incidentId,
+        eventId: args.eventId,
+        channel: "push",
+        userId: args.userId,
+        reason: args.reason,
+        schedule: args.schedule ?? null,
+      },
     };
     return ok(event);
   },

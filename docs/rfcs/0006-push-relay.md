@@ -77,8 +77,79 @@ relay's bearer token):
 
 ## Who is paged
 
-There are no on-call schedules until Phase 2. Until then a page goes to the incident commander if one is assigned,
-can still respond (not a viewer), did not cause the event and has a registered device; otherwise to every member who
+A workspace with a **default escalation policy** (RFC 0003 "Escalation policies") pages through it; one without
+pages by the **interim rule**, unchanged since Phase 1.
+
+**Through the policy.** The first page of an incident (`incident.declared`, or a severity raised into SEV1 or SEV2
+while no run is under way) starts an escalation run in the shard (`escalation.start`) and pages level 1 on that same
+event. A level's targets are resolved when it fires: a schedule to whoever is on call at that instant (`onCallAt`,
+overrides first), a member to themselves; each person once, on every registered device. Whoever caused the event is
+not pushed (they know) but counts as reached, so declaring an incident while on call does not page the next level
+at once. If nobody acknowledges within the level's timeout, the shard's alarm fires the next level
+(`escalation.advance`, `escalation.paged`), and after the last level starts over `repeat` more times; then the run is
+`exhausted`: nobody acknowledged, so everyone who can respond is paged once (below) and the run ends, said on the
+timeline. `incident.ack` or resolving stops it. A severity raised into SEV1 or SEV2 while a
+run is under way pages the level paged last again, at `page` urgency.
+
+**Fallbacks** (the paging path's; tests in `apps/api/test/escalation.test.ts`). A level must never quietly end the
+chain:
+
+- A level none of whose targets can be reached (a schedule with nobody on call, `nobody_on_call`; a schedule since
+  deleted, `schedule_missing`; a member no longer in the workspace or a viewer, `not_a_member`; people with no
+  registered device, `no_devices`; a level emptied by removals) is recorded on the timeline ("Couldn't page …") and
+  the **next level fires at once**, in the same transaction.
+- When no level from there to the last can be reached, the run falls back to the **interim rule** (commander, then
+  everyone who can respond), recorded as level "everyone who can respond", and ends there (`exhausted`): there is
+  nothing left to escalate to. Its own failures are recorded as the interim rule's always were.
+- **A run that ends unacknowledged** (every level and repeat paged, nobody acknowledged) pages everyone who can
+  respond once, then ends: every member who can respond, the commander included and not asked first (they had
+  their chance), except whoever caused the run's first page. This also covers a run whose only reach was whoever
+  declared it (on call and counted as reached, so nobody was pushed): it must not end silently, so everyone else who
+  can respond is paged at the last level's timeout. When nobody else can respond, that is recorded ("Nobody else was
+  paged: only the person who declared it can respond", `nobody_else`).
+- **A level that cannot fire** (`escalation.advance` refusing it while the run is due and still running: a bug, or a
+  row it cannot read) is never dropped. Its first failure goes on the timeline ("An escalation level couldn't fire",
+  `escalation_stalled`), it is tried again every minute, and 3 minutes after its first failure (stored on its timer, so
+  an alarm that came late still retries first) the shard pages everyone who can respond, as for a run that ends
+  unacknowledged, through a mutation that does not read the levels (`escalation.fallback`, `reason: "stalled"`), and
+  the run ends. An "ok" that left the level due (a stored result the run did not move past) counts as a failure, so
+  the alarm never comes straight back to it.
+- A level reached on some device whose push then fails (relay down, APNs refusing) is recorded when the page
+  settles (RFC 0005 "Notifiers") and escalates at its timeout, not before: retries take about 75 s and a level's
+  timeout is at least a minute. Escalating early on a failed delivery is left for delivery receipts.
+- **Timers survive restarts.** The run and its timer are in the shard's storage; the alarm is set whenever a run
+  starts or advances, and the object re-arms it from the earliest timer every time it wakes, so an eviction or a
+  deploy mid-escalation resumes on time (or at once, if the level was due meanwhile). The alarm fires due levels
+  **before** monitor upkeep, the outbox drain and the member repair (each level is a synchronous mutation, at most
+  50 per run, the rest right after), and the drain that follows sends their events; no level ever waits on D1.
+- **Idempotency.** Each level is its own event, so the page ledger (RFC 0005) de-duplicates it like any page; the
+  start is de-duplicated by the event that asked for it (`start:<event id>`), and a level by its run and the run's page
+  count (`advance:<run event id>:<page count>`, likewise `fallback:`, `repage:` and the stall's entry), so a
+  redelivered event or a repeated alarm never pages a level twice, and a later run on the same incident (reopened)
+  never meets the first run's results. A level's event carries its run and page count: one from a run that has
+  stopped (acknowledged and then reopened, or replaced by a new run) sends nothing, while any page of the run under
+  way, or of a run that ended by paging everyone, still sends (a level's event the Queue is still retrying when a
+  later level ended the run is not dropped). Acknowledging or resolving closes an ended run too (keeping when it
+  ended), so after a reopen none of its pages sends. A redelivery of the event that started a run after the run moved
+  past the pages the incident row keeps sends nothing, and so does an event older than the run that has ended since
+  (a SEV3 declaration still being retried after a severity raise started the run): it starts no new run.
+- **A lost page.** A dead-lettered page is recorded like any dead-lettered page (`dead_lettered`). A dead-lettered
+  **first** page (the shard never planned it, so no run started) starts the run when it is recorded, so the next
+  levels still fire on time. When the lost page is still the run's last, nothing would page its members until the
+  next level's timeout, or ever when the run ended on it, so the shard pages it again on an event of its own, once:
+  a level's members (`escalation.repage`; whoever caused the run's first page still counts as reached, and the next
+  level keeps its time) or everyone who can respond, as that page would have (`escalation.fallback` on the ended
+  run, with its reason, and the run keeps when it ended). That event names the lost one (`lost`): devices the lost
+  page reached before the Queue gave up are not pushed again, and if it is lost too it is only recorded, never paged
+  a third time. The timeline says so ("Level 2 paged again: the earlier page was lost"). A lost page the run has
+  moved past (a later level fired meanwhile) is only recorded, and so is a severity raised mid-run whose page (the
+  level paged last, again) is lost: that level was already paged once. Another event's page lost meanwhile (an
+  incident declared before a later event started the run) is recorded on no page of the run, and starts no run once
+  that one ended. A failed page is recorded with the run and page it belongs to, so the incident page puts a slow
+  failure on the right level.
+
+**The interim rule** (no default policy, and the last fallback above): the incident commander if one is assigned,
+can still respond (not a viewer), did not cause the event and has a registered device; otherwise every member who
 can respond (owners, admins, responders; viewers only read), except whoever caused it. Each of them on every
 registered device. A commander without a device does not leave the incident unpaged: everyone who can respond is
 paged instead. Every member the page was for who has no device (the commander included) is recorded as not paged

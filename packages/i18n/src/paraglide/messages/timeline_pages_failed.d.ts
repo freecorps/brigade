@@ -18,6 +18,8 @@ export type Timeline_Pages_FailedInputs = {
 * | "not_configured" | * | "Couldn't page {countFormatted} people: push notifications aren't set up on this server" |
 * | "over_limit" | "one" | "Couldn't page {countFormatted} person: this page went to too many phones" |
 * | "over_limit" | * | "Couldn't page {countFormatted} people: this page went to too many phones" |
+* | "not_a_member" | "one" | "Couldn't page {countFormatted} person: no longer someone who can respond" |
+* | "not_a_member" | * | "Couldn't page {countFormatted} people: no longer someone who can respond" |
 * | * | "one" | "Couldn't page {countFormatted} person" |
 * | * | * | "Couldn't page {countFormatted} people" |
 *

@@ -163,7 +163,8 @@ const $$ = (selector: string, scope: ParentNode = document) => [
 ];
 const card = (title: string) =>
   $$("[aria-labelledby]").find(
-    (el) => $(`#${el.getAttribute("aria-labelledby")}`)?.textContent === title,
+    // `[id=…]`, not `#…`: a trigger is labelled by two ids, which is no `#` selector.
+    (el) => $(`[id="${el.getAttribute("aria-labelledby")}"]`)?.textContent === title,
   );
 
 async function click(element: Element | null | undefined) {
@@ -208,7 +209,8 @@ test("the timeline comes before the roles in the page, and roles show first on p
   const timeline = card("Timeline")!;
   const roles = card("Roles")!;
   expect(timeline.compareDocumentPosition(roles) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(roles.className).toContain("max-md:order-first");
+  // The side column (roles, then the escalation) moves first on phones.
+  expect(roles.parentElement!.className).toContain("max-md:order-first");
 });
 
 test("a viewer sees badges and names, not controls that do nothing", async () => {
@@ -316,4 +318,93 @@ test("back to the list puts focus on the incident's title link", async () => {
   await act(() => view.router.load());
   await view.flush();
   expect(document.activeElement).toBe($('[data-incident-link="1"]'));
+});
+
+test("Acknowledge stops paging from the web: at once, then says who acknowledged", async () => {
+  const view = await incidentPage();
+  const header = $$("header").at(-1)!;
+  const ack = $$("button", header).find((button) => button.textContent === "Acknowledge");
+  expect(header.textContent).toContain("Stops paging");
+  await click(ack);
+  // Optimistic: the line shows before the shard confirms.
+  expect(header.textContent).toContain("Acknowledged by You");
+  expect($$("button", header).some((button) => button.textContent === "Acknowledge")).toBe(false);
+  await view.flush();
+  expect(view.sentMutations()).toEqual([expect.objectContaining({ name: "incident.ack" })]);
+  expect(view.shard.store.get("incidents", view.id)).toMatchObject({ acknowledgedBy: "usr_dev" });
+  expect(header.textContent).toContain("Acknowledged by You");
+});
+
+test("someone acknowledging first: the refusal says so and names them", async () => {
+  const view = await incidentPage();
+  const header = $$("header").at(-1)!;
+  // Bia acknowledges on the shard while this ack is on its way.
+  view.shard.write(bia, "incident.ack", { id: view.id });
+  await click($$("button", header).find((button) => button.textContent === "Acknowledge"));
+  await view.flush();
+  expect($('[role="alert"]', header)?.textContent).toBe("Someone else acknowledged it first.");
+  expect(header.textContent).toContain(`Acknowledged by ${LONG_NAME}`);
+});
+
+test("a run under way: what fires next and whom, the latest page first, misses and the earlier levels folded", async () => {
+  const view = await mount("/incidents/1");
+  const id = view.declare("Checkout down");
+  const now = T0;
+  view.shard.store.insert("members", member("usr_eva", "Eva Lima"));
+  view.shard.store.update("incidents", id, {
+    escalation: {
+      policyId: "esc_01JB0000000000000000000001",
+      policyName: "Checkout",
+      levels: [
+        { id: "lvl_1", targets: [{ kind: "member", id: "usr_bia" }], timeoutMinutes: 5 },
+        { id: "lvl_2", targets: [{ kind: "member", id: "usr_dev" }], timeoutMinutes: 5 },
+        { id: "lvl_3", targets: [{ kind: "member", id: "usr_eva" }], timeoutMinutes: 5 },
+      ],
+      repeat: 0,
+      eventId: "evt_01JB0000000000000000000001",
+      causedBy: "sys_monitors",
+      status: "running",
+      startedAt: now - 6 * 60_000,
+      endedAt: null,
+      nextAt: now + 60_000,
+      paged: 2,
+      pages: [
+        {
+          level: 1,
+          round: 0,
+          at: now - 6 * 60_000,
+          userIds: ["usr_bia"],
+          missed: [],
+          missedCount: 0,
+          reason: "started",
+        },
+        {
+          level: 2,
+          round: 0,
+          at: now - 60_000,
+          userIds: ["usr_dev"],
+          missed: [{ userId: "usr_x", reason: "no_devices", scheduleId: null, schedule: null }],
+          missedCount: 3,
+          reason: "timeout",
+        },
+      ],
+    },
+  });
+  await act(() => view.router.load());
+  await view.flush();
+  const escalation = card("Escalation")!;
+  const text = escalation.textContent!;
+  expect(text).toContain("Escalating");
+  expect(text).toContain("Level 3 at");
+  expect(text).toContain("Who it would page now");
+  expect(text).toContain("Eva Lima");
+  // The latest page sits right under Next; its misses are on its row, with how many more.
+  expect(text).toContain("Couldn't page: Unnamed member (no phone registered) and 2 more");
+  expect(text.indexOf("Level 2")).toBeLessThan(text.indexOf("Earlier levels (1)"));
+  const earlier = $<HTMLDetailsElement>("details", escalation)!;
+  expect(earlier.open).toBe(false);
+  expect($("summary", earlier)!.textContent).toBe("Earlier levels (1)");
+  expect(earlier.textContent).toContain(LONG_NAME);
+  // While it escalates, phones show it before the roles.
+  expect(escalation.parentElement!.className).toContain("max-md:order-first");
 });

@@ -169,7 +169,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     re-sent); a member removed or demoted in D1 outside Brigade is still paged until the next sync upgrade
     reconciles the shard (RFC 0006 "Who is paged", Q18); delivery receipts
     and "why wasn't I paged" (Phase 2); holding back lower-urgency pushes while a page may be undelivered (RFC 0006
-    "Offline phones"); who is paged before schedules (Q18).
+    "Offline phones"); what is left of who is paged (Q18).
 - [x] External dead-man switch
   - A Cron Trigger beats once a minute into the `WatchdogDO`'s outbox; the beat goes through the alarm, the outbox
     drain, the `brigade-events` Queue and the consumer, which checks the relay takes its send token; only a beat proved
@@ -195,8 +195,13 @@ Validate the risky assumptions before writing product code. Each spike produces 
     their own overrides; a member removed or made a viewer leaves the rotations and loses their overrides; the
     dashboard's On-call card lists schedules with who is on call now and the next handoffs, edits them and adds
     overrides (RFC 0003 "Schedules").
-  - Left: escalation policies with timeouts and paging the person on call (until then RFC 0006's interim rule pages);
-    the mobile on-call view and "I'm on call" (the Mobile item); schedules on teams (Better Auth teams); layer
+  - Done: escalation policies (ordered levels of schedules and people, a timeout per level, repeats, one default
+    policy) that page whoever is on call instead of the interim rule; runs started by the first page, advanced by
+    the shard's alarm, stopped by `incident.ack` or a resolve, with every level an `escalation.paged` event and a
+    timeline entry; unreachable levels skipped at once and the interim rule as the last fallback; the dashboard's
+    Escalation card and an incident's escalation progress (RFC 0003 "Escalation policies", RFC 0006 "Who is paged").
+  - Left: a policy per monitor or alert route; escalating early when a level's pushes all fail; the mobile on-call
+    view and "I'm on call" (the Mobile item); schedules on teams (Better Auth teams); layer
     restrictions (only some hours or days); a calendar view and export (iCal); telling someone their shift starts;
     Q20.
 - [ ] Slack app: `/inc`, incident channels, timeline mirror, ack buttons

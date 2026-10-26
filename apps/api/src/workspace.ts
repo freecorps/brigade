@@ -22,6 +22,7 @@ import {
   type MemberChangeResult,
   type SocketVerdict,
 } from "./members.ts";
+import { ESCALATION_RETRY_MS, Escalations } from "./escalation.ts";
 import { isProbeRegion, MONITOR_TICK_MS, Monitoring } from "./monitors.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
 import {
@@ -114,6 +115,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly drain: OutboxDrain;
   private readonly drainPaused: boolean;
   private readonly pager: Pager;
+  private readonly escalations: Escalations;
   private readonly membership: Membership;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -144,6 +146,12 @@ export class WorkspaceDO extends DurableObject<Env> {
       shard: this.shard,
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
+      wake: (at) => this.wake(at, "escalation"),
+    });
+    this.escalations = new Escalations({
+      shard: this.shard,
+      log: (message, fields) => this.log(message, fields),
+      committed: (version, changes) => this.broadcast(version, changes, undefined),
     });
     this.monitoring = new Monitoring({
       storage: ctx.storage,
@@ -169,6 +177,14 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (!this.drainPaused && this.drain.backlog() > 0) this.armDrain();
     } catch (error) {
       this.log("arming the outbox drain failed", { error: String(error) });
+    }
+    // A running escalation's next level (RFC 0006 "Who is paged"): stored with its run, so a restart or an eviction
+    // mid-escalation resumes on time, or at once if it came due meanwhile.
+    try {
+      const escalationAt = this.escalations.nextAt();
+      if (escalationAt !== null) this.wake(escalationAt, "escalation");
+    } catch (error) {
+      this.log("arming the escalation failed", { error: String(error) });
     }
     // Likewise a member repair whose alarm failed to arm.
     try {
@@ -339,7 +355,8 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
-   * The shard's one alarm (RFC 0005, RFC 0007, RFC 0006 "Who is paged"): monitor upkeep (`Monitoring.tick`), draining
+   * The shard's one alarm (RFC 0005, RFC 0007, RFC 0006 "Who is paged"): escalation levels that came due
+   * (`Escalations.fireDue`, synchronous, drained at once when any fired), monitor upkeep (`Monitoring.tick`), draining
    * the outbox to the Queue, then a due member repair (`Membership.repairDue`: a member change D1 has and the shard
    * missed), and the outbox again when the repair wrote events. The drain goes before the repair because the repair
    * waits on D1 (and on any member change ahead of it in the member lock): a page never waits on D1. A fallback a
@@ -349,6 +366,18 @@ export class WorkspaceDO extends DurableObject<Env> {
   override async alarm(): Promise<void> {
     const now = Date.now();
     await this.ctx.storage.setAlarm(now + MONITOR_TICK_MS);
+    // Pages first: a level is a mutation in this object's storage and its events go out before the monitor tick
+    // (which waits on probes), the repair (which waits on D1) or anything else.
+    let escalations: number | null = now + MONITOR_TICK_MS;
+    let escalationsFailed = false;
+    try {
+      const { fired, next } = this.escalations.fireDue(now);
+      escalations = next;
+      if (fired > 0) await this.drainOutbox();
+    } catch (error) {
+      escalationsFailed = true;
+      this.log("escalation failed", { error });
+    }
     let monitors: number | null = now + MONITOR_TICK_MS;
     try {
       monitors = await this.monitoring.tick(now);
@@ -385,8 +414,21 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("reading the member repair failed", { error });
     }
+    let escalationAt: number | null = escalations;
+    try {
+      // Read again: a page planned while the alarm ran may have started a run. After `fireDue` threw, its timers are
+      // still due: they are tried again `ESCALATION_RETRY_MS` later, not in a loop.
+      const stored = this.escalations.nextAt();
+      escalationAt = escalationsFailed
+        ? stored === null
+          ? null
+          : Math.max(stored, now + ESCALATION_RETRY_MS)
+        : earliest(escalations, stored);
+    } catch (error) {
+      this.log("reading the escalation timers failed", { error });
+    }
     const next = earliest(
-      earliest(monitors, earliest(repair, armed)),
+      earliest(earliest(monitors, escalationAt), earliest(repair, armed)),
       this.drainPaused ? null : this.drain.nextWake(Date.now()),
     );
     if (next === null) await this.ctx.storage.deleteAlarm();

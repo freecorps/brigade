@@ -5,7 +5,7 @@ export type Oncall_Not_PagingInputs = {};
 /**
 * | output |
 * | --- |
-* | "Schedules don't page anyone yet: pages still go to the incident's commander, or to everyone who can respond." |
+* | "Schedules page people through an escalation policy (below); without a default policy, pages go to the incident's commander, or to everyone who can respond." |
 *
 * @param {Oncall_Not_PagingInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

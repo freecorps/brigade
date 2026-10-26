@@ -1,5 +1,6 @@
 import { m } from "@freecorps/brigade-i18n";
 import { createFileRoute } from "@tanstack/react-router";
+import { EscalationCard } from "@/components/escalation-card";
 import { IncidentsCard } from "@/components/incidents-card";
 import { LegendCard } from "@/components/legend-card";
 import { MembersCard } from "@/components/members-card";
@@ -36,6 +37,7 @@ function Overview() {
       <PagingHealthNotice />
       <IncidentsCard />
       <OnCallCard />
+      <EscalationCard />
       <MonitorsCard />
       <MembersCard />
       <StackCard />

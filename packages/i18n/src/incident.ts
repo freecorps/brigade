@@ -65,6 +65,13 @@ export function personName(
   return member.name ?? m.incident_page({ part: "unnamed" });
 }
 
+/** Whoever declared it, reached without a push: "you (declared it)", "Ana (declared it)". */
+function declarer(id: string, who: People): string {
+  const text = (part: "declarer" | "declarer_you_object", name = "") =>
+    m.escalation_text({ text: part, name, time: "", level: "", reason: "", who: "" });
+  return id === who.self ? text("declarer_you_object") : text("declarer", personName(id, who));
+}
+
 /** One line saying what an entry recorded; an update's text is drawn under it, not in it. */
 export function entryText(entry: TimelineRow, who: People): string {
   const actor = personName(entry.actor, who);
@@ -99,8 +106,38 @@ export function entryText(entry: TimelineRow, who: People): string {
       // Written by the notifier: the sentence is about who was not paged, not who wrote it.
       // A dead-lettered page is about the page, whoever it was for.
       if (entry.reason === "dead_lettered") return say("page_dead_lettered");
+      // An escalation level's schedule: by the name it had then.
+      if (entry.reason === "nobody_on_call")
+        return say("page_nobody_on_call", entry.schedule ?? "");
+      if (entry.reason === "schedule_missing") return say("page_schedule_missing");
+      if (entry.reason === "escalation_stalled") return say("page_escalation_stalled");
+      if (entry.reason === "nobody_else") return say("page_nobody_else");
       if (entry.userId === null) return say("page_nobody");
       return say(`page_failed_${entry.reason}`, personName(entry.userId, who, "object"));
+    case "escalated": {
+      if (entry.level === null) {
+        // A page made again because its event was lost: about the page, not why it went to everyone.
+        if (entry.again) return say("escalated_everyone_again");
+        if (entry.reason === "stalled") return say("escalated_everyone_stalled");
+        return say(entry.later ? "escalated_everyone_later" : "escalated_everyone");
+      }
+      const level = m.escalation_level_round({
+        level: String(entry.level),
+        round: String(entry.round),
+      });
+      // Whoever caused the run's first page is reached without a push: "Level 1: you (declared it)", not "Paged".
+      const aware = (id: string) => id === entry.causedBy;
+      const names = entry.userIds
+        .map((id) => (aware(id) ? declarer(id, who) : personName(id, who)))
+        .join(", ");
+      if (entry.again) return say("escalated_again", level);
+      if (entry.userIds.length > 0 && entry.userIds.every(aware)) {
+        return say("escalated_started_aware", level, names);
+      }
+      return say(`escalated_${entry.reason}`, level, names);
+    }
+    case "escalation_exhausted":
+      return say("escalation_exhausted");
   }
 }
 

@@ -645,6 +645,21 @@
         "kind=page_failed_over_limit": "Não foi possível chamar {a}: a chamada foi para celulares demais",
         "kind=page_nobody": "Ninguém foi chamado: ninguém que pode responder tem o Brigade no celular",
         "kind=page_dead_lettered": "Uma chamada pode não ter saído: o Brigade não conseguiu enviá-la",
+        "kind=page_failed_not_a_member": "Não foi possível chamar {a}: não é mais alguém que pode responder",
+        "kind=page_nobody_on_call": "Não foi possível chamar {a}: ninguém de plantão",
+        "kind=page_schedule_missing": "Não foi possível chamar uma escala que foi excluída",
+        "kind=escalated_started": "Nível {a} chamado: {b}",
+        "kind=escalated_timeout": "Ninguém confirmou, então o nível {a} foi chamado: {b}",
+        "kind=escalated_unreachable": "Os níveis anteriores não alcançaram ninguém, então o nível {a} foi chamado: {b}",
+        "kind=escalated_everyone": "Nenhum nível alcançou ninguém, então todos que podem responder foram chamados",
+        "kind=escalated_everyone_later": "Nenhum nível seguinte alcançou ninguém, então todos que podem responder foram chamados",
+        "kind=escalated_started_aware": "Nível {a}: {b}",
+        "kind=escalated_again": "Nível {a} chamado de novo: a chamada anterior se perdeu",
+        "kind=escalated_everyone_again": "Todos que podem responder chamados de novo: a chamada anterior se perdeu",
+        "kind=page_nobody_else": "Ninguém mais foi chamado: só quem declarou pode responder",
+        "kind=escalation_exhausted": "Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados",
+        "kind=escalated_everyone_stalled": "Um nível de escalonamento continuou falhando, então todos que podem responder foram chamados",
+        "kind=page_escalation_stalled": "Um nível de escalonamento não pôde ser disparado. O Brigade continua tentando e chama todos que podem responder se ainda falhar",
         "kind=*": "{actor} alterou o incidente"
       }
     }
@@ -669,6 +684,8 @@
         "reason=not_configured, countPlural=*": "Não foi possível chamar {countFormatted} pessoas: as notificações push não estão configuradas neste servidor",
         "reason=over_limit, countPlural=one": "Não foi possível chamar {countFormatted} pessoa: a chamada foi para celulares demais",
         "reason=over_limit, countPlural=*": "Não foi possível chamar {countFormatted} pessoas: a chamada foi para celulares demais",
+        "reason=not_a_member, countPlural=one": "Não foi possível chamar {countFormatted} pessoa: não é mais alguém que pode responder",
+        "reason=not_a_member, countPlural=*": "Não foi possível chamar {countFormatted} pessoas: não são mais pessoas que podem responder",
         "reason=*, countPlural=one": "Não foi possível chamar {countFormatted} pessoa",
         "reason=*, countPlural=*": "Não foi possível chamar {countFormatted} pessoas"
       }
@@ -798,7 +815,7 @@
     }
   ],
   "oncall_empty": "Ainda não há escalas de plantão. Uma escala diz quem está de plantão e quando passa o turno.",
-  "oncall_not_paging": "As escalas ainda não acionam ninguém: os alertas continuam indo para o comandante do incidente, ou para todos que podem responder.",
+  "oncall_not_paging": "As escalas chamam pessoas por meio de uma política de escalonamento (abaixo); sem uma política padrão, as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
   "oncall_nobody": "Ninguém de plantão",
   "oncall_until": "até {time}",
   "oncall_override_badge": "Substituição",
@@ -991,6 +1008,199 @@
       "match": {
         "number=1": "Principal",
         "number=*": "Camada {number}"
+      }
+    }
+  ],
+  "escalation_level_round": [
+    {
+      "declarations": ["input level", "input round"],
+      "selectors": ["round"],
+      "match": {
+        "round=0": "{level}",
+        "round=*": "{level} (repetição {round})"
+      }
+    }
+  ],
+  "escalation_text": [
+    {
+      "declarations": [
+        "input text",
+        "input name",
+        "input time",
+        "input level",
+        "input reason",
+        "input who"
+      ],
+      "selectors": ["text"],
+      "match": {
+        "text=title": "Escalonamento",
+        "text=empty": "Ainda não há políticas de escalonamento. Sem uma política padrão, as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
+        "text=no_default": "Nenhuma política padrão: as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
+        "text=default_note": "Toda chamada, de um monitor ou declarada à mão, passa pela política padrão.",
+        "text=default_badge": "Padrão",
+        "text=level": "Nível {level}",
+        "text=level_empty": "Ninguém para chamar neste nível: ele é pulado até alguém ser adicionado",
+        "text=on_call": "{name} de plantão agora",
+        "text=delete_confirm": "Excluir {name}? Escalonamentos em andamento mantêm os níveis com que começaram.",
+        "text=delete_default": "É a política padrão: as chamadas voltam a ir para o comandante do incidente, ou para todos que podem responder.",
+        "text=change_failed": "Não foi possível alterar {name}: {reason}",
+        "text=gone": "A política não existe mais.",
+        "text=dropped": "Pessoas ou escalas que não existem mais foram retiradas desta política.",
+        "text=deleted_schedule": "Escala excluída",
+        "text=hint": "Os níveis chamam em ordem até alguém confirmar. Uma escala chama quem estiver de plantão quando o nível dispara; um nível em que ninguém pode ser alcançado é pulado na hora.",
+        "text=next_label": "Próximo",
+        "text=paged_at": "Chamado às {time}",
+        "text=everyone": "Todos que podem responder",
+        "text=policy_named": "Política: {name}",
+        "text=nobody_reached": "Ninguém alcançado",
+        "text=target_schedule": "Escala",
+        "text=target_member": "Pessoa",
+        "text=group_schedules": "Escalas (quem estiver de plantão)",
+        "text=group_people": "Pessoas",
+        "text=forecast": "Quem seria chamado agora",
+        "text=schedule_now": "{name} ({who} de plantão agora)",
+        "text=schedule_gap": "{name} (ninguém de plantão agora)",
+        "text=latest_label": "Mais recente",
+        "text=missed": "Não foi possível chamar",
+        "text=declarer_you": "Você (declarou)",
+        "text=declarer": "{name} (declarou)",
+        "text=declarer_you_object": "você (declarou)",
+        "text=replaces_default": "Substitui {name} como padrão.",
+        "text=level_empty_draft": "Ninguém para chamar ainda: adicione uma escala ou uma pessoa, ou remova este nível.",
+        "text=*": "Escalonamento"
+      }
+    }
+  ],
+  "escalation_count": [
+    {
+      "declarations": [
+        "input kind",
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["kind", "count", "countPlural"],
+      "match": {
+        "kind=policies, count=*, countPlural=one": "{countFormatted} política",
+        "kind=policies, count=*, countPlural=*": "{countFormatted} políticas",
+        "kind=timeout, count=*, countPlural=one": "Próximo nível após {countFormatted} minuto",
+        "kind=timeout, count=*, countPlural=*": "Próximo nível após {countFormatted} minutos",
+        "kind=repeat, count=0, countPlural=*": "Não se repete",
+        "kind=repeat, count=*, countPlural=one": "Repete mais {countFormatted} vez",
+        "kind=repeat, count=*, countPlural=*": "Repete mais {countFormatted} vezes",
+        "kind=repeat_choice, count=0, countPlural=*": "Não repetir",
+        "kind=repeat_choice, count=*, countPlural=one": "Mais {countFormatted} vez",
+        "kind=repeat_choice, count=*, countPlural=*": "Mais {countFormatted} vezes",
+        "kind=timeout_repeat, count=*, countPlural=one": "Nível 1 de novo após {countFormatted} minuto",
+        "kind=timeout_repeat, count=*, countPlural=*": "Nível 1 de novo após {countFormatted} minutos",
+        "kind=timeout_end, count=*, countPlural=one": "Todos que podem responder após {countFormatted} minuto",
+        "kind=timeout_end, count=*, countPlural=*": "Todos que podem responder após {countFormatted} minutos",
+        "kind=earlier, count=*, countPlural=*": "Níveis anteriores ({countFormatted})",
+        "kind=show_levels, count=*, countPlural=*": "Mostrar os {countFormatted} níveis",
+        "kind=more_missed, count=*, countPlural=*": "e mais {countFormatted}",
+        "kind=*, count=*, countPlural=*": "{countFormatted}"
+      }
+    }
+  ],
+  "escalation_action": [
+    {
+      "declarations": ["input action"],
+      "selectors": ["action"],
+      "match": {
+        "action=add_policy": "Nova política",
+        "action=edit": "Editar",
+        "action=save": "Salvar",
+        "action=create": "Criar política",
+        "action=cancel": "Cancelar",
+        "action=delete_policy": "Excluir política",
+        "action=delete": "Excluir",
+        "action=add_level": "Adicionar um nível",
+        "action=remove_level": "Remover nível",
+        "action=remove_target": "Remover",
+        "action=show_fewer": "Mostrar menos níveis",
+        "action=*": "Alterar"
+      }
+    }
+  ],
+  "escalation_action_on": [
+    {
+      "declarations": ["input action", "input name"],
+      "selectors": ["action"],
+      "match": {
+        "action=edit": "Editar {name}",
+        "action=remove_target": "Remover {name}",
+        "action=remove_level": "Remover {name}",
+        "action=*": "{name}"
+      }
+    }
+  ],
+  "escalation_field": [
+    {
+      "declarations": ["input field", "input form"],
+      "selectors": ["field", "form"],
+      "match": {
+        "field=name, form=label": "Nome",
+        "field=timeout, form=label": "Minutos até o próximo nível",
+        "field=timeout_last, form=label": "Minutos antes de chamar todos que podem responder",
+        "field=repeat, form=label": "Repetir os níveis",
+        "field=targets, form=label": "Quem é chamado",
+        "field=default, form=label": "Usar em toda chamada (política padrão)",
+        "field=add_target, form=label": "Adicionar uma escala ou pessoa",
+        "field=name, form=invalid": "Informe um nome.",
+        "field=timeout, form=invalid": "Informe um número inteiro de minutos de 1 a 1440.",
+        "field=targets, form=invalid": "Adicione pelo menos uma escala ou pessoa.",
+        "field=*, form=invalid": "Confira este campo.",
+        "field=*, form=*": "Campo"
+      }
+    }
+  ],
+  "escalation_progress": [
+    {
+      "declarations": ["input part", "input time", "input level"],
+      "selectors": ["part"],
+      "match": {
+        "part=running": "Escalonando",
+        "part=resolved": "Parado: resolvido {time}",
+        "part=next_level": "Nível {level} às {time}",
+        "part=next_repeat": "Nível 1 de novo às {time}",
+        "part=next_end": "Todos que podem responder às {time}",
+        "part=fallback_unreachable": "Nenhum nível alcançou ninguém: todos que podem responder foram chamados",
+        "part=fallback_exhausted": "Ninguém confirmou depois de todos os níveis: todos que podem responder foram chamados",
+        "part=fallback_stalled": "Um nível continuou falhando: todos que podem responder foram chamados",
+        "part=fallback_unreachable_later": "Nenhum nível seguinte alcançou ninguém: todos que podem responder foram chamados",
+        "part=fallback_unreachable_nobody": "Nenhum nível alcançou ninguém. Tentamos todos que podem responder: ninguém pôde ser chamado",
+        "part=fallback_unreachable_later_nobody": "Nenhum nível seguinte alcançou ninguém. Tentamos todos que podem responder: ninguém pôde ser chamado",
+        "part=fallback_exhausted_nobody": "Ninguém confirmou depois de todos os níveis. Tentamos todos que podem responder: ninguém pôde ser chamado",
+        "part=fallback_stalled_nobody": "Um nível continuou falhando. Tentamos todos que podem responder: ninguém pôde ser chamado",
+        "part=*": "Escalonamento"
+      }
+    }
+  ],
+  "escalation_miss": [
+    {
+      "declarations": ["input reason", "input name"],
+      "selectors": ["reason"],
+      "match": {
+        "reason=no_devices": "{name} (sem celular registrado)",
+        "reason=nobody_on_call": "{name} (ninguém de plantão)",
+        "reason=schedule_missing": "Uma escala excluída",
+        "reason=not_a_member": "{name} (não pode mais responder)",
+        "reason=failed": "{name} (falha no envio)",
+        "reason=*": "{name}"
+      }
+    }
+  ],
+  "incident_ack": [
+    {
+      "declarations": ["input part", "input name", "input time", "input reason"],
+      "selectors": ["part"],
+      "match": {
+        "part=action": "Confirmar",
+        "part=hint": "Interrompe as chamadas: nenhum outro nível de escalonamento é disparado.",
+        "part=by": "Confirmado por {name}, {time}",
+        "part=already": "Outra pessoa confirmou primeiro.",
+        "part=failed": "Não foi possível confirmar. {reason}",
+        "part=*": "Confirmar"
       }
     }
   ]

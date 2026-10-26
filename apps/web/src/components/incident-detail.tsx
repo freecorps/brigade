@@ -3,6 +3,7 @@ import {
   can,
   formatIncidentNumber,
   INCIDENT_ROLES,
+  isActive,
   UPDATE_BODY_MAX,
   type IncidentRole,
   type IncidentRow,
@@ -18,6 +19,7 @@ import { cn } from "cn";
 import {
   ArrowLeftIcon,
   BellOffIcon,
+  BellRingIcon,
   ChevronDownIcon,
   CircleAlertIcon,
   CirclePlusIcon,
@@ -27,6 +29,7 @@ import {
   MessageSquareTextIcon,
   PhoneMissedIcon,
   SendIcon,
+  TimerOffIcon,
   UserRoundIcon,
   XIcon,
   type LucideIcon,
@@ -45,6 +48,7 @@ import {
 import { STATUS_ICONS } from "@/components/incident-badges";
 import { SeverityMenu, StatusMenu } from "@/components/incident-item";
 import { ANNOUNCE_MS, useNow } from "@/components/incidents-card";
+import { EscalationProgress } from "@/components/escalation-progress";
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
@@ -61,6 +65,7 @@ import {
 import {
   adjustBusy,
   formatAge,
+  mutationErrorReason,
   noticeFor,
   noticeText,
   queryErrorReason,
@@ -189,11 +194,16 @@ function Incident({ row }: { row: IncidentRow }) {
 
   const members = useQuery("members.all", {});
   const who = people(member.userId, members.rows);
+  const timeline = useQuery("incident.timeline", { id: row.id });
+  // What the escalation card forecasts the next level from (whoever is on call now).
+  const schedules = useQuery("schedules.all", {});
+  const overrides = useQuery("overrides.all", {});
 
   const setStatus = useMutation("incident.setStatus");
   const setSeverity = useMutation("incident.setSeverity");
   const postUpdate = useMutation("incident.postUpdate");
   const assignRole = useMutation("incident.assignRole");
+  const acknowledge = useMutation("incident.ack");
 
   const [busy, setBusy] = useState<Busy>(new Map());
   const [notices, setNotices] = useState<Notice[]>([]);
@@ -229,6 +239,26 @@ function Incident({ row }: { row: IncidentRow }) {
       { ...base, kind: "role", role },
       `role/${role}`,
     );
+  const [ackRefused, setAckRefused] = useState<string | null>(null);
+  // Optimistic like every change here: the row says who acknowledged at once; a refusal puts it back and says why.
+  const onAck = () => {
+    setAckRefused(null);
+    setBusy((current) => adjustBusy(current, ["ack"], 1));
+    void acknowledge({ id: row.id }).then((outcome) => {
+      setBusy((current) => adjustBusy(current, ["ack"], -1));
+      if (outcome.ok) return;
+      setAckRefused(
+        outcome.error.code === "conflict"
+          ? m.incident_ack({ part: "already", name: "", time: "", reason: "" })
+          : m.incident_ack({
+              part: "failed",
+              name: "",
+              time: "",
+              reason: mutationErrorReason(outcome.error.code),
+            }),
+      );
+    });
+  };
   const onPost = (body: string) =>
     track(postUpdate({ id: row.id, body }), { ...base, kind: "update" }, "update");
   const dismiss = (key: string) =>
@@ -242,7 +272,10 @@ function Incident({ row }: { row: IncidentRow }) {
 
   const now = useNow(20_000);
   const declared = formatAge(Math.min(row.declaredAt, now), now, locale);
-  const saving = busy.has("status") || busy.has("severity");
+  const saving = busy.has("status") || busy.has("severity") || busy.has("ack");
+  const acked = row.acknowledgedAt != null && row.acknowledgedBy != null;
+  const canAck = can(member.role, "incident:ack") && isActive(row.status) && !acked;
+  const escalating = row.escalation?.status === "running" && !acked;
 
   return (
     <Shell>
@@ -281,6 +314,35 @@ function Incident({ row }: { row: IncidentRow }) {
             onChange={onStatus}
           />
         </div>
+        {canAck ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <Button onClick={onAck} className="max-sm:w-full">
+              <BellOffIcon aria-hidden />
+              {m.incident_ack({ part: "action", name: "", time: "", reason: "" })}
+            </Button>
+            <p className="text-sm text-muted-foreground">
+              {m.incident_ack({ part: "hint", name: "", time: "", reason: "" })}
+            </p>
+          </div>
+        ) : acked ? (
+          <p className="flex items-start gap-2 text-sm font-medium">
+            <BellOffIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 [overflow-wrap:anywhere]">
+              {m.incident_ack({
+                part: "by",
+                name: personName(row.acknowledgedBy!, who),
+                time: formatAge(Math.min(row.acknowledgedAt!, now), now, locale),
+                reason: "",
+              })}
+            </span>
+          </p>
+        ) : null}
+        {ackRefused ? (
+          <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive">
+            <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+            <span className="min-w-0">{ackRefused}</span>
+          </p>
+        ) : null}
         {noticesFor(["status", "severity"])}
         {editable ? null : (
           <p className="text-sm text-muted-foreground">{m.incident_page({ part: "read_only" })}</p>
@@ -304,37 +366,62 @@ function Incident({ row }: { row: IncidentRow }) {
               />
             ) : null}
             {noticesFor(["update"])}
-            <Timeline incidentId={row.id} who={who} locale={locale} now={now} />
+            <Timeline
+              rows={timeline.rows}
+              ready={timeline.status === "ready"}
+              who={who}
+              locale={locale}
+              now={now}
+            />
           </CardContent>
         </Card>
 
-        <Card aria-labelledby="roles-title" className="max-md:order-first">
-          <CardTitle id="roles-title" className="px-4 sm:px-6">
-            {m.incident_page({ part: "roles" })}
-          </CardTitle>
-          <CardContent className="flex flex-col gap-4">
-            <ul className="flex flex-col gap-3">
-              {INCIDENT_ROLES.map((role) => (
-                <RoleRow
-                  key={role}
-                  role={role}
-                  holder={row.roles?.[role] ?? null}
-                  who={who}
-                  members={assignable(members.rows)}
-                  pending={busy.has(`role/${role}`)}
-                  editable={editable}
-                  onAssign={onAssign}
-                />
-              ))}
-            </ul>
-            {members.status === "ready" && assignable(members.rows).length <= 1 ? (
-              <p className="text-xs text-muted-foreground">
-                {m.incident_page({ part: "no_members" })}
-              </p>
-            ) : null}
-            {noticesFor(["role"])}
-          </CardContent>
-        </Card>
+        <div className="flex min-w-0 flex-col gap-6 max-md:order-first">
+          <Card aria-labelledby="roles-title">
+            <CardTitle id="roles-title" className="px-4 sm:px-6">
+              {m.incident_page({ part: "roles" })}
+            </CardTitle>
+            <CardContent className="flex flex-col gap-4">
+              <ul className="flex flex-col gap-3">
+                {INCIDENT_ROLES.map((role) => (
+                  <RoleRow
+                    key={role}
+                    role={role}
+                    holder={row.roles?.[role] ?? null}
+                    who={who}
+                    members={assignable(members.rows)}
+                    pending={busy.has(`role/${role}`)}
+                    editable={editable}
+                    onAssign={onAssign}
+                  />
+                ))}
+              </ul>
+              {members.status === "ready" && assignable(members.rows).length <= 1 ? (
+                <p className="text-xs text-muted-foreground">
+                  {m.incident_page({ part: "no_members" })}
+                </p>
+              ) : null}
+              {noticesFor(["role"])}
+            </CardContent>
+          </Card>
+          {row.escalation ? (
+            // While it is escalating, phones show it above the roles: "Level 2 in 59 seconds" is what matters then.
+            <div className={cn("min-w-0", escalating && "max-md:order-first")}>
+              <EscalationProgress
+                run={row.escalation}
+                incident={row}
+                who={who}
+                members={members.rows}
+                schedules={schedules.rows}
+                overrides={overrides.rows}
+                timeline={timeline.rows}
+                locale={locale}
+                timeZone={TIME_ZONE}
+                now={now}
+              />
+            </div>
+          ) : null}
+        </div>
       </div>
     </Shell>
   );
@@ -574,6 +661,8 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
   update: MessageSquareTextIcon,
   alert_resolved: HeartPulseIcon,
   page_failed: PhoneMissedIcon,
+  escalated: BellRingIcon,
+  escalation_exhausted: TimerOffIcon,
 };
 
 /**
@@ -582,18 +671,19 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
  * member's own, are not.
  */
 function Timeline({
-  incidentId,
+  rows,
+  ready,
   who,
   locale,
   now,
 }: {
-  incidentId: string;
+  rows: readonly TimelineRow[];
+  ready: boolean;
   who: People;
   locale: Locale;
   now: number;
 }) {
-  const { rows, status } = useQuery("incident.timeline", { id: incidentId });
-  const announcements = useAnnouncements(rows, status === "ready", who);
+  const announcements = useAnnouncements(rows, ready, who);
   const announcer = (
     <div aria-live="polite" className="sr-only">
       {announcements.map(({ key, text }) => (
@@ -602,7 +692,7 @@ function Timeline({
     </div>
   );
   if (rows.length === 0) {
-    return status === "ready" ? (
+    return ready ? (
       <p className="text-sm text-muted-foreground">{m.incident_page({ part: "timeline_empty" })}</p>
     ) : null;
   }

@@ -29,6 +29,21 @@ export type Timeline_EntryInputs = {
 * | "page_failed_over_limit" | "Couldn't page {a}: this page went to too many phones" |
 * | "page_nobody" | "Nobody was paged: no one who can respond has Brigade on their phone" |
 * | "page_dead_lettered" | "A page may not have gone out: Brigade kept failing to send it" |
+* | "page_failed_not_a_member" | "Couldn't page {a}: no longer someone who can respond" |
+* | "page_nobody_on_call" | "Couldn't page {a}: nobody on call" |
+* | "page_schedule_missing" | "Couldn't page a schedule that was deleted" |
+* | "escalated_started" | "Paged level {a}: {b}" |
+* | "escalated_timeout" | "Nobody acknowledged, so level {a} was paged: {b}" |
+* | "escalated_unreachable" | "Earlier levels couldn't reach anyone, so level {a} was paged: {b}" |
+* | "escalated_everyone" | "No level could reach anyone, so everyone who can respond was paged" |
+* | "escalated_everyone_later" | "No later level could reach anyone, so everyone who can respond was paged" |
+* | "escalated_started_aware" | "Level {a}: {b}" |
+* | "escalated_again" | "Level {a} paged again: the earlier page was lost" |
+* | "escalated_everyone_again" | "Everyone who can respond paged again: the earlier page was lost" |
+* | "page_nobody_else" | "Nobody else was paged: only the person who declared it can respond" |
+* | "escalation_exhausted" | "Nobody acknowledged after every level, so everyone who can respond was paged" |
+* | "escalated_everyone_stalled" | "An escalation level kept failing to fire, so everyone who can respond was paged" |
+* | "page_escalation_stalled" | "An escalation level couldn't fire. Brigade keeps trying, and pages everyone who can respond if it still can't" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs

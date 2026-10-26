@@ -143,8 +143,7 @@ would change D1 without the shard's copy or an event.
 ## Schedules
 
 First slice of on-call (Phase 2), in `packages/schema` (`schedules.ts`, `zoned.ts`), stored in `WorkspaceDO`. It
-says who is on call; it does not change who is paged yet (RFC 0006 "Who is paged" keeps the interim rule until
-escalation policies exist).
+says who is on call; escalation policies (below) page from it.
 
 - **Schedule** (`schedules` table, query `schedules.all`): a name, an IANA time zone (stored as the runtime spells
   it, so `america/sao_paulo` is saved as `America/Sao_Paulo`; Workers' and Chrome's V8 keep ICU's older names, such
@@ -202,11 +201,55 @@ escalation policies exist).
 3. `AlertRoute` rules (evaluated in order) decide: ignore, attach to an open incident, or create a new incident with a type/severity and an escalation policy.
 4. Creating a page starts an escalation run on the `IncidentDO` (alarm per level timeout).
 
+## Escalation policies
+
+Second slice of on-call (Phase 2), in `packages/schema` (`policies.ts`, `escalation.ts`), stored in `WorkspaceDO`.
+How a page uses them is RFC 0006 "Who is paged".
+
+- **Policy** (`escalation_policies` table, query `escalationPolicies.all`): a name, one to ten **levels** in order,
+  and `repeat` (0 to 9): how many more times the whole list runs when nobody acknowledges. A level has one to ten
+  **targets**, each a schedule (whoever `onCallAt` says is on call when the level fires) or a member, and a timeout
+  of 1 to 1440 minutes before the next level fires. Levels and targets are kept in the policy's own row, so an edit
+  is one mutation and never half applied. At most 50 policies per workspace.
+- **The default policy** (`isDefault`, at most one): every page uses it, whether a monitor opened the incident or a
+  member declared it. Making a policy the default takes the flag from the previous one (its own
+  `escalation_policy.updated`, `reason: default_changed`). With no default, RFC 0006's interim rule pages, unchanged,
+  so a workspace that never creates a policy pages as before. A policy per monitor (and alert routes, Phase 3) can
+  come later: the run already records which policy it follows.
+- **Who manages them** (`escalation:read`, `escalation:manage`): owners and admins create, edit, delete and pick the
+  default; everyone reads. A member target must be in the shard's member list and not a viewer; a schedule target
+  must exist (`invalid_args` otherwise).
+- **References that go away** are taken out in the same transaction, never left dangling: deleting a schedule takes
+  it out of every level (`escalation_policy.updated`, `reason: schedule_deleted`), and a member removed or made a
+  viewer is taken out with their rotations (`member_removed`, wherever `dropFromSchedules` runs). A level left with
+  no targets stays, shown as "Nobody to page at this level" until someone edits it; when it fires it is skipped like
+  an unreachable level (RFC 0006).
+
 ## Escalation run
 
-- Level N notifies its targets (resolving schedules to the on-call user _at that moment_).
-- Any target acks (`incident.ack`; until escalation runs exist the ack is stored on the incident and reopening clears it, spike S6) → run stops. Timeout → level N+1. Last level exhausted → repeat policy (configurable) and flag "unacknowledged".
-- Every notification attempt and delivery receipt is recorded (debuggable: "why didn't I get paged?").
+- **State** lives on the incident (`escalation` on its row, synced with it, so every client can show "Level 2 paged
+  at 14:05 · next level at 14:20"): the policy's id, name, levels and repeat as they were when the run started (a
+  snapshot, so an edit or a delete mid-run changes nothing for a run under way; the next run reads the policy
+  again), the level and round paged last, `status` (`running`, `acknowledged`, `resolved`, `exhausted`), when it
+  started, when the next level fires (`nextAt`), how many pages it made (`paged`) and the last 20 of them (`pages`:
+  level, round, when, whom, why, and the first 20 targets that could not be paged with their count; the timeline and
+  the events keep everything, the row stays small). A server-only `escalation_timers` row per running run (incident id, `nextAt`) is what the shard's alarm
+  reads, so it never scans every incident.
+- **Start.** The first page of an incident starts a run (`escalation.start`, server only, as `sys_escalation`):
+  level 1 is resolved and paged at once, on the same event that asked for the page (no extra trip through the
+  Queue). **Next level.** At `nextAt` the shard's alarm runs `escalation.advance`: the next level, or level 1 of the
+  next round, or, past the last round, `exhausted`: nobody acknowledged, so everyone who can respond is paged once
+  (the interim rule, RFC 0006) and the run ends (a timeline entry, `escalation.exhausted`). A level `escalation.advance`
+  keeps refusing is recorded at once and, 3 minutes after its first refusal, ends the run the same way
+  (`escalation.fallback`).
+- **Stop.** `incident.ack` (any responder, through any route: the mutation does it, not an endpoint) sets the run
+  `acknowledged`, and a status change out of the active ones (resolved, declined) sets it `resolved`; both delete
+  the timer in the same transaction, so no level fires after them. Both also close a run that already ended
+  (`exhausted`), keeping when it ended, so none of its pages is sent after a reopen. A reopened incident starts no
+  run by itself; its next page does (as a page to an acknowledged incident is not sent).
+- Every level fired is an `escalation.paged` event and an `escalated` timeline entry; levels that could not be
+  paged are `page_failed` entries ("Couldn't page Primary: nobody on call"). Delivery receipts (did the phone show
+  it) and "why wasn't I paged" stay Phase 2's later items.
 
 ## Tenancy and access control
 
@@ -219,7 +262,7 @@ escalation policies exist).
 | Role        | Typical permissions                                                                    |
 | ----------- | -------------------------------------------------------------------------------------- |
 | `owner`     | Everything, including billing/deletion and transferring ownership                      |
-| `admin`     | Manage members, integrations, monitors, schedules, policies                            |
+| `admin`     | Manage members, integrations, monitors, schedules, escalation policies                 |
 | `responder` | Declare/run incidents, ack/escalate pages, edit timeline, manage own on-call overrides |
 | `viewer`    | Read-only (stakeholders)                                                               |
 

@@ -214,7 +214,7 @@ export async function notifyPush(
   const workspace = env.WORKSPACE.getByName(event.workspaceId);
   const plan = await workspace.planPage(event);
   if (!plan.send) return false;
-  const sent = await Promise.all(plan.targets.map((target) => pushOne(plan, target, env, send)));
+  const sent = await Promise.all(plan.targets.map((target) => pushOne(event.workspaceId, plan, target, env, send)));
   const final = !sent.some((one) => one.retry) || attempts >= MAX_PAGE_ATTEMPTS;
   await workspace.recordPage(
     event,
@@ -230,6 +230,7 @@ type Sent = { outcome: DeviceOutcome; retry: boolean };
 
 /** Seals and sends one device's push; classifies the relay's answer. Never throws. */
 async function pushOne(
+  workspaceId: string,
   plan: Extract<PagePlan, { send: true }>,
   target: PageTarget,
   env: NotifyEnv,
@@ -264,6 +265,8 @@ async function pushOne(
         .join(" · "),
       body: incident.title,
       incident: incident.id,
+      // For the notification's Acknowledge action (RFC 0004 "Clients").
+      workspace: workspaceId,
     });
   } catch (error) {
     // A key `device.register` accepted but WebCrypto refuses (not on the curve): retrying cannot help.

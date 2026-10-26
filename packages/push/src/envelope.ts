@@ -10,6 +10,11 @@ export interface PushContent {
   body: string;
   /** The incident a page is about, so a call's ack can name it (RFC 0010). Sealed like the rest. */
   incident?: string;
+  /**
+   * The workspace the incident is in, so a notification's Acknowledge action knows where to send it (RFC 0004
+   * "Clients"). The app offers the action only on a page that carries both.
+   */
+  workspace?: string;
 }
 
 /** The encrypted push as it travels: HPKE's encapsulated key and ciphertext, base64url. */
@@ -38,10 +43,9 @@ export async function sealPush(
   devicePublicKey: string,
   content: PushContent,
 ): Promise<PushEnvelope> {
-  const { title, body, incident } = content;
-  const plaintext = encoder.encode(
-    JSON.stringify(incident === undefined ? { title, body } : { title, body, incident }),
-  );
+  const { title, body, incident, workspace } = content;
+  // Only the fields set, in a fixed order.
+  const plaintext = encoder.encode(JSON.stringify({ title, body, incident, workspace }));
   if (plaintext.length > PUSH_PLAINTEXT_MAX_BYTES) {
     throw new Error(`push content is ${plaintext.length} bytes, over ${PUSH_PLAINTEXT_MAX_BYTES}`);
   }
@@ -64,13 +68,15 @@ export async function openPush(
     !isRecord(value) ||
     typeof value.title !== "string" ||
     typeof value.body !== "string" ||
-    (value.incident !== undefined && typeof value.incident !== "string")
+    (value.incident !== undefined && typeof value.incident !== "string") ||
+    (value.workspace !== undefined && typeof value.workspace !== "string")
   ) {
-    throw new Error("push content is not { title, body, incident? }");
+    throw new Error("push content is not { title, body, incident?, workspace? }");
   }
-  return typeof value.incident === "string"
-    ? { title: value.title, body: value.body, incident: value.incident }
-    : { title: value.title, body: value.body };
+  const content: PushContent = { title: value.title, body: value.body };
+  if (typeof value.incident === "string") content.incident = value.incident;
+  if (typeof value.workspace === "string") content.workspace = value.workspace;
+  return content;
 }
 
 /** Accepts an envelope from untrusted JSON (a relay request), or returns null. */

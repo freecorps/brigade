@@ -401,7 +401,7 @@ test("a run under way: what fires next and whom, the latest page first, misses a
   // The latest page sits right under Next; its misses are on its row, with how many more.
   expect(text).toContain("Couldn't page: Unnamed member (no phone registered) and 2 more");
   expect(text.indexOf("Level 2")).toBeLessThan(text.indexOf("Earlier levels (1)"));
-  const earlier = $("details", escalation)!;
+  const earlier = $<HTMLDetailsElement>("details", escalation)!;
   expect(earlier.open).toBe(false);
   expect($("summary", earlier)!.textContent).toBe("Earlier levels (1)");
   expect(earlier.textContent).toContain(LONG_NAME);

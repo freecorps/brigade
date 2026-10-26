@@ -1,0 +1,27 @@
+// The Slack app's Worker (RFC 0011): verifies and answers Slack's requests, and runs Slack's OAuth. Only a `dev`
+// Worker so far (`brigade-slack-dev`); staging and production get their names with their first deploys (owner's call).
+// Slack reaches it on the dashboard's origin: brigade-web forwards /slack/* here through its SLACK service binding.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "brigade-slack-dev",
+  "main": "./src/index.ts",
+  // Matches apps/api: the installed workerd, so local and deployed behaviour agree.
+  "compatibility_date": "2026-10-19",
+  // Reached only through brigade-web's service binding, never on its own URL.
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 },
+  },
+  "upload_source_maps": true,
+  // The API's SlackBridge entrypoint (apps/api src/slack-bridge.ts): every D1 read and shard write goes through it.
+  // One way only: the API never binds to this Worker, so the two deploy in order (api, then slack) with no cycle.
+  "services": [{ "binding": "API", "service": "brigade-api-dev", "entrypoint": "SlackBridge" }],
+  // Set with `wrangler secret put` (deployed) or a local .dev.vars (gitignored); never in this file (README.md).
+  // SLACK_SIGNING_SECRET verifies every request; SLACK_CLIENT_ID and SLACK_CLIENT_SECRET run OAuth; DASHBOARD_URL is
+  // the public origin Slack and the browser come back to.
+  "secrets": {
+    "required": ["SLACK_SIGNING_SECRET", "SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET", "DASHBOARD_URL"],
+  },
+}

@@ -118,6 +118,21 @@
         "wrangler": "^4.152.0",
       },
     },
+    "integrations/slack": {
+      "name": "@freecorps/brigade-slack",
+      "version": "0.0.0",
+      "dependencies": {
+        "@freecorps/brigade-i18n": "workspace:*",
+        "@freecorps/brigade-schema": "workspace:*",
+      },
+      "devDependencies": {
+        "@cloudflare/vite-plugin": "^1.65.0",
+        "@types/node": "^26.6.5",
+        "typescript": "^7.0.2",
+        "vite-plus": "catalog:",
+        "wrangler": "^4.152.0",
+      },
+    },
     "packages/i18n": {
       "name": "@freecorps/brigade-i18n",
       "version": "0.0.0",
@@ -596,6 +611,8 @@
     "@freecorps/brigade-relay": ["@freecorps/brigade-relay@workspace:apps/relay"],
 
     "@freecorps/brigade-schema": ["@freecorps/brigade-schema@workspace:packages/schema"],
+
+    "@freecorps/brigade-slack": ["@freecorps/brigade-slack@workspace:integrations/slack"],
 
     "@freecorps/brigade-spike-s2": ["@freecorps/brigade-spike-s2@workspace:spikes/s2-probe-placement"],
 

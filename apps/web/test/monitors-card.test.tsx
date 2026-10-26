@@ -49,6 +49,8 @@ function monitor(overrides: Partial<MonitorRow>): MonitorRow {
     method: "GET",
     expectedStatus: null,
     keyword: null,
+    host: null,
+    port: null,
     timeoutSeconds: 10,
     regions: ["wnam", "enam", "weur"],
     intervalSeconds: 60,
@@ -754,4 +756,103 @@ test("a pause prompt open when someone else pauses the monitor does not come bac
     await view.flush();
   }
   expect(item().textContent).not.toContain("Pause this monitor?");
+});
+
+test("a full workspace says so in the form, keeps the draft and sends nothing", async () => {
+  const rows = Array.from({ length: 100 }, (_, i) => monitor({ name: `Service ${i}` }));
+  const view = await mount(rows);
+  await click(button("Add monitor"));
+  act(() => setValue(field("Name"), "One more"));
+  act(() => setValue(field("URL"), "https://example.com/"));
+  await click(button("Create monitor"));
+  await view.flush();
+  const form = document.querySelector("form")!;
+  expect(form.querySelector('[role="alert"]')?.textContent).toBe(
+    "This workspace has 100 monitors, the most it can have. Delete one to add another.",
+  );
+  expect(field("Name").value).toBe("One more");
+  expect(view.shard.store.scan("monitors")).toHaveLength(100);
+});
+
+test("the type selector uses short names; pasting host:port fills both TCP fields", async () => {
+  await mount();
+  await click(button("Add monitor"));
+  const labels = $$('[role="radiogroup"] label').map((label) => label.textContent);
+  expect(labels).toEqual(["HTTP", "TCP", "Heartbeat"]);
+  await click($$('input[type="radio"]').find((r) => (r as HTMLInputElement).value === "tcp"));
+  const host = field("Host");
+  await act(async () => {
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.assign(event, {
+      clipboardData: { getData: () => "postgres://db.example.com:6432/app" },
+    });
+    host.dispatchEvent(event);
+    await Promise.resolve();
+  });
+  expect(field("Host").value).toBe("db.example.com");
+  expect(field("Port").value).toBe("6432");
+});
+
+test("a TCP port: host and port fields, a refused host says what to fix, and the row reads host:port", async () => {
+  const view = await mount();
+  await click(button("Add monitor"));
+  const kind = $$('input[type="radio"]').find(
+    (radio) => (radio as HTMLInputElement).value === "tcp",
+  );
+  await click(kind);
+  const form = document.querySelector("form")!;
+  // Host and port instead of the URL; the regions and the timeout stay.
+  expect(field("URL")).toBeUndefined();
+  expect(field("Host")).toBeDefined();
+  expect(field("Port")).toBeDefined();
+  expect(form.textContent).toContain("How long the connection may take to open.");
+  expect($$('input[type="checkbox"]', form)).toHaveLength(6);
+
+  act(() => setValue(field("Name"), "Database"));
+  act(() => setValue(field("Host"), "10.0.0.5"));
+  act(() => setValue(field("Port"), "25"));
+  await click(button("Create monitor"));
+  await frame();
+  expect(form.textContent).toContain(
+    "Use a public host name or IP address, without http:// or a port.",
+  );
+  expect(document.activeElement).toBe(field("Host"));
+  act(() => setValue(field("Host"), "db.example.com"));
+  await click(button("Create monitor"));
+  await frame();
+  expect(form.textContent).toContain("Cloudflare blocks port 25. Use another port.");
+  expect(document.activeElement).toBe(field("Port"));
+  // The error runs under both fields, and the port says which one it is about.
+  const portError = $$("p", form).find((p) => p.textContent?.includes("port 25"))!;
+  expect(field("Port").getAttribute("aria-describedby")?.split(" ")).toContain(portError.id);
+  expect(field("Host").getAttribute("aria-describedby")?.split(" ")).not.toContain(portError.id);
+  act(() => setValue(field("Port"), "70000"));
+  await click(button("Create monitor"));
+  await frame();
+  expect(form.textContent).toContain("Use a port from 1 to 65535.");
+
+  act(() => setValue(field("Port"), "5432"));
+  await click(button("Create monitor"));
+  await view.flush();
+  const [created] = view.shard.store.scan("monitors");
+  expect(created).toMatchObject({
+    kind: "tcp",
+    name: "Database",
+    host: "db.example.com",
+    port: 5432,
+    url: null,
+    regions: ["enam", "weur"],
+  });
+  const item = document.querySelector(`[data-monitor="${created!.id}"]`)!;
+  expect(item.textContent).toContain("db.example.com:5432");
+
+  // Editing keeps the kind and opens with its host and port.
+  await click(button("Edit", item));
+  expect(item.querySelector("form")?.textContent).toContain("TCP port");
+  expect(field("Host").value).toBe("db.example.com");
+  act(() => setValue(field("Port"), "5433"));
+  expect(item.textContent).toContain("Saving starts its checks over");
+  await click(button("Save changes", item));
+  await view.flush();
+  expect(view.shard.store.get("monitors", created!.id)).toMatchObject({ port: 5433 });
 });

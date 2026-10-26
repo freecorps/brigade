@@ -12,6 +12,11 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | --- | --- |
 * | "name" | "Give the monitor a name." |
 * | "url" | "Use a public http or https address, on a web port such as 80, 443, 8080 or 8443." |
+* | "host" | "Use a public host name or IP address, without http:// or a port." |
+* | "host_cloudflare" | "Cloudflare doesn't allow TCP checks of its own addresses. Use your server's address." |
+* | "host_underscore" | "Host names can't contain underscores (_). Use a public host name or IP address." |
+* | "port" | "Use a port from 1 to 65535." |
+* | "port_blocked" | "Cloudflare blocks port 25. Use another port." |
 * | "expected_status" | "Use a status from 100 to 599, or leave it empty." |
 * | "keyword" | "Use at most 200 characters." |
 * | "interval" | "Use whole seconds, from 30 to 86,400 (24 hours)." |
@@ -29,6 +34,11 @@ export const monitor_field_invalid = /** @type {((inputs: Monitor_Field_InvalidI
 	if (locale === "pt-BR") {
 		if (i?.field === "name") return /** @type {LocalizedString} */ (`Dê um nome ao monitor.`);
 		if (i?.field === "url") return /** @type {LocalizedString} */ (`Use um endereço http ou https público, numa porta web como 80, 443, 8080 ou 8443.`);
+		if (i?.field === "host") return /** @type {LocalizedString} */ (`Use um nome de host ou endereço IP público, sem http:// nem porta.`);
+		if (i?.field === "host_cloudflare") return /** @type {LocalizedString} */ (`A Cloudflare não permite verificações TCP dos próprios endereços. Use o endereço do seu servidor.`);
+		if (i?.field === "host_underscore") return /** @type {LocalizedString} */ (`Nomes de host não podem ter sublinhado (_). Use um nome de host ou endereço IP público.`);
+		if (i?.field === "port") return /** @type {LocalizedString} */ (`Use uma porta de 1 a 65535.`);
+		if (i?.field === "port_blocked") return /** @type {LocalizedString} */ (`A Cloudflare bloqueia a porta 25. Use outra porta.`);
 		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Use um status de 100 a 599, ou deixe vazio.`);
 		if (i?.field === "keyword") return /** @type {LocalizedString} */ (`Use no máximo 200 caracteres.`);
 		if (i?.field === "interval") return /** @type {LocalizedString} */ (`Use segundos inteiros, de 30 a 86.400 (24 horas).`);
@@ -40,6 +50,11 @@ export const monitor_field_invalid = /** @type {((inputs: Monitor_Field_InvalidI
 	{
 		if (i?.field === "name") return /** @type {LocalizedString} */ (`Give the monitor a name.`);
 		if (i?.field === "url") return /** @type {LocalizedString} */ (`Use a public http or https address, on a web port such as 80, 443, 8080 or 8443.`);
+		if (i?.field === "host") return /** @type {LocalizedString} */ (`Use a public host name or IP address, without http:// or a port.`);
+		if (i?.field === "host_cloudflare") return /** @type {LocalizedString} */ (`Cloudflare doesn't allow TCP checks of its own addresses. Use your server's address.`);
+		if (i?.field === "host_underscore") return /** @type {LocalizedString} */ (`Host names can't contain underscores (_). Use a public host name or IP address.`);
+		if (i?.field === "port") return /** @type {LocalizedString} */ (`Use a port from 1 to 65535.`);
+		if (i?.field === "port_blocked") return /** @type {LocalizedString} */ (`Cloudflare blocks port 25. Use another port.`);
 		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Use a status from 100 to 599, or leave it empty.`);
 		if (i?.field === "keyword") return /** @type {LocalizedString} */ (`Use at most 200 characters.`);
 		if (i?.field === "interval") return /** @type {LocalizedString} */ (`Use whole seconds, from 30 to 86,400 (24 hours).`);

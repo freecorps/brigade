@@ -53,9 +53,11 @@ import {
   formatSeconds,
   monitorActions,
   monitorBadge,
+  monitorsFull,
   monitorRefusal,
   newHeartbeat,
   sourceChips,
+  tcpHostLabel,
   type CheckedDraft,
   type CheckedEdit,
   type MonitorAction,
@@ -89,8 +91,10 @@ export function MonitorsCard() {
   const manage = can(role, "monitor:manage");
   const { rows, status, error } = useQuery("monitors.all", {});
   const createHttp = useMutation("monitor.createHttp");
+  const createTcp = useMutation("monitor.createTcp");
   const createHeartbeat = useMutation("monitor.createHeartbeat");
   const updateHttp = useMutation("monitor.updateHttp");
+  const updateTcp = useMutation("monitor.updateTcp");
   const updateHeartbeat = useMutation("monitor.updateHeartbeat");
   const setPaused = useMutation("monitor.setPaused");
   const remove = useMutation("monitor.delete");
@@ -153,8 +157,9 @@ export function MonitorsCard() {
     : null;
   const onCreate = async (checked: Extract<CheckedDraft, { ok: true }>) => {
     setRefused(null);
-    if (checked.kind === "http") {
-      void createHttp(checked.args).then(report(checked.args.name));
+    if (checked.kind !== "heartbeat") {
+      const sent = checked.kind === "http" ? createHttp(checked.args) : createTcp(checked.args);
+      void sent.then(report(checked.args.name));
       close();
       return true;
     }
@@ -198,7 +203,12 @@ export function MonitorsCard() {
    */
   const onSave = (row: MonitorRow, checked: Extract<CheckedEdit, { ok: true }>) => {
     setRefused(null);
-    const sent = checked.kind === "http" ? updateHttp(checked.args) : updateHeartbeat(checked.args);
+    const sent =
+      checked.kind === "http"
+        ? updateHttp(checked.args)
+        : checked.kind === "tcp"
+          ? updateTcp(checked.args)
+          : updateHeartbeat(checked.args);
     void sent.then(report(row.name));
     closeEdit(row.id);
   };
@@ -270,7 +280,7 @@ export function MonitorsCard() {
       <CardContent className="flex flex-col gap-5">
         {adding ? (
           <MonitorForm
-            mode={{ kind: "create", onCreate }}
+            mode={{ kind: "create", full: monitorsFull(rows.length), onCreate }}
             onCancel={close}
             onChanged={onChanged}
             discard={discard}
@@ -444,6 +454,15 @@ function MonitorItem({
               {row.url}
             </p>
           </details>
+        ) : row.kind === "tcp" ? (
+          // Inline, so a long host wraps back to the start of the line; the port never splits.
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium">TCP</span>{" "}
+            <span className="[overflow-wrap:anywhere] select-text">
+              {tcpHostLabel(row)}
+              <span className="whitespace-nowrap">:{row.port}</span>
+            </span>
+          </p>
         ) : (
           <p className="text-sm text-muted-foreground">
             {m.monitor_heartbeat_every({ interval: formatSeconds(row.intervalSeconds, locale) })}

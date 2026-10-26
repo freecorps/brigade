@@ -333,7 +333,7 @@
       }
     }
   ],
-  "monitors_empty": "Nada é monitorado ainda. Adicione uma verificação HTTP, ou um heartbeat para tarefas que devem dar sinal de vida.",
+  "monitors_empty": "Nada é monitorado ainda. Adicione uma verificação HTTP, uma porta TCP, ou um heartbeat para tarefas que devem dar sinal de vida.",
   "monitor_add": "Adicionar monitor",
   "monitor_kind": [
     {
@@ -341,10 +341,23 @@
       "selectors": ["kind"],
       "match": {
         "kind=http": "Verificação HTTP",
+        "kind=tcp": "Porta TCP",
         "kind=*": "Heartbeat"
       }
     }
   ],
+  "monitor_kind_short": [
+    {
+      "declarations": ["input kind"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=http": "HTTP",
+        "kind=tcp": "TCP",
+        "kind=*": "Heartbeat"
+      }
+    }
+  ],
+  "monitor_limit_reached": "Este workspace já tem {max} monitores, o máximo possível. Exclua um para adicionar outro.",
   "monitor_status": [
     {
       "declarations": ["input status"],
@@ -404,6 +417,11 @@
       "match": {
         "field=name": "Dê um nome ao monitor.",
         "field=url": "Use um endereço http ou https público, numa porta web como 80, 443, 8080 ou 8443.",
+        "field=host": "Use um nome de host ou endereço IP público, sem http:// nem porta.",
+        "field=host_cloudflare": "A Cloudflare não permite verificações TCP dos próprios endereços. Use o endereço do seu servidor.",
+        "field=host_underscore": "Nomes de host não podem ter sublinhado (_). Use um nome de host ou endereço IP público.",
+        "field=port": "Use uma porta de 1 a 65535.",
+        "field=port_blocked": "A Cloudflare bloqueia a porta 25. Use outra porta.",
         "field=expected_status": "Use um status de 100 a 599, ou deixe vazio.",
         "field=keyword": "Use no máximo 200 caracteres.",
         "field=interval": "Use segundos inteiros, de 30 a 86.400 (24 horas).",
@@ -423,6 +441,8 @@
         "field=kind": "Tipo de monitor",
         "field=name": "Nome",
         "field=url": "URL",
+        "field=host": "Host",
+        "field=port": "Porta",
         "field=method": "Método",
         "field=expected_status": "Status esperado",
         "field=keyword": "Texto que a página deve conter",
@@ -440,7 +460,10 @@
       "match": {
         "field=url": "Todos no workspace, inclusive leitores, veem esta URL: não coloque tokens nem senhas nela.",
         "field=expected_status": "Vazio: qualquer 2xx ou 3xx. Redirecionamentos não são seguidos.",
+        "field=host": "Passa quando uma conexão com este host e porta abre; nada é enviado. Hosts com proxy da Cloudflare não podem ser verificados por TCP.",
+        "field=port": "Qualquer porta menos a 25.",
         "field=timeout": "Quanto tempo uma verificação pode levar.",
+        "field=timeout_tcp": "Quanto tempo a conexão pode levar para abrir.",
         "field=*": "Quanto um sinal pode atrasar antes de contar como perdido."
       }
     }

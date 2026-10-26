@@ -33,7 +33,8 @@ export type DomainEvent<Type extends string = string, Data = unknown> = {
 /**
  * `conflict` means a well-formed request cannot apply to the current state: the id already exists, or the
  * target value already holds (no change — for status and severity alike). `limit_reached`: it would go over a
- * per-member cap (a member's devices), so the caller can tell "nothing to do" from "not done".
+ * per-member or per-workspace cap (a member's devices, a workspace's monitors), so the caller can tell "nothing
+ * to do" from "not done".
  */
 export type MutationErrorCode =
   | "unknown_mutation"

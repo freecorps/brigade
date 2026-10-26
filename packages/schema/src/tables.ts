@@ -104,7 +104,8 @@ export type MonitorCheck = {
 };
 
 /**
- * A monitor (RFC 0003, 0007). HTTP fields are null for a heartbeat, `graceSeconds` is null for HTTP. `status`,
+ * A monitor (RFC 0003, 0007). Each kind's fields are null for the others: `url`, `method`, `expectedStatus` and
+ * `keyword` for HTTP, `host` and `port` for TCP, `graceSeconds` for a heartbeat. `status`,
  * `checks`, `alertId` and `incidentId` are written by the server only, from probe reports and heartbeats.
  */
 export type MonitorRow = {
@@ -117,10 +118,13 @@ export type MonitorRow = {
   expectedStatus: number | null;
   /** Text the body must contain; null: none. */
   keyword: string | null;
+  /** TCP: the host name or address (IPv6 without brackets) and port connected to. */
+  host: string | null;
+  port: number | null;
   timeoutSeconds: number | null;
   /** Probe regions, empty for a heartbeat. */
   regions: ProbeRegion[];
-  /** HTTP: how often each region checks. Heartbeat: how often a ping is expected. */
+  /** HTTP and TCP: how often each region checks. Heartbeat: how often a ping is expected. */
   intervalSeconds: number;
   graceSeconds: number | null;
   paused: boolean;

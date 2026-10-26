@@ -21,8 +21,12 @@ import {
   monitorActions,
   monitorBadge,
   monitorRefusal,
+  monitorsFull,
   newHeartbeat,
   sourceChips,
+  splitHostPort,
+  tcpFieldReason,
+  tcpHostLabel,
 } from "../src/lib/monitors";
 
 const id = () => newId("mon", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n)));
@@ -180,6 +184,93 @@ test("the fields the shard would refuse are named, a private URL among them", ()
   expect(head).toMatchObject({ ok: true, args: { method: "HEAD", keyword: null } });
 });
 
+test("a TCP draft becomes createTcp's args; a private host, port 25 and a host with a port are refused", () => {
+  const tcp = { ...EMPTY_DRAFT, kind: "tcp" as const, name: "Database" };
+  expect(checkDraft({ ...tcp, host: " DB.Example.com ", port: "5432" }, id())).toMatchObject({
+    ok: true,
+    kind: "tcp",
+    args: { host: "db.example.com", port: 5432, timeoutSeconds: 10, regions: ["enam", "weur"] },
+  });
+  const fields = (draft: object) => {
+    const checked = checkDraft({ ...tcp, ...draft }, id());
+    return checked.ok ? [] : [...checked.fields].sort();
+  };
+  // The SSRF rules of HTTP checks, through the schema's own `tcpTargetProblems`.
+  expect(fields({ host: "10.0.0.5", port: "5432" })).toEqual(["host"]);
+  expect(fields({ host: "169.254.169.254", port: "80" })).toEqual(["host"]);
+  expect(fields({ host: "localhost", port: "22" })).toEqual(["host"]);
+  expect(fields({ host: "db.example.com:5432", port: "5432" })).toEqual(["host"]);
+  expect(fields({ host: "https://example.com", port: "443" })).toEqual(["host"]);
+  expect(fields({ host: "example.com", port: "25" })).toEqual(["port"]);
+  expect(fields({ host: "example.com", port: "70000" })).toEqual(["port"]);
+  expect(fields({ host: "", port: "" })).toEqual(["host", "port"]);
+  // Both at once: a private host and port 25 are each named.
+  expect(fields({ host: "10.0.0.5", port: "25" })).toEqual(["host", "port"]);
+  // The timeout rule holds for TCP too, named alongside another refused field.
+  expect(
+    fields({ host: "10.0.0.5", port: "22", intervalSeconds: "30", timeoutSeconds: "31" }),
+  ).toEqual(["host", "timeoutSeconds"]);
+  expect(fields({ host: "example.com", port: "22", regions: [] })).toEqual(["regions"]);
+  // Cloudflare's own addresses, which connect() never reaches.
+  expect(fields({ host: "104.16.0.1", port: "443" })).toEqual(["host"]);
+  expect(m.monitor_field_invalid({ field: "port" }, { locale: "pt-BR" })).toBe(
+    "Use uma porta de 1 a 65535.",
+  );
+});
+
+test("a refused TCP port or host has its own wording when Cloudflare or an underscore is the reason", () => {
+  const tcp = { kind: "tcp" as const, host: "db.example.com", port: "5432" };
+  expect(tcpFieldReason("port", { ...tcp, port: "25" })).toBe("port_blocked");
+  expect(tcpFieldReason("port", { ...tcp, port: "70000" })).toBeNull();
+  expect(tcpFieldReason("host", { ...tcp, host: " 104.16.0.1 " })).toBe("host_cloudflare");
+  expect(tcpFieldReason("host", { ...tcp, host: "[2606:4700::1111]" })).toBe("host_cloudflare");
+  expect(tcpFieldReason("host", { ...tcp, host: "10.0.0.5" })).toBeNull();
+  expect(tcpFieldReason("host", { ...tcp, host: "db_1.example.com" })).toBe("host_underscore");
+  expect(tcpFieldReason("port", { ...tcp, kind: "http", port: "25" })).toBeNull();
+  for (const locale of ["en", "pt-BR"] as const) {
+    for (const field of ["port_blocked", "host_cloudflare", "host_underscore"]) {
+      expect(m.monitor_field_invalid({ field }, { locale })).not.toBe(
+        m.monitor_field_invalid({ field: "other" }, { locale }),
+      );
+    }
+  }
+  expect(m.monitor_field_invalid({ field: "port_blocked" })).toBe(
+    "Cloudflare blocks port 25. Use another port.",
+  );
+});
+
+test("a pasted host:port or URL splits into host and port; a bare host pastes as typed", () => {
+  expect(splitHostPort("db.example.com:5432")).toEqual({ host: "db.example.com", port: "5432" });
+  expect(splitHostPort(" postgres://db.example.com:5432/app?ssl=1 ")).toEqual({
+    host: "db.example.com",
+    port: "5432",
+  });
+  expect(splitHostPort("[2001:db8::1]:22")).toEqual({ host: "2001:db8::1", port: "22" });
+  expect(splitHostPort("https://example.com/health")).toEqual({ host: "example.com", port: null });
+  expect(splitHostPort("db.example.com")).toBeNull();
+  expect(splitHostPort("2001:db8::1")).toBeNull();
+  expect(splitHostPort("not a host:22")).toBeNull();
+});
+
+test("a pasted connection string fills in its host and port, never its credentials", () => {
+  for (const [text, host, port] of [
+    ["postgres://admin:hunter2@db.example.com:5432/app", "db.example.com", "5432"],
+    ["redis://:hunter2@cache.example.com:6379", "cache.example.com", "6379"],
+    // An unescaped `@` in the password: everything up to the last one before the path is credentials.
+    ["mysql://admin:hun@ter2@db.example.com:3306/app?ssl=true", "db.example.com", "3306"],
+    ["amqp://admin@[2001:db8::1]:5672", "2001:db8::1", "5672"],
+  ] as const) {
+    const split = splitHostPort(text);
+    expect(split).toEqual({ host, port });
+    expect(JSON.stringify(split)).not.toMatch(/hunter2|hun@ter2|admin/);
+  }
+});
+
+test("a TCP host reads as itself before its port, an IPv6 address in brackets", () => {
+  expect(tcpHostLabel({ host: "db.example.com" })).toBe("db.example.com");
+  expect(tcpHostLabel({ host: "2001:db8::10" })).toBe("[2001:db8::10]");
+});
+
 test("a heartbeat URL carries the workspace, the monitor and a secret whose hash is sent", async () => {
   const monitorId = id();
   const { tokenHash, url } = await newHeartbeat(
@@ -211,6 +302,8 @@ const row = (overrides: Partial<MonitorRow> = {}): MonitorRow => ({
   method: "GET",
   expectedStatus: null,
   keyword: null,
+  host: null,
+  port: null,
   timeoutSeconds: 10,
   regions: ["enam", "weur"],
   intervalSeconds: 60,
@@ -313,10 +406,41 @@ test("only a change to what is checked, on a running HTTP monitor, starts it ove
   expect(editRestarts({ ...draft, url: "not a url" }, http)).toBe(false);
 });
 
+test("a TCP monitor edits like an HTTP one: its own update, restarting on a new host, port or timeout", () => {
+  const tcp = row({
+    kind: "tcp",
+    name: "Database",
+    url: null,
+    method: null,
+    host: "db.example.com",
+    port: 5432,
+  });
+  const draft = draftFromRow(tcp);
+  expect(draft).toMatchObject({ kind: "tcp", host: "db.example.com", port: "5432" });
+  expect(checkEdit(draft, tcp)).toMatchObject({ ok: true, kind: "tcp", changed: false });
+  expect(checkEdit({ ...draft, name: "Primary" }, tcp)).toMatchObject({
+    ok: true,
+    kind: "tcp",
+    args: { id: tcp.id, name: "Primary", host: "db.example.com", port: 5432 },
+    changed: true,
+  });
+  expect(checkEdit({ ...draft, port: "25" }, tcp)).toEqual({ ok: false, fields: ["port"] });
+  expect(editRestarts({ ...draft, name: "Primary", intervalSeconds: "120" }, tcp)).toBe(false);
+  expect(editRestarts({ ...draft, port: "5433" }, tcp)).toBe(true);
+  expect(editRestarts({ ...draft, host: "db2.example.com" }, tcp)).toBe(true);
+  expect(editRestarts({ ...draft, timeoutSeconds: "5" }, tcp)).toBe(true);
+  expect(editRestarts({ ...draft, port: "5433" }, { ...tcp, paused: true })).toBe(false);
+});
+
 test("a refused monitor change uses the shared wording, except a monitor that is gone", () => {
   expect(monitorRefusal("forbidden")).toBe(m.sync_error_forbidden());
   expect(monitorRefusal("conflict")).toBe(m.sync_error_conflict());
   expect(monitorRefusal("not_found")).toBe("It was deleted.");
+  expect(monitorRefusal("limit_reached")).toBe(
+    "This workspace has 100 monitors, the most it can have. Delete one to add another.",
+  );
+  expect(monitorsFull(99)).toBe(false);
+  expect(monitorsFull(100)).toBe(true);
   expect(m.monitor_gone({}, { locale: "pt-BR" })).toBe("Ele foi excluído.");
 });
 

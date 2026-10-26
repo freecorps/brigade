@@ -5,6 +5,7 @@ import {
   MAX_INTERVAL_SECONDS,
   MAX_TIMEOUT_SECONDS,
   MIN_INTERVAL_SECONDS,
+  MONITOR_HOST_MAX,
   MONITOR_KEYWORD_MAX,
   MONITOR_KINDS,
   MONITOR_NAME_MAX,
@@ -19,7 +20,7 @@ import { cn } from "cn";
 import { CheckIcon, CircleAlertIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
-import { Field } from "@/components/ui/field";
+import { Field, FormError } from "@/components/ui/field";
 import {
   checkDraft,
   checkEdit,
@@ -28,6 +29,9 @@ import {
   draftFromRow,
   editRestarts,
   EMPTY_DRAFT,
+  monitorLimitReached,
+  splitHostPort,
+  tcpFieldReason,
   type CheckedDraft,
   type CheckedEdit,
   type DraftField,
@@ -51,6 +55,8 @@ export const CONFIRM_DESTRUCTIVE =
 const FIELD_KEYS: Record<DraftField, string> = {
   name: "name",
   url: "url",
+  host: "host",
+  port: "port",
   expectedStatus: "expected_status",
   keyword: "keyword",
   intervalSeconds: "interval",
@@ -63,6 +69,8 @@ const FIELD_KEYS: Record<DraftField, string> = {
 export type MonitorFormMode =
   | {
       kind: "create";
+      /** The workspace has as many monitors as it may (`monitorsFull`): the form says so from the start, and sends nothing. */
+      full: boolean;
       onCreate: (checked: Extract<CheckedDraft, { ok: true }>) => Promise<boolean>;
     }
   | {
@@ -80,7 +88,7 @@ export type MonitorFormMode =
 export type DiscardPrompt = { onDiscard: () => void; onKeep: () => void; asked: number };
 
 /**
- * A new HTTP check or heartbeat, or an existing one's settings. Checked on submit with the mutation's own validator,
+ * A new HTTP check, TCP port or heartbeat, or an existing one's settings. Checked on submit with the mutation's own validator,
  * so a value the shard would refuse is marked in its field, with what to fix, and the draft stays. Creating:
  * `onCreate` sends it, and the form closes when it resolves true. Editing: the values are the monitor's, an edit
  * that changes nothing just closes, saving says when it starts the checks over, and Delete asks first, saying what
@@ -105,13 +113,19 @@ export function MonitorForm({
   const [draft, setDraft] = useState<MonitorDraft>(initial);
   const [invalid, setInvalid] = useState<ReadonlySet<DraftField>>(new Set());
   const [sending, setSending] = useState(false);
+  /** A new monitor cannot be added at all: said at the top as the form opens, not after it is filled in. */
+  const full = mode.kind === "create" && mode.full;
   const formRef = useRef<HTMLFormElement>(null);
   const kindId = useId();
   const regionsId = useId();
   const methodId = useId();
   const regionsErrorId = useId();
+  const hostErrorId = useId();
+  const portErrorId = useId();
+  const targetHintId = useId();
   const headingId = useId();
   const restartId = useId();
+  const fullId = useId();
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => nameRef.current?.focus(), []);
   const changed = draftChanged(draft, initial);
@@ -124,7 +138,9 @@ export function MonitorForm({
     }
   };
   const error = (field: DraftField) =>
-    invalid.has(field) ? m.monitor_field_invalid({ field: FIELD_KEYS[field] }) : undefined;
+    invalid.has(field)
+      ? m.monitor_field_invalid({ field: tcpFieldReason(field, draft) ?? FIELD_KEYS[field] })
+      : undefined;
   const text = (field: DraftField & keyof MonitorDraft) => ({
     value: draft[field] as string,
     error: error(field),
@@ -152,6 +168,10 @@ export function MonitorForm({
     }
     const checked = checkDraft(draft, client.newId("mon"));
     if (!checked.ok) return refuse(checked.fields);
+    // The shard would refuse it (`limit_reached`); the draft stays, in case one is deleted.
+    if (mode.full) {
+      return document.getElementById(fullId)?.scrollIntoView({ block: "nearest" });
+    }
     setSending(true);
     // `onCreate` can throw (no WebCrypto outside a secure context): the form must not stay busy.
     void mode
@@ -172,6 +192,9 @@ export function MonitorForm({
   };
 
   const http = draft.kind === "http";
+  const tcp = draft.kind === "tcp";
+  /** Checked from the probe regions, with a timeout: HTTP and TCP. */
+  const probed = http || tcp;
   const restarts = editing ? editRestarts(rebaseDraft(draft, initial, editing), editing) : false;
   return (
     <form
@@ -183,6 +206,7 @@ export function MonitorForm({
       aria-labelledby={editing ? headingId : undefined}
       className="flex min-w-0 flex-col gap-4 rounded-md border bg-muted/40 p-4"
     >
+      {full ? <FormError id={fullId}>{monitorLimitReached()}</FormError> : null}
       {discard ? (
         <DiscardChanges
           name={editing?.name ?? null}
@@ -213,7 +237,7 @@ export function MonitorForm({
           <div
             role="radiogroup"
             aria-labelledby={kindId}
-            className="grid w-full grid-cols-2 divide-x divide-border overflow-hidden rounded-md bg-card outline-1 -outline-offset-1 outline-input sm:w-fit"
+            className="grid w-full grid-cols-[repeat(3,minmax(max-content,1fr))] divide-x divide-border overflow-hidden rounded-md bg-card outline-1 -outline-offset-1 outline-input sm:w-fit"
           >
             {MONITOR_KINDS.map((kind) => (
               <label
@@ -228,7 +252,8 @@ export function MonitorForm({
                   onChange={() => set("kind", kind)}
                   className="sr-only"
                 />
-                {m.monitor_kind({ kind })}
+                {/* Short, so three fit on a 320px phone in every language; the edit header has the long name. */}
+                {m.monitor_kind_short({ kind })}
               </label>
             ))}
           </div>
@@ -292,6 +317,69 @@ export function MonitorForm({
               />
             ) : null}
           </div>
+        </>
+      ) : null}
+
+      {tcp ? (
+        // Host and port on one row at every width, the port narrower on a phone so the host keeps the room; their
+        // errors and the hint run under both, full width.
+        <div className="flex flex-col gap-1.5">
+          <div className="grid grid-cols-[minmax(0,1fr)_4.75rem] gap-3 sm:grid-cols-[minmax(0,1fr)_6.5rem]">
+            <Field
+              label={m.monitor_field_label({ field: "host" })}
+              placeholder="db.example.com"
+              maxLength={MONITOR_HOST_MAX}
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              {...text("host")}
+              error={undefined}
+              aria-invalid={invalid.has("host") || undefined}
+              aria-describedby={describe(invalid.has("host") && hostErrorId, targetHintId)}
+              onPaste={(event) => {
+                // `db.example.com:5432` or `postgres://db.example.com:5432/app` into both fields, when it
+                // replaces the whole host; pasted into the middle of one, it goes in as typed.
+                const input = event.currentTarget;
+                const whole =
+                  input.selectionStart === 0 && input.selectionEnd === input.value.length;
+                const split = whole ? splitHostPort(event.clipboardData.getData("text")) : null;
+                if (!split) return;
+                event.preventDefault();
+                set("host", split.host);
+                if (split.port !== null) set("port", split.port);
+              }}
+            />
+            <Field
+              label={m.monitor_field_label({ field: "port" })}
+              inputMode="numeric"
+              placeholder="5432"
+              maxLength={5}
+              {...text("port")}
+              error={undefined}
+              aria-invalid={invalid.has("port") || undefined}
+              aria-describedby={describe(invalid.has("port") && portErrorId, targetHintId)}
+            />
+          </div>
+          {(["host", "port"] as const).map((field) =>
+            invalid.has(field) ? (
+              <p
+                key={field}
+                id={field === "host" ? hostErrorId : portErrorId}
+                className="flex items-start gap-1.5 text-sm text-destructive"
+              >
+                <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+                <span className="min-w-0 [overflow-wrap:anywhere]">{error(field)}</span>
+              </p>
+            ) : null,
+          )}
+          <p id={targetHintId} className="text-sm text-muted-foreground">
+            {m.monitor_field_hint({ field: "host" })} {m.monitor_field_hint({ field: "port" })}
+          </p>
+        </div>
+      ) : null}
+
+      {probed ? (
+        <>
           <fieldset
             className="flex flex-col gap-1.5"
             aria-describedby={invalid.has("regions") ? regionsErrorId : undefined}
@@ -366,10 +454,10 @@ export function MonitorForm({
           placeholder={String(MIN_INTERVAL_SECONDS)}
           {...text("intervalSeconds")}
         />
-        {http ? (
+        {probed ? (
           <Field
             label={m.monitor_field_label({ field: "timeout" })}
-            hint={m.monitor_field_hint({ field: "timeout" })}
+            hint={m.monitor_field_hint({ field: tcp ? "timeout_tcp" : "timeout" })}
             inputMode="numeric"
             maxLength={String(MAX_TIMEOUT_SECONDS).length}
             {...text("timeoutSeconds")}
@@ -394,7 +482,7 @@ export function MonitorForm({
               className="mb-4 rounded-md bg-card px-3 py-2 text-sm text-muted-foreground"
             >
               {m.monitor_edit({ part: "restart", name: "" })}
-              {/* `monitor.updateHttp` starts it over from Waiting but keeps its alert and incident. */}
+              {/* `monitor.updateHttp` and `updateTcp` start it over from Waiting but keeps its alert and incident. */}
               {editing && monitorAlerting(editing)
                 ? ` ${m.monitor_edit({ part: "restart_alert", name: "" })}`
                 : null}
@@ -406,7 +494,7 @@ export function MonitorForm({
           <Button
             type="submit"
             disabled={sending}
-            aria-describedby={restarts ? restartId : undefined}
+            aria-describedby={restarts ? restartId : full ? fullId : undefined}
           >
             {editing ? m.monitor_edit({ part: "save", name: "" }) : m.monitor_create()}
           </Button>
@@ -419,6 +507,9 @@ export function MonitorForm({
     </form>
   );
 }
+
+/** The ids an input is described by, skipping the ones not shown. */
+const describe = (...ids: (string | false)[]) => ids.filter(Boolean).join(" ") || undefined;
 
 /**
  * Asked when another monitor's form was opened while this one has changes: Keep editing (focused, and Escape)

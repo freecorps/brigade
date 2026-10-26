@@ -9,6 +9,11 @@ export type Monitor_Field_InvalidInputs = {
 * | --- | --- |
 * | "name" | "Give the monitor a name." |
 * | "url" | "Use a public http or https address, on a web port such as 80, 443, 8080 or 8443." |
+* | "host" | "Use a public host name or IP address, without http:// or a port." |
+* | "host_cloudflare" | "Cloudflare doesn't allow TCP checks of its own addresses. Use your server's address." |
+* | "host_underscore" | "Host names can't contain underscores (_). Use a public host name or IP address." |
+* | "port" | "Use a port from 1 to 65535." |
+* | "port_blocked" | "Cloudflare blocks port 25. Use another port." |
 * | "expected_status" | "Use a status from 100 to 599, or leave it empty." |
 * | "keyword" | "Use at most 200 characters." |
 * | "interval" | "Use whole seconds, from 30 to 86,400 (24 hours)." |

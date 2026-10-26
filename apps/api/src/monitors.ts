@@ -15,7 +15,7 @@ import {
   type RandomBytes,
 } from "@freecorps/brigade-schema";
 import type { MutationResultMessage } from "@freecorps/brigade-sync/protocol";
-import type { HttpCheckConfig } from "./check.ts";
+import type { CheckConfig } from "./check.ts";
 import { probeName, type ProbeDO, type ProbeReport } from "./probe.ts";
 import type { Shard } from "./shard.ts";
 import type { RowChange } from "./store.ts";
@@ -207,13 +207,13 @@ export class Monitoring {
   }
 
   /**
-   * HTTP monitors whose results went stale since the last report (`monitorStatus`): every probe stopped
+   * HTTP and TCP monitors whose results went stale since the last report (`monitorStatus`): every probe stopped
    * reporting, or too many did. Each gets `monitor.evaluate`, which turns it `unknown` (no data) and emits
    * `monitor.status_changed`; a firing alert stays (RFC 0007 "Quorum and flapping").
    */
   private staleMonitors(monitors: MonitorRow[], now: number): void {
     for (const monitor of monitors) {
-      if (monitor.kind !== "http" || monitor.paused) continue;
+      if (monitor.kind === "heartbeat" || monitor.paused) continue;
       if (monitorStatus(monitor, monitor.checks, now) === monitor.status) continue;
       this.run("monitor", newId("evl", now, this.options.randomBytes), "monitor.evaluate", {
         id: monitor.id,
@@ -240,7 +240,7 @@ export class Monitoring {
       PROBE_REGIONS.map(async (region) => {
         const active = monitors.filter(
           (monitor) =>
-            monitor.kind === "http" && !monitor.paused && monitor.regions.includes(region),
+            monitor.kind !== "heartbeat" && !monitor.paused && monitor.regions.includes(region),
         );
         const checks = active.map(toConfig);
         const config = JSON.stringify(checks);
@@ -281,7 +281,18 @@ export class Monitoring {
   }
 }
 
-function toConfig(monitor: MonitorRow): HttpCheckConfig {
+function toConfig(monitor: MonitorRow): CheckConfig {
+  if (monitor.kind === "tcp") {
+    return {
+      kind: "tcp",
+      id: monitor.id,
+      host: monitor.host!,
+      port: monitor.port!,
+      intervalSeconds: monitor.intervalSeconds,
+      timeoutSeconds: monitor.timeoutSeconds!,
+    };
+  }
+  // No `kind`: the config an HTTP check had before TCP checks, so a deploy does not restart every probe's streaks.
   return {
     id: monitor.id,
     url: monitor.url!,

@@ -11,6 +11,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | kind | output |
 * | --- | --- |
 * | "http" | "HTTP check" |
+* | "tcp" | "TCP port" |
 * | * | "Heartbeat" |
 *
 * @param {Monitor_KindInputs} inputs
@@ -21,10 +22,12 @@ export const monitor_kind = /** @type {((inputs: Monitor_KindInputs, options?: {
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.kind === "http") return /** @type {LocalizedString} */ (`Verificação HTTP`);
+		if (i?.kind === "tcp") return /** @type {LocalizedString} */ (`Porta TCP`);
 		return /** @type {LocalizedString} */ (`Heartbeat`)
 	}
 	{
 		if (i?.kind === "http") return /** @type {LocalizedString} */ (`HTTP check`);
+		if (i?.kind === "tcp") return /** @type {LocalizedString} */ (`TCP port`);
 		return /** @type {LocalizedString} */ (`Heartbeat`)
 	}
 });

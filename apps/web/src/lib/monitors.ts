@@ -6,20 +6,28 @@ import {
   can,
   createHeartbeatMonitor,
   createHttpMonitor,
+  createTcpMonitor,
   heartbeatToken,
+  isCloudflareAddress,
   isFresh,
+  MAX_MONITORS_PER_WORKSPACE,
   monitorSources,
   newHeartbeatSecret,
+  normalizeTcpHost,
   PROBE_REGIONS,
+  TCP_BLOCKED_PORTS,
+  tcpTargetProblems,
   type ArgsOf,
   type CheckSource,
   type HttpMethod,
   type MonitorCheck,
+  type MonitorKind,
   type MonitorRow,
   type ProbeRegion,
   type Role,
   type updateHeartbeatMonitor,
   type updateHttpMonitor,
+  type updateTcpMonitor,
 } from "@freecorps/brigade-schema";
 
 /** What the status badge says: a paused monitor is paused, whatever its last status. */
@@ -70,6 +78,12 @@ export function checkErrorReason(
   return check.error ?? "unknown";
 }
 
+/** A TCP monitor's host as it reads before `:port`: an IPv6 address in brackets (`[2001:db8::1]`). */
+export function tcpHostLabel(row: Pick<MonitorRow, "host">): string {
+  const host = row.host ?? "";
+  return host.includes(":") ? `[${host}]` : host;
+}
+
 /** `142 ms`, `1,284 ms`. */
 export function formatLatency(ms: number, locale: Locale): string {
   return formatNumber(ms, locale, { style: "unit", unit: "millisecond", unitDisplay: "short" });
@@ -77,9 +91,11 @@ export function formatLatency(ms: number, locale: Locale): string {
 
 /** The create form as typed: every value a string (or the chosen regions), checked only on submit. */
 export type MonitorDraft = {
-  kind: "http" | "heartbeat";
+  kind: MonitorKind;
   name: string;
   url: string;
+  host: string;
+  port: string;
   method: HttpMethod;
   expectedStatus: string;
   keyword: string;
@@ -93,6 +109,8 @@ export const EMPTY_DRAFT: MonitorDraft = {
   kind: "http",
   name: "",
   url: "",
+  host: "",
+  port: "",
   method: "GET",
   expectedStatus: "",
   keyword: "",
@@ -115,13 +133,15 @@ const PLACEHOLDER_HASH = "0".repeat(64);
 
 export type CheckedDraft =
   | { ok: true; kind: "http"; args: ArgsOf<typeof createHttpMonitor> }
+  | { ok: true; kind: "tcp"; args: ArgsOf<typeof createTcpMonitor> }
   | { ok: true; kind: "heartbeat"; args: ArgsOf<typeof createHeartbeatMonitor> }
   | { ok: false; fields: DraftField[] };
 
 /**
  * The mutation's args for `draft` with a new monitor id, or the fields to fix: the validator the shard runs, plus
- * its one cross-field rule a form can break (a timeout longer than the interval). A keyword is dropped for HEAD,
- * whose response has no body; the form hides the field then.
+ * the rules it checks across fields (a timeout longer than the interval; for TCP, the target rules of
+ * `tcpTargetProblems`, which judge the host and the port together). A keyword is dropped for HEAD, whose response
+ * has no body; the form hides the field then.
  */
 export function checkDraft(draft: MonitorDraft, id: string): CheckedDraft {
   const common = {
@@ -137,27 +157,36 @@ export function checkDraft(draft: MonitorDraft, id: string): CheckedDraft {
     });
     return result.ok ? { ok: true, kind: "heartbeat", args: result.value } : refused(result.issues);
   }
+  const timeoutSeconds = wholeNumber(draft.timeoutSeconds);
+  // The cross-field rule, also when other fields are refused, if both numbers are fine on their own.
+  const issues: { path: string }[] =
+    timeoutSeconds > common.intervalSeconds ? [{ path: "timeoutSeconds" }] : [];
+  if (draft.kind === "tcp") {
+    const host = draft.host.trim();
+    const port = wholeNumber(draft.port);
+    const result = createTcpMonitor.args({
+      ...common,
+      host,
+      port,
+      timeoutSeconds,
+      regions: draft.regions,
+    });
+    // Also when another field is refused, so every field to fix is named at once.
+    issues.push(...tcpTargetProblems(host, port));
+    if (!result.ok || issues.length)
+      return refused([...(result.ok ? [] : result.issues), ...issues]);
+    return { ok: true, kind: "tcp", args: result.value };
+  }
   const result = createHttpMonitor.args({
     ...common,
     url: draft.url.trim(),
     method: draft.method,
     expectedStatus: optionalNumber(draft.expectedStatus),
     keyword: draft.method === "HEAD" ? null : optionalText(draft.keyword),
-    timeoutSeconds: wholeNumber(draft.timeoutSeconds),
+    timeoutSeconds,
     regions: draft.regions,
   });
-  if (!result.ok) {
-    const fields = refused(result.issues);
-    // The cross-field rule too, when both numbers are fine on their own.
-    const timeout = wholeNumber(draft.timeoutSeconds);
-    if (!fields.ok && timeout > wholeNumber(draft.intervalSeconds)) {
-      fields.fields = [...new Set([...fields.fields, "timeoutSeconds" as const])];
-    }
-    return fields;
-  }
-  if (result.value.timeoutSeconds > result.value.intervalSeconds) {
-    return { ok: false, fields: ["timeoutSeconds"] };
-  }
+  if (!result.ok || issues.length) return refused([...(result.ok ? [] : result.issues), ...issues]);
   return { ok: true, kind: "http", args: result.value };
 }
 
@@ -174,6 +203,8 @@ function refused(issues: readonly { path: string }[]): Extract<CheckedDraft, { o
 const DRAFT_FIELDS: readonly DraftField[] = [
   "name",
   "url",
+  "host",
+  "port",
   "expectedStatus",
   "keyword",
   "intervalSeconds",
@@ -181,6 +212,53 @@ const DRAFT_FIELDS: readonly DraftField[] = [
   "graceSeconds",
   "regions",
 ];
+
+/**
+ * The `monitor_field_invalid` key for a refused TCP field when it has its own wording: a port Cloudflare blocks, an
+ * address of Cloudflare's own (`tcpTargetProblems`), or a host with an underscore, which no host name may have
+ * (`db_1.example.com`). Null for every other field and reason.
+ */
+export function tcpFieldReason(
+  field: DraftField,
+  draft: Pick<MonitorDraft, "kind" | "host" | "port">,
+): "port_blocked" | "host_cloudflare" | "host_underscore" | null {
+  if (draft.kind !== "tcp") return null;
+  if (field === "port" && TCP_BLOCKED_PORTS.includes(wholeNumber(draft.port))) {
+    return "port_blocked";
+  }
+  if (field === "host") {
+    const host = normalizeTcpHost(draft.host.trim());
+    if (host !== undefined && isCloudflareAddress(host)) return "host_cloudflare";
+    if (draft.host.includes("_")) return "host_underscore";
+  }
+  return null;
+}
+
+/**
+ * A pasted `host:port`, `[v6]:port` or `scheme://user:password@host:port/path` split into the TCP form's two
+ * fields; the port is null when the paste has none, and the credentials of a connection string are dropped, never
+ * filled in. Null when the paste is a bare host already (or not a host at all), so it pastes as typed.
+ */
+export function splitHostPort(text: string): { host: string; port: string | null } | null {
+  const trimmed = text.trim();
+  const unschemed = trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  const rest = (unschemed === trimmed ? unschemed : unschemed.replace(/^[^/?#]*@/, "")).replace(
+    /[/?#].*$/,
+    "",
+  );
+  const match =
+    /^\[([0-9a-f:.]+)\](?::(\d{1,5}))?$/i.exec(rest) ?? /^([^\s:[\]@]+):(\d{1,5})$/.exec(rest);
+  if (match) return { host: match[1]!, port: match[2] ?? null };
+  return rest !== trimmed && /^[^\s:[\]@]+$/.test(rest) ? { host: rest, port: null } : null;
+}
+
+/**
+ * Whether the workspace has `MAX_MONITORS_PER_WORKSPACE` monitors, so the shard would refuse another one
+ * (`limit_reached`): the form says so on submit instead of sending it.
+ */
+export function monitorsFull(count: number): boolean {
+  return count >= MAX_MONITORS_PER_WORKSPACE;
+}
 
 /** What an owner or admin can do to a monitor from its row; everyone else reads it (`monitor:manage`). */
 export type MonitorAction = "edit" | "pause" | "resume";
@@ -198,13 +276,16 @@ export function draftFromRow(row: MonitorRow): MonitorDraft {
     kind: row.kind,
     name: row.name,
     url: row.url ?? "",
+    // Rows from before TCP monitors have neither field.
+    host: row.host ?? "",
+    port: row.port == null ? "" : String(row.port),
     method: row.method ?? "GET",
     expectedStatus: number(row.expectedStatus, ""),
     keyword: row.keyword ?? "",
     intervalSeconds: String(row.intervalSeconds),
     timeoutSeconds: number(row.timeoutSeconds, EMPTY_DRAFT.timeoutSeconds),
     graceSeconds: number(row.graceSeconds, EMPTY_DRAFT.graceSeconds),
-    regions: row.kind === "http" ? [...row.regions] : EMPTY_DRAFT.regions,
+    regions: row.kind === "heartbeat" ? EMPTY_DRAFT.regions : [...row.regions],
   };
 }
 
@@ -243,6 +324,7 @@ export function rebaseDraft(
 
 export type CheckedEdit =
   | { ok: true; kind: "http"; args: ArgsOf<typeof updateHttpMonitor>; changed: boolean }
+  | { ok: true; kind: "tcp"; args: ArgsOf<typeof updateTcpMonitor>; changed: boolean }
   | { ok: true; kind: "heartbeat"; args: ArgsOf<typeof updateHeartbeatMonitor>; changed: boolean }
   | { ok: false; fields: DraftField[] };
 
@@ -263,11 +345,16 @@ export function checkEdit(draft: MonitorDraft, row: MonitorRow): CheckedEdit {
       args.graceSeconds !== row.graceSeconds;
     return { ok: true, kind: "heartbeat", args, changed };
   }
-  const args = {
-    ...checked.args,
-    // The shard keeps them in `PROBE_REGIONS` order, so the comparison does too.
-    regions: PROBE_REGIONS.filter((region) => checked.args.regions.includes(region)),
-  };
+  // The shard keeps the regions in `PROBE_REGIONS` order, so the comparison does too.
+  const regions = PROBE_REGIONS.filter((region) => checked.args.regions.includes(region));
+  if (checked.kind === "tcp") {
+    const args = { ...checked.args, regions };
+    const changed = (["name", "intervalSeconds", ...TCP_TARGET_FIELDS] as const).some(
+      (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key]),
+    );
+    return { ok: true, kind: "tcp", args, changed };
+  }
+  const args = { ...checked.args, regions };
   const changed = (["name", "intervalSeconds", ...TARGET_FIELDS] as const).some(
     (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key]),
   );
@@ -275,16 +362,17 @@ export function checkEdit(draft: MonitorDraft, row: MonitorRow): CheckedEdit {
 }
 
 /**
- * Whether saving `draft` starts the monitor's checks over, as `monitor.updateHttp` does: a change to what is
- * checked (anything but the name and the interval) on a running HTTP monitor. Its results are dropped and it
- * waits for its regions again. A heartbeat's edit never restarts it.
+ * Whether saving `draft` starts the monitor's checks over, as `monitor.updateHttp` and `monitor.updateTcp` do: a
+ * change to what is checked (anything but the name and the interval) on a running HTTP or TCP monitor. Its results
+ * are dropped and it waits for its regions again. A heartbeat's edit never restarts it.
  */
 export function editRestarts(draft: MonitorDraft, row: MonitorRow): boolean {
-  if (row.kind !== "http" || row.paused) return false;
+  if (row.kind === "heartbeat" || row.paused) return false;
   const checked = checkEdit(draft, row);
-  if (!checked.ok || checked.kind !== "http") return false;
-  const { args } = checked;
-  return TARGET_FIELDS.some((key) => JSON.stringify(args[key]) !== JSON.stringify(row[key]));
+  if (!checked.ok || checked.kind === "heartbeat") return false;
+  const args: Partial<MonitorRow> = checked.args;
+  const fields = checked.kind === "tcp" ? TCP_TARGET_FIELDS : TARGET_FIELDS;
+  return fields.some((key) => JSON.stringify(args[key]) !== JSON.stringify(row[key]));
 }
 
 /** What an HTTP check is: changing any of these starts it over (`monitor.updateHttp`). */
@@ -297,13 +385,22 @@ const TARGET_FIELDS = [
   "regions",
 ] as const;
 
+/** What a TCP check is: changing any of these starts it over (`monitor.updateTcp`). */
+const TCP_TARGET_FIELDS = ["host", "port", "timeoutSeconds", "regions"] as const;
+
 /**
  * Why the shard refused a change to a monitor, in the shared wording (`mutationErrorReason`), except "not found",
- * whose shared sentence is about an incident.
+ * whose shared sentence is about an incident, and the monitor cap, which says what to do.
  */
 export function monitorRefusal(code: string): string {
-  return code === "not_found" ? m.monitor_gone() : mutationErrorReason(code);
+  if (code === "not_found") return m.monitor_gone();
+  if (code === "limit_reached") return monitorLimitReached();
+  return mutationErrorReason(code);
 }
+
+/** Why a new monitor cannot be added: the workspace has `MAX_MONITORS_PER_WORKSPACE` already. */
+export const monitorLimitReached = () =>
+  m.monitor_limit_reached({ max: String(MAX_MONITORS_PER_WORKSPACE) });
 
 /** A new heartbeat token, its SHA-256 (what the shard stores) and the URL to ping. */
 export async function newHeartbeat(

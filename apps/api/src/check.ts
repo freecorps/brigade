@@ -1,15 +1,30 @@
-// One HTTP check (RFC 0007 "Check types"): status, latency and an optional keyword, with the target rules of
-// `targetProblem` applied again right before the request, no redirects followed and a bounded body read.
+// One HTTP or TCP check (RFC 0007 "Check types"). HTTP: status, latency and an optional keyword, with the target
+// rules of `targetProblem` applied again right before the request, no redirects followed and a bounded body read.
+// TCP: whether a connection opens within the timeout, with `tcpTargetProblems` applied again first.
 
-import { targetProblem, type HttpMethod } from "@freecorps/brigade-schema";
+import { connect } from "cloudflare:sockets";
+import { targetProblem, tcpTargetProblems, type HttpMethod } from "@freecorps/brigade-schema";
 
 /** What a probe needs to run one monitor's check; pushed by the workspace shard. */
+export type CheckConfig = HttpCheckConfig | TcpCheckConfig;
+
+/** An HTTP check. Configs pushed before TCP checks existed carry no `kind`; they are HTTP. */
 export type HttpCheckConfig = {
+  kind?: "http";
   id: string;
   url: string;
   method: HttpMethod;
   expectedStatus: number | null;
   keyword: string | null;
+  intervalSeconds: number;
+  timeoutSeconds: number;
+};
+
+export type TcpCheckConfig = {
+  kind: "tcp";
+  id: string;
+  host: string;
+  port: number;
   intervalSeconds: number;
   timeoutSeconds: number;
 };
@@ -21,6 +36,69 @@ export type CheckResult = {
   httpStatus: number | null;
   error: "blocked" | "timeout" | "network" | "status" | "keyword" | null;
 };
+
+/** Opens a TCP connection: `connect` from `cloudflare:sockets`; the tests replace it. */
+export type Connector = (address: SocketAddress) => Socket;
+
+export const defaultConnector: Connector = (address) => connect(address);
+
+/** Runs `config` with the probe's outbound fetch or socket. Never throws. */
+export function runCheck(
+  fetcher: typeof fetch,
+  connector: Connector,
+  config: CheckConfig,
+): Promise<CheckResult> {
+  return config.kind === "tcp" ? tcpCheck(connector, config) : httpCheck(fetcher, config);
+}
+
+/**
+ * A TCP check: up when the connection opens within the timeout, and closed at once either way; nothing is sent
+ * or read. The socket is closed on every path (opened, refused, timed out), and the timeout is the check's own
+ * timer, so a connection that never answers cannot hold the probe past it. A connection that fails is `network`
+ * (the runtime gives one error, "proxy request failed", for a refused port, a name that does not resolve and an
+ * address Cloudflare refuses); one that gets no answer is `timeout`. So a result tells a closed port from a
+ * filtered one, which operators need; the workspace's monitor cap bounds what that reveals (RFC 0007). Never throws.
+ */
+export async function tcpCheck(connector: Connector, config: TcpCheckConfig): Promise<CheckResult> {
+  if (tcpTargetProblems(config.host, config.port).length > 0) {
+    return { ok: false, latencyMs: null, httpStatus: null, error: "blocked" };
+  }
+  const start = Date.now();
+  let socket: Socket;
+  try {
+    // An IPv6 address is stored bare (`normalizeTcpHost`); `connect()` takes it only in brackets, and fails a bare
+    // one as it fails a refused port (test/monitors.test.ts, RFC 0007).
+    const hostname = config.host.includes(":") ? `[${config.host}]` : config.host;
+    socket = connector({ hostname, port: config.port });
+  } catch {
+    return { ok: false, latencyMs: null, httpStatus: null, error: "network" };
+  }
+  // Both promises reject on a failed connection; handled here, so a rejection after the timeout won the race is
+  // never unhandled.
+  socket.closed.catch(() => undefined);
+  const opened = socket.opened.then(
+    () => ({ opened: true as const }),
+    () => ({ opened: false as const }),
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), config.timeoutSeconds * 1000);
+  });
+  try {
+    const outcome = await Promise.race([opened, timedOut]);
+    if (outcome === "timeout") {
+      return { ok: false, latencyMs: null, httpStatus: null, error: "timeout" };
+    }
+    if (!outcome.opened) {
+      return { ok: false, latencyMs: null, httpStatus: null, error: "network" };
+    }
+    return { ok: true, latencyMs: Math.max(0, Date.now() - start), httpStatus: null, error: null };
+  } finally {
+    clearTimeout(timer);
+    // Not awaited: closing is forcible and the result does not depend on it.
+    socket.close().catch(() => undefined);
+  }
+}
 
 /** At most this much of a body is searched for the keyword; the rest is never read. */
 export const MAX_BODY_BYTES = 64 * 1024;

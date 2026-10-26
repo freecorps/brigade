@@ -1,4 +1,4 @@
-// Monitors (RFC 0007): HTTP checks run by one `ProbeDO` per workspace and region, and heartbeats pushed by the
+// Monitors (RFC 0007): HTTP and TCP checks run by one `ProbeDO` per workspace and region, and heartbeats pushed by the
 // monitored system. The workspace shard keeps each monitor's config and its last result per source; a monitor is
 // down when a quorum of its sources is down, which fires one alert per monitor and opens an incident through
 // `incident.declare`, run as the monitors' system actor (RFC 0003 "Alert → incident flow", RFC 0004).
@@ -33,7 +33,13 @@ export type ProbeRegion = (typeof PROBE_REGIONS)[number];
 /** Where a result comes from: a probe region, or the heartbeat endpoint. */
 export type CheckSource = ProbeRegion | "heartbeat";
 
-export const MONITOR_KINDS = ["http", "heartbeat"] as const;
+export const MONITOR_KINDS = ["http", "tcp", "heartbeat"] as const;
+/**
+ * Monitors one workspace may have, of every kind together: with the per-monitor limits (one host and port, one
+ * check per region every 30 s), what bounds how many targets a workspace can probe (RFC 0007 "Limits"). One cap
+ * for every workspace until plans exist.
+ */
+export const MAX_MONITORS_PER_WORKSPACE = 100;
 export type MonitorKind = (typeof MONITOR_KINDS)[number];
 /**
  * `pending` until a quorum of sources agrees, after creation, a resume or a change of target. `unknown` ("no
@@ -48,6 +54,8 @@ export type AlertStatus = (typeof ALERT_STATUSES)[number];
 
 export const MONITOR_NAME_MAX = 80;
 export const MONITOR_URL_MAX = 2048;
+/** A DNS name is at most 253 characters (RFC 1035). */
+export const MONITOR_HOST_MAX = 253;
 export const MONITOR_KEYWORD_MAX = 200;
 /** RFC 0007: no check more often than every 30 s. */
 export const MIN_INTERVAL_SECONDS = 30;
@@ -160,8 +168,12 @@ const ipv4 = (address: string): number =>
   address.split(".").reduce((value, part) => value * 256 + Number(part), 0);
 
 function blockedIpv4(address: string): boolean {
+  return inIpv4Ranges(address, BLOCKED_IPV4);
+}
+
+function inIpv4Ranges(address: string, ranges: readonly [string, number][]): boolean {
   const value = ipv4(address);
-  return BLOCKED_IPV4.some(([base, bits]) => {
+  return ranges.some(([base, bits]) => {
     const size = 2 ** (32 - bits);
     return Math.floor(value / size) === Math.floor(ipv4(base) / size);
   });
@@ -239,7 +251,16 @@ export function targetProblem(input: string): string | null {
   if (url.port !== "" && !MONITOR_PORTS.includes(Number(url.port))) {
     return `Expected port 80, 443 or one of ${MONITOR_PORTS.filter((p) => p !== 80 && p !== 443).join(", ")}`;
   }
-  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  return hostProblem(url.hostname);
+}
+
+/**
+ * Why a check may not target `hostname` (as the URL parser gives it: IPv4 in dotted decimal, IPv6 in brackets),
+ * or null if it may: no private, loopback, link-local, shared, reserved or multicast address, and no local-only
+ * name. The one host rule for every kind of check, HTTP (`targetProblem`) and TCP (`tcpTargetProblems`).
+ */
+function hostProblem(hostname: string): string | null {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
   if (host.startsWith("[")) {
     return blockedIpv6(host.slice(1, -1)) ? "Expected a public address" : null;
   }
@@ -252,6 +273,114 @@ export function targetProblem(input: string): string | null {
   return null;
 }
 
+/**
+ * Ports a TCP check never connects to: 25, which Cloudflare refuses for every Worker (outbound SMTP), so a monitor
+ * on it could only ever be down.
+ */
+export const TCP_BLOCKED_PORTS: readonly number[] = [25];
+
+/**
+ * Cloudflare's published IP ranges, https://www.cloudflare.com/ips/ (the lists at /ips-v4/ and /ips-v6/, as of
+ * October 2026). A Worker's `connect()` is refused for every address in them
+ * (https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/), so a TCP check of one of them, or of a
+ * host proxied by Cloudflare, could only ever be down. Only literal addresses in these lists are refused on save:
+ * a proxied name is not caught (Workers cannot resolve names), and the form's hint says so. HTTP checks may
+ * target them.
+ */
+const CLOUDFLARE_IPV4: readonly [string, number][] = [
+  ["173.245.48.0", 20],
+  ["103.21.244.0", 22],
+  ["103.22.200.0", 22],
+  ["103.31.4.0", 22],
+  ["141.101.64.0", 18],
+  ["108.162.192.0", 18],
+  ["190.93.240.0", 20],
+  ["188.114.96.0", 20],
+  ["197.234.240.0", 22],
+  ["198.41.128.0", 17],
+  ["162.158.0.0", 15],
+  ["104.16.0.0", 13],
+  ["104.24.0.0", 14],
+  ["172.64.0.0", 13],
+  ["131.0.72.0", 22],
+];
+/** The IPv6 half of the list above: the first two groups of each prefix and its length (at most 32). */
+const CLOUDFLARE_IPV6: readonly [number, number, number][] = [
+  [0x2400, 0xcb00, 32],
+  [0x2606, 0x4700, 32],
+  [0x2803, 0xf800, 32],
+  [0x2405, 0xb500, 32],
+  [0x2405, 0x8100, 32],
+  [0x2a06, 0x98c0, 29],
+  [0x2c0f, 0xf248, 32],
+];
+
+/** Whether `host` (as `normalizeTcpHost` gives it) is an address in Cloudflare's published ranges. */
+export function isCloudflareAddress(host: string): boolean {
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return inIpv4Ranges(host, CLOUDFLARE_IPV4);
+  if (!host.includes(":")) return false;
+  const [first = 0, second = 0] = expandIpv6(host);
+  const top = first * 0x10000 + second;
+  return CLOUDFLARE_IPV6.some(([a, b, bits]) => {
+    const size = 2 ** (32 - bits);
+    return Math.floor(top / size) === Math.floor((a * 0x10000 + b) / size);
+  });
+}
+
+/**
+ * `host` as a TCP check connects to it: lower case, an internationalised name in punycode (`bücher.example` is
+ * `xn--bcher-kva.example`, as the URL parser turns it for an HTTP check), an IPv4 address in dotted decimal (any
+ * spelling the URL parser takes), an IPv6 address without brackets. Undefined if it is not a bare host name or
+ * address (a scheme, a port, a path, credentials, a percent escape or spaces are no host), or a name DNS cannot
+ * look up (an empty label, a label over 63 characters or a name over 253, counted in punycode).
+ */
+export function normalizeTcpHost(host: string): string | undefined {
+  const ipv6 = /^\[?([0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*)\]?$/.exec(host)?.[1];
+  if (ipv6 === undefined && /[\s/\\?#@:%[\]]/.test(host)) return undefined;
+  let url: ParsedUrl;
+  try {
+    url = new URL_PARSER(`http://${ipv6 === undefined ? host : `[${ipv6}]`}`);
+  } catch {
+    return undefined;
+  }
+  const hostname = url.hostname.replace(/\.$/, "");
+  if (hostname.startsWith("[")) return hostname.slice(1, -1);
+  // DNS limits, on the name as it is looked up (in punycode): 253 characters, labels of 1 to 63 (no `a..b`).
+  const fits =
+    hostname.length <= 253 &&
+    hostname.split(".").every((label) => label.length >= 1 && label.length <= 63);
+  return fits && /^[a-z0-9.-]+$/.test(hostname) ? hostname : undefined;
+}
+
+/**
+ * Why a TCP check may not connect to `host` and `port`, one issue per field (none if it may): the host rules of HTTP checks
+ * (`hostProblem`), no address of Cloudflare's own (`isCloudflareAddress`), and a port from 1 to 65535 other than
+ * `TCP_BLOCKED_PORTS`. Unlike an HTTP check, any other port
+ * is allowed, since whether something listens there is the whole answer (RFC 0007 "Check types"). Checked when a
+ * monitor is saved and again by the probe before every connection.
+ */
+export function tcpTargetProblems(host: string, port: number): Issue[] {
+  const issues: Issue[] = [];
+  const hostname = normalizeTcpHost(host);
+  const problem =
+    hostname === undefined
+      ? "Expected a host name or an IP address"
+      : hostProblem(hostname.includes(":") ? `[${hostname}]` : hostname);
+  if (problem !== null) issues.push({ path: "host", message: problem });
+  else if (hostname !== undefined && isCloudflareAddress(hostname)) {
+    issues.push({
+      path: "host",
+      message: "Cloudflare refuses TCP connections to its own addresses",
+    });
+  }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    issues.push({ path: "port", message: "Expected a port from 1 to 65535" });
+  } else if (TCP_BLOCKED_PORTS.includes(port)) {
+    issues.push({ path: "port", message: "Cloudflare blocks connections to this port" });
+  }
+  return issues;
+}
+
 /** A URL a check may target, normalised (`new URL(…).href`). */
 const monitorUrl: Validator<string> = (input, path = "") => {
   const text = v.string({ min: 1, max: MONITOR_URL_MAX })(input, path);
@@ -260,6 +389,16 @@ const monitorUrl: Validator<string> = (input, path = "") => {
   return problem
     ? { ok: false, issues: [{ path, message: problem }] }
     : { ok: true, value: new URL_PARSER(text.value).href };
+};
+
+/** A host a TCP check may connect to, normalised (`normalizeTcpHost`); the port is checked with it. */
+const tcpHost: Validator<string> = (input, path = "") => {
+  const text = v.string({ min: 1, max: MONITOR_HOST_MAX })(input, path);
+  if (!text.ok) return text;
+  const host = normalizeTcpHost(text.value);
+  return host === undefined
+    ? { ok: false, issues: [{ path, message: "Expected a host name or an IP address" }] }
+    : { ok: true, value: host };
 };
 
 /** A SHA-256 digest in lower-case hex: the heartbeat token's hash, never the token. */
@@ -308,6 +447,14 @@ const httpFields = {
   timeoutSeconds: v.integer({ min: 1, max: MAX_TIMEOUT_SECONDS }),
   regions: v.array(v.picklist(PROBE_REGIONS), { min: 1, max: PROBE_REGIONS.length, unique: true }),
 };
+const tcpFields = {
+  name: monitorName,
+  host: tcpHost,
+  port: v.integer({ min: 1, max: 65535 }),
+  intervalSeconds,
+  timeoutSeconds: v.integer({ min: 1, max: MAX_TIMEOUT_SECONDS }),
+  regions: v.array(v.picklist(PROBE_REGIONS), { min: 1, max: PROBE_REGIONS.length, unique: true }),
+};
 const heartbeatFields = {
   name: monitorName,
   intervalSeconds,
@@ -337,6 +484,23 @@ function checkHttp(args: HttpFields): { issues: Issue[]; regions: ProbeRegion[] 
   return { issues, regions: PROBE_REGIONS.filter((region) => args.regions.includes(region)) };
 }
 
+type TcpFields = {
+  host: string;
+  port: number;
+  intervalSeconds: number;
+  timeoutSeconds: number;
+  regions: ProbeRegion[];
+};
+
+/** The target rules (`tcpTargetProblems`) and the timeout; the regions come back in `PROBE_REGIONS` order. */
+function checkTcp(args: TcpFields): { issues: Issue[]; regions: ProbeRegion[] } {
+  const issues = tcpTargetProblems(args.host, args.port);
+  if (args.timeoutSeconds > args.intervalSeconds) {
+    issues.push({ path: "timeoutSeconds", message: "Expected at most the interval" });
+  }
+  return { issues, regions: PROBE_REGIONS.filter((region) => args.regions.includes(region)) };
+}
+
 function checkNewId(id: string, ctx: MutationContext): MutationResult | undefined {
   if (ctx.server && idTime(id) - ctx.now > ID_CLOCK_SKEW_MS) {
     return fail("invalid_args", "Monitor id time is ahead of the server clock", [
@@ -344,6 +508,12 @@ function checkNewId(id: string, ctx: MutationContext): MutationResult | undefine
     ]);
   }
   return undefined;
+}
+
+/** `limit_reached` when the workspace has `MAX_MONITORS_PER_WORKSPACE` monitors already. */
+function checkCap(store: MutationStore): MutationResult | undefined {
+  if (store.scan("monitors").length < MAX_MONITORS_PER_WORKSPACE) return undefined;
+  return fail("limit_reached", `At most ${MAX_MONITORS_PER_WORKSPACE} monitors per workspace`);
 }
 
 function created(row: MonitorRow): MonitorCreated {
@@ -380,6 +550,8 @@ export const createHttpMonitor = defineMutation({
     if (issues.length)
       return fail("invalid_args", "Invalid arguments for monitor.createHttp", issues);
     if (store.get("monitors", args.id)) return fail("conflict", "Monitor already exists");
+    const full = checkCap(store);
+    if (full) return full;
     const row: MonitorRow = {
       id: args.id,
       name: args.name,
@@ -388,6 +560,43 @@ export const createHttpMonitor = defineMutation({
       method: args.method,
       expectedStatus: args.expectedStatus,
       keyword: args.keyword,
+      host: null,
+      port: null,
+      timeoutSeconds: args.timeoutSeconds,
+      regions,
+      intervalSeconds: args.intervalSeconds,
+      graceSeconds: null,
+      ...fresh(ctx),
+    };
+    store.insert("monitors", row);
+    return ok(created(row));
+  },
+});
+
+/** A TCP check: a monitor is up where a connection to `host` and `port` opens within the timeout (RFC 0007). */
+export const createTcpMonitor = defineMutation({
+  name: "monitor.createTcp",
+  args: v.object({ id: monitorId, ...tcpFields }),
+  permission: "monitor:manage",
+  apply(store, args, ctx) {
+    const clock = checkNewId(args.id, ctx);
+    if (clock) return clock;
+    const { issues, regions } = checkTcp(args);
+    if (issues.length)
+      return fail("invalid_args", "Invalid arguments for monitor.createTcp", issues);
+    if (store.get("monitors", args.id)) return fail("conflict", "Monitor already exists");
+    const full = checkCap(store);
+    if (full) return full;
+    const row: MonitorRow = {
+      id: args.id,
+      name: args.name,
+      kind: "tcp",
+      url: null,
+      method: null,
+      expectedStatus: null,
+      keyword: null,
+      host: args.host,
+      port: args.port,
       timeoutSeconds: args.timeoutSeconds,
       regions,
       intervalSeconds: args.intervalSeconds,
@@ -411,6 +620,8 @@ export const createHeartbeatMonitor = defineMutation({
     const clock = checkNewId(args.id, ctx);
     if (clock) return clock;
     if (store.get("monitors", args.id)) return fail("conflict", "Monitor already exists");
+    const full = checkCap(store);
+    if (full) return full;
     const row: MonitorRow = {
       id: args.id,
       name: args.name,
@@ -419,6 +630,8 @@ export const createHeartbeatMonitor = defineMutation({
       method: null,
       expectedStatus: null,
       keyword: null,
+      host: null,
+      port: null,
       timeoutSeconds: null,
       regions: [],
       intervalSeconds: args.intervalSeconds,
@@ -479,6 +692,42 @@ export const updateHttpMonitor = defineMutation({
       type: "monitor.updated",
       subject: args.id,
       data: { id: args.id, name: args.name, kind: "http" },
+    };
+    return ok(event);
+  },
+});
+
+/** As `monitor.updateHttp`: a new host, port, timeout or region set starts the checks over. */
+export const updateTcpMonitor = defineMutation({
+  name: "monitor.updateTcp",
+  args: v.object({ id: monitorId, ...tcpFields }),
+  permission: "monitor:manage",
+  apply(store, args, ctx) {
+    const monitor = store.get("monitors", args.id);
+    if (!monitor) return fail("not_found", "Monitor not found");
+    if (monitor.kind !== "tcp") return fail("invalid_args", "Not a TCP monitor");
+    const { issues, regions } = checkTcp(args);
+    if (issues.length)
+      return fail("invalid_args", "Invalid arguments for monitor.updateTcp", issues);
+    const next = {
+      name: args.name,
+      host: args.host,
+      port: args.port,
+      intervalSeconds: args.intervalSeconds,
+      timeoutSeconds: args.timeoutSeconds,
+      regions,
+    };
+    const changed = (Object.keys(next) as (keyof typeof next)[]).filter(
+      (key) => JSON.stringify(monitor[key]) !== JSON.stringify(next[key]),
+    );
+    if (changed.length === 0) return fail("conflict", "Nothing to change");
+    const retarget = changed.some((key) => key !== "name" && key !== "intervalSeconds");
+    const restarted = retarget && !monitor.paused ? restart(ctx) : {};
+    store.update("monitors", args.id, { ...next, ...restarted, updatedAt: ctx.now });
+    const event: MonitorUpdated = {
+      type: "monitor.updated",
+      subject: args.id,
+      data: { id: args.id, name: args.name, kind: "tcp" },
     };
     return ok(event);
   },
@@ -801,8 +1050,10 @@ export const allMonitors = defineQuery({
 /** What members may send. */
 export const monitorMutations = [
   createHttpMonitor,
+  createTcpMonitor,
   createHeartbeatMonitor,
   updateHttpMonitor,
+  updateTcpMonitor,
   updateHeartbeatMonitor,
   setMonitorPaused,
   deleteMonitor,

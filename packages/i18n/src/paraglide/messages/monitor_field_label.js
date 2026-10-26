@@ -13,6 +13,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "kind" | "Monitor type" |
 * | "name" | "Name" |
 * | "url" | "URL" |
+* | "host" | "Host" |
+* | "port" | "Port" |
 * | "method" | "Method" |
 * | "expected_status" | "Expected status" |
 * | "keyword" | "Text the page must contain" |
@@ -31,6 +33,8 @@ export const monitor_field_label = /** @type {((inputs: Monitor_Field_LabelInput
 		if (i?.field === "kind") return /** @type {LocalizedString} */ (`Tipo de monitor`);
 		if (i?.field === "name") return /** @type {LocalizedString} */ (`Nome`);
 		if (i?.field === "url") return /** @type {LocalizedString} */ (`URL`);
+		if (i?.field === "host") return /** @type {LocalizedString} */ (`Host`);
+		if (i?.field === "port") return /** @type {LocalizedString} */ (`Porta`);
 		if (i?.field === "method") return /** @type {LocalizedString} */ (`Método`);
 		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Status esperado`);
 		if (i?.field === "keyword") return /** @type {LocalizedString} */ (`Texto que a página deve conter`);
@@ -43,6 +47,8 @@ export const monitor_field_label = /** @type {((inputs: Monitor_Field_LabelInput
 		if (i?.field === "kind") return /** @type {LocalizedString} */ (`Monitor type`);
 		if (i?.field === "name") return /** @type {LocalizedString} */ (`Name`);
 		if (i?.field === "url") return /** @type {LocalizedString} */ (`URL`);
+		if (i?.field === "host") return /** @type {LocalizedString} */ (`Host`);
+		if (i?.field === "port") return /** @type {LocalizedString} */ (`Port`);
 		if (i?.field === "method") return /** @type {LocalizedString} */ (`Method`);
 		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Expected status`);
 		if (i?.field === "keyword") return /** @type {LocalizedString} */ (`Text the page must contain`);

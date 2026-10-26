@@ -333,7 +333,7 @@
       }
     }
   ],
-  "monitors_empty": "Nothing is watched yet. Add an HTTP check, or a heartbeat for jobs that should check in.",
+  "monitors_empty": "Nothing is watched yet. Add an HTTP check, a TCP port, or a heartbeat for jobs that should check in.",
   "monitor_add": "Add monitor",
   "monitor_kind": [
     {
@@ -341,10 +341,23 @@
       "selectors": ["kind"],
       "match": {
         "kind=http": "HTTP check",
+        "kind=tcp": "TCP port",
         "kind=*": "Heartbeat"
       }
     }
   ],
+  "monitor_kind_short": [
+    {
+      "declarations": ["input kind"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=http": "HTTP",
+        "kind=tcp": "TCP",
+        "kind=*": "Heartbeat"
+      }
+    }
+  ],
+  "monitor_limit_reached": "This workspace has {max} monitors, the most it can have. Delete one to add another.",
   "monitor_status": [
     {
       "declarations": ["input status"],
@@ -404,6 +417,11 @@
       "match": {
         "field=name": "Give the monitor a name.",
         "field=url": "Use a public http or https address, on a web port such as 80, 443, 8080 or 8443.",
+        "field=host": "Use a public host name or IP address, without http:// or a port.",
+        "field=host_cloudflare": "Cloudflare doesn't allow TCP checks of its own addresses. Use your server's address.",
+        "field=host_underscore": "Host names can't contain underscores (_). Use a public host name or IP address.",
+        "field=port": "Use a port from 1 to 65535.",
+        "field=port_blocked": "Cloudflare blocks port 25. Use another port.",
         "field=expected_status": "Use a status from 100 to 599, or leave it empty.",
         "field=keyword": "Use at most 200 characters.",
         "field=interval": "Use whole seconds, from 30 to 86,400 (24 hours).",
@@ -423,6 +441,8 @@
         "field=kind": "Monitor type",
         "field=name": "Name",
         "field=url": "URL",
+        "field=host": "Host",
+        "field=port": "Port",
         "field=method": "Method",
         "field=expected_status": "Expected status",
         "field=keyword": "Text the page must contain",
@@ -440,7 +460,10 @@
       "match": {
         "field=url": "Everyone in the workspace, viewers too, can see this URL: keep tokens and passwords out of it.",
         "field=expected_status": "Empty: any 2xx or 3xx. Redirects are not followed.",
+        "field=host": "Passes when a connection to this host and port opens; nothing is sent. Hosts proxied by Cloudflare can't be checked over TCP.",
+        "field=port": "Any port but 25.",
         "field=timeout": "How long one check may take.",
+        "field=timeout_tcp": "How long the connection may take to open.",
         "field=*": "How late a ping may be before it counts as missed."
       }
     }

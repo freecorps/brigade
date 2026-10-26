@@ -104,23 +104,34 @@ would change D1 without the shard's copy or an event.
 - **Failure.** D1 failing changes nothing (`503 unavailable`). The shard failing after D1 committed answers
   `503 not_applied`, logs `member change not applied to the shard` and **arms the shard's alarm to reconcile** within
   10 s (`member_repair`, tried again every 30 s until it succeeds; it shares the one alarm with the outbox drain and
-  monitor upkeep, which takes the earliest any of them needs), so the repair needs no socket. Sending the request
-  again finishes it sooner: a caller who may make the change has the shard catch up through `member.reconcile` (as
-  `sys_members`, so the events never name the caller), and a leaver D1 already dropped may repeat their own `DELETE`
+  monitor upkeep, which takes the earliest any of them needs), so the repair needs no socket. The shard also records
+  the member whose change it missed, so a workspace too large for one `member.reconcile` still catches up on them
+  one by one. Sending the request again finishes it sooner: a caller who may make the change has the shard catch up
+  on that one member (`member.remove` with `reconciled`, or `member.changeRole`, as `sys_members`, so the events
+  never name the caller), and a leaver D1 already dropped may repeat their own `DELETE`
   (the Worker lets it through for one's own id in an existing workspace; the shard checks its own copy and devices
   first, without the member lock or a D1 read, and runs `member.remove` with `left` only while it still has one;
   its `role` is null when only devices were left). Any other answer to someone D1 does not have is the same
-  `403 not_a_member`, whether or not the workspace exists, so the route tells an outsider nothing about which
-  workspaces exist (Q16). A `DELETE` by a member for someone with nothing left in D1 or the shard is `404`. The
-  dashboard shows `not_applied` as a note, not an error: the change is saved and paging catches up within a minute,
-  with nothing to retry. A narrow race is accepted: a leaver re-added in D1 between the shard's D1 read and its
+  `403 not_a_member` with the same body, whether or not the workspace exists (Q16). The leave retry takes longer for
+  a workspace that exists (it asks the shard), so the route hides which workspaces exist only because their ids are
+  ULIDs nobody can guess: it takes `ws_<ULID>` ids alone (`ORGANIZATION_ID`), never a dev shard's short name. A
+  `DELETE` by a member for someone with nothing left in D1 or the shard is `404`. The dashboard shows `not_applied`
+  as a note, not an error: the change is saved and paging catches up within a minute, with nothing to retry; on
+  one's own leave it is done, and the dashboard moves on. A `not_a_member` answer to one's own leave moves on only
+  once D1 confirms they are gone (a member whose role is not a Brigade role gets it too, and stays). A narrow race is accepted: a leaver re-added in D1 between the shard's D1 read and its
   `member.remove` loses the devices they had (their new membership stays; they register the phone again).
   Besides, **every sync upgrade into the workspace reconciles** the shard with D1 (`member.reconcile`, run by
   `sys_members` after the socket is accepted, never holding it up): a copy D1 no longer has is deleted with its devices
   (`member.removed`, `reconciled`), a copy whose role differs takes D1's (`member.role_changed`), and a device whose
   member D1 no longer has is dropped. Members D1 has and the shard does not are left to `member.sync`. An empty
-  read changes nothing (a workspace always has an owner). A removal whose shard step failed for a member the shard
-  never knew emits no event: nothing in the shard is wrong, and nothing records that it is owed (accepted).
+  read changes nothing (a workspace always has an owner). If that reconcile fails (D1 or the shard down), the
+  upgrade arms the repair alarm. A removal whose shard step failed for a member the shard never knew emits no
+  event: nothing in the shard is wrong (accepted).
+- **Stale upgrades.** A removal leaves a tombstone in the shard for 60 s (`member_repair`, `gone:<userId>`): a sync
+  upgrade the Worker authenticated just before the removal and that reaches the shard after it is refused
+  (`403 not_a_member`) rather than letting `member.sync` restore the removed member's copy. A reconcile that finds
+  them in D1 again (re-added) drops it. One arriving later still restores the copy until its own reconcile removes
+  it again, a second `member.removed` (`reconciled`) for the same member (accepted).
 - **Open sockets.** After a change the shard closes the target's sockets: `1008` when removed (the client reconnects
   and the upgrade answers `403 not_a_member`), `1012` on a role change (it reconnects with the new role). The
   reconcile after every upgrade also closes any socket whose actor D1 no longer backs (gone, or another role),

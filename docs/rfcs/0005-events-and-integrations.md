@@ -39,7 +39,8 @@ integrations care about is announced by the workspace shard: creating a workspac
 new `WorkspaceDO` (`workspace.created`, subject the workspace id). Member changes made through Brigade emit
 `member.role_changed` (`userId`, `from`, `to`) and `member.removed` (`userId`, `role`, null when the shard no longer
 knew it, `reason`: `removed`, `left`,
-or `reconciled` when the shard caught up with a change D1 had and it missed, actor `sys_members`), subject the
+or `reconciled` when the shard caught up with a change D1 had and it missed, actor `sys_members`; a member
+removed through Brigade whose copy a late sync upgrade restored is announced again as `reconciled`), subject the
 member, after D1 committed (RFC 0003 "Members"); a removal also emits `device.unregistered` (`member_removed`) for
 each of the member's devices. `member.added` waits for invitations; until then the creator's membership is part of
 `workspace.created` (`createdBy`). The API still refuses Better Auth's routes that would change a workspace or its

@@ -26,7 +26,9 @@ Event types are versioned with the schema package and documented in the generate
 emit `monitor.created`, `monitor.updated`, `monitor.paused`, `monitor.resumed`, `monitor.deleted`, `monitor.checked`
 (when a source's verdict or failure reason changes; the 5-minute refreshes of an unchanged verdict are synced but
 emit nothing), `monitor.status_changed` (to `unknown` too, when probes stop reporting), `alert.fired` and
-`alert.resolved`, with actor `sys_monitors` for what the probes and heartbeats cause.
+`alert.resolved`, with actor `sys_monitors` for what the probes and heartbeats cause; and, when the owner of an
+address takes back an account someone else signed up with (RFC 0002 "Auth"), `monitor.paused` and
+`monitor.heartbeat_revoked` (`id`) with actor `sys_account`.
 
 Incidents emit `incident.declared`, `incident.status_changed`, `incident.severity_changed`,
 `incident.acknowledged`, `incident.update_posted` (`entryId`, `body`) and `incident.role_assigned` (`role`,
@@ -73,7 +75,7 @@ events of taking that member out of the rotations (above).
 Devices and paging emit `device.registered` (`id`, `userId`, `platform`, `environment`, `voip`: never the tokens or
 the key), `device.unregistered` (`reason`: `unregistered` by the member, `token_invalid` when APNs said the token is
 gone, `member_removed` when its member left or was removed, `password_reset` when its member's password was reset,
-from `device.signOut`, RFC 0002 "Auth") and `notification.failed` (`incidentId`, `eventId` of the event that asked for the page, `channel: "push"`,
+from `device.signOut`, or from `member.reconcile` when that failed, RFC 0002 "Auth") and `notification.failed` (`incidentId`, `eventId` of the event that asked for the page, `channel: "push"`,
 `userId` or null, `reason`: `no_devices`, `undelivered`, `unsupported`, `not_configured`, `over_limit`,
 `dead_lettered`, and for escalation levels `nobody_on_call`, `schedule_missing`, `not_a_member`; `schedule`: the
 name of the schedule nobody was on call for, else null; `page`: the escalation run and step it belongs to, absent

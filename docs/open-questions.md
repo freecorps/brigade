@@ -118,9 +118,19 @@ to confirm in production:
   which marks the address verified and signs everyone else out (RFC 0002 "Auth"), so no manual release is planned
   where email is set up. Left: an instance without email, where nobody can reset; should its operator have a way to
   free an address, or is no sign-up by others (closed sign-up) the answer there?
-- **Password reset**: at most 3 per address an hour and 5 a day (counted for any address, account or not), and 3 per
-  IP a minute. Is 3 an hour too few for someone who mistypes, or 5 a day too many for an inbox someone else keeps
-  filling?
+- **Password reset**: at most 3 per address and IP an hour and 10 per address a day (counted for any address,
+  account or not), and 3 per IP a minute. The hourly count is keyed by address and IP so that someone holding an
+  account at another person's address cannot use up the owner's resets from their own network: the owner, asking
+  from theirs, still gets a link. The daily cap is shared, so someone asking from many IPs can still deny the owner a
+  link for a day, and fill their inbox with up to 10 emails. Is 10 a day the right trade, or should a request get
+  through anyway when the address's last link has expired? Is 3 an hour too few for someone who mistypes?
+- **Taking back an address** (RFC 0002 "Auth"): the reset pauses every monitor and revokes every heartbeat URL in the
+  workspaces the account is alone in. Left to the owner: anything else the person who signed up configured there.
+  Schedules and escalation policies only page members, for incidents only the owner or a (paused) monitor can open,
+  so they are left as they are. A Slack connection is the open one: a workspace connected to the other person's
+  Slack team would keep posting there, and may let that team's users act on incidents. The takeover should also
+  disconnect it (or the notice should list it) once the Slack app lands (RFC 0011). Any future inbound integration
+  (alert webhooks, email ingest) needs the same: its secret revoked on a takeover.
 - None of these counts the sender's own quota (Cloudflare Email Sending's limits answer `E_RATE_LIMIT_EXCEEDED`,
   retried); a Brigade-wide daily ceiling may be needed before open sign-up on a shared instance.
 

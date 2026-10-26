@@ -162,35 +162,50 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
     sender. "Forgot your password?" on the dashboard's sign-in page opens `/forgot-password`; the mobile sign-in
     screen opens that page in the browser rather than asking from the app, since the email's link lands on the
     dashboard anyway and the whole reset then happens in one place. Asking (`/request-password-reset`) answers the
-    same for every address, with an account or not, and the email is sent in the background either way, so neither
-    the answer nor its timing says whether an address has an account. It is limited per address (3 an hour, 5 a
-    day, counted in D1's `rateLimit` table like verification's, for any address, so a 429 says nothing either) and
-    per IP (3 a minute); without a sender it answers `503 EMAIL_NOT_CONFIGURED` for everyone. The email
-    (`email_reset`, en and pt-BR, escaped) carries the address and the link, never the name, and the link is the
-    dashboard's `/reset-password?token=…` (from `DASHBOARD_URL`, with the same dev-only fallback as verification).
-    The token is Better Auth's: random, bound to the account (a `verification` row holding the user id), usable
-    once, for an hour (`RESET_TTL_S`). The page takes it out of the address bar as soon as it reads it. Setting the
-    new password (`/reset-password`, Better Auth's 8 to 128 characters) deletes every session of the account,
-    marks its address verified (the link reached the address, as a verification link would), and signs the account
-    out of every workspace it belongs to: each shard drops its devices (`device.signOut`, a server-only mutation
-    with a `device.unregistered` `password_reset` for each, so phones stop getting its pages) and closes its open
-    sockets, which reconnect without a session and are refused. A shard that fails is logged and the reset still
-    stands; those devices stay registered until the app signs in again or unregisters them. The app registers its
-    phone again at the next sign-in; until then a page that would have reached it takes the `no_devices` path
-    (the member, now verified, is emailed for SEV1 and SEV2, and the escalation falls back as for anyone without a
-    phone).
+    same for every address, with an account or not: the before hook counts the limits and answers, and Better
+    Auth's lookup, token and email run after the response (`waitUntil`), so neither the answer nor its timing says
+    whether an address has an account. It is limited per address and IP (3 an hour) and per address from anywhere
+    (10 a day), counted in D1's `rateLimit` table like verification's, for any address, so a 429 says nothing
+    either, and per IP (3 a minute). Keyed by address and IP so that someone asking for another person's address
+    uses up their own hourly count, not the owner's; only the daily cap is shared (Q21). Without a sender it answers
+    `503 EMAIL_NOT_CONFIGURED` for everyone. The email (`email_reset`, en and pt-BR, escaped) carries the address
+    and the link, never the name, and the link is the dashboard's `/reset-password#token=…` (from `DASHBOARD_URL`,
+    with the same dev-only fallback as verification): in the fragment, which the browser never sends to a server,
+    a proxy's log or a `Referer`. The token is Better Auth's: random, bound to the account (a `verification` row
+    holding the user id), usable once, for an hour (`RESET_TTL_S`). The page takes it out of the address bar as
+    soon as it reads it. Setting the new password (`/reset-password`, Better Auth's 8 to 128 characters) deletes
+    every session of the account and its other reset links, marks its address verified (the link reached the
+    address, as a verification link would) and records when (`user.passwordResetAt`), all through Better Auth's
+    adapter, and signs the account out of every workspace it belongs to: each shard drops its devices
+    (`device.signOut`, a server-only mutation with a `device.unregistered` `password_reset` for each, so phones
+    stop getting its pages) and closes its open sockets, which reconnect without a session and are refused. The
+    sockets close even when the mutation fails. A shard that fails is tried 3 times; one that still fails is
+    logged, the reset stands, and its member reconcile catches up: the failure arms the shard's repair alarm, and
+    every reconcile (that alarm, or any member's next sync upgrade) drops a member's devices last registered before
+    their `passwordResetAt` and closes their sockets opened before it (`member.reconcile`, RFC 0006 "Who is paged").
+    If the server fails after the password may have been saved, the page says so instead of suggesting the link
+    again. The app registers its phone again at the next sign-in; until then a page that would have reached it
+    takes the `no_devices` path (the member, now verified, is emailed for SEV1 and SEV2, and the escalation falls
+    back as for anyone without a phone).
     **Taking back an address.** This is how the owner of an address someone else signed up with (and never
-    verified) gets it back: they reset the password and the account is theirs, with its address verified. What
-    the account held stays with it, and nothing more is undone: whoever signed up loses every session, phone and
-    socket at once, which is all their access, and the rest cannot have reached anyone else. An unverified account
-    cannot invite, accept or decline invitations, or be emailed, so it has no pending invitations of its own and is
-    a member of no workspace but those it created, where it is the only member. Those workspaces are kept (owned
-    by the account, now the owner's): deleting them is not designed (RFC 0003), and removing the account from them
-    would leave shards with nobody to own them. The owner finds them as they were left, configuration included
-    (monitors, schedules, integrations), and can change or leave them like any workspace. The account's name and
-    language are whatever the person who signed up chose; the owner changes them in the dashboard. A reset of a
-    verified account is the same operation (it also signs out a phone or socket someone who learned the password
-    left behind); only the address being verified is new for an unverified one.
+    verified) gets it back: they reset the password and the account is theirs, with its address verified. A reset
+    is a takeover when the address was not verified before it. Whoever signed up loses every session, phone and
+    socket at once. An unverified account cannot invite, accept or decline invitations, or be emailed, so it has
+    no pending invitations of its own and is a member of no workspace but those it created, where it is the only
+    member. Those workspaces are kept (owned by the account, now the owner's): deleting them is not designed (RFC
+    0003), and removing the account from them would leave shards with nobody to own them. But what was set up in
+    them can still reach the owner: a heartbeat whose URL the other person kept, or an HTTP or TCP check on a host
+    they control, would page the owner whenever they chose. So on a takeover, in every workspace where the account
+    is the only member, the shard also pauses every monitor and revokes every heartbeat URL (`monitor.takeOver`,
+    server only, as `ACCOUNT_ACTOR`: `monitor.paused` with any firing alert resolved, and
+    `monitor.heartbeat_revoked`, whose hash becomes random bytes nobody holds a token for), and the dashboard
+    tells the owner once which workspaces came with the account and what was paused, or that a shard could not be
+    reached (`takeover_notice` in D1, `GET`/`DELETE /account/takeover`, en and pt-BR). The owner resumes what they
+    want to keep; a heartbeat needs a new monitor for a new URL. Schedules and escalation policies stay: they page
+    only members, and only for incidents, which in such a workspace only the owner or a monitor can open. What is
+    left is in Q21. The account's name and language are whatever the person who signed up chose; the owner changes
+    them in the dashboard. A reset of a verified account signs out the same way (a phone or socket someone who
+    learned the password left behind) but pauses nothing: the monitors are the owner's own.
 - **Workers tooling:** `wrangler` per app, invoked through `vp run` tasks. The Cloudflare Vite plugin
   (`@cloudflare/vite-plugin`) runs Workers inside the Vite dev server; validated with Vite+ in spike S5: the
   api Worker runs as an `auxiliaryWorkers` entry of apps/web in dev; apps/api tests use `@cloudflare/vitest-plugin`

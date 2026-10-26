@@ -91,8 +91,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Done: password reset ("Forgot your password?" on the dashboard's sign-in, and on the mobile sign-in screen as a
     link to that page; the same answer for any address, limited per address and IP; the dashboard's
     `/reset-password` page). Saving the new password ends every session, signs the account's devices and sockets out
-    of each workspace (`device.signOut`) and marks the address verified, which is how the owner of an address
-    someone else signed up with takes the account back (RFC 0002 "Auth").
+    of each workspace (`device.signOut`, with the member reconcile as its fallback) and marks the address verified,
+    which is how the owner of an address someone else signed up with takes the account back; that takeover also
+    pauses the monitors and revokes the heartbeat URLs of the workspaces the account is alone in, and tells the
+    owner once on the dashboard (RFC 0002 "Auth").
   - Left: switching workspaces in the
     UI, closing open sockets on sign-out or a revoked session (RFC 0004 "Session revocation"), mobile OAuth/OIDC with PKCE
     via the system browser and QR pairing (mobile email and password sign-in is done, see the Mobile item),

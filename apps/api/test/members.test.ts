@@ -747,7 +747,10 @@ describe("a workspace past the reconcile limit", () => {
       { actor: { id: "sys_members" }, data: { userId: t.caio.id, reason: "reconciled" } },
     ]);
     expect(await events(t, "member.role_changed")).toMatchObject([
-      { actor: { id: "sys_members" }, data: { userId: t.duda.id, from: "viewer", to: "responder" } },
+      {
+        actor: { id: "sys_members" },
+        data: { userId: t.duda.id, from: "viewer", to: "responder" },
+      },
     ]);
     // Nothing left owed: no target, no due repair (the tombstone runs out on its own).
     expect(

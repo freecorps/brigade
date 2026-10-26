@@ -1134,9 +1134,9 @@
         "part=acknowledged": "Parado: confirmado {time}",
         "part=resolved": "Parado: resolvido {time}",
         "part=exhausted": "Ninguém confirmou: sem níveis restantes desde {time}",
-        "part=next_level": "Nível {level} {time}",
-        "part=next_repeat": "Nível 1 de novo {time}",
-        "part=next_end": "Desiste {time}",
+        "part=next_level": "Nível {level} às {time}",
+        "part=next_repeat": "Nível 1 de novo às {time}",
+        "part=next_end": "Desiste às {time}",
         "part=*": "Escalonamento"
       }
     }

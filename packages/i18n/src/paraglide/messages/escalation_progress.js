@@ -14,9 +14,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "acknowledged" | "Stopped: acknowledged {time}" |
 * | "resolved" | "Stopped: resolved {time}" |
 * | "exhausted" | "Nobody acknowledged: no levels left since {time}" |
-* | "next_level" | "Level {level} {time}" |
-* | "next_repeat" | "Level 1 again {time}" |
-* | "next_end" | "Gives up {time}" |
+* | "next_level" | "Level {level} at {time}" |
+* | "next_repeat" | "Level 1 again at {time}" |
+* | "next_end" | "Gives up at {time}" |
 * | * | "Escalation" |
 *
 * @param {Escalation_ProgressInputs} inputs
@@ -30,9 +30,9 @@ export const escalation_progress = /** @type {((inputs: Escalation_ProgressInput
 		if (i?.part === "acknowledged") return /** @type {LocalizedString} */ (`Parado: confirmado ${i?.time}`);
 		if (i?.part === "resolved") return /** @type {LocalizedString} */ (`Parado: resolvido ${i?.time}`);
 		if (i?.part === "exhausted") return /** @type {LocalizedString} */ (`Ninguém confirmou: sem níveis restantes desde ${i?.time}`);
-		if (i?.part === "next_level") return /** @type {LocalizedString} */ (`Nível ${i?.level} ${i?.time}`);
-		if (i?.part === "next_repeat") return /** @type {LocalizedString} */ (`Nível 1 de novo ${i?.time}`);
-		if (i?.part === "next_end") return /** @type {LocalizedString} */ (`Desiste ${i?.time}`);
+		if (i?.part === "next_level") return /** @type {LocalizedString} */ (`Nível ${i?.level} às ${i?.time}`);
+		if (i?.part === "next_repeat") return /** @type {LocalizedString} */ (`Nível 1 de novo às ${i?.time}`);
+		if (i?.part === "next_end") return /** @type {LocalizedString} */ (`Desiste às ${i?.time}`);
 		return /** @type {LocalizedString} */ (`Escalonamento`)
 	}
 	{
@@ -40,9 +40,9 @@ export const escalation_progress = /** @type {((inputs: Escalation_ProgressInput
 		if (i?.part === "acknowledged") return /** @type {LocalizedString} */ (`Stopped: acknowledged ${i?.time}`);
 		if (i?.part === "resolved") return /** @type {LocalizedString} */ (`Stopped: resolved ${i?.time}`);
 		if (i?.part === "exhausted") return /** @type {LocalizedString} */ (`Nobody acknowledged: no levels left since ${i?.time}`);
-		if (i?.part === "next_level") return /** @type {LocalizedString} */ (`Level ${i?.level} ${i?.time}`);
-		if (i?.part === "next_repeat") return /** @type {LocalizedString} */ (`Level 1 again ${i?.time}`);
-		if (i?.part === "next_end") return /** @type {LocalizedString} */ (`Gives up ${i?.time}`);
+		if (i?.part === "next_level") return /** @type {LocalizedString} */ (`Level ${i?.level} at ${i?.time}`);
+		if (i?.part === "next_repeat") return /** @type {LocalizedString} */ (`Level 1 again at ${i?.time}`);
+		if (i?.part === "next_end") return /** @type {LocalizedString} */ (`Gives up at ${i?.time}`);
 		return /** @type {LocalizedString} */ (`Escalation`)
 	}
 });

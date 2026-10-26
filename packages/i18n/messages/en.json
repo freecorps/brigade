@@ -1134,9 +1134,9 @@
         "part=acknowledged": "Stopped: acknowledged {time}",
         "part=resolved": "Stopped: resolved {time}",
         "part=exhausted": "Nobody acknowledged: no levels left since {time}",
-        "part=next_level": "Level {level} {time}",
-        "part=next_repeat": "Level 1 again {time}",
-        "part=next_end": "Gives up {time}",
+        "part=next_level": "Level {level} at {time}",
+        "part=next_repeat": "Level 1 again at {time}",
+        "part=next_end": "Gives up at {time}",
         "part=*": "Escalation"
       }
     }

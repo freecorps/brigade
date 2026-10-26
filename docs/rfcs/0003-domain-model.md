@@ -231,13 +231,16 @@ How a page uses them is RFC 0006 "Who is paged".
   at 14:05 · next level at 14:20"): the policy's id, name, levels and repeat as they were when the run started (a
   snapshot, so an edit or a delete mid-run changes nothing for a run under way; the next run reads the policy
   again), the level and round paged last, `status` (`running`, `acknowledged`, `resolved`, `exhausted`), when it
-  started, when the next level fires (`nextAt`) and every level paged so far (`pages`: level, round, when, whom; at
-  most 100). A server-only `escalation_timers` row per running run (incident id, `nextAt`) is what the shard's alarm
+  started, when the next level fires (`nextAt`), how many pages it made (`paged`) and the last 20 of them (`pages`:
+  level, round, when, whom, why, and the first 20 targets that could not be paged with their count; the timeline and
+  the events keep everything, the row stays small). A server-only `escalation_timers` row per running run (incident id, `nextAt`) is what the shard's alarm
   reads, so it never scans every incident.
 - **Start.** The first page of an incident starts a run (`escalation.start`, server only, as `sys_escalation`):
   level 1 is resolved and paged at once, on the same event that asked for the page (no extra trip through the
   Queue). **Next level.** At `nextAt` the shard's alarm runs `escalation.advance`: the next level, or level 1 of the
-  next round, or, past the last round, `exhausted` (a timeline entry, `escalation.exhausted`, no further page).
+  next round, or, past the last round, `exhausted`: nobody acknowledged, so everyone who can respond is paged once
+  (the interim rule, RFC 0006) and the run ends (a timeline entry, `escalation.exhausted`). A level `escalation.advance`
+  keeps refusing is recorded at once and, after 3 minutes, ends the run the same way (`escalation.fallback`).
 - **Stop.** `incident.ack` (any responder, through any route: the mutation does it, not an endpoint) sets the run
   `acknowledged`, and a status change out of the active ones (resolved, declined) sets it `resolved`; both delete
   the timer in the same transaction, so no level fires after them. A reopened incident starts no run by itself; its

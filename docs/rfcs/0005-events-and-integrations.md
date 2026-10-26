@@ -43,9 +43,10 @@ rotations), `schedule.deleted` (`id`, `overrides` deleted with it), `schedule.ov
 policy became the default, `member_removed` with the `userId` or `schedule_deleted` with the `scheduleId` taken out of
 the levels) and `escalation_policy.deleted` (`id`, `wasDefault`). Escalation runs, actor `sys_escalation`, emit
 `escalation.paged` for every level fired (`incidentId`, `policyId`, `level`, 1-based or null for everyone who can
-respond, `round`, `userIds`, `missed`: the targets that could not be paged, `reason`: `started`, `timeout` or
-`unreachable`, and `started`, true for the level a run started with, which is paged on the event that started it)
-and `escalation.exhausted` (`incidentId`, `policyId`, `levels`, `rounds`). An ack or a resolve stops a run with no
+respond, `round`, `userIds`, `missed`: the targets that could not be paged, `reason`: `started`, `timeout`,
+`unreachable`, and for everyone who can respond also `exhausted` or `stalled`, `started`, true for the page a run
+started with, which is paged on the event that started it, and `run` and `step`, the event that started the run and
+the page's number in it, so a page from a run that has since stopped is not sent) and `escalation.exhausted` (`incidentId`, `policyId`, `levels`, `rounds`). An ack or a resolve stops a run with no
 event of its own: `incident.acknowledged` and `incident.status_changed` say it. A member removal or a change to
 viewer carries the schedule and policy events with
 `member.removed` or `member.role_changed`, in the same transaction; a viewer role copied from D1 by `member.sync`

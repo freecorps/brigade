@@ -38,8 +38,9 @@ without a policy keeps the interim rule (commander, then every owner, admin and 
   used in this slice.
 - A failed page is surfaced on the timeline and in logs. When even the interim fallback reached nobody, should it
   also reach someone outside the incident (an email to owners, the external dead-man switch)?
-- Should a level whose pushes all fail escalate before its timeout (needs delivery receipts), and should an
-  exhausted run fall back to everyone who can respond instead of stopping?
+- Should a level whose pushes all fail escalate before its timeout (needs delivery receipts)? An exhausted run
+  already falls back to everyone who can respond once (RFC 0006 "Who is paged"); should a workspace be able to turn
+  that off, or point it at a smaller group?
 - Every member without a device the page was for still gets their own "Couldn't page …" line: right for a small
   team, noisy for a large one where most never install the app.
 

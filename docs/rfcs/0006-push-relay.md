@@ -87,7 +87,8 @@ overrides first), a member to themselves; each person once, on every registered 
 not pushed (they know) but counts as reached, so declaring an incident while on call does not page the next level
 at once. If nobody acknowledges within the level's timeout, the shard's alarm fires the next level
 (`escalation.advance`, `escalation.paged`), and after the last level starts over `repeat` more times; then the run is
-`exhausted`, said on the timeline. `incident.ack` or resolving stops it. A severity raised into SEV1 or SEV2 while a
+`exhausted`: nobody acknowledged, so everyone who can respond is paged once (below) and the run ends, said on the
+timeline. `incident.ack` or resolving stops it. A severity raised into SEV1 or SEV2 while a
 run is under way pages the level paged last again, at `page` urgency.
 
 **Fallbacks** (the paging path's; tests in `apps/api/test/escalation.test.ts`). A level must never quietly end the
@@ -100,6 +101,15 @@ chain:
 - When no level from there to the last can be reached, the run falls back to the **interim rule** (commander, then
   everyone who can respond), recorded as level "everyone who can respond", and ends there (`exhausted`): there is
   nothing left to escalate to. Its own failures are recorded as the interim rule's always were.
+- **A run that ends unacknowledged** (every level and repeat paged, nobody acknowledged) falls back to the interim
+  rule once the same way, then ends. This also covers a run whose only reach was whoever declared it (on call and
+  counted as reached, so nobody was pushed): it must not end silently, so everyone else who can respond is paged
+  at the last level's timeout.
+- **A level that cannot fire** (`escalation.advance` refusing it while the run is due and still running: a bug, or a
+  row it cannot read) is never dropped. Its first failure goes on the timeline ("An escalation level couldn't fire",
+  `escalation_stalled`), it is tried again every minute, and once it has been due for 3 minutes the shard pages the
+  interim rule through a mutation that does not read the levels (`escalation.fallback`, `reason: "stalled"`) and the
+  run ends.
 - A level reached on some device whose push then fails (relay down, APNs refusing) is recorded when the page
   settles (RFC 0005 "Notifiers") and escalates at its timeout, not before: retries take about 75 s and a level's
   timeout is at least a minute. Escalating early on a failed delivery is left for delivery receipts.
@@ -109,9 +119,13 @@ chain:
   **before** monitor upkeep, the outbox drain and the member repair (each level is a synchronous mutation, at most
   50 per run, the rest right after), and the drain that follows sends their events; no level ever waits on D1.
 - **Idempotency.** Each level is its own event, so the page ledger (RFC 0005) de-duplicates it like any page; the
-  start is de-duplicated by the event that asked for it (`start:<event id>`), and a level by its round and number,
-  so a redelivered event or a repeated alarm never pages a level twice. A dead-lettered level is recorded like any
-  dead-lettered page.
+  start is de-duplicated by the event that asked for it (`start:<event id>`), and a level by the run's page count,
+  (`advance:<incident>:<page count>`), so a redelivered event or a repeated alarm never pages a level twice. A level's
+  event carries its run
+  and page count: one from a run that has stopped (acknowledged and then reopened, or replaced by a new run) sends
+  nothing. A dead-lettered level is recorded like any dead-lettered page; a dead-lettered **first** page (the shard
+  never planned it, so no run started) starts the run when it is recorded, its first level marked as not paged, so
+  the next levels still fire on time.
 
 **The interim rule** (no default policy, and the last fallback above): the incident commander if one is assigned,
 can still respond (not a viewer), did not cause the event and has a registered device; otherwise every member who

@@ -77,8 +77,44 @@ relay's bearer token):
 
 ## Who is paged
 
-There are no on-call schedules until Phase 2. Until then a page goes to the incident commander if one is assigned,
-can still respond (not a viewer), did not cause the event and has a registered device; otherwise to every member who
+A workspace with a **default escalation policy** (RFC 0003 "Escalation policies") pages through it; one without
+pages by the **interim rule**, unchanged since Phase 1.
+
+**Through the policy.** The first page of an incident (`incident.declared`, or a severity raised into SEV1 or SEV2
+while no run is under way) starts an escalation run in the shard (`escalation.start`) and pages level 1 on that same
+event. A level's targets are resolved when it fires: a schedule to whoever is on call at that instant (`onCallAt`,
+overrides first), a member to themselves; each person once, on every registered device. Whoever caused the event is
+not pushed (they know) but counts as reached, so declaring an incident while on call does not page the next level
+at once. If nobody acknowledges within the level's timeout, the shard's alarm fires the next level
+(`escalation.advance`, `escalation.paged`), and after the last level starts over `repeat` more times; then the run is
+`exhausted`, said on the timeline. `incident.ack` or resolving stops it. A severity raised into SEV1 or SEV2 while a
+run is under way pages the level paged last again, at `page` urgency.
+
+**Fallbacks** (the paging path's; tests in `apps/api/test/escalation.test.ts`). A level must never quietly end the
+chain:
+
+- A level none of whose targets can be reached (a schedule with nobody on call, `nobody_on_call`; a schedule since
+  deleted, `schedule_missing`; a member no longer in the workspace or a viewer, `not_a_member`; people with no
+  registered device, `no_devices`; a level emptied by removals) is recorded on the timeline ("Couldn't page …") and
+  the **next level fires at once**, in the same transaction.
+- When no level from there to the last can be reached, the run falls back to the **interim rule** (commander, then
+  everyone who can respond), recorded as level "everyone who can respond", and ends there (`exhausted`): there is
+  nothing left to escalate to. Its own failures are recorded as the interim rule's always were.
+- A level reached on some device whose push then fails (relay down, APNs refusing) is recorded when the page
+  settles (RFC 0005 "Notifiers") and escalates at its timeout, not before: retries take about 75 s and a level's
+  timeout is at least a minute. Escalating early on a failed delivery is left for delivery receipts.
+- **Timers survive restarts.** The run and its timer are in the shard's storage; the alarm is set whenever a run
+  starts or advances, and the object re-arms it from the earliest timer every time it wakes, so an eviction or a
+  deploy mid-escalation resumes on time (or at once, if the level was due meanwhile). The alarm fires due levels
+  **before** monitor upkeep, the outbox drain and the member repair (each level is a synchronous mutation, at most
+  50 per run, the rest right after), and the drain that follows sends their events; no level ever waits on D1.
+- **Idempotency.** Each level is its own event, so the page ledger (RFC 0005) de-duplicates it like any page; the
+  start is de-duplicated by the event that asked for it (`start:<event id>`), and a level by its round and number,
+  so a redelivered event or a repeated alarm never pages a level twice. A dead-lettered level is recorded like any
+  dead-lettered page.
+
+**The interim rule** (no default policy, and the last fallback above): the incident commander if one is assigned,
+can still respond (not a viewer), did not cause the event and has a registered device; otherwise every member who
 can respond (owners, admins, responders; viewers only read), except whoever caused it. Each of them on every
 registered device. A commander without a device does not leave the incident unpaged: everyone who can respond is
 paged instead. Every member the page was for who has no device (the commander included) is recorded as not paged

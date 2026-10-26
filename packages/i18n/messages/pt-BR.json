@@ -134,6 +134,7 @@
   "sync_error_too_many_pending": "Espere as alterações pendentes serem enviadas e tente de novo.",
   "sync_error_closed": "Esta página parou de sincronizar. Recarregue para tentar de novo.",
   "sync_error_internal": "Algo deu errado no servidor. Tente de novo.",
+  "sync_error_limit_reached": "Você chegou ao limite para isso.",
   "incident_quoted_title": "“{title}”",
   "incidents_all_clear": "Tudo tranquilo.",
   "incidents_sev1_count": [

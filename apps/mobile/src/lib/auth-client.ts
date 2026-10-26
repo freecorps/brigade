@@ -15,17 +15,47 @@ export const server = brigadeServer({
   dev: __DEV__,
 });
 
-export const authClient = createAuthClient({
-  // Without a server every request fails as a network error, and sign-in says the build has no server.
-  baseURL: server?.auth ?? "http://localhost.invalid/api/auth",
-  plugins: [
-    expoClient({
-      scheme: "brigade",
-      // Keys in secure storage: `brigade_cookie` (the session) and `brigade_session_data` (the last session read,
-      // so the app opens signed in without the network).
-      storagePrefix: "brigade",
-      storage: SecureStore,
-    }),
-    organizationClient(),
-  ],
-});
+/** Where `@better-auth/expo` keeps the session: expo-secure-store, or a fake one in tests. */
+export type SessionStorage = Pick<
+  typeof SecureStore,
+  "getItem" | "getItemAsync" | "setItem" | "setItemAsync"
+>;
+
+/** Made by a function so src/lib/auth-client.test.ts can run it in Node against fake storage and network. */
+export function brigadeAuthClient(baseURL: string, storage: SessionStorage) {
+  return createAuthClient({
+    baseURL,
+    plugins: [
+      expoClient({
+        scheme: "brigade",
+        // Keys in secure storage: `brigade_cookie` (the session) and `brigade_session_data` (the last session
+        // read, so the app opens signed in without the network).
+        storagePrefix: "brigade",
+        storage,
+      }),
+      organizationClient(),
+    ],
+  });
+}
+
+// Without a server every request fails as a network error, and sign-in says the build has no server.
+export const authClient = brigadeAuthClient(
+  server?.auth ?? "http://localhost.invalid/api/auth",
+  SecureStore,
+);
+
+/**
+ * Signs out here only: `@better-auth/expo` forgets the stored session before a `/sign-out` request goes out, and
+ * this one never does, so the server keeps the session (src/lib/sign-out.ts keeps it aside to finish with).
+ */
+export async function forgetSession(client: Pick<typeof authClient, "signOut">): Promise<void> {
+  try {
+    await client.signOut({
+      fetchOptions: {
+        customFetchImpl: () => Promise.reject(new Error("Signed out on this phone only")),
+      },
+    });
+  } catch {
+    // The request that never went out.
+  }
+}

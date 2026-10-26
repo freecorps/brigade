@@ -166,6 +166,7 @@ export const MUTATION_ERROR_CODES: readonly MutationErrorCode[] = [
   "not_found",
   "invalid_transition",
   "conflict",
+  "limit_reached",
   "internal",
 ];
 

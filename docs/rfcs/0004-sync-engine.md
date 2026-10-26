@@ -57,7 +57,8 @@ runQuery(queries, name, rawArgs, store, role, { onError? }) // → { ok: true, r
   integers; ISO 8601 only in event envelopes and the UI). `runMutation` checks the role against the access-control
   table (`can(role, permission)`, shaped for Better Auth's `createAccessControl`, RFC 0003), validates args, then
   runs `apply` and then `commit` in one `store.transaction`, so any failure writes nothing. Failures are typed
-  (`unknown_mutation`, `forbidden`, `invalid_args`, `not_found`, `invalid_transition`, `conflict`); an unexpected
+  (`unknown_mutation`, `forbidden`, `invalid_args`, `not_found`, `invalid_transition`, `conflict` for no change,
+  `limit_reached` for a per-member cap); an unexpected
   exception becomes `internal`, whose cause goes only to `onError` (server logs), never over the wire. Neither
   `runMutation` nor `runQuery` throws, whatever arrives off the wire (a non-string name is an unknown one; args
   that throw while being read are `internal`). System and integration actors carry a role and pass the same check.

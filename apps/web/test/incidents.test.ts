@@ -1,6 +1,8 @@
 import { setLocale } from "@freecorps/brigade-i18n";
+import type { WordedReason } from "@freecorps/brigade-i18n/incident";
 import type { SyncErrorCode } from "@freecorps/brigade-sync";
-import { afterEach, expect, test } from "vite-plus/test";
+import { MUTATION_ERROR_CODES } from "@freecorps/brigade-sync/protocol";
+import { afterEach, expect, expectTypeOf, test } from "vite-plus/test";
 import {
   adjustBusy,
   checkDeclare,
@@ -62,12 +64,23 @@ const fail = (code: SyncErrorCode, issues?: { path: string; message: string }[])
   error: { code, message: "English", ...(issues ? { issues } : {}) },
 });
 
+test("every sync error code, and a clock skew, has its own wording", () => {
+  // `NoticeReason` is a plain string, so a new code would otherwise read as a server problem without a word.
+  expectTypeOf<SyncErrorCode | "clock_skew">().toExtend<WordedReason>();
+  const internal = mutationErrorReason("internal");
+  for (const code of MUTATION_ERROR_CODES) {
+    if (code === "internal" || code === "unknown_mutation") continue;
+    expect(mutationErrorReason(code), code).not.toBe(internal);
+  }
+});
+
 test("every refused outcome becomes a notice with a translated reason; a confirmed one none", async () => {
   expect(noticeFor({ ok: true, version: 3 }, change, "k")).toBeUndefined();
   const codes: SyncErrorCode[] = [
     "forbidden",
     "not_found",
     "conflict",
+    "limit_reached",
     "invalid_transition",
     "invalid_args",
     "internal",

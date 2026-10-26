@@ -110,7 +110,7 @@ export function entryText(entry: TimelineRow, who: People): string {
  */
 export type NoticeReason = string;
 
-const REASONS: Record<string, () => string> = {
+const REASONS = {
   forbidden: m.sync_error_forbidden,
   not_found: m.sync_error_not_found,
   conflict: m.sync_error_conflict,
@@ -122,12 +122,19 @@ const REASONS: Record<string, () => string> = {
   internal: m.sync_error_internal,
   // A mutation this client knows but the deployed API does not: a version skew, worded as a server problem.
   unknown_mutation: m.sync_error_internal,
+  limit_reached: m.sync_error_limit_reached,
   clock_skew: m.sync_error_clock_skew,
-};
+} satisfies Record<string, () => string>;
+
+/**
+ * The reasons with their own wording. `NoticeReason` stays a string (a newer server can send a code this build
+ * does not know), so apps/web/test/incidents.test.ts checks every `SyncErrorCode` is one of these.
+ */
+export type WordedReason = keyof typeof REASONS;
 
 /** A translated reason for a refused mutation; never the server's English message. */
 export function mutationErrorReason(code: NoticeReason): string {
-  return (Object.hasOwn(REASONS, code) ? REASONS[code]! : m.sync_error_internal)();
+  return (Object.hasOwn(REASONS, code) ? REASONS[code as WordedReason] : m.sync_error_internal)();
 }
 
 /**

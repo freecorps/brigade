@@ -1,6 +1,6 @@
 // Which Brigade the app talks to, and as whom it runs optimistic mutations. Pure, so it is tested in Node;
 // src/lib/auth-client.ts and src/components/session.tsx build the clients from it with the native pieces.
-import { isRole, type Actor } from "@freecorps/brigade-schema";
+import { isRole, type Actor, type Role } from "@freecorps/brigade-schema";
 
 /** The dashboard's dev server (`vp run dev`), which forwards `/api/auth/*` and `/api/sync/<workspace>` to the API. */
 export const DEV_SERVER_PORT = 5173;
@@ -69,4 +69,28 @@ function serverOrigin(override: string | undefined, host: string | undefined): s
  */
 export function memberActor(userId: string, role: unknown): Actor {
   return { kind: "user", id: userId, role: isRole(role) ? role : "viewer" };
+}
+
+/** The member's workspace as last read, so the app opens signed in without the network (secure storage). */
+export type KnownWorkspace = { userId: string; workspaceId: string; name: string; role: Role };
+
+export const WORKSPACE_KEY = "brigade_workspace";
+
+/** The stored workspace, if it is this member's in this workspace; anything else is nothing. */
+export function knownWorkspace(
+  raw: string | null,
+  userId: string,
+  workspaceId: string,
+): KnownWorkspace | null {
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (typeof value !== "object" || value === null) return null;
+    const known = value as Record<string, unknown>;
+    if (known.userId !== userId || known.workspaceId !== workspaceId) return null;
+    if (typeof known.name !== "string" || !isRole(known.role)) return null;
+    return { userId, workspaceId, name: known.name, role: known.role };
+  } catch {
+    return null;
+  }
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { brigadeServer, devHost, memberActor } from "./sync";
+import { brigadeServer, devHost, knownWorkspace, memberActor } from "./sync";
 
 test("the optimistic actor is the signed-in member; a role the app does not know reads as viewer", () => {
   expect(memberActor("usr_1", "responder")).toEqual({
@@ -50,4 +50,16 @@ test("an override wins, as an origin only; a malformed one, or none without a Me
   expect(brigadeServer({ ...dev, override: "brigade.example.com" })).toBeUndefined();
   expect(brigadeServer({ ...dev, override: "ftp://brigade.example.com" })).toBeUndefined();
   expect(brigadeServer({ dev: true })).toBeUndefined();
+});
+
+test("the remembered workspace opens only for the same member in the same workspace", () => {
+  const known = { userId: "usr_a", workspaceId: "org_a", name: "Acme", role: "responder" };
+  const raw = JSON.stringify(known);
+  expect(knownWorkspace(raw, "usr_a", "org_a")).toEqual(known);
+  expect(knownWorkspace(raw, "usr_b", "org_a")).toBeNull();
+  expect(knownWorkspace(raw, "usr_a", "org_b")).toBeNull();
+  expect(knownWorkspace(JSON.stringify({ ...known, role: "owner!" }), "usr_a", "org_a")).toBeNull();
+  for (const bad of [null, "", "{}", "nope", "null"]) {
+    expect(knownWorkspace(bad, "usr_a", "org_a")).toBeNull();
+  }
 });

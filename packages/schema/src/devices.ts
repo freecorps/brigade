@@ -59,7 +59,7 @@ const publicKey: Validator<string> = (input, path = "") =>
  * Registers the actor's device, or refreshes it (a rotated token or key). The id is made by the app; the same push
  * token registered under another id by the same member (a reinstall) replaces that device, so one phone is never
  * paged twice. A device belongs to whoever registered it: another member's id is `forbidden`. No change is a
- * `conflict`, as for every mutation (RFC 0005).
+ * `conflict`, as for every mutation (RFC 0005); a new device over the member's limit is `limit_reached`.
  */
 export const registerDevice = defineMutation({
   name: "device.register",
@@ -120,7 +120,7 @@ export const registerDevice = defineMutation({
           mine.filter((device) => device.pushToken !== args.pushToken).length >=
           MAX_DEVICES_PER_MEMBER
         ) {
-          return fail("conflict", `At most ${MAX_DEVICES_PER_MEMBER} devices per member`);
+          return fail("limit_reached", `At most ${MAX_DEVICES_PER_MEMBER} devices per member`);
         }
         store.insert("devices", row);
       }

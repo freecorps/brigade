@@ -93,20 +93,12 @@ export async function registerPhone(deps: DeviceDeps): Promise<Paging> {
       apsEnvironment: deps.apsEnvironment,
     });
     const result = await deps.mutate("device.register", args);
-    if (result.ok || upToDate(result.error)) return "on";
+    // `conflict`: registered already with these values. The member's device limit is `limit_reached`.
+    if (result.ok || result.error.code === "conflict") return "on";
     return result.error.code === "forbidden" ? "taken" : "failed";
   } catch {
     return "failed";
   }
-}
-
-/**
- * The shard's `conflict` for a registration with nothing new. Its other `conflict` (the member's device limit) is
- * a failure: the phone is not registered. Only the message tells them apart (device.test.ts runs the shard's
- * own mutation for both).
- */
-function upToDate(error: { code: string; message: string }): boolean {
-  return error.code === "conflict" && error.message === "Device is up to date";
 }
 
 /**

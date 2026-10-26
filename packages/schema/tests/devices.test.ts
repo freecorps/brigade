@@ -134,7 +134,7 @@ describe("device.register", () => {
       run(store, ana, "device.register", args(deviceId(), { pushToken: "f".repeat(64) })),
     ).toMatchObject({
       ok: false,
-      error: { code: "conflict" },
+      error: { code: "limit_reached" },
     });
   });
 

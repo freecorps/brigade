@@ -134,6 +134,7 @@
   "sync_error_too_many_pending": "Wait for the pending changes to be sent, then try again.",
   "sync_error_closed": "This page stopped syncing. Reload it to try again.",
   "sync_error_internal": "Something went wrong on the server. Try again.",
+  "sync_error_limit_reached": "You've reached the limit for this.",
   "incident_quoted_title": "“{title}”",
   "incidents_all_clear": "All clear.",
   "incidents_sev1_count": [

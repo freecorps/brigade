@@ -232,6 +232,7 @@ export * from './sync_error_forbidden.js';
 export * from './sync_error_internal.js';
 export * from './sync_error_invalid_args.js';
 export * from './sync_error_invalid_transition.js';
+export * from './sync_error_limit_reached.js';
 export * from './sync_error_not_found.js';
 export * from './sync_error_read_forbidden.js';
 export * from './sync_error_too_many_pending.js';

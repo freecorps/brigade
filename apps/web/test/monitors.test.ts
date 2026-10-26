@@ -4,15 +4,23 @@ import {
   parseHeartbeatToken,
   REPORT_EVERY_MS,
   type MonitorCheck,
+  type MonitorRow,
 } from "@freecorps/brigade-schema";
 import { expect, test } from "vite-plus/test";
 import {
   checkDraft,
+  checkEdit,
   checkErrorReason,
+  draftChanged,
+  rebaseDraft,
+  draftFromRow,
+  editRestarts,
   EMPTY_DRAFT,
   formatLatency,
   formatSeconds,
+  monitorActions,
   monitorBadge,
+  monitorRefusal,
   newHeartbeat,
   sourceChips,
 } from "../src/lib/monitors";
@@ -193,4 +201,153 @@ test("a heartbeat URL carries the workspace, the monitor and a secret whose hash
     kind: "heartbeat",
     args: { intervalSeconds: 60, graceSeconds: 300 },
   });
+});
+
+const row = (overrides: Partial<MonitorRow> = {}): MonitorRow => ({
+  id: id(),
+  name: "Checkout",
+  kind: "http",
+  url: "https://example.com/health",
+  method: "GET",
+  expectedStatus: null,
+  keyword: null,
+  timeoutSeconds: 10,
+  regions: ["enam", "weur"],
+  intervalSeconds: 60,
+  graceSeconds: null,
+  paused: false,
+  pausedBy: null,
+  pausedAt: null,
+  status: "up",
+  since: 0,
+  restartedAt: 0,
+  checks: [],
+  alertId: null,
+  incidentId: null,
+  createdAt: 0,
+  createdBy: "usr_dev",
+  updatedAt: 0,
+  ...overrides,
+});
+
+test("owners and admins can edit and pause or resume (Delete is in the edit form); others only read", () => {
+  expect(monitorActions("owner", { paused: false })).toEqual(["edit", "pause"]);
+  expect(monitorActions("admin", { paused: true })).toEqual(["edit", "resume"]);
+  expect(monitorActions("responder", { paused: false })).toEqual([]);
+  expect(monitorActions("viewer", { paused: true })).toEqual([]);
+});
+
+test("the edit form opens with the monitor's values, and an untouched one changes nothing", () => {
+  const http = row({ expectedStatus: 204, keyword: "ok" });
+  const draft = draftFromRow(http);
+  expect(draft).toMatchObject({
+    kind: "http",
+    name: "Checkout",
+    url: "https://example.com/health",
+    expectedStatus: "204",
+    keyword: "ok",
+    intervalSeconds: "60",
+    timeoutSeconds: "10",
+  });
+  // Regions picked in another order are the same regions (the shard keeps `PROBE_REGIONS` order).
+  expect(checkEdit({ ...draft, regions: ["weur", "enam"] }, http)).toMatchObject({
+    ok: true,
+    changed: false,
+  });
+
+  const heartbeat = row({
+    kind: "heartbeat",
+    url: null,
+    method: null,
+    timeoutSeconds: null,
+    regions: [],
+    graceSeconds: 120,
+  });
+  const beat = draftFromRow(heartbeat);
+  expect(beat).toMatchObject({ kind: "heartbeat", graceSeconds: "120" });
+  expect(checkEdit(beat, heartbeat)).toEqual({
+    ok: true,
+    kind: "heartbeat",
+    changed: false,
+    args: { id: heartbeat.id, name: "Checkout", intervalSeconds: 60, graceSeconds: 120 },
+  });
+  // No token hash in a heartbeat's update: its URL stays as it was.
+  expect(checkEdit({ ...beat, name: "Nightly backup" }, heartbeat)).toMatchObject({
+    ok: true,
+    changed: true,
+    args: { name: "Nightly backup" },
+  });
+});
+
+test("an edit is checked like a new monitor, and the kind never changes", () => {
+  const http = row();
+  const draft = draftFromRow(http);
+  expect(checkEdit({ ...draft, name: "", url: "http://localhost/" }, http)).toEqual({
+    ok: false,
+    fields: ["name", "url"],
+  });
+  expect(checkEdit({ ...draft, timeoutSeconds: "90" }, http)).toEqual({
+    ok: false,
+    fields: ["timeoutSeconds"],
+  });
+  expect(checkEdit({ ...draft, regions: [] }, http)).toEqual({ ok: false, fields: ["regions"] });
+  // A draft that says heartbeat is still checked as the HTTP monitor it edits.
+  expect(checkEdit({ ...draft, kind: "heartbeat", name: "Renamed" }, http)).toMatchObject({
+    ok: true,
+    kind: "http",
+    changed: true,
+  });
+});
+
+test("only a change to what is checked, on a running HTTP monitor, starts it over", () => {
+  const http = row();
+  const draft = draftFromRow(http);
+  expect(editRestarts({ ...draft, name: "Renamed", intervalSeconds: "120" }, http)).toBe(false);
+  expect(editRestarts({ ...draft, url: "https://example.com/ready" }, http)).toBe(true);
+  expect(editRestarts({ ...draft, regions: ["enam"] }, http)).toBe(true);
+  expect(editRestarts({ ...draft, keyword: "ok" }, http)).toBe(true);
+  // Paused, it starts over on resume anyway; invalid, nothing is sent.
+  expect(editRestarts({ ...draft, url: "https://example.com/ready" }, row({ paused: true }))).toBe(
+    false,
+  );
+  expect(editRestarts({ ...draft, url: "not a url" }, http)).toBe(false);
+});
+
+test("a refused monitor change uses the shared wording, except a monitor that is gone", () => {
+  expect(monitorRefusal("forbidden")).toBe(m.sync_error_forbidden());
+  expect(monitorRefusal("conflict")).toBe(m.sync_error_conflict());
+  expect(monitorRefusal("not_found")).toBe("It was deleted.");
+  expect(m.monitor_gone({}, { locale: "pt-BR" })).toBe("Ele foi excluído.");
+});
+
+test("a draft has changes once it differs from what it opened with; region order does not count", () => {
+  const initial = draftFromRow(row({}));
+  expect(draftChanged(initial, initial)).toBe(false);
+  expect(draftChanged({ ...initial, name: `${initial.name} API` }, initial)).toBe(true);
+  expect(draftChanged({ ...initial, regions: [...initial.regions].reverse() }, initial)).toBe(
+    false,
+  );
+  expect(draftChanged({ ...initial, regions: initial.regions.slice(1) }, initial)).toBe(true);
+  expect(draftChanged(EMPTY_DRAFT, EMPTY_DRAFT)).toBe(false);
+  expect(draftChanged({ ...EMPTY_DRAFT, kind: "heartbeat" }, EMPTY_DRAFT)).toBe(true);
+});
+
+test("saving an edit keeps a teammate's change to another field made while the form was open", () => {
+  const opened = row();
+  const initial = draftFromRow(opened);
+  // Here: only the interval. Meanwhile a teammate renamed it and moved its URL.
+  const draft = { ...initial, intervalSeconds: "120" };
+  const live = row({ name: "Checkout API", url: "https://example.com/ready" });
+  const checked = checkEdit(rebaseDraft(draft, initial, live), live);
+  expect(checked).toMatchObject({
+    ok: true,
+    changed: true,
+    args: { name: "Checkout API", url: "https://example.com/ready", intervalSeconds: 120 },
+  });
+  // Regions picked again in another order are not an edit, so the live ones stay.
+  const regions = rebaseDraft({ ...initial, regions: [...initial.regions].reverse() }, initial, {
+    ...live,
+    regions: ["enam"],
+  });
+  expect(regions.regions).toEqual(["enam"]);
 });

@@ -18,28 +18,47 @@ import {
   CopyIcon,
   OctagonAlertIcon,
   PauseIcon,
+  PencilIcon,
   PlayIcon,
   PlusIcon,
   XIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { MonitorForm } from "@/components/monitor-form";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
+import {
+  CONFIRM_DESTRUCTIVE,
+  MonitorForm,
+  type DiscardPrompt,
+  type MonitorFormMode,
+} from "@/components/monitor-form";
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { FormError } from "@/components/ui/field";
-import { formatAge, mutationErrorReason, queryErrorReason } from "@/lib/incidents";
+import { formatAge, queryErrorReason } from "@/lib/incidents";
 import {
   checkErrorReason,
   formatLatency,
   formatSeconds,
+  monitorActions,
   monitorBadge,
+  monitorRefusal,
   newHeartbeat,
   sourceChips,
   type CheckedDraft,
+  type CheckedEdit,
+  type MonitorAction,
   type MonitorBadge,
   type SourceChip,
 } from "@/lib/monitors";
@@ -59,19 +78,33 @@ const BADGES: Record<
 
 /**
  * The workspace's monitors, live from its shard (`useQuery("monitors.all")`): status, the last result from each
- * region with the colo it really ran from and why it failed, and for owners and admins the create form and
- * pause (confirmed) and resume.
+ * region with the colo it really ran from and why it failed, and for owners and admins the create form, editing
+ * and deleting (confirmed, in the edit form), and pause (confirmed) and resume. One form is open at a time:
+ * opening another while the open one has changes asks first whether to discard them.
  */
 export function MonitorsCard() {
   const { locale } = usePreferences();
   const { workspaceId, userId, role } = useMember();
+  // Owners and admins; everyone else reads.
   const manage = can(role, "monitor:manage");
   const { rows, status, error } = useQuery("monitors.all", {});
   const createHttp = useMutation("monitor.createHttp");
   const createHeartbeat = useMutation("monitor.createHeartbeat");
+  const updateHttp = useMutation("monitor.updateHttp");
+  const updateHeartbeat = useMutation("monitor.updateHeartbeat");
   const setPaused = useMutation("monitor.setPaused");
+  const remove = useMutation("monitor.delete");
   const [adding, setAdding] = useState(false);
+  /** The monitor whose edit form is open. */
+  const [editing, setEditing] = useState<string | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
+  /** The form asked for while the open one has changes, waiting on its discard prompt. */
+  const [pending, setPending] = useState<Opening | null>(null);
+  /** Whether the open form's draft differs from what it opened with. */
+  const changed = useRef(false);
+  const onChanged = useCallback((value: boolean) => {
+    changed.current = value;
+  }, []);
   /** The heartbeat URL, shown once after its monitor was created (only its hash is stored). */
   const [ping, setPing] = useState<{ url: string; interval: number } | null>(null);
   const addRef = useRef<HTMLButtonElement>(null);
@@ -89,16 +122,35 @@ export function MonitorsCard() {
 
   const report = (name: string) => (outcome: MutationOutcome) => {
     if (!outcome.ok) {
-      setRefused(
-        m.monitor_change_failed({ name, reason: mutationErrorReason(outcome.error.code) }),
-      );
+      setRefused(m.monitor_change_failed({ name, reason: monitorRefusal(outcome.error.code) }));
     }
     return outcome.ok;
   };
   const close = () => {
     restoreFocus.current = true;
+    changed.current = false;
+    setPending(null);
     setAdding(false);
   };
+  /** Opens the create form or a monitor's edit form, closing the other one. */
+  const open = (target: Opening) => {
+    setRefused(null);
+    changed.current = false;
+    setPending(null);
+    setAdding(target.kind === "add");
+    setEditing(target.kind === "edit" ? target.id : null);
+  };
+  /** Opens `target`, unless the open form has changes: then that form asks first. */
+  const [asked, setAsked] = useState(0);
+  const ask = (target: Opening) => {
+    if (changed.current && (adding || editing !== null)) {
+      setPending(target);
+      setAsked((count) => count + 1);
+    } else open(target);
+  };
+  const discard: DiscardPrompt | null = pending
+    ? { onDiscard: () => open(pending), onKeep: () => setPending(null), asked }
+    : null;
   const onCreate = async (checked: Extract<CheckedDraft, { ok: true }>) => {
     setRefused(null);
     if (checked.kind === "http") {
@@ -128,6 +180,54 @@ export function MonitorsCard() {
     setRefused(null);
     void setPaused({ id: row.id, paused: !row.paused }).then(report(row.name));
   };
+  /** Focus goes back to the row's Edit button once the form is gone. */
+  const closeEdit = (id: string) => {
+    changed.current = false;
+    setPending(null);
+    setEditing(null);
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>(`[data-monitor="${id}"] [data-action="edit"]`)?.focus(),
+    );
+  };
+  const onEdit = (row: MonitorRow) => ask({ kind: "edit", id: row.id });
+  /**
+   * The form closes as the edit is sent, before the shard answers. Only the fields edited here are sent over the
+   * live row (`rebaseDraft`), so a teammate's change to another field stays. A refusal that only a race can cause
+   * (someone deleted it, `not_found`; or the live row already has these values, `conflict`) is said above the
+   * list, and the draft is gone: what was typed is not kept to try again.
+   */
+  const onSave = (row: MonitorRow, checked: Extract<CheckedEdit, { ok: true }>) => {
+    setRefused(null);
+    const sent = checked.kind === "http" ? updateHttp(checked.args) : updateHeartbeat(checked.args);
+    void sent.then(report(row.name));
+    closeEdit(row.id);
+  };
+  const onDelete = (row: MonitorRow) => {
+    setRefused(null);
+    void remove({ id: row.id }).then(report(row.name));
+    changed.current = false;
+    setPending(null);
+    setEditing(null);
+    // The row is gone: focus goes to the card's own action.
+    requestAnimationFrame(() => addRef.current?.focus());
+  };
+  const editMode = (row: MonitorRow): MonitorFormMode => ({
+    kind: "edit",
+    row,
+    onSave: (checked) => onSave(row, checked),
+    onDelete: () => onDelete(row),
+  });
+
+  // The monitor being edited was deleted elsewhere: its form went with its row, so focus goes to the card's action.
+  const editedGone =
+    editing !== null && status === "ready" && !rows.some((row) => row.id === editing);
+  useEffect(() => {
+    if (!editedGone) return;
+    changed.current = false;
+    setPending(null);
+    setEditing(null);
+    requestAnimationFrame(() => addRef.current?.focus());
+  }, [editedGone]);
 
   const down = rows.filter(monitorAlerting).length;
   const loading = status !== "ready" && status !== "error";
@@ -142,14 +242,7 @@ export function MonitorsCard() {
             {m.monitors_title()}
           </CardTitle>
           {manage && !adding ? (
-            <Button
-              ref={addRef}
-              variant="outline"
-              onClick={() => {
-                setRefused(null);
-                setAdding(true);
-              }}
-            >
+            <Button ref={addRef} variant="outline" onClick={() => ask({ kind: "add" })}>
               <PlusIcon aria-hidden />
               {m.monitor_add()}
             </Button>
@@ -175,7 +268,14 @@ export function MonitorsCard() {
       </div>
 
       <CardContent className="flex flex-col gap-5">
-        {adding ? <MonitorForm onCreate={onCreate} onCancel={close} /> : null}
+        {adding ? (
+          <MonitorForm
+            mode={{ kind: "create", onCreate }}
+            onCancel={close}
+            onChanged={onChanged}
+            discard={discard}
+          />
+        ) : null}
         {ping ? (
           <PingUrl
             {...ping}
@@ -204,7 +304,19 @@ export function MonitorsCard() {
                 locale={locale}
                 now={now}
                 userId={userId}
-                onPause={manage ? onPause : undefined}
+                actions={monitorActions(role, row)}
+                onPause={onPause}
+                onEdit={onEdit}
+                edit={
+                  editing === row.id ? (
+                    <MonitorForm
+                      mode={editMode(row)}
+                      onCancel={() => closeEdit(row.id)}
+                      onChanged={onChanged}
+                      discard={discard}
+                    />
+                  ) : null
+                }
               />
             ))}
           </ul>
@@ -224,8 +336,11 @@ export function MonitorsCard() {
   );
 }
 
+/** A form to open: the create form, or a monitor's edit form. */
+type Opening = { kind: "add" } | { kind: "edit"; id: string };
+
 const ROW_GRID =
-  "relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 px-4 py-3 sm:px-6 md:grid-cols-[--spacing(28)_minmax(0,1fr)_minmax(0,18rem)_--spacing(30)]";
+  "relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 px-4 py-3 sm:px-6 md:grid-cols-[--spacing(28)_minmax(0,1fr)_minmax(0,18rem)_--spacing(30)] md:has-[[data-action]]:grid-cols-[--spacing(28)_minmax(0,1fr)_minmax(0,18rem)_--spacing(48)]";
 
 /**
  * One monitor. Phones stack the badge and name, the target, then the results; from `md` the badge, name and
@@ -236,13 +351,21 @@ function MonitorItem({
   locale,
   now,
   userId,
+  actions,
   onPause,
+  onEdit,
+  edit,
 }: {
   row: MonitorRow;
   locale: Locale;
   now: number;
   userId: string;
-  onPause?: (row: MonitorRow) => void;
+  /** What this member may do here (`monitorActions`): none for responders and viewers. */
+  actions: readonly MonitorAction[];
+  onPause: (row: MonitorRow) => void;
+  onEdit: (row: MonitorRow) => void;
+  /** The open edit form, drawn in place of the row's content. */
+  edit: ReactNode;
 }) {
   const nameId = useId();
   const promptId = useId();
@@ -261,6 +384,16 @@ function MonitorItem({
     // The Pause button stays mounted while the prompt is open.
     pauseRef.current?.focus();
   };
+  // A pause prompt left open does not come back once the edit form closes, or after someone else paused it (it
+  // would pop up again on a later resume). Adjusted while rendering, React's pattern for state that follows props.
+  if ((edit || row.paused) && confirming) setConfirming(false);
+  if (edit) {
+    return (
+      <li data-monitor={row.id} className="px-4 py-3 sm:px-6">
+        {edit}
+      </li>
+    );
+  }
   const latest = row.checks.reduce<MonitorCheck | undefined>(
     (last, check) => (last && last.at >= check.at ? last : check),
     undefined,
@@ -327,10 +460,26 @@ function MonitorItem({
         )}
         {line ? <p className="text-muted-foreground">{line}</p> : null}
       </div>
-      {onPause ? (
-        <div className="col-start-2 row-start-1 justify-self-end md:col-auto">
-          {row.paused ? (
-            <Button variant="ghost" aria-describedby={nameId} onClick={() => onPause(row)}>
+      {actions.length > 0 ? (
+        <div className="col-start-2 row-start-1 flex gap-1 justify-self-end md:col-auto">
+          {actions.includes("edit") ? (
+            <Button
+              variant="ghost"
+              data-action="edit"
+              aria-describedby={nameId}
+              onClick={() => onEdit(row)}
+            >
+              <PencilIcon aria-hidden />
+              {m.monitor_edit({ part: "action", name: "" })}
+            </Button>
+          ) : null}
+          {actions.includes("resume") ? (
+            <Button
+              variant="ghost"
+              data-action="pause"
+              aria-describedby={nameId}
+              onClick={() => onPause(row)}
+            >
               <PlayIcon aria-hidden />
               {m.monitor_pause_action({ action: "resume" })}
             </Button>
@@ -338,6 +487,7 @@ function MonitorItem({
             <Button
               ref={pauseRef}
               variant="ghost"
+              data-action="pause"
               aria-describedby={nameId}
               aria-expanded={confirming}
               onClick={() => setConfirming(true)}
@@ -348,8 +498,8 @@ function MonitorItem({
           )}
         </div>
       ) : null}
-      {confirming && onPause && !row.paused ? (
-        // Pausing resolves a firing alert, so it asks first. Inline, next to the row it is about.
+      {confirming && actions.includes("pause") ? (
+        // Pausing stops the checks and resolves a firing alert, so it asks first. Inline, next to the row it is about.
         <div
           role="group"
           aria-labelledby={promptId}
@@ -362,18 +512,21 @@ function MonitorItem({
           className="col-span-full flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md bg-muted px-3 py-2 text-sm"
         >
           <p id={promptId} className="min-w-0 flex-1 basis-48">
-            {m.monitor_pause_action({ action: "prompt" })}
+            {m.monitor_pause_action({ action: alerting ? "prompt_alert" : "prompt" })}
           </p>
           <div className="flex flex-wrap gap-2">
             <Button
               ref={confirmRef}
               variant="destructive"
+              className={CONFIRM_DESTRUCTIVE}
               aria-describedby={nameId}
               onClick={() => {
                 setConfirming(false);
                 onPause(row);
                 requestAnimationFrame(() =>
-                  document.querySelector<HTMLElement>(`[data-monitor="${row.id}"] button`)?.focus(),
+                  document
+                    .querySelector<HTMLElement>(`[data-monitor="${row.id}"] [data-action="pause"]`)
+                    ?.focus(),
                 );
               }}
             >

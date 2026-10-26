@@ -102,9 +102,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Also done: a separate restart guard (`restartedAt`), fresh-only quorum with a "No data" status, refreshes
     without outbox events, heartbeat routing checked against D1, a port list for checks; in the dashboard, failure
     reasons, waiting and no-data chips, a confirmed pause with who paused it, the down row's incident link, and a
-    one-time heartbeat URL with Copy and a `curl` example.
-  - Left: TCP checks (`connect()`); editing and deleting monitors in the dashboard (the mutations exist); regenerating
-    a heartbeat URL; whether "No data" pages (Q17); member names for "Paused by" (today "you" or "a teammate"; the shard's member list now has them); regex,
+    one-time heartbeat URL with Copy and a `curl` example; editing a monitor in place (owners and admins; the kind
+    stays, an edit that changes nothing sends nothing, and the form says when saving starts the checks over) and
+    deleting it from the edit form, confirmed with what happens to its firing alert and its incidents and, for a
+    heartbeat, its URL.
+  - Left: TCP checks (`connect()`); regenerating a heartbeat URL (no mutation for it yet); whether "No data" pages (Q17); member names for "Paused by" (today "you" or "a teammate"; the shard's member list now has them); regex,
     headers and TLS expiry; configurable quorum and severity; alerting on a stalled probe (RFC 0007 "Watching the
     watcher"; today it is logged and re-pushed); `AlertGroupDO` and alert routes, moving monitor alerts out of the
     workspace shard;

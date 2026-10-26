@@ -378,7 +378,8 @@
       "selectors": ["action"],
       "match": {
         "action=pause": "Pausar",
-        "action=prompt": "Pausar as verificações? Um alerta ativo é resolvido.",
+        "action=prompt": "Pausar este monitor? As verificações param até você retomá-lo.",
+        "action=prompt_alert": "Pausar este monitor? As verificações param até você retomá-lo, e o alerta ativo é resolvido.",
         "action=*": "Retomar"
       }
     }
@@ -485,6 +486,48 @@
       "match": {
         "has=yes": "Abrir {number}",
         "has=*": "Abrir incidente"
+      }
+    }
+  ],
+  "monitor_edit": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=action": "Editar",
+        "part=form": "Editar {name}",
+        "part=restart": "Salvar recomeça as verificações: os últimos resultados são descartados e ele mostra Aguardando até as regiões responderem de novo.",
+        "part=restart_alert": "O alerta ativo continua até as verificações voltarem a passar.",
+        "part=*": "Salvar alterações"
+      }
+    }
+  ],
+  "monitor_delete": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=action": "Excluir monitor",
+        "part=prompt": "Excluir {name}? As verificações param e os resultados se perdem de vez.",
+        "part=alert": "O alerta ativo é resolvido. O incidente que ele abriu fica para as pessoas encerrarem.",
+        "part=incidents": "Incidentes que ele abriu antes continuam como estão.",
+        "part=heartbeat": "A URL do heartbeat deixa de funcionar.",
+        "part=keep": "Manter monitor",
+        "part=*": "Excluir"
+      }
+    }
+  ],
+  "monitor_gone": "Ele foi excluído.",
+  "monitor_discard": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=prompt": "Descartar as alterações em {name}?",
+        "part=prompt_new": "Descartar este novo monitor?",
+        "part=discard_new": "Descartar",
+        "part=discard": "Descartar alterações",
+        "part=*": "Continuar editando"
       }
     }
   ],

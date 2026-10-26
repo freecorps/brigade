@@ -37,6 +37,7 @@ describe("workspace.create", () => {
       "notification.fail",
       "escalation.start",
       "escalation.advance",
+      "escalation.fallback",
     ]);
     const result = runMutation(
       mutations,

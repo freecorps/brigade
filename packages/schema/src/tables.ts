@@ -50,17 +50,29 @@ export type EscalationMiss = {
   schedule: string | null;
 };
 
+/**
+ * Why a level was paged: the run `started`, the level before timed out, the ones before were `unreachable`; for the
+ * interim rule (`level` null) also `exhausted` (every level and repeat paged, nobody acknowledged) or `stalled` (a
+ * level kept failing to fire, `escalation.fallback`).
+ */
+export type EscalationReason = "started" | "timeout" | "unreachable" | "exhausted" | "stalled";
+
 /** One level an escalation run paged. */
 export type EscalationPage = {
-  /** 1-based; null: no level could be reached, so everyone who can respond was paged (the interim rule). */
+  /** 1-based; null: everyone who can respond was paged (the interim rule), for `reason`. */
   level: number | null;
   /** 0 the first time through the levels, then 1 to the policy's `repeat`. */
   round: number;
   at: number;
   /** Who the level resolved to and could reach (schedules to whoever was on call then). */
   userIds: string[];
-  /** Targets of this level, and of the unreachable levels skipped to get here, that could not be paged. */
+  /**
+   * Targets of this level, and of the unreachable levels skipped to get here, that could not be paged: the first
+   * `MAX_PAGE_MISSES` of them (the incident row stays small); `missedCount` says how many there were.
+   */
   missed: EscalationMiss[];
+  missedCount: number;
+  reason: EscalationReason;
 };
 
 export type EscalationStatus = "running" | "acknowledged" | "resolved" | "exhausted";
@@ -84,6 +96,9 @@ export type Escalation = {
   endedAt: number | null;
   /** When the next level fires; null once it stopped. */
   nextAt: number | null;
+  /** How many pages the run made: the step `escalation.advance` names, which `pages` (capped) cannot. */
+  paged: number;
+  /** The last `MAX_ESCALATION_PAGES` pages, oldest first. */
   pages: EscalationPage[];
 };
 
@@ -138,16 +153,16 @@ export type TimelineEntry =
   | { kind: "page_failed"; userId: string | null; reason: PageFailure; schedule?: string | null }
   /**
    * An escalation level was paged (RFC 0006 "Who is paged"): `level` 1-based, or null for everyone who can respond;
-   * `reason` says why this level: the run `started`, the last one timed out, or the ones before were `unreachable`.
+   * `reason` says why this level (`EscalationReason`).
    */
   | {
       kind: "escalated";
       level: number | null;
       round: number;
       userIds: string[];
-      reason: "started" | "timeout" | "unreachable";
+      reason: EscalationReason;
     }
-  /** Every level and repeat was paged and nobody acknowledged. */
+  /** Every level and repeat was paged and nobody acknowledged, so everyone who can respond was paged. */
   | { kind: "escalation_exhausted"; levels: number; rounds: number };
 
 /**

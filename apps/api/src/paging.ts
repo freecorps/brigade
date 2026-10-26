@@ -81,8 +81,18 @@ export type PagePlan =
     }
   | {
       send: false;
-      /** Why nothing is sent: not a paging event, already done, the incident moved on, or nobody to page. */
-      reason: "not_a_page" | "done" | "not_found" | "acknowledged" | "inactive" | "nobody";
+      /**
+       * Why nothing is sent: not a paging event, already done, the incident moved on, an escalation page from a run
+       * that has stopped (or an older one), or nobody to page.
+       */
+      reason:
+        | "not_a_page"
+        | "done"
+        | "not_found"
+        | "acknowledged"
+        | "inactive"
+        | "stale"
+        | "nobody";
     };
 
 /** Why one device's push failed, as the notifier reports it. */
@@ -190,6 +200,18 @@ export type PagerOptions = {
 /** Who an escalation page is for: the members a level reached, or the interim rule (`level` null). */
 type Recipients = { targets: PageTarget[]; noDevices: string[]; skipped: SkippedMember[] };
 
+/**
+ * Whether an `escalation.paged` event belongs to the incident's run as it is now: a level of the run under way, or
+ * the interim rule's page that ended it. One from a run since stopped (acknowledged, then reopened) or replaced pages
+ * nobody.
+ */
+function current(event: BrigadeEvent, incident: IncidentRow): boolean {
+  const data = event.data as Partial<EscalationPaged["data"]> | null;
+  const run = incident.escalation;
+  if (!run || data?.run !== run.eventId) return false;
+  return run.status === "running" || (run.status === "exhausted" && data.step === run.paged);
+}
+
 const fromMiss = (miss: EscalationMiss): SkippedMember => ({
   userId: miss.userId,
   reason: miss.reason,
@@ -225,6 +247,11 @@ export class Pager {
     if (!incident) return { send: false, reason: "not_found" };
     if (!isActive(incident.status)) return { send: false, reason: "inactive" };
     if (incident.acknowledgedAt != null) return { send: false, reason: "acknowledged" };
+    if (event.type === "escalation.paged" && !current(event, incident)) {
+      // Acknowledged and then reopened, or a new run since: this page belongs to a run that stopped.
+      this.finish(event.id, now);
+      return { send: false, reason: "stale" };
+    }
 
     const recipients =
       this.escalated(event, incident, now) ??
@@ -307,17 +334,8 @@ export class Pager {
     let page: EscalationPage | undefined;
     let missed: SkippedMember[] = [];
     if (run?.eventId !== event.id && run?.status !== "running") {
-      if (!defaultPolicy(store)) return undefined;
-      this.run(
-        ESCALATION_ACTOR,
-        "escalation",
-        `start:${event.id}`,
-        "escalation.start",
-        { incidentId: incident.id, eventId: event.id, causedBy: event.actor.id },
-        now,
-      );
+      if (!this.start(event, incident, now)) return undefined;
       run = store.get("incidents", incident.id)?.escalation;
-      if (run?.status === "running" && run.nextAt !== null) this.options.wake(run.nextAt);
     }
     if (run?.eventId === event.id) {
       // This event started the run (now, or before a redelivery): its first page, and what that level missed.
@@ -329,6 +347,25 @@ export class Pager {
     if (!page) return undefined;
     if (page.level === null) return this.interim(incident, missed);
     return { ...this.devicesOf(page.userIds, event.actor.id), skipped: missed };
+  }
+
+  /**
+   * Starts a run on the default policy for the page `event` asked for (`escalation.start`, de-duplicated by the
+   * event) and brings the alarm forward to its next level. False without a default policy (the interim rule pages).
+   */
+  private start(event: BrigadeEvent, incident: IncidentRow, now: number): boolean {
+    if (!defaultPolicy(this.options.shard.store)) return false;
+    this.run(
+      ESCALATION_ACTOR,
+      "escalation",
+      `start:${event.id}`,
+      "escalation.start",
+      { incidentId: incident.id, eventId: event.id, causedBy: event.actor.id },
+      now,
+    );
+    const run = this.options.shard.store.get("incidents", incident.id)?.escalation;
+    if (run?.status === "running" && run.nextAt !== null) this.options.wake(run.nextAt);
+    return true;
   }
 
   /** RFC 0006's interim rule, excluding whoever caused the run's first page (they know). */
@@ -420,7 +457,9 @@ export class Pager {
   /**
    * A page the Queue gave up on (the dead-letter consumer, src/notify.ts): if nothing settled it, its incident says
    * the page may not have gone out (`dead_lettered`), and the page is closed. Not for an incident that is
-   * acknowledged or no longer active, which `plan` would not page either.
+   * acknowledged or no longer active, which `plan` would not page either. A first page that never reached the plan
+   * never started its escalation run: it starts here (its first level recorded as not paged), so the next levels
+   * still fire on time.
    */
   deadLettered(event: BrigadeEvent, now: number): DeadLetterResult {
     if (!asksForPage(event)) return "not_a_page";
@@ -428,6 +467,15 @@ export class Pager {
     const incident = this.options.shard.store.get("incidents", event.subject!);
     if (!incident) return "no_incident";
     const open = isActive(incident.status) && incident.acknowledgedAt == null;
+    const run = incident.escalation;
+    if (
+      open &&
+      event.type !== "escalation.paged" &&
+      run?.eventId !== event.id &&
+      run?.status !== "running"
+    ) {
+      this.start(event, incident, now);
+    }
     if (open) this.fail(event, incident.id, null, "dead_lettered", now);
     this.finish(event.id, now);
     return open ? "recorded" : "closed";

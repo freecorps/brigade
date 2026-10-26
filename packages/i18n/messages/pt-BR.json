@@ -652,7 +652,9 @@
         "kind=escalated_timeout": "Ninguém confirmou, então o nível {a} foi chamado: {b}",
         "kind=escalated_unreachable": "Os níveis anteriores não alcançaram ninguém, então o nível {a} foi chamado: {b}",
         "kind=escalated_everyone": "Nenhum nível alcançou ninguém, então todos que podem responder foram chamados",
-        "kind=escalation_exhausted": "Ninguém confirmou depois de todos os níveis da política de escalonamento",
+        "kind=escalation_exhausted": "Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados",
+        "kind=escalated_everyone_stalled": "Um nível de escalonamento continuou falhando, então todos que podem responder foram chamados",
+        "kind=page_escalation_stalled": "Um nível de escalonamento não pôde ser disparado. O Brigade continua tentando e chama todos que podem responder se ainda falhar",
         "kind=*": "{actor} alterou o incidente"
       }
     }

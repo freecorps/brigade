@@ -103,10 +103,15 @@ export function entryText(entry: TimelineRow, who: People): string {
       if (entry.reason === "nobody_on_call")
         return say("page_nobody_on_call", entry.schedule ?? "");
       if (entry.reason === "schedule_missing") return say("page_schedule_missing");
+      if (entry.reason === "escalation_stalled") return say("page_escalation_stalled");
       if (entry.userId === null) return say("page_nobody");
       return say(`page_failed_${entry.reason}`, personName(entry.userId, who, "object"));
     case "escalated": {
-      if (entry.level === null) return say("escalated_everyone");
+      if (entry.level === null) {
+        return say(
+          entry.reason === "stalled" ? "escalated_everyone_stalled" : "escalated_everyone",
+        );
+      }
       const level = m.escalation_level_round({
         level: String(entry.level),
         round: String(entry.round),

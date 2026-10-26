@@ -23,7 +23,9 @@ const scheduleName: Validator<string | null | undefined> = (input, path = "") =>
  *   the Queue gave up on it, so whether anyone was paged is unknown (`userId: null`);
  * - `nobody_on_call`: an escalation level's schedule had nobody on call when it fired (`userId: null`, `schedule`);
  * - `schedule_missing`: an escalation level's schedule was deleted after the run started (`userId: null`);
- * - `not_a_member`: an escalation level's member left the workspace or became a viewer.
+ * - `not_a_member`: an escalation level's member left the workspace or became a viewer;
+ * - `escalation_stalled`: an escalation level is due but could not fire (`userId: null`); the shard tries again every
+ *   minute, and past `ESCALATION_STALL_MS` pages everyone who can respond (`escalation.fallback`).
  */
 export const PAGE_FAILURES = [
   "no_devices",
@@ -35,6 +37,7 @@ export const PAGE_FAILURES = [
   "nobody_on_call",
   "schedule_missing",
   "not_a_member",
+  "escalation_stalled",
 ] as const;
 export type PageFailure = (typeof PAGE_FAILURES)[number];
 

@@ -5,6 +5,8 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   createMemoryStore,
   ESCALATION_ACTOR,
+  MAX_ESCALATION_PAGES,
+  MAX_PAGE_MISSES,
   MEMBERS_ACTOR,
   mutations,
   runMutation,
@@ -158,7 +160,7 @@ const advance = (store: MutationStore, now: number) =>
   runMutation(
     serverMutations,
     "escalation.advance",
-    { incidentId: INC, step: store.get("incidents", INC)!.escalation!.pages.length },
+    { incidentId: INC, step: store.get("incidents", INC)!.escalation!.paged },
     store,
     system(now),
   );
@@ -386,6 +388,8 @@ describe("escalation runs", () => {
             missed: [],
             reason: "started",
             started: true,
+            run: EVT,
+            step: 1,
           },
         },
       ],
@@ -396,7 +400,18 @@ describe("escalation runs", () => {
       status: "running",
       eventId: EVT,
       nextAt: T + 5 * MINUTE,
-      pages: [{ level: 1, round: 0, at: T, userIds: ["usr_caio"] }],
+      paged: 1,
+      pages: [
+        {
+          level: 1,
+          round: 0,
+          at: T,
+          userIds: ["usr_caio"],
+          missed: [],
+          missedCount: 0,
+          reason: "started",
+        },
+      ],
     });
     expect(store.get("escalation_timers", INC)).toEqual({ id: INC, at: T + 5 * MINUTE });
     expect(timeline(store)).toEqual([
@@ -413,7 +428,7 @@ describe("escalation runs", () => {
     expect(start(store)).toMatchObject({ ok: false, error: { code: "conflict" } });
   });
 
-  test("a timeout fires the next level, then repeats, then the run is exhausted", () => {
+  test("a timeout fires the next level, then repeats, then everyone who can respond is paged and the run ends", () => {
     const store = withPolicy({ repeat: 1 });
     start(store);
     // Not due yet: nothing fires.
@@ -434,6 +449,22 @@ describe("escalation runs", () => {
     expect(advance(store, T + 30 * MINUTE)).toEqual({
       ok: true,
       events: [
+        {
+          type: "escalation.paged",
+          subject: INC,
+          data: {
+            incidentId: INC,
+            policyId: ESC,
+            level: null,
+            round: 1,
+            userIds: [],
+            missed: [],
+            reason: "exhausted",
+            started: false,
+            run: EVT,
+            step: 5,
+          },
+        },
         {
           type: "escalation.exhausted",
           subject: INC,
@@ -458,7 +489,7 @@ describe("escalation runs", () => {
   test("a repeated alarm fires a level once", () => {
     const store = withPolicy();
     start(store);
-    const step = run(store).pages.length;
+    const step = run(store).paged;
     const again = () =>
       runMutation(
         serverMutations,
@@ -585,6 +616,106 @@ describe("escalation runs", () => {
     expect(start(store, "usr_bia")).toMatchObject({
       events: [{ data: { level: 1, userIds: ["usr_bia"], missed: [] } }],
     });
+  });
+
+  test("a one-level policy whose only reach was the declarer falls back to everyone at its timeout", () => {
+    const store = withPolicy({ levels: [level(LVL1, [{ kind: "schedule", id: SCH }])] });
+    // Caio is on call and declared it: nobody is pushed for level 1.
+    start(store, "usr_caio");
+    expect(run(store).pages[0]).toMatchObject({ level: 1, userIds: ["usr_caio"] });
+    expect(advance(store, T + 5 * MINUTE)).toMatchObject({
+      ok: true,
+      events: [
+        { type: "escalation.paged", data: { level: null, reason: "exhausted", started: false } },
+        { type: "escalation.exhausted" },
+      ],
+    });
+    expect(run(store)).toMatchObject({ status: "exhausted", causedBy: "usr_caio", paged: 2 });
+  });
+
+  test("escalation.fallback pages everyone who can respond for a level that keeps failing, once", () => {
+    const store = withPolicy();
+    start(store);
+    const fallback = (step: number) =>
+      runMutation(
+        serverMutations,
+        "escalation.fallback",
+        { incidentId: INC, step },
+        store,
+        system(T + 9 * MINUTE),
+      );
+    expect(fallback(2)).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(fallback(1)).toMatchObject({
+      ok: true,
+      events: [{ type: "escalation.paged", data: { level: null, reason: "stalled", step: 2 } }],
+    });
+    expect(run(store)).toMatchObject({ status: "exhausted", nextAt: null });
+    expect(store.get("escalation_timers", INC)).toBeUndefined();
+    expect(timeline(store).at(-1)).toMatchObject({
+      kind: "escalated",
+      level: null,
+      reason: "stalled",
+    });
+    expect(fallback(2)).toMatchObject({ ok: false, error: { code: "not_found" } });
+    // Server only: no socket sends it.
+    expect(
+      runMutation(
+        mutations,
+        "escalation.fallback",
+        { incidentId: INC, step: 1 },
+        store,
+        ctx("usr_ana", "owner"),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "unknown_mutation" } });
+  });
+
+  test("the incident row keeps the last pages and the first misses of each; the counts stay whole", () => {
+    // Levels 1 to 3: nine members each with no device (skipped at once, 27 misses); levels 4 to 6: Eva. Repeated
+    // 9 more times: 30 pages, then the interim rule's.
+    const away = (from: number) =>
+      Array.from({ length: 9 }, (_, i) => ({
+        kind: "member" as const,
+        id: `usr_away${String(from + i).padStart(2, "0")}`,
+      }));
+    const eva = [{ kind: "member" as const, id: "usr_eva" }];
+    const store = shard();
+    for (const { id } of [...away(0), ...away(9), ...away(18)]) {
+      store.insert("members", { id, name: id, role: "responder", updatedAt: 0 });
+    }
+    expect(
+      runMutation(
+        mutations,
+        "escalation.createPolicy",
+        policyArgs({
+          levels: [
+            level(LVL1, away(0), 1),
+            level(LVL2, away(9), 1),
+            level(LVL3, away(18), 1),
+            level("lvl_01JB0000000000000000000004", eva, 1),
+            level("lvl_01JB0000000000000000000005", eva, 1),
+            level("lvl_01JB0000000000000000000006", eva, 1),
+          ],
+          repeat: 9,
+        }),
+        store,
+        ctx("usr_ana", "owner"),
+      ),
+    ).toMatchObject({ ok: true });
+    const started = start(store);
+    if (!started.ok) throw new Error("not started");
+    // The event carries every miss; the row keeps the first ones and the count.
+    expect(started.events[0].data).toMatchObject({ level: 4, reason: "unreachable" });
+    expect((started.events[0].data as { missed: unknown[] }).missed).toHaveLength(27);
+    expect(run(store).pages[0]).toMatchObject({ missedCount: 27 });
+    expect(run(store).pages[0].missed).toHaveLength(MAX_PAGE_MISSES);
+    for (let minute = 1; minute <= 30; minute++) {
+      expect(advance(store, T + minute * MINUTE)).toMatchObject({ ok: true });
+    }
+    expect(run(store)).toMatchObject({ status: "exhausted", paged: 31 });
+    expect(run(store).pages).toHaveLength(MAX_ESCALATION_PAGES);
+    expect(run(store).pages.at(-1)).toMatchObject({ level: null, reason: "exhausted" });
+    // The timeline keeps every page.
+    expect(timeline(store).filter((entry) => entry.kind === "escalated")).toHaveLength(30);
   });
 
   test("a later level that times out into unreachable levels falls back as well", () => {

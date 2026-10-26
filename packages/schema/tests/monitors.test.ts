@@ -650,6 +650,160 @@ describe("managing monitors", () => {
   });
 });
 
+describe("monitor.rotateHeartbeat", () => {
+  const NEW_HASH = "c".repeat(64);
+  function createBeat(db: MemoryStore<BrigadeTables>) {
+    const id = newId("mon", T, random);
+    const args = { id, name: "Backup", intervalSeconds: 3600, graceSeconds: 300, tokenHash: HASH };
+    expect(runMutation(mutations, "monitor.createHeartbeat", args, db, as("admin")).ok).toBe(true);
+    return id;
+  }
+  const beat = (db: MemoryStore<BrigadeTables>, id: string, up: boolean, at: number) =>
+    runMutation(
+      serverMutations,
+      "monitor.report",
+      {
+        id,
+        source: "heartbeat",
+        at,
+        up,
+        latencyMs: null,
+        colo: null,
+        httpStatus: null,
+        error: up ? null : "missed",
+        open: open(),
+      },
+      db,
+      system(at),
+    );
+
+  test("owners and admins only; the hash is replaced server-side and never leaves it", () => {
+    const db = store();
+    const id = createBeat(db);
+    for (const role of ["responder", "viewer"] as const) {
+      expect(
+        runMutation(mutations, "monitor.rotateHeartbeat", { id, tokenHash: NEW_HASH }, db, as(role)),
+      ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    }
+    expect(db.get("heartbeats", id)).toMatchObject({ tokenHash: HASH });
+
+    for (const role of ["owner", "admin"] as const) {
+      const hash = role === "owner" ? NEW_HASH : "d".repeat(64);
+      const result = runMutation(
+        mutations,
+        "monitor.rotateHeartbeat",
+        { id, tokenHash: hash },
+        db,
+        as(role, T + 1000),
+      );
+      expect(types(result)).toEqual(["monitor.heartbeat_rotated"]);
+      expect(result.ok && result.events[0]).toEqual({
+        type: "monitor.heartbeat_rotated",
+        subject: id,
+        data: { id },
+      });
+      expect(db.get("heartbeats", id)).toEqual({ id, tokenHash: hash, lastPingAt: null });
+      expect(JSON.stringify(db.get("monitors", id))).not.toContain(hash);
+    }
+    // The same hash again (never from a real client) changes nothing.
+    expect(
+      runMutation(
+        mutations,
+        "monitor.rotateHeartbeat",
+        { id, tokenHash: "d".repeat(64) },
+        db,
+        as("admin"),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+  });
+
+  test("a client's optimistic store never holds the hash; only heartbeats rotate", () => {
+    const client = store();
+    const id = createBeat(client);
+    client.delete("heartbeats", id);
+    const result = runMutation(
+      mutations,
+      "monitor.rotateHeartbeat",
+      { id, tokenHash: NEW_HASH },
+      client,
+      { ...as("admin"), server: false },
+    );
+    expect(result.ok).toBe(true);
+    expect(client.get("heartbeats", id)).toBeUndefined();
+
+    const db = store();
+    const http = createHttp(db, ["weur"]);
+    expect(
+      runMutation(mutations, "monitor.rotateHeartbeat", { id: http, tokenHash: NEW_HASH }, db, as("admin")),
+    ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+    expect(
+      runMutation(
+        mutations,
+        "monitor.rotateHeartbeat",
+        { id: newId("mon", T, random), tokenHash: NEW_HASH },
+        db,
+        as("admin"),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "not_found" } });
+    expect(
+      runMutation(mutations, "monitor.rotateHeartbeat", { id: http, tokenHash: "nope" }, db, as("admin")),
+    ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+  });
+
+  test("starts the monitor over: pending, a full interval and grace from now, the alert kept until a ping", () => {
+    const db = store();
+    const id = createBeat(db);
+    // The old pinger stopped: the monitor is down and paging.
+    expect(beat(db, id, false, T + 5000).ok).toBe(true);
+    const down = db.get("monitors", id)!;
+    expect(down).toMatchObject({ status: "down", alertId: expect.any(String) });
+
+    const at = T + 60_000;
+    expect(
+      runMutation(mutations, "monitor.rotateHeartbeat", { id, tokenHash: NEW_HASH }, db, as("admin", at)).ok,
+    ).toBe(true);
+    expect(db.get("monitors", id)).toMatchObject({
+      status: "pending",
+      checks: [],
+      since: at,
+      restartedAt: at,
+      alertId: down.alertId,
+      incidentId: down.incidentId,
+    });
+    // A miss computed before the rotation is refused, so the old pinger's silence cannot page again.
+    expect(beat(db, id, false, at - 1)).toMatchObject({ ok: false, error: { code: "conflict" } });
+    // No second alert while the first fires; the new URL's first ping resolves it.
+    expect(types(beat(db, id, true, at + 1000))).toEqual([
+      "monitor.checked",
+      "monitor.status_changed",
+      "alert.resolved",
+    ]);
+    expect(db.scan("alerts")).toEqual([expect.objectContaining({ status: "resolved" })]);
+  });
+
+  test("a paused monitor only gets the new hash: resuming starts it over", () => {
+    const db = store();
+    const id = createBeat(db);
+    runMutation(mutations, "monitor.setPaused", { id, paused: true }, db, as("admin"));
+    const paused = db.get("monitors", id)!;
+    expect(
+      runMutation(
+        mutations,
+        "monitor.rotateHeartbeat",
+        { id, tokenHash: NEW_HASH },
+        db,
+        as("admin", T + 60_000),
+      ).ok,
+    ).toBe(true);
+    expect(db.get("monitors", id)).toMatchObject({
+      paused: true,
+      restartedAt: paused.restartedAt,
+      updatedAt: T + 60_000,
+    });
+    expect(db.get("heartbeats", id)).toMatchObject({ tokenHash: NEW_HASH });
+  });
+});
+
 describe("monitor.takeOver", () => {
   // RFC 0002 "Auth": the owner of an address took back an account someone else signed up with; what that person
   // set up must not be able to page the owner.

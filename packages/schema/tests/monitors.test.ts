@@ -21,7 +21,9 @@ import {
   runMutation,
   serverMutations,
   staleAfterMs,
+  normalizeTcpHost,
   targetProblem,
+  tcpTargetProblem,
   v,
   type BrigadeTables,
   type MemoryStore,
@@ -52,6 +54,17 @@ const httpArgs = (regions: ProbeRegion[] = ["weur"], overrides: object = {}) => 
   method: "GET",
   expectedStatus: null,
   keyword: null,
+  intervalSeconds: 60,
+  timeoutSeconds: 10,
+  regions,
+  ...overrides,
+});
+
+const tcpArgs = (regions: ProbeRegion[] = ["weur"], overrides: object = {}) => ({
+  id: newId("mon", T, random),
+  name: "Database",
+  host: "db.example.com",
+  port: 5432,
   intervalSeconds: 60,
   timeoutSeconds: 10,
   regions,
@@ -204,6 +217,83 @@ describe("targets (SSRF)", () => {
     const args = httpArgs(["weur"], { url: "HTTPS://Example.COM" });
     expect(runMutation(mutations, "monitor.createHttp", args, db, as("admin")).ok).toBe(true);
     expect(db.get("monitors", args.id)?.url).toBe("https://example.com/");
+  });
+});
+
+describe("TCP targets (SSRF)", () => {
+  test("accepts public names and addresses on any port but 25, normalising the host", () => {
+    for (const [host, port] of [
+      ["db.example.com", 5432],
+      ["example.com", 22],
+      ["example.com", 6379],
+      ["example.com", 1],
+      ["example.com", 65535],
+      ["1.1.1.1", 53],
+      ["2606:4700::1111", 443],
+      ["[2001:30::1]", 8080],
+    ] as const) {
+      expect(tcpTargetProblem(host, port), `${host}:${port}`).toBeNull();
+    }
+    expect(normalizeTcpHost("DB.Example.COM.")).toBe("db.example.com");
+    expect(normalizeTcpHost("[2606:4700:0:0::1111]")).toBe("2606:4700::1111");
+  });
+
+  test("refuses what HTTP checks refuse, port 25, ports out of range, and anything but a bare host", () => {
+    for (const [host, port, path] of [
+      ["localhost", 5432, "host"],
+      ["db.internal", 5432, "host"],
+      ["intranet", 22, "host"],
+      ["127.0.0.1", 22, "host"],
+      ["127.1", 22, "host"],
+      ["2130706433", 22, "host"],
+      ["0x7f000001", 22, "host"],
+      ["10.0.0.5", 5432, "host"],
+      ["169.254.169.254", 80, "host"],
+      ["192.0.2.10", 22, "host"],
+      ["::1", 22, "host"],
+      ["[::ffff:127.0.0.1]", 22, "host"],
+      ["fd00::1", 22, "host"],
+      ["2001:db8::1", 22, "host"],
+      ["example.com:22", 22, "host"],
+      ["tcp://example.com", 22, "host"],
+      ["user@example.com", 22, "host"],
+      ["example.com/path", 22, "host"],
+      ["exa mple.com", 22, "host"],
+      ["", 22, "host"],
+      ["example.com", 25, "port"],
+      ["example.com", 0, "port"],
+      ["example.com", 65536, "port"],
+      ["example.com", 22.5, "port"],
+    ] as const) {
+      expect(tcpTargetProblem(host, port), `${host}:${port}`).toMatchObject({ path });
+    }
+  });
+
+  test("monitor.createTcp refuses a private host or port 25 and stores the normalised host", () => {
+    const db = store();
+    const create = (overrides: object) =>
+      runMutation(mutations, "monitor.createTcp", tcpArgs(["weur"], overrides), db, as("admin"));
+    expect(create({ host: "169.254.169.254" })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args", issues: [{ path: "host" }] },
+    });
+    expect(create({ host: "localhost" })).toMatchObject({ error: { issues: [{ path: "host" }] } });
+    expect(create({ port: 25 })).toMatchObject({ error: { issues: [{ path: "port" }] } });
+    expect(create({ port: 70000 })).toMatchObject({ error: { issues: [{ path: "port" }] } });
+    expect(create({ host: "example.com:22" })).toMatchObject({ error: { issues: [{ path: "host" }] } });
+    const args = tcpArgs(["weur", "wnam"], { host: "DB.Example.COM" });
+    expect(types(runMutation(mutations, "monitor.createTcp", args, db, as("admin")))).toEqual([
+      "monitor.created",
+    ]);
+    expect(db.get("monitors", args.id)).toMatchObject({
+      kind: "tcp",
+      host: "db.example.com",
+      port: 5432,
+      url: null,
+      method: null,
+      regions: ["wnam", "weur"],
+      status: "pending",
+    });
   });
 });
 
@@ -382,6 +472,74 @@ describe("managing monitors", () => {
     // Regions where Durable Objects do not spawn are not offered (spike S2).
     expect(run({ regions: ["sam"] })).toMatchObject({ error: { code: "invalid_args" } });
     expect(run({ expectedStatus: 204, keyword: "ok" }).ok).toBe(true);
+  });
+
+  test("TCP monitors: the same roles, timeout and restart rules as HTTP; pause and delete cover them", () => {
+    for (const role of ["responder", "viewer"] as const) {
+      const result = runMutation(mutations, "monitor.createTcp", tcpArgs(), store(), as(role));
+      expect(result).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    }
+    const db = store();
+    const args = tcpArgs(["weur"]);
+    const timeout = { ...args, id: newId("mon", T, random), timeoutSeconds: 31 };
+    expect(runMutation(mutations, "monitor.createTcp", timeout, db, as("admin")).ok).toBe(false);
+    const long = { ...args, id: newId("mon", T, random), intervalSeconds: 30, timeoutSeconds: 31 };
+    expect(runMutation(mutations, "monitor.createTcp", long, db, as("admin")).ok).toBe(false);
+    expect(runMutation(mutations, "monitor.createTcp", args, db, as("admin")).ok).toBe(true);
+    // An HTTP update cannot touch a TCP monitor, nor a TCP update an HTTP one.
+    expect(
+      runMutation(mutations, "monitor.updateHttp", { ...httpArgs(), id: args.id }, db, as("admin")),
+    ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+    const http = createHttp(db, ["weur"]);
+    expect(
+      runMutation(mutations, "monitor.updateTcp", { ...args, id: http }, db, as("admin")),
+    ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+
+    expect(runMutation(mutations, "monitor.updateTcp", args, db, as("admin"))).toMatchObject({
+      error: { code: "conflict" },
+    });
+    report(db, args.id, "weur", true, T + 1000);
+    const renamed = { ...args, name: "Primary database", intervalSeconds: 120 };
+    expect(types(runMutation(mutations, "monitor.updateTcp", renamed, db, as("admin")))).toEqual([
+      "monitor.updated",
+    ]);
+    expect(db.get("monitors", args.id)).toMatchObject({ status: "up", restartedAt: T });
+    const moved = { ...renamed, port: 5433 };
+    runMutation(mutations, "monitor.updateTcp", moved, db, as("admin", T + 2000));
+    expect(db.get("monitors", args.id)).toMatchObject({
+      port: 5433,
+      status: "pending",
+      checks: [],
+      restartedAt: T + 2000,
+    });
+    const refused = { ...moved, host: "10.0.0.5" };
+    expect(runMutation(mutations, "monitor.updateTcp", refused, db, as("admin"))).toMatchObject({
+      error: { issues: [{ path: "host" }] },
+    });
+
+    const pause = { id: args.id, paused: true };
+    expect(types(runMutation(mutations, "monitor.setPaused", pause, db, as("admin")))).toEqual([
+      "monitor.paused",
+    ]);
+    expect(types(runMutation(mutations, "monitor.delete", { id: args.id }, db, as("admin")))).toEqual(
+      ["monitor.deleted"],
+    );
+    expect(db.get("monitors", args.id)).toBeUndefined();
+  });
+
+  test("a TCP monitor's regions vote like an HTTP monitor's: down fires one alert and one incident", () => {
+    const db = store();
+    const args = tcpArgs(["wnam", "enam", "weur"]);
+    runMutation(mutations, "monitor.createTcp", args, db, as("admin"));
+    expect(types(report(db, args.id, "wnam", false))).toEqual(["monitor.checked"]);
+    expect(types(report(db, args.id, "enam", false, T + 1100))).toEqual([
+      "monitor.checked",
+      "monitor.status_changed",
+      "incident.declared",
+      "alert.fired",
+    ]);
+    expect(db.scan("incidents")).toHaveLength(1);
+    expect(db.get("monitors", args.id)?.status).toBe("down");
   });
 
   test("a heartbeat keeps its token hash server-side only", () => {

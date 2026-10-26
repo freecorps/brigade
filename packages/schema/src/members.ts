@@ -26,7 +26,8 @@ export type MemberRoleChanged = DomainEvent<
 >;
 export type MemberRemoved = DomainEvent<
   "member.removed",
-  { userId: string; role: Role; reason: MemberRemoval }
+  /** `role` is theirs before, or null when the shard no longer knew it (a leaver finishing with only devices left). */
+  { userId: string; role: Role | null; reason: MemberRemoval }
 >;
 
 /** A change one member asks for on another (or on themselves). */
@@ -106,7 +107,7 @@ export const changeMemberRole = defineMutation({
 });
 
 /**
- * Server only: a member left or was removed in D1 (`role`: theirs before). Deletes their copy and every device of
+ * Server only: a member left or was removed in D1 (`role`: theirs before, null if unknown). Deletes their copy and every device of
  * theirs in the same transaction, so no page plan made after it counts them (RFC 0006 "Who is paged"), and emits
  * `member.removed` (and `device.unregistered` per device). `left` is the actor themselves (any role); `removed`
  * needs `members:manage`. Emits even when the shard had neither (a member who never opened Brigade): the
@@ -116,7 +117,7 @@ export const removeMember = defineMutation({
   name: "member.remove",
   args: v.object({
     id: memberId,
-    role: v.picklist(ROLES),
+    role: v.nullable(v.picklist(ROLES)),
     reason: v.picklist(["removed", "left"]),
   }),
   // Leaving needs only membership; removing someone else is checked below.

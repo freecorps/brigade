@@ -303,9 +303,12 @@ export async function changeMember(
 
   // Checked here first, so a made-up workspace or an outsider never wakes (or creates) a shard. One exception: a
   // leave D1 already has but the shard missed (`not_applied`) may be sent again by the leaver, so they stop being
-  // paged without waiting for the shard's repair; the shard refuses it unless it still has their copy or devices.
+  // paged without waiting for the shard's repair; the shard finishes it only if it still has their copy or devices.
+  // Every other answer to a non-member is the same 403, whether or not the workspace exists (open question Q16).
+  let member: boolean;
   try {
-    if ((await memberRole(env.DB, workspaceId, session.user.id)) === undefined) {
+    member = (await memberRole(env.DB, workspaceId, session.user.id)) !== undefined;
+    if (!member) {
       const retryingLeave =
         request.method === "DELETE" &&
         userId === session.user.id &&
@@ -318,16 +321,17 @@ export async function changeMember(
   }
   let result: MemberChangeResult;
   try {
-    result = await env.WORKSPACE.getByName(workspaceId).changeMember(
-      workspaceId,
-      session.user.id,
-      userId,
-      change,
-    );
+    const shard = env.WORKSPACE.getByName(workspaceId);
+    result = member
+      ? await shard.changeMember(workspaceId, session.user.id, userId, change)
+      : await shard.finishLeave(workspaceId, session.user.id);
   } catch (error) {
     return failed("WorkspaceDO.changeMember failed", workspaceId, error);
   }
   if (result.ok) return json({ ok: true });
+  if (!member && (result.code === "not_found" || result.code === "forbidden")) {
+    return json({ error: "not_a_member" }, 403);
+  }
   const status = {
     forbidden: 403,
     not_found: 404,

@@ -187,6 +187,40 @@ const paged = (t: Team) =>
 
 const user = (person: Person, role: Role): Actor => ({ kind: "user", id: person.id, role });
 
+/** A Membership on the workspace's own storage, with D1 or the shard swapped for a failing one. */
+const membership = (
+  t: Team,
+  state: DurableObjectState,
+  options: { db?: D1Database; shardFails?: boolean } = {},
+) => {
+  const shard = new Shard(state.storage, {
+    shard: "workspace",
+    randomBytes: random,
+    log: () => {},
+  });
+  const failing = {
+    store: shard.store,
+    mutate: () => {
+      throw new Error("storage failed");
+    },
+  } as unknown as Shard;
+  return new Membership({
+    db: options.db ?? env.DB,
+    shard: options.shardFails ? failing : shard,
+    randomBytes: random,
+    sql: state.storage.sql,
+    log: () => {},
+    committed: () => {},
+    closeSockets: () => {},
+    wake: (at) => void state.storage.setAlarm(at),
+  });
+};
+const brokenDb = {
+  prepare: () => {
+    throw new Error("D1 is down");
+  },
+} as unknown as D1Database;
+
 describe("PATCH /workspaces/:id/members/:userId: changing a role", () => {
   test("an owner demotes a responder: D1, the shard's copy and member.role_changed, and their socket closes", async () => {
     const t = await team();
@@ -416,40 +450,6 @@ describe("DELETE /workspaces/:id/members/:userId: removing and leaving", () => {
 });
 
 describe("when one side fails", () => {
-  /** A Membership on the workspace's own storage, with D1 or the shard swapped for a failing one. */
-  const membership = (
-    t: Team,
-    state: DurableObjectState,
-    options: { db?: D1Database; shardFails?: boolean } = {},
-  ) => {
-    const shard = new Shard(state.storage, {
-      shard: "workspace",
-      randomBytes: random,
-      log: () => {},
-    });
-    const failing = {
-      store: shard.store,
-      mutate: () => {
-        throw new Error("storage failed");
-      },
-    } as unknown as Shard;
-    return new Membership({
-      db: options.db ?? env.DB,
-      shard: options.shardFails ? failing : shard,
-      randomBytes: random,
-      sql: state.storage.sql,
-      log: () => {},
-      committed: () => {},
-      closeSockets: () => {},
-      wake: (at) => void state.storage.setAlarm(at),
-    });
-  };
-  const brokenDb = {
-    prepare: () => {
-      throw new Error("D1 is down");
-    },
-  } as unknown as D1Database;
-
   test("D1 failing changes nothing anywhere", async () => {
     const t = await team();
     await connect(t, t.caio);
@@ -510,9 +510,25 @@ describe("when one side fails", () => {
       { actor: { id: t.caio.id }, data: { userId: t.caio.id, role: "responder", reason: "left" } },
     ]);
     expect(await caio.closed).toBe(1008);
-    // Done: once more is a 404, and only the leaver may finish their own leave.
-    expect((await remove(t, t.caio, t.caio)).status).toBe(404);
+    // Done: once more they are just not a member, and only the leaver may finish their own leave.
+    const again = await remove(t, t.caio, t.caio);
+    expect(again.status).toBe(403);
+    expect(await again.json()).toEqual({ error: "not_a_member" });
     expect((await remove(t, t.caio, t.duda)).status).toBe(403);
+  });
+
+  test("a leaver finishing with only devices left is announced with an unknown role, not a guessed one", async () => {
+    const t = await team();
+    await device(t, user(t.caio, "responder"));
+    await env.DB.prepare(`delete from member where "organizationId" = ? and "userId" = ?`)
+      .bind(t.id, t.caio.id)
+      .run();
+    expect(await t.withShard((shard) => shard.store.get("members", t.caio.id))).toBeUndefined();
+    expect((await remove(t, t.caio, t.caio)).status).toBe(200);
+    expect(await paged(t)).toEqual([]);
+    expect(await events(t, "member.removed")).toMatchObject([
+      { actor: { id: t.caio.id }, data: { userId: t.caio.id, role: null, reason: "left" } },
+    ]);
   });
 
   test("a failed change is repaired by the shard's alarm, with nobody connecting or retrying", async () => {
@@ -554,9 +570,14 @@ describe("when one side fails", () => {
       Reflect.set(instance, "drainPaused", false);
       Reflect.set(instance, "drain", {
         drain: async () => {
-          left = await membership(t, state, { shardFails: true }).change(t.id, t.caio.id, t.caio.id, {
-            kind: "remove",
-          });
+          left = await membership(t, state, { shardFails: true }).change(
+            t.id,
+            t.caio.id,
+            t.caio.id,
+            {
+              kind: "remove",
+            },
+          );
         },
         nextWake: () => null,
         failed: () => {},
@@ -691,9 +712,28 @@ describe("rules come before any repair", () => {
         })
       ).status,
     ).toBe(404);
-    // An outsider cannot use their own id to reach the shard either.
-    expect((await remove(t, outsider, outsider)).status).toBe(404);
     expect(await events(t, "member.removed")).toEqual([]);
+  });
+
+  test("an outsider 'leaving' gets the same 403 whether or not the workspace exists, and the shard reads no D1", async () => {
+    const t = await team();
+    const outsider = await signUp("Eva");
+    const existing = await remove(t, outsider, outsider);
+    const missing = await api(`/workspaces/ws_00000000000000000000000000/members/${outsider.id}`, {
+      method: "DELETE",
+      headers: { Cookie: outsider.cookie },
+    });
+    expect([existing.status, missing.status]).toEqual([403, 403]);
+    expect([await existing.json(), await missing.json()]).toEqual([
+      { error: "not_a_member" },
+      { error: "not_a_member" },
+    ]);
+    expect(await events(t, "member.removed")).toEqual([]);
+    // With nothing of theirs in the shard, it answers before reading D1 (which is down here).
+    const result = await runInDurableObject(t.stub, (_instance: WorkspaceDO, state) =>
+      membership(t, state, { db: brokenDb }).finishLeave(t.id, outsider.id),
+    );
+    expect(result).toEqual({ ok: false, code: "not_found" });
   });
 });
 

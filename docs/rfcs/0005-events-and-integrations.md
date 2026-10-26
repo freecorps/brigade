@@ -37,7 +37,8 @@ the same transaction (RFC 0003 "Timeline, updates and roles"); the monitor recov
 Users, sessions and membership live in D1, written by Better Auth (RFC 0002), not by a shard. A change there that
 integrations care about is announced by the workspace shard: creating a workspace runs `workspace.create` in its
 new `WorkspaceDO` (`workspace.created`, subject the workspace id). Member changes made through Brigade emit
-`member.role_changed` (`userId`, `from`, `to`) and `member.removed` (`userId`, `role`, `reason`: `removed`, `left`,
+`member.role_changed` (`userId`, `from`, `to`) and `member.removed` (`userId`, `role`, null when the shard no longer
+knew it, `reason`: `removed`, `left`,
 or `reconciled` when the shard caught up with a change D1 had and it missed, actor `sys_members`), subject the
 member, after D1 committed (RFC 0003 "Members"); a removal also emits `device.unregistered` (`member_removed`) for
 each of the member's devices. `member.added` waits for invitations; until then the creator's membership is part of

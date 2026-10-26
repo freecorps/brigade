@@ -107,9 +107,14 @@ would change D1 without the shard's copy or an event.
   monitor upkeep, which takes the earliest any of them needs), so the repair needs no socket. Sending the request
   again finishes it sooner: a caller who may make the change has the shard catch up through `member.reconcile` (as
   `sys_members`, so the events never name the caller), and a leaver D1 already dropped may repeat their own `DELETE`
-  (the Worker lets it through for one's own id in an existing workspace; the shard runs `member.remove` with `left`
-  only while it still has their copy or devices, else `404`). A `DELETE` for someone with nothing left in D1 or the
-  shard is `404`. The dashboard says the change is saved and paging catches up within a minute, with Try again.
+  (the Worker lets it through for one's own id in an existing workspace; the shard checks its own copy and devices
+  first, without the member lock or a D1 read, and runs `member.remove` with `left` only while it still has one;
+  its `role` is null when only devices were left). Any other answer to someone D1 does not have is the same
+  `403 not_a_member`, whether or not the workspace exists, so the route tells an outsider nothing about which
+  workspaces exist (Q16). A `DELETE` by a member for someone with nothing left in D1 or the shard is `404`. The
+  dashboard shows `not_applied` as a note, not an error: the change is saved and paging catches up within a minute,
+  with nothing to retry. A narrow race is accepted: a leaver re-added in D1 between the shard's D1 read and its
+  `member.remove` loses the devices they had (their new membership stays; they register the phone again).
   Besides, **every sync upgrade into the workspace reconciles** the shard with D1 (`member.reconcile`, run by
   `sys_members` after the socket is accepted, never holding it up): a copy D1 no longer has is deleted with its devices
   (`member.removed`, `reconciled`), a copy whose role differs takes D1's (`member.role_changed`), and a device whose

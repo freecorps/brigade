@@ -95,7 +95,10 @@ D1: a D1 outage must not become a reason a page is late or missing. How the copy
   reaches them. If the shard step fails after D1 committed, the request answers `not_applied` and the shard's alarm
   reconciles with D1 within 10 s (again every 30 s while D1 fails), with no socket needed; sending the request again
   (the leaver included, though D1 no longer has them) or the next sync upgrade repairs it sooner. Until then the
-  member is still paged as before (the API said so: never silent).
+  member is still paged as before (the API said so: never silent). A workspace over 1000 members
+  (`MAX_RECONCILED_MEMBERS`) is never reconciled: a repair there is dropped with an error logged (`too many members
+  to reconcile`), and the member stays paged until a change through Brigade applies (accepted: far past any
+  workspace today; a paged reconcile comes with paged member lists, RFC 0003).
 - **Edits made outside Brigade** (straight in D1): reconciled on the next sync upgrade into the workspace by anyone
   (`member.reconcile`): a removed member's row and devices go, a changed role is copied, and their open sockets
   close. Until somebody opens Brigade, a member removed or demoted outside it is still paged (Q18).

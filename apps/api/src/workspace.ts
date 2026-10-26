@@ -240,6 +240,17 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
+   * A leave sent again by someone D1 no longer has (RPC from the API Worker, which checked that): finishes it when
+   * this shard still has their copy or a device, and answers `not_found` otherwise, without reading D1.
+   */
+  finishLeave(workspaceId: string, userId: string): Promise<MemberChangeResult> {
+    if (this.shard.workspace() !== workspaceId) {
+      return Promise.resolve({ ok: false, code: "not_found" });
+    }
+    return this.membership.finishLeave(workspaceId, userId);
+  }
+
+  /**
    * Makes this shard's member list agree with D1 and closes sockets D1 no longer backs (src/members.ts). Every sync
    * upgrade starts one; exposed so a repair can be asked for directly.
    */

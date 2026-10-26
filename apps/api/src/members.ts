@@ -178,6 +178,24 @@ export class Membership {
     });
   }
 
+  /**
+   * A leave D1 already has, sent again by the leaver: the shard's leftovers are checked first, so someone with none
+   * (an outsider probing workspaces, or a leave already finished) never takes the member lock or reads D1.
+   */
+  finishLeave(workspaceId: string, userId: string): Promise<MemberChangeResult> {
+    if (!this.leftovers(userId)) return Promise.resolve({ ok: false, code: "not_found" });
+    return this.change(workspaceId, userId, userId, { kind: "remove" });
+  }
+
+  /** Whether the shard still has `userId`'s member copy or a device of theirs. */
+  private leftovers(userId: string): boolean {
+    const { store } = this.options.shard;
+    return (
+      store.get("members", userId) !== undefined ||
+      store.scan("devices").some((device) => device.userId === userId)
+    );
+  }
+
   private async decide(
     workspaceId: string,
     actorId: string,
@@ -196,18 +214,18 @@ export class Membership {
     const actor = members.find((member) => member.id === actorId);
     const target = members.find((member) => member.id === targetId);
     const copy = shard.store.get("members", targetId);
-    const leftovers =
-      copy !== undefined ||
-      shard.store.scan("devices").some((device) => device.userId === targetId);
+    const leftovers = this.leftovers(targetId);
 
     if (!actor) {
       // A leave whose shard step failed after D1 deleted the leaver: they may finish it themselves, so they stop
       // being paged without waiting for the repair alarm or someone else to connect.
       if (actorId !== targetId || change.kind !== "remove") return { ok: false, code: "forbidden" };
       if (!leftovers) return { ok: false, code: "not_found" };
+      // Without a copy their role is unknown: the event says so (null) rather than guess. Running as a viewer
+      // grants nothing: leaving needs only membership.
       return this.apply({ id: actorId, role: copy?.role ?? "viewer" }, "member.remove", targetId, {
         id: targetId,
-        role: copy?.role ?? "viewer",
+        role: copy?.role ?? null,
         reason: "left",
       });
     }
@@ -362,8 +380,16 @@ export class Membership {
       }
       if (members.length === 0) return true;
       if (members.length > MAX_RECONCILED_MEMBERS) {
-        // Not retried: it would fail the same way every time.
-        this.options.log("too many members to reconcile", { members: members.length });
+        // Not retried: it would fail the same way every time. A due repair is dropped with it, so a member removed
+        // or demoted whose shard step failed stays paged as before: an error to act on, not a retry (RFC 0006).
+        this.options.log(
+          "too many members to reconcile: the shard may page members D1 removed or demoted",
+          {
+            members: members.length,
+            max: MAX_RECONCILED_MEMBERS,
+            error: "member_limit",
+          },
+        );
         return true;
       }
       return this.repair(members) !== "failed";

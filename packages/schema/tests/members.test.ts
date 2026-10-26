@@ -287,6 +287,37 @@ describe("member.changeRole, member.remove, member.reconcile", () => {
     ).toMatchObject({ ok: false, error: { code: "forbidden" } });
   });
 
+  test("only the members' system actor removes one member as reconciled, and it drops their devices", () => {
+    const reconciled = { id: "usr_caio", role: "responder", reason: "reconciled" };
+    for (const actor of [ctx("usr_ana", "owner"), ctx("sys_monitors", "admin", "system")]) {
+      expect(
+        runMutation(serverMutations, "member.remove", reconciled, shard(), actor),
+      ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    }
+    const store = shard();
+    expect(
+      runMutation(
+        serverMutations,
+        "member.remove",
+        reconciled,
+        store,
+        ctx(MEMBERS_ACTOR.id, MEMBERS_ACTOR.role, "system"),
+      ),
+    ).toMatchObject({
+      ok: true,
+      events: [
+        {
+          type: "member.removed",
+          data: { userId: "usr_caio", role: "responder", reason: "reconciled" },
+        },
+        { type: "device.unregistered" },
+        { type: "device.unregistered" },
+      ],
+    });
+    expect(store.get("members", "usr_caio")).toBeUndefined();
+    expect(store.scan("devices").map((device) => device.id)).toEqual(["dev_3"]);
+  });
+
   test("reconcile removes copies D1 no longer has, fixes roles and drops orphaned devices", () => {
     const store = shard();
     store.insert("devices", { ...store.get("devices", "dev_3")!, id: "dev_4", userId: "usr_gone" });

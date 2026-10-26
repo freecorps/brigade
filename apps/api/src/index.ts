@@ -16,7 +16,7 @@ import {
 import type { MemberChangeResult } from "./members.ts";
 import { consumeDeadLetters, consumeEvents } from "./notify.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
-import { WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
+import { ORGANIZATION_ID, WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
 
 export { ProbeDO } from "./probe.ts";
 export { WatchdogDO } from "./watchdog.ts";
@@ -278,7 +278,7 @@ export async function changeMember(
   if (request.method !== "PATCH" && request.method !== "DELETE") {
     return json({ error: "method_not_allowed" }, 405, { Allow: "PATCH, DELETE" });
   }
-  if (!WORKSPACE_ID.test(workspaceId)) return json({ error: "invalid_workspace_id" }, 400);
+  if (!ORGANIZATION_ID.test(workspaceId)) return json({ error: "invalid_workspace_id" }, 400);
   if (!USER_ID.test(userId)) return json({ error: "not_found" }, 404);
   const origin = request.headers.get("Origin");
   if (origin !== null && origin !== new URL(request.url).origin) {
@@ -305,6 +305,8 @@ export async function changeMember(
   // leave D1 already has but the shard missed (`not_applied`) may be sent again by the leaver, so they stop being
   // paged without waiting for the shard's repair; the shard finishes it only if it still has their copy or devices.
   // Every other answer to a non-member is the same 403, whether or not the workspace exists (open question Q16).
+  // The leave retry does take longer for a workspace that exists (it asks the shard); that is safe only because a
+  // workspace id is a ULID nobody can guess, which `ORGANIZATION_ID` holds this route to.
   let member: boolean;
   try {
     member = (await memberRole(env.DB, workspaceId, session.user.id)) !== undefined;

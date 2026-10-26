@@ -41,6 +41,12 @@ export interface WorkspaceInfo {
  */
 export const WORKSPACE_ID = /^(?:ws_[0-9A-HJKMNP-TV-Z]{26}|[a-z0-9][a-z0-9_-]{0,62})$/;
 
+/**
+ * A workspace's own id alone (`ws_<ULID>`, src/auth.ts `authId`): what routes for D1's workspaces accept, so none
+ * of them takes a short, guessable dev-shard name.
+ */
+export const ORGANIZATION_ID = /^ws_[0-9A-HJKMNP-TV-Z]{26}$/;
+
 /** Set by the Worker on the upgrade it forwards; the shard records it on first use. */
 export const WORKSPACE_HEADER = "Brigade-Workspace";
 
@@ -414,6 +420,11 @@ export class WorkspaceDO extends DurableObject<Env> {
       return Response.json({ error: "internal" }, { status: 500 });
     }
     const name = readMemberName(request.headers);
+    // A member just removed here whose upgrade the Worker let through before the removal: refused, as the Worker
+    // would now, rather than have `member.sync` restore their copy.
+    if (name !== undefined && this.membership.gone(actor.id, Date.now())) {
+      return Response.json({ error: "not_a_member" }, { status: 403 });
+    }
     if (name !== undefined) this.syncMember(actor, name);
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server);
@@ -421,9 +432,9 @@ export class WorkspaceDO extends DurableObject<Env> {
     server.serializeAttachment(state);
     // The Worker read the member's role before this request arrived, and a member change may have landed in
     // between (or D1 was edited outside Brigade): check D1 again without holding up the socket. A socket D1 no
-    // longer backs is closed, and the member list's copy follows D1 (src/members.ts).
-    // Only a signed-in member's upgrade (the dev actor has no name and no D1 row).
-    if (name !== undefined) void this.membership.reconcile(workspace);
+    // longer backs is closed, and the member list's copy follows D1 (src/members.ts); if that fails, the repair
+    // alarm does it. Only a signed-in member's upgrade (the dev actor has no name and no D1 row).
+    if (name !== undefined) void this.membership.upgraded(workspace);
     return new Response(null, { status: 101, webSocket: client });
   }
 

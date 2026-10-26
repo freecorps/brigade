@@ -3,9 +3,10 @@
 // sides of a failure (D1 failing, the shard failing after D1 committed) with their repair.
 import { env, exports } from "cloudflare:workers";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { newId, type Actor, type Role } from "@freecorps/brigade-schema";
+import { MAX_RECONCILED_MEMBERS, newId, type Actor, type Role } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, describe, expect, test } from "vite-plus/test";
+import { ACTOR_HEADER, MEMBER_NAME_HEADER } from "../src/actor.ts";
 import {
   MEMBER_REPAIR_DELAY_MS,
   MEMBER_REPAIR_RETRY_MS,
@@ -15,7 +16,7 @@ import {
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { pageTargets } from "../src/paging.ts";
 import { Shard } from "../src/shard.ts";
-import type { SocketState, WorkspaceDO } from "../src/workspace.ts";
+import { WORKSPACE_HEADER, type SocketState, type WorkspaceDO } from "../src/workspace.ts";
 
 const ORIGIN = "http://api.test";
 const PASSWORD = "correct horse battery staple";
@@ -215,6 +216,46 @@ const membership = (
     wake: (at) => void state.storage.setAlarm(at),
   });
 };
+/** Adds `count` made-up responders to the workspace in D1 (users included), none of whom ever opened Brigade. */
+async function crowd(t: Team, count: number) {
+  const prefix = `usr_crowd${t.id.slice(-8).toLowerCase()}`;
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(
+      `with recursive n(i) as (select 1 union all select i + 1 from n where i < ?1)
+       insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt")
+       select ?2 || i, 'Crowd ' || i, ?2 || i || '@example.com', 0, ?3, ?3 from n`,
+    ).bind(count, prefix, now),
+    env.DB.prepare(
+      `with recursive n(i) as (select 1 union all select i + 1 from n where i < ?1)
+       insert into member (id, "organizationId", "userId", role, "createdAt")
+       select 'mem_' || ?2 || i, ?4, ?2 || i, 'responder', ?3 from n`,
+    ).bind(count, prefix, now, t.id),
+  ]);
+}
+
+/**
+ * A sync upgrade as the Worker forwards it, sent straight to the shard: one the Worker authenticated before a
+ * change landed and that reaches the shard after it.
+ */
+const staleUpgrade = (t: Team, person: Person, role: Role) =>
+  t.stub.fetch(`${ORIGIN}/sync/${t.id}`, {
+    headers: {
+      Upgrade: "websocket",
+      [WORKSPACE_HEADER]: t.id,
+      [ACTOR_HEADER]: JSON.stringify(user(person, role)),
+      [MEMBER_NAME_HEADER]: encodeURIComponent("Caio"),
+    },
+  });
+
+/** Makes a due member repair as if `MEMBER_REPAIR_DELAY_MS` passed, then runs the shard's alarm. */
+async function repairNow(t: Team) {
+  await t.withShard((_shard, state) =>
+    state.storage.sql.exec("update member_repair set value = ? where key = 'at'", Date.now() - 1),
+  );
+  expect(await runDurableObjectAlarm(t.stub)).toBe(true);
+}
+
 const brokenDb = {
   prepare: () => {
     throw new Error("D1 is down");
@@ -657,6 +698,139 @@ describe("when one side fails", () => {
   });
 });
 
+describe("a workspace past the reconcile limit", () => {
+  test("a retried removal catches up on its one member instead of reconciling everyone", async () => {
+    const t = await team();
+    await crowd(t, MAX_RECONCILED_MEMBERS + 1);
+    await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    const result = await runInDurableObject(t.stub, (_instance: WorkspaceDO, state) =>
+      membership(t, state, { shardFails: true }).change(t.id, t.ana.id, t.caio.id, {
+        kind: "remove",
+      }),
+    );
+    expect(result).toEqual({ ok: false, code: "not_applied" });
+    expect(await paged(t)).toEqual([t.caio.id]);
+
+    expect((await remove(t, t.ana, t.caio)).status).toBe(200);
+    expect(await paged(t)).toEqual([]);
+    expect(await events(t, "member.removed")).toMatchObject([
+      { actor: { id: "sys_members" }, data: { userId: t.caio.id, reason: "reconciled" } },
+    ]);
+  });
+
+  test("the repair alarm catches up on the members whose change the shard missed", async () => {
+    const t = await team();
+    await crowd(t, MAX_RECONCILED_MEMBERS + 1);
+    await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    await connect(t, t.duda);
+    const results = await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {
+      const failing = membership(t, state, { shardFails: true });
+      return [
+        await failing.change(t.id, t.ana.id, t.caio.id, { kind: "remove" }),
+        await failing.change(t.id, t.ana.id, t.duda.id, { kind: "role", role: "responder" }),
+      ];
+    });
+    expect(results).toEqual([
+      { ok: false, code: "not_applied" },
+      { ok: false, code: "not_applied" },
+    ]);
+    expect(await paged(t)).toEqual([t.caio.id]);
+
+    await repairNow(t);
+    expect(await paged(t)).toEqual([]);
+    expect(await t.withShard((shard) => shard.store.get("members", t.duda.id)?.role)).toBe(
+      "responder",
+    );
+    expect(await events(t, "member.removed")).toMatchObject([
+      { actor: { id: "sys_members" }, data: { userId: t.caio.id, reason: "reconciled" } },
+    ]);
+    expect(await events(t, "member.role_changed")).toMatchObject([
+      { actor: { id: "sys_members" }, data: { userId: t.duda.id, from: "viewer", to: "responder" } },
+    ]);
+    // Nothing left owed: no target, no due repair (the tombstone runs out on its own).
+    expect(
+      await t.withShard((_shard, state) =>
+        state.storage.sql
+          .exec<{ key: string }>("select key from member_repair where key not like 'gone:%'")
+          .toArray(),
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("a sync upgrade the Worker let through before a removal", () => {
+  test("is refused by the shard instead of restoring the removed member's copy", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    expect((await remove(t, t.ana, t.caio)).status).toBe(200);
+
+    const response = await staleUpgrade(t, t.caio, "responder");
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "not_a_member" });
+    expect(await t.withShard((shard) => shard.store.get("members", t.caio.id))).toBeUndefined();
+    // One removal, announced once.
+    expect(await events(t, "member.removed")).toMatchObject([
+      { actor: { id: t.ana.id }, data: { userId: t.caio.id, reason: "removed" } },
+    ]);
+  });
+
+  test("a member D1 has again is not refused", async () => {
+    const t = await team();
+    expect((await remove(t, t.ana, t.caio)).status).toBe(200);
+    await addMember(t.id, t.caio.id, "viewer");
+    // Anyone's upgrade reconciles with D1, which has them again.
+    await connect(t, t.duda);
+    await connect(t, t.caio);
+  });
+
+  test("whose reconcile then fails arms the repair alarm, which removes the copy it restored", async () => {
+    const t = await team();
+    expect((await remove(t, t.ana, t.caio)).status).toBe(200);
+    // Past the tombstone, and with D1 failing for the shard: the upgrade restores the copy and cannot reconcile.
+    const real = await runInDurableObject(t.stub, (instance: WorkspaceDO, state) => {
+      state.storage.sql.exec("update member_repair set value = 0 where key like 'gone:%'");
+      const original: unknown = Reflect.get(instance, "membership");
+      Reflect.set(instance, "membership", membership(t, state, { db: brokenDb }));
+      return original;
+    });
+    expect(real).toBeDefined();
+    const response = await staleUpgrade(t, t.caio, "responder");
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    open.push(socket);
+    const closed = new Promise<number>((resolve) =>
+      socket.addEventListener("close", (event) => resolve(event.code)),
+    );
+    // Waits for the upgrade's reconcile (and its failure) to finish.
+    await t.stub.reconcileMembers();
+    expect(await t.withShard((shard) => shard.store.get("members", t.caio.id)?.role)).toBe(
+      "responder",
+    );
+    expect(
+      await runInDurableObject(t.stub, (instance: WorkspaceDO, state) => {
+        Reflect.set(instance, "membership", real);
+        return {
+          at: state.storage.sql
+            .exec<{ value: number }>("select value from member_repair where key = 'at'")
+            .toArray()[0]?.value,
+        };
+      }),
+    ).toMatchObject({ at: expect.any(Number) });
+
+    // D1 is back: the alarm removes the copy with nobody connecting, and the stale socket closes.
+    await repairNow(t);
+    expect(await t.withShard((shard) => shard.store.get("members", t.caio.id))).toBeUndefined();
+    expect(await closed).toBe(1008);
+    expect(await events(t, "member.removed")).toMatchObject([
+      { actor: { id: t.ana.id }, data: { reason: "removed" } },
+      { actor: { id: "sys_members" }, data: { reason: "reconciled" } },
+    ]);
+  });
+});
+
 describe("rules come before any repair", () => {
   test("an admin cannot 'make' an owner D1 already has, and the catch-up never names the caller", async () => {
     const t = await team();
@@ -729,6 +903,12 @@ describe("rules come before any repair", () => {
       { error: "not_a_member" },
     ]);
     expect(await events(t, "member.removed")).toEqual([]);
+    // The route takes a workspace's own id only, never a dev shard's short name.
+    const slug = await api(`/workspaces/demo/members/${outsider.id}`, {
+      method: "DELETE",
+      headers: { Cookie: outsider.cookie },
+    });
+    expect(slug.status).toBe(400);
     // With nothing of theirs in the shard, it answers before reading D1 (which is down here).
     const result = await runInDurableObject(t.stub, (_instance: WorkspaceDO, state) =>
       membership(t, state, { db: brokenDb }).finishLeave(t.id, outsider.id),

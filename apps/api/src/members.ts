@@ -10,11 +10,16 @@
 // 3. Then the member's open sockets close, so they reconnect with D1's answer (refused when removed, with the new
 //    role otherwise).
 //
-// If step 2 fails after D1 committed, the request answers `not_applied` and the shard arms its alarm to reconcile
-// its copy with D1 (`member.reconcile`, as `MEMBERS_ACTOR`) within `MEMBER_REPAIR_DELAY_MS`, retrying until it
-// succeeds; every sync upgrade into the workspace reconciles too, and closes sockets acting with a role D1 no longer
-// gives them. The same request again also finishes it: a leaver D1 already dropped may repeat their leave, and a
-// member who may make the change has the shard catch up (as `MEMBERS_ACTOR`, never as the caller).
+// If step 2 fails after D1 committed, the request answers `not_applied` and the shard records the member and arms
+// its alarm to catch up with D1 within `MEMBER_REPAIR_DELAY_MS` (`member.reconcile` as `MEMBERS_ACTOR`, or for a
+// workspace too large to reconcile, `member.remove`/`member.changeRole` for each recorded member), retrying until
+// it succeeds; every sync upgrade into the workspace reconciles too (arming the alarm when that fails), and closes
+// sockets acting with a role D1 no longer gives them. The same request again also finishes it: a leaver D1 already
+// dropped may repeat their leave, and a member who may make the change has the shard catch up on that one member
+// (as `MEMBERS_ACTOR`, never as the caller).
+//
+// A removal also leaves a short-lived tombstone (`MEMBER_TOMBSTONE_MS`): a sync upgrade the Worker authenticated
+// just before the removal, arriving after it, is refused instead of restoring the member's copy.
 
 import {
   can,
@@ -123,7 +128,14 @@ export type SocketVerdict = "removed" | "role_changed";
 export const MEMBER_REPAIR_DELAY_MS = 10 * 1000;
 /** A repair that failed (D1 down) is tried again this often until it succeeds. */
 export const MEMBER_REPAIR_RETRY_MS = 30 * 1000;
+/**
+ * How long after a removal the shard refuses the removed member's sync upgrades on its own: far longer than an
+ * upgrade takes from the Worker's D1 check to the shard. After it, the Worker's own check refuses them.
+ */
+export const MEMBER_TOMBSTONE_MS = 60 * 1000;
 
+// `at`: when the repair alarm wants to run; `target:<userId>`: a member whose change it owes the shard (when it was
+// recorded); `gone:<userId>`: a removed member's tombstone (until when it holds).
 const REPAIR_SCHEMA = `
   create table if not exists member_repair (key text primary key, value integer not null) without rowid;
 `;
@@ -163,7 +175,7 @@ export class Membership {
   /**
    * `actorId` makes `change` to `targetId` (themselves to leave); see the file's comment for the order. Every rule
    * is checked before anything is repaired, and a repair (D1 already has the change: a retry, or an edit made outside
-   * Brigade) runs as `MEMBERS_ACTOR` through `member.reconcile`, so its events never name the caller.
+   * Brigade) runs as `MEMBERS_ACTOR` for the target alone (`catchUp`), so its events never name the caller.
    */
   change(
     workspaceId: string,
@@ -173,7 +185,7 @@ export class Membership {
   ): Promise<MemberChangeResult> {
     return this.exclusive(async () => {
       const result = await this.decide(workspaceId, actorId, targetId, change);
-      if (!result.ok && result.code === "not_applied") this.armRepair(Date.now());
+      if (!result.ok && result.code === "not_applied") this.armRepair(Date.now(), targetId);
       return result;
     });
   }
@@ -221,13 +233,15 @@ export class Membership {
       // being paged without waiting for the repair alarm or someone else to connect.
       if (actorId !== targetId || change.kind !== "remove") return { ok: false, code: "forbidden" };
       if (!leftovers) return { ok: false, code: "not_found" };
+      this.tombstone(targetId);
       // Without a copy their role is unknown: the event says so (null) rather than guess. Running as a viewer
       // grants nothing: leaving needs only membership.
-      return this.apply({ id: actorId, role: copy?.role ?? "viewer" }, "member.remove", targetId, {
-        id: targetId,
-        role: copy?.role ?? null,
-        reason: "left",
-      });
+      return this.apply(
+        { kind: "user", id: actorId, role: copy?.role ?? "viewer" },
+        "member.remove",
+        targetId,
+        { id: targetId, role: copy?.role ?? null, reason: "left" },
+      );
     }
 
     if (!target) {
@@ -237,17 +251,14 @@ export class Membership {
         can(actor.role, "members:manage") && (copy?.role !== "owner" || actor.role === "owner");
       if (!allowed) return { ok: false, code: "forbidden" };
       if (change.kind === "role" || !leftovers) return { ok: false, code: "not_found" };
-      return this.repairNow(members);
+      return this.catchUp(targetId, members);
     }
 
     const owners = members.filter((member) => member.role === "owner").length;
     const check = checkMemberChange(actor, target, change, owners);
     if (!check.ok && check.code !== "conflict") return check;
-    if (!check.ok) {
-      // D1 already has the role (a retry): bring the shard's copy along if it lags.
-      if (!copy || copy.role === target.role) return { ok: true };
-      return this.repairNow(members);
-    }
+    // D1 already has the role (a retry): bring the shard's copy along if it lags.
+    if (!check.ok) return this.catchUp(targetId, members);
 
     let written: boolean;
     try {
@@ -260,23 +271,46 @@ export class Membership {
       return { ok: false, code: "unavailable" };
     }
     if (!written) return { ok: false, code: "conflict" };
+    if (change.kind === "remove") this.tombstone(targetId);
 
+    const by: Actor = { kind: "user", id: actor.id, role: actor.role };
     return change.kind === "role"
-      ? this.apply(actor, "member.changeRole", targetId, {
+      ? this.apply(by, "member.changeRole", targetId, {
           id: targetId,
           from: target.role,
           to: change.role,
         })
-      : this.apply(actor, "member.remove", targetId, {
+      : this.apply(by, "member.remove", targetId, {
           id: targetId,
           role: target.role,
           reason: actorId === targetId ? "left" : "removed",
         });
   }
 
-  /** A repair asked for by a change: `not_applied` when it failed, so the repair alarm takes over. */
-  private repairNow(members: { id: string; role: Role }[]): MemberChangeResult {
-    return this.repair(members) === "failed" ? { ok: false, code: "not_applied" } : { ok: true };
+  /**
+   * Brings the shard's copy of one member in line with D1's `members`, as `MEMBERS_ACTOR`: `member.remove`
+   * (`reconciled`) when D1 no longer has them and the shard still holds something of theirs, `member.changeRole`
+   * when the copy's role lags. Touches no other member, so it works in a workspace too large to reconcile.
+   * `not_applied` when the shard failed.
+   */
+  private catchUp(targetId: string, members: { id: string; role: Role }[]): MemberChangeResult {
+    const target = members.find((member) => member.id === targetId);
+    const copy = this.options.shard.store.get("members", targetId);
+    if (!target) {
+      if (!this.leftovers(targetId)) return { ok: true };
+      this.tombstone(targetId);
+      return this.apply(MEMBERS_ACTOR, "member.remove", targetId, {
+        id: targetId,
+        role: copy?.role ?? null,
+        reason: "reconciled",
+      });
+    }
+    if (!copy || copy.role === target.role) return { ok: true };
+    return this.apply(MEMBERS_ACTOR, "member.changeRole", targetId, {
+      id: targetId,
+      from: copy.role,
+      to: target.role,
+    });
   }
 
   /**
@@ -285,7 +319,7 @@ export class Membership {
    * shard disagree until the repair alarm (or the next sync upgrade) reconciles them.
    */
   private apply(
-    actor: { id: string; role: Role },
+    actor: Actor,
     name: "member.changeRole" | "member.remove",
     targetId: string,
     args: object,
@@ -296,7 +330,7 @@ export class Membership {
       const { result, changes } = shard.mutate({
         clientId: "api",
         mutationId: newId("mut", now, this.options.randomBytes),
-        actor: { kind: "user", id: actor.id, role: actor.role },
+        actor,
         name,
         args,
         now,
@@ -378,29 +412,109 @@ export class Membership {
         this.options.log("member reconcile failed", { error });
         return false;
       }
-      if (members.length === 0) return true;
+      if (members.length === 0) {
+        this.settle(members, () => true);
+        return true;
+      }
       if (members.length > MAX_RECONCILED_MEMBERS) {
-        // Not retried: it would fail the same way every time. A due repair is dropped with it, so a member removed
-        // or demoted whose shard step failed stays paged as before: an error to act on, not a retry (RFC 0006).
+        // Too many for one `member.reconcile`: the members whose change the shard missed are caught up one by
+        // one, and an edit made outside Brigade is not (an error to act on, RFC 0006).
         this.options.log(
-          "too many members to reconcile: the shard may page members D1 removed or demoted",
+          "too many members to reconcile: the shard may page members D1 removed or demoted outside Brigade",
           {
             members: members.length,
             max: MAX_RECONCILED_MEMBERS,
             error: "member_limit",
           },
         );
-        return true;
+        let caughtUp = true;
+        this.settle(members, (userId) => {
+          const done = this.catchUp(userId, members).ok;
+          caughtUp &&= done;
+          return done;
+        });
+        return caughtUp;
       }
-      return this.repair(members) !== "failed";
+      if (this.repair(members) === "failed") return false;
+      this.settle(members, () => true);
+      return true;
     });
     this.queued = run;
     return run;
   }
 
-  /** Asks the shard's alarm for a reconcile `MEMBER_REPAIR_DELAY_MS` from `now` (or sooner, if one is already due). */
-  private armRepair(now: number): void {
+  /**
+   * After D1 was read whole (`members`): forgets each recorded target `done` says is caught up, and the tombstones
+   * of members D1 has again (re-added) or that ran out. Never throws.
+   */
+  private settle(members: { id: string; role: Role }[], done: (userId: string) => boolean): void {
     try {
+      const { sql } = this.options;
+      const targets = sql
+        .exec<{ key: string }>("select key from member_repair where key like 'target:%'")
+        .toArray()
+        .map((row) => row.key.slice("target:".length));
+      for (const userId of targets) {
+        if (done(userId)) sql.exec("delete from member_repair where key = ?", `target:${userId}`);
+      }
+      sql.exec("delete from member_repair where key like 'gone:%' and value <= ?", Date.now());
+      for (const member of members) {
+        sql.exec("delete from member_repair where key = ?", `gone:${member.id}`);
+      }
+    } catch (error) {
+      this.options.log("settling the member repair failed", { error });
+    }
+  }
+
+  /**
+   * The reconcile every signed-in member's sync upgrade starts: when it fails (D1 or the shard down), the repair
+   * alarm takes over, so a copy the upgrade restored or a change the shard missed is not left until the next one.
+   */
+  async upgraded(workspaceId: string): Promise<void> {
+    if (!(await this.reconcile(workspaceId))) this.armRepair(Date.now());
+  }
+
+  /** Whether `userId` was removed from this shard within `MEMBER_TOMBSTONE_MS` (and D1 has not re-added them). */
+  gone(userId: string, now: number): boolean {
+    try {
+      const row = this.options.sql
+        .exec<{ value: number }>("select value from member_repair where key = ?", `gone:${userId}`)
+        .toArray()[0];
+      return row !== undefined && row.value > now;
+    } catch (error) {
+      // The Worker's D1 check stands; the upgrade's reconcile catches anything it let through.
+      this.options.log("reading a member tombstone failed", { error });
+      return false;
+    }
+  }
+
+  /** Records that `userId` was removed, for `gone`. Never throws: the upgrade's reconcile is the fallback. */
+  private tombstone(userId: string): void {
+    try {
+      this.options.sql.exec(
+        "insert into member_repair (key, value) values (?, ?) on conflict (key) do update set value = excluded.value",
+        `gone:${userId}`,
+        Date.now() + MEMBER_TOMBSTONE_MS,
+      );
+    } catch (error) {
+      this.options.log("recording a member tombstone failed", { error });
+    }
+  }
+
+  /**
+   * Asks the shard's alarm for a repair `MEMBER_REPAIR_DELAY_MS` from `now` (or sooner, if one is already due), and
+   * records `targetId`, the member whose change the shard missed, so a workspace too large to reconcile still
+   * catches up on them.
+   */
+  private armRepair(now: number, targetId?: string): void {
+    try {
+      if (targetId !== undefined) {
+        this.options.sql.exec(
+          "insert into member_repair (key, value) values (?, ?) on conflict (key) do nothing",
+          `target:${targetId}`,
+          now,
+        );
+      }
       const current = this.repairAt();
       const at = Math.min(current ?? Infinity, now + MEMBER_REPAIR_DELAY_MS);
       this.setRepairAt(at);

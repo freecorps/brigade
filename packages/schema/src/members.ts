@@ -110,22 +110,27 @@ export const changeMemberRole = defineMutation({
  * Server only: a member left or was removed in D1 (`role`: theirs before, null if unknown). Deletes their copy and every device of
  * theirs in the same transaction, so no page plan made after it counts them (RFC 0006 "Who is paged"), and emits
  * `member.removed` (and `device.unregistered` per device). `left` is the actor themselves (any role); `removed`
- * needs `members:manage`. Emits even when the shard had neither (a member who never opened Brigade): the
- * caller runs it once per removal D1 made.
+ * needs `members:manage`; `reconciled` is `MEMBERS_ACTOR` catching the shard up with one removal D1 already has
+ * (without reconciling every member). Emits even when the shard had neither (a member who never opened Brigade):
+ * the caller runs it once per removal D1 made.
  */
 export const removeMember = defineMutation({
   name: "member.remove",
   args: v.object({
     id: memberId,
     role: v.nullable(v.picklist(ROLES)),
-    reason: v.picklist(["removed", "left"]),
+    reason: v.picklist(MEMBER_REMOVALS),
   }),
   // Leaving needs only membership; removing someone else is checked below.
   permission: "workspace:read",
   apply(store, args, ctx) {
-    if (
-      args.reason === "left" ? ctx.actor.id !== args.id : !can(ctx.actor.role, "members:manage")
-    ) {
+    const allowed =
+      args.reason === "left"
+        ? ctx.actor.id === args.id
+        : args.reason === "reconciled"
+          ? ctx.actor.kind === MEMBERS_ACTOR.kind && ctx.actor.id === MEMBERS_ACTOR.id
+          : can(ctx.actor.role, "members:manage");
+    if (!allowed) {
       return fail("forbidden", "Not allowed to remove this member");
     }
     if (store.get("members", args.id)) store.delete("members", args.id);

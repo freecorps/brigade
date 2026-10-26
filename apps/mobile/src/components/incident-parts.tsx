@@ -1,5 +1,6 @@
 // Pieces the incident list and the incident screen share: badges that open a choice, refusal notices, the
 // connection line and what to say when sync is stale or missing.
+import { queryErrorReason } from "@freecorps/brigade-i18n/incident";
 import { m } from "@freecorps/brigade-i18n";
 import { incidentStatusLabels, severityLabels } from "@freecorps/brigade-i18n/labels";
 import type { IncidentStatus, Severity } from "@freecorps/brigade-schema";
@@ -219,10 +220,7 @@ export function StatePanel({
       {view === "refused" ? (
         <>
           <ThemedText selectable>
-            {m.sync_refused_hint({
-              reason:
-                errorCode === "forbidden" ? m.sync_error_read_forbidden() : m.sync_error_internal(),
-            })}
+            {m.sync_refused_hint({ reason: queryErrorReason(errorCode) })}
           </ThemedText>
           <Pressable accessibilityRole="button" onPress={onReload} hitSlop={spacing[3]}>
             <ThemedText style={{ color: colors.primary }}>{m.reload()}</ThemedText>

@@ -1,8 +1,8 @@
-// Monitoring end to end (RFC 0007), a paging path: the HTTP check and its target rules, ProbeDO's alarm chain,
+// Monitoring end to end (RFC 0007), a paging path: the HTTP and TCP checks and their target rules, ProbeDO's alarm chain,
 // probe reports turning into an alert and an incident on the workspace shard, and heartbeats.
 import { env, exports } from "cloudflare:workers";
 import { listDurableObjectIds, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { describe, expect, test, vi } from "vite-plus/test";
+import { describe, expect, inject, test, vi } from "vite-plus/test";
 import {
   heartbeatToken,
   newHeartbeatSecret,
@@ -12,7 +12,15 @@ import {
   type Actor,
   type ProbeRegion,
 } from "@freecorps/brigade-schema";
-import { httpCheck, MAX_BODY_BYTES, type HttpCheckConfig } from "../src/check.ts";
+import {
+  defaultConnector,
+  httpCheck,
+  MAX_BODY_BYTES,
+  tcpCheck,
+  type Connector,
+  type HttpCheckConfig,
+  type TcpCheckConfig,
+} from "../src/check.ts";
 import { receiveHeartbeat } from "../src/index.ts";
 import { probeName, type ProbeDO, type ProbeReport } from "../src/probe.ts";
 import { Shard } from "../src/shard.ts";
@@ -123,6 +131,120 @@ describe("httpCheck", () => {
       error: "keyword",
     });
     expect(pulled).toBeLessThan(MAX_BODY_BYTES + 64 * 1024);
+  });
+});
+
+const tcpConfig = (overrides: Partial<TcpCheckConfig> = {}): TcpCheckConfig => ({
+  kind: "tcp",
+  id: newId("mon", Date.now(), random),
+  host: "db.example.com",
+  port: 5432,
+  intervalSeconds: 60,
+  timeoutSeconds: 5,
+  ...overrides,
+});
+
+/**
+ * A connector whose sockets open, fail or hang as `answer` says, and that counts what was opened and closed. A
+ * hanging socket settles only when closed, as a real one does.
+ */
+function fakeConnect(answer: (address: SocketAddress) => "open" | "hang" | Error) {
+  const calls: SocketAddress[] = [];
+  let closed = 0;
+  const connector: Connector = (address) => {
+    calls.push(address);
+    const outcome = answer(address);
+    let settle!: (error?: Error) => void;
+    const opened = new Promise<SocketInfo>((resolve, reject) => {
+      settle = (error) => (error ? reject(error) : resolve({}));
+    });
+    if (outcome === "open") settle();
+    else if (outcome instanceof Error) settle(outcome);
+    return {
+      opened,
+      // Rejects with `opened`, as a real socket's does.
+      closed: opened.then(() => undefined),
+      close: async () => {
+        closed++;
+        settle(new Error("socket closed"));
+      },
+    } as unknown as Socket;
+  };
+  return { connector, calls, closedCount: () => closed };
+}
+
+describe("tcpCheck", () => {
+  test("up when the connection opens; the socket is closed straight after", async () => {
+    const fake = fakeConnect(() => "open");
+    expect(await tcpCheck(fake.connector, tcpConfig())).toEqual({
+      ok: true,
+      latencyMs: expect.any(Number),
+      httpStatus: null,
+      error: null,
+    });
+    expect(fake.calls).toEqual([{ hostname: "db.example.com", port: 5432 }]);
+    expect(fake.closedCount()).toBe(1);
+  });
+
+  test("refused, failing or timed out: down with its reason, and always closed", async () => {
+    const refused = fakeConnect(() => new Error("connection refused"));
+    expect(await tcpCheck(refused.connector, tcpConfig())).toEqual({
+      ok: false,
+      latencyMs: null,
+      httpStatus: null,
+      error: "network",
+    });
+    expect(refused.closedCount()).toBe(1);
+
+    const hang = fakeConnect(() => "hang");
+    const start = Date.now();
+    expect(await tcpCheck(hang.connector, tcpConfig({ timeoutSeconds: 1 }))).toMatchObject({
+      ok: false,
+      error: "timeout",
+    });
+    expect(Date.now() - start).toBeLessThan(5000);
+    expect(hang.closedCount()).toBe(1);
+
+    const throws: Connector = () => {
+      throw new TypeError("proxy request failed, cannot connect to the specified address");
+    };
+    expect(await tcpCheck(throws, tcpConfig())).toMatchObject({ ok: false, error: "network" });
+  });
+
+  test("a real socket through workerd's connect(): a listening port is up, a closed one is down", async () => {
+    // The target rules refuse loopback, so the check is configured with a public name and the connector is
+    // pointed at the local listener (test/setup/tcp-listener.ts).
+    const to =
+      (port: number): Connector =>
+      () =>
+        defaultConnector({ hostname: "127.0.0.1", port });
+    expect(await tcpCheck(to(inject("tcpOpenPort")), tcpConfig())).toMatchObject({
+      ok: true,
+      error: null,
+    });
+    expect(await tcpCheck(to(inject("tcpClosedPort")), tcpConfig())).toMatchObject({
+      ok: false,
+      error: "network",
+    });
+  });
+
+  test("refuses a private host or port 25 without connecting", async () => {
+    const fake = fakeConnect(() => "open");
+    for (const [host, port] of [
+      ["169.254.169.254", 80],
+      ["localhost", 22],
+      ["10.0.0.5", 5432],
+      ["fd00::1", 22],
+      ["db.example.com", 25],
+    ] as const) {
+      expect(await tcpCheck(fake.connector, tcpConfig({ host, port }))).toEqual({
+        ok: false,
+        latencyMs: null,
+        httpStatus: null,
+        error: "blocked",
+      });
+    }
+    expect(fake.calls).toEqual([]);
   });
 });
 
@@ -299,6 +421,72 @@ describe("monitor down → alert → incident", () => {
     expect(await runInDurableObject(weur, (_i, state) => state.storage.getAlarm())).toBeNull();
   });
 
+  test("a TCP monitor: the shard pushes its host and port, refused connections open one incident", async () => {
+    const ws = await workspace();
+    const monitorId = newId("mon", Date.now(), random);
+    const enam = probe(ws.id, "enam");
+    let refusing = true;
+    const fake = fakeConnect(() => (refusing ? new Error("connection refused") : "open"));
+    const http = fakeFetch("IAD", () => new Response("ok"));
+    await runInDurableObject(enam, (instance: ProbeDO) => {
+      instance.connector = fake.connector;
+      instance.fetcher = http.fetcher;
+    });
+    expect(
+      await ws.run("monitor.createTcp", {
+        id: monitorId,
+        name: "Database",
+        host: "db.example.com",
+        port: 5432,
+        intervalSeconds: 60,
+        timeoutSeconds: 5,
+        regions: ["enam"],
+      }),
+    ).toMatchObject({ ok: true });
+    await ws.withShard((_shard, instance) => instance.alarm());
+    const rows = await runInDurableObject(enam, (instance: ProbeDO) => instance.rows());
+    expect(rows.map((row) => JSON.parse(row.config))).toEqual([
+      {
+        kind: "tcp",
+        id: monitorId,
+        host: "db.example.com",
+        port: 5432,
+        intervalSeconds: 60,
+        timeoutSeconds: 5,
+      },
+    ]);
+
+    for (let run = 0; run < 3; run++) {
+      const status = await ws.withShard((shard) => shard.store.get("monitors", monitorId)?.status);
+      if (status === "down") break;
+      await runProbe(enam);
+    }
+    await ws.withShard((shard) => {
+      const monitor = shard.store.get("monitors", monitorId)!;
+      expect(monitor).toMatchObject({ status: "down", alertId: expect.any(String) });
+      expect(monitor.checks).toEqual([
+        expect.objectContaining({ source: "enam", up: false, colo: "IAD", error: "network" }),
+      ]);
+      expect(shard.store.scan("incidents")).toEqual([
+        expect.objectContaining({ title: "Database is down", declaredBy: "sys_monitors" }),
+      ]);
+    });
+    // Only the trace went over HTTP; every check was a socket, and every socket was closed.
+    expect(http.calls.every((call) => call.url.endsWith("/cdn-cgi/trace"))).toBe(true);
+    expect(fake.closedCount()).toBe(fake.calls.length);
+
+    refusing = false;
+    for (let run = 0; run < 3; run++) {
+      const status = await ws.withShard((shard) => shard.store.get("monitors", monitorId)?.status);
+      if (status === "up") break;
+      await runProbe(enam);
+    }
+    await ws.withShard((shard) => {
+      expect(shard.store.get("monitors", monitorId)).toMatchObject({ status: "up", alertId: null });
+      expect(shard.store.scan("alerts")).toEqual([expect.objectContaining({ status: "resolved" })]);
+    });
+  });
+
   test("a report computed before another region's flip still counts: one incident, no false recovery", async () => {
     const ws = await workspace();
     const monitorId = newId("mon", Date.now(), random);
@@ -423,6 +611,40 @@ describe("monitor down → alert → incident", () => {
     } finally {
       error.mockRestore();
     }
+  });
+
+  test("a probe connects to at most six targets at once, and closes every socket", async () => {
+    const ws = await workspace();
+    const stub = probe(ws.id, "apac");
+    let open = 0;
+    let most = 0;
+    let closed = 0;
+    // Each connection opens 20 ms later; the probe's pool (PARALLEL_CHECKS) bounds how many wait at once.
+    const connector: Connector = () => {
+      open++;
+      most = Math.max(most, open);
+      const opened = new Promise<SocketInfo>((resolve) => setTimeout(() => resolve({}), 20));
+      return {
+        opened,
+        closed: opened.then(() => undefined),
+        close: async () => {
+          open--;
+          closed++;
+        },
+      } as unknown as Socket;
+    };
+    const fake = fakeFetch("SIN", () => new Response("ok"));
+    await runInDurableObject(stub, (instance: ProbeDO) => {
+      instance.connector = connector;
+      instance.fetcher = fake.fetcher;
+    });
+    const checks = Array.from({ length: 14 }, (_, port) => tcpConfig({ port: 2000 + port }));
+    expect(await stub.configure(ws.id, "apac", checks)).toEqual({ ok: true });
+    await runProbe(stub);
+    expect(most).toBeLessThanOrEqual(6);
+    expect(closed).toBe(14);
+    const rows = await runInDurableObject(stub, (instance: ProbeDO) => instance.rows());
+    expect(rows.every((row) => row.last_ok === 1)).toBe(true);
   });
 
   test("a probe run that throws keeps its alarm chain", async () => {

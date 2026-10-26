@@ -280,7 +280,9 @@ describe("TCP targets (SSRF)", () => {
     expect(create({ host: "localhost" })).toMatchObject({ error: { issues: [{ path: "host" }] } });
     expect(create({ port: 25 })).toMatchObject({ error: { issues: [{ path: "port" }] } });
     expect(create({ port: 70000 })).toMatchObject({ error: { issues: [{ path: "port" }] } });
-    expect(create({ host: "example.com:22" })).toMatchObject({ error: { issues: [{ path: "host" }] } });
+    expect(create({ host: "example.com:22" })).toMatchObject({
+      error: { issues: [{ path: "host" }] },
+    });
     const args = tcpArgs(["weur", "wnam"], { host: "DB.Example.COM" });
     expect(types(runMutation(mutations, "monitor.createTcp", args, db, as("admin")))).toEqual([
       "monitor.created",
@@ -521,9 +523,9 @@ describe("managing monitors", () => {
     expect(types(runMutation(mutations, "monitor.setPaused", pause, db, as("admin")))).toEqual([
       "monitor.paused",
     ]);
-    expect(types(runMutation(mutations, "monitor.delete", { id: args.id }, db, as("admin")))).toEqual(
-      ["monitor.deleted"],
-    );
+    expect(
+      types(runMutation(mutations, "monitor.delete", { id: args.id }, db, as("admin"))),
+    ).toEqual(["monitor.deleted"]);
     expect(db.get("monitors", args.id)).toBeUndefined();
   });
 

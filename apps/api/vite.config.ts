@@ -44,5 +44,9 @@ export default defineConfig(async ({ command, mode }) => ({
           cloudflare(command === "serve" ? { config: { vars: LOCAL_VARS } } : {}),
           workspaceSource(),
         ],
-  test: { setupFiles: ["./test/apply-migrations.ts"] },
+  test: {
+    setupFiles: ["./test/apply-migrations.ts"],
+    // A loopback TCP listener for the TCP check's real-socket test.
+    globalSetup: ["./test/setup/tcp-listener.ts"],
+  },
 }));

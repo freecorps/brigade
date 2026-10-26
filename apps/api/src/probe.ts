@@ -6,7 +6,14 @@ import {
   REPORT_EVERY_MS,
   type ProbeRegion,
 } from "@freecorps/brigade-schema";
-import { httpCheck, observedColo, type CheckResult, type HttpCheckConfig } from "./check.ts";
+import {
+  defaultConnector,
+  observedColo,
+  runCheck,
+  type CheckConfig,
+  type CheckResult,
+  type Connector,
+} from "./check.ts";
 
 /** One region's verdict on one monitor, sent to the workspace shard (`WorkspaceDO.report`). */
 export type ProbeReport = {
@@ -32,7 +39,10 @@ export function probeName(workspaceId: string, region: ProbeRegion): string {
 
 const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
 
-/** Checks run at once per alarm, at most. */
+/**
+ * Checks run at once per alarm, at most, HTTP and TCP together: a Worker has at most six connections waiting for
+ * their response headers or to open, and queues the rest, which would eat into the queued checks' timeouts.
+ */
 const PARALLEL_CHECKS = 6;
 /** If an alarm run fails before it sets the real next alarm, the one set first fires after this. */
 const RETRY_MS = MIN_INTERVAL_SECONDS * 1000;
@@ -69,7 +79,7 @@ type CheckRow = {
 type Stored = CheckResult & { at: number; colo: string | null };
 
 /**
- * One workspace's checks from one region (RFC 0007 "Placement"): the shard pushes the HTTP monitors that use the
+ * One workspace's checks from one region (RFC 0007 "Placement"): the shard pushes the HTTP and TCP monitors that use the
  * region (`configure`), and `alarm()` runs each on its interval. A region's verdict flips after
  * `CONSECUTIVE_CHECKS` alike results; the probe reports it to the shard when it changes and otherwise every
  * `REPORT_EVERY_MS`, with the colo the check really ran from. Every alarm sets the next one before doing anything
@@ -79,6 +89,8 @@ type Stored = CheckResult & { at: number; colo: string | null };
 export class ProbeDO extends DurableObject<Env> {
   /** Outbound fetch; the tests replace it. */
   fetcher: typeof fetch = (input, init) => fetch(input, init);
+  /** Outbound TCP; the tests replace it. */
+  connector: Connector = defaultConnector;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -92,7 +104,7 @@ export class ProbeDO extends DurableObject<Env> {
   async configure(
     workspaceId: string,
     region: ProbeRegion,
-    checks: HttpCheckConfig[],
+    checks: CheckConfig[],
   ): Promise<{ ok: boolean }> {
     if (!this.claim("workspace", workspaceId) || !this.claim("region", region)) {
       this.log("probe serves another workspace or region", { workspaceId, region });
@@ -141,7 +153,7 @@ export class ProbeDO extends DurableObject<Env> {
     if (due.length > 0 && region && workspaceId) {
       const colo = await observedColo(this.fetcher);
       const results = await mapLimited(due, PARALLEL_CHECKS, (row) =>
-        httpCheck(this.fetcher, JSON.parse(row.config) as HttpCheckConfig),
+        runCheck(this.fetcher, this.connector, JSON.parse(row.config) as CheckConfig),
       );
       due.forEach((row, index) => this.record(row, { ...results[index]!, at: now, colo }, now));
       await this.report(workspaceId, region, now);
@@ -151,7 +163,7 @@ export class ProbeDO extends DurableObject<Env> {
 
   /** Stores one result and the region's verdict after it. */
   private record(row: CheckRow, result: Stored, now: number): void {
-    const config = JSON.parse(row.config) as HttpCheckConfig;
+    const config = JSON.parse(row.config) as CheckConfig;
     const ok = result.ok ? 1 : 0;
     const streak = row.last_ok === ok ? row.streak + 1 : 1;
     // A new check is up on its first success, but down only after CONSECUTIVE_CHECKS failures; after that a

@@ -296,7 +296,8 @@ export function normalizeTcpHost(host: string): string | undefined {
  */
 export function tcpTargetProblem(host: string, port: number): Issue | null {
   const hostname = normalizeTcpHost(host);
-  if (hostname === undefined) return { path: "host", message: "Expected a host name or an IP address" };
+  if (hostname === undefined)
+    return { path: "host", message: "Expected a host name or an IP address" };
   const problem = hostProblem(hostname.includes(":") ? `[${hostname}]` : hostname);
   if (problem !== null) return { path: "host", message: problem };
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -503,7 +504,8 @@ export const createTcpMonitor = defineMutation({
     const clock = checkNewId(args.id, ctx);
     if (clock) return clock;
     const { issues, regions } = checkTcp(args);
-    if (issues.length) return fail("invalid_args", "Invalid arguments for monitor.createTcp", issues);
+    if (issues.length)
+      return fail("invalid_args", "Invalid arguments for monitor.createTcp", issues);
     if (store.get("monitors", args.id)) return fail("conflict", "Monitor already exists");
     const row: MonitorRow = {
       id: args.id,
@@ -623,7 +625,8 @@ export const updateTcpMonitor = defineMutation({
     if (!monitor) return fail("not_found", "Monitor not found");
     if (monitor.kind !== "tcp") return fail("invalid_args", "Not a TCP monitor");
     const { issues, regions } = checkTcp(args);
-    if (issues.length) return fail("invalid_args", "Invalid arguments for monitor.updateTcp", issues);
+    if (issues.length)
+      return fail("invalid_args", "Invalid arguments for monitor.updateTcp", issues);
     const next = {
       name: args.name,
       host: args.host,

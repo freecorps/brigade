@@ -145,7 +145,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     socket (the network gone without a close) shows as reconnecting, not Live (RFC 0004 "Heartbeat"); incident and sign-in wording shared with the dashboard through
     `packages/i18n` and `packages/sync` (#20) (RFC 0002 "Auth", RFC 0004 "Socket topology", RFC 0006 "Device
     registration").
-  - Left: ack from the notification (a notification action over HTTPS, RFC 0004 "Clients"); the iOS end to end on
+  - Done: ack from the notification on iOS: an Acknowledge action on decrypted pages (Face ID or the passcode on a
+    locked phone), sent in the background over HTTPS as `incident.ack` (`POST /api/workspaces/:id/incidents/:id/ack`,
+    idempotent per tap) and answered with a quiet notification; offline, the answer is a page again with the action
+    (RFC 0004 "Acknowledging from a notification", RFC 0006 "Acting from the notification").
+  - Left: ack from the notification on an iPhone (the action, a locked phone, a cold background launch); the iOS end to end on
     a phone (sign in, registered, a page received and opened on its incident); FCM for Android (until then Android
     says it is not paged); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
     session's active one); creating an account or workspace from the app; editing and deleting updates; persisting

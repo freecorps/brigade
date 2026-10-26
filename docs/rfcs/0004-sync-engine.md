@@ -449,7 +449,28 @@ extra hop and more moving parts, so we start without it.
   stable id buys de-duplication across restarts only once the queue itself survives them. Persist both together.
 - Mobile cache: `expo-sqlite` stores the latest snapshot per subscription → the app opens instantly and reads offline.
 - Offline mutations are queued and shown as "pending". Paging actions from notifications (ack/escalate) use plain HTTPS,
-  not the socket, because iOS suspends sockets in the background.
+  not the socket, because iOS suspends sockets in the background (below).
+
+### Acknowledging from a notification
+
+`POST /api/workspaces/:id/incidents/:incidentId/ack` with an `Idempotency-Key` header (`[\w:-]{1,64}`), built for the
+page's Acknowledge action (RFC 0006 "Acting from the notification"). It is a server-side write like any other: the
+shard runs the named mutation `incident.ack` as the member, with its RBAC, its event through the outbox and its patch
+to every open socket; nothing is applied on the phone first.
+
+- **Authenticated like the sync upgrade:** the Better Auth session from the `Cookie` header (the app sends the one
+  `@better-auth/expo` keeps in secure storage), then the member's role read in D1, so a made-up workspace or an outsider
+  never wakes a shard. The shard also refuses a member removed within the tombstone (`not_a_member`), as it refuses
+  their upgrade. A request with another site's `Origin` is refused (403 `forbidden_origin`), like every
+  cookie-authenticated write; the app sends no `Origin`. Only workspace ids (`ws_<ULID>`), never dev shards.
+- **Idempotent per tap:** client id `notification`, mutation id the key, de-duplicated by the shard like a socket's
+  mutation. The app makes one key per tap and keeps it across its retries, so a retry whose first answer was lost is
+  still answered "acknowledged" instead of "someone already did". A second tap, or anyone else's ack, is the
+  mutation's `conflict`.
+- **Answers:** 200 acknowledged; 409 `conflict` (already acknowledged) or `invalid_transition` (resolved or declined);
+  404 no such incident; 403 `forbidden` (a viewer) or `not_a_member`; 401 no session; 503 when D1 or the shard cannot
+  be reached. The app tries again on a network failure, a timeout, 429 or 5xx, never on a refusal.
+- Escalate gets the same shape once escalation runs exist (IncidentDO). Tests: `apps/api/test/ack.test.ts`.
 
 ## Server-side writes
 

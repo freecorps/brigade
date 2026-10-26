@@ -418,7 +418,18 @@ export class Invitations {
         log("invitation: writing D1 failed", { error });
         return { ok: false, code: "unavailable" };
       }
-      const send = sends.count + 1;
+      // The shard's ledger is pruned, while D1 keeps every send of a pending invitation (this one's reservation
+      // included): number the send from whichever is further along, so a resend never reuses a send already done.
+      let send = sends.count + 1;
+      try {
+        const counted = await db
+          .prepare(`select count(*) as n from invitation_send where "invitationId" = ?`)
+          .bind(invitationId)
+          .first<{ n: number }>();
+        if (counted) send = Math.max(send, counted.n);
+      } catch (error) {
+        log("invitation: counting sends failed", { error });
+      }
       this.recordSend(invitationId, send, now, origin);
       const applied = this.apply(
         { kind: "user", id: actorId, role: actor.role },

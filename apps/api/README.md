@@ -225,8 +225,7 @@ The same sender sends the account emails (RFC 0002 "Auth", RFC 0003 "Invitations
 - **Email verification**: sent at sign-up and when the dashboard asks again (signed in, for one's own address, at
   most 3 per user in 15 minutes, 5 a day and 3 per IP a minute). It carries the address and the link, never the name
   typed at sign-up. The link opens the dashboard's `/verify-email` page and works for 24 hours. Without a sender,
-  asking again answers `503 EMAIL_NOT_CONFIGURED`. An account still unverified 24 hours after sign-up is replaced by
-  the next sign-up with its address (RFC 0002 "Auth").
+  asking again answers `503 EMAIL_NOT_CONFIGURED`. An address someone signed up with and never verified stays taken until password reset exists (RFC 0002 "Auth").
 - **Invitations**: `member.invited` from the workspace shard's outbox, sent by the same queue consumer
   (`src/notify-invite.ts`), in the invitee's language if they have an account, else the inviter's. The link opens the
   dashboard's `/invitations/:id`. Capped per workspace and, counted in D1, per invited address, per inviter and per

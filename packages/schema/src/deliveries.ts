@@ -232,13 +232,15 @@ export const reportDeliveries = defineMutation({
       const id = deliveryId(args.incidentId, args.eventId, outcome.deviceId);
       const row = store.get("deliveries", id);
       if (!row) continue;
-      // Never before the plan: the notifier's clock and the shard's may disagree.
-      const sentAt = Math.max(row.plannedAt, ctx.now - outcome.ms);
+      // Never before the plan: the notifier's clock and the shard's may disagree. Never after a receipt either: a
+      // slow device in the same send can hold this report back past another phone's receipt.
+      const cap = row.deliveredAt ?? Number.POSITIVE_INFINITY;
+      const sentAt = Math.min(cap, Math.max(row.plannedAt, ctx.now - outcome.ms));
       store.update("deliveries", id, {
         sentAt,
         attempts: row.attempts + 1,
         ...(outcome.ok
-          ? { acceptedAt: row.acceptedAt ?? ctx.now, error: null, reason: null }
+          ? { acceptedAt: row.acceptedAt ?? Math.min(cap, ctx.now), error: null, reason: null }
           : { error: outcome.error ?? "relay_unreachable", reason: outcome.reason }),
         updatedAt: ctx.now,
       });

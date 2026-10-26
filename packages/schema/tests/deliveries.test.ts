@@ -183,6 +183,28 @@ describe("delivery.plan, report and confirm", () => {
     expect(store.get("member_devices", deviceId)?.lastSeenAt).toBe(T + 2000);
   });
 
+  test("a report that lands after the phone's receipt never stamps sent or accepted after delivered", () => {
+    const { store, incidentId, eventId, deviceId, plan, id } = setup();
+    plan();
+    // The phone posts its receipt while a slow device in the same send holds the report back.
+    run(store, NOTIFIER_ACTOR, "delivery.confirm", { id }, T + 1000);
+    run(
+      store,
+      NOTIFIER_ACTOR,
+      "delivery.report",
+      {
+        incidentId,
+        eventId,
+        outcomes: [{ deviceId, ok: true, error: null, reason: null, ms: 200 }],
+      },
+      T + 10_000,
+    );
+    const row = store.get("deliveries", id)!;
+    expect(row.sentAt).toBeLessThanOrEqual(row.deliveredAt!);
+    expect(row.acceptedAt).toBeLessThanOrEqual(row.deliveredAt!);
+    expect(deliveryStage(row)).toBe("delivered");
+  });
+
   test("a retry keeps the first plan; a second receipt changes nothing", () => {
     const { store, plan, id } = setup();
     plan();

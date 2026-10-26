@@ -291,7 +291,14 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
     now,
   };
 
+  // Every query the explanation reads must have loaded: empty lists while they fill would read as "no phone".
+  const feeds = [members, timeline, schedules, deliveries, devices];
+  const pagingFailed = feeds.find((feed) => feed.status === "error");
+  const pagingReady = feeds.every((feed) => feed.status === "ready");
+
   if (why !== undefined && row.number !== null) {
+    if (pagingFailed) return <LoadFailed code={pagingFailed.error?.code} />;
+    if (!pagingReady) return <Loading />;
     return (
       <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-10">
         <WhyPagedView
@@ -453,7 +460,9 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
               />
             </div>
           ) : null}
-          {row.number !== null ? <PagingCard data={paging} who={who} number={row.number} /> : null}
+          {row.number !== null && pagingReady ? (
+            <PagingCard data={paging} who={who} number={row.number} />
+          ) : null}
         </div>
       </div>
     </Shell>

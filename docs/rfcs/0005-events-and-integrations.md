@@ -75,7 +75,8 @@ gone, `member_removed` when its member left or was removed) and `notification.fa
 name of the schedule nobody was on call for, else null; `page`: the escalation run and step it belongs to, absent
 outside a run), with actor
 `sys_notifier` for what the notifier records. Delivery receipts (RFC 0006 "Delivery receipts") emit
-`notification.planned` (`incidentId`, `eventId`, `devices`: how many new, `page`), `notification.sent` (`incidentId`,
+`notification.planned` (`incidentId`, `eventId`, `devices`: how many new, `page`, `dropped`: older delivery rows
+removed to keep the latest 20 per device, absent when none), `notification.sent` (`incidentId`,
 `eventId`, `accepted`, `failed`: one attempt's outcome) and `notification.delivered` (`incidentId`, `eventId`,
 `userId`, `deviceId`: the phone opened it), actor `sys_notifier`; no notifier acts on them. `notification.failed` rides with a `page_failed` timeline entry. The
 email notifier's own failures are `notification.failed` with `channel: "email"` (`incidentId`, `eventId`: the push

@@ -265,8 +265,11 @@ export function InvitationsPanel({
               const ask = confirming === invitation.id;
               return (
                 <li key={invitation.id} className="flex flex-col gap-2 px-4 py-3 sm:px-6">
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                    <MailIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                  <div className="flex flex-wrap items-start gap-x-4 gap-y-2 sm:items-center">
+                    <MailIcon
+                      aria-hidden
+                      className="mt-1 size-4 shrink-0 text-muted-foreground sm:mt-0"
+                    />
                     <div className="flex min-w-0 flex-1 basis-48 flex-col gap-0.5">
                       <p className="font-medium [overflow-wrap:anywhere]">{invitation.email}</p>
                       <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">

@@ -53,6 +53,7 @@ import {
   formatSeconds,
   monitorActions,
   monitorBadge,
+  monitorsFull,
   monitorRefusal,
   newHeartbeat,
   sourceChips,
@@ -279,7 +280,7 @@ export function MonitorsCard() {
       <CardContent className="flex flex-col gap-5">
         {adding ? (
           <MonitorForm
-            mode={{ kind: "create", onCreate }}
+            mode={{ kind: "create", full: monitorsFull(rows.length), onCreate }}
             onCancel={close}
             onChanged={onChanged}
             discard={discard}
@@ -457,7 +458,7 @@ function MonitorItem({
           // Inline, so a long host wraps back to the start of the line; the port never splits.
           <p className="text-sm text-muted-foreground">
             <span className="font-medium">TCP</span>{" "}
-            <span className="font-mono text-xs [overflow-wrap:anywhere] select-text">
+            <span className="[overflow-wrap:anywhere] select-text">
               {tcpHostLabel(row)}
               <span className="whitespace-nowrap">:{row.port}</span>
             </span>

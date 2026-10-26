@@ -22,10 +22,8 @@ const listen = (server: Server) =>
 export default async function setup(project: TestProject) {
   const open = createServer((socket) => socket.end());
   project.provide("tcpOpenPort", await listen(open));
-  // Bound, then closed: a port that refuses connections.
-  const closed = createServer();
-  const closedPort = await listen(closed);
-  await new Promise<void>((resolve) => closed.close(() => resolve()));
-  project.provide("tcpClosedPort", closedPort);
+  // Port 1 (tcpmux): below 1024, so only root could listen there, and nothing does on a dev machine or a CI
+  // runner. A port bound and closed again here could be taken by another process before the test connects.
+  project.provide("tcpClosedPort", 1);
   return () => new Promise<void>((resolve) => open.close(() => resolve()));
 }

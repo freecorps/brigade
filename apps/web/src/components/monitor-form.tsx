@@ -20,7 +20,7 @@ import { cn } from "cn";
 import { CheckIcon, CircleAlertIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
-import { Field } from "@/components/ui/field";
+import { Field, FormError } from "@/components/ui/field";
 import {
   checkDraft,
   checkEdit,
@@ -29,6 +29,9 @@ import {
   draftFromRow,
   editRestarts,
   EMPTY_DRAFT,
+  monitorLimitReached,
+  splitHostPort,
+  tcpFieldReason,
   type CheckedDraft,
   type CheckedEdit,
   type DraftField,
@@ -66,6 +69,8 @@ const FIELD_KEYS: Record<DraftField, string> = {
 export type MonitorFormMode =
   | {
       kind: "create";
+      /** The workspace has as many monitors as it may (`monitorsFull`): submitting says so, and sends nothing. */
+      full: boolean;
       onCreate: (checked: Extract<CheckedDraft, { ok: true }>) => Promise<boolean>;
     }
   | {
@@ -108,11 +113,16 @@ export function MonitorForm({
   const [draft, setDraft] = useState<MonitorDraft>(initial);
   const [invalid, setInvalid] = useState<ReadonlySet<DraftField>>(new Set());
   const [sending, setSending] = useState(false);
+  /** Said above the buttons when a new monitor cannot be added at all. */
+  const [blocked, setBlocked] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const kindId = useId();
   const regionsId = useId();
   const methodId = useId();
   const regionsErrorId = useId();
+  const hostErrorId = useId();
+  const portErrorId = useId();
+  const targetHintId = useId();
   const headingId = useId();
   const restartId = useId();
   const nameRef = useRef<HTMLInputElement>(null);
@@ -127,7 +137,9 @@ export function MonitorForm({
     }
   };
   const error = (field: DraftField) =>
-    invalid.has(field) ? m.monitor_field_invalid({ field: FIELD_KEYS[field] }) : undefined;
+    invalid.has(field)
+      ? m.monitor_field_invalid({ field: tcpFieldReason(field, draft) ?? FIELD_KEYS[field] })
+      : undefined;
   const text = (field: DraftField & keyof MonitorDraft) => ({
     value: draft[field] as string,
     error: error(field),
@@ -155,6 +167,9 @@ export function MonitorForm({
     }
     const checked = checkDraft(draft, client.newId("mon"));
     if (!checked.ok) return refuse(checked.fields);
+    // The shard would refuse it (`limit_reached`); the draft stays, in case one is deleted.
+    if (mode.full) return setBlocked(monitorLimitReached());
+    setBlocked(null);
     setSending(true);
     // `onCreate` can throw (no WebCrypto outside a secure context): the form must not stay busy.
     void mode
@@ -234,7 +249,8 @@ export function MonitorForm({
                   onChange={() => set("kind", kind)}
                   className="sr-only"
                 />
-                {m.monitor_kind({ kind })}
+                {/* Short, so three fit on a 320px phone in every language; the edit header has the long name. */}
+                {m.monitor_kind_short({ kind })}
               </label>
             ))}
           </div>
@@ -302,24 +318,59 @@ export function MonitorForm({
       ) : null}
 
       {tcp ? (
-        <div className="grid items-start gap-4 sm:grid-cols-[minmax(0,1fr)_9rem]">
-          <Field
-            label={m.monitor_field_label({ field: "host" })}
-            hint={m.monitor_field_hint({ field: "host" })}
-            placeholder="db.example.com"
-            maxLength={MONITOR_HOST_MAX}
-            autoComplete="off"
-            autoCapitalize="none"
-            spellCheck={false}
-            {...text("host")}
-          />
-          <Field
-            label={m.monitor_field_label({ field: "port" })}
-            inputMode="numeric"
-            placeholder="5432"
-            maxLength={5}
-            {...text("port")}
-          />
+        // Host and port on one row at every width; their errors and the hint run under both, full width.
+        <div className="flex flex-col gap-1.5">
+          <div className="grid grid-cols-[minmax(0,1fr)_6.5rem] gap-3">
+            <Field
+              label={m.monitor_field_label({ field: "host" })}
+              placeholder="db.example.com"
+              maxLength={MONITOR_HOST_MAX}
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              {...text("host")}
+              error={undefined}
+              aria-invalid={invalid.has("host") || undefined}
+              aria-describedby={describe(invalid.has("host") && hostErrorId, targetHintId)}
+              onPaste={(event) => {
+                // `db.example.com:5432` or `postgres://db.example.com:5432/app` into both fields, when it
+                // replaces the whole host; pasted into the middle of one, it goes in as typed.
+                const input = event.currentTarget;
+                const whole =
+                  input.selectionStart === 0 && input.selectionEnd === input.value.length;
+                const split = whole ? splitHostPort(event.clipboardData.getData("text")) : null;
+                if (!split) return;
+                event.preventDefault();
+                set("host", split.host);
+                if (split.port !== null) set("port", split.port);
+              }}
+            />
+            <Field
+              label={m.monitor_field_label({ field: "port" })}
+              inputMode="numeric"
+              placeholder="5432"
+              maxLength={5}
+              {...text("port")}
+              error={undefined}
+              aria-invalid={invalid.has("port") || undefined}
+              aria-describedby={describe(invalid.has("port") && portErrorId, targetHintId)}
+            />
+          </div>
+          {(["host", "port"] as const).map((field) =>
+            invalid.has(field) ? (
+              <p
+                key={field}
+                id={field === "host" ? hostErrorId : portErrorId}
+                className="flex items-start gap-1.5 text-sm text-destructive"
+              >
+                <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+                <span className="min-w-0 [overflow-wrap:anywhere]">{error(field)}</span>
+              </p>
+            ) : null,
+          )}
+          <p id={targetHintId} className="text-sm text-muted-foreground">
+            {m.monitor_field_hint({ field: "host" })} {m.monitor_field_hint({ field: "port" })}
+          </p>
         </div>
       ) : null}
 
@@ -435,6 +486,11 @@ export function MonitorForm({
           ) : null}
         </div>
 
+        {blocked ? (
+          <div className="mb-4">
+            <FormError>{blocked}</FormError>
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center gap-2">
           <Button
             type="submit"
@@ -452,6 +508,9 @@ export function MonitorForm({
     </form>
   );
 }
+
+/** The ids an input is described by, skipping the ones not shown. */
+const describe = (...ids: (string | false)[]) => ids.filter(Boolean).join(" ") || undefined;
 
 /**
  * Asked when another monitor's form was opened while this one has changes: Keep editing (focused, and Escape)

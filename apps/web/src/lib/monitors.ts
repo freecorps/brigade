@@ -8,10 +8,14 @@ import {
   createHttpMonitor,
   createTcpMonitor,
   heartbeatToken,
+  isCloudflareAddress,
   isFresh,
+  MAX_MONITORS_PER_WORKSPACE,
   monitorSources,
   newHeartbeatSecret,
+  normalizeTcpHost,
   PROBE_REGIONS,
+  TCP_BLOCKED_PORTS,
   tcpTargetProblems,
   type ArgsOf,
   type CheckSource,
@@ -209,6 +213,47 @@ const DRAFT_FIELDS: readonly DraftField[] = [
   "regions",
 ];
 
+/**
+ * The `monitor_field_invalid` key for a refused TCP field when it has its own wording: a port Cloudflare blocks, or an
+ * address of Cloudflare's own (`tcpTargetProblems`). Null for every other field and reason.
+ */
+export function tcpFieldReason(
+  field: DraftField,
+  draft: Pick<MonitorDraft, "kind" | "host" | "port">,
+): "port_blocked" | "host_cloudflare" | null {
+  if (draft.kind !== "tcp") return null;
+  if (field === "port" && TCP_BLOCKED_PORTS.includes(wholeNumber(draft.port))) {
+    return "port_blocked";
+  }
+  if (field === "host") {
+    const host = normalizeTcpHost(draft.host.trim());
+    if (host !== undefined && isCloudflareAddress(host)) return "host_cloudflare";
+  }
+  return null;
+}
+
+/**
+ * A pasted `host:port`, `[v6]:port` or `scheme://host:port/path` split into the TCP form's two fields; the port is
+ * null when the paste has none. Null when the paste is a bare host already (or not a host at all), so it pastes as
+ * typed.
+ */
+export function splitHostPort(text: string): { host: string; port: string | null } | null {
+  const trimmed = text.trim();
+  const rest = trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/[/?#].*$/, "");
+  const match =
+    /^\[([0-9a-f:.]+)\](?::(\d{1,5}))?$/i.exec(rest) ?? /^([^\s:[\]@]+):(\d{1,5})$/.exec(rest);
+  if (match) return { host: match[1]!, port: match[2] ?? null };
+  return rest !== trimmed && /^[^\s:[\]@]+$/.test(rest) ? { host: rest, port: null } : null;
+}
+
+/**
+ * Whether the workspace has `MAX_MONITORS_PER_WORKSPACE` monitors, so the shard would refuse another one
+ * (`limit_reached`): the form says so on submit instead of sending it.
+ */
+export function monitorsFull(count: number): boolean {
+  return count >= MAX_MONITORS_PER_WORKSPACE;
+}
+
 /** What an owner or admin can do to a monitor from its row; everyone else reads it (`monitor:manage`). */
 export type MonitorAction = "edit" | "pause" | "resume";
 
@@ -339,11 +384,17 @@ const TCP_TARGET_FIELDS = ["host", "port", "timeoutSeconds", "regions"] as const
 
 /**
  * Why the shard refused a change to a monitor, in the shared wording (`mutationErrorReason`), except "not found",
- * whose shared sentence is about an incident.
+ * whose shared sentence is about an incident, and the monitor cap, which says what to do.
  */
 export function monitorRefusal(code: string): string {
-  return code === "not_found" ? m.monitor_gone() : mutationErrorReason(code);
+  if (code === "not_found") return m.monitor_gone();
+  if (code === "limit_reached") return monitorLimitReached();
+  return mutationErrorReason(code);
 }
+
+/** Why a new monitor cannot be added: the workspace has `MAX_MONITORS_PER_WORKSPACE` already. */
+export const monitorLimitReached = () =>
+  m.monitor_limit_reached({ max: String(MAX_MONITORS_PER_WORKSPACE) });
 
 /** A new heartbeat token, its SHA-256 (what the shard stores) and the URL to ping. */
 export async function newHeartbeat(

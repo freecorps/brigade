@@ -9,7 +9,8 @@ export type Monitor_Field_HintInputs = {
 * | --- | --- |
 * | "url" | "Everyone in the workspace, viewers too, can see this URL: keep tokens and passwords out of it." |
 * | "expected_status" | "Empty: any 2xx or 3xx. Redirects are not followed." |
-* | "host" | "The check passes when a connection to this host and port opens. Nothing is sent." |
+* | "host" | "Passes when a connection to this host and port opens; nothing is sent. Hosts proxied by Cloudflare can't be checked over TCP." |
+* | "port" | "Any port but 25." |
 * | "timeout" | "How long one check may take." |
 * | "timeout_tcp" | "How long the connection may take to open." |
 * | * | "How late a ping may be before it counts as missed." |

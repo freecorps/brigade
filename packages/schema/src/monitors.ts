@@ -363,7 +363,10 @@ export function tcpTargetProblems(host: string, port: number): Issue[] {
       : hostProblem(hostname.includes(":") ? `[${hostname}]` : hostname);
   if (problem !== null) issues.push({ path: "host", message: problem });
   else if (hostname !== undefined && isCloudflareAddress(hostname)) {
-    issues.push({ path: "host", message: "Cloudflare refuses TCP connections to its own addresses" });
+    issues.push({
+      path: "host",
+      message: "Cloudflare refuses TCP connections to its own addresses",
+    });
   }
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     issues.push({ path: "port", message: "Expected a port from 1 to 65535" });

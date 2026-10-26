@@ -21,8 +21,11 @@ import {
   monitorActions,
   monitorBadge,
   monitorRefusal,
+  monitorsFull,
   newHeartbeat,
   sourceChips,
+  splitHostPort,
+  tcpFieldReason,
   tcpHostLabel,
 } from "../src/lib/monitors";
 
@@ -208,9 +211,44 @@ test("a TCP draft becomes createTcp's args; a private host, port 25 and a host w
     fields({ host: "10.0.0.5", port: "22", intervalSeconds: "30", timeoutSeconds: "31" }),
   ).toEqual(["host", "timeoutSeconds"]);
   expect(fields({ host: "example.com", port: "22", regions: [] })).toEqual(["regions"]);
+  // Cloudflare's own addresses, which connect() never reaches.
+  expect(fields({ host: "104.16.0.1", port: "443" })).toEqual(["host"]);
   expect(m.monitor_field_invalid({ field: "port" }, { locale: "pt-BR" })).toBe(
-    "Use uma porta de 1 a 65535. A porta 25 é bloqueada pela Cloudflare.",
+    "Use uma porta de 1 a 65535.",
   );
+});
+
+test("a refused TCP port or host has its own wording when Cloudflare is the reason", () => {
+  const tcp = { kind: "tcp" as const, host: "db.example.com", port: "5432" };
+  expect(tcpFieldReason("port", { ...tcp, port: "25" })).toBe("port_blocked");
+  expect(tcpFieldReason("port", { ...tcp, port: "70000" })).toBeNull();
+  expect(tcpFieldReason("host", { ...tcp, host: " 104.16.0.1 " })).toBe("host_cloudflare");
+  expect(tcpFieldReason("host", { ...tcp, host: "[2606:4700::1111]" })).toBe("host_cloudflare");
+  expect(tcpFieldReason("host", { ...tcp, host: "10.0.0.5" })).toBeNull();
+  expect(tcpFieldReason("port", { ...tcp, kind: "http", port: "25" })).toBeNull();
+  for (const locale of ["en", "pt-BR"] as const) {
+    for (const field of ["port_blocked", "host_cloudflare"]) {
+      expect(m.monitor_field_invalid({ field }, { locale })).not.toBe(
+        m.monitor_field_invalid({ field: "other" }, { locale }),
+      );
+    }
+  }
+  expect(m.monitor_field_invalid({ field: "port_blocked" })).toBe(
+    "Cloudflare blocks port 25. Use another port.",
+  );
+});
+
+test("a pasted host:port or URL splits into host and port; a bare host pastes as typed", () => {
+  expect(splitHostPort("db.example.com:5432")).toEqual({ host: "db.example.com", port: "5432" });
+  expect(splitHostPort(" postgres://db.example.com:5432/app?ssl=1 ")).toEqual({
+    host: "db.example.com",
+    port: "5432",
+  });
+  expect(splitHostPort("[2001:db8::1]:22")).toEqual({ host: "2001:db8::1", port: "22" });
+  expect(splitHostPort("https://example.com/health")).toEqual({ host: "example.com", port: null });
+  expect(splitHostPort("db.example.com")).toBeNull();
+  expect(splitHostPort("2001:db8::1")).toBeNull();
+  expect(splitHostPort("not a host:22")).toBeNull();
 });
 
 test("a TCP host reads as itself before its port, an IPv6 address in brackets", () => {
@@ -383,6 +421,11 @@ test("a refused monitor change uses the shared wording, except a monitor that is
   expect(monitorRefusal("forbidden")).toBe(m.sync_error_forbidden());
   expect(monitorRefusal("conflict")).toBe(m.sync_error_conflict());
   expect(monitorRefusal("not_found")).toBe("It was deleted.");
+  expect(monitorRefusal("limit_reached")).toBe(
+    "This workspace has 100 monitors, the most it can have. Delete one to add another.",
+  );
+  expect(monitorsFull(99)).toBe(false);
+  expect(monitorsFull(100)).toBe(true);
   expect(m.monitor_gone({}, { locale: "pt-BR" })).toBe("Ele foi excluído.");
 });
 

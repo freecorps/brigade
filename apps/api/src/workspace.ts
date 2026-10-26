@@ -22,7 +22,7 @@ import {
   type MemberChangeResult,
   type SocketVerdict,
 } from "./members.ts";
-import { Escalations } from "./escalation.ts";
+import { ESCALATION_RETRY_MS, Escalations } from "./escalation.ts";
 import { isProbeRegion, MONITOR_TICK_MS, Monitoring } from "./monitors.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
 import {
@@ -369,11 +369,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     // Pages first: a level is a mutation in this object's storage and its events go out before the monitor tick
     // (which waits on probes), the repair (which waits on D1) or anything else.
     let escalations: number | null = now + MONITOR_TICK_MS;
+    let escalationsFailed = false;
     try {
       const { fired, next } = this.escalations.fireDue(now);
       escalations = next;
       if (fired > 0) await this.drainOutbox();
     } catch (error) {
+      escalationsFailed = true;
       this.log("escalation failed", { error });
     }
     let monitors: number | null = now + MONITOR_TICK_MS;
@@ -414,8 +416,14 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
     let escalationAt: number | null = escalations;
     try {
-      // Read again: a page planned while the alarm ran may have started a run.
-      escalationAt = earliest(escalations, this.escalations.nextAt());
+      // Read again: a page planned while the alarm ran may have started a run. After `fireDue` threw, its timers are
+      // still due: they are tried again `ESCALATION_RETRY_MS` later, not in a loop.
+      const stored = this.escalations.nextAt();
+      escalationAt = escalationsFailed
+        ? stored === null
+          ? null
+          : Math.max(stored, now + ESCALATION_RETRY_MS)
+        : earliest(escalations, stored);
     } catch (error) {
       this.log("reading the escalation timers failed", { error });
     }

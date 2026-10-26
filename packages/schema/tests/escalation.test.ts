@@ -656,7 +656,7 @@ describe("escalation runs", () => {
       level: null,
       reason: "stalled",
     });
-    expect(fallback(2)).toMatchObject({ ok: false, error: { code: "not_found" } });
+    expect(fallback(1)).toMatchObject({ ok: false, error: { code: "not_found" } });
     // Server only: no socket sends it.
     expect(
       runMutation(
@@ -667,6 +667,90 @@ describe("escalation runs", () => {
         ctx("usr_ana", "owner"),
       ),
     ).toMatchObject({ ok: false, error: { code: "unknown_mutation" } });
+  });
+
+  test("escalation.fallback pages a lost end page again, at any step, as that page would have", () => {
+    const store = withPolicy({ levels: [level(LVL1, [{ kind: "member", id: "usr_eva" }])] });
+    start(store);
+    expect(advance(store, T + 5 * MINUTE)).toMatchObject({ ok: true });
+    expect(run(store)).toMatchObject({ status: "exhausted", paged: 2 });
+    const fallback = (step: number) =>
+      runMutation(
+        serverMutations,
+        "escalation.fallback",
+        { incidentId: INC, step },
+        store,
+        system(T + 9 * MINUTE),
+      );
+    // An earlier step is not the lost end page.
+    expect(fallback(1)).toMatchObject({ ok: false, error: { code: "not_found" } });
+    expect(fallback(2)).toMatchObject({
+      ok: true,
+      events: [
+        {
+          type: "escalation.paged",
+          data: { level: null, reason: "exhausted", round: 0, step: 3, started: false },
+        },
+      ],
+    });
+    expect(run(store)).toMatchObject({ status: "exhausted", paged: 3 });
+    expect(fallback(2)).toMatchObject({ ok: false, error: { code: "not_found" } });
+  });
+
+  test("escalation.repage pages a lost level again, leaving out the declarer and keeping the next level's time", () => {
+    const store = withPolicy({
+      levels: [
+        level(LVL1, [
+          { kind: "schedule", id: SCH },
+          { kind: "member", id: "usr_ana" },
+        ]),
+        level(LVL2, [{ kind: "member", id: "usr_eva" }], 10),
+      ],
+    });
+    start(store);
+    const before = run(store);
+    expect(before.pages[0]).toMatchObject({ level: 1, userIds: ["usr_caio", "usr_ana"] });
+    const repage = (step: number) =>
+      runMutation(
+        serverMutations,
+        "escalation.repage",
+        { incidentId: INC, step },
+        store,
+        system(T + 2 * MINUTE),
+      );
+    expect(repage(2)).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(repage(1)).toMatchObject({
+      ok: true,
+      events: [
+        {
+          type: "escalation.paged",
+          data: { level: 1, round: 0, userIds: ["usr_caio"], reason: "started", step: 2 },
+        },
+      ],
+    });
+    expect(run(store)).toMatchObject({ status: "running", paged: 2, nextAt: before.nextAt });
+    expect(store.get("escalation_timers", INC)).toMatchObject({ at: before.nextAt });
+    expect(repage(1)).toMatchObject({ ok: false, error: { code: "conflict" } });
+    // The next level still fires at its time, after the level paged again.
+    expect(advance(store, before.nextAt!)).toMatchObject({
+      ok: true,
+      events: [{ type: "escalation.paged", data: { level: 2, step: 3 } }],
+    });
+  });
+
+  test("escalation.repage has nobody to page again when the declarer was the level's only reach", () => {
+    const store = withPolicy();
+    start(store, "usr_caio");
+    expect(
+      runMutation(
+        serverMutations,
+        "escalation.repage",
+        { incidentId: INC, step: 1 },
+        store,
+        system(T + MINUTE),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(run(store)).toMatchObject({ paged: 1 });
   });
 
   test("the incident row keeps the last pages and the first misses of each; the counts stay whole", () => {

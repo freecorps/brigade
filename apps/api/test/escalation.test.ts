@@ -459,34 +459,86 @@ describe("fallbacks (the paging path's)", () => {
     await consumeDeadLetters(batch, { WORKSPACE: env.WORKSPACE });
     expect((await getQueueResult(batch, ctx)).explicitAcks).toEqual(["dlq-0"]);
     expect((await ws.timeline(incident)).filter((row) => row.kind === "page_failed")).toEqual([
-      expect.objectContaining({ userId: null, reason: "dead_lettered" }),
+      expect.objectContaining({ userId: null, reason: "dead_lettered", run: event.id, step: 2 }),
     ]);
+    // Still the run's last page: level 2 is paged again on an event of its own, not left until level 3's time.
+    const again = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[2]!;
+    expect(again.data).toMatchObject({ level: 2, userIds: [eva.id], step: 3, started: false });
+    const { tokens, send } = relay();
+    await deliver(again, send);
+    expect(await pagedMembers(ws, tokens)).toEqual([eva.id]);
   });
 
-  test("a first page dead-lettered before it was planned still starts the run, so level 2 fires on time", async () => {
+  test("a first page dead-lettered before it was planned starts the run and pages level 1 again at once", async () => {
     const ws = await workspace();
     for (const member of [caio, eva]) await ws.device(member);
     await withPolicy(ws);
     const { event, incident } = await ws.declare(MONITOR_ACTOR);
     // The shard never planned it (unreachable, or it threw): the Queue gave up on it.
     await deadLetter(event);
-    expect(await ws.escalation(incident)).toMatchObject({
+    const run = (await ws.escalation(incident))!;
+    expect(run).toMatchObject({
       status: "running",
       eventId: event.id,
-      pages: [expect.objectContaining({ level: 1, userIds: [caio.id] })],
+      paged: 2,
+      pages: [
+        expect.objectContaining({ level: 1, userIds: [caio.id] }),
+        expect.objectContaining({ level: 1, userIds: [caio.id] }),
+      ],
     });
     expect((await ws.timeline(incident)).filter((row) => row.kind === "page_failed")).toEqual([
-      expect.objectContaining({ userId: null, reason: "dead_lettered" }),
+      expect.objectContaining({ userId: null, reason: "dead_lettered", run: event.id, step: 1 }),
     ]);
+    // Level 1 again on its own event, not a full timeout later; level 2 keeps its time.
+    const [again] = (await ws.events(incident)).filter(
+      (e) => e.type === "escalation.paged" && (e.data as { started: boolean }).started === false,
+    );
+    expect(again!.data).toMatchObject({ level: 1, step: 2 });
+    const first = relay();
+    await deliver(again!, first.send);
+    expect(await pagedMembers(ws, first.tokens)).toEqual([caio.id]);
     const alarm = await ws.withShard((_shard, state) => state.storage.getAlarm());
     expect(alarm).not.toBeNull();
+    expect(alarm!).toBeLessThanOrEqual(run.nextAt!);
+    // Once: the dead letter again changes nothing.
+    await deadLetter(event);
+    expect(await ws.levels(incident)).toHaveLength(2);
     await ws.due(incident);
     await runDurableObjectAlarm(ws.stub);
-    expect((await ws.levels(incident)).map((one) => one.level)).toEqual([1, 2]);
-    const second = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[1]!;
+    expect((await ws.levels(incident)).map((one) => one.level)).toEqual([1, 1, 2]);
+    const second = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[2]!;
     const { tokens, send } = relay();
     await deliver(second, send);
     expect(await pagedMembers(ws, tokens)).toEqual([eva.id]);
+  });
+
+  test("a dead-lettered first page whose only reach was the declarer pages nobody again", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(caio);
+    await deadLetter(event);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "running", paged: 1 });
+    expect(await ws.levels(incident)).toHaveLength(1);
+  });
+
+  test("a dead-lettered declaration belongs to no page of a run a later event started", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    // Declared at SEV3, its page not delivered yet; raised to SEV1, that page starts the run.
+    const { event: declared, incident } = await ws.declare(MONITOR_ACTOR, "sev3");
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev1" }, false);
+    const raised = (await ws.events(incident)).find((e) => e.type === "incident.severity_changed")!;
+    await deliver(raised, relay().send);
+    expect(await ws.escalation(incident)).toMatchObject({ eventId: raised.id, paged: 1 });
+    await deadLetter(declared);
+    const failed = (await ws.timeline(incident)).filter((row) => row.kind === "page_failed");
+    expect(failed).toEqual([expect.objectContaining({ userId: null, reason: "dead_lettered" })]);
+    expect(failed[0]).not.toHaveProperty("run");
+    expect(failed[0]).not.toHaveProperty("step");
+    // Nor is the run's page paged again.
+    expect(await ws.escalation(incident)).toMatchObject({ eventId: raised.id, paged: 1 });
   });
 
   test("a level the shard keeps refusing is on the timeline at once, and pages everyone after 3 minutes", async () => {
@@ -610,6 +662,118 @@ describe("fallbacks (the paging path's)", () => {
     expect(await ws.levels(incident)).toHaveLength(2);
   });
 
+  test("a level's event still retried when a later level ended the run on everyone still pages", async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    // Level 3 is Ana, with no device: when it fires, the run ends on everyone who can respond.
+    await withPolicy(ws, [
+      { targets: [{ kind: "schedule", id: SCHEDULE }] },
+      { targets: [{ kind: "member", id: eva.id }] },
+      { targets: [{ kind: "member", id: ana.id }] },
+    ]);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, relay().send);
+    await ws.due(incident);
+    await runDurableObjectAlarm(ws.stub);
+    // Level 2's event is still with the Queue (the shard failed its first deliveries) when level 3 fires.
+    const second = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[1]!;
+    expect(second.data).toMatchObject({ level: 2, step: 2 });
+    await ws.due(incident);
+    await runDurableObjectAlarm(ws.stub);
+    expect(await ws.escalation(incident)).toMatchObject({
+      status: "exhausted",
+      paged: 3,
+      pages: [
+        expect.objectContaining({ level: 1 }),
+        expect.objectContaining({ level: 2 }),
+        expect.objectContaining({ level: null, reason: "unreachable" }),
+      ],
+    });
+    const { tokens, send } = relay();
+    await deliver(second, send);
+    expect(await pagedMembers(ws, tokens)).toEqual([eva.id]);
+  });
+
+  test("a lost end page at a later step (commander first) is paged again, on its own event", async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    // Level 2 is Ana, with no device: level 1 times out into the interim rule, which asks the commander first.
+    await withPolicy(ws, [
+      { targets: [{ kind: "schedule", id: SCHEDULE }] },
+      { targets: [{ kind: "member", id: ana.id }] },
+    ]);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await ws.run(ana, "incident.assignRole", { id: incident, role: "commander", userId: bia.id });
+    await deliver(event, relay().send);
+    await ws.due(incident);
+    await runDurableObjectAlarm(ws.stub);
+    const end = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[1]!;
+    expect(end.data).toMatchObject({ level: null, reason: "unreachable", step: 2 });
+    await deadLetter(end);
+    const again = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[2]!;
+    expect(again.data).toMatchObject({
+      level: null,
+      reason: "unreachable",
+      run: event.id,
+      step: 3,
+      started: false,
+    });
+    const { tokens, send } = relay();
+    await deliver(again, send);
+    expect(await pagedMembers(ws, tokens)).toEqual([bia.id]);
+    // Once: the dead letter again changes nothing.
+    await deadLetter(end);
+    expect(await ws.levels(incident)).toHaveLength(3);
+  });
+
+  test("a lost end page of a run nobody acknowledged pages everyone again, the commander not first", async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    await withPolicy(ws, [{ targets: [{ kind: "member", id: eva.id }] }]);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await ws.run(ana, "incident.assignRole", { id: incident, role: "commander", userId: bia.id });
+    await deliver(event, relay().send);
+    await ws.due(incident);
+    await runDurableObjectAlarm(ws.stub);
+    const end = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[1]!;
+    expect(end.data).toMatchObject({ level: null, reason: "exhausted", step: 2 });
+    await deadLetter(end);
+    const again = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[2]!;
+    expect(again.data).toMatchObject({ level: null, reason: "exhausted", step: 3, started: false });
+    const { tokens, send } = relay();
+    await deliver(again, send);
+    expect(await pagedMembers(ws, tokens)).toEqual([bia.id, caio.id, eva.id]);
+    // Ana (no device) is recorded on the page sent again, the loss on the one lost.
+    expect(
+      (await ws.timeline(incident))
+        .filter((row) => row.kind === "page_failed")
+        .map((row) => [row.userId, row.reason, row.step]),
+    ).toEqual([
+      [null, "dead_lettered", 2],
+      [ana.id, "no_devices", 3],
+    ]);
+  });
+
+  test("a redelivered first page after the run moved past the pages the row keeps sends nothing", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await ws.run(ESCALATION, "escalation.start", {
+      incidentId: incident,
+      eventId: event.id,
+      causedBy: MONITOR_ACTOR.id,
+    });
+    // As if the run had made 30 pages: the row keeps its last 20, so its first is gone.
+    await ws.withShard((shard) => {
+      const row = shard.store.get("incidents", incident)!;
+      shard.store.update("incidents", incident, { escalation: { ...row.escalation!, paged: 30 } });
+    });
+    const { tokens, send } = relay();
+    await deliver(event, send);
+    expect(tokens).toEqual([]);
+  });
+
   test("when only whoever declared it can respond, the end of the run says nobody else could be paged", async () => {
     const ws = await workspace();
     for (const member of [ana, bia]) await ws.device(member);
@@ -728,15 +892,78 @@ describe("the shard's alarm", () => {
       shard.store.update("incidents", incident, { escalation: before });
       shard.store.update("escalation_timers", incident, { at: before.nextAt! });
     });
+    // Each pass at the retry time the last one set: the level is due again each time, and refused each time.
+    let at = now;
     for (let pass = 0; pass < 3; pass++) {
-      const result = await ws.withShard((shard) => escalations(shard).fireDue(now));
+      const result = await ws.withShard((shard) => escalations(shard).fireDue(at));
       expect(result.fired).toBe(0);
-      expect(result.next).toBeGreaterThan(now);
+      expect(result.next).toBe(at + ESCALATION_RETRY_MS);
+      at = result.next!;
     }
     const timer = await ws.withShard((shard) => shard.store.get("escalation_timers", incident));
-    expect(timer).toMatchObject({ at: now + ESCALATION_RETRY_MS, failingSince: now });
+    expect(timer).toMatchObject({ at, failingSince: now });
     expect((await ws.timeline(incident)).filter((row) => row.kind === "page_failed")).toEqual([
       expect.objectContaining({ userId: null, reason: "escalation_stalled" }),
     ]);
+  });
+
+  test('a fallback "ok" that left the level due is a refusal too: the run is tried again, not dropped', async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, relay().send);
+    // A run `escalation.advance` refuses (no page to go on from), failing for over 3 minutes.
+    const now = Date.now();
+    const refused = await ws.withShard((shard) => {
+      const row = shard.store.get("incidents", incident)!;
+      const escalation = { ...row.escalation!, pages: [], nextAt: now - 1 };
+      shard.store.update("incidents", incident, { escalation });
+      shard.store.update("escalation_timers", incident, {
+        at: now - 1,
+        failingSince: now - 4 * 60_000,
+      });
+      return escalation;
+    });
+    const escalations = (shard: Shard) =>
+      new Escalations({ shard, log: () => {}, committed: () => {} });
+    expect((await ws.withShard((shard) => escalations(shard).fireDue(now))).fired).toBe(1);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "exhausted" });
+    // Put the run back as it was: `escalation.fallback` at that step has a stored "ok" that pages nothing now.
+    await ws.withShard((shard) => {
+      shard.store.update("incidents", incident, { escalation: refused });
+      shard.store.insert("escalation_timers", {
+        id: incident,
+        at: now - 1,
+        failingSince: now - 4 * 60_000,
+      });
+    });
+    const result = await ws.withShard((shard) => escalations(shard).fireDue(now));
+    expect(result).toEqual({ fired: 0, next: now + ESCALATION_RETRY_MS });
+    expect(
+      await ws.withShard((shard) => shard.store.get("escalation_timers", incident)),
+    ).toMatchObject({ at: now + ESCALATION_RETRY_MS });
+    expect(await ws.escalation(incident)).toMatchObject({ status: "running" });
+  });
+
+  test("an alarm whose escalations threw comes back a retry later, not straight away", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, relay().send);
+    await ws.due(incident);
+    const fireDue = vi.spyOn(Escalations.prototype, "fireDue").mockImplementation(() => {
+      throw new Error("storage failed");
+    });
+    const before = Date.now();
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+    const alarm = await ws.withShard((_shard, state) => state.storage.getAlarm());
+    expect(alarm).not.toBeNull();
+    expect(alarm!).toBeGreaterThanOrEqual(before + ESCALATION_RETRY_MS);
+    // The level is still due, and fires once the escalations work again.
+    fireDue.mockRestore();
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+    expect((await ws.levels(incident)).map((one) => one.level)).toEqual([1, 2]);
   });
 });

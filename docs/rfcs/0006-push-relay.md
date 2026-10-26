@@ -124,17 +124,22 @@ chain:
   50 per run, the rest right after), and the drain that follows sends their events; no level ever waits on D1.
 - **Idempotency.** Each level is its own event, so the page ledger (RFC 0005) de-duplicates it like any page; the
   start is de-duplicated by the event that asked for it (`start:<event id>`), and a level by its run and the run's page
-  count (`advance:<run event id>:<page count>`, likewise `fallback:` and the stall's entry), so a redelivered event or
-  a repeated alarm never pages a level twice, and a later run on the same incident (reopened) never meets the first
-  run's results. A level's
-  event carries its run
-  and page count: one from a run that has stopped (acknowledged and then reopened, or replaced by a new run) sends
-  nothing. A dead-lettered level is recorded like any dead-lettered page; a dead-lettered **first** page (the shard
-  never planned it, so no run started) starts the run when it is recorded, its first level marked as not paged, so
-  the next levels still fire on time. When that first page was already the interim rule (no level could reach
-  anyone, so the run ended on it), nothing would page again: everyone who can respond is paged anew, on an event of
-  its own (`escalation.fallback` on the ended run, once). A failed page is recorded with the run and page it belongs
-  to, so the incident page puts a slow failure on the right level.
+  count (`advance:<run event id>:<page count>`, likewise `fallback:`, `repage:` and the stall's entry), so a
+  redelivered event or a repeated alarm never pages a level twice, and a later run on the same incident (reopened)
+  never meets the first run's results. A level's event carries its run and page count: one from a run that has
+  stopped (acknowledged and then reopened, or replaced by a new run) sends nothing, while any page of the run under
+  way, or of a run that ended by paging everyone, still sends (a level's event the Queue is still retrying when a
+  later level ended the run is not dropped). A redelivery of the event that started a run after the run moved past
+  the pages the incident row keeps sends nothing.
+- **A lost page.** A dead-lettered page is recorded like any dead-lettered page (`dead_lettered`). A dead-lettered
+  **first** page (the shard never planned it, so no run started) starts the run when it is recorded, so the next
+  levels still fire on time. When the lost page is still the run's last, nothing would page its members until the
+  next level's timeout, or ever when the run ended on it, so the shard pages it again on an event of its own, once:
+  a level's members (`escalation.repage`; whoever caused the run's first page still counts as reached, and the next
+  level keeps its time) or everyone who can respond, as that page would have (`escalation.fallback` on the ended
+  run, with its reason). Another event's page lost meanwhile (an incident declared before a later event started the
+  run) is recorded on no page of the run. A failed page is recorded with the run and page it belongs to, so the
+  incident page puts a slow failure on the right level.
 
 **The interim rule** (no default policy, and the last fallback above): the incident commander if one is assigned,
 can still respond (not a viewer), did not cause the event and has a registered device; otherwise every member who

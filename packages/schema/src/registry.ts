@@ -17,7 +17,12 @@ import { allMonitors, evaluateMonitor, monitorMutations, reportMonitorCheck } fr
 import { defineRegistry } from "./mutation.ts";
 import { allOverrides, allSchedules, scheduleMutations } from "./schedules.ts";
 import { allPolicies, policyMutations } from "./policies.ts";
-import { advanceEscalation, fallbackEscalation, startEscalation } from "./escalation.ts";
+import {
+  advanceEscalation,
+  fallbackEscalation,
+  repageEscalation,
+  startEscalation,
+} from "./escalation.ts";
 import { incidentTimeline } from "./timeline.ts";
 import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";
 import { allMembers, createWorkspace, syncMember } from "./workspaces.ts";
@@ -77,4 +82,5 @@ export const serverMutations = defineRegistry([
   startEscalation,
   advanceEscalation,
   fallbackEscalation,
+  repageEscalation,
 ]);

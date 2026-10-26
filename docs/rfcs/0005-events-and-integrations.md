@@ -141,7 +141,8 @@ splits off when there is more than push to run. It routes each event to its noti
   `max_retries` (10, so 11 deliveries); the last logs `page dead-lettered` (event, incident, workspace) and the
   message goes to `brigade-events-dlq`. The same Worker consumes that queue: for a page not already settled, on an
   incident still active and unacknowledged, it records `notification.failed` with `userId: null` and
-  `dead_lettered` ("A page may not have gone out"), closes the page in the ledger, and acks. If the shard
+  `dead_lettered` ("A page may not have gone out"), closes the page in the ledger, and acks; a lost page that is
+  still its escalation run's last is paged again on an event of its own (RFC 0006 "A lost page"). If the shard
   still cannot be reached it logs `dead-lettered page could not be recorded` and retries in 2 minutes, up to 5
   times (`max_retries: 5`, no dead-letter queue of its own, so spent retries delete the message: nothing loops).
 - **The outbox.** A row the drain cannot read (not JSON) or too large for the Queue is logged and dropped, so it

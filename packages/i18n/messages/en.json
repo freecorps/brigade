@@ -708,6 +708,7 @@
         "part=cancel": "Cancel",
         "part=saving": "Saving…",
         "part=empty": "Nobody else is in this workspace yet.",
+        "part=load_failed": "Couldn't load the members.",
         "part=demote": "Change role",
         "part=retry": "Try again",
         "part=only_owner": "You're the only owner. Make someone else an owner before you can leave or change your role.",

@@ -239,6 +239,13 @@ export class Membership {
     const members = brigadeMembers(directory);
     const actor = members.find((member) => member.id === actorId);
     const target = members.find((member) => member.id === targetId);
+    // In D1 with a role Brigade does not know (Better Auth's own `member`, set outside Brigade): still a member, so
+    // neither branch below may treat them as gone and announce a leave or removal D1 does not have. The shard
+    // already drops such a member from its list on reconcile.
+    const inD1 = (id: string) => directory.some((member) => member.userId === id);
+    if ((!actor && inD1(actorId)) || (!target && inD1(targetId))) {
+      return { ok: false, code: "forbidden" };
+    }
     const copy = shard.store.get("members", targetId);
     const leftovers = this.leftovers(targetId);
 

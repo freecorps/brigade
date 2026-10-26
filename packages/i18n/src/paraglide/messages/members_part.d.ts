@@ -21,6 +21,7 @@ export type Members_PartInputs = {
 * | "cancel" | "Cancel" |
 * | "saving" | "Saving…" |
 * | "empty" | "Nobody else is in this workspace yet." |
+* | "load_failed" | "Couldn't load the members." |
 * | "demote" | "Change role" |
 * | "retry" | "Try again" |
 * | "only_owner" | "You're the only owner. Make someone else an owner before you can leave or change your role." |

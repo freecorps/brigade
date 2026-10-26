@@ -708,6 +708,7 @@
         "part=cancel": "Cancelar",
         "part=saving": "Salvando…",
         "part=empty": "Ainda não há mais ninguém neste espaço de trabalho.",
+        "part=load_failed": "Não foi possível carregar os membros.",
         "part=demote": "Mudar papel",
         "part=retry": "Tentar de novo",
         "part=only_owner": "Só você é proprietário deste espaço de trabalho. Torne outra pessoa proprietária antes de sair ou mudar seu papel.",

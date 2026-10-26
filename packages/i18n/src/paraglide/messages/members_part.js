@@ -23,6 +23,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "cancel" | "Cancel" |
 * | "saving" | "Saving…" |
 * | "empty" | "Nobody else is in this workspace yet." |
+* | "load_failed" | "Couldn't load the members." |
 * | "demote" | "Change role" |
 * | "retry" | "Try again" |
 * | "only_owner" | "You're the only owner. Make someone else an owner before you can leave or change your role." |
@@ -48,6 +49,7 @@ export const members_part = /** @type {((inputs: Members_PartInputs, options?: {
 		if (i?.part === "cancel") return /** @type {LocalizedString} */ (`Cancelar`);
 		if (i?.part === "saving") return /** @type {LocalizedString} */ (`Salvando…`);
 		if (i?.part === "empty") return /** @type {LocalizedString} */ (`Ainda não há mais ninguém neste espaço de trabalho.`);
+		if (i?.part === "load_failed") return /** @type {LocalizedString} */ (`Não foi possível carregar os membros.`);
 		if (i?.part === "demote") return /** @type {LocalizedString} */ (`Mudar papel`);
 		if (i?.part === "retry") return /** @type {LocalizedString} */ (`Tentar de novo`);
 		if (i?.part === "only_owner") return /** @type {LocalizedString} */ (`Só você é proprietário deste espaço de trabalho. Torne outra pessoa proprietária antes de sair ou mudar seu papel.`);
@@ -67,6 +69,7 @@ export const members_part = /** @type {((inputs: Members_PartInputs, options?: {
 		if (i?.part === "cancel") return /** @type {LocalizedString} */ (`Cancel`);
 		if (i?.part === "saving") return /** @type {LocalizedString} */ (`Saving…`);
 		if (i?.part === "empty") return /** @type {LocalizedString} */ (`Nobody else is in this workspace yet.`);
+		if (i?.part === "load_failed") return /** @type {LocalizedString} */ (`Couldn't load the members.`);
 		if (i?.part === "demote") return /** @type {LocalizedString} */ (`Change role`);
 		if (i?.part === "retry") return /** @type {LocalizedString} */ (`Try again`);
 		if (i?.part === "only_owner") return /** @type {LocalizedString} */ (`You're the only owner. Make someone else an owner before you can leave or change your role.`);

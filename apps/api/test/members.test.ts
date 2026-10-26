@@ -329,6 +329,21 @@ describe("PATCH /workspaces/:id/members/:userId: changing a role", () => {
     expect(await paged(t)).toEqual([]);
   });
 
+  test("a member D1 holds with a role Brigade does not know is refused, not taken for gone", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    await env.DB.prepare(
+      `update member set role = 'member' where "organizationId" = ? and "userId" = ?`,
+    )
+      .bind(t.id, t.caio.id)
+      .run();
+    expect((await remove(t, t.caio, t.caio)).status).toBe(403);
+    expect((await remove(t, t.ana, t.caio)).status).toBe(403);
+    expect(await roleIn(t.id, t.caio.id)).toBe("member");
+    expect(await events(t, "member.removed")).toEqual([]);
+  });
+
   test("admins cannot touch owners or make one; responders and viewers change no role", async () => {
     const t = await team();
     expect((await patchRole(t, t.bia, t.ana, "admin")).status).toBe(403);

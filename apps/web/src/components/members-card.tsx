@@ -35,6 +35,7 @@ export function MembersCard() {
     <MembersList
       members={members}
       loading={organization.isPending && !organization.data}
+      reload={organization.error && !organization.data ? () => organization.refetch() : undefined}
       change={(userId, change) => changeMember(workspaceId, userId, change)}
       refresh={async () => {
         // `set-active` (not a refetch of one hook) refreshes the session, the workspace and the signed-in
@@ -72,12 +73,15 @@ type FocusTarget = { userId: string; control: "role" | "remove" | "retry" | "fir
 export function MembersList({
   members,
   loading,
+  reload,
   change,
   refresh,
   left,
 }: {
   members: ListedMember[];
   loading: boolean;
+  /** Set when the list failed to load (nothing to show): says so, with Try again, instead of an empty workspace. */
+  reload?: () => void;
   change: (
     userId: string,
     change: MemberChange,
@@ -185,7 +189,7 @@ export function MembersList({
           {m.members_part({ part: "title", name: "" })}
         </CardTitle>
         <CardDescription className="flex flex-wrap gap-x-2">
-          {loading ? (
+          {reload && members.length === 0 ? null : loading ? (
             <span aria-hidden className="my-0.5 block h-4 w-24 rounded-sm bg-muted" />
           ) : (
             <span className="tabular-nums">{m.members_count({ count: members.length })}</span>
@@ -252,7 +256,14 @@ export function MembersList({
             ))}
           </ul>
         ) : null}
-        {!loading && members.length <= 1 ? (
+        {reload && members.length === 0 ? (
+          <div className="flex flex-col items-start gap-2">
+            <FormError>{m.members_part({ part: "load_failed", name: "" })}</FormError>
+            <Button variant="outline" onClick={reload}>
+              {m.members_part({ part: "retry", name: "" })}
+            </Button>
+          </div>
+        ) : !loading && members.length <= 1 ? (
           <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
             {m.members_part({ part: "empty", name: "" })}
           </p>

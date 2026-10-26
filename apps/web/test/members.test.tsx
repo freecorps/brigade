@@ -172,10 +172,13 @@ function render(
     members?: ListedMember[];
     /** What reloading the list finds: whether D1 still has the signed-in user in the workspace. */
     member?: boolean;
+    /** The list failed to load: Try again counts its reloads. */
+    failed?: boolean;
   } = {},
 ) {
   const changes: [string, MemberChange][] = [];
   let leftCount = 0;
+  let reloads = 0;
   void setI18nLocale(options.locale ?? "en");
   const container = document.createElement("div");
   document.body.append(container);
@@ -187,6 +190,7 @@ function render(
           <MembersList
             members={options.members ?? team}
             loading={false}
+            reload={options.failed ? () => reloads++ : undefined}
             change={async (userId, change) => {
               changes.push([userId, change]);
               const answers = [options.result ?? { ok: true }].flat();
@@ -203,10 +207,22 @@ function render(
     container.querySelector<HTMLElement>(`[data-member="${userId}"]`)!;
   const button = (scope: HTMLElement, text: string) =>
     [...scope.querySelectorAll("button")].find((b) => b.textContent?.includes(text))!;
-  return { container, changes, row, button, left: () => leftCount };
+  return { container, changes, row, button, left: () => leftCount, reloads: () => reloads };
 }
 
 describe("MembersList", () => {
+  test("a list that failed to load says so, with Try again, not that the workspace is empty", () => {
+    const { container, button, reloads } = render(
+      { userId: "usr_ana", role: "owner" },
+      { members: [], failed: true },
+    );
+    expect(container.textContent).toContain("Couldn't load the members.");
+    expect(container.textContent).not.toContain("Nobody else is in this workspace yet.");
+    expect(container.textContent).not.toContain("0 members");
+    act(() => button(container, "Try again").click());
+    expect(reloads()).toBe(1);
+  });
+
   test("viewers read names, emails and roles, and can only leave", () => {
     const { container, row } = render({ userId: "usr_duda", role: "viewer" });
     expect(container.textContent).toContain("4 members");

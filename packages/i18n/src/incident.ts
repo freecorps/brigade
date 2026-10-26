@@ -138,6 +138,9 @@ export function entryText(entry: TimelineRow, who: People): string {
     }
     case "escalation_exhausted":
       return say("escalation_exhausted");
+    case "email_failed":
+      // Written by the notifier, like a failed page: about who was not emailed.
+      return say(`email_failed_${entry.about}`, personName(entry.userId, who, "object"));
   }
 }
 

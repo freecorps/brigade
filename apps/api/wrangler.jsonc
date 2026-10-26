@@ -62,11 +62,18 @@
       { "queue": "brigade-events-dlq", "max_batch_size": 10, "max_retries": 5 },
     ],
   },
+  // Cloudflare Email Sending (RFC 0005 "Email", src/email.ts): the email notifier tells a member a page missed them and
+  // the owners when nobody could be paged. No sender or destination restriction here: the sender is the secret
+  // EMAIL_FROM, on a domain onboarded to Email Sending (apps/api/README.md "Email"), so no domain is in this file.
+  // Without EMAIL_FROM nothing is sent. Locally the binding is simulated (logged, never sent): never `remote: true`.
+  "send_email": [{ "name": "EMAIL" }],
   // Set with `wrangler secret put` (deployed) or apps/api/.dev.vars (local, gitignored); never in this file.
   // RELAY_URL and RELAY_SEND_TOKEN (src/notify.ts) are optional: without them every page is recorded as failed.
   // DEAD_MAN_URL (src/watchdog.ts) is optional too: the external check's ping URL; without it nothing is pinged.
+  // EMAIL_FROM and DASHBOARD_URL (src/email.ts, src/notify-email.ts) are optional: the sender of the email notifier
+  // and the dashboard's origin for links in it; without EMAIL_FROM no email is sent.
   "secrets": { "required": ["BETTER_AUTH_SECRET"] },
-  // Durable Object, D1, Queue and secrets settings are not inherited, so each environment repeats them.
+  // Durable Object, D1, Queue, email and secrets settings are not inherited, so each environment repeats them.
   // No `vars` anywhere: no deployed environment may set SYNC_DEV_ACTOR (src/actor.ts); only local runs and the
   // tests do, in their Vite configs.
   "env": {
@@ -99,6 +106,7 @@
           { "queue": "brigade-events-dlq-dev", "max_batch_size": 10, "max_retries": 5 },
         ],
       },
+      "send_email": [{ "name": "EMAIL" }],
       "secrets": { "required": ["BETTER_AUTH_SECRET"] },
     },
     "staging": {
@@ -130,6 +138,7 @@
           { "queue": "brigade-events-dlq-staging", "max_batch_size": 10, "max_retries": 5 },
         ],
       },
+      "send_email": [{ "name": "EMAIL" }],
       "secrets": { "required": ["BETTER_AUTH_SECRET"] },
     },
   },

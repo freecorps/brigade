@@ -512,6 +512,7 @@ describe("GET /sync/:workspaceId", () => {
       PROBE: env.PROBE,
       WATCHDOG: env.WATCHDOG,
       DB: env.DB,
+      EMAIL: env.EMAIL,
       BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
     };
     const request = new Request(`http://localhost/sync/${workspace()}`, {

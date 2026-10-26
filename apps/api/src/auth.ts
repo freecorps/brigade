@@ -14,6 +14,7 @@ import {
   workspaceName,
   type RandomBytes,
 } from "@freecorps/brigade-schema";
+import { isLocale, resolveLocale } from "@freecorps/brigade-i18n";
 import { expo } from "@better-auth/expo";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
@@ -120,21 +121,38 @@ export const WORKSPACE_LIMIT = 10;
 export const NAME_PATHS = ["/sign-up/email", "/update-user"] as const;
 /** The error code when a name breaks `memberName`. */
 export const INVALID_NAME_CODE = "INVALID_NAME";
+/** The error code when a locale is not one Brigade has (`locales` in packages/i18n). */
+export const INVALID_LOCALE_CODE = "INVALID_LOCALE";
 
 /**
  * Checks a name before Better Auth stores it, with the rule the shard's member list keeps names by (`memberName`:
  * no bidi or other invisible characters, joiners only between letters, at most `MEMBER_NAME_MAX`), and stores it
- * trimmed. Better Auth itself takes any string.
+ * trimmed. Better Auth itself takes any string. Likewise the user's `locale` (the language emails are written in,
+ * RFC 0008): one of Brigade's locales exactly; a sign-up without one takes the closest to the request's first
+ * `Accept-Language`, if any.
  */
 const checkName = createAuthMiddleware(async (ctx) => {
   if (!(NAME_PATHS as readonly string[]).includes(ctx.path)) return;
   const body: unknown = ctx.body;
-  if (typeof body !== "object" || body === null || !("name" in body)) return;
-  const name = memberName(body.name, "name");
-  if (!name.ok) {
-    throw APIError.from("BAD_REQUEST", { code: INVALID_NAME_CODE, message: "Invalid name" });
+  if (typeof body !== "object" || body === null) return;
+  const checked: Record<string, unknown> = {};
+  if ("name" in body) {
+    const name = memberName(body.name, "name");
+    if (!name.ok) {
+      throw APIError.from("BAD_REQUEST", { code: INVALID_NAME_CODE, message: "Invalid name" });
+    }
+    checked.name = name.value;
   }
-  return { context: { body: { ...body, name: name.value } } };
+  if ("locale" in body && body.locale !== undefined) {
+    if (!isLocale(body.locale)) {
+      throw APIError.from("BAD_REQUEST", { code: INVALID_LOCALE_CODE, message: "Invalid locale" });
+    }
+  } else if (ctx.path === "/sign-up/email") {
+    const wanted = ctx.headers?.get("accept-language")?.split(",")[0]?.split(";")[0]?.trim();
+    if (wanted) checked.locale = resolveLocale(wanted);
+  }
+  if (Object.keys(checked).length === 0) return;
+  return { context: { body: { ...body, ...checked } } };
 });
 
 export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
@@ -145,6 +163,12 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
     secret: bindings.secret,
     database: bindings.database,
     emailAndPassword: { enabled: true },
+    // The language Brigade writes to the user in (emails, RFC 0008); null: English. Checked by `checkName`.
+    user: {
+      additionalFields: {
+        locale: { type: "string", required: false, input: true },
+      },
+    },
     // The dashboard is same-origin (Better Auth trusts its own base URL); the mobile app is `APP_ORIGIN`.
     trustedOrigins: [APP_ORIGIN],
     hooks: { before: checkName },

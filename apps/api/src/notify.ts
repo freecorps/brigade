@@ -1,5 +1,5 @@
-// The `brigade-events` consumer (RFC 0005 "Delivery", RFC 0002 runtime map): routes each event to its notifiers.
-// The first is push: for an event that pages, the workspace shard plans who gets it, each device's push is sealed
+// The `brigade-events` consumer (RFC 0005 "Delivery", RFC 0002 runtime map): routes each event to its notifiers:
+// a page that failed to email (src/notify-email.ts), everything else to push. Push: for an event that pages, the workspace shard plans who gets it, each device's push is sealed
 // to its own key (HPKE, `packages/push`) and sent through the relay (RFC 0006), and the outcomes go back to the
 // shard. Delivery is at-least-once, so the shard's page ledger, keyed by `event.id`, makes a redelivery page nobody
 // twice. What the Queue gives up on lands in `brigade-events-dlq`, whose consumer (`consumeDeadLetters`) records it
@@ -7,6 +7,9 @@
 
 import { sealPush } from "@freecorps/brigade-push";
 import { formatIncidentNumber } from "@freecorps/brigade-schema";
+import { emailSender, type EmailEnv, type EmailSender } from "./email.ts";
+import { asksForEmail } from "./mailer.ts";
+import { emailRetryDelay, notifyEmail, type EmailNotifyEnv } from "./notify-email.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 import {
   asksForPage,
@@ -37,23 +40,29 @@ export const RELAY_TIMEOUT_MS = 10_000;
 export const RELAY_HEALTH_TIMEOUT_MS = 5000;
 
 /** Optional: an instance without a relay still runs, and every page it would send is recorded as failed. */
-export type NotifyEnv = {
-  WORKSPACE: Env["WORKSPACE"];
-  /** The dead-man switch's watchdog (src/watchdog.ts); without it a heartbeat is logged and dropped. */
-  WATCHDOG?: Env["WATCHDOG"];
-  /** The relay's base URL, e.g. a `brigade-relay-<env>` Worker. A secret, so hostnames stay out of the repo. */
-  RELAY_URL?: string;
-  /** Bearer token for the relay's `POST /send`. */
-  RELAY_SEND_TOKEN?: string;
-};
+export type NotifyEnv = EmailEnv &
+  EmailNotifyEnv & {
+    WORKSPACE: Env["WORKSPACE"];
+    /** The dead-man switch's watchdog (src/watchdog.ts); without it a heartbeat is logged and dropped. */
+    WATCHDOG?: Env["WATCHDOG"];
+    /** The relay's base URL, e.g. a `brigade-relay-<env>` Worker. A secret, so hostnames stay out of the repo. */
+    RELAY_URL?: string;
+    /** Bearer token for the relay's `POST /send`. */
+    RELAY_SEND_TOKEN?: string;
+  };
 
 export type Fetch = (request: Request) => Promise<Response>;
 
-/** The queue handler: one message per event; each is acked or retried on its own. Never throws. */
+/**
+ * The queue handler: one message per event; each is acked or retried on its own, all of a batch's at once, so a
+ * page never waits for an email in the same batch. Never throws. `mail` is the email sender (`emailSender`, none
+ * when email is not set up).
+ */
 export async function consumeEvents(
   batch: MessageBatch<unknown>,
   env: NotifyEnv,
   send: Fetch = (request) => fetch(request),
+  mail: EmailSender | undefined = emailSender(env),
 ): Promise<void> {
   const seen = new Set<string>();
   await Promise.all(
@@ -71,9 +80,13 @@ export async function consumeEvents(
       // The same event twice in one batch (a redelivery next to the original): once is enough.
       if (seen.has(event.id)) return message.ack();
       seen.add(event.id);
+      const email = asksForEmail(event);
+      const delay = email ? emailRetryDelay : retryDelay;
       try {
-        const retry = await notifyPush(event, message.attempts, env, send);
-        if (retry) message.retry({ delaySeconds: retryDelay(message.attempts) });
+        const retry = email
+          ? await notifyEmail(event, message.attempts, env, mail)
+          : await notifyPush(event, message.attempts, env, send);
+        if (retry) message.retry({ delaySeconds: delay(message.attempts) });
         else message.ack();
       } catch (error) {
         // The shard was unreachable or threw: nothing was recorded, so the whole page runs again.
@@ -88,7 +101,7 @@ export async function consumeEvents(
             attempts: message.attempts,
           });
         }
-        message.retry({ delaySeconds: retryDelay(message.attempts) });
+        message.retry({ delaySeconds: delay(message.attempts) });
       }
     }),
   );

@@ -1,5 +1,6 @@
 // What notifiers report back (RFC 0005 "Notifiers"). A page that reached nobody is a state change: it goes on the
-// incident's timeline, where responders look, and out as `notification.failed`, like every change.
+// incident's timeline, where responders look, and out as `notification.failed`, like every change. So is an email
+// about it that could not be sent (RFC 0005 "Email").
 
 import { defineMutation, fail, ok, type DomainEvent } from "./mutation.ts";
 import { appendTimeline } from "./timeline.ts";
@@ -52,19 +53,44 @@ export const PAGE_FAILURES = [
 ] as const;
 export type PageFailure = (typeof PAGE_FAILURES)[number];
 
+/**
+ * Why the email notifier could not email a member (RFC 0005 "Email"): `undelivered`, the email service kept failing
+ * until the notifier gave up, or refused the message (a suppressed address, a sender the service does not accept).
+ */
+export const EMAIL_FAILURES = ["undelivered"] as const;
+export type EmailFailure = (typeof EMAIL_FAILURES)[number];
+
+/**
+ * Which email it was: `unpaged`, telling a member a page did not reach them; `nobody_paged`, telling an owner a
+ * page reached nobody.
+ */
+export const EMAIL_ABOUT = ["unpaged", "nobody_paged"] as const;
+export type EmailAbout = (typeof EMAIL_ABOUT)[number];
+
 export type NotificationFailed = DomainEvent<
   "notification.failed",
-  {
-    incidentId: string;
-    /** The event that asked for the page, so a consumer can tell which page failed. */
-    eventId: string;
-    channel: "push";
-    /** The member who was not paged; null when the page had nobody to go to. */
-    userId: string | null;
-    reason: PageFailure;
-    /** The schedule nobody was on call for (`nobody_on_call`); null otherwise. */
-    schedule: string | null;
-  }
+  | {
+      incidentId: string;
+      /** The event that asked for the page, so a consumer can tell which page failed. */
+      eventId: string;
+      channel: "push";
+      /** The member who was not paged; null when the page had nobody to go to. */
+      userId: string | null;
+      reason: PageFailure;
+      /** The schedule nobody was on call for (`nobody_on_call`); null otherwise. */
+      schedule: string | null;
+      /** The escalation page it belongs to (its run and step); absent outside a run. */
+      page?: { run: string; step: number };
+    }
+  | {
+      incidentId: string;
+      /** The `notification.failed` event the email was about. */
+      eventId: string;
+      channel: "email";
+      userId: string;
+      reason: EmailFailure;
+      about: EmailAbout;
+    }
 >;
 
 /**
@@ -108,6 +134,48 @@ export const failNotification = defineMutation({
         userId: args.userId,
         reason: args.reason,
         schedule: args.schedule ?? null,
+        ...(args.page && { page: args.page }),
+      },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * Server only, as the notifier: records that an email about a failed page could not reach `userId`, with an
+ * `email_failed` timeline entry and `notification.failed` (`channel: "email"`). The queue consumer runs it once its
+ * retries are spent (RFC 0005 "Email"); the email notifier never acts on these.
+ */
+export const failEmail = defineMutation({
+  name: "notification.failEmail",
+  args: v.object({
+    incidentId: v.id("inc"),
+    eventId: v.id("evt"),
+    userId: v.string({ min: 1, max: 64 }),
+    reason: v.picklist(EMAIL_FAILURES),
+    about: v.picklist(EMAIL_ABOUT),
+  }),
+  permission: "incident:update",
+  apply(store, args, ctx) {
+    const incident = store.get("incidents", args.incidentId);
+    if (!incident) return fail("not_found", "Incident not found");
+    store.update("incidents", incident.id, { updatedAt: ctx.now });
+    appendTimeline(
+      store,
+      incident,
+      { kind: "email_failed", userId: args.userId, reason: args.reason, about: args.about },
+      ctx,
+    );
+    const event: NotificationFailed = {
+      type: "notification.failed",
+      subject: incident.id,
+      data: {
+        incidentId: args.incidentId,
+        eventId: args.eventId,
+        channel: "email",
+        userId: args.userId,
+        reason: args.reason,
+        about: args.about,
       },
     };
     return ok(event);

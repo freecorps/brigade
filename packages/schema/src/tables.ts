@@ -1,7 +1,7 @@
 import type { Role } from "./access.ts";
 import type { DevicePlatform, PushEnvironment } from "./devices.ts";
 import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
-import type { PageFailure } from "./notifications.ts";
+import type { EmailAbout, EmailFailure, PageFailure } from "./notifications.ts";
 import type { EscalationTargetKind } from "./policies.ts";
 import type { RotationUnit } from "./schedules.ts";
 import type {
@@ -186,7 +186,12 @@ export type TimelineEntry =
       again?: boolean;
     }
   /** Every level and repeat was paged and nobody acknowledged, so everyone who can respond was paged. */
-  | { kind: "escalation_exhausted"; levels: number; rounds: number };
+  | { kind: "escalation_exhausted"; levels: number; rounds: number }
+  /**
+   * The email notifier could not email `userId` (`notification.failEmail`, RFC 0005 "Email"): `about` says which
+   * email, the one telling a member their page did not reach them or the one telling an owner nobody was paged.
+   */
+  | { kind: "email_failed"; userId: string; reason: EmailFailure; about: EmailAbout };
 
 /**
  * One entry of an incident's timeline: append-only, written by the mutation that made the change, in its
@@ -220,7 +225,16 @@ export type WorkspaceRow = {
   name: string;
   createdAt: number;
   createdBy: string;
+  /** Who is emailed when paging fails (`workspace.setEmail`); absent: `DEFAULT_EMAIL_SETTINGS`. */
+  email?: EmailSettings;
 };
+
+/**
+ * Who the email notifier writes to when paging fails (RFC 0005 "Email"):
+ * - `unpaged`: a member a SEV1 or SEV2 page did not reach (no device, or every push failed), once per incident;
+ * - `nobodyPaged`: the workspace's owners, when a page reached nobody and nothing else will page on its own.
+ */
+export type EmailSettings = { unpaged: boolean; nobodyPaged: boolean };
 
 /** The last result one source reported for a monitor: a probe region, or the heartbeat endpoint. */
 export type MonitorCheck = {

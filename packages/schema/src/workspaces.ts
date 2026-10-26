@@ -6,7 +6,7 @@ import { ROLES } from "./access.ts";
 import { defineMutation, fail, ok, type DomainEvent } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
 import { dropFromSchedules } from "./schedules.ts";
-import type { MemberRow, WorkspaceRow } from "./tables.ts";
+import type { EmailSettings, MemberRow, WorkspaceRow } from "./tables.ts";
 import { trimSpace } from "./text.ts";
 import { v } from "./validate.ts";
 
@@ -94,6 +94,46 @@ export const createWorkspace = defineMutation({
       type: "workspace.created",
       subject: row.id,
       data: { id: row.id, name: row.name, createdBy: row.createdBy },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * Who is emailed when paging fails, until an owner or admin changes it (RFC 0005 "Email"): both on. A member a SEV1
+ * or SEV2 page missed is told once per incident, and the owners are told when a page reached nobody, because the
+ * alternative is that nobody hears of it at all.
+ */
+export const DEFAULT_EMAIL_SETTINGS: EmailSettings = { unpaged: true, nobodyPaged: true };
+
+/** A workspace's email settings, the defaults filled in. */
+export function emailSettings(row: Pick<WorkspaceRow, "email"> | undefined): EmailSettings {
+  return { ...DEFAULT_EMAIL_SETTINGS, ...row?.email };
+}
+
+export type WorkspaceEmailChanged = DomainEvent<"workspace.email_changed", EmailSettings>;
+
+/**
+ * Changes who is emailed when paging fails (`EmailSettings`, both given); owners and admins. No change is a
+ * `conflict`.
+ */
+export const setEmailSettings = defineMutation({
+  name: "workspace.setEmail",
+  args: v.object({ unpaged: v.boolean(), nobodyPaged: v.boolean() }),
+  permission: "workspace:manage",
+  apply(store, args) {
+    const [row] = store.scan("workspace");
+    if (!row) return fail("not_found", "Workspace not found");
+    const current = emailSettings(row);
+    const next: EmailSettings = { unpaged: args.unpaged, nobodyPaged: args.nobodyPaged };
+    if (next.unpaged === current.unpaged && next.nobodyPaged === current.nobodyPaged) {
+      return fail("conflict", "Email settings are unchanged");
+    }
+    store.update("workspace", row.id, { email: next });
+    const event: WorkspaceEmailChanged = {
+      type: "workspace.email_changed",
+      subject: row.id,
+      data: next,
     };
     return ok(event);
   },

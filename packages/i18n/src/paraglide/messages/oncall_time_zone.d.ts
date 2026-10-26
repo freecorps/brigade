@@ -1,13 +1,14 @@
 export type LocalizedString = import('../runtime.js').LocalizedString;
 export type Oncall_Time_ZoneInputs = {
     zone: NonNullable<unknown>;
+    offset: NonNullable<unknown>;
 };
 /** @typedef {import('../runtime.js').LocalizedString} LocalizedString */
-/** @typedef {{ zone: NonNullable<unknown> }} Oncall_Time_ZoneInputs */
+/** @typedef {{ zone: NonNullable<unknown>, offset: NonNullable<unknown> }} Oncall_Time_ZoneInputs */
 /**
 * | output |
 * | --- |
-* | "Times in {zone}" |
+* | "Times in {zone} ({offset})" |
 *
 * @param {Oncall_Time_ZoneInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

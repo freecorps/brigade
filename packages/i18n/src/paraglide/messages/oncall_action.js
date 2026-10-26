@@ -18,6 +18,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "save" | "Save changes" |
 * | "cancel" | "Cancel" |
 * | "delete_schedule" | "Delete schedule" |
+* | "remove" | "Remove" |
 * | * | "Delete" |
 *
 * @param {Oncall_ActionInputs} inputs
@@ -35,6 +36,7 @@ export const oncall_action = /** @type {((inputs: Oncall_ActionInputs, options?:
 		if (i?.action === "save") return /** @type {LocalizedString} */ (`Salvar alterações`);
 		if (i?.action === "cancel") return /** @type {LocalizedString} */ (`Cancelar`);
 		if (i?.action === "delete_schedule") return /** @type {LocalizedString} */ (`Excluir escala`);
+		if (i?.action === "remove") return /** @type {LocalizedString} */ (`Remover`);
 		return /** @type {LocalizedString} */ (`Excluir`)
 	}
 	{
@@ -46,6 +48,7 @@ export const oncall_action = /** @type {((inputs: Oncall_ActionInputs, options?:
 		if (i?.action === "save") return /** @type {LocalizedString} */ (`Save changes`);
 		if (i?.action === "cancel") return /** @type {LocalizedString} */ (`Cancel`);
 		if (i?.action === "delete_schedule") return /** @type {LocalizedString} */ (`Delete schedule`);
+		if (i?.action === "remove") return /** @type {LocalizedString} */ (`Remove`);
 		return /** @type {LocalizedString} */ (`Delete`)
 	}
 });

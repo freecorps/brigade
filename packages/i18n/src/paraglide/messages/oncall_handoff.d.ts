@@ -10,6 +10,7 @@ export type Oncall_HandoffInputs = {
 * | unit | output |
 * | --- | --- |
 * | "weeks" | "hands off {day} at {time}" |
+* | "from" | "starting {day} at {time}" |
 * | * | "hands off at {time}" |
 *
 * @param {Oncall_HandoffInputs} inputs

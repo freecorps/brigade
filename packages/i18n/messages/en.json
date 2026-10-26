@@ -818,7 +818,7 @@
     }
   ],
   "oncall_layer_empty": "Nobody in this layer: a gap until someone is added",
-  "oncall_time_zone": "Times in {zone}",
+  "oncall_time_zone": "Times in {zone} ({offset})",
   "oncall_unit": [
     {
       "declarations": ["input unit"],
@@ -888,6 +888,7 @@
         "action=save": "Save changes",
         "action=cancel": "Cancel",
         "action=delete_schedule": "Delete schedule",
+        "action=remove": "Remove",
         "action=*": "Delete"
       }
     }
@@ -913,7 +914,6 @@
       "selectors": ["heading"],
       "match": {
         "heading=new": "New schedule",
-        "heading=edit": "Edit schedule",
         "heading=layers": "Layers",
         "heading=overrides": "Overrides",
         "heading=now": "On call now",
@@ -927,7 +927,59 @@
       "selectors": ["unit"],
       "match": {
         "unit=weeks": "hands off {day} at {time}",
+        "unit=from": "starting {day} at {time}",
         "unit=*": "hands off at {time}"
+      }
+    }
+  ],
+  "oncall_layer_now": [
+    {
+      "declarations": ["input state", "input name"],
+      "selectors": ["state"],
+      "match": {
+        "state=active": "Now: {name}",
+        "state=hidden": "Now: {name}, hidden by a later layer",
+        "state=overridden": "Now: {name}, covered by an override",
+        "state=*": "Starts {name}"
+      }
+    }
+  ],
+  "oncall_more": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=*": "+{countFormatted} more"
+      }
+    }
+  ],
+  "oncall_text": [
+    {
+      "declarations": ["input text", "input name", "input max", "input time"],
+      "selectors": ["text"],
+      "match": {
+        "text=your_time": "{time} your time",
+        "text=members_max": "Up to {max} people per layer.",
+        "text=choose_person": "Choose a person…",
+        "text=remove_override": "Remove {name}'s override?",
+        "text=*": "A later layer has someone at all times from this layer's start, so nobody in this one is ever on call."
+      }
+    }
+  ],
+  "oncall_zone": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=placeholder": "Search a city or UTC offset",
+        "part=empty": "No time zone matches.",
+        "part=suggested": "Suggested",
+        "part=yours": "Your time zone",
+        "part=*": "All time zones"
       }
     }
   ],

@@ -8,7 +8,6 @@ export type Oncall_HeadingInputs = {
 * | heading | output |
 * | --- | --- |
 * | "new" | "New schedule" |
-* | "edit" | "Edit schedule" |
 * | "layers" | "Layers" |
 * | "overrides" | "Overrides" |
 * | "now" | "On call now" |

@@ -125,7 +125,9 @@ describe("zoned time", () => {
   });
 
   test("Pacific/Apia skipped 2011-12-30: its wall times land a day later, and that day's shift is empty", () => {
-    expect(wall(at("2011-12-30", "09:00", "Pacific/Apia"), "Pacific/Apia")).toBe("2011-12-31 09:00");
+    expect(wall(at("2011-12-30", "09:00", "Pacific/Apia"), "Pacific/Apia")).toBe(
+      "2011-12-31 09:00",
+    );
     const s = schedule(
       [layer({ startDate: "2011-12-27", unit: "days", members: ["usr_ana", "usr_bia"] })],
       "Pacific/Apia",
@@ -519,6 +521,8 @@ describe("schedule mutations", () => {
     ).toEqual(["layers[0].members[1]", "layers[0].members[2]"]);
     expect(paths(run({ layers: [layer(), layer()] }))).toEqual(["layers[1].id"]);
     expect(paths(run({ layers: [] }))).toEqual(["layers"]);
+    // A layer's name is optional (readers show a fallback in their own language).
+    expect(paths(run({ layers: [layer({ name: "  " })] }))).toEqual([]);
   });
 
   test("caps schedules per workspace", () => {

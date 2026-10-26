@@ -193,6 +193,7 @@ export type DeviceRow = {
  */
 export type ScheduleLayer = {
   id: string; // lyr_<ULID>, made by the client
+  /** Empty when nobody named it: readers show "Primary", "Layer 2" in their own language. */
   name: string;
   /** Member ids in rotation order. Empty only after the last of them left (a gap until someone edits it). */
   members: string[];

@@ -178,11 +178,7 @@ const MAX_LAYER_BOUNDARIES = 2000;
 /** A layer's handoffs after `from`, in order, one at a time. */
 type Cursor = { next: number; advance: () => void; seen: number };
 
-function layerCursor(
-  layer: ScheduleLayer,
-  timeZone: string,
-  from: number,
-): Cursor | undefined {
+function layerCursor(layer: ScheduleLayer, timeZone: string, from: number): Cursor | undefined {
   const start = startMinute(layer);
   if (start === undefined || layer.members.length === 0) return undefined;
   const period = periodMinutes(layer);
@@ -237,7 +233,8 @@ export function nextHandoffs(
   const edges: number[] = [];
   for (const override of overrides) {
     if (override.scheduleId !== schedule.id) continue;
-    for (const edge of [override.start, override.end]) if (edge > from && edge < until) edges.push(edge);
+    for (const edge of [override.start, override.end])
+      if (edge > from && edge < until) edges.push(edge);
   }
   edges.sort((a, b) => a - b);
   let edge = 0;
@@ -325,7 +322,8 @@ const instant: Validator<number> = (input, path = "") =>
 
 const layerArgs = v.object({
   id: layerId,
-  name: v.string({ min: 1, max: LAYER_NAME_MAX }),
+  // Optional: an unnamed layer reads as "Primary", "Layer 2" in each reader's language, not the creator's.
+  name: v.string({ max: LAYER_NAME_MAX }),
   members: v.array(memberId, { min: 1, max: MAX_LAYER_MEMBERS, unique: true }),
   startDate: date,
   handoffTime: clock,

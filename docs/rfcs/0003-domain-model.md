@@ -147,9 +147,10 @@ says who is on call; it does not change who is paged yet (RFC 0006 "Who is paged
 escalation policies exist).
 
 - **Schedule** (`schedules` table, query `schedules.all`): a name, an IANA time zone (stored as the runtime spells
-  it, so `america/sao_paulo` is saved as `America/Sao_Paulo`), and one to five **layers**
+  it, so `america/sao_paulo` is saved as `America/Sao_Paulo`; Workers' V8 keeps ICU's older names, such as
+  `Asia/Calcutta` for `Asia/Kolkata`, and every runtime accepts both), and one to five **layers**
   (rotations), kept in the schedule's own row so an edit to several layers is one mutation and never half applied.
-  A layer has a name, its members in rotation order (1 to 50, each once), a start date and a handoff time on the
+  A layer has an optional name (unnamed, it reads as "Primary", "Layer 2" in each reader's language), its members in rotation order (1 to 50, each once), a start date and a handoff time on the
   schedule's wall clock (`YYYY-MM-DD`, `HH:MM`), and a shift length: `count` hours (up to 168), days (up to 31) or
   weeks (up to 13). A weekly rotation hands off on the start date's weekday. Shift `k` (0 is the first) starts at the
   start date and time plus `k` shift lengths and goes to member `k mod n`.

@@ -11,7 +11,6 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | heading | output |
 * | --- | --- |
 * | "new" | "New schedule" |
-* | "edit" | "Edit schedule" |
 * | "layers" | "Layers" |
 * | "overrides" | "Overrides" |
 * | "now" | "On call now" |
@@ -25,7 +24,6 @@ export const oncall_heading = /** @type {((inputs: Oncall_HeadingInputs, options
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.heading === "new") return /** @type {LocalizedString} */ (`Nova escala`);
-		if (i?.heading === "edit") return /** @type {LocalizedString} */ (`Editar escala`);
 		if (i?.heading === "layers") return /** @type {LocalizedString} */ (`Camadas`);
 		if (i?.heading === "overrides") return /** @type {LocalizedString} */ (`Substituições`);
 		if (i?.heading === "now") return /** @type {LocalizedString} */ (`De plantão agora`);
@@ -33,7 +31,6 @@ export const oncall_heading = /** @type {((inputs: Oncall_HeadingInputs, options
 	}
 	{
 		if (i?.heading === "new") return /** @type {LocalizedString} */ (`New schedule`);
-		if (i?.heading === "edit") return /** @type {LocalizedString} */ (`Edit schedule`);
 		if (i?.heading === "layers") return /** @type {LocalizedString} */ (`Layers`);
 		if (i?.heading === "overrides") return /** @type {LocalizedString} */ (`Overrides`);
 		if (i?.heading === "now") return /** @type {LocalizedString} */ (`On call now`);

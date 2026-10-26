@@ -818,7 +818,7 @@
     }
   ],
   "oncall_layer_empty": "Ninguém nesta camada: um buraco até alguém ser adicionado",
-  "oncall_time_zone": "Horários em {zone}",
+  "oncall_time_zone": "Horários em {zone} ({offset})",
   "oncall_unit": [
     {
       "declarations": ["input unit"],
@@ -888,6 +888,7 @@
         "action=save": "Salvar alterações",
         "action=cancel": "Cancelar",
         "action=delete_schedule": "Excluir escala",
+        "action=remove": "Remover",
         "action=*": "Excluir"
       }
     }
@@ -913,7 +914,6 @@
       "selectors": ["heading"],
       "match": {
         "heading=new": "Nova escala",
-        "heading=edit": "Editar escala",
         "heading=layers": "Camadas",
         "heading=overrides": "Substituições",
         "heading=now": "De plantão agora",
@@ -927,7 +927,59 @@
       "selectors": ["unit"],
       "match": {
         "unit=weeks": "troca {day}, às {time}",
+        "unit=from": "a partir de {day}, às {time}",
         "unit=*": "troca às {time}"
+      }
+    }
+  ],
+  "oncall_layer_now": [
+    {
+      "declarations": ["input state", "input name"],
+      "selectors": ["state"],
+      "match": {
+        "state=active": "Agora: {name}",
+        "state=hidden": "Agora: {name}, oculto por uma camada posterior",
+        "state=overridden": "Agora: {name}, coberto por uma substituição",
+        "state=*": "Começa {name}"
+      }
+    }
+  ],
+  "oncall_more": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=*": "mais {countFormatted}"
+      }
+    }
+  ],
+  "oncall_text": [
+    {
+      "declarations": ["input text", "input name", "input max", "input time"],
+      "selectors": ["text"],
+      "match": {
+        "text=your_time": "{time} no seu horário",
+        "text=members_max": "Até {max} pessoas por camada.",
+        "text=choose_person": "Escolha uma pessoa…",
+        "text=remove_override": "Remover a substituição de {name}?",
+        "text=*": "Uma camada posterior tem alguém o tempo todo desde o início desta, então ninguém nesta fica de plantão."
+      }
+    }
+  ],
+  "oncall_zone": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=placeholder": "Busque uma cidade ou deslocamento UTC",
+        "part=empty": "Nenhum fuso horário encontrado.",
+        "part=suggested": "Sugestões",
+        "part=yours": "Seu fuso horário",
+        "part=*": "Todos os fusos horários"
       }
     }
   ],

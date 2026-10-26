@@ -15,6 +15,7 @@ export type Oncall_ActionInputs = {
 * | "save" | "Save changes" |
 * | "cancel" | "Cancel" |
 * | "delete_schedule" | "Delete schedule" |
+* | "remove" | "Remove" |
 * | * | "Delete" |
 *
 * @param {Oncall_ActionInputs} inputs

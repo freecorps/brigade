@@ -1,8 +1,10 @@
 import { m, type Locale } from "@freecorps/brigade-i18n";
 import {
   can,
+  LAYER_NAME_MAX,
   MAX_SHIFT_COUNT,
   nextHandoffs,
+  SCHEDULE_NAME_MAX,
   type MemberRow,
   type OnCallSegment,
   type OverrideRow,
@@ -23,35 +25,58 @@ import {
   UserRoundIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { CONFIRM_DESTRUCTIVE } from "@/components/monitor-form";
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
+import { TimeZonePicker } from "@/components/time-zone-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Field, FormError } from "@/components/ui/field";
 import { queryErrorReason } from "@/lib/incidents";
 import {
+  browserTimeZone,
   canAddLayer,
+  canAddMember,
   canAddSchedule,
   checkOverride,
   checkSchedule,
   draftFromSchedule,
   emptyOverride,
   emptySchedule,
+  fromLocalInput,
+  fromNow,
   handoffTime,
+  hiddenLayers,
+  layerName,
+  layerNow,
   layerRhythm,
+  MAX_LAYER_MEMBERS,
   memberLabel,
   newLayer,
   newOverrideId,
   newScheduleId,
+  offsetLabel,
+  ROTATION_SHOWN,
   ROTATION_UNITS,
   rotationChoices,
+  rotationFrom,
   scheduleRefusal,
-  timeZones,
+  text,
   UPCOMING_MS,
   UPCOMING_SHOWN,
+  viewerTime,
+  withTimeZone,
   zoneLabel,
   type CheckedSchedule,
   type LayerDraft,
@@ -63,12 +88,16 @@ import {
 
 const SELECT =
   "h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
+const LABEL = "text-xs font-medium tracking-wide text-muted-foreground uppercase";
+/** Forms run edge to edge on phones (the card's padding is room enough) and as a box from `sm` up. */
+const FORM =
+  "-mx-4 flex min-w-0 flex-col gap-4 border-y bg-muted/40 px-4 py-4 sm:mx-0 sm:rounded-md sm:border";
 
 /**
  * The workspace's on-call schedules, live from its shard (`schedules.all`, `overrides.all`): who is on call now and
- * the next handoffs, each in the schedule's own time zone, its layers and upcoming overrides. Owners and admins
- * create, edit and delete schedules and add anyone's override; responders add and remove their own overrides.
- * Nothing here pages anyone yet (RFC 0006 "Who is paged").
+ * the next handoffs, each in the schedule's own time zone (and the viewer's, when that reads differently), its
+ * layers and upcoming overrides. Owners and admins create, edit and delete schedules and add anyone's override;
+ * responders add and remove their own overrides. Nothing here pages anyone yet (RFC 0006 "Who is paged").
  */
 export function OnCallCard() {
   const { locale } = usePreferences();
@@ -89,6 +118,7 @@ export function OnCallCard() {
   const [refused, setRefused] = useState<string | null>(null);
   const addRef = useRef<HTMLButtonElement>(null);
   const now = useNow(30_000);
+  const viewerZone = useMemo(browserTimeZone, []);
 
   const report = (name: string) => (outcome: MutationOutcome) => {
     if (!outcome.ok) {
@@ -111,6 +141,7 @@ export function OnCallCard() {
   const status = schedules.status;
   const loading = status !== "ready" && status !== "error";
   const choices = rotationChoices(members.rows);
+  const usedZones = rows.map((row) => row.timeZone);
   return (
     <Card
       aria-labelledby="oncall-title"
@@ -137,13 +168,16 @@ export function OnCallCard() {
             </Button>
           ) : null}
         </div>
-        <div className="flex h-6 items-center text-sm text-muted-foreground tabular-nums">
-          {status === "ready" ? (
-            <span>{m.oncall_schedules_count({ count: rows.length })}</span>
-          ) : status === "error" ? null : (
-            <span aria-hidden className="block h-4 w-24 rounded-sm bg-muted" />
-          )}
-        </div>
+        {/* The empty state says "no schedules" already; the count is for when there are some. */}
+        {loading || rows.length > 0 ? (
+          <div className="flex h-6 items-center text-sm text-muted-foreground tabular-nums">
+            {loading ? (
+              <span aria-hidden className="block h-4 w-24 rounded-sm bg-muted" />
+            ) : (
+              <span>{m.oncall_schedules_count({ count: rows.length })}</span>
+            )}
+          </div>
+        ) : null}
       </div>
 
       <CardContent className="flex flex-col gap-5">
@@ -153,6 +187,8 @@ export function OnCallCard() {
             initial={emptySchedule(now)}
             members={members.rows}
             choices={choices}
+            viewerZone={viewerZone}
+            usedZones={usedZones}
             onCancel={() => {
               setAdding(false);
               requestAnimationFrame(() => addRef.current?.focus());
@@ -201,6 +237,8 @@ export function OnCallCard() {
                     editing={row}
                     members={members.rows}
                     choices={choices}
+                    viewerZone={viewerZone}
+                    usedZones={usedZones}
                     onCancel={() => {
                       setEditing(null);
                       focusRow(row.id, "edit");
@@ -228,6 +266,7 @@ export function OnCallCard() {
                     members={members.rows}
                     locale={locale}
                     now={now}
+                    viewerZone={viewerZone}
                     userId={userId}
                     manage={manage}
                     canOverride={override}
@@ -252,6 +291,8 @@ export function OnCallCard() {
                           members={choices}
                           self={manage ? null : userId}
                           now={now}
+                          locale={locale}
+                          viewerZone={viewerZone}
                           onCancel={() => {
                             setOverriding(null);
                             focusRow(row.id, "override");
@@ -297,6 +338,7 @@ function ScheduleItem({
   members,
   locale,
   now,
+  viewerZone,
   userId,
   manage,
   canOverride,
@@ -310,6 +352,7 @@ function ScheduleItem({
   members: readonly MemberRow[];
   locale: Locale;
   now: number;
+  viewerZone: string;
   userId: string;
   manage: boolean;
   canOverride: boolean;
@@ -319,12 +362,31 @@ function ScheduleItem({
   overrideForm: ReactNode;
 }) {
   const nameId = useId();
-  const segments = nextHandoffs(row, overrides, now, now + UPCOMING_MS, UPCOMING_SHOWN + 1);
+  const layersId = useId();
+  const overridesId = useId();
+  const [confirming, setConfirming] = useState<string | null>(null);
+  // Typing in a form re-renders the whole card; the handoffs only change with the schedule, overrides or clock.
+  const segments = useMemo(
+    () => nextHandoffs(row, overrides, now, now + UPCOMING_MS, UPCOMING_SHOWN + 1),
+    [row, overrides, now],
+  );
   const [current, ...upcoming] = segments;
   const own = overrides
     .filter((item) => item.scheduleId === row.id && item.end > now)
     .sort((a, b) => a.start - b.start);
   const name = (id: string | null) => (id === null ? m.oncall_nobody() : memberLabel(members, id));
+  const ends = current && current.end < now + UPCOMING_MS ? current.end : null;
+  const endsLocal = ends === null ? null : viewerTime(ends, row.timeZone, viewerZone, locale);
+  const until =
+    ends === null ? null : (
+      <span className="flex flex-col text-sm text-muted-foreground tabular-nums">
+        <span>{m.oncall_until({ time: handoffTime(ends, row.timeZone, locale) })}</span>
+        <span className="text-xs">
+          {endsLocal ? `${endsLocal} · ` : ""}
+          {fromNow(ends, now, locale)}
+        </span>
+      </span>
+    );
   return (
     <>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
@@ -333,7 +395,10 @@ function ScheduleItem({
             {row.name}
           </h3>
           <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-            {m.oncall_time_zone({ zone: zoneLabel(row.timeZone) })}
+            {m.oncall_time_zone({
+              zone: zoneLabel(row.timeZone),
+              offset: offsetLabel(row.timeZone, now),
+            })}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -367,9 +432,7 @@ function ScheduleItem({
           aria-label={m.oncall_heading({ heading: "now" })}
           className="flex min-w-0 flex-col gap-1.5 rounded-md bg-muted/50 p-3"
         >
-          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            {m.oncall_heading({ heading: "now" })}
-          </p>
+          <p className={LABEL}>{m.oncall_heading({ heading: "now" })}</p>
           {current && current.userId !== null ? (
             <>
               <p className="flex min-w-0 items-center gap-2 text-lg font-semibold">
@@ -379,41 +442,34 @@ function ScheduleItem({
                   <Badge variant="outline">{m.oncall_override_badge()}</Badge>
                 ) : null}
               </p>
-              {current.end < now + UPCOMING_MS ? (
-                <p className="text-sm text-muted-foreground tabular-nums">
-                  {m.oncall_until({ time: handoffTime(current.end, row.timeZone, locale) })}
-                </p>
-              ) : null}
+              {until}
             </>
           ) : (
-            <p className="flex items-center gap-2">
-              <Badge variant="sev3">
-                <TriangleAlertIcon aria-hidden />
-                {m.oncall_nobody()}
-              </Badge>
-              {current && current.end < now + UPCOMING_MS ? (
-                <span className="text-sm text-muted-foreground tabular-nums">
-                  {m.oncall_until({ time: handoffTime(current.end, row.timeZone, locale) })}
-                </span>
-              ) : null}
-            </p>
+            <>
+              <p>
+                <Badge variant="sev3">
+                  <TriangleAlertIcon aria-hidden />
+                  {m.oncall_nobody()}
+                </Badge>
+              </p>
+              {until}
+            </>
           )}
         </section>
         <section
           aria-label={m.oncall_heading({ heading: "upcoming" })}
           className="flex min-w-0 flex-col gap-1.5 p-1 md:p-3"
         >
-          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            {m.oncall_heading({ heading: "upcoming" })}
-          </p>
+          <p className={LABEL}>{m.oncall_heading({ heading: "upcoming" })}</p>
           {upcoming.length > 0 ? (
-            <ol className="flex flex-col gap-1 text-sm">
+            <ol className="flex flex-col gap-2 text-sm sm:gap-1">
               {upcoming.slice(0, UPCOMING_SHOWN).map((segment) => (
                 <Handoff
                   key={segment.start}
                   segment={segment}
                   label={name(segment.userId)}
                   timeZone={row.timeZone}
+                  viewerZone={viewerZone}
                   locale={locale}
                 />
               ))}
@@ -424,60 +480,128 @@ function ScheduleItem({
         </section>
       </div>
 
-      <section aria-label={m.oncall_heading({ heading: "layers" })} className="flex flex-col gap-2">
-        <ol className="flex flex-col gap-2 text-sm">
-          {row.layers.map((layer) => (
-            <li key={layer.id} className="flex min-w-0 flex-col gap-0.5">
-              <p className="min-w-0 [overflow-wrap:anywhere]">
-                <span className="font-medium">{layer.name}</span>
-                <span className="text-muted-foreground"> · {layerRhythm(layer, locale)}</span>
-              </p>
-              {layer.members.length > 0 ? (
-                <p className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
-                  {layer.members.map((id) => memberLabel(members, id)).join(" → ")}
-                </p>
-              ) : (
-                <p className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
-                  <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
-                  {m.oncall_layer_empty()}
-                </p>
-              )}
-            </li>
+      <section aria-labelledby={layersId} className="flex flex-col gap-1.5">
+        <h4 id={layersId} className={LABEL}>
+          {m.oncall_heading({ heading: "layers" })}
+        </h4>
+        <ol className="flex flex-col gap-3 text-sm">
+          {row.layers.map((layer, index) => (
+            <LayerSummary
+              key={layer.id}
+              layer={layer}
+              index={index}
+              row={row}
+              current={current}
+              members={members}
+              locale={locale}
+              now={now}
+            />
           ))}
         </ol>
       </section>
 
       {own.length > 0 ? (
-        <section
-          aria-label={m.oncall_heading({ heading: "overrides" })}
-          className="flex flex-col gap-1.5"
-        >
-          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+        <section aria-labelledby={overridesId} className="flex flex-col gap-1.5">
+          <h4 id={overridesId} className={LABEL}>
             {m.oncall_heading({ heading: "overrides" })}
-          </p>
+          </h4>
           <ul className="flex flex-col gap-1 text-sm">
-            {own.map((item) => {
+            {own.map((item, position) => {
               const who = memberLabel(members, item.userId);
               const removable = manage || (canOverride && item.userId === userId);
+              const startLocal = viewerTime(item.start, row.timeZone, viewerZone, locale);
+              const endLocal = viewerTime(item.end, row.timeZone, viewerZone, locale);
               return (
-                <li key={item.id} className="flex min-h-11 items-center gap-2">
-                  <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
-                    <span className="font-medium">{who}</span>
-                    <span className="text-muted-foreground tabular-nums">
-                      {" "}
-                      · {handoffTime(item.start, row.timeZone, locale)} –{" "}
-                      {handoffTime(item.end, row.timeZone, locale)}
+                <li
+                  key={item.id}
+                  data-override={item.id}
+                  className="flex min-h-11 flex-col gap-2 py-1"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="flex min-w-0 flex-1 flex-col [overflow-wrap:anywhere]">
+                      <span>
+                        <span className="font-medium">{who}</span>
+                        <span className="text-muted-foreground tabular-nums">
+                          {" "}
+                          · {handoffTime(item.start, row.timeZone, locale)} –{" "}
+                          {handoffTime(item.end, row.timeZone, locale)}
+                        </span>
+                      </span>
+                      {startLocal && endLocal ? (
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                          {startLocal} – {endLocal}
+                        </span>
+                      ) : null}
                     </span>
-                  </span>
-                  {removable ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
+                    {removable && confirming !== item.id ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        data-action="remove-override"
+                        aria-label={m.oncall_action_on({ action: "remove_override", name: who })}
+                        onClick={() => setConfirming(item.id)}
+                      >
+                        <Trash2Icon aria-hidden />
+                      </Button>
+                    ) : null}
+                  </div>
+                  {confirming === item.id ? (
+                    <div
+                      role="alertdialog"
                       aria-label={m.oncall_action_on({ action: "remove_override", name: who })}
-                      onClick={() => onRemoveOverride(item)}
+                      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-2 pl-3"
                     >
-                      <Trash2Icon aria-hidden />
-                    </Button>
+                      <p className="min-w-0 flex-1 basis-48 font-medium [overflow-wrap:anywhere]">
+                        {text("remove_override", { name: who })}
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          className={CONFIRM_DESTRUCTIVE}
+                          autoFocus
+                          onClick={() => {
+                            setConfirming(null);
+                            onRemoveOverride(item);
+                            // Focus the next override's remove (or the previous one's), else the card's own buttons.
+                            const next = own[position + 1] ?? own[position - 1];
+                            requestAnimationFrame(() => {
+                              const scope = document.querySelector(`[data-schedule="${row.id}"]`);
+                              const target =
+                                (next &&
+                                  scope?.querySelector<HTMLElement>(
+                                    `[data-override="${next.id}"] [data-action="remove-override"]`,
+                                  )) ||
+                                scope?.querySelector<HTMLElement>(
+                                  '[data-action="override"], [data-action="edit"]',
+                                );
+                              target?.focus();
+                            });
+                          }}
+                        >
+                          {m.oncall_action({ action: "remove" })}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") setConfirming(null);
+                          }}
+                          onClick={() => {
+                            setConfirming(null);
+                            requestAnimationFrame(() =>
+                              document
+                                .querySelector<HTMLElement>(
+                                  `[data-override="${item.id}"] [data-action="remove-override"]`,
+                                )
+                                ?.focus(),
+                            );
+                          }}
+                        >
+                          {m.oncall_action({ action: "cancel" })}
+                        </Button>
+                      </div>
+                    </div>
                   ) : null}
                 </li>
               );
@@ -490,21 +614,97 @@ function ScheduleItem({
   );
 }
 
+/** A layer on the dashboard: its rhythm, who it has now (and whether that is who is on call), its rotation. */
+function LayerSummary({
+  layer,
+  index,
+  row,
+  current,
+  members,
+  locale,
+  now,
+}: {
+  layer: ScheduleRow["layers"][number];
+  index: number;
+  row: ScheduleRow;
+  current: OnCallSegment | undefined;
+  members: readonly MemberRow[];
+  locale: Locale;
+  now: number;
+}) {
+  const state = layerNow(layer, row.timeZone, now, current);
+  const order = rotationFrom(layer.members, "shift" in state ? state.shift : 0);
+  const shown = order.slice(0, ROTATION_SHOWN);
+  const rest = order.slice(ROTATION_SHOWN);
+  const active = state.state === "active";
+  return (
+    <li className="flex min-w-0 flex-col gap-0.5">
+      <p className="min-w-0 [overflow-wrap:anywhere]">
+        <span className="font-medium">{layerName(layer, index)}</span>
+        <span className="text-muted-foreground"> · {layerRhythm(layer, locale)}</span>
+      </p>
+      {state.state === "empty" ? (
+        <p className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
+          <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+          {m.oncall_layer_empty()}
+        </p>
+      ) : (
+        <>
+          <p
+            className={cn(
+              "min-w-0 [overflow-wrap:anywhere]",
+              active ? "text-foreground" : "text-muted-foreground",
+            )}
+          >
+            {state.state === "starts"
+              ? m.oncall_layer_now({
+                  state: "starts",
+                  name: handoffTime(state.at, row.timeZone, locale),
+                })
+              : m.oncall_layer_now({
+                  state: state.state,
+                  name: memberLabel(members, state.userId),
+                })}
+          </p>
+          {order.length > 1 ? (
+            <div className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
+              <p>{shown.map((id) => memberLabel(members, id)).join(" → ")}</p>
+              {rest.length > 0 ? (
+                <details className="group">
+                  <summary className="inline-flex min-h-11 cursor-pointer items-center rounded-sm text-foreground underline-offset-4 outline-none select-none focus-visible:ring-3 focus-visible:ring-ring sm:min-h-8 [@media(hover:hover)]:hover:underline">
+                    {m.oncall_more({ count: rest.length })}
+                  </summary>
+                  <p>→ {rest.map((id) => memberLabel(members, id)).join(" → ")}</p>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      )}
+    </li>
+  );
+}
+
 function Handoff({
   segment,
   label,
   timeZone,
+  viewerZone,
   locale,
 }: {
   segment: OnCallSegment;
   label: string;
   timeZone: string;
+  viewerZone: string;
   locale: Locale;
 }) {
+  const local = viewerTime(segment.start, timeZone, viewerZone, locale);
   return (
-    <li className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] items-baseline gap-x-3">
-      <span className="text-muted-foreground tabular-nums">
-        {handoffTime(segment.start, timeZone, locale)}
+    // Phones stack the time over the name; wider screens put them side by side.
+    <li className="flex flex-col sm:grid sm:grid-cols-[minmax(0,auto)_minmax(0,1fr)] sm:items-baseline sm:gap-x-3">
+      <span className="flex flex-col text-muted-foreground tabular-nums">
+        <span>{handoffTime(segment.start, timeZone, locale)}</span>
+        {local ? <span className="text-xs">{local}</span> : null}
       </span>
       <span
         className={cn(
@@ -528,6 +728,8 @@ function ScheduleForm({
   editing,
   members,
   choices,
+  viewerZone,
+  usedZones,
   onCancel,
   onSubmit,
   onDelete,
@@ -536,6 +738,8 @@ function ScheduleForm({
   editing?: ScheduleRow;
   members: readonly MemberRow[];
   choices: readonly MemberRow[];
+  viewerZone: string;
+  usedZones: readonly string[];
   onCancel: () => void;
   onSubmit: (draft: ScheduleDraft) => CheckedSchedule;
   onDelete?: () => void;
@@ -545,8 +749,8 @@ function ScheduleForm({
   const [confirming, setConfirming] = useState(false);
   const titleId = useId();
   const nameRef = useRef<HTMLInputElement>(null);
-  const zones = timeZones(draft.timeZone);
   const zoneId = useId();
+  const hidden = hiddenLayers(draft.layers);
   useEffect(() => {
     nameRef.current?.focus();
   }, []);
@@ -573,19 +777,21 @@ function ScheduleForm({
       noValidate
       onSubmit={submit}
       onKeyDown={(event) => {
-        if (event.key === "Escape" && !(event.target instanceof HTMLSelectElement)) onCancel();
+        if (event.key === "Escape" && !keepsEscape(event)) onCancel();
       }}
-      className="flex min-w-0 flex-col gap-4 rounded-md border bg-muted/40 p-4"
+      className={FORM}
     >
       <h3 id={titleId} className="font-medium [overflow-wrap:anywhere]">
-        {editing ? m.oncall_heading({ heading: "edit" }) : m.oncall_heading({ heading: "new" })}
+        {editing
+          ? m.oncall_action_on({ action: "edit", name: editing.name })
+          : m.oncall_heading({ heading: "new" })}
       </h3>
       <div className="grid items-start gap-4 sm:grid-cols-2">
         <Field
           ref={nameRef}
           label={m.oncall_field({ field: "name" })}
           value={draft.name}
-          maxLength={160}
+          maxLength={SCHEDULE_NAME_MAX}
           autoComplete="off"
           error={errors?.name ? m.oncall_field_invalid({ field: "name" }) : undefined}
           onChange={(event) => setDraft({ ...draft, name: event.target.value })}
@@ -594,19 +800,18 @@ function ScheduleForm({
           <label htmlFor={zoneId} className="text-sm font-medium">
             {m.oncall_field({ field: "time_zone" })}
           </label>
-          <select
+          <TimeZonePicker
             id={zoneId}
-            className={SELECT}
             value={draft.timeZone}
-            aria-invalid={errors?.timeZone ? true : undefined}
-            onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })}
-          >
-            {zones.map((zone) => (
-              <option key={zone} value={zone}>
-                {zoneLabel(zone)}
-              </option>
-            ))}
-          </select>
+            viewerZone={viewerZone}
+            used={[initial.timeZone, ...usedZones]}
+            invalid={errors?.timeZone}
+            onChange={(zone) =>
+              setDraft((current) =>
+                editing ? { ...current, timeZone: zone } : withTimeZone(current, zone, Date.now()),
+              )
+            }
+          />
         </div>
       </div>
       <p className="text-sm text-muted-foreground">{m.oncall_layers_hint()}</p>
@@ -614,6 +819,8 @@ function ScheduleForm({
         <LayerFields
           key={layer.id}
           layer={layer}
+          index={index}
+          hidden={hidden[index] ?? false}
           errors={errors?.layers[index]}
           members={members}
           choices={choices}
@@ -635,10 +842,7 @@ function ScheduleForm({
           onClick={() =>
             setDraft((current) => ({
               ...current,
-              layers: [
-                ...current.layers,
-                newLayer(current.layers.length, current.timeZone, Date.now()),
-              ],
+              layers: [...current.layers, newLayer(current.timeZone, Date.now())],
             }))
           }
         >
@@ -694,8 +898,19 @@ function ScheduleForm({
   );
 }
 
+/** Escape that a control handles itself (a native select, an open combobox) does not cancel the form. */
+function keepsEscape(event: KeyboardEvent<HTMLElement>): boolean {
+  const target = event.target as HTMLElement;
+  return (
+    target instanceof HTMLSelectElement ||
+    (target.getAttribute("role") === "combobox" && target.getAttribute("aria-expanded") === "true")
+  );
+}
+
 function LayerFields({
   layer,
+  index: layerIndex,
+  hidden,
   errors,
   members,
   choices,
@@ -704,6 +919,9 @@ function LayerFields({
   onRemove,
 }: {
   layer: LayerDraft;
+  index: number;
+  /** A later layer has someone at all times from this one's start. */
+  hidden: boolean;
   errors: ScheduleErrors["layers"][number] | undefined;
   members: readonly MemberRow[];
   choices: readonly MemberRow[];
@@ -715,22 +933,49 @@ function LayerFields({
   const addId = useId();
   const membersId = useId();
   const membersErrorId = useId();
+  const peopleRef = useRef<HTMLDivElement>(null);
   const available = choices.filter((member) => !layer.members.includes(member.id));
-  const move = (from: number, to: number) => {
+  const name = layerName(layer, layerIndex);
+  const count = layer.members.length;
+  const focus = (selector: string) =>
+    requestAnimationFrame(() => peopleRef.current?.querySelector<HTMLElement>(selector)?.focus());
+  const rowSelector = (id: string, action: string) =>
+    `[data-member="${CSS.escape(id)}"] [data-action="${action}"]`;
+  /** Moves a person and keeps focus on them: on the arrow pressed, or the other one where it stops. */
+  const move = (from: number, to: number, action: "up" | "down") => {
     const next = [...layer.members];
     const [item] = next.splice(from, 1);
-    if (item !== undefined) next.splice(to, 0, item);
+    if (item === undefined) return;
+    next.splice(to, 0, item);
     onChange({ members: next });
+    const stuck = (action === "up" && to === 0) || (action === "down" && to === count - 1);
+    focus(rowSelector(item, stuck ? (action === "up" ? "down" : "up") : action));
+  };
+  /** Removes a person and focuses the next row's remove (or the last one's), or "Add a person" when none is left. */
+  const remove = (position: number) => {
+    const id = layer.members[position];
+    onChange({ members: layer.members.filter((member) => member !== id) });
+    const after = layer.members[position + 1] ?? layer.members[position - 1];
+    focus(after ? rowSelector(after, "remove") : '[data-action="add-member"]');
+  };
+  const keys = (event: KeyboardEvent<HTMLLIElement>, position: number) => {
+    if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+    const up = event.key === "ArrowUp";
+    const to = position + (up ? -1 : 1);
+    if (to < 0 || to >= count) return;
+    event.preventDefault();
+    move(position, to, up ? "up" : "down");
   };
   return (
     <fieldset className="flex min-w-0 flex-col gap-4 rounded-md border bg-card p-3 sm:p-4">
-      <legend className="sr-only">{layer.name}</legend>
+      <legend className="sr-only">{name}</legend>
       <div className="flex items-end gap-2">
         <Field
           className="flex-1"
           label={m.oncall_field({ field: "layer_name" })}
           value={layer.name}
-          maxLength={120}
+          placeholder={m.oncall_layer_name({ number: String(layerIndex + 1) })}
+          maxLength={LAYER_NAME_MAX}
           autoComplete="off"
           error={errors?.name ? m.oncall_field_invalid({ field: "layer_name" }) : undefined}
           onChange={(event) => onChange({ name: event.target.value })}
@@ -740,13 +985,19 @@ function LayerFields({
             type="button"
             variant="ghost"
             size="icon"
-            aria-label={m.oncall_action_on({ action: "remove_layer", name: layer.name })}
+            aria-label={m.oncall_action_on({ action: "remove_layer", name })}
             onClick={onRemove}
           >
             <Trash2Icon aria-hidden />
           </Button>
         ) : null}
       </div>
+      {hidden ? (
+        <p className="flex items-start gap-1.5 text-sm text-amber-700 dark:text-amber-400">
+          <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+          {text("layer_hidden")}
+        </p>
+      ) : null}
       <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field
           type="date"
@@ -795,65 +1046,83 @@ function LayerFields({
           </select>
         </div>
       </div>
-      <div className="flex min-w-0 flex-col gap-1.5">
+      <div ref={peopleRef} className="flex min-w-0 flex-col gap-1.5">
         <p id={membersId} className="text-sm font-medium">
           {m.oncall_field({ field: "members" })}
         </p>
-        {layer.members.length > 0 ? (
+        {count > 0 ? (
           <ol aria-labelledby={membersId} className="flex flex-col divide-y rounded-md border">
-            {layer.members.map((id, index) => {
+            {layer.members.map((id, position) => {
               const label = memberLabel(members, id);
               return (
-                <li key={id} className="flex min-h-11 items-center gap-1 pl-3">
+                // Phones put the name on its own line and the buttons under it, on the right.
+                <li
+                  key={id}
+                  data-member={id}
+                  onKeyDown={(event) => keys(event, position)}
+                  className="flex flex-wrap items-center gap-x-1 py-1 pr-1 pl-3 sm:min-h-11 sm:flex-nowrap sm:py-0"
+                >
                   <span className="w-6 shrink-0 text-sm text-muted-foreground tabular-nums">
-                    {index + 1}
+                    {position + 1}
                   </span>
-                  <span className="min-w-0 flex-1 text-sm [overflow-wrap:anywhere]">{label}</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    disabled={index === 0}
-                    className="disabled:border-transparent disabled:bg-transparent disabled:opacity-40"
-                    aria-label={m.oncall_action_on({ action: "up", name: label })}
-                    onClick={() => move(index, index - 1)}
-                  >
-                    <ArrowUpIcon aria-hidden />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    disabled={index === layer.members.length - 1}
-                    className="disabled:border-transparent disabled:bg-transparent disabled:opacity-40"
-                    aria-label={m.oncall_action_on({ action: "down", name: label })}
-                    onClick={() => move(index, index + 1)}
-                  >
-                    <ArrowDownIcon aria-hidden />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={m.oncall_action_on({ action: "remove_member", name: label })}
-                    onClick={() =>
-                      onChange({ members: layer.members.filter((member) => member !== id) })
-                    }
-                  >
-                    <XIcon aria-hidden />
-                  </Button>
+                  <span className="min-w-0 flex-1 basis-[calc(100%-2rem)] py-1.5 text-sm [overflow-wrap:anywhere] sm:basis-auto sm:py-0">
+                    {label}
+                  </span>
+                  <span className="ml-auto flex shrink-0">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      data-action="up"
+                      aria-keyshortcuts="Alt+ArrowUp"
+                      disabled={position === 0}
+                      className="disabled:border-transparent disabled:bg-transparent disabled:opacity-40"
+                      aria-label={m.oncall_action_on({ action: "up", name: label })}
+                      onClick={() => move(position, position - 1, "up")}
+                    >
+                      <ArrowUpIcon aria-hidden />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      data-action="down"
+                      aria-keyshortcuts="Alt+ArrowDown"
+                      disabled={position === count - 1}
+                      className="disabled:border-transparent disabled:bg-transparent disabled:opacity-40"
+                      aria-label={m.oncall_action_on({ action: "down", name: label })}
+                      onClick={() => move(position, position + 1, "down")}
+                    >
+                      <ArrowDownIcon aria-hidden />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      data-action="remove"
+                      aria-label={m.oncall_action_on({ action: "remove_member", name: label })}
+                      onClick={() => remove(position)}
+                    >
+                      <XIcon aria-hidden />
+                    </Button>
+                  </span>
                 </li>
               );
             })}
           </ol>
         ) : null}
-        {available.length > 0 ? (
+        {!canAddMember(count) ? (
+          <p className="text-sm text-muted-foreground">
+            {text("members_max", { max: String(MAX_LAYER_MEMBERS) })}
+          </p>
+        ) : available.length > 0 ? (
           <>
             <label htmlFor={addId} className="sr-only">
               {m.oncall_member_add()}
             </label>
             <select
               id={addId}
+              data-action="add-member"
               className={SELECT}
               value=""
               aria-invalid={errors?.members ? true : undefined}
@@ -872,10 +1141,12 @@ function LayerFields({
             </select>
           </>
         ) : null}
-        {errors?.members ? (
+        {errors?.members && (errors.members === "too_many" || count === 0) ? (
           <p id={membersErrorId} className="flex items-start gap-1.5 text-sm text-destructive">
             <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
-            {m.oncall_field_invalid({ field: "members" })}
+            {errors.members === "too_many"
+              ? text("members_max", { max: String(MAX_LAYER_MEMBERS) })
+              : m.oncall_field_invalid({ field: "members" })}
           </p>
         ) : null}
       </div>
@@ -890,6 +1161,8 @@ function OverrideForm({
   members,
   self,
   now,
+  locale,
+  viewerZone,
   onCancel,
   onSubmit,
 }: {
@@ -898,6 +1171,8 @@ function OverrideForm({
   /** A responder covers only for themselves: their id, fixed. Null: anyone. */
   self: string | null;
   now: number;
+  locale: Locale;
+  viewerZone: string;
   onCancel: () => void;
   onSubmit: (args: { scheduleId: string; userId: string; start: number; end: number }) => void;
 }) {
@@ -912,6 +1187,13 @@ function OverrideForm({
   useEffect(() => {
     (self ? startRef.current : whoRef.current)?.focus();
   }, [self]);
+  /** The field's time on the viewer's clock, when theirs reads differently. */
+  const local = (value: string) => {
+    const instant = fromLocalInput(value, schedule.timeZone);
+    return instant === undefined
+      ? undefined
+      : (viewerTime(instant, schedule.timeZone, viewerZone, locale) ?? undefined);
+  };
   return (
     <form
       aria-labelledby={titleId}
@@ -923,16 +1205,19 @@ function OverrideForm({
         else setErrors(checked.errors);
       }}
       onKeyDown={(event) => {
-        if (event.key === "Escape" && !(event.target instanceof HTMLSelectElement)) onCancel();
+        if (event.key === "Escape" && !keepsEscape(event)) onCancel();
       }}
-      className="flex min-w-0 flex-col gap-4 rounded-md border bg-muted/40 p-4"
+      className={FORM}
     >
       <div className="flex flex-col gap-0.5">
         <h4 id={titleId} className="font-medium [overflow-wrap:anywhere]">
           {m.oncall_override_title({ name: schedule.name })}
         </h4>
         <p className="text-sm text-muted-foreground">
-          {m.oncall_time_zone({ zone: zoneLabel(schedule.timeZone) })}
+          {m.oncall_time_zone({
+            zone: zoneLabel(schedule.timeZone),
+            offset: offsetLabel(schedule.timeZone, now),
+          })}
           {self ? ` · ${m.oncall_override_self()}` : ""}
         </p>
       </div>
@@ -950,7 +1235,7 @@ function OverrideForm({
               aria-invalid={errors?.userId ? true : undefined}
               onChange={(event) => setDraft({ ...draft, userId: event.target.value })}
             >
-              <option value="">{m.oncall_field({ field: "who" })}</option>
+              <option value="">{text("choose_person")}</option>
               {members.map((member) => (
                 <option key={member.id} value={member.id}>
                   {member.name || m.oncall_unnamed()}
@@ -970,6 +1255,7 @@ function OverrideForm({
           type="datetime-local"
           label={m.oncall_field({ field: "start" })}
           value={draft.start}
+          hint={local(draft.start)}
           error={errors?.start ? m.oncall_field_invalid({ field: "start" }) : undefined}
           onChange={(event) => setDraft({ ...draft, start: event.target.value })}
         />
@@ -977,6 +1263,7 @@ function OverrideForm({
           type="datetime-local"
           label={m.oncall_field({ field: "end" })}
           value={draft.end}
+          hint={local(draft.end)}
           error={errors?.end ? m.oncall_field_invalid({ field: "end" }) : undefined}
           onChange={(event) => setDraft({ ...draft, end: event.target.value })}
         />

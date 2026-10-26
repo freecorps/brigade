@@ -1,11 +1,12 @@
 // The On-call card's logic, string-free where it can be (RFC 0003 "Schedules"): drafts for the schedule and
 // override forms, checked the way `schedule.create`, `schedule.update` and `schedule.addOverride` will check them,
 // and the wall-clock conversions in a schedule's own time zone.
-import { formatDateTime, m, type Locale } from "@freecorps/brigade-i18n";
+import { formatDateTime, formatRelativeTime, m, type Locale } from "@freecorps/brigade-i18n";
 import { mutationErrorReason } from "@freecorps/brigade-i18n/incident";
 import {
-  isTimeZone,
+  canonicalTimeZone,
   LAYER_NAME_MAX,
+  layerShiftAt,
   localMinute,
   MAX_LAYER_MEMBERS,
   MAX_LAYERS_PER_SCHEDULE,
@@ -18,19 +19,24 @@ import {
   wallMinute,
   wallParts,
   zonedInstant,
+  zoneOffset,
   type MemberRow,
+  type OnCallSegment,
   type RotationUnit,
   type ScheduleLayer,
   type ScheduleRow,
 } from "@freecorps/brigade-schema";
 
 const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
-const HOUR = 60 * 60 * 1000;
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
 
 /** How far ahead the card looks for handoffs. */
 export const UPCOMING_MS = 28 * 24 * HOUR;
 /** Handoffs shown per schedule. */
 export const UPCOMING_SHOWN = 4;
+/** People of a rotation shown before "+N more": who has the shift now and the next three. */
+export const ROTATION_SHOWN = 4;
 
 export type LayerDraft = Omit<ScheduleLayer, "count"> & { count: string };
 export type ScheduleDraft = { name: string; timeZone: string; layers: LayerDraft[] };
@@ -39,21 +45,26 @@ export type ScheduleDraft = { name: string; timeZone: string; layers: LayerDraft
 export type ScheduleErrors = {
   name?: true;
   timeZone?: true;
-  layers: { name?: true; members?: true; startDate?: true; handoffTime?: true; count?: true }[];
+  layers: {
+    name?: true;
+    members?: "empty" | "too_many";
+    startDate?: true;
+    handoffTime?: true;
+    count?: true;
+  }[];
 };
 
-/** The browser's time zone, or UTC when it has none the runtime knows. */
+/** The browser's time zone, as the runtime spells it, or UTC when it has none the runtime knows. */
 export function browserTimeZone(): string {
   try {
-    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    return zone && isTimeZone(zone) ? zone : "UTC";
+    return canonicalTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone) ?? "UTC";
   } catch {
     return "UTC";
   }
 }
 
-/** The time zones to offer: the runtime's list (with UTC and `current`), or just those two without one. */
-export function timeZones(current: string): string[] {
+/** The runtime's time zones (with UTC), each in the runtime's own spelling; just UTC without a list. */
+export function timeZones(): string[] {
   let zones: string[] = [];
   try {
     zones =
@@ -62,7 +73,7 @@ export function timeZones(current: string): string[] {
   } catch {
     zones = [];
   }
-  return [...new Set(["UTC", current, ...zones])].filter(Boolean).sort();
+  return [...new Set(["UTC", ...zones])].sort();
 }
 
 /** Today's date on `timeZone`'s wall clock, `YYYY-MM-DD`. */
@@ -70,11 +81,11 @@ export function todayIn(timeZone: string, now: number): string {
   return wallParts(localMinute(now, timeZone)).date;
 }
 
-export function newLayer(index: number, timeZone: string, now: number): LayerDraft {
+/** A new layer, unnamed: it reads as "Primary", "Layer 2" in each reader's language (`layerName`). */
+export function newLayer(timeZone: string, now: number): LayerDraft {
   return {
     id: newId("lyr", now, random),
-    // "Primary" for the first.
-    name: m.oncall_layer_name({ number: String(index + 1) }),
+    name: "",
     members: [],
     startDate: todayIn(timeZone, now),
     handoffTime: "09:00",
@@ -85,7 +96,23 @@ export function newLayer(index: number, timeZone: string, now: number): LayerDra
 
 export function emptySchedule(now: number): ScheduleDraft {
   const timeZone = browserTimeZone();
-  return { name: "", timeZone, layers: [newLayer(0, timeZone, now)] };
+  return { name: "", timeZone, layers: [newLayer(timeZone, now)] };
+}
+
+/**
+ * The draft with its time zone changed. A layer still starting "today" in the old zone starts today in the new
+ * one (in Tokyo it may already be tomorrow); a date someone picked stays.
+ */
+export function withTimeZone(draft: ScheduleDraft, timeZone: string, now: number): ScheduleDraft {
+  const before = todayIn(draft.timeZone, now);
+  const after = todayIn(timeZone, now);
+  return {
+    ...draft,
+    timeZone,
+    layers: draft.layers.map((layer) =>
+      layer.startDate === before ? { ...layer, startDate: after } : layer,
+    ),
+  };
 }
 
 export function draftFromSchedule(row: ScheduleRow): ScheduleDraft {
@@ -100,6 +127,11 @@ export function draftFromSchedule(row: ScheduleRow): ScheduleDraft {
   };
 }
 
+/** A layer's name, or "Primary" / "Layer 2" (by position) in the reader's language when it has none. */
+export function layerName(layer: Pick<ScheduleLayer, "name">, index: number): string {
+  return layer.name.trim() || m.oncall_layer_name({ number: String(index + 1) });
+}
+
 export type CheckedSchedule =
   | {
       ok: true;
@@ -110,24 +142,23 @@ export type CheckedSchedule =
 const hasErrors = (errors: ScheduleErrors) =>
   errors.name || errors.timeZone || errors.layers.some((layer) => Object.keys(layer).length > 0);
 
-/** Whether `name` is something the shard will take for a name of up to `max` characters. */
-const nameOk = (name: string, max: number) => name.trim().length > 0 && name.trim().length <= max;
-
 /**
  * The draft as `schedule.create` / `schedule.update` arguments, or what is wrong with it. Members are checked
  * against `members` (the shard's list, which the card subscribes to): a viewer or someone gone is dropped from the
- * draft when it opens (`draftMembers`), so here only an empty layer is wrong.
+ * draft when it opens (`draftMembers`), so here only an empty or overfull layer is wrong.
  */
 export function checkSchedule(id: string, draft: ScheduleDraft): CheckedSchedule {
   const errors: ScheduleErrors = { layers: draft.layers.map(() => ({})) };
-  if (!nameOk(draft.name, SCHEDULE_NAME_MAX)) errors.name = true;
-  if (!isTimeZone(draft.timeZone)) errors.timeZone = true;
+  const name = draft.name.trim();
+  if (name.length === 0 || name.length > SCHEDULE_NAME_MAX) errors.name = true;
+  const timeZone = canonicalTimeZone(draft.timeZone);
+  if (!timeZone) errors.timeZone = true;
   const layers: ScheduleLayer[] = draft.layers.map((layer, index) => {
     const issues: ScheduleErrors["layers"][number] = {};
     errors.layers[index] = issues;
-    if (!nameOk(layer.name, LAYER_NAME_MAX)) issues.name = true;
-    if (layer.members.length === 0 || layer.members.length > MAX_LAYER_MEMBERS)
-      issues.members = true;
+    if (layer.name.trim().length > LAYER_NAME_MAX) issues.name = true;
+    if (layer.members.length === 0) issues.members = "empty";
+    else if (layer.members.length > MAX_LAYER_MEMBERS) issues.members = "too_many";
     const date = wallMinute(layer.startDate, "00:00");
     if (date === undefined || layer.startDate < "2000-01-01" || layer.startDate > "2099-12-31") {
       issues.startDate = true;
@@ -139,8 +170,26 @@ export function checkSchedule(id: string, draft: ScheduleDraft): CheckedSchedule
     }
     return { ...layer, name: layer.name.trim(), count };
   });
-  if (hasErrors(errors)) return { ok: false, errors };
-  return { ok: true, args: { id, name: draft.name.trim(), timeZone: draft.timeZone, layers } };
+  if (hasErrors(errors) || !timeZone) return { ok: false, errors };
+  return { ok: true, args: { id, name, timeZone, layers } };
+}
+
+/**
+ * For each layer, whether a later one has someone at every moment it could: a later layer with people that starts
+ * no later than this one hides it for good (layers stack, RFC 0003 "Schedules").
+ */
+export function hiddenLayers(
+  layers: readonly Pick<ScheduleLayer, "members" | "startDate" | "handoffTime">[],
+): boolean[] {
+  const start = (layer: (typeof layers)[number]) => wallMinute(layer.startDate, layer.handoffTime);
+  return layers.map((layer, index) => {
+    const own = start(layer);
+    if (own === undefined) return false;
+    return layers.slice(index + 1).some((later) => {
+      const from = start(later);
+      return later.members.length > 0 && from !== undefined && from <= own;
+    });
+  });
 }
 
 /** Only the members who can hold a shift, to pick from: not viewers, by name. */
@@ -166,7 +215,52 @@ export const newOverrideId = (now: number) => newId("ovr", now, random);
 
 export const canAddSchedule = (count: number) => count < MAX_SCHEDULES_PER_WORKSPACE;
 export const canAddLayer = (count: number) => count < MAX_LAYERS_PER_SCHEDULE;
-export { ROTATION_UNITS, type RotationUnit };
+export const canAddMember = (count: number) => count < MAX_LAYER_MEMBERS;
+export { MAX_LAYER_MEMBERS, ROTATION_UNITS, type RotationUnit };
+
+// ---- A layer on the dashboard -------------------------------------------------------------------------------------
+
+export type LayerNow =
+  | { state: "empty" }
+  | { state: "starts"; at: number }
+  | { state: "active" | "hidden" | "overridden"; userId: string; shift: number };
+
+/**
+ * Who `layer` has on call at `now`, and whether that is who is on call: `current` is the schedule's segment at
+ * `now` (from `nextHandoffs`). A layer with someone that does not win is hidden by a later layer or covered by an
+ * override.
+ */
+export function layerNow(
+  layer: ScheduleLayer,
+  timeZone: string,
+  now: number,
+  current: OnCallSegment | undefined,
+): LayerNow {
+  if (layer.members.length === 0) return { state: "empty" };
+  const shift = layerShiftAt(layer, timeZone, now);
+  if (!shift) {
+    const start = wallMinute(layer.startDate, layer.handoffTime);
+    return start === undefined
+      ? { state: "empty" }
+      : { state: "starts", at: zonedInstant(start, timeZone) };
+  }
+  const userId = layer.members[shift.k % layer.members.length] ?? "";
+  const source = current?.source;
+  const state =
+    source?.kind === "override"
+      ? "overridden"
+      : source?.kind === "layer" && source.layerId === layer.id
+        ? "active"
+        : "hidden";
+  return { state, userId, shift: shift.k };
+}
+
+/** The rotation from the member holding shift `k` on, wrapping around: who is on now, then who is next. */
+export function rotationFrom(members: readonly string[], k: number): string[] {
+  if (members.length === 0) return [];
+  const first = k % members.length;
+  return [...members.slice(first), ...members.slice(0, first)];
+}
 
 // ---- Overrides ----------------------------------------------------------------------------------------------------
 
@@ -224,31 +318,152 @@ export function checkOverride(
 
 // ---- Wording ------------------------------------------------------------------------------------------------------
 
-/** "Weekly, hands off Monday at 09:00", in the schedule's own words. */
+/**
+ * "Weekly, hands off Monday at 9:00 AM", in the schedule's own words. Hourly shifts that fit a day evenly a few
+ * times list each time ("Every 12 hours, hands off at 8:00 AM and 8:00 PM"); others drift across the day, so they
+ * say when they start ("Every 5 hours, starting Oct 5 at 8:00 AM").
+ */
 export function layerRhythm(layer: ScheduleLayer, locale: Locale): string {
   const length = m.oncall_shift_length({ unit: layer.unit, count: layer.count }, { locale });
   const minute = wallMinute(layer.startDate, layer.handoffTime);
   if (minute === undefined) return length;
   // The wall clock as if it were UTC: the time and weekday the layer says, whatever the zone.
-  const at = minute * 60_000;
-  const time = formatDateTime(at, locale, "UTC", { timeStyle: "short" });
-  const day = formatDateTime(at, locale, "UTC", { weekday: "long" });
-  const handoff = m.oncall_handoff({ unit: layer.unit, day, time }, { locale });
+  const clock = (at: number) => formatDateTime(at * MINUTE, locale, "UTC", { timeStyle: "short" });
+  const day = formatDateTime(minute * MINUTE, locale, "UTC", { weekday: "long" });
+  let handoff: string;
+  if (layer.unit !== "hours" || layer.count % 24 === 0) {
+    handoff = m.oncall_handoff({ unit: layer.unit, day, time: clock(minute) }, { locale });
+  } else if (24 % layer.count === 0 && 24 / layer.count <= 4) {
+    const times = Array.from({ length: 24 / layer.count }, (_, i) => minute + i * layer.count * 60)
+      .map((at) => ({ at, of: at % 1440 }))
+      .sort((a, b) => a.of - b.of)
+      .map(({ at }) => clock(at));
+    const time = new Intl.ListFormat(locale, { type: "conjunction" }).format(times);
+    handoff = m.oncall_handoff({ unit: "hours", day, time }, { locale });
+  } else {
+    const date = formatDateTime(minute * MINUTE, locale, "UTC", { month: "short", day: "numeric" });
+    handoff = m.oncall_handoff({ unit: "from", day: date, time: clock(minute) }, { locale });
+  }
   return `${length}, ${handoff}`;
 }
 
-/** A handoff time in the schedule's zone: "Mon, Oct 27, 9:00 AM", the time in the locale's short style. */
+/** The zone's short name at `instant` in `locale` ("GMT-3", "BRT", "CET"), or "" if the runtime has none. */
+function zoneName(instant: number, timeZone: string, locale: Locale): string {
+  try {
+    return (
+      new Intl.DateTimeFormat(locale, { timeZone, timeZoneName: "short" })
+        .formatToParts(instant)
+        .find((part) => part.type === "timeZoneName")?.value ?? ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * A handoff time in `timeZone`, saying which zone: "Mon, Oct 27, 9:00 AM GMT-3", the time in the locale's short
+ * style.
+ */
 export function handoffTime(instant: number, timeZone: string, locale: Locale): string {
   const date = formatDateTime(instant, locale, timeZone, {
     weekday: "short",
     month: "short",
     day: "numeric",
   });
-  return `${date}, ${formatDateTime(instant, locale, timeZone, { timeStyle: "short" })}`;
+  const time = formatDateTime(instant, locale, timeZone, { timeStyle: "short" });
+  const zone = zoneName(instant, timeZone, locale);
+  return `${date}, ${time}${zone ? ` ${zone}` : ""}`;
+}
+
+/**
+ * The same instant on the viewer's clock ("Tue, Oct 28, 7:00 AM GMT-3 your time"), or null when their clock
+ * reads the same as the schedule's then.
+ */
+export function viewerTime(
+  instant: number,
+  timeZone: string,
+  viewerZone: string,
+  locale: Locale,
+): string | null {
+  if (zoneOffset(instant, timeZone) === zoneOffset(instant, viewerZone)) return null;
+  return text("your_time", { time: handoffTime(instant, viewerZone, locale) });
+}
+
+/** "in 19 hours". */
+export const fromNow = (instant: number, now: number, locale: Locale) =>
+  formatRelativeTime(instant, locale, now);
+
+/** `oncall_text` with only the inputs the variant uses. */
+export function text(
+  key: "your_time" | "members_max" | "choose_person" | "remove_override" | "layer_hidden",
+  inputs: { name?: string; max?: string; time?: string } = {},
+): string {
+  return m.oncall_text({ text: key, name: "", max: "", time: "", ...inputs });
 }
 
 /** An IANA zone as people read it: "America/Sao Paulo". */
 export const zoneLabel = (zone: string) => zone.replaceAll("_", " ");
+
+/** A zone's offset from UTC at `instant`: "UTC", "UTC+05:45", "UTC-03:00". */
+export function offsetLabel(timeZone: string, instant: number): string {
+  const minutes = Math.round(zoneOffset(instant, timeZone) / MINUTE);
+  if (minutes === 0) return "UTC";
+  const abs = Math.abs(minutes);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `UTC${minutes < 0 ? "-" : "+"}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+}
+
+export type ZoneChoice = { value: string; label: string; offset: string; search: string };
+export type ZoneGroup = { value: "suggested" | "all"; items: ZoneChoice[] };
+
+/** Lowercased, without accents, with `_`, `/` and `-` as spaces: "São_Paulo" and "sao paulo" match. */
+const fold = (value: string) =>
+  value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[_/]+/g, " ");
+
+/**
+ * The time zone picker's choices at `now`: the viewer's zone and the zones the workspace's schedules already use
+ * first, then every zone the runtime knows, each once, with its UTC offset.
+ */
+export function zoneGroups(now: number, viewerZone: string, used: readonly string[]): ZoneGroup[] {
+  const choice = (zone: string): ZoneChoice => {
+    const offset = offsetLabel(zone, now);
+    const label = zoneLabel(zone);
+    return { value: zone, label, offset, search: fold(`${label} ${zone} ${offset}`) };
+  };
+  // In this runtime's spelling, so each zone is listed once (V8 says "Asia/Calcutta" where others say
+  // "Asia/Kolkata"; its own list agrees with it).
+  const suggested = [
+    ...new Set(
+      [viewerZone, ...used].flatMap((zone) => {
+        const canonical = canonicalTimeZone(zone);
+        return canonical ? [canonical] : [];
+      }),
+    ),
+  ];
+  const rest = timeZones().filter((zone) => !suggested.includes(zone));
+  return [
+    { value: "suggested", items: suggested.map(choice) },
+    { value: "all", items: rest.map(choice) },
+  ];
+}
+
+/**
+ * Whether a zone matches what was typed, anywhere in its name: "paulo", "new york", "kolkata", or an offset
+ * ("+05:45", "utc-3", "-03").
+ */
+export function matchZone(zone: ZoneChoice, query: string): boolean {
+  const words = fold(query).trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  return words.every((word) => {
+    if (zone.search.includes(word)) return true;
+    // "utc-3" / "-3" / "+5:45" against "utc-03:00" / "utc+05:45".
+    const offset = /^(?:utc|gmt)?([+-])(\d{1,2})(?::?(\d{2}))?$/.exec(word);
+    if (!offset) return false;
+    const [, sign, hours = "", minutes] = offset;
+    const wanted = `utc${sign}${hours.padStart(2, "0")}${minutes ? `:${minutes}` : ""}`;
+    return zone.search.includes(wanted);
+  });
+}
 
 /** Why the shard refused a schedule change, in the shared wording, with this card's "gone". */
 export function scheduleRefusal(code: string): string {

@@ -33,7 +33,7 @@ import {
 } from "@freecorps/brigade-sync/react";
 import { fontSize, radius, spacing } from "@freecorps/brigade-ui";
 import { Link } from "expo-router";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { AccessibilityInfo, Pressable, ScrollView, TextInput, View } from "react-native";
 import { Account, PagingNotice } from "@/components/account";
 import {
@@ -53,6 +53,8 @@ import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
 import { useMember } from "@/components/session";
 import { titleToRestore } from "@/lib/incidents";
+import { restoredTarget } from "@/lib/pending";
+import { currentSync } from "@/lib/sync-client";
 
 /**
  * The signed-in member's workspace: its active incidents, live from its shard, with declare and per-row status and
@@ -95,7 +97,11 @@ function IncidentList({ onReload }: { onReload: () => void }) {
   // In-flight changes per incident, so the row can say "Saving…" until the shard answers.
   const [busy, setBusy] = useState<ReadonlyMap<string, number>>(new Map());
   const nextKey = useRef(0);
-  const track = (outcome: Promise<MutationOutcome>, target: NoticeTarget) => {
+  /** `target` may be read when the outcome is in, for a change made before the list had its rows. */
+  const track = (
+    outcome: Promise<MutationOutcome>,
+    target: NoticeTarget & { read?: () => NoticeTarget },
+  ) => {
     const bump = (by: number) =>
       setBusy((current) => {
         const next = new Map(current);
@@ -107,7 +113,7 @@ function IncidentList({ onReload }: { onReload: () => void }) {
     bump(1);
     void outcome.then((result) => {
       bump(-1);
-      const refusal = noticeFor(result, target, `r${nextKey.current++}`);
+      const refusal = noticeFor(result, target.read?.() ?? target, `r${nextKey.current++}`);
       if (!refusal) return;
       setRefusals((current) => [...current, refusal].slice(-5));
       // VoiceOver has no live regions (accessibilityLiveRegion is Android's), so say it once.
@@ -118,6 +124,48 @@ function IncidentList({ onReload }: { onReload: () => void }) {
       setTitle((field) => titleToRestore(refusal, field) ?? field);
     });
   };
+
+  // Changes kept from before a restart (src/lib/pending.ts) are tracked like new ones. A declare's refusal says so
+  // here; another's, on its incident's screen, or here on its row when that screen is not open.
+  const trackRef = useRef(track);
+  useLayoutEffect(() => {
+    trackRef.current = track;
+  });
+  useEffect(() => {
+    const restored = currentSync()?.restored;
+    if (!restored) return;
+    for (const change of restored.list) {
+      const target = restoredTarget(change);
+      if (!target) continue;
+      const { incidentId } = target;
+      if (target.notice.kind === "declare") {
+        trackRef.current(restored.claim(change), {
+          kind: "declare",
+          incidentId,
+          number: null,
+          title: target.notice.title ?? "",
+        });
+        continue;
+      }
+      const { kind, to, role } = target.notice;
+      const row = () => latest.current.find((incident) => incident.id === incidentId);
+      const notice = (): NoticeTarget => {
+        const found = row();
+        return {
+          kind,
+          to,
+          role,
+          incidentId,
+          number: found?.number ?? null,
+          title: found?.title ?? "",
+        };
+      };
+      trackRef.current(
+        restored.claimLeft(change, () => row() !== undefined),
+        { ...notice(), read: notice },
+      );
+    }
+  }, []);
 
   const [severity, setSeverityChoice] = useState<Severity>("sev3");
   const [invalid, setInvalid] = useState<"empty" | "invalid" | null>(null);

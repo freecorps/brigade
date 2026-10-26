@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { brigadeServer, devHost, knownWorkspace, memberActor } from "./sync";
+import { brigadeServer, devHost, knownWorkspace, memberActor, settledRole } from "./sync";
 
 test("the optimistic actor is the signed-in member; a role the app does not know reads as viewer", () => {
   expect(memberActor("usr_1", "responder")).toEqual({
@@ -68,4 +68,16 @@ test("the remembered workspace opens only for the same member in the same worksp
   for (const bad of [null, "", "{}", "nope", "null"]) {
     expect(knownWorkspace(bad, "usr_a", "org_a")).toBeNull();
   }
+});
+
+test("the role kept changes are restored as waits for the live or remembered one, never a loading viewer", () => {
+  const known = { userId: "usr_1", workspaceId: "org_1", name: "Acme", role: "responder" as const };
+  // Still reading what was remembered, and nothing live yet.
+  expect(settledRole("usr_1", undefined, undefined)).toBeUndefined();
+  // Offline with nothing remembered.
+  expect(settledRole("usr_1", undefined, null)).toBeUndefined();
+  expect(settledRole("usr_1", undefined, known)).toBe("responder");
+  // The live role wins over the remembered one; one the app does not know is a viewer, as the shard would treat it.
+  expect(settledRole("usr_1", "admin", known)).toBe("admin");
+  expect(settledRole("usr_1", "owner-ish", known)).toBe("viewer");
 });

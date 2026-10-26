@@ -27,15 +27,16 @@ export type Mobile_SessionInputs = {
 * | "pages_notice_title" | "This phone isn't paging you" |
 * | "open_settings" | "Open Settings" |
 * | "sign_out_body_unpaged" | "You'll need to sign in again to see incidents here." |
+* | "sign_out_unsent" | "Changes you made that aren't sent yet are lost." |
 * | "sign_out_kept_title" | "This phone may still get pages for you" |
 * | "sign_out_kept_body" | "Brigade couldn't reach the server, so this phone keeps getting your pages until it's back online. Brigade finishes signing you out then, on its own." |
 * | "sign_out_stuck_title" | "This phone may keep getting your pages" |
 * | "sign_out_stuck_body" | "Brigade couldn't reach the server, nor keep your session to finish signing you out later, so it can't free this phone on its own. To stop the pages, sign in ..." |
 * | "try_again" | "Try again" |
 * | "offline" | "Offline" |
-* | "incident_stale_hint" | "Showing this incident as last received. Changes you make are sent once the connection is back, as long as Brigade stays open." |
+* | "incident_stale_hint" | "Showing this incident as last received. Changes you make are kept if you close Brigade, and sent once it's open and can reach the server." |
 * | "update_sending" | "Sending…" |
-* | "update_waiting" | "Not sent yet. Keep Brigade open: it sends once Brigade is reachable again." |
+* | "update_waiting" | "Not sent yet. It's kept if you close Brigade, and sent once Brigade is open and can reach the server." |
 * | "show_password" | "Show password" |
 * | "hide_password" | "Hide password" |
 * | * | "Brigade" |

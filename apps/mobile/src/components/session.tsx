@@ -1,5 +1,6 @@
-import type { Role } from "@freecorps/brigade-schema";
+import { newId, type Role } from "@freecorps/brigade-schema";
 import { SyncProvider } from "@freecorps/brigade-sync/react";
+import { getRandomBytes } from "expo-crypto";
 import { useNetworkState } from "expo-network";
 import * as SecureStore from "expo-secure-store";
 import { AppState } from "react-native";
@@ -16,9 +17,11 @@ import {
 import { authClient, forgetSession, server } from "@/lib/auth-client";
 import { registerPhone, unregisterPhone, type Paging } from "@/lib/device";
 import { pagingCycle } from "@/lib/paging";
+import { dropQueues, openQueue } from "@/lib/pending";
+import { pendingFiles } from "@/lib/pending-files";
 import { finishDeps, keptSignOuts, phoneDeps, SESSION_LIFETIME_MS } from "@/lib/phone";
 import { finishSignOut, signOutPhone, type FinishResult } from "@/lib/sign-out";
-import { knownWorkspace, memberActor, WORKSPACE_KEY, type Server } from "@/lib/sync";
+import { knownWorkspace, memberActor, settledRole, WORKSPACE_KEY, type Server } from "@/lib/sync";
 import { createWorkspaceSync, setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
 
 /** The signed-in member in their active workspace: what every signed-in screen reads. */
@@ -38,6 +41,8 @@ export type Member = {
    * their session be kept to tell it later.
    */
   signOut: () => Promise<"released" | "kept" | "stuck">;
+  /** Whether changes not sent yet are kept on the phone: signing out deletes them. */
+  unsent: () => boolean;
 };
 
 /** What the app shows before a member is ready: the sign-in screen draws all of these. */
@@ -198,6 +203,7 @@ async function signOutHere(): Promise<boolean> {
 async function signOut(): Promise<void> {
   await signOutHere();
   await SecureStore.deleteItemAsync(WORKSPACE_KEY).catch(() => {});
+  await dropQueues(pendingFiles).catch(() => {});
 }
 
 function ActiveWorkspace({
@@ -281,22 +287,32 @@ function ActiveWorkspace({
     let made: WorkspaceSync | null = null;
     let live = true;
     // A cookie that cannot be read still opens the workspace: the upgrade then refuses it and the screen says so,
-    // instead of loading forever.
-    void authClient
-      .getCookie()
-      .catch(() => "")
-      .then((value) => {
-        if (!live) return;
-        cookie.current = value;
-        made = createWorkspaceSync({
-          server: target,
-          workspaceId,
-          actor: () => ({ kind: "user", id: userId, role: role.current }),
-          cookie: () => cookie.current,
-        });
-        setCurrentSync(made);
-        setSync(made);
+    // instead of loading forever. A queue that cannot be read opens it too, without keeping changes.
+    void Promise.all([
+      authClient.getCookie().catch(() => ""),
+      openQueue(pendingFiles, { userId, workspaceId }, () =>
+        newId("cli", Date.now(), getRandomBytes),
+      ).catch((error: unknown) => {
+        // Changes made this launch then live only in memory, as before restarts kept them.
+        console.warn(
+          "Brigade could not open the queue of unsent changes; they won't survive a restart",
+          error,
+        );
+        return undefined;
+      }),
+    ]).then(([value, queue]) => {
+      if (!live) return;
+      cookie.current = value;
+      made = createWorkspaceSync({
+        server: target,
+        workspaceId,
+        actor: () => ({ kind: "user", id: userId, role: role.current }),
+        cookie: () => cookie.current,
+        queue,
       });
+      setCurrentSync(made);
+      setSync(made);
+    });
     return () => {
       live = false;
       // Closing drops the socket and every row it brought: nothing of this session outlives it.
@@ -305,6 +321,18 @@ function ActiveWorkspace({
       setSync(null);
     };
   }, [userId, workspaceId]);
+
+  // Changes kept from before a restart are applied as the member's role, so they go back only once it is known:
+  // run as the `viewer` a role still loading reads as, they would drop out of the view until the shard answered
+  // (src/lib/pending.ts). The screens that track them wait for it too.
+  const roleNow = settledRole(userId, liveRole, known);
+  const [restored, setRestored] = useState<WorkspaceSync | null>(null);
+  useEffect(() => {
+    if (!sync || roleNow === undefined) return;
+    role.current = roleNow;
+    sync.restore();
+    setRestored(sync);
+  }, [sync, roleNow]);
 
   // Someone who signed out offline first: their device has to come off the shard before this one can take it.
   const register = useMemo(
@@ -336,10 +364,13 @@ function ActiveWorkspace({
       },
     );
     await SecureStore.deleteItemAsync(WORKSPACE_KEY).catch(() => {});
+    // Nothing they queued is sent or shown after they leave, whoever signs in next.
+    await sync?.queue?.drop().catch(() => {});
+    await dropQueues(pendingFiles).catch(() => {});
     return result;
   }, [sync, userId, workspaceId, stopPaging]);
 
-  const ready = Boolean(sync && workspaceName !== undefined && (liveRole ?? known?.role));
+  const ready = Boolean(sync && restored === sync && workspaceName !== undefined);
   const value = useMemo<SessionView>(() => {
     if (ready) {
       return {
@@ -354,6 +385,7 @@ function ActiveWorkspace({
           paging,
           retryPaging,
           signOut: leave,
+          unsent: () => sync?.queue?.unsent() ?? false,
         },
       };
     }

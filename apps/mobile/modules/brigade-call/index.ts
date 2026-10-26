@@ -47,6 +47,11 @@ interface BrigadeCallModule {
   stopSpeaking(): void;
   openFullScreenIntentSettings(): void;
   getVoipToken(): Promise<string | null>;
+  /**
+   * iOS: leaves the folder at this `file://` URL out of device backups. Not on Android, whose backup rules do it
+   * (plugins/pending-backup.ts), nor in builds made before it.
+   */
+  excludeFromBackup?(uri: string): void;
   addListener<E extends keyof Events>(event: E, listener: Events[E]): EventSubscription;
 }
 

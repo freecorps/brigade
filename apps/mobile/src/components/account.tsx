@@ -119,12 +119,18 @@ export function Account() {
   const confirm = () =>
     Alert.alert(
       m.mobile_session({ part: "sign_out_title" }),
-      m.mobile_session({
-        part:
-          member.paging === "on" || member.paging === "pending"
-            ? "sign_out_body"
-            : "sign_out_body_unpaged",
-      }),
+      [
+        m.mobile_session({
+          part:
+            member.paging === "on" || member.paging === "pending"
+              ? "sign_out_body"
+              : "sign_out_body_unpaged",
+        }),
+        // Changes made offline are kept for this member only: signing out deletes them unsent.
+        member.unsent() ? m.mobile_session({ part: "sign_out_unsent" }) : null,
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
       [
         { text: m.mobile_session({ part: "cancel" }), style: "cancel" },
         {

@@ -30,15 +30,16 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "pages_notice_title" | "This phone isn't paging you" |
 * | "open_settings" | "Open Settings" |
 * | "sign_out_body_unpaged" | "You'll need to sign in again to see incidents here." |
+* | "sign_out_unsent" | "Changes you made that aren't sent yet are lost." |
 * | "sign_out_kept_title" | "This phone may still get pages for you" |
 * | "sign_out_kept_body" | "Brigade couldn't reach the server, so this phone keeps getting your pages until it's back online. Brigade finishes signing you out then, on its own." |
 * | "sign_out_stuck_title" | "This phone may keep getting your pages" |
 * | "sign_out_stuck_body" | "Brigade couldn't reach the server, nor keep your session to finish signing you out later, so it can't free this phone on its own. To stop the pages, sign in ..." |
 * | "try_again" | "Try again" |
 * | "offline" | "Offline" |
-* | "incident_stale_hint" | "Showing this incident as last received. Changes you make are sent once the connection is back, as long as Brigade stays open." |
+* | "incident_stale_hint" | "Showing this incident as last received. Changes you make are kept if you close Brigade, and sent once it's open and can reach the server." |
 * | "update_sending" | "Sending…" |
-* | "update_waiting" | "Not sent yet. Keep Brigade open: it sends once Brigade is reachable again." |
+* | "update_waiting" | "Not sent yet. It's kept if you close Brigade, and sent once Brigade is open and can reach the server." |
 * | "show_password" | "Show password" |
 * | "hide_password" | "Hide password" |
 * | * | "Brigade" |
@@ -70,15 +71,16 @@ export const mobile_session = /** @type {((inputs: Mobile_SessionInputs, options
 		if (i?.part === "pages_notice_title") return /** @type {LocalizedString} */ (`Este telefone não está chamando você`);
 		if (i?.part === "open_settings") return /** @type {LocalizedString} */ (`Abrir Ajustes`);
 		if (i?.part === "sign_out_body_unpaged") return /** @type {LocalizedString} */ (`Você vai precisar entrar de novo para ver os incidentes aqui.`);
+		if (i?.part === "sign_out_unsent") return /** @type {LocalizedString} */ (`As alterações que você fez e ainda não foram enviadas serão perdidas.`);
 		if (i?.part === "sign_out_kept_title") return /** @type {LocalizedString} */ (`Este telefone ainda pode receber seus chamados`);
 		if (i?.part === "sign_out_kept_body") return /** @type {LocalizedString} */ (`O Brigade não conseguiu falar com o servidor, então este telefone continua recebendo seus chamados até voltar a ficar online. Aí o Brigade conclui sua saída sozinho.`);
 		if (i?.part === "sign_out_stuck_title") return /** @type {LocalizedString} */ (`Este telefone pode continuar recebendo seus chamados`);
 		if (i?.part === "sign_out_stuck_body") return /** @type {LocalizedString} */ (`O Brigade não conseguiu falar com o servidor nem guardar sua sessão para concluir a saída depois, então não consegue liberar este telefone sozinho. Para parar os chamados, entre aqui de novo com conexão e saia.`);
 		if (i?.part === "try_again") return /** @type {LocalizedString} */ (`Tentar de novo`);
 		if (i?.part === "offline") return /** @type {LocalizedString} */ (`Sem conexão`);
-		if (i?.part === "incident_stale_hint") return /** @type {LocalizedString} */ (`Mostrando este incidente como recebido por último. Suas alterações são enviadas quando a conexão voltar, desde que o Brigade continue aberto.`);
+		if (i?.part === "incident_stale_hint") return /** @type {LocalizedString} */ (`Mostrando este incidente como recebido por último. Suas alterações ficam guardadas se você fechar o Brigade e são enviadas quando ele estiver aberto e conseguir conectar.`);
 		if (i?.part === "update_sending") return /** @type {LocalizedString} */ (`Enviando…`);
-		if (i?.part === "update_waiting") return /** @type {LocalizedString} */ (`Ainda não enviada. Mantenha o Brigade aberto: ela será enviada quando o Brigade voltar a responder.`);
+		if (i?.part === "update_waiting") return /** @type {LocalizedString} */ (`Ainda não enviada. Fica guardada se você fechar o Brigade e é enviada quando ele estiver aberto e conseguir conectar.`);
 		if (i?.part === "show_password") return /** @type {LocalizedString} */ (`Mostrar senha`);
 		if (i?.part === "hide_password") return /** @type {LocalizedString} */ (`Ocultar senha`);
 		return /** @type {LocalizedString} */ (`Brigade`)
@@ -104,15 +106,16 @@ export const mobile_session = /** @type {((inputs: Mobile_SessionInputs, options
 		if (i?.part === "pages_notice_title") return /** @type {LocalizedString} */ (`This phone isn't paging you`);
 		if (i?.part === "open_settings") return /** @type {LocalizedString} */ (`Open Settings`);
 		if (i?.part === "sign_out_body_unpaged") return /** @type {LocalizedString} */ (`You'll need to sign in again to see incidents here.`);
+		if (i?.part === "sign_out_unsent") return /** @type {LocalizedString} */ (`Changes you made that aren't sent yet are lost.`);
 		if (i?.part === "sign_out_kept_title") return /** @type {LocalizedString} */ (`This phone may still get pages for you`);
 		if (i?.part === "sign_out_kept_body") return /** @type {LocalizedString} */ (`Brigade couldn't reach the server, so this phone keeps getting your pages until it's back online. Brigade finishes signing you out then, on its own.`);
 		if (i?.part === "sign_out_stuck_title") return /** @type {LocalizedString} */ (`This phone may keep getting your pages`);
 		if (i?.part === "sign_out_stuck_body") return /** @type {LocalizedString} */ (`Brigade couldn't reach the server, nor keep your session to finish signing you out later, so it can't free this phone on its own. To stop the pages, sign in here again with a connection and sign out.`);
 		if (i?.part === "try_again") return /** @type {LocalizedString} */ (`Try again`);
 		if (i?.part === "offline") return /** @type {LocalizedString} */ (`Offline`);
-		if (i?.part === "incident_stale_hint") return /** @type {LocalizedString} */ (`Showing this incident as last received. Changes you make are sent once the connection is back, as long as Brigade stays open.`);
+		if (i?.part === "incident_stale_hint") return /** @type {LocalizedString} */ (`Showing this incident as last received. Changes you make are kept if you close Brigade, and sent once it's open and can reach the server.`);
 		if (i?.part === "update_sending") return /** @type {LocalizedString} */ (`Sending…`);
-		if (i?.part === "update_waiting") return /** @type {LocalizedString} */ (`Not sent yet. Keep Brigade open: it sends once Brigade is reachable again.`);
+		if (i?.part === "update_waiting") return /** @type {LocalizedString} */ (`Not sent yet. It's kept if you close Brigade, and sent once Brigade is open and can reach the server.`);
 		if (i?.part === "show_password") return /** @type {LocalizedString} */ (`Show password`);
 		if (i?.part === "hide_password") return /** @type {LocalizedString} */ (`Hide password`);
 		return /** @type {LocalizedString} */ (`Brigade`)

@@ -445,8 +445,36 @@ extra hop and more moving parts, so we start without it.
   Native passes `randomBytes` from `expo-crypto`, since Hermes has no `crypto.getRandomValues`; the global
   `WebSocket` needs no adapter. How a list reads the connection (`syncView`, `nextFailed`) lives in `packages/sync`
   so both apps say the same thing; each app draws it with its own components.
-- **Client ids** are per browser tab (web) and per launch (mobile) while pending mutations live only in memory: a
-  stable id buys de-duplication across restarts only once the queue itself survives them. Persist both together.
+- **Pending mutations across a restart:** the client takes an injected `pendingStorage` and calls its `save(shard,
+  mutations)` whenever a shard's unconfirmed mutations change (each one's name, args, `mutationId` and creation
+  time, oldest first; `[]` once none is left). `restore(shard, saved)` puts them back: applied optimistically again
+  as the current actor at their creation time, and re-sent on connect with their own ids. The client id is kept
+  with them, since the shard de-duplicates by `(actor, clientId, mutationId)`: one the shard ran before the app was
+  killed is answered from its stored result, not run twice. They keep their creation time, so the retention window
+  is the same as for any pending mutation: past it, `restore` fails them with `expired` and never sends them, and so
+  it does with one dated after the client's clock (the clock moved back, so its window cannot be told).
+  Restored mutations resolve like `mutate`'s, so the app shows their refusal or expiry where it shows any other.
+  `close()` leaves the saved queue alone; the app decides when to drop it. Entries that are not mutations, or past
+  `maxPending`, are skipped or fail with `too_many_pending`.
+- **Client ids:** mobile keeps one per member and workspace, in the file with that member's queue (the app's
+  document directory via `expo-file-system`, which ships with `expo`; secure storage is for small secrets, and a
+  queue holds up to 500 changes). A launch reads only the signed-in member's file in their workspace and deletes
+  every other member's; signing out deletes them all, so a phone handed over never sends or shows the last
+  member's changes. Device registration is not kept: the app registers again on its own. The app restores the
+  queue only once the member's role is known (live, or remembered from the last launch): applied as the `viewer`
+  a role still loading reads as, the changes would drop out of the view until the shard answered, and saves made
+  before then (a device registration) leave the file as it was. Each change rewrites the file whole, aside first
+  and then moved over it; a kill between the move's delete and its rename leaves the copy, which a launch reads. A
+  save still waiting its turn takes a newer one's text, so a burst of confirmations is a write or two. Signing out
+  says so when changes are still unsent. A launch also deletes the member's queues of other workspaces once
+  everything in them is past the retention window. A refusal of a restored change shows on its incident's screen,
+  or else on the incident list's row. **Backups:** the queue holds what members wrote about incidents, so it stays
+  out of device backups. Android: backup rules (`plugins/pending-backup.ts`, `fullBackupContent` and
+  `dataExtractionRules`) exclude only its folder. iOS: the folder is marked `isExcludedFromBackup` by a function of
+  the app's `brigade-call` module (`expo-file-system` has none). Not the caches directory, which iOS and Android
+  may empty when storage runs low, and a phone low on storage is no reason to lose an incident update. The web keeps an id per
+  tab and pending mutations in memory: tabs share `localStorage`, so one queue per tab would need its own
+  ownership rules for what a closed tab left behind, and a browser is rarely killed with an update unsent.
 - Mobile cache: `expo-sqlite` stores the latest snapshot per subscription → the app opens instantly and reads offline.
 - Offline mutations are queued and shown as "pending". Paging actions from notifications (ack/escalate) use plain HTTPS,
   not the socket, because iOS suspends sockets in the background (below).

@@ -53,6 +53,20 @@ public class BrigadeCallModule: Module {
 
     Function("openFullScreenIntentSettings") {}
 
+    /// Leaves a folder of the app's, and what is in it, out of iCloud and computer backups: the queue of changes not
+    /// sent yet (src/lib/pending-files.ts) holds what members wrote about incidents. Takes a `file://` URL.
+    Function("excludeFromBackup") { (uri: String) throws in
+      // Throws rather than quietly succeeding: the caller keeps trying on its next write until the flag is set.
+      guard var url = URL(string: uri), url.isFileURL else {
+        throw NSError(
+          domain: "BrigadeCall", code: 1,
+          userInfo: [NSLocalizedDescriptionKey: "Not a file URL: the folder was not excluded from backup"])
+      }
+      var values = URLResourceValues()
+      values.isExcludedFromBackup = true
+      try url.setResourceValues(values)
+    }
+
     /// The PushKit token the relay sends calls to (hex), or null until PushKit has one.
     AsyncFunction("getVoipToken") { () -> String? in
       return CallCenter.shared.voipToken

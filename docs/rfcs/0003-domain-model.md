@@ -170,7 +170,9 @@ stay refused (RFC 0002 "Auth"). The code is `apps/api/src/invitations.ts`; the r
   invitation emails (invitations and resends) per workspace per day (`INVITATIONS_DAILY_CAP`, `rate_limited`), and
   one send of an invitation per 5 minutes (`INVITATION_RESEND_INTERVAL_MS`, `too_soon`), counted in the shard's own
   ledger (`invitation_sends`) under the member lock. Across workspaces, from D1's `invitation_send` (migration
-  0005): 3 invitation emails per invited address per day (`INVITATIONS_PER_ADDRESS_DAILY_CAP`, `address_limited`),
+  0005): 3 invitation emails per invited address per day (`INVITATIONS_PER_ADDRESS_DAILY_CAP`, `address_limited`;
+  counted on `invitationAddressKey`, the address with any `+tag` dropped from the local part, so `jane+1@` and
+  `jane+2@` share one count, while the invitation keeps the address as typed),
   50 per inviter per day (`INVITATIONS_PER_INVITER_DAILY_CAP`, `inviter_limited`) and 5 per invitation ever
   (`INVITATION_MAX_SENDS`, `send_limit`). The row is inserted only while all three have room, in the same D1 batch as
   the invitation (or its new expiry), so shards inviting at once cannot pass them together. Rows past the daily

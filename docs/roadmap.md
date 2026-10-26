@@ -89,7 +89,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
     invitation email from the outbox, 7-day expiry and per-workspace caps (RFC 0002 "Auth", RFC 0003 "Invitations").
   - Left: switching workspaces in the
     UI, closing open sockets on sign-out or a revoked session (RFC 0004 "Session revocation"), mobile OAuth/OIDC with PKCE
-    via the system browser and QR pairing (mobile email and password sign-in is done, see the Mobile item), password reset (needs the email notifier),
+    via the system browser and QR pairing (mobile email and password sign-in is done, see the Mobile item), password reset
+    (on the email notifier's sender; also the way back to an address someone else signed up with and never verified,
+    so the reset link, which proves control of the address, must also mark it verified and end the account's other
+    sessions; RFC 0002 "Auth"),
     putting `/workspaces/:id` (the stack check) behind auth before `workers_dev` is turned on, and the production
     and staging secrets (owner approval). Also: a uniform sign-up response (the same answer whether or not the email
     is taken, so sign-up cannot enumerate accounts; until then only rate limiting slows it); applying migration 0004

@@ -241,11 +241,11 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   not retried. The caps are read when the plan is made, so deliveries running at once can overshoot by a batch.
   Invitations are the one email to an address nobody proved, so they have their own bounds (RFC 0003
   "Invitations"): only a verified member may invite; per workspace, 30 invitation emails a day, 50 pending and one
-  send per invitation per 5 minutes; and across every workspace, counted in D1, 3 a day to one address, 50 a day
+  send per invitation per 5 minutes; and across every workspace, counted in D1, 3 a day to one address (its `+tags` counted as one), 50 a day
   from one inviter and 5 per invitation ever, so many workspaces cannot add up to flood one inbox. The verification
   email goes only to one's own address and never carries the name typed at sign-up: at most 3 per user in 15
-  minutes and 5 a day. An account squatting someone else's address unverified is replaced by the next sign-up with
-  that address after 24 hours (RFC 0002 "Auth"). Whether these caps are right in production is Q21's.
+  minutes and 5 a day. An address someone else signed up with and never verified stays taken until password reset
+  exists (RFC 0002 "Auth"). Whether these caps are right in production is Q21's.
 - **Push first.** Email only acts on failures push already recorded, so it can never delay or stop a page. The
   consumer handles a batch's messages in parallel and acks each on its own: a page in the same batch as an email
   goes to the relay without waiting for it (tested). Every wait on the email side is bounded (10 s a send, 5 s the

@@ -7,7 +7,6 @@ import {
   createAuth,
   EMAIL_NOT_CONFIGURED_CODE,
   safeNext,
-  UNVERIFIED_RELEASE_S,
   VERIFICATION_DAILY_LIMIT,
   VERIFICATION_RESEND_LIMIT,
 } from "../src/auth.ts";
@@ -304,75 +303,49 @@ describe("what the verification email says", () => {
 });
 
 describe("an address held by an account nobody verified", () => {
-  const age = (userId: string, seconds: number) =>
-    env.DB.prepare(`update "user" set "createdAt" = ? where id = ?`)
-      .bind(new Date(Date.now() - seconds * 1000).toISOString(), userId)
+  // A verification link holds only the address (Better Auth's token), so it is safe only while one account holds
+  // that address for good: nothing frees an address, and an old link can never reach a newer account (RFC 0002
+  // "Auth"). Pinned here, since the earlier release of unverified accounts let exactly that happen.
+  test("stays taken, and its link verifies that account only", async () => {
+    const sent = outbox();
+    const first = await signUp("Jon");
+    await vi.waitFor(() => expect(sent().some((one) => one.to.email === first.email)).toBe(true));
+    const link = /https?:\/\/\S+/.exec(
+      sent().find((one) => one.to.email === first.email)!.text,
+    )![0];
+    const token = new URL(link).searchParams.get("token")!;
+
+    // A sign-up with the address is refused, however old the account is.
+    await env.DB.prepare(`update "user" set "createdAt" = ? where id = ?`)
+      .bind(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), first.id)
       .run();
-  const session = (cookie: string) =>
-    api("/auth/get-session", { headers: { Cookie: cookie } }).then((response) => response.json());
-
-  test("a new sign-up replaces it once it is older than `UNVERIFIED_RELEASE_S`", async () => {
-    const squatter = await signUp("Jon");
-    const created = await api("/workspaces", {
+    const again = await api("/auth/sign-up/email", {
       method: "POST",
-      headers: { Cookie: squatter.cookie },
-      body: JSON.stringify({ name: "Taken" }),
+      body: JSON.stringify({ name: "Jo", email: first.email, password: PASSWORD }),
     });
-    expect(created.status).toBe(201);
-    const { id: workspaceId } = (await created.json()) as { id: string };
-    await age(squatter.id, UNVERIFIED_RELEASE_S + 60);
-
-    const owner = await signUp("Jo", undefined, squatter.email);
-    expect(owner.id).not.toBe(squatter.id);
-    const users = await env.DB.prepare(`select id from "user" where email = ?`)
-      .bind(squatter.email)
+    expect(again.status).toBe(422);
+    // Nor can the account be deleted or moved off the address, the other ways a newer account could get it.
+    const deleted = await api("/auth/delete-user", {
+      method: "POST",
+      headers: { Cookie: first.cookie },
+      body: JSON.stringify({ password: PASSWORD }),
+    });
+    expect(deleted.ok).toBe(false);
+    const moved = await api("/auth/change-email", {
+      method: "POST",
+      headers: { Cookie: first.cookie },
+      body: JSON.stringify({ newEmail: `moved-v${++people}@example.com` }),
+    });
+    expect(moved.ok).toBe(false);
+    const holders = await env.DB.prepare(`select id from "user" where email = ?`)
+      .bind(first.email)
       .all<{ id: string }>();
-    expect(users.results).toEqual([{ id: owner.id }]);
-    // The squatter's sessions went with them; their workspace is left without members.
-    expect(await session(squatter.cookie)).toBe(null);
-    const members = await env.DB.prepare(
-      `select count(*) as n from member where "organizationId" = ?`,
-    )
-      .bind(workspaceId)
-      .first<{ n: number }>();
-    expect(members?.n).toBe(0);
-    expect(await session(owner.cookie)).toMatchObject({ user: { id: owner.id } });
-  });
+    expect(holders.results).toEqual([{ id: first.id }]);
 
-  test("kept while young, once verified, or while in a workspace with anyone else", async () => {
-    const taken = async (email: string) => {
-      const response = await api("/auth/sign-up/email", {
-        method: "POST",
-        body: JSON.stringify({ name: "Kai", email, password: PASSWORD }),
-      });
-      expect(response.status).toBe(422);
-    };
-    const young = await signUp("Lu");
-    await age(young.id, UNVERIFIED_RELEASE_S - 60);
-    await taken(young.email);
-
-    const proven = await signUp("Mo");
-    await age(proven.id, UNVERIFIED_RELEASE_S + 60);
-    await env.DB.prepare(`update "user" set "emailVerified" = 1 where id = ?`)
-      .bind(proven.id)
-      .run();
-    await taken(proven.email);
-
-    const shared = await signUp("Ned");
-    const other = await signUp("Oli");
-    const created = await api("/workspaces", {
-      method: "POST",
-      headers: { Cookie: other.cookie },
-      body: JSON.stringify({ name: "Shared" }),
-    });
-    const { id: workspaceId } = (await created.json()) as { id: string };
-    await env.DB.prepare(
-      `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, 'viewer', ?)`,
-    )
-      .bind(`mem_${crypto.randomUUID()}`, workspaceId, shared.id, new Date().toISOString())
-      .run();
-    await age(shared.id, UNVERIFIED_RELEASE_S + 60);
-    await taken(shared.email);
-    expect(await session(shared.cookie)).toMatchObject({ user: { id: shared.id } });
+    // The old link verifies the one account that ever held the address, and nobody else.
+    const bystander = await signUp("Kai");
+    expect((await api(`/auth/verify-email?token=${encodeURIComponent(token)}`)).status).toBe(200);
+    expect(await verified(first.id)).toBe(1);
+    expect(await verified(bystander.id)).toBe(0);
   });
 });

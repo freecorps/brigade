@@ -137,12 +137,15 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
     session and is for one's own address only (Better Auth would otherwise email any unverified address it is given):
     at most 3 per user in 15 minutes and 5 a day, counted in D1's `rateLimit` table (one upsert per counter, so
     requests at once each count), and 3 per IP a minute; it answers `503 EMAIL_NOT_CONFIGURED` when no sender is set
-    up. **A squatted address is released:** a sign-up with the address of an account still unverified 24 hours after
-    it was created (`UNVERIFIED_RELEASE_S`, past its link) replaces that account: the old user goes with its
-    sessions, accounts and memberships, and a workspace it was alone in is left with no members (its D1 row and shard
-    stay, unreachable, since deleting a workspace is not designed). An unverified account in a workspace with anyone
-    else is kept, and the sign-up is refused as for any taken address; its owner can still verify it, and password
-    reset, once built, is the other way back. **Unverified accounts sign
+    up. **An address someone else signed up with stays taken:** an account
+    nobody verified keeps its address (nothing releases or deletes it), and a sign-up with that address is refused
+    as for any taken one. Releasing it was tried and dropped: a verification link holds only the address, so after a
+    release an old link would verify the newer account; on an instance without email nobody can ever verify, so a
+    timed release would let anyone take any account; and deleting a user there skipped the shard and its outbox
+    (devices and escalation targets stayed behind). For the same reason Better Auth's user deletion and email change
+    stay off (stated in `authOptions`): an address belongs to one account for good, so a link can only ever verify
+    that account. The way back is password reset (not built yet, roadmap): its link proves control of the address,
+    so using it must also mark the address verified and end the account's other sessions. **Unverified accounts sign
     in** and create and use their own workspaces (sign-up creates the first one, and an unproven address harms nobody
     there); what needs a verified address is everything that reaches someone else's inbox or depends on owning the
     address: being emailed by the notifier, inviting (and resending), and accepting or declining an invitation. An

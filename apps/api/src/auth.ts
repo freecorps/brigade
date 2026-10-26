@@ -130,15 +130,10 @@ export const VERIFICATION_TTL_S = 24 * 60 * 60;
  * Verification emails one signed-in user may ask for again (`/send-verification-email`) per window, on top of the
  * per-IP rule (`VERIFICATION_IP_LIMIT`): counted per user in D1's `rateLimit` table, so asking from many addresses
  * floods nobody's inbox. The one sent at sign-up does not count. `VERIFICATION_DAILY_LIMIT` bounds a day of them, so
- * an account squatting someone else's address cannot keep mailing it 3 times every 15 minutes.
+ * an account signed up with someone else's address cannot keep mailing it 3 times every 15 minutes.
  */
 export const VERIFICATION_RESEND_LIMIT = { window: 15 * 60, max: 3 };
 export const VERIFICATION_DAILY_LIMIT = { window: 24 * 60 * 60, max: 5 };
-/**
- * How old an unverified account must be before a new sign-up with its address replaces it (`releaseSquatted`): long
- * past its verification link (`VERIFICATION_TTL_S`), so its owner had every chance to confirm it.
- */
-export const UNVERIFIED_RELEASE_S = 24 * 60 * 60;
 export const VERIFICATION_IP_LIMIT = { window: 60, max: 3 };
 /** The answer when a verification email is asked for and email is not set up. */
 export const EMAIL_NOT_CONFIGURED_CODE = "EMAIL_NOT_CONFIGURED";
@@ -194,7 +189,6 @@ const beforeHook = (bindings: AuthBindings) =>
       }
       return;
     }
-    if (ctx.path === "/sign-up/email") await releaseSquatted(ctx, bindings.database);
     return checkName(ctx);
   });
 
@@ -223,52 +217,6 @@ async function countRequest(
 }
 
 const randomBytes: RandomBytes = (length) => crypto.getRandomValues(new Uint8Array(length));
-
-/**
- * A sign-up with the address of an account nobody verified, older than `UNVERIFIED_RELEASE_S`, replaces that account
- * (RFC 0002 "Auth"): otherwise anyone could hold someone else's address forever by signing up with it first. The old
- * user goes with its sessions, accounts and memberships; a workspace they were alone in is left without members (its
- * D1 row and shard stay, unreachable, as deleting a workspace is not designed yet). An account in a workspace with
- * anyone else is kept, and the sign-up is refused as for any taken address: removing it would take a member from
- * people who may count on them. Never throws for the sign-up's sake: a failure leaves the old account in place.
- */
-async function releaseSquatted(
-  ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0],
-  db: D1Database,
-): Promise<void> {
-  const email: unknown = Reflect.get(Object(ctx.body), "email");
-  if (typeof email !== "string") return;
-  try {
-    const user = await db
-      .prepare(`select id, "emailVerified", "createdAt" from "user" where email = ?`)
-      .bind(email.trim().toLowerCase())
-      .first<{ id: string; emailVerified: number; createdAt: string }>();
-    if (!user || user.emailVerified === 1) return;
-    if (Date.now() - Date.parse(user.createdAt) < UNVERIFIED_RELEASE_S * 1000) return;
-    const shared = await db
-      .prepare(
-        `select count(*) as n from member m
-         where m."userId" = ?1
-           and exists (select 1 from member o where o."organizationId" = m."organizationId" and o."userId" != ?1)`,
-      )
-      .bind(user.id)
-      .first<{ n: number }>();
-    if ((shared?.n ?? 1) > 0) return;
-    // Still unverified in the same batch: a link opened meanwhile keeps the account.
-    const unverified = `(select "emailVerified" from "user" where id = ?1) = 0`;
-    await db.batch([
-      db.prepare(`delete from session where "userId" = ?1 and ${unverified}`).bind(user.id),
-      db.prepare(`delete from account where "userId" = ?1 and ${unverified}`).bind(user.id),
-      db.prepare(`delete from member where "userId" = ?1 and ${unverified}`).bind(user.id),
-      db.prepare(`delete from "user" where id = ?1 and "emailVerified" = 0`).bind(user.id),
-    ]);
-    console.log(JSON.stringify({ message: "unverified account replaced by a new sign-up" }));
-  } catch (error) {
-    console.error(
-      JSON.stringify({ message: "releasing an unverified account failed", error: String(error) }),
-    );
-  }
-}
 
 const checkName = async (ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) => {
   if (!(NAME_PATHS as readonly string[]).includes(ctx.path)) return;
@@ -360,6 +308,12 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
       additionalFields: {
         locale: { type: "string", required: false, input: true },
       },
+      // Stated, not left to the defaults: a verification link holds only the address, so it is safe only while an
+      // address belongs to one account for good. With no way to delete a user or move them to another address, an
+      // old link can never verify a newer account at that address (RFC 0002 "Auth"). Enabling either needs links
+      // bound to the account first.
+      deleteUser: { enabled: false },
+      changeEmail: { enabled: false },
     },
     // The dashboard is same-origin (Better Auth trusts its own base URL); the mobile app is `APP_ORIGIN`.
     trustedOrigins: [APP_ORIGIN],

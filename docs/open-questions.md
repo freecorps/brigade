@@ -108,12 +108,15 @@ to confirm in production:
 - **Notifier emails** (a missed page, nobody paged): only to verified members, at most 5 per user per workspace an
   hour and 200 per workspace a day, read when the plan is made (deliveries at once can overshoot by a batch).
 - **Invitations**, the one email to an unproven address: a verified inviter; per workspace 30 a day, 50 pending,
-  one send per invitation per 5 minutes; across workspaces, counted atomically in D1, 3 a day per invited address,
+  one send per invitation per 5 minutes; across workspaces, counted atomically in D1, 3 a day per invited address
+  (`+tags` counted as one),
   50 a day per inviter and 5 per invitation ever. Is 3 a day per address too few for someone invited to several
   teams at once (a consultant, an onboarding day)? Should an address be able to opt out of invitations altogether?
-- **Verification**: one at sign-up, then at most 3 per user in 15 minutes and 5 a day. A squatted unverified
-  address is released by the next sign-up after 24 hours, unless the squatter shares a workspace with someone; is
-  24 hours right, and should a released account's empty workspace be cleaned up once deleting workspaces exists?
+- **Verification**: one at sign-up, then at most 3 per user in 15 minutes and 5 a day. An address someone else
+  signed up with and never verified stays taken (RFC 0002 "Auth"): no timed release, since a verification link holds
+  only the address and an instance without email can never verify. The way back is password reset, not built yet:
+  its link must also mark the address verified and end the account's other sessions. Until it exists, should an
+  operator have a manual way to free an address?
 - None of these counts the sender's own quota (Cloudflare Email Sending's limits answer `E_RATE_LIMIT_EXCEEDED`,
   retried); a Brigade-wide daily ceiling may be needed before open sign-up on a shared instance.
 

@@ -2,6 +2,7 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   checkInvite,
   createMemoryStore,
+  invitationAddressKey,
   invitationEmail,
   inviteRoles,
   MEMBERS_ACTOR,
@@ -29,6 +30,17 @@ describe("checkInvite", () => {
     expect(inviteRoles({ role: "responder" })).toEqual([]);
     expect(inviteRoles({ role: "viewer" })).toEqual([]);
     expect(checkInvite({ role: "admin" }, "owner")).toEqual({ ok: false, code: "forbidden" });
+  });
+});
+
+describe("invitationAddressKey", () => {
+  test("drops a `+tag` from the local part, and nothing else", () => {
+    expect(invitationAddressKey("jane+1@example.com")).toBe("jane@example.com");
+    expect(invitationAddressKey("jane+2@example.com")).toBe("jane@example.com");
+    expect(invitationAddressKey("jane+a+b@example.com")).toBe("jane@example.com");
+    expect(invitationAddressKey("jane@example.com")).toBe("jane@example.com");
+    // A local part that is only a tag keeps it: there is no inbox name to fall back on.
+    expect(invitationAddressKey("+ops@example.com")).toBe("+ops@example.com");
   });
 });
 

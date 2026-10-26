@@ -24,6 +24,7 @@ import {
   INVITATION_TTL_MS,
   INVITATIONS_DAILY_CAP,
   INVITATIONS_PER_ADDRESS_DAILY_CAP,
+  invitationAddressKey,
   INVITATIONS_PER_INVITER_DAILY_CAP,
   isRole,
   MAX_PENDING_INVITATIONS,
@@ -705,13 +706,17 @@ export class Invitations {
     for (const { key, name, args } of owed) {
       const parsed: unknown = JSON.parse(args);
       if (name === "member.add") {
+        // Without the workspace's id D1 cannot be asked, and "not in D1" would drop an add that is still owed:
+        // leave it for a later alarm.
+        if (workspaceId === undefined) {
+          this.options.log("invitation repair: the shard has no workspace id yet", { name });
+          done = false;
+          continue;
+        }
         let role: string | undefined;
         try {
           const userId = String(Reflect.get(Object(parsed), "id"));
-          role =
-            workspaceId === undefined
-              ? undefined
-              : await readRole(this.options.db, workspaceId, userId);
+          role = await readRole(this.options.db, workspaceId, userId);
         } catch (error) {
           this.options.log("invitation repair: reading D1 failed", { error });
           done = false;
@@ -795,7 +800,8 @@ export class Invitations {
 
   /**
    * Counts one more email of `invitationId` in D1's `invitation_send`, only while the caps that span workspaces all
-   * have room: `INVITATIONS_PER_ADDRESS_DAILY_CAP` for `email`, `INVITATIONS_PER_INVITER_DAILY_CAP` for `inviterId`
+   * have room: `INVITATIONS_PER_ADDRESS_DAILY_CAP` for `email` (its `invitationAddressKey`, which is what the row's
+   * `email` holds, so `+tags` share one count), `INVITATIONS_PER_INVITER_DAILY_CAP` for `inviterId`
    * and `INVITATION_MAX_SENDS` for the invitation (and, with `pending`, only while it is still pending). One
    * statement, so D1 decides it atomically whichever shards are inviting at once.
    */
@@ -818,7 +824,7 @@ export class Invitations {
       .bind(
         newId("snd", now, this.options.randomBytes),
         invitationId,
-        email,
+        invitationAddressKey(email),
         inviterId,
         now,
         now - DAY_MS,
@@ -843,7 +849,7 @@ export class Invitations {
            (select count(*) from invitation_send where "inviterId" = ?2 and at > ?4) as inviter,
            (select count(*) from invitation_send where "invitationId" = ?3) as sends`,
       )
-      .bind(email, inviterId, invitationId, now - DAY_MS)
+      .bind(invitationAddressKey(email), inviterId, invitationId, now - DAY_MS)
       .first<{ address: number; inviter: number; sends: number }>();
     if (counts && counts.sends >= INVITATION_MAX_SENDS) return { ok: false, code: "send_limit" };
     if (counts && counts.address >= INVITATIONS_PER_ADDRESS_DAILY_CAP) {

@@ -97,6 +97,17 @@ export function invitationEmail(value: unknown): string | undefined {
   return EMAIL.test(email) ? email : undefined;
 }
 
+/**
+ * The key `INVITATIONS_PER_ADDRESS_DAILY_CAP` counts an address under: an `invitationEmail` with any `+tag` dropped
+ * from the local part, since most providers deliver `jane+1@` and `jane+2@` to the same inbox. Only the count uses
+ * it; the invitation keeps the address as typed.
+ */
+export function invitationAddressKey(email: string): string {
+  const at = email.lastIndexOf("@");
+  const plus = email.indexOf("+");
+  return plus > 0 && plus < at ? email.slice(0, plus) + email.slice(at) : email;
+}
+
 const invitationId = v.string({ min: 1, max: 64 });
 const userId = v.string({ min: 1, max: 64 });
 

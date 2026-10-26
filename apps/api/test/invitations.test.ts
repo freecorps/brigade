@@ -594,6 +594,23 @@ describe("the limits", () => {
     await invited(second!, address());
   });
 
+  test("`+tags` of one address share its cap; the invitation keeps the address as typed", async () => {
+    const [first, second] = await Promise.all([team(), team()]);
+    const inbox = `jane-${++invitees}`;
+    const one = `${inbox}+1@example.com`;
+    const two = `${inbox}+2@example.com`;
+    await invited(first!, one);
+    // `+1` counted once already; the rest under the bare address.
+    await sendsInD1(INVITATIONS_PER_ADDRESS_DAILY_CAP - 1, { email: `${inbox}@example.com` });
+    const capped = await invite(second!, second!.ana, two, "viewer");
+    expect(capped.status).toBe(429);
+    expect(await capped.json()).toEqual({ error: "address_limited" });
+    const rows = await env.DB.prepare(`select email from invitation where email like ?`)
+      .bind(`${inbox}%`)
+      .all<{ email: string }>();
+    expect(rows.results).toEqual([{ email: one }]);
+  });
+
   test("one inviter sends at most `INVITATIONS_PER_INVITER_DAILY_CAP` a day, from every workspace", async () => {
     const t = await team();
     await sendsInD1(INVITATIONS_PER_INVITER_DAILY_CAP, { inviterId: t.ana.id });
@@ -815,6 +832,28 @@ describe("failures", () => {
       state.storage.sql.exec("update member_repair set value = ? where key = 'at'", Date.now() - 1),
     );
     expect(await runDurableObjectAlarm(t.stub)).toBe(true);
+    expect(await events(t, "member.added")).toMatchObject([{ subject: guest.id }]);
+  });
+
+  test("a repair without the workspace's id keeps an owed `member.add` for later", async () => {
+    const t = await team();
+    const email = address();
+    const id = await invited(t, email);
+    const guest = await signUp("Ivo", { email });
+    await t.withState((state) =>
+      invitations(state, { shardFails: true }).accept(t.id, id, { id: guest.id, email }),
+    );
+    const owed = (state: DurableObjectState) =>
+      state.storage.sql
+        .exec("select count(*) as n from invitation_repair where name = 'member.add'")
+        .one();
+    expect(await t.withState(owed)).toEqual({ n: 1 });
+    expect(await t.withState((state) => invitations(state).repair(undefined))).toBe(false);
+    expect(await t.withState(owed)).toEqual({ n: 1 });
+    expect(await events(t, "member.added")).toEqual([]);
+    // Once it has one, the add runs.
+    expect(await t.withState((state) => invitations(state).repair(t.id))).toBe(true);
+    expect(await t.withState(owed)).toEqual({ n: 0 });
     expect(await events(t, "member.added")).toMatchObject([{ subject: guest.id }]);
   });
 });

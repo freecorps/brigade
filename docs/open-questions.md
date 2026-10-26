@@ -24,7 +24,8 @@ also post the time-sensitive fallback notification at once? Check on devices whi
 
 An incident a monitor opens is titled "<name> is down" in English: data is not translated, and workspaces have no
 default locale yet. Add a workspace locale (set at sign-up, editable by owners) and render server-written titles in
-it?
+it? Text written to one person already follows theirs: each user has a `locale`, and emails are rendered in it
+(RFC 0005 "Email"); a workspace locale would default it and cover what is shared.
 
 ## Q18 — Who is paged, what is left after escalation policies (RFC 0005, RFC 0006)
 
@@ -36,13 +37,18 @@ without a policy keeps the interim rule (commander, then every owner, admin and 
   SEV2), or should a policy say from which severity it runs?
 - Should a monitor (and later an alert route) pick its own policy? Runs already record theirs; only the default is
   used in this slice.
-- A failed page is surfaced on the timeline and in logs. When even the interim fallback reached nobody, should it
-  also reach someone outside the incident (an email to owners, the external dead-man switch)?
+- A failed page is surfaced on the timeline, in logs and now by email (RFC 0005 "Email"): a member a SEV1 or SEV2
+  page missed is told once per incident, and the owners are told when a page reached nobody and nothing else will
+  page on its own; both on by default, `workspace.setEmail` turns either off. Still open: a dashboard switch for it;
+  whether a member may opt out of their own emails (deferred to notification preferences); whether the owners'
+  email should also go to admins, or skip an owner who declared the incident; and whether the external dead-man
+  switch should hear of it too.
 - Should a level whose pushes all fail escalate before its timeout (needs delivery receipts)? An exhausted run
   already falls back to everyone who can respond once (RFC 0006 "Who is paged"); should a workspace be able to turn
   that off, or point it at a smaller group?
 - Every member without a device the page was for still gets their own "Couldn't page …" line: right for a small
-  team, noisy for a large one where most never install the app.
+  team, noisy for a large one where most never install the app. The same members are emailed (SEV1 and SEV2, once
+  per incident), which is the point for those who never install it, and the same noise for those who do not want it.
 
 Who counts as a member is the shard's copy of the member list, not D1 (RFC 0006 "Who is paged"). Member changes made
 through Brigade (roles, removal, leaving) update it with D1 and drop a removed member's devices at once (RFC 0003
@@ -65,8 +71,8 @@ it), or D1 (sign-in, heartbeat routing). Options, not exclusive:
 - A relay `/health?deep=1` that asks APNs for a provider token (no push), so a revoked key shows up.
 - One D1 read per beat.
 
-Also open: who inside Brigade hears `brigade.status_changed` (an email to the instance's operators once the email
-notifier exists?), and whether paging Brigade's operators on a monitor stuck at `unknown` should ride on this switch (it carries no
+Also open: who inside Brigade hears `brigade.status_changed` (an email to the instance's operators, now that the email
+notifier exists; it needs a list of operators, which the instance-operator role below would give), and whether paging Brigade's operators on a monitor stuck at `unknown` should ride on this switch (it carries no
 workspace data today).
 
 Decided for now: `GET /health/paging` says only `{ status }` without a session or to a user in no workspace; the
@@ -80,7 +86,7 @@ The first schedules slice made choices that are easy to change now and harder on
 
 - A member removed from the workspace (or made a viewer) is taken out of every rotation and the rest move up, so
   everyone's later shifts shift. The alternative keeps their slots as gaps. Which should it be, and should the
-  owners be told (an email once the email notifier exists)?
+  owners be told (the email notifier exists now, RFC 0005 "Email")?
 - Responders may add and remove overrides for themselves only. Should they also swap a shift with someone else
   (an override for another member, accepted by them)?
 - A layer emptied by removals stays, as a gap, until someone edits it. Should an empty schedule warn on the

@@ -51,6 +51,10 @@ roles and removal, invitations, …) would change D1 without the shard's member 
 event in the outbox (RFC 0005). Member roles, removal and leaving go through `/workspaces/:id/members/:userId`
 (below); deleting a workspace is off.
 
+A user also has a `locale` (`en` or `pt-BR`, Better Auth's `additionalFields`): the language Brigade writes to them
+in, emails included (RFC 0008). Sign-up takes it from the body, or else from the first `Accept-Language`;
+`/update-user` changes it (the dashboard's language switch does). Anything else is `400 INVALID_LOCALE`.
+
 A sync upgrade is authenticated by the Worker (`src/actor.ts`): it checks `Origin`, reads the session, looks up the
 member's role in D1, and forwards a request it builds itself carrying the actor (`Brigade-Actor`) and the workspace
 (`Brigade-Workspace`). The shard trusts those headers: it is only reachable through this Worker. RBAC runs in the
@@ -75,12 +79,15 @@ vp run --filter @freecorps/brigade-web db:migrate      # the local database `vp 
 wrangler d1 migrations apply DB --remote --env dev     # brigade-db-dev (in apps/api)
 ```
 
-| Environment | Database             | Status                                               |
-| ----------- | -------------------- | ---------------------------------------------------- |
-| local       | Miniflare's local D1 | `db:migrate` above                                   |
-| `dev`       | `brigade-db-dev`     | created on the Freecorps account, migrations applied |
-| `staging`   | `brigade-db-staging` | created on the Freecorps account, migrations applied |
-| production  | `brigade-db`         | created on the Freecorps account, migrations applied |
+| Environment | Database             | Status                                              |
+| ----------- | -------------------- | --------------------------------------------------- |
+| local       | Miniflare's local D1 | `db:migrate` above                                  |
+| `dev`       | `brigade-db-dev`     | created on the Freecorps account, 0001-0002 applied |
+| `staging`   | `brigade-db-staging` | created on the Freecorps account, 0001-0002 applied |
+| production  | `brigade-db`         | created on the Freecorps account, 0001-0002 applied |
+
+`0003_user_locale.sql` (the user's language, for emails) is not applied to the deployed databases yet: apply it
+before the API that reads it is deployed there (owner's call).
 
 `BETTER_AUTH_SECRET` is required in every environment (`secrets.required`): `wrangler secret put
 BETTER_AUTH_SECRET --env dev` for a deployed Worker, and for local runs a gitignored `apps/api/.dev.vars`:
@@ -159,6 +166,51 @@ delivery logs `page dead-lettered` and it goes to `brigade-events-dlq`, which th
   client reconnects and replays. Frames still queued on a socket the shard closed are dropped unread, so nothing runs
   out of order before the replay.
 
+## Email
+
+RFC 0005 "Email". The same `queue` handler routes each `notification.failed` from push to the email notifier
+(`src/notify-email.ts`): the shard plans who is emailed (`WorkspaceDO.planEmail`, `src/mailer.ts`), the Worker reads
+their addresses and languages from D1 (`user.email`, `user.locale`), renders each email in the recipient's language
+(`src/email-templates.ts`, `email_text` in packages/i18n, escaped HTML and plain text) and sends it through an
+`EmailSender` (`src/email.ts`), then reports back (`WorkspaceDO.recordEmail`). Two emails, both on by default
+(`workspace.setEmail`, owners and admins):
+
+- **A member a page missed** (no phone, every push failed, Android, no relay, the device cap): SEV1 and SEV2 only,
+  once per incident.
+- **The owners, when nobody could be paged**: a page that settled having reached nobody, when nothing else will page
+  on its own (no escalation run, or the last page of a run that ended).
+
+Neither once the incident is acknowledged or resolved. A failed send is retried (30 s, 1, 2, 4 minutes); after 5
+attempts, or at once when the service refuses the message or address, it is an `email_failed` timeline entry and a
+`notification.failed` with `channel: "email"`. Push never waits on any of this: email only acts on failures push
+already recorded, and a page in the same batch is handled in parallel.
+
+Which sender is used:
+
+| Set                             | Sender                                                                                |
+| ------------------------------- | ------------------------------------------------------------------------------------- |
+| `EMAIL_FROM` (and the binding)  | Cloudflare Email Sending through the `EMAIL` binding (`send_email` in wrangler.jsonc) |
+| `EMAIL_LOG=1` (local runs only) | Logs each email (one JSON line with the text) and sends nothing                       |
+| neither                         | No email; failed pages are still on the timeline                                      |
+
+`vp run dev` sets `EMAIL_LOG`, so the terminal shows what would be sent. Setting `EMAIL_FROM` in the shell
+(`EMAIL_FROM="Brigade <brigade@example.com>" vp run dev`) uses the binding instead, which wrangler simulates locally:
+it logs the message and writes it to a local file, and never sends. Never set `remote: true` on the binding.
+
+**To send for real** (owner's call, per environment):
+
+1. Onboard a sending domain to Cloudflare Email Sending in the account (dashboard: Compute & AI > Email Service >
+   Email Sending > Onboard Domain; it adds the SPF and DKIM records). Add a DMARC record if the domain has none.
+2. `wrangler secret put EMAIL_FROM` with a sender on that domain, `Brigade <brigade@your-domain>`.
+3. Optionally `wrangler secret put DASHBOARD_URL` with the dashboard's origin (`https://…`), so emails link to the
+   incident; without it they carry no link.
+4. Apply `migrations/0003_user_locale.sql` to the environment's D1 before deploying (`wrangler d1 migrations apply`):
+   the notifier reads `user.locale`.
+
+Emails go to the address each user signed up with: email verification does not exist yet (RFC 0002), so an address
+is not proven to be theirs. What an email carries is the incident's number, severity and title and the workspace's
+name.
+
 ## Monitoring
 
 RFC 0007. Monitors live in the workspace shard (`monitors`, `alerts`, and the server-only `heartbeats` with each
@@ -235,7 +287,7 @@ vp run build:staging        # CLOUDFLARE_ENV=staging vp build (also build:dev)
 wrangler deploy --dry-run   # validates the built output (drop --dry-run to deploy)
 ```
 
-Durable Object bindings are not inherited by environments, so each one repeats them.
+Durable Object and `send_email` bindings are not inherited by environments, so each one repeats them.
 
 Local secrets go in `apps/api/.dev.vars` (`.dev.vars.<env>` per environment), which is gitignored. Their names
 come from `secrets.required` in `wrangler.jsonc`, so `wrangler types` no longer reads `.dev.vars` and the committed

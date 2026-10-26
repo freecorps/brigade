@@ -72,8 +72,13 @@ the key), `device.unregistered` (`reason`: `unregistered` by the member, `token_
 gone, `member_removed` when its member left or was removed) and `notification.failed` (`incidentId`, `eventId` of the event that asked for the page, `channel: "push"`,
 `userId` or null, `reason`: `no_devices`, `undelivered`, `unsupported`, `not_configured`, `over_limit`,
 `dead_lettered`, and for escalation levels `nobody_on_call`, `schedule_missing`, `not_a_member`; `schedule`: the
-name of the schedule nobody was on call for, else null), with actor
-`sys_notifier` for what the notifier records. `notification.failed` rides with a `page_failed` timeline entry.
+name of the schedule nobody was on call for, else null; `page`: the escalation run and step it belongs to, absent
+outside a run), with actor
+`sys_notifier` for what the notifier records. `notification.failed` rides with a `page_failed` timeline entry. The
+email notifier's own failures are `notification.failed` with `channel: "email"` (`incidentId`, `eventId`: the push
+failure the email was about, `userId`, `reason`: `undelivered`, `about`: `unpaged` or `nobody_paged`), with an
+`email_failed` entry ("Couldn't email Ana that nobody could be paged"). Changing who is emailed emits
+`workspace.email_changed` (`unpaged`, `nobodyPaged`).
 
 The paging pipeline's own watchdog (RFC 0007 "Watching the watcher") writes events too, through its own outbox and
 the same Queue, with `workspaceId` `_system` (no workspace can have it; `source` `brigade://_system/watchdog`, actor
@@ -114,8 +119,10 @@ Decided with the drain (`apps/api/src/outbox.ts`):
 
 ## Notifiers
 
-The first consumer is the API Worker's own `queue` handler (`apps/api/src/notify.ts`); RFC 0002's notifier Worker
-splits off when there is more than push to run. It routes each event to its notifiers; push is the only one so far.
+The first consumer is the API Worker's own `queue` handler (`apps/api/src/notify.ts`). It routes each event to its
+notifiers: push, and email for a page that failed ("Email" below). Email stays in this Worker too: it needs the same
+bindings (the shards, D1) and is small; RFC 0002's notifier Worker splits off with Slack, or when a notifier's load
+or dependencies should not share the API's.
 
 - **What pages**: `incident.declared` (urgency `page` for SEV1 and SEV2, `high` otherwise),
   `incident.severity_changed` raised into SEV1 or SEV2 (`page`), and `escalation.paged` for a level the shard's
@@ -149,8 +156,64 @@ splits off when there is more than push to run. It routes each event to its noti
   never blocks the events after it; any drain that throws (storage) backs off like a failed send.
 - **Not yet.** Delivery receipts (did the phone show it, did anyone see it) and the "why wasn't I paged" view are
   Phase 2; until then "delivered" means the relay and APNs accepted the push. Escalating early when a level's pushes all
-  fail (rather than at its timeout) waits for delivery receipts. A failed page alerts nobody outside the incident yet:
-  the timeline entry and the log line are what surfaces it.
+  fail (rather than at its timeout) waits for delivery receipts. Outside the incident, a failed page reaches people
+  by email (below).
+
+## Email
+
+The second notifier, in the same consumer (`apps/api/src/notify-email.ts`; the shard's side in `src/mailer.ts`).
+It is the base for invitations, email verification and password reset (RFC 0002), which are not built yet.
+
+- **Provider-agnostic.** An `EmailSender` (`src/email.ts`) takes one rendered email (`to`, `subject`, `text`,
+  `html`) and answers accepted, or refused with whether a retry may help; it never throws. Implementations:
+  Cloudflare Email Sending through the Workers `send_email` binding (`EMAIL`), which needs no API key; a double that
+  logs each email instead of sending it (`EMAIL_LOG=1`, set by `vp run dev`); the tests' recorder. The sender
+  address is the secret `EMAIL_FROM`, on a domain onboarded to Email Sending, so no domain is in the repo; without it
+  (and without the double) no email is sent and nothing is recorded: failed pages are on the timeline as before.
+  The binding's limit, quota and service errors and the receiving server refusing for now are retried; any other
+  code (an unverified sender, a suppressed address, a bad message) is final at once.
+- **What leads to an email.** Only `notification.failed` from push. The shard decides (`Mailer.plan`), reading the
+  page ledger, never writing it:
+  - **A member a page missed** (`unpaged`: `no_devices`, `undelivered`, `unsupported`, `not_configured`,
+    `over_limit`), for a SEV1 or SEV2 incident, once per incident and member: "Brigade tried to page you about
+    SEV1 · INC-142 in Acme, but the page didn't reach your phone: …". A member without a phone also reads how to get
+    pages on it.
+  - **The owners, when nobody could be paged** (`nobody_paged`, Q18): the page settled having reached nobody on any
+    device and nothing else will page on its own: there is no escalation run (the interim rule was the page), or the
+    page was the last of a run that ended (everyone who can respond). A level that missed everyone is not it: the
+    next level fires. Neither is a dead-lettered page (paged again on its own event), a stalled level (everyone is
+    paged after it) or a page only its declarer could answer. Owners come from D1, so one who never opened Brigade
+    is told too; at most 50. Once per page.
+  - Neither once the incident is acknowledged or no longer active, or when the workspace turned it off.
+- **Workspace settings.** `workspace.setEmail` (`workspace:manage`: owners and admins) sets both on or off; both are
+  on by default (`DEFAULT_EMAIL_SETTINGS`), since the alternative is that nobody outside the incident hears of a page
+  that failed. The dashboard has no switch yet. Per-member opt-out is deferred: these emails say a page failed, so
+  turning them off is a workspace's decision for now; a member preference arrives with notification preferences.
+- **Addresses and language.** The shard keeps no email addresses. The consumer reads each recipient's address, name
+  and `locale` from D1 (Better Auth's `user`, joined with `member` so a member removed since is not emailed). D1 is
+  read only here, off the page path; a D1 failure is retried like a failed send. Each email is rendered in the
+  recipient's locale (RFC 0008, `email_text` in `packages/i18n`), plain text plus simple HTML. Every line is rendered
+  as text and escaped as a whole in the HTML, so an incident's title, a workspace's or a person's name never becomes
+  markup; the subject and display names are made single-line. A link to the incident needs `DASHBOARD_URL` (an
+  http(s) origin, a secret).
+- **Idempotency.** The shard keeps an email ledger: emails by key (`unpaged:<incident>:<member>`,
+  `nobody:<page event>`) and who each reached. A plan holds each email it returns for 60 s (`EMAIL_CLAIM_MS`), so the
+  failures of one page in one batch (one event per member) send the owners' email once: the others leave it to the
+  delivery holding it, which sends it, lets it go to retry, or is redelivered by the Queue if its Worker died. A
+  redelivery skips whoever an email reached and does nothing once the email is done. The ledger lives 15 days, like
+  the page ledger.
+- **Failure.** A failed send is retried with the message: 30 s, 1, 2, 4 minutes. After 5 attempts, or at once for a
+  refusal retrying cannot fix, each recipient the email never reached gets an `email_failed` entry and a
+  `notification.failed` (`channel: "email"`), which no notifier acts on (nothing loops). The shard being unreachable
+  retries the message like any event and, past the Queue's retries, it is dead-lettered and dropped (logged): only
+  pages are recorded from there.
+- **Push first.** Email only acts on failures push already recorded, so it can never delay or stop a page. The
+  consumer handles a batch's messages in parallel and acks each on its own: a page in the same batch as an email
+  goes to the relay without waiting for it (tested). Every wait on the email side is bounded (10 s a send, 5 s the
+  D1 read).
+- **Not yet.** Emails go to the address a user signed up with, which is not verified until email verification
+  exists. No email to Brigade's operators when the paging pipeline degrades (Q19), to owners when a rotation
+  changes (Q20), or for invitations; each can now build on the `EmailSender`.
 
 ## Provider interfaces (published in `packages/sdk`, MIT)
 

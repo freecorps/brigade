@@ -276,6 +276,10 @@ How a page uses them is RFC 0006 "Who is paged".
 - Monitors (`monitor:read`, `monitor:manage`): owners and admins manage them (create, edit, pause, delete);
   responders and viewers read them. Responders run the incidents monitors open, but changing what is watched is an
   admin's call.
+- Workspace settings (`workspace:manage`): owners and admins. The first is who is emailed when paging fails
+  (`workspace.setEmail`, `workspace.email_changed`; kept on the `workspace` row as `email`, absent meaning both on;
+  RFC 0005 "Email"). A failed email is an `email_failed` timeline entry, written by `sys_notifier` like
+  `page_failed`.
 - **System actors** (RFC 0004 "Server-side writes") carry a role like members and pass the same check. Monitors run
   as `{ kind: "system", id: "sys_monitors", role: "admin" }` (`MONITOR_ACTOR`); incidents they open are declared by
   `sys_monitors`. Their server-only mutations (`monitor.report`) are never reachable from a socket, so the role

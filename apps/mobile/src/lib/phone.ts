@@ -81,8 +81,9 @@ export function finishDeps(server: Server): FinishDeps {
         actor: () => memberActor(leftover.userId, undefined),
         cookie: () => leftover.cookie,
       });
-      // A refused upgrade (the member was removed: 403) ends the try at once instead of after the timeout. It stays
-      // pending: nothing else can take the device off as them (RFC 0006 "A handed-over phone").
+      // A socket that never opens (the upgrade refused, as for a removed member's 403, or the server unreachable)
+      // ends the try at once instead of after the timeout. It stays pending and is tried again on the backoff:
+      // nothing else can take the device off as them (RFC 0006 "A handed-over phone").
       const refused = neverOpened(sync.client, sync.shard);
       try {
         return await unregisterPhone(phoneDeps(sync), 10_000, refused.promise);

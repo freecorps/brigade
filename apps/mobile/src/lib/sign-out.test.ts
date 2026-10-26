@@ -160,6 +160,7 @@ test("signing out offline signs out here but keeps the session aside, unrevoked,
       workspaceId: WORKSPACE,
       origin: ORIGIN,
       expiresAt: w.clock.now + LIFETIME,
+      keptAt: w.clock.now,
     },
   ]);
   // Revoking it now would leave nothing that can take the phone off the shard.
@@ -369,11 +370,42 @@ test("a kept session the socket renews is kept for as long as the server keeps i
   };
   expect(await finishSignOut(silent)).toBe("pending");
   expect(parseLeftovers(w.phoneState.kept)).toMatchObject([{ expiresAt: w.clock.now + LIFETIME }]);
-  // Past a lifetime from when it was kept, the session still works on the server: the record is not dropped.
-  w.clock.now = keptAt + LIFETIME + DAY;
+  // Before a lifetime from when it was kept is up, the renewed session finishes it.
+  w.clock.now = keptAt + LIFETIME - DAY;
   expect(await finishSignOut(w.finishDeps)).toBe("finished");
   expect(w.store.scan("devices")).toEqual([]);
   expect(w.sessions.has("ana-cookie")).toBe(false);
+});
+
+test("a removed member's kept sign-out is dropped and revoked a lifetime after it was kept, however often it renewed", async () => {
+  const w = world();
+  await registerPhone(phone(w.as(ANA)));
+  w.network.offline = true;
+  await signOutPhone({ userId: ANA.id, workspaceId: WORKSPACE }, w.signOutDeps(ANA));
+  const keptAt = w.clock.now;
+  w.network.offline = false;
+  // Ana is removed: /get-session still answers, and every upgrade renews the session before the 403.
+  const refused: FinishDeps = {
+    ...w.finishDeps,
+    unregister: async (leftover) => {
+      w.expiries.set(leftover.cookie, w.clock.now + LIFETIME);
+      return false;
+    },
+  };
+  for (let day = 2; day < 7; day += 2) {
+    w.clock.now = keptAt + day * DAY;
+    expect(await finishSignOut(refused)).toBe("pending");
+  }
+  const [renewed] = parseLeftovers(w.phoneState.kept);
+  expect(renewed!.expiresAt).toBeGreaterThan(keptAt + LIFETIME);
+  expect(w.sessions.has("ana-cookie")).toBe(true);
+  // A lifetime after it was kept: dropped, and the session revoked once on the way out.
+  w.clock.now = keptAt + LIFETIME;
+  expect(await finishSignOut(refused)).toBe("none");
+  expect(w.phoneState.kept).toBeNull();
+  expect(w.sessions.has("ana-cookie")).toBe(false);
+  // The phone stays Ana's on that shard (RFC 0006): only her removal from the shard frees it.
+  expect(await registerPhone(phone(w.as(BIA)))).toBe("taken");
 });
 
 test("an expiry /get-session reports later than the kept one is stored", async () => {
@@ -398,6 +430,7 @@ test("a full list drops a sign-out already off its shard, never one still on it"
     workspaceId,
     origin: ORIGIN,
     expiresAt: w.clock.now + LIFETIME,
+    keptAt: w.clock.now,
   });
   // One only left to revoke, then the rest still on their shards.
   await w.kept.add(record(0, null));
@@ -423,11 +456,14 @@ test("a kept sign-out that is not one is ignored", () => {
     workspaceId: null,
     origin: ORIGIN,
     expiresAt: 1,
+    keptAt: 0,
   };
   expect(parseLeftovers(JSON.stringify([ok]))).toEqual([ok]);
-  // A record from before origins and times were kept cannot be told apart from another server's: dropped.
+  // A record from before origins and times were kept cannot be told apart from another server's, and one without
+  // when it was kept has no limit: dropped.
   const { origin: _origin, expiresAt: _expiresAt, ...old } = ok;
-  expect(parseLeftovers(JSON.stringify([old, ok]))).toEqual([ok]);
+  const { keptAt: _keptAt, ...unbounded } = ok;
+  expect(parseLeftovers(JSON.stringify([old, unbounded, ok]))).toEqual([ok]);
   for (const raw of [
     null,
     "",

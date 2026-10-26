@@ -99,9 +99,10 @@ socket. So someone who never opened Brigade is not paged (they have no device ei
   paged. The page path does not re-read D1: a D1 outage would then become a reason a page is late or missing.
 - **A handed-over phone** (same install, so the same device id, signed in as another member) keeps paging the first
   member until it unregisters: `device.register` refuses another member's device id (`forbidden`). Signing out
-  unregisters it, so the next member's sign-in registers it for them. Signing out first waits for a registration
-  already under way (asking for the key, permission or token): it sends nothing once sign-out has begun, and one
-  already sent is ahead of the unregister on the same socket, so the shard drops it again.
+  unregisters it, so the next member's sign-in registers it for them. Signing out does not wait for a registration
+  already under way (asking for the key, permission or token, which can take forever without APNs): it stops the
+  registration first, which then sends nothing when it gets them, and one already sent is queued ahead of the
+  unregister on the same sync client and socket, so the shard drops it again.
   - **Signed out offline** (`device.unregister` did not answer within 5 s): the app signs out on the phone only and
     keeps the member's session, unrevoked, in secure storage with their user and workspace ids, the auth server it
     belongs to and when the session expires (`brigade_signed_out`, a list with one record per session,
@@ -121,7 +122,9 @@ socket. So someone who never opened Brigade is not paged (they have no device ei
     (`SESSION_LIFETIME_S`, Better Auth's `expiresIn`) from then; it also takes any later expiry `/get-session`
     reports. A record is finished only against the server it was kept for (a development build's server moves with
     the Metro host); one kept for another server does not hold up registering for this one. A record is dropped
-    once past its expiry, when the server has forgotten the session. Not renewing on the upgrade instead would let
+    once past its expiry, when the server has forgotten the session, and in any case a lifetime after it was kept
+    (`keptAt`), however often its session was renewed meanwhile: then the app tries `/sign-out` with it once (best
+    effort, and only against its own server) so the session goes with it. Not renewing on the upgrade instead would let
     a member whose app keeps its socket open but rarely asks `/get-session` be signed out under them. The session
     is not revoked first because only it can say
     whose device this is. Until it finishes, a next member who signs in sees "taken" (the phone still pages the
@@ -139,9 +142,12 @@ socket. So someone who never opened Brigade is not paged (they have no device ei
     removal, once it exists (above), will drop a removed member's devices.
   - **Removed from the workspace before the phone came back**: the session is alive, but the socket's upgrade
     answers 403 `not_a_member`, so `device.unregister` never reaches the shard. A socket that closes before it
-    ever opens ends that try at once (no 10 s wait); the record stays pending and is tried on the backoff until its
-    session expires, since the shard still pages the removed member on this phone (Q18) and re-adding them lets it
-    finish. Until then the next member sees "taken".
+    ever opens ends that try at once (no 10 s wait); the record stays pending and is tried on the backoff, since
+    the shard still pages the removed member on this phone (Q18) and re-adding them lets it finish. Each try still
+    renews the session (`/get-session` sees it alive and the upgrade renews it before the 403), so its expiry never
+    comes: the record is dropped a lifetime after it was kept, revoking the session on the way out, which bounds
+    both the record (one of the 10) and the removed member's credential. Until then the next member sees "taken";
+    after it the device stays the removed member's on that shard, as for a kept session that is gone.
 
 Content: title `SEV1 · INC-142` (codes, so no locale is needed), body the incident's title, and the incident id,
 sealed per device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id, so a repeat replaces

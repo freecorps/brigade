@@ -168,7 +168,7 @@ test("a stopped cycle neither reports nor tries again", async () => {
   expect(p.log).toEqual(["finish"]);
 });
 
-test("signing out while a registration waits for the push token sends no device.register", async () => {
+test("signing out does not wait for a push token that never comes, and the token arriving later sends nothing", async () => {
   const time = clock();
   const sent: string[] = [];
   let token!: (value: string) => void;
@@ -177,6 +177,7 @@ test("signing out while a registration waits for the push token sends no device.
     apsEnvironment: "development",
     publicKey: async () => `BA${"abcdefghij".repeat(9).slice(0, 85)}`,
     permission: async () => true,
+    // No APNs: getDevicePushTokenAsync may never return.
     pushToken: () =>
       new Promise((resolve) => {
         token = resolve;
@@ -194,22 +195,17 @@ test("signing out while a registration waits for the push token sends no device.
     setTimer: time.setTimer,
   });
   await time.settle();
-  // Sign-out starts: it waits for the registration still asking for the token.
-  let stopped = false;
-  const stopping = cycle.stop().then(() => {
-    stopped = true;
-  });
-  await time.settle();
-  expect(stopped).toBe(false);
+  // Sign-out starts while the token is still pending: stopping resolves at once.
+  await cycle.stop();
+  await deps.mutate("device.unregister", {});
   token("ab".repeat(32));
-  await stopping;
-  // Only now does it unregister, and nothing it would have to undo went out.
-  expect(sent).toEqual([]);
+  await time.settle();
+  expect(sent).toEqual(["device.unregister"]);
   expect(shown).toEqual([]);
   expect(time.pending()).toEqual([]);
 });
 
-test("stopping during a registration already sent resolves without waiting for the shard's answer", async () => {
+test("a registration already sent stays ahead of the unregister sent after stopping, without waiting for the shard", async () => {
   const time = clock();
   const sent: string[] = [];
   const cycle = pagingCycle({
@@ -225,7 +221,8 @@ test("stopping during a registration already sent resolves without waiting for t
   });
   await time.settle();
   await cycle.stop();
-  expect(sent).toEqual(["device.register"]);
+  sent.push("device.unregister");
+  expect(sent).toEqual(["device.register", "device.unregister"]);
 });
 
 test("a finish or registration that throws counts as not done, not as a crash", async () => {

@@ -31,9 +31,11 @@ export type PagingCycle = {
   /** Tries now (dropping the pending wait); resolves once that try is done. */
   retry: () => Promise<void>;
   /**
-   * Stops trying. Resolves once no registration can still send `device.register`: a try still asking for the key,
-   * permission or token sends nothing, and one that already sent it is on the socket ahead of anything sent after
-   * (signing out unregisters after it, so the shard drops what it registered).
+   * Stops trying, at once: from here no registration sends `device.register`. A try still asking for the key,
+   * permission or token sends nothing when it gets them (`proceed` says false), and one that already sent it is
+   * queued on the sync client ahead of anything sent after (`mutate` queues in the same tick `proceed` answers, so
+   * signing out unregisters after it on the same socket and the shard drops what it registered). It never waits
+   * for the try: a push token can take forever to come without APNs.
    */
   stop: () => Promise<void>;
 };
@@ -50,8 +52,6 @@ export function pagingCycle(deps: PagingDeps): PagingCycle {
   let again = false;
   let cancel: (() => void) | null = null;
   let running: Promise<void> | null = null;
-  /** Resolves once the registration in flight has sent `device.register`, given up before it, or ended. */
-  let registering: Promise<void> | null = null;
 
   const wait = () => {
     cancel?.();
@@ -63,20 +63,7 @@ export function pagingCycle(deps: PagingDeps): PagingCycle {
     if (stopped) return;
     let paging: Paging | null = null;
     if (deps.register) {
-      let past!: () => void;
-      const gate = new Promise<void>((resolve) => {
-        past = resolve;
-      });
-      registering = gate;
-      const proceed = () => {
-        past();
-        return !stopped;
-      };
-      paging = await deps
-        .register(proceed)
-        .catch(() => "failed" as const)
-        .finally(past);
-      if (registering === gate) registering = null;
+      paging = await deps.register(() => !stopped).catch(() => "failed" as const);
       if (stopped) return;
       deps.onPaging(paging);
     }
@@ -116,7 +103,7 @@ export function pagingCycle(deps: PagingDeps): PagingCycle {
     stop: () => {
       stopped = true;
       wait();
-      return registering ?? Promise.resolve();
+      return Promise.resolve();
     },
   };
 }

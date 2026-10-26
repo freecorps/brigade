@@ -18,6 +18,11 @@ export type Leftover = {
    * renew it). Past it the server has forgotten the session, so the record is dropped.
    */
   expiresAt: number;
+  /**
+   * When it was kept (ms). A full lifetime later the record is dropped however often its session was renewed (a
+   * removed member's tries renew it but never finish), after one last best-effort revoke.
+   */
+  keptAt: number;
 };
 
 export const SIGNED_OUT_KEY = "brigade_signed_out";
@@ -30,13 +35,14 @@ export const MAX_KEPT = 10;
 
 function parseOne(value: unknown): Leftover | null {
   if (typeof value !== "object" || value === null) return null;
-  const { cookie, userId, workspaceId, origin, expiresAt } = value as Record<string, unknown>;
+  const { cookie, userId, workspaceId, origin, expiresAt, keptAt } = value as Record<string, unknown>;
   if (typeof cookie !== "string" || cookie === "" || typeof userId !== "string") return null;
   if (workspaceId !== null && typeof workspaceId !== "string") return null;
   if (typeof origin !== "string" || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) {
     return null;
   }
-  return { cookie, userId, workspaceId, origin, expiresAt };
+  if (typeof keptAt !== "number" || !Number.isFinite(keptAt)) return null;
+  return { cookie, userId, workspaceId, origin, expiresAt, keptAt };
 }
 
 /** The kept sign-outs in `raw`; anything that is not one is ignored. */
@@ -154,7 +160,8 @@ export async function signOutPhone(
   const keep = async (workspaceId: string | null) => {
     if (cookie === "") return false;
     const leftover = { cookie, userId: member.userId, workspaceId, origin: deps.origin };
-    return deps.add({ ...leftover, expiresAt: deps.now() + deps.lifetime }).then(
+    const keptAt = deps.now();
+    return deps.add({ ...leftover, expiresAt: keptAt + deps.lifetime, keptAt }).then(
       () => true,
       () => false,
     );
@@ -198,6 +205,8 @@ export type FinishResult = "none" | "finished" | "pending";
  * can: the leftover is dropped, and the phone stays the other member's on that shard (RFC 0006). One kept against
  * another server (a development build whose Metro host moved) waits for the app to talk to that server again, until
  * its session would have expired anyway; it is not this server's to finish, so it never makes the result `pending`.
+ * Whatever renewed it, a record is dropped a lifetime after it was kept (`keptAt`), revoking its session first when
+ * it is this server's (best effort): a removed member's record would otherwise keep itself and the session alive.
  */
 export async function finishSignOut(deps: FinishDeps): Promise<FinishResult> {
   const kept = await deps.leftovers.list();
@@ -208,7 +217,13 @@ export async function finishSignOut(deps: FinishDeps): Promise<FinishResult> {
       await deps.leftovers.remove(leftover.cookie);
       continue;
     }
-    if (leftover.origin !== deps.origin) continue;
+    const mine = leftover.origin === deps.origin;
+    if (deps.now() >= leftover.keptAt + deps.lifetime) {
+      if (mine) await deps.signOut(leftover.cookie).catch(() => false);
+      await deps.leftovers.remove(leftover.cookie);
+      continue;
+    }
+    if (!mine) continue;
     if (!(await finishOne(leftover, deps))) result = "pending";
     else if (result === "none") result = "finished";
   }

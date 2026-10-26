@@ -42,7 +42,8 @@ keeps being paged, and one demoted keeps being paged until they next open Brigad
 (member management) delete the row and the member's devices, or change the role, in the shard. No API path removes or
 demotes a member today, so only an edit made outside Brigade hits this. It also leaves a phone that member signed
 out of offline unable to come off the shard (their socket is refused), so the next member on it stays "taken" until
-the kept session expires (RFC 0006 "A handed-over phone").
+the app drops the kept sign-out a session lifetime after keeping it, and the device stays theirs on that shard after
+that (RFC 0006 "A handed-over phone").
 
 ## Q19 — What else the dead-man switch should prove (RFC 0007)
 

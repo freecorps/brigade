@@ -4,6 +4,8 @@ import {
   MAX_CLIENT_MESSAGE_LENGTH,
   parseClientMessage,
   parseServerMessage,
+  PING_FRAME,
+  PONG_FRAME,
   PROTOCOL_VERSION,
   type ClientMessage,
   type ServerMessage,
@@ -198,4 +200,17 @@ test("the client parser bounds what a client can send", () => {
   expect(
     parseClientMessage(JSON.stringify({ type: "unsubscribe", subId: "s0", all: true })).ok,
   ).toBe(false);
+});
+
+test("the heartbeat frames are exact texts that parse both ways and take no other field", () => {
+  // The shard's auto-response matches the exact text, so the client must send these bytes.
+  expect(encode({ type: "ping" })).toBe(PING_FRAME);
+  expect(encode({ type: "pong" })).toBe(PONG_FRAME);
+  expect(parseClientMessage(PING_FRAME)).toEqual({ ok: true, message: { type: "ping" } });
+  expect(parseServerMessage(PONG_FRAME)).toEqual({ ok: true, message: { type: "pong" } });
+  expect(parseClientMessage('{"type":"ping","at":1}').ok).toBe(false);
+  expect(parseServerMessage('{"type":"pong","at":1}').ok).toBe(false);
+  // Each only travels one way.
+  expect(parseServerMessage(PING_FRAME).ok).toBe(false);
+  expect(parseClientMessage(PONG_FRAME).ok).toBe(false);
 });

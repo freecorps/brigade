@@ -31,6 +31,7 @@ import {
   MUTATION_ERROR_CODES,
   MUTATION_RETENTION_MS,
   parseServerMessage,
+  PING_FRAME,
   PROTOCOL_VERSION,
   TOKEN,
   type ClientMessage,
@@ -74,6 +75,16 @@ export type Backoff = {
   factor?: number;
 };
 
+/**
+ * The socket heartbeat (RFC 0004 "Heartbeat"): how a half-open socket (the network gone without a close) is found.
+ */
+export type Heartbeat = {
+  /** Time from an open (or the last pong) to the next ping, less up to a fifth of jitter. Default 25 000. */
+  intervalMs?: number;
+  /** How long after a ping a frame (any frame) must arrive before the socket counts as dead. Default 10 000. */
+  timeoutMs?: number;
+};
+
 type QueryRegistry = { readonly [name: string]: AnyQuery };
 type MutationRegistry = { readonly [name: string]: AnyMutation };
 
@@ -111,6 +122,8 @@ export type SyncClientOptions<Q extends QueryRegistry, M extends MutationRegistr
    * Strict Mode, a quick navigation) keeps it instead of re-subscribing. Default 1 000 ms.
    */
   lingerMs?: number;
+  /** Pings on every open socket; `false` turns them off. */
+  heartbeat?: Heartbeat | false;
   /** Default `MAX_PENDING_MUTATIONS`. */
   maxPending?: number;
   /** Malformed or stale frames, socket failures, listener errors. Default `console.warn` when there is one. */
@@ -250,6 +263,10 @@ type Shard = {
   idleTimer?: unknown;
   /** Fires when the oldest unconfirmed mutation passes the retention window. */
   expiryTimer?: unknown;
+  /** Sends the next ping on the open socket. */
+  pingTimer?: unknown;
+  /** Set while a ping waits for an answer: fires when the socket stayed silent too long. */
+  deadlineTimer?: unknown;
 };
 
 const globals = globalThis as unknown as {
@@ -656,16 +673,20 @@ export class SyncClient<
       shard.open = true;
       this.connectionChanged(shard.id);
       this.greet(shard);
+      // Unless greeting it failed (or a listener closed the client): then it is gone already.
+      if (shard.socket === socket && shard.open) this.armPing(shard);
     };
     socket.onmessage = ((event: { data: unknown }) => {
       // Frames from a socket the client already left are ignored.
       if (shard.socket !== socket) return;
+      this.heard(shard);
       this.receive(shard, event.data);
     }) as (event: never) => void;
     socket.onclose = () => {
       if (shard.socket !== socket) return;
       shard.socket = null;
       shard.open = false;
+      this.stopHeartbeat(shard);
       // A connection that delivered data starts the backoff over.
       if (shard.healthy) shard.attempt = 0;
       shard.healthy = false;
@@ -699,12 +720,65 @@ export class SyncClient<
     const socket = shard.socket;
     shard.socket = null;
     shard.open = false;
+    this.stopHeartbeat(shard);
     if (!socket) return;
     try {
       socket.close(1000, reason);
     } catch (error) {
       this.warn(`Could not close the socket for ${shard.id}`, error);
     }
+  }
+
+  // ----------------------------------------------------------------------------------------- heartbeat
+
+  /** Schedules the next ping on the open socket, jittered so a fleet of clients does not ping in step. */
+  private armPing(shard: Shard): void {
+    const heartbeat = this.options.heartbeat;
+    if (heartbeat === false || this.closed) return;
+    const interval = heartbeat?.intervalMs ?? 25_000;
+    shard.pingTimer = this.timers.setTimeout(
+      () => {
+        shard.pingTimer = undefined;
+        if (!shard.open || !shard.socket) return;
+        shard.deadlineTimer = this.timers.setTimeout(
+          () => this.silent(shard),
+          heartbeat?.timeoutMs ?? 10_000,
+        );
+        this.sendFrame(shard, PING_FRAME);
+      },
+      Math.round(interval * (1 - this.random() / 5)),
+    );
+  }
+
+  /** Any frame proves the socket alive: a ping waiting for its answer has it, and the next one is scheduled. */
+  private heard(shard: Shard): void {
+    if (shard.deadlineTimer === undefined) return;
+    this.timers.clearTimeout(shard.deadlineTimer);
+    shard.deadlineTimer = undefined;
+    this.armPing(shard);
+  }
+
+  /**
+   * Nothing arrived within the deadline after a ping: the socket is half-open (the network went without a close)
+   * or the shard is stuck. Drop it and reconnect like after any lost connection, so the UI stops showing Live.
+   */
+  private silent(shard: Shard): void {
+    shard.deadlineTimer = undefined;
+    if (!shard.socket) return;
+    this.warn(`No answer from ${shard.id} within the heartbeat deadline; reconnecting`);
+    // A dropped network, not a refusal: a connection that delivered data starts the backoff over, as on a close.
+    if (shard.healthy) shard.attempt = 0;
+    shard.healthy = false;
+    this.closeSocket(shard, "heartbeat timeout");
+    if (!this.closed && this.refs(shard) > 0) this.retry(shard);
+    this.connectionChanged(shard.id);
+  }
+
+  private stopHeartbeat(shard: Shard): void {
+    for (const timer of [shard.pingTimer, shard.deadlineTimer]) {
+      if (timer !== undefined) this.timers.clearTimeout(timer);
+    }
+    shard.pingTimer = shard.deadlineTimer = undefined;
   }
 
   private disconnect(shard: Shard): void {
@@ -850,6 +924,8 @@ export class SyncClient<
       }
       case "error":
         return this.error(shard, message);
+      case "pong":
+        return; // Its only news, that the socket is alive, was taken in `heard`.
     }
   }
 

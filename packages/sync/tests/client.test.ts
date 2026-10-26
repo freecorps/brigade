@@ -17,6 +17,7 @@ import {
   type SyncClientOptions,
 } from "../src/client.ts";
 import { MUTATION_RETENTION_MS } from "../src/protocol.ts";
+import { syncView } from "../src/view.ts";
 import { FakeNetwork, FakeServer, FakeTimers, type FakeSocket } from "./fake-server.ts";
 
 const T0 = Date.UTC(2026, 9, 24, 12, 0, 0);
@@ -902,7 +903,8 @@ test("another epoch at the same version gets a snapshot, not an empty patch", as
 
 test("the retention window expires a mutation on a timer, with no reconnect", async () => {
   const { client, incidentId, settle, network, timers } = setup();
-  const a = client(ana);
+  // No heartbeat: it would find the silent socket and reconnect (see the heartbeat tests).
+  const a = client(ana, ana, { heartbeat: false });
   const active = watch(a.query(SHARD, "incidents.active", {}));
   await settle();
   // The socket stays open but the server never answers.
@@ -1447,4 +1449,131 @@ test("two clients post to one incident at once: each ends with the other's entry
   }
   expect(shard.store.get("incidents", id)?.timelineSeq).toBe(4);
   expect(warnings).toEqual([]);
+});
+
+// ------------------------------------------------------------------------------------------------- heartbeat
+
+/** With `random` at 0.5, the ping comes a tenth before the 25 s interval; the deadline is 10 s after it. */
+const PING_AT = 22_500;
+const DEADLINE = 10_000;
+
+const pings = (socket: FakeSocket) => sentTypes(socket).filter((type) => type === "ping").length;
+
+test("a pong keeps the socket live, and pings go on every interval", async () => {
+  const { client, settle, network, timers, shard } = setup();
+  const a = client(ana);
+  watch(a.query(SHARD, "incidents.active", {}));
+  await settle();
+  timers.advance(PING_AT - 1);
+  expect(pings(network.sockets[0])).toBe(0);
+  timers.advance(1);
+  expect(pings(network.sockets[0])).toBe(1);
+  await settle(); // The ping reaches the shard and its pong comes back.
+  timers.advance(DEADLINE);
+  expect(a.connectionState(SHARD)).toBe("open");
+  // The next ping is an interval after the pong, not after the first ping's deadline.
+  timers.advance(PING_AT - DEADLINE);
+  expect(pings(network.sockets[0])).toBe(2);
+  await settle();
+  timers.advance(DEADLINE);
+  expect(shard.pings).toBe(2);
+  expect(a.connectionState(SHARD)).toBe("open");
+  expect(network.sockets).toHaveLength(1);
+});
+
+test("a socket silent past the deadline is dropped and the client reconnects and resumes", async () => {
+  const { client, settle, network, timers, shard, warnings } = setup();
+  const a = client(ana);
+  const active = watch(a.query(SHARD, "incidents.active", {}));
+  const seen: string[] = [];
+  a.onConnectionChange(SHARD, () => seen.push(a.connectionState(SHARD)));
+  await settle();
+  // Half-open: the socket still looks open, but nothing comes back.
+  shard.silent = true;
+  timers.advance(PING_AT);
+  await settle();
+  expect(shard.pings).toBe(1);
+  timers.advance(DEADLINE - 1);
+  expect(a.connectionState(SHARD)).toBe("open");
+  timers.advance(1);
+  // Straight to waiting, never a passing idle; the list says reconnecting, not Live.
+  expect(seen).toEqual(["open", "waiting"]);
+  expect(network.sockets[0].closed).toBe(true);
+  expect(syncView(active.get().status, a.connectionState(SHARD), false)).toBe("reconnecting");
+  expect(warnings.some((warning) => warning.includes("heartbeat"))).toBe(true);
+
+  // The connection had delivered data, so the backoff starts over: the first retry delay.
+  shard.silent = false;
+  timers.advance(backoffDelay(0, 0.5));
+  await settle();
+  expect(seen.slice(2)).toEqual(["connecting", "open"]);
+  expect(network.sockets).toHaveLength(2);
+  expect(network.sockets[1].sent).toContainEqual(
+    expect.objectContaining({ type: "subscribe", version: 0, epoch: shard.epoch }),
+  );
+  expect(active.get()).toMatchObject({ status: "ready" });
+});
+
+test("any frame after a ping counts as an answer", async () => {
+  const { client, settle, network, timers, shard, incidentId } = setup();
+  const a = client(ana);
+  const active = watch(a.query(SHARD, "incidents.active", {}));
+  await settle();
+  shard.silent = true; // No pong: only data.
+  timers.advance(PING_AT);
+  await settle();
+  timers.advance(DEADLINE - 1);
+  shard.write(bia, "incident.declare", { id: incidentId(), title: "DB lag", severity: "sev3" });
+  await settle();
+  timers.advance(DEADLINE);
+  expect(a.connectionState(SHARD)).toBe("open");
+  expect(active.get().rows).toHaveLength(1);
+  // And the next ping is scheduled from that frame.
+  timers.advance(PING_AT - DEADLINE);
+  expect(pings(network.sockets[0])).toBe(2);
+});
+
+test("no pings while the socket is down, after the idle close or after close()", async () => {
+  const { client, settle, network, timers, shard } = setup();
+  const a = client(ana);
+  const stop = watch(a.query(SHARD, "incidents.active", {})).stop;
+  await settle();
+  network.disconnect();
+  await settle();
+  network.reconnect();
+  // Down, then back after the backoff: the first ping is an interval after the new open.
+  timers.advance(PING_AT);
+  await settle();
+  expect(shard.pings).toBe(0);
+  timers.advance(PING_AT);
+  await settle();
+  expect(shard.pings).toBe(1);
+  expect(pings(network.sockets[0])).toBe(0);
+
+  // The idle close stops the heartbeat with the socket.
+  stop();
+  timers.advance(1000 + 5000);
+  await settle();
+  expect(a.connectionState(SHARD)).toBe("idle");
+  expect(timers.pending).toBe(0);
+
+  const b = client(bia);
+  watch(b.query(SHARD, "incidents.active", {}));
+  await settle();
+  b.close();
+  expect(timers.pending).toBe(0);
+  timers.advance(10 * PING_AT);
+  expect(shard.pings).toBe(1);
+});
+
+test("heartbeat: false sends no pings and keeps a silent socket", async () => {
+  const { client, settle, timers, shard } = setup();
+  const a = client(ana, ana, { heartbeat: false });
+  watch(a.query(SHARD, "incidents.active", {}));
+  await settle();
+  expect(timers.pending).toBe(0);
+  timers.advance(10 * PING_AT);
+  await settle();
+  expect(shard.pings).toBe(0);
+  expect(a.connectionState(SHARD)).toBe("open");
 });

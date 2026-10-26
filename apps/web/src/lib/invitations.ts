@@ -37,6 +37,9 @@ export type InvitationError =
   | "already_invited"
   | "limit_reached"
   | "rate_limited"
+  | "address_limited"
+  | "inviter_limited"
+  | "send_limit"
   | "too_soon"
   | "not_found"
   | "expired"
@@ -59,6 +62,9 @@ const KNOWN: readonly string[] = [
   "already_invited",
   "limit_reached",
   "rate_limited",
+  "address_limited",
+  "inviter_limited",
+  "send_limit",
   "too_soon",
   "not_found",
   "expired",

@@ -79,6 +79,14 @@ describe("the API client", () => {
       error: "invalid_email",
     });
     expect(
+      await inviteMember(
+        "ws_1",
+        "x@example.com",
+        "viewer",
+        answer(429, { error: "address_limited" }),
+      ),
+    ).toEqual({ ok: false, error: "address_limited" });
+    expect(
       await inviteMember("ws_1", "x@example.com", "viewer", answer(500, { error: "boom" })),
     ).toEqual({
       ok: false,

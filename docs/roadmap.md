@@ -116,6 +116,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Left for later items: publishing an update to a status page (Phase 3), role definitions (Phase 3), editing an
     update, member names from invitations (members appear once they open Brigade), and the mobile incident detail.
 - [ ] Brigade Sync in production for web + mobile
+  - Done so far: D1 `brigade-db` and `brigade-db-staging` exist with the migrations applied. Left: production and
+    staging queues, the first deploy, and the relay's production secrets.
 - [ ] Web dashboard: incident list/detail, monitors
   - Done so far: the incident list, the incident page (`/incidents/<number>`) and the Monitors card.
 - [ ] Mobile: login, incident list/detail, push via relay, ack from notification

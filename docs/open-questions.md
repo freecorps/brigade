@@ -26,23 +26,6 @@ An incident a monitor opens is titled "<name> is down" in English: data is not t
 default locale yet. Add a workspace locale (set at sign-up, editable by owners) and render server-written titles in
 it?
 
-## Q17 — Should "no data" page? (RFC 0007)
-
-A monitor whose probes stop reporting turns `unknown` ("No data"): it is never shown as up, a firing alert stays
-firing, and `monitor.status_changed` goes to the outbox, but it opens no incident, since the failure is Brigade's
-probes, not the customer's service. Should a monitor that stays without data (say 15 minutes) page the workspace, or
-page Brigade's own operators through the external dead-man switch ("Watching the watcher") instead?
-
-The current rule has a blind spot: a monitor that goes down _after_ most of its probes died is `unknown` too, and
-pages nobody, even when every probe still reporting sees it down (three regions, two silent, the third reports
-down: below the fresh floor, so "No data"; pinned by a test in `packages/schema/tests/monitors.test.ts`). Options:
-
-- Keep the rule: `unknown` never pages; the dashboard and `monitor.status_changed` are the only signal.
-- Page the workspace after a monitor stays `unknown` for a while (say 15 minutes).
-- Page when every fresh result is down, even below the fresh floor: one surviving region can then open an
-  incident, at the price of a single bad probe paging on its own.
-- Page Brigade's operators (not the workspace) on `unknown`, through the external dead-man switch.
-
 ## Q18 — Who is paged before on-call schedules (RFC 0005, RFC 0006)
 
 Until Phase 2's schedules, a page goes to the incident commander if assigned, otherwise to every owner, admin and
@@ -72,7 +55,7 @@ it), or D1 (sign-in, heartbeat routing). Options, not exclusive:
 - One D1 read per beat.
 
 Also open: who inside Brigade hears `brigade.status_changed` (an email to the instance's operators once the email
-notifier exists?), and whether Q17's "page Brigade's operators on `unknown`" should ride on this switch (it carries no
+notifier exists?), and whether paging Brigade's operators on a monitor stuck at `unknown` should ride on this switch (it carries no
 workspace data today).
 
 Decided for now: `GET /health/paging` says only `{ status }` without a session or to a user in no workspace; the
@@ -98,3 +81,4 @@ reads it in the logs. Open: an instance-operator role (or an allowlist in config
 | Q11 | Task runner                    | Vite+ `vp run`, no Turborepo.                                                                                                                                                                                                                                       |
 | Q12 | CLA                            | Handled by Freecorps; CLA Assistant + standard CLA text reviewed by counsel.                                                                                                                                                                                        |
 | Q16 | Heartbeats, made-up workspaces | The Worker looks the workspace id up in D1 (`organization`, cached per isolate) before it routes a ping, so a token for a workspace that does not exist gets the same 404 and creates no Durable Object (RFC 0007). If D1 fails, the ping goes to the shard anyway. |
+| Q17 | Should "no data" page?         | No. `unknown` ("No data") opens no incident and pages nobody; the dashboard and `monitor.status_changed` are the signal. The blind spot (an outage only the surviving probes see) is accepted; Q19 covers watching Brigade's own probes.                            |

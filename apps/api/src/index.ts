@@ -266,8 +266,8 @@ export function workerAuth(
 }
 
 /** Tries per workspace at signing a reset account out (`signOutWith`), and the wait before each retry. */
-export const SIGN_OUT_ATTEMPTS = 3;
-export const SIGN_OUT_RETRY_MS = 250;
+const SIGN_OUT_ATTEMPTS = 3;
+const SIGN_OUT_RETRY_MS = 250;
 
 /** An inherited workspace in the takeover notice: what Brigade paused there, or that it could not. */
 export type InheritedWorkspace = {

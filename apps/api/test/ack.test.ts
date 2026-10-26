@@ -277,9 +277,9 @@ describe("POST /workspaces/:id/incidents/:incidentId/ack", () => {
     expect(other.status).toBe(200);
     const row = await t.withShard((shard) => shard.store.get("incidents", second));
     expect(row?.acknowledgedBy).toBe(t.caio.id);
-    expect((await acks(t)).map((event) => event.subject).sort()).toEqual(
-      [t.incident, second].sort(),
-    );
+    const subjects = (await acks(t)).map((event) => event.subject);
+    expect(subjects).toHaveLength(2);
+    expect(subjects).toEqual(expect.arrayContaining([t.incident, second]));
   });
 
   test("an incident of another workspace is not found, and stays unacknowledged", async () => {

@@ -38,9 +38,13 @@ export const keptSignOuts = leftovers({
       : SecureStore.setItemAsync(SIGNED_OUT_KEY, raw),
 });
 
+/** How long a session lasts on the server, in ms (Better Auth's `expiresIn`). */
+export const SESSION_LIFETIME_MS = SESSION_LIFETIME_S * 1000;
+
 /**
  * Finishing kept sign-outs against `server`, as the member who left: Better Auth's `/get-session` (without
- * refreshing the session, so asking does not keep it alive) and `/sign-out` with their `Cookie` (and the app's
+ * refreshing the session, so asking does not keep it alive; it says when the session expires) and `/sign-out` with
+ * their `Cookie` (and the app's
  * `expo-origin`, as `@better-auth/expo` sends it), and a sync client of their own for `device.unregister`, closed
  * when it answers.
  */
@@ -50,7 +54,7 @@ export function finishDeps(server: Server): FinishDeps {
     leftovers: keptSignOuts,
     origin: server.auth,
     now: Date.now,
-    lifetime: SESSION_LIFETIME_S * 1000,
+    lifetime: SESSION_LIFETIME_MS,
     session: async (cookie) => {
       try {
         const response = await fetch(`${server.auth}/get-session?disableRefresh=true`, {
@@ -58,8 +62,11 @@ export function finishDeps(server: Server): FinishDeps {
         });
         if (response.status === 401) return false;
         if (!response.ok) return null;
-        const body = (await response.json()) as { session?: unknown } | null;
-        return Boolean(body?.session);
+        const body = (await response.json()) as { session?: { expiresAt?: unknown } } | null;
+        if (!body?.session) return false;
+        const expiresAt = Date.parse(String(body.session.expiresAt));
+        // An expiry it cannot read: as long as the server could keep it.
+        return { expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + SESSION_LIFETIME_MS };
       } catch {
         return null;
       }

@@ -8,9 +8,11 @@ import {
 } from "@freecorps/brigade-schema";
 import { expect, test } from "vite-plus/test";
 import { registerPhone, unregisterPhone, type DeviceDeps } from "./device";
+import { needsRetry } from "./paging";
 import {
   finishSignOut,
   leftovers,
+  MAX_KEPT,
   parseLeftovers,
   signOutPhone,
   type FinishDeps,
@@ -67,6 +69,14 @@ function world() {
   const actors: Record<string, Actor> = { [ANA.id]: ANA, [BIA.id]: BIA };
   const phoneState = { cookie: "ana-cookie", kept: null as string | null };
   const clock = { now: 1_000_000 };
+  // When each session expires on the server: past it, the server no longer knows it.
+  const expiries = new Map<string, number>(
+    [...sessions.keys()].map((cookie) => [cookie, clock.now + LIFETIME]),
+  );
+  const known = (cookie: string) => {
+    if ((expiries.get(cookie) ?? 0) <= clock.now) sessions.delete(cookie);
+    return sessions.has(cookie);
+  };
   const kept = leftovers({
     read: async () => phoneState.kept,
     write: async (raw) => {
@@ -91,6 +101,7 @@ function world() {
     add: kept.add,
     origin: ORIGIN,
     now: () => clock.now,
+    lifetime: LIFETIME,
   });
 
   const finishDeps: FinishDeps = {
@@ -98,7 +109,10 @@ function world() {
     origin: ORIGIN,
     now: () => clock.now,
     lifetime: LIFETIME,
-    session: async (cookie) => (network.offline ? null : sessions.has(cookie)),
+    session: async (cookie) => {
+      if (network.offline) return null;
+      return known(cookie) ? { expiresAt: expiries.get(cookie)! } : false;
+    },
     unregister: (leftover) => unregisterPhone(phone(as(actors[leftover.userId]!)), 10),
     signOut: async (cookie) => {
       if (network.offline) return false;
@@ -107,7 +121,18 @@ function world() {
     },
   };
 
-  return { store, network, as, sessions, phoneState, clock, kept, signOutDeps, finishDeps };
+  return {
+    store,
+    network,
+    as,
+    sessions,
+    expiries,
+    phoneState,
+    clock,
+    kept,
+    signOutDeps,
+    finishDeps,
+  };
 }
 
 test("signing out online takes the phone off the shard and keeps nothing", async () => {
@@ -134,7 +159,7 @@ test("signing out offline signs out here but keeps the session aside, unrevoked,
       userId: ANA.id,
       workspaceId: WORKSPACE,
       origin: ORIGIN,
-      savedAt: w.clock.now,
+      expiresAt: w.clock.now + LIFETIME,
     },
   ]);
   // Revoking it now would leave nothing that can take the phone off the shard.
@@ -309,17 +334,99 @@ test("a kept sign-out is finished only against its own server, and dropped once 
   expect(w.phoneState.kept).toBeNull();
 });
 
+test("a sign-out kept against another server does not hold up registering for this one", async () => {
+  const w = world();
+  await registerPhone(phone(w.as(ANA)));
+  w.network.offline = true;
+  await signOutPhone(
+    { userId: ANA.id, workspaceId: WORKSPACE },
+    { ...w.signOutDeps(ANA), origin: "http://localhost:5173/api/auth" },
+  );
+  w.network.offline = false;
+  // Not this server's to finish: nothing to retry for it, so Bia's registration result alone decides.
+  const finished = await finishSignOut(w.finishDeps);
+  expect(finished).toBe("none");
+  expect(needsRetry(finished, "on")).toBe(false);
+  expect(parseLeftovers(w.phoneState.kept)).toHaveLength(1);
+});
+
+test("a kept session the socket renews is kept for as long as the server keeps it", async () => {
+  const w = world();
+  await registerPhone(phone(w.as(ANA)));
+  w.network.offline = true;
+  await signOutPhone({ userId: ANA.id, workspaceId: WORKSPACE }, w.signOutDeps(ANA));
+  const keptAt = w.clock.now;
+  w.network.offline = false;
+  // Six days on, the phone opens Ana's socket, but the shard does not answer in time.
+  w.clock.now += 6 * DAY;
+  const silent: FinishDeps = {
+    ...w.finishDeps,
+    unregister: async (leftover) => {
+      // Better Auth renews a session last renewed over a day ago on the upgrade.
+      w.expiries.set(leftover.cookie, w.clock.now + LIFETIME);
+      return false;
+    },
+  };
+  expect(await finishSignOut(silent)).toBe("pending");
+  expect(parseLeftovers(w.phoneState.kept)).toMatchObject([{ expiresAt: w.clock.now + LIFETIME }]);
+  // Past a lifetime from when it was kept, the session still works on the server: the record is not dropped.
+  w.clock.now = keptAt + LIFETIME + DAY;
+  expect(await finishSignOut(w.finishDeps)).toBe("finished");
+  expect(w.store.scan("devices")).toEqual([]);
+  expect(w.sessions.has("ana-cookie")).toBe(false);
+});
+
+test("an expiry /get-session reports later than the kept one is stored", async () => {
+  const w = world();
+  await registerPhone(phone(w.as(ANA)));
+  w.network.offline = true;
+  await signOutPhone({ userId: ANA.id, workspaceId: WORKSPACE }, w.signOutDeps(ANA));
+  w.network.offline = false;
+  w.expiries.set("ana-cookie", w.clock.now + 2 * LIFETIME);
+  const down: FinishDeps = { ...w.finishDeps, unregister: async () => false };
+  expect(await finishSignOut(down)).toBe("pending");
+  expect(parseLeftovers(w.phoneState.kept)).toMatchObject([
+    { expiresAt: w.clock.now + 2 * LIFETIME },
+  ]);
+});
+
+test("a full list drops a sign-out already off its shard, never one still on it", async () => {
+  const w = world();
+  const record = (n: number, workspaceId: string | null): Leftover => ({
+    cookie: `cookie-${n}`,
+    userId: `usr_${n}`,
+    workspaceId,
+    origin: ORIGIN,
+    expiresAt: w.clock.now + LIFETIME,
+  });
+  // One only left to revoke, then the rest still on their shards.
+  await w.kept.add(record(0, null));
+  for (let n = 1; n < MAX_KEPT; n++) await w.kept.add(record(n, WORKSPACE));
+  await w.kept.add(record(MAX_KEPT, WORKSPACE));
+  const cookies = (await w.kept.list()).map(({ cookie }) => cookie);
+  expect(cookies).toHaveLength(MAX_KEPT);
+  expect(cookies).not.toContain("cookie-0");
+  // Every one is still on a shard: keeping Ana's would drop one of them, so it is refused and she is told.
+  await expect(w.kept.add(record(99, WORKSPACE))).rejects.toThrow();
+  await registerPhone(phone(w.as(ANA)));
+  w.network.offline = true;
+  expect(await signOutPhone({ userId: ANA.id, workspaceId: WORKSPACE }, w.signOutDeps(ANA))).toBe(
+    "stuck",
+  );
+  expect((await w.kept.list()).map(({ cookie }) => cookie)).toEqual(cookies);
+});
+
 test("a kept sign-out that is not one is ignored", () => {
   const ok: Leftover = {
     cookie: "c",
     userId: "usr_a",
     workspaceId: null,
     origin: ORIGIN,
-    savedAt: 1,
+    expiresAt: 1,
   };
   expect(parseLeftovers(JSON.stringify([ok]))).toEqual([ok]);
   // A record from before origins and times were kept cannot be told apart from another server's: dropped.
-  const { origin: _origin, savedAt: _savedAt, ...old } = ok;
+  const { origin: _origin, expiresAt: _expiresAt, ...old } = ok;
   expect(parseLeftovers(JSON.stringify([old, ok]))).toEqual([ok]);
   for (const raw of [
     null,

@@ -12,24 +12,31 @@ export type Leftover = {
   workspaceId: string | null;
   /** The Better Auth base URL the session belongs to: a development build's server moves with the Metro host. */
   origin: string;
-  /** When it was kept (ms): past the session's lifetime the server has forgotten it, so it is dropped. */
-  savedAt: number;
+  /**
+   * When the session expires on the server (ms), as far as the phone knows: a full lifetime from when it was kept,
+   * then what `/get-session` reports, pushed to a full lifetime again whenever its socket is opened (the upgrade may
+   * renew it). Past it the server has forgotten the session, so the record is dropped.
+   */
+  expiresAt: number;
 };
 
 export const SIGNED_OUT_KEY = "brigade_signed_out";
 
-/** Kept sign-outs past this many are dropped, oldest first: each is a session nobody can use on this phone. */
-const MAX_KEPT = 10;
+/**
+ * At most this many kept sign-outs. Past it, the oldest already off its shard (only the revoke left) is dropped; one
+ * still on its shard never is, so keeping another then fails (`signOutPhone` says `stuck`).
+ */
+export const MAX_KEPT = 10;
 
 function parseOne(value: unknown): Leftover | null {
   if (typeof value !== "object" || value === null) return null;
-  const { cookie, userId, workspaceId, origin, savedAt } = value as Record<string, unknown>;
+  const { cookie, userId, workspaceId, origin, expiresAt } = value as Record<string, unknown>;
   if (typeof cookie !== "string" || cookie === "" || typeof userId !== "string") return null;
   if (workspaceId !== null && typeof workspaceId !== "string") return null;
-  if (typeof origin !== "string" || typeof savedAt !== "number" || !Number.isFinite(savedAt)) {
+  if (typeof origin !== "string" || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) {
     return null;
   }
-  return { cookie, userId, workspaceId, origin, savedAt };
+  return { cookie, userId, workspaceId, origin, expiresAt };
 }
 
 /** The kept sign-outs in `raw`; anything that is not one is ignored. */
@@ -57,10 +64,12 @@ export type LeftoverStorage = {
  */
 export type Leftovers = {
   list: () => Promise<Leftover[]>;
-  /** Keeps a sign-out, replacing one kept with the same session. */
+  /** Keeps a sign-out, replacing one kept with the same session; rejects when the list is full (`MAX_KEPT`). */
   add: (leftover: Leftover) => Promise<void>;
   /** Marks the session's record as off its shard; nothing when it is not kept (any more). */
   released: (cookie: string) => Promise<void>;
+  /** Moves the session's expiry to `expiresAt` if that is later; nothing when it is not kept (any more). */
+  renewed: (cookie: string, expiresAt: number) => Promise<void>;
   /** Forgets the session's record only. */
   remove: (cookie: string) => Promise<void>;
 };
@@ -83,13 +92,27 @@ export function leftovers(storage: LeftoverStorage): Leftovers {
       return next;
     },
     add: (leftover) =>
-      change((list) =>
-        [...list.filter(({ cookie }) => cookie !== leftover.cookie), leftover].slice(-MAX_KEPT),
-      ),
+      change((list) => {
+        const next = [...list.filter(({ cookie }) => cookie !== leftover.cookie), leftover];
+        while (next.length > MAX_KEPT) {
+          const done = next.findIndex(({ workspaceId }) => workspaceId === null);
+          if (done === -1) throw new Error("Too many sign-outs kept");
+          next.splice(done, 1);
+        }
+        return next;
+      }),
     released: (cookie) =>
       change((list) =>
         list.map((leftover) =>
           leftover.cookie === cookie ? { ...leftover, workspaceId: null } : leftover,
+        ),
+      ),
+    renewed: (cookie, expiresAt) =>
+      change((list) =>
+        list.map((leftover) =>
+          leftover.cookie === cookie && expiresAt > leftover.expiresAt
+            ? { ...leftover, expiresAt }
+            : leftover,
         ),
       ),
     remove: (cookie) => change((list) => list.filter((leftover) => leftover.cookie !== cookie)),
@@ -109,13 +132,16 @@ export type SignOutDeps = {
   /** The Better Auth base URL the session belongs to. */
   origin: string;
   now: () => number;
+  /** How long a session lasts on the server (Better Auth's `expiresIn`, ms). */
+  lifetime: number;
 };
 
 /**
  * Signs the member out here, always. `released`: the phone no longer pages them. `kept`: the shard could not be
  * told, so it may still page them until the app is next online (`finishSignOut`); their session stays valid on the
  * server until then, since a revoked one could never take the phone off. `stuck`: the shard could not be told and
- * the session could not be kept either (it could not be read or stored), so nothing on the phone can take it off
+ * the session could not be kept either (it could not be read or stored, or `MAX_KEPT` sign-outs still on their
+ * shards are kept already), so nothing on the phone can take it off
  * the shard: it pages them until its token expires or someone they trust removes the device.
  */
 export async function signOutPhone(
@@ -128,7 +154,7 @@ export async function signOutPhone(
   const keep = async (workspaceId: string | null) => {
     if (cookie === "") return false;
     const leftover = { cookie, userId: member.userId, workspaceId, origin: deps.origin };
-    return deps.add({ ...leftover, savedAt: deps.now() }).then(
+    return deps.add({ ...leftover, expiresAt: deps.now() + deps.lifetime }).then(
       () => true,
       () => false,
     );
@@ -144,14 +170,17 @@ export async function signOutPhone(
 }
 
 export type FinishDeps = {
-  leftovers: Pick<Leftovers, "list" | "released" | "remove">;
+  leftovers: Pick<Leftovers, "list" | "released" | "renewed" | "remove">;
   /** The Better Auth base URL this build talks to now: only its sessions can be finished. */
   origin: string;
   now: () => number;
   /** How long a session lasts on the server (Better Auth's `expiresIn`, ms). */
   lifetime: number;
-  /** Whether the server still knows the session, without extending it: null when it could not be asked. */
-  session: (cookie: string) => Promise<boolean | null>;
+  /**
+   * Whether the server still knows the session, without extending it, and when it expires there: false when it does
+   * not, null when it could not be asked.
+   */
+  session: (cookie: string) => Promise<{ expiresAt: number } | false | null>;
   /** `SignOutDeps.unregister` with the leftover's session and workspace. */
   unregister: (leftover: Leftover & { workspaceId: string }) => Promise<boolean>;
   /** Revokes the session on the server; true when it answered. */
@@ -168,14 +197,14 @@ export type FinishResult = "none" | "finished" | "pending";
  * A session the server no longer knows (expired, revoked elsewhere) cannot take the phone off, and nothing else
  * can: the leftover is dropped, and the phone stays the other member's on that shard (RFC 0006). One kept against
  * another server (a development build whose Metro host moved) waits for the app to talk to that server again, until
- * its session would have expired anyway.
+ * its session would have expired anyway; it is not this server's to finish, so it never makes the result `pending`.
  */
 export async function finishSignOut(deps: FinishDeps): Promise<FinishResult> {
   const kept = await deps.leftovers.list();
   if (kept.length === 0) return "none";
   let result: FinishResult = "none";
   for (const leftover of kept) {
-    if (deps.now() - leftover.savedAt >= deps.lifetime) {
+    if (deps.now() >= leftover.expiresAt) {
       await deps.leftovers.remove(leftover.cookie);
       continue;
     }
@@ -192,6 +221,10 @@ async function finishOne(leftover: Leftover, deps: FinishDeps): Promise<boolean>
   if (alive === null) return false;
   if (alive) {
     const { workspaceId } = leftover;
+    // Better Auth renews a session used more than a day after its last renewal, and the socket below is such a use:
+    // keep it as long as the server may.
+    const opens = workspaceId !== null ? deps.now() + deps.lifetime : 0;
+    await deps.leftovers.renewed(leftover.cookie, Math.max(alive.expiresAt, opens)).catch(() => {});
     if (workspaceId !== null) {
       if (!(await deps.unregister({ ...leftover, workspaceId }).catch(() => false))) return false;
       // Off the shard: a later try only revokes the session. If this write fails, unregistering again is harmless.

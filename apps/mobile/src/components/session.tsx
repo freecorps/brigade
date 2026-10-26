@@ -16,7 +16,7 @@ import {
 import { authClient, forgetSession, server } from "@/lib/auth-client";
 import { registerPhone, unregisterPhone, type Paging } from "@/lib/device";
 import { pagingCycle } from "@/lib/paging";
-import { finishDeps, keptSignOuts, phoneDeps } from "@/lib/phone";
+import { finishDeps, keptSignOuts, phoneDeps, SESSION_LIFETIME_MS } from "@/lib/phone";
 import { finishSignOut, signOutPhone, type FinishResult } from "@/lib/sign-out";
 import { knownWorkspace, memberActor, WORKSPACE_KEY, type Server } from "@/lib/sync";
 import { createWorkspaceSync, setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
@@ -323,6 +323,7 @@ function ActiveWorkspace({
         add: keptSignOuts.add,
         origin: server?.auth ?? "",
         now: Date.now,
+        lifetime: SESSION_LIFETIME_MS,
       },
     );
     await SecureStore.deleteItemAsync(WORKSPACE_KEY).catch(() => {});

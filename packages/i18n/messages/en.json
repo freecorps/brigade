@@ -779,5 +779,219 @@
         "countPlural=*": "Show all {countFormatted} members"
       }
     }
+  ],
+  "oncall_title": "On call",
+  "oncall_schedules_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countExact = count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countExact", "countPlural"],
+      "match": {
+        "countExact=0, countPlural=*": "No schedules",
+        "countExact=*, countPlural=one": "{countFormatted} schedule",
+        "countExact=*, countPlural=*": "{countFormatted} schedules"
+      }
+    }
+  ],
+  "oncall_empty": "No on-call schedules yet. A schedule says who is on call and when they hand off.",
+  "oncall_not_paging": "Schedules don't page anyone yet: pages still go to the incident's commander, or to everyone who can respond.",
+  "oncall_nobody": "Nobody on call",
+  "oncall_until": "until {time}",
+  "oncall_override_badge": "Override",
+  "oncall_upcoming_none": "No handoffs in the next 4 weeks",
+  "oncall_shift_length": [
+    {
+      "declarations": ["input unit", "input count", "local countPlural = count: plural"],
+      "selectors": ["unit", "countPlural"],
+      "match": {
+        "unit=hours, countPlural=one": "Every hour",
+        "unit=hours, countPlural=*": "Every {count} hours",
+        "unit=days, countPlural=one": "Daily",
+        "unit=days, countPlural=*": "Every {count} days",
+        "unit=weeks, countPlural=one": "Weekly",
+        "unit=*, countPlural=*": "Every {count} weeks"
+      }
+    }
+  ],
+  "oncall_layer_empty": "Nobody in this layer: a gap until someone is added",
+  "oncall_time_zone": "Times in {zone} ({offset})",
+  "oncall_unit": [
+    {
+      "declarations": ["input unit"],
+      "selectors": ["unit"],
+      "match": {
+        "unit=hours": "Hours",
+        "unit=days": "Days",
+        "unit=*": "Weeks"
+      }
+    }
+  ],
+  "oncall_member_add": "Add a person…",
+  "oncall_layers_hint": "Layers stack: a later layer wins where it has someone on call. Handoffs follow the time zone's clock, also across daylight saving changes.",
+  "oncall_field_invalid": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=name": "Enter a name, up to 80 characters.",
+        "field=time_zone": "Choose a time zone.",
+        "field=layer_name": "Enter a layer name, up to 60 characters.",
+        "field=start_date": "Enter a date from 2000 to 2099.",
+        "field=handoff_time": "Enter a time.",
+        "field=members": "Add at least one person.",
+        "field=user": "Choose who covers.",
+        "field=start": "Enter when the override starts.",
+        "field=*": "End after the start, in the future, at most 90 days later."
+      }
+    }
+  ],
+  "oncall_count_invalid": "Enter a whole number from 1 to {max}.",
+  "oncall_delete_confirm": "Delete {name}? Its overrides are deleted with it.",
+  "oncall_override_title": "Override on {name}",
+  "oncall_override_self": "You can add overrides for yourself.",
+  "oncall_change_failed": "Couldn't change {name}: {reason}",
+  "oncall_gone": "The schedule no longer exists.",
+  "oncall_unnamed": "Unnamed member",
+  "oncall_field": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=name": "Name",
+        "field=time_zone": "Time zone",
+        "field=layer_name": "Layer name",
+        "field=start_date": "Starts on",
+        "field=handoff_time": "Handoff time",
+        "field=count": "Shift length",
+        "field=unit": "Unit",
+        "field=members": "People, in rotation order",
+        "field=who": "Who covers",
+        "field=start": "From",
+        "field=*": "Until"
+      }
+    }
+  ],
+  "oncall_action": [
+    {
+      "declarations": ["input action"],
+      "selectors": ["action"],
+      "match": {
+        "action=add_schedule": "Add schedule",
+        "action=add_override": "Add override",
+        "action=add_layer": "Add layer",
+        "action=edit": "Edit",
+        "action=create": "Create schedule",
+        "action=save": "Save changes",
+        "action=cancel": "Cancel",
+        "action=delete_schedule": "Delete schedule",
+        "action=remove": "Remove",
+        "action=*": "Delete"
+      }
+    }
+  ],
+  "oncall_action_on": [
+    {
+      "declarations": ["input action", "input name"],
+      "selectors": ["action"],
+      "match": {
+        "action=edit": "Edit {name}",
+        "action=add_override": "Add override to {name}",
+        "action=remove_override": "Remove override for {name}",
+        "action=remove_layer": "Remove layer {name}",
+        "action=up": "Move {name} up",
+        "action=down": "Move {name} down",
+        "action=*": "Remove {name} from the layer"
+      }
+    }
+  ],
+  "oncall_heading": [
+    {
+      "declarations": ["input heading"],
+      "selectors": ["heading"],
+      "match": {
+        "heading=new": "New schedule",
+        "heading=layers": "Layers",
+        "heading=overrides": "Overrides",
+        "heading=now": "On call now",
+        "heading=*": "Next handoffs"
+      }
+    }
+  ],
+  "oncall_handoff": [
+    {
+      "declarations": ["input unit", "input day", "input time"],
+      "selectors": ["unit"],
+      "match": {
+        "unit=weeks": "hands off {day} at {time}",
+        "unit=from": "starting {day} at {time}",
+        "unit=*": "hands off at {time}"
+      }
+    }
+  ],
+  "oncall_layer_now": [
+    {
+      "declarations": ["input state", "input name"],
+      "selectors": ["state"],
+      "match": {
+        "state=active": "Now: {name}",
+        "state=hidden": "Now: {name}, hidden by a later layer",
+        "state=overridden": "Now: {name}, covered by an override",
+        "state=*": "Starts {name}"
+      }
+    }
+  ],
+  "oncall_more": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=*": "+{countFormatted} more"
+      }
+    }
+  ],
+  "oncall_text": [
+    {
+      "declarations": ["input text", "input name", "input max", "input time"],
+      "selectors": ["text"],
+      "match": {
+        "text=your_time": "{time} your time",
+        "text=members_max": "Up to {max} people per layer.",
+        "text=choose_person": "Choose a person…",
+        "text=remove_override": "Remove {name}'s override?",
+        "text=dropped_members": "People who can no longer be on call (viewers, or members who left) were taken out of the layers below. Save to keep the change.",
+        "text=*": "A later layer has someone at all times from this layer's start, so nobody in this one is ever on call."
+      }
+    }
+  ],
+  "oncall_zone": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=placeholder": "Search a city or UTC offset",
+        "part=empty": "No time zone matches.",
+        "part=suggested": "Suggested",
+        "part=yours": "Your time zone",
+        "part=*": "All time zones"
+      }
+    }
+  ],
+  "oncall_layer_name": [
+    {
+      "declarations": ["input number"],
+      "selectors": ["number"],
+      "match": {
+        "number=1": "Primary",
+        "number=*": "Layer {number}"
+      }
+    }
   ]
 }

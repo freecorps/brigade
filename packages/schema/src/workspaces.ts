@@ -5,6 +5,7 @@
 import { ROLES } from "./access.ts";
 import { defineMutation, fail, ok, type DomainEvent } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
+import { dropFromSchedules } from "./schedules.ts";
 import type { MemberRow, WorkspaceRow } from "./tables.ts";
 import { trimSpace } from "./text.ts";
 import { v } from "./validate.ts";
@@ -102,10 +103,12 @@ export const createWorkspace = defineMutation({
  * Server only: copies the member a socket acts as into the shard's member list (`members`), from what the Worker
  * read in D1 when it authenticated the upgrade (RFC 0004 "Socket topology"). D1 stays the authority on membership:
  * this is a cache of it, so roles can point at members and the dashboard can show their names, and like a
- * monitor's refreshed latency it is `silent` (no outbox event). Membership changes themselves are announced by the
- * mutations that apply them (`member.changeRole`, `member.remove`, `member.reconcile` in members.ts; `member.added`
- * once invitations exist), which write this table too. A member can only copy themselves; no change is a
- * `conflict`.
+ * monitor's refreshed latency it is `silent` (usually no outbox event). Membership changes themselves are announced
+ * by the mutations that apply them (`member.changeRole`, `member.remove`, `member.reconcile` in members.ts;
+ * `member.added` once invitations exist), which write this table too. The exception: a copy that makes someone a
+ * viewer (D1 changed outside Brigade, so no `member.changeRole` ran and `member.reconcile` will find nothing left
+ * to repair) takes them out of the rotations (RFC 0003 "Schedules"), and those events go through the outbox like
+ * any other. A member can only copy themselves; no change is a `conflict`.
  */
 export const syncMember = defineMutation({
   name: "member.sync",
@@ -128,7 +131,8 @@ export const syncMember = defineMutation({
     const row: MemberRow = { ...args, updatedAt: ctx.now };
     if (current) store.update("members", args.id, row);
     else store.insert("members", row);
-    return ok();
+    // Viewers only read. Run whenever the copy says viewer: a first copy may follow layers an older role was in.
+    return ok(...(args.role === "viewer" ? dropFromSchedules(store, args.id, ctx) : []));
   },
 });
 

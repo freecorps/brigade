@@ -779,5 +779,219 @@
         "countPlural=*": "Mostrar todos os {countFormatted} membros"
       }
     }
+  ],
+  "oncall_title": "Plantão",
+  "oncall_schedules_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countExact = count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countExact", "countPlural"],
+      "match": {
+        "countExact=0, countPlural=*": "Nenhuma escala",
+        "countExact=*, countPlural=one": "{countFormatted} escala",
+        "countExact=*, countPlural=*": "{countFormatted} escalas"
+      }
+    }
+  ],
+  "oncall_empty": "Ainda não há escalas de plantão. Uma escala diz quem está de plantão e quando passa o turno.",
+  "oncall_not_paging": "As escalas ainda não acionam ninguém: os alertas continuam indo para o comandante do incidente, ou para todos que podem responder.",
+  "oncall_nobody": "Ninguém de plantão",
+  "oncall_until": "até {time}",
+  "oncall_override_badge": "Substituição",
+  "oncall_upcoming_none": "Nenhuma troca nas próximas 4 semanas",
+  "oncall_shift_length": [
+    {
+      "declarations": ["input unit", "input count", "local countPlural = count: plural"],
+      "selectors": ["unit", "countPlural"],
+      "match": {
+        "unit=hours, countPlural=one": "A cada hora",
+        "unit=hours, countPlural=*": "A cada {count} horas",
+        "unit=days, countPlural=one": "Diário",
+        "unit=days, countPlural=*": "A cada {count} dias",
+        "unit=weeks, countPlural=one": "Semanal",
+        "unit=*, countPlural=*": "A cada {count} semanas"
+      }
+    }
+  ],
+  "oncall_layer_empty": "Ninguém nesta camada: um buraco até alguém ser adicionado",
+  "oncall_time_zone": "Horários em {zone} ({offset})",
+  "oncall_unit": [
+    {
+      "declarations": ["input unit"],
+      "selectors": ["unit"],
+      "match": {
+        "unit=hours": "Horas",
+        "unit=days": "Dias",
+        "unit=*": "Semanas"
+      }
+    }
+  ],
+  "oncall_member_add": "Adicionar uma pessoa…",
+  "oncall_layers_hint": "As camadas se empilham: uma camada posterior prevalece onde tem alguém de plantão. As trocas seguem o relógio do fuso, inclusive nas mudanças de horário de verão.",
+  "oncall_field_invalid": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=name": "Informe um nome de até 80 caracteres.",
+        "field=time_zone": "Escolha um fuso horário.",
+        "field=layer_name": "Informe um nome de camada de até 60 caracteres.",
+        "field=start_date": "Informe uma data de 2000 a 2099.",
+        "field=handoff_time": "Informe um horário.",
+        "field=members": "Adicione pelo menos uma pessoa.",
+        "field=user": "Escolha quem vai cobrir.",
+        "field=start": "Informe quando a substituição começa.",
+        "field=*": "Termine depois do início, no futuro, em até 90 dias."
+      }
+    }
+  ],
+  "oncall_count_invalid": "Informe um número inteiro de 1 a {max}.",
+  "oncall_delete_confirm": "Excluir {name}? As substituições dela são excluídas junto.",
+  "oncall_override_title": "Substituição em {name}",
+  "oncall_override_self": "Você pode adicionar substituições para você mesmo.",
+  "oncall_change_failed": "Não foi possível alterar {name}: {reason}",
+  "oncall_gone": "A escala não existe mais.",
+  "oncall_unnamed": "Membro sem nome",
+  "oncall_field": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=name": "Nome",
+        "field=time_zone": "Fuso horário",
+        "field=layer_name": "Nome da camada",
+        "field=start_date": "Começa em",
+        "field=handoff_time": "Horário da troca",
+        "field=count": "Duração do turno",
+        "field=unit": "Unidade",
+        "field=members": "Pessoas, na ordem do rodízio",
+        "field=who": "Quem cobre",
+        "field=start": "De",
+        "field=*": "Até"
+      }
+    }
+  ],
+  "oncall_action": [
+    {
+      "declarations": ["input action"],
+      "selectors": ["action"],
+      "match": {
+        "action=add_schedule": "Adicionar escala",
+        "action=add_override": "Adicionar substituição",
+        "action=add_layer": "Adicionar camada",
+        "action=edit": "Editar",
+        "action=create": "Criar escala",
+        "action=save": "Salvar alterações",
+        "action=cancel": "Cancelar",
+        "action=delete_schedule": "Excluir escala",
+        "action=remove": "Remover",
+        "action=*": "Excluir"
+      }
+    }
+  ],
+  "oncall_action_on": [
+    {
+      "declarations": ["input action", "input name"],
+      "selectors": ["action"],
+      "match": {
+        "action=edit": "Editar {name}",
+        "action=add_override": "Adicionar substituição em {name}",
+        "action=remove_override": "Remover a substituição de {name}",
+        "action=remove_layer": "Remover a camada {name}",
+        "action=up": "Subir {name}",
+        "action=down": "Descer {name}",
+        "action=*": "Tirar {name} da camada"
+      }
+    }
+  ],
+  "oncall_heading": [
+    {
+      "declarations": ["input heading"],
+      "selectors": ["heading"],
+      "match": {
+        "heading=new": "Nova escala",
+        "heading=layers": "Camadas",
+        "heading=overrides": "Substituições",
+        "heading=now": "De plantão agora",
+        "heading=*": "Próximas trocas"
+      }
+    }
+  ],
+  "oncall_handoff": [
+    {
+      "declarations": ["input unit", "input day", "input time"],
+      "selectors": ["unit"],
+      "match": {
+        "unit=weeks": "troca {day}, às {time}",
+        "unit=from": "a partir de {day}, às {time}",
+        "unit=*": "troca às {time}"
+      }
+    }
+  ],
+  "oncall_layer_now": [
+    {
+      "declarations": ["input state", "input name"],
+      "selectors": ["state"],
+      "match": {
+        "state=active": "Agora: {name}",
+        "state=hidden": "Agora: {name}, mas uma camada posterior tem prioridade",
+        "state=overridden": "Agora: {name}, mas uma substituição tem prioridade",
+        "state=*": "Começa {name}"
+      }
+    }
+  ],
+  "oncall_more": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=*": "mais {countFormatted}"
+      }
+    }
+  ],
+  "oncall_text": [
+    {
+      "declarations": ["input text", "input name", "input max", "input time"],
+      "selectors": ["text"],
+      "match": {
+        "text=your_time": "{time} no seu horário",
+        "text=members_max": "Até {max} pessoas por camada.",
+        "text=choose_person": "Escolha uma pessoa…",
+        "text=remove_override": "Remover a substituição de {name}?",
+        "text=dropped_members": "Quem não pode mais ficar de plantão (leitores ou quem saiu do espaço de trabalho) foi tirado das camadas abaixo. Salve para manter a mudança.",
+        "text=*": "Uma camada posterior tem alguém o tempo todo desde o início desta, então ninguém nesta fica de plantão."
+      }
+    }
+  ],
+  "oncall_zone": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=placeholder": "Busque uma cidade ou deslocamento UTC",
+        "part=empty": "Nenhum fuso horário encontrado.",
+        "part=suggested": "Sugestões",
+        "part=yours": "Seu fuso horário",
+        "part=*": "Todos os fusos horários"
+      }
+    }
+  ],
+  "oncall_layer_name": [
+    {
+      "declarations": ["input number"],
+      "selectors": ["number"],
+      "match": {
+        "number=1": "Principal",
+        "number=*": "Camada {number}"
+      }
+    }
   ]
 }

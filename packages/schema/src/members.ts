@@ -7,6 +7,7 @@ import { can, ROLES, type Role } from "./access.ts";
 import type { DeviceUnregistered } from "./devices.ts";
 import { defineMutation, fail, ok, type Actor, type DomainEvent } from "./mutation.ts";
 import type { MutationStore } from "./mutation.ts";
+import { dropFromSchedules } from "./schedules.ts";
 import { v } from "./validate.ts";
 
 /**
@@ -102,7 +103,9 @@ export const changeMemberRole = defineMutation({
       subject: args.id,
       data: { userId: args.id, from: args.from, to: args.to },
     };
-    return ok(event);
+    // Viewers only read: a member made one leaves the rotations (RFC 0003 "Schedules").
+    const schedules = args.to === "viewer" ? dropFromSchedules(store, args.id, ctx) : [];
+    return ok(event, ...schedules);
   },
 });
 
@@ -135,12 +138,13 @@ export const removeMember = defineMutation({
     }
     if (store.get("members", args.id)) store.delete("members", args.id);
     const devices = dropDevices(store, args.id);
+    const schedules = dropFromSchedules(store, args.id, ctx);
     const event: MemberRemoved = {
       type: "member.removed",
       subject: args.id,
       data: { userId: args.id, role: args.role, reason: args.reason },
     };
-    return ok(event, ...devices);
+    return ok(event, ...devices, ...schedules);
   },
 });
 
@@ -178,7 +182,11 @@ export const reconcileMembers = defineMutation({
           subject: current.id,
           data: { userId: current.id, role: current.role, reason: "reconciled" },
         };
-        events.push(event, ...dropDevices(store, current.id));
+        events.push(
+          event,
+          ...dropDevices(store, current.id),
+          ...dropFromSchedules(store, current.id, ctx),
+        );
       } else if (role !== current.role) {
         store.update("members", current.id, { role, updatedAt: ctx.now });
         const event: MemberRoleChanged = {
@@ -187,6 +195,7 @@ export const reconcileMembers = defineMutation({
           data: { userId: current.id, from: current.role, to: role },
         };
         events.push(event);
+        if (role === "viewer") events.push(...dropFromSchedules(store, current.id, ctx));
       }
     }
     // Devices of someone with no copy (their `member.sync` failed, or the copy went before this rule existed).

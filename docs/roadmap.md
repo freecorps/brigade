@@ -189,6 +189,16 @@ Validate the risky assumptions before writing product code. Each spike produces 
 ## Phase 2 — On-call (4–6 weeks)
 
 - [ ] Schedules, rotations, overrides; escalation policies with timeouts
+  - Done: schedules with stacked layers (members in order, handoff date and time, hours, days or weeks, the
+    schedule's IANA time zone, wall-clock handoffs through DST) and overrides, as mutations in the workspace shard
+    with `schedule.*` events; `onCallAt` and `nextHandoffs`; owners and admins manage, responders add and remove
+    their own overrides; a member removed or made a viewer leaves the rotations and loses their overrides; the
+    dashboard's On-call card lists schedules with who is on call now and the next handoffs, edits them and adds
+    overrides (RFC 0003 "Schedules").
+  - Left: escalation policies with timeouts and paging the person on call (until then RFC 0006's interim rule pages);
+    the mobile on-call view and "I'm on call" (the Mobile item); schedules on teams (Better Auth teams); layer
+    restrictions (only some hours or days); a calendar view and export (iCal); telling someone their shift starts;
+    Q20.
 - [ ] Slack app: `/inc`, incident channels, timeline mirror, ack buttons
 - [ ] Email notifier; in-app VoIP call paging (RFC 0010); optional PSTN notifier (provider-agnostic)
 - [ ] Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup

@@ -12,6 +12,8 @@ export * from "./timeline.ts";
 export * from "./workspaces.ts";
 export * from "./members.ts";
 export * from "./monitors.ts";
+export * from "./zoned.ts";
+export * from "./schedules.ts";
 export * from "./devices.ts";
 export * from "./notifications.ts";
 export * from "./registry.ts";

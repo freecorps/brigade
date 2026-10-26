@@ -16,6 +16,9 @@ export const statement = {
   monitor: ["read", "manage"],
   // `register`: a member's own devices for paging (RFC 0006); every role, so anyone can be reached.
   device: ["register"],
+  // On-call schedules (RFC 0003 "Schedules"): `manage` creates, edits and deletes schedules and anyone's overrides;
+  // `override` adds and removes overrides, only one's own without `manage`.
+  schedule: ["read", "manage", "override"],
 } as const;
 
 type Statement = typeof statement;
@@ -34,6 +37,7 @@ export const roles = {
     members: ["manage"],
     monitor: ["read", "manage"],
     device: ["register"],
+    schedule: ["read", "manage", "override"],
   },
   admin: {
     incident: ["read", "declare", "update", "ack"],
@@ -41,6 +45,7 @@ export const roles = {
     members: ["manage"],
     monitor: ["read", "manage"],
     device: ["register"],
+    schedule: ["read", "manage", "override"],
   },
   // Responders see what monitors say (they run the incidents monitors open) but do not change what is watched.
   responder: {
@@ -48,12 +53,15 @@ export const roles = {
     workspace: ["read"],
     monitor: ["read"],
     device: ["register"],
+    // Responders cover for each other (their own overrides) but do not change the rotations.
+    schedule: ["read", "override"],
   },
   viewer: {
     incident: ["read"],
     workspace: ["read"],
     monitor: ["read"],
     device: ["register"],
+    schedule: ["read"],
   },
 } as const satisfies Record<Role, Grants>;
 

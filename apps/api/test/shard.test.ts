@@ -91,6 +91,59 @@ describe("Shard", () => {
     });
   });
 
+  test("a silent member.sync that makes someone a viewer still writes its rotation events to the outbox", async () => {
+    await withShard((shard, sql) => {
+      const sync = (actor: Actor, name: string) =>
+        shard.mutate({
+          clientId: "api",
+          mutationId: `m${++mutations}`,
+          actor,
+          name: "member.sync",
+          args: { id: actor.id, name, role: actor.role },
+          now: NOW,
+          internal: true,
+        });
+      const owner: Actor = { kind: "user", id: "usr_ana", role: "owner" };
+      sync(owner, "Ana");
+      sync(bia, "Bia");
+      expect(count(sql, "outbox")).toBe(0);
+      const created = shard.mutate({
+        clientId: "c1",
+        mutationId: `m${++mutations}`,
+        actor: owner,
+        name: "schedule.create",
+        args: {
+          id: newId("sch", NOW, random),
+          name: "Platform",
+          timeZone: "UTC",
+          layers: [
+            {
+              id: newId("lyr", NOW, random),
+              name: "Primary",
+              members: ["usr_ana", "usr_bia"],
+              startDate: "2026-10-19",
+              handoffTime: "09:00",
+              unit: "weeks",
+              count: 1,
+            },
+          ],
+        },
+        now: NOW,
+      });
+      expect(created.result.ok).toBe(true);
+      sql.exec("delete from outbox");
+
+      // D1 made Bia a viewer outside Brigade; their next socket copies it.
+      const { result } = sync({ ...bia, role: "viewer" }, "Bia");
+      expect(result.ok).toBe(true);
+      const events = sql
+        .exec<{ event: string }>("select event from outbox")
+        .toArray()
+        .map((row) => JSON.parse(row.event).type);
+      expect(events).toEqual(["schedule.updated"]);
+    });
+  });
+
   test("a rejected mutation writes nothing but its stored result", async () => {
     await withShard((shard, sql) => {
       const outcome = shard.mutate({

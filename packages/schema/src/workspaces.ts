@@ -9,6 +9,12 @@ import type { MemberRow, WorkspaceRow } from "./tables.ts";
 import { trimSpace } from "./text.ts";
 import { v } from "./validate.ts";
 
+/**
+ * How long a Better Auth session lasts without being used, in seconds (its `session.expiresIn`, Better Auth's
+ * default of 7 days, apps/api/src/auth.ts). The mobile app drops a sign-out it kept from offline after this long.
+ */
+export const SESSION_LIFETIME_S = 60 * 60 * 24 * 7;
+
 export const WORKSPACE_NAME_MAX = 80;
 /** The longest member name, in UTF-16 code units after trimming: what the API accepts and the shard keeps. */
 export const MEMBER_NAME_MAX = 100;

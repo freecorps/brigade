@@ -37,6 +37,11 @@ Entry points:
   `formatRelativeTime`, `toTimeZone`.
 - `./messages`: every message by name, and `m`.
 - `./labels`: `severityLabels` and `incidentStatusLabels`, keyed by the canonical values.
+- `./incident`: how incidents read in a UI, shared by the dashboard and the app: `entryText` (a timeline entry),
+  `personName`, `severityName`, `formatAge`, `entryTime`, and refused changes (`noticeFor`, `noticeText`,
+  `mutationErrorReason`, `queryErrorReason`). It reads `@freecorps/brigade-schema`'s rows, which makes schema a
+  dependency of this package (the other entries import nothing from it).
+- `./auth`: the sign-in form's checks (`checkSignIn`, `checkEmail`, `checkPassword`) and `authErrorMessage`.
 
 Messages are shipped one module per message and `m` is a real ESM namespace. Vite (Rolldown) tree-shakes
 `m.x` down to the messages used; **esbuild (Wrangler) does not**: it keeps every message reachable through

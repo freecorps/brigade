@@ -9,10 +9,12 @@ import {
   memberName,
   newId,
   roles,
+  SESSION_LIFETIME_S,
   statement,
   workspaceName,
   type RandomBytes,
 } from "@freecorps/brigade-schema";
+import { expo } from "@better-auth/expo";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { organization } from "better-auth/plugins";
@@ -105,6 +107,13 @@ export const UNLIMITED_READS = [
   "/organization/get-active-member",
   "/organization/list",
 ] as const;
+/**
+ * The mobile app's origin (its `brigade://` scheme, apps/mobile/app.config.ts). The app has no web origin: its Better
+ * Auth client (`@better-auth/expo`) sends this as `expo-origin`, which the `expo()` plugin copies to `Origin` when a
+ * request has none, so Better Auth's origin check on sign-in and sign-out passes for the app and still refuses any
+ * other site. A browser page cannot send it: browsers set `Origin` themselves, and the plugin never replaces one.
+ */
+export const APP_ORIGIN = "brigade://";
 /** Workspaces one user may belong to; bounds `POST /workspaces` (each one also provisions a shard). */
 export const WORKSPACE_LIMIT = 10;
 /** Better Auth's routes that set a user's name. */
@@ -136,7 +145,11 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
     secret: bindings.secret,
     database: bindings.database,
     emailAndPassword: { enabled: true },
+    // The dashboard is same-origin (Better Auth trusts its own base URL); the mobile app is `APP_ORIGIN`.
+    trustedOrigins: [APP_ORIGIN],
     hooks: { before: checkName },
+    // Stated, not left to the default: the mobile app keeps a session from an offline sign-out this long at most.
+    session: { expiresIn: SESSION_LIFETIME_S },
     // Off by default on Workers (Better Auth enables it only when NODE_ENV is "production"). The in-memory store
     // would count per isolate, so the counts live in D1.
     rateLimit: {
@@ -180,6 +193,9 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
       ...(bindings.waitUntil ? { backgroundTasks: { handler: bindings.waitUntil } } : {}),
     },
     plugins: [
+      // The mobile app (RFC 0002): its session lives in the phone's secure storage and travels as a `Cookie` header
+      // it sets itself, on these routes and on the sync upgrade (src/actor.ts).
+      expo(),
       organization({
         ac,
         roles: authRoles,

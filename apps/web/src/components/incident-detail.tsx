@@ -72,13 +72,16 @@ import {
   assignable,
   bodyParts,
   checkUpdate,
-  entryText,
   entryTime,
+  itemText,
+  pagesFailedNames,
   people,
   personName,
+  timelineItems,
   UPDATE_COUNT_FROM,
   updateLength,
   type People,
+  type TimelineItem,
   type UpdateProblem,
 } from "@/lib/timeline";
 
@@ -603,17 +606,22 @@ function Timeline({
       <p className="text-sm text-muted-foreground">{m.incident_page({ part: "timeline_empty" })}</p>
     ) : null;
   }
-  const entries = [...rows].reverse();
+  // Pages one run could not send for the same reason are one line (a SEV1 can fail for most of the workspace).
+  const items = timelineItems([...rows].reverse());
   return (
     <>
       {announcer}
       <ol aria-labelledby="timeline-title" className="flex flex-col">
-        {entries.map((entry, index) => {
+        {items.map((item, index) => {
+          const entry = item.kind === "entry" ? item.entry : item.entries[0];
           const Icon =
             entry.kind === "status_changed" ? STATUS_ICONS[entry.to] : ENTRY_ICONS[entry.kind];
-          const last = index === entries.length - 1;
+          const last = index === items.length - 1;
           return (
-            <li key={entry.id} className="grid grid-cols-[--spacing(8)_minmax(0,1fr)] gap-x-3">
+            <li
+              key={item.kind === "entry" ? entry.id : item.key}
+              className="grid grid-cols-[--spacing(8)_minmax(0,1fr)] gap-x-3"
+            >
               {/* The rail: an icon per entry, joined by a line down to the next (older) one. */}
               <div className="flex flex-col items-center">
                 <span
@@ -629,7 +637,7 @@ function Timeline({
               </div>
               <div className={cn("flex min-w-0 flex-col gap-1 pt-1.5", !last && "pb-5")}>
                 <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                  <span className="[overflow-wrap:anywhere]">{entryText(entry, who)}</span>
+                  <span className="[overflow-wrap:anywhere]">{itemText(item, who)}</span>
                   <time
                     className="text-xs whitespace-nowrap text-muted-foreground tabular-nums"
                     dateTime={new Date(entry.at).toISOString()}
@@ -639,12 +647,50 @@ function Timeline({
                   </time>
                 </p>
                 {entry.kind === "update" ? <UpdateBody body={entry.body} /> : null}
+                {item.kind === "pages_failed" ? <FailedNames item={item} who={who} /> : null}
               </div>
             </li>
           );
         })}
       </ol>
     </>
+  );
+}
+
+/** Who a group of failed pages was for, behind Show names. */
+function FailedNames({
+  item,
+  who,
+}: {
+  item: Extract<TimelineItem, { kind: "pages_failed" }>;
+  who: People;
+}) {
+  const id = useId();
+  const { locale } = usePreferences();
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="flex flex-col items-start gap-1">
+      {/* Above the list, so closing a long one leaves the button where it was tapped. */}
+      <Button
+        variant="link"
+        aria-expanded={open}
+        aria-controls={open ? id : undefined}
+        className="-ml-1 px-1"
+        onClick={() => setOpen((shown) => !shown)}
+      >
+        {m.incident_page({ part: open ? "hide_names" : "show_names" })}
+      </Button>
+      {/* A wrapped name hangs under its first line and names are spaced apart, so one never reads as two. */}
+      {open ? (
+        <ul id={id} className="space-y-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+          {pagesFailedNames(item, who, locale).map(({ id: key, name }) => (
+            <li key={key} className="pl-4 -indent-4">
+              {name}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 

@@ -4,7 +4,7 @@ import type { Actor } from "@freecorps/brigade-schema";
 /**
  * DEV ONLY: who a sync upgrade without a session acts as, and only where `SYNC_DEV_ACTOR` is "1": local runs
  * (vite.config.ts) and the tests, never a deployed environment (src/actor.ts). Everywhere else such an upgrade
- * gets 401. The mobile app relies on it until it can sign in.
+ * gets 401. No app relies on it since the mobile app signs in; it stays for local tools and the tests.
  */
 export const DEV_ACTOR: Actor = { kind: "user", id: "usr_dev", role: "responder" };
 

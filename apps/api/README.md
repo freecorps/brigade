@@ -57,8 +57,8 @@ shard on every mutation and query (`runMutation`, `runQuery`).
 `preview_urls` stay off. **Dev actor:** where `SYNC_DEV_ACTOR` is `"1"` and the request is for `localhost`,
 `127.0.0.1`, `[::1]` or a private LAN address (a phone on the same Wi-Fi), an upgrade without a session acts as
 `{ kind: "user", id: "usr_dev", role: "responder" }` (`src/dev-actor.ts`). Only `vp dev` and the tests set it (in
-`vite.config.ts` here and in apps/web), never a build or an environment in `wrangler.jsonc`; the mobile app relies
-on it until it can sign in. Through the dashboard Worker the endpoints are under `/api` (`/api/auth/*`,
+`vite.config.ts` here and in apps/web), never a build or an environment in `wrangler.jsonc`; no app relies on it
+since the mobile app signs in. Through the dashboard Worker the endpoints are under `/api` (`/api/auth/*`,
 `/api/sync/:id`).
 
 ### D1

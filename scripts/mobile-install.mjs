@@ -13,9 +13,9 @@
 //
 // Variants:
 //   development  the dev client (Debug): loads JavaScript from Metro (`vp run --filter @freecorps/brigade-mobile
-//                start`), and in development the incident list uses the dev server on the Metro host.
-//   release      Release with the JavaScript embedded, no Metro. It needs EXPO_PUBLIC_BRIGADE_SYNC_URL at build
-//                time; without it the list shows sync as unavailable.
+//                start`), and in development the app signs in and syncs through the dev server on the Metro host.
+//   release      Release with the JavaScript embedded, no Metro. It needs EXPO_PUBLIC_BRIGADE_URL (the dashboard's
+//                origin) at build time; without it sign-in says the build has no server.
 //
 // iOS needs macOS with Xcode, so elsewhere Android is the default. iOS signs with Xcode automatic signing: an
 // Apple account signed into Xcode (Settings > Accounts) with a paid team, picked from Xcode's accounts when
@@ -421,9 +421,9 @@ try {
     ["development", "release", "artifact"].includes(variant),
     `--variant must be development or release, not ${variant}.`,
   );
-  if (variant === "release" && building && !process.env.EXPO_PUBLIC_BRIGADE_SYNC_URL) {
+  if (variant === "release" && building && !process.env.EXPO_PUBLIC_BRIGADE_URL) {
     console.warn(
-      "\nEXPO_PUBLIC_BRIGADE_SYNC_URL is not set: this build will show sync as unavailable.",
+      "\nEXPO_PUBLIC_BRIGADE_URL is not set: this build will have no server to sign in to.",
     );
   }
   console.log(`\n${platform === "ios" ? "iOS" : "Android"}, ${options.from ?? variant}.`);

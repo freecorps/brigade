@@ -32,6 +32,8 @@ export type Incident_PageInputs = {
 * | "unnamed" | "Unnamed member" |
 * | "show_more" | "Show more" |
 * | "show_less" | "Show less" |
+* | "show_names" | "Show names" |
+* | "hide_names" | "Hide names" |
 * | * | "Incident" |
 *
 * @param {Incident_PageInputs} inputs

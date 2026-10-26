@@ -65,10 +65,13 @@ relay's bearer token):
   its token is still the one the push went to (a device registered again with a new token meanwhile is kept).
 - **Server-only.** Devices live in the workspace shard's `devices` table, which is never synced: no member sees
   another's tokens or key, and the `device.*` events carry neither.
-- **The app** registers from the development `/push` screen once it has permission, a token and a key, through
-  Brigade Sync (as the dev actor until mobile sign-in exists). Its device id is derived from the device key, so a
-  relaunch registers the same id (a no-op). Registration from sign-in, and unregistering on sign-out, come with
-  mobile sign-in.
+- **The app** registers the phone on the signed-in member's workspace each time a session opens it (sign-in, or a
+  launch already signed in), once it has permission, a token and a key, through Brigade Sync as that member. Its
+  device id is derived from the device key, so a relaunch registers the same id (a no-op, `conflict`). Sign out
+  unregisters it first (`device.unregister`, given up after 5 s so signing out offline still works; the device then
+  stays registered until someone signs out on it online or APNs drops its token), then ends the session. The account
+  section says whether the phone is paged: on, notifications off, no device key yet (Android until FCM), taken by the
+  last member signed in on it, or failed. Registering into one workspace only: the active one.
 - **The relay** takes the device's `environment` with each push and picks the APNs host from it (one provider token
   signs for both).
 
@@ -95,8 +98,56 @@ socket. So someone who never opened Brigade is not paged (they have no device ei
   member (`device.unregistered` for each). Until they exist, an out-of-band D1 edit is not reflected in who is
   paged. The page path does not re-read D1: a D1 outage would then become a reason a page is late or missing.
 - **A handed-over phone** (same install, so the same device id, signed in as another member) keeps paging the first
-  member until it unregisters: `device.register` refuses another member's device id (`forbidden`). Registering on
-  sign-in and unregistering on sign-out (mobile sign-in) settle it.
+  member until it unregisters: `device.register` refuses another member's device id (`forbidden`). Signing out
+  unregisters it, so the next member's sign-in registers it for them. Signing out does not wait for a registration
+  already under way (asking for the key, permission or token, which can take forever without APNs): it stops the
+  registration first, which then sends nothing when it gets them, and one already sent is queued ahead of the
+  unregister on the same sync client and socket, so the shard drops it again.
+  - **Signed out offline** (`device.unregister` did not answer within 5 s): the app signs out on the phone only and
+    keeps the member's session, unrevoked, in secure storage with their user and workspace ids, the auth server it
+    belongs to and when the session expires (`brigade_signed_out`, a list with one record per session,
+    apps/mobile/src/lib/sign-out.ts), and tells them the phone may still get their pages until it is back online.
+    The list holds at most 10: past that, the oldest record already off its shard (only its revoke left) is
+    dropped; one still on its shard never is, so an eleventh such sign-out is not kept and the app says the phone
+    may keep paging them (below).
+    A sign-out whose `/sign-out` went unanswered is kept the same way, already off the shard. Every record is
+    changed in turn and by its own session, so a second member's sign-out kept before the first is finished never
+    replaces or clears it. At launch, whenever the phone reconnects or the app comes to the foreground, before any
+    member's `device.register`, and while one is left on a backoff (30 s, 2 min, then every 10 min,
+    apps/mobile/src/lib/paging.ts), the app finishes each: `/get-session?disableRefresh=true` with that cookie (the
+    check itself does not extend the session, and it says when the session expires), `device.unregister` over a
+    socket of its own as that member, then `/sign-out`, and only then forgets it. The socket's upgrade does extend
+    the session (Better Auth renews one last renewed over a day ago on any use, and the upgrade is checked like
+    every other request), so before opening it the record's expiry moves to a full lifetime
+    (`SESSION_LIFETIME_S`, Better Auth's `expiresIn`) from then; it also takes any later expiry `/get-session`
+    reports. A record is finished only against the server it was kept for (a development build's server moves with
+    the Metro host); one kept for another server does not hold up registering for this one. A record is dropped
+    once past its expiry, when the server has forgotten the session, and in any case a lifetime after it was kept
+    (`keptAt`), however often its session was renewed meanwhile: then the app tries `/sign-out` with it once (best
+    effort, and only against its own server) so the session goes with it. Not renewing on the upgrade instead would let
+    a member whose app keeps its socket open but rarely asks `/get-session` be signed out under them. The session
+    is not revoked first because only it can say
+    whose device this is. Until it finishes, a next member who signs in sees "taken" (the phone still pages the
+    other one), with Try again, instead of a claim that it pages them; once finished, the phone registers for
+    them. If the session could not be read or stored either, nothing can finish it: the app says the phone may
+    keep paging them and that signing in and out again with a connection stops it.
+  - **Reinstalled with a record kept**: iOS Keychain items survive an uninstall, so the reinstalled app (a new
+    device key, so a new device id) finishes the record with `not_found` from `device.unregister`, treats that as
+    done and revokes the session, and the old device row goes only when that member registers the same APNs token
+    again or a page finds the token gone (`token_invalid`).
+  - **The kept session is gone** (it expired, or was revoked from elsewhere, before the phone came back): nothing
+    can take the device off as that member, so the leftover is dropped and the device stays theirs on that shard.
+    Taking over a device id on proof of the device key (a signature over a server nonce) would close this, but the
+    key is HPKE-only today (P-256 key agreement in the Keychain) and Android has none; it waits for FCM. Member
+    removal, once it exists (above), will drop a removed member's devices.
+  - **Removed from the workspace before the phone came back**: the session is alive, but the socket's upgrade
+    answers 403 `not_a_member`, so `device.unregister` never reaches the shard. A socket that closes before it
+    ever opens ends that try at once (no 10 s wait); the record stays pending and is tried on the backoff, since
+    the shard still pages the removed member on this phone (Q18) and re-adding them lets it finish. Each try still
+    renews the session (`/get-session` sees it alive and the upgrade renews it before the 403), so its expiry never
+    comes: the record is dropped a lifetime after it was kept, revoking the session on the way out, which bounds
+    both the record (one of the 10) and the removed member's credential. Until then the next member sees "taken";
+    after it the device stays the removed member's on that shard, as for a kept session that is gone.
 
 Content: title `SEV1 · INC-142` (codes, so no locale is needed), body the incident's title, and the incident id,
 sealed per device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id, so a repeat replaces

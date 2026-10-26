@@ -1,15 +1,21 @@
 import { setLocale } from "@freecorps/brigade-i18n";
 import { afterEach, expect, test } from "vite-plus/test";
-import type { IncidentRow } from "@freecorps/brigade-schema";
 import {
   formatAge,
-  nextStatuses,
-  pickTarget,
-  refusalFor,
-  refusalText,
-  titleToRestore,
-  type Target,
-} from "./incidents";
+  noticeFor as refusalFor,
+  noticeText,
+  type Notice,
+  type NoticeTarget as Target,
+} from "@freecorps/brigade-i18n/incident";
+import type { IncidentRow } from "@freecorps/brigade-schema";
+import { nextStatuses, pickTarget } from "@freecorps/brigade-sync";
+import { titleToRestore } from "./incidents";
+
+// The app words a refusal in the incident's row, or below the list (where it names the incident: `card`).
+const refusalText = (notice: Notice, place: "row" | "list") =>
+  noticeText(notice, place === "row" ? "row" : "card");
+
+// The incident list and page logic now comes from the shared packages; these tests pin what the app relies on.
 
 afterEach(() => setLocale("en"));
 
@@ -46,7 +52,7 @@ test("pickTarget checks a pick against the rows it is given (the screen passes t
 });
 
 test("a title the shard refused comes back only to an empty field, and never for the clock", () => {
-  const declare: Target = { kind: "declare", incidentId: ID, title: "Checkout down" };
+  const declare: Target = { kind: "declare", incidentId: ID, number: null, title: "Checkout down" };
   const refused = refusalFor(
     {
       ok: false,
@@ -116,10 +122,10 @@ test("a declare refused for its id is the device clock, not the title", () => {
       ok: false,
       error: { code: "invalid_args", message: "bad", issues: [{ path: "id", message: "future" }] },
     },
-    { kind: "declare", incidentId: ID, title: "Checkout down" },
+    { kind: "declare", incidentId: ID, number: null, title: "Checkout down" },
     "r2",
   )!;
-  expect(refusal.clockSkew).toBe(true);
+  expect(refusal.reason).toBe("clock_skew");
   expect(refusalText(refusal, "list")).toContain("device clock");
   const severity = refusalFor(
     { ok: false, error: { code: "forbidden", message: "no" } },

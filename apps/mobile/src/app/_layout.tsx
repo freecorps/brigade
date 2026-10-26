@@ -1,18 +1,16 @@
 import { getLocale, m, setLocale } from "@freecorps/brigade-i18n";
-import { SyncProvider } from "@freecorps/brigade-sync/react";
 import { fontWeight } from "@freecorps/brigade-ui";
 import { useCalendars, useLocales } from "expo-localization";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import * as SystemUI from "expo-system-ui";
 import { useEffect, useMemo } from "react";
+import { Session } from "@/components/session";
 import { useIncomingCalls } from "@/hooks/use-incoming-calls";
 import { LocaleContext } from "@/hooks/use-locale";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { useTheme } from "@/hooks/use-theme";
 import { pickLocale } from "@/lib/locale";
-import { SHARD } from "@/lib/sync";
-import { syncClient } from "@/lib/sync-client";
 
 export default function RootLayout() {
   const colors = useTheme();
@@ -32,35 +30,46 @@ export default function RootLayout() {
   }, [colors.background]);
 
   return (
-    <SyncProvider client={syncClient} shard={SHARD}>
-      <LocaleContext value={value}>
-        <IncomingCalls />
-        <StatusBar style="auto" />
-        <Stack
-          key={locale}
-          screenOptions={{
-            headerStyle: { backgroundColor: colors.background },
-            headerTintColor: colors.foreground,
-            headerTitleStyle: { color: colors.foreground, fontWeight: fontWeight.semibold },
-            headerShadowVisible: false,
-            contentStyle: { backgroundColor: colors.background },
-            // Reduced motion: no sliding, a short fade instead (packages/ui, Motion).
-            animation: reducedMotion ? "fade" : "default",
-          }}
-        >
-          <Stack.Screen name="index" options={{ title: m.incidents_title() }} />
-          <Stack.Screen name="legend" options={{ title: m.legend_title() }} />
-          <Stack.Screen name="intl" options={{ title: m.intl_title() }} />
-          <Stack.Screen name="push" options={{ title: m.push_title() }} />
-          <Stack.Screen name="call-test" options={{ title: m.call_test_title() }} />
-          <Stack.Screen
-            name="call"
-            // The call ends with Hang up, not a swipe back.
-            options={{ title: m.call_title(), gestureEnabled: false, headerBackVisible: false }}
-          />
-        </Stack>
-      </LocaleContext>
-    </SyncProvider>
+    <LocaleContext value={value}>
+      <IncomingCalls />
+      <StatusBar style="auto" />
+      <Session>
+        {(signedIn) => (
+          <Stack
+            key={locale}
+            screenOptions={{
+              headerStyle: { backgroundColor: colors.background },
+              headerTintColor: colors.foreground,
+              headerTitleStyle: { color: colors.foreground, fontWeight: fontWeight.semibold },
+              headerShadowVisible: false,
+              contentStyle: { backgroundColor: colors.background },
+              // Reduced motion: no sliding, a short fade instead (packages/ui, Motion).
+              animation: reducedMotion ? "fade" : "default",
+            }}
+          >
+            {/* The member's workspace: only with a session, an active workspace and its socket. */}
+            <Stack.Protected guard={signedIn}>
+              <Stack.Screen name="index" options={{ title: m.incidents_title() }} />
+              <Stack.Screen name="incidents/[number]" options={{ title: "" }} />
+              <Stack.Screen name="push" options={{ title: m.push_title() }} />
+              <Stack.Screen name="call-test" options={{ title: m.call_test_title() }} />
+              <Stack.Screen
+                name="call"
+                // The call ends with Hang up, not a swipe back.
+                options={{ title: m.call_title(), gestureEnabled: false, headerBackVisible: false }}
+              />
+              <Stack.Screen name="legend" options={{ title: m.legend_title() }} />
+              <Stack.Screen name="intl" options={{ title: m.intl_title() }} />
+            </Stack.Protected>
+            {/* Signing in, and every state before a member is ready (loading, no workspace, offline): the only
+                screen signed out, so a guarded route always lands here. */}
+            <Stack.Protected guard={!signedIn}>
+              <Stack.Screen name="sign-in" options={{ title: m.auth_sign_in_title() }} />
+            </Stack.Protected>
+          </Stack>
+        )}
+      </Session>
+    </LocaleContext>
   );
 }
 

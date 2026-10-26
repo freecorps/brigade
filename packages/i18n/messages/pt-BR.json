@@ -134,6 +134,7 @@
   "sync_error_too_many_pending": "Espere as alterações pendentes serem enviadas e tente de novo.",
   "sync_error_closed": "Esta página parou de sincronizar. Recarregue para tentar de novo.",
   "sync_error_internal": "Algo deu errado no servidor. Tente de novo.",
+  "sync_error_limit_reached": "Você chegou ao limite para isso.",
   "incident_quoted_title": "“{title}”",
   "incidents_all_clear": "Tudo tranquilo.",
   "incidents_sev1_count": [
@@ -176,6 +177,46 @@
   "mobile_sync_retrying": "O app continua tentando sozinho.",
   "mobile_sync_offline_hint": "Não foi possível conectar ao Brigade agora. Suas alterações são enviadas quando a conexão voltar, desde que o app continue aberto.",
   "mobile_change_hint": "Abre as opções",
+  "mobile_session": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=sign_in_hint": "Novo no Brigade? Crie uma conta no painel e depois entre aqui.",
+        "part=no_server": "Este build não diz a qual Brigade se conectar.",
+        "part=account": "Conta",
+        "part=no_workspace": "Sua conta ainda não está em um espaço de trabalho. Crie um no painel e abra o Brigade de novo.",
+        "part=sign_out_title": "Sair do Brigade?",
+        "part=sign_out_body": "Este telefone deixa de receber chamados até você entrar de novo.",
+        "part=cancel": "Cancelar",
+        "part=signing_out": "Saindo…",
+        "part=pages": "Chamados neste telefone",
+        "part=pages_pending": "Configurando…",
+        "part=pages_on": "Ativados",
+        "part=pages_off": "As notificações estão desativadas. Ative-as nos Ajustes para receber chamados aqui.",
+        "part=pages_unsupported": "Ainda não neste telefone",
+        "part=pages_failed": "Não foi possível registrar este telefone. O Brigade continua tentando.",
+        "part=pages_taken": "Este telefone ainda chama a pessoa que entrou nele antes de você e saiu sem conexão. O Brigade libera o telefone para você assim que conseguir concluir a saída dela.",
+        "part=open_hint": "Abre o incidente",
+        "part=assign_hint": "Abre os membros que podem assumir",
+        "part=pages_notice_title": "Este telefone não está chamando você",
+        "part=open_settings": "Abrir Ajustes",
+        "part=sign_out_body_unpaged": "Você vai precisar entrar de novo para ver os incidentes aqui.",
+        "part=sign_out_kept_title": "Este telefone ainda pode receber seus chamados",
+        "part=sign_out_kept_body": "O Brigade não conseguiu falar com o servidor, então este telefone continua recebendo seus chamados até voltar a ficar online. Aí o Brigade conclui sua saída sozinho.",
+        "part=sign_out_stuck_title": "Este telefone pode continuar recebendo seus chamados",
+        "part=sign_out_stuck_body": "O Brigade não conseguiu falar com o servidor nem guardar sua sessão para concluir a saída depois, então não consegue liberar este telefone sozinho. Para parar os chamados, entre aqui de novo com conexão e saia.",
+        "part=try_again": "Tentar de novo",
+        "part=offline": "Sem conexão",
+        "part=incident_stale_hint": "Mostrando este incidente como recebido por último. Suas alterações são enviadas quando a conexão voltar, desde que o Brigade continue aberto.",
+        "part=update_sending": "Enviando…",
+        "part=update_waiting": "Ainda não enviada. Mantenha o Brigade aberto: ela será enviada quando o Brigade voltar a responder.",
+        "part=show_password": "Mostrar senha",
+        "part=hide_password": "Ocultar senha",
+        "part=*": "Brigade"
+      }
+    }
+  ],
   "push_fallback_title": "Novo alerta",
   "push_fallback_body": "Abra o Brigade para ver.",
   "push_title": "Push",
@@ -186,7 +227,6 @@
   "push_unavailable": "Ainda não disponível nesta plataforma.",
   "push_error": "Falhou: {error}",
   "push_paging": "Chamados",
-  "push_registered": "Registrado em {shard}",
   "auth_sign_in_title": "Entrar no Brigade",
   "auth_sign_in_description": "Use o e-mail e a senha do seu cadastro.",
   "auth_sign_up_title": "Crie sua conta",
@@ -478,6 +518,8 @@
         "part=unnamed": "Membro sem nome",
         "part=show_more": "Mostrar mais",
         "part=show_less": "Mostrar menos",
+        "part=show_names": "Mostrar nomes",
+        "part=hide_names": "Ocultar nomes",
         "part=*": "Incidente"
       }
     }
@@ -538,6 +580,31 @@
         "kind=page_nobody": "Ninguém foi chamado: ninguém que pode responder tem o Brigade no celular",
         "kind=page_dead_lettered": "Uma chamada pode não ter saído: o Brigade não conseguiu enviá-la",
         "kind=*": "{actor} alterou o incidente"
+      }
+    }
+  ],
+  "timeline_pages_failed": [
+    {
+      "declarations": [
+        "input reason",
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["reason", "countPlural"],
+      "match": {
+        "reason=no_devices, countPlural=one": "Não foi possível chamar {countFormatted} pessoa: nenhum aparelho registrado",
+        "reason=no_devices, countPlural=*": "Não foi possível chamar {countFormatted} pessoas: nenhum aparelho registrado",
+        "reason=undelivered, countPlural=one": "Não foi possível chamar {countFormatted} pessoa: o push não foi entregue",
+        "reason=undelivered, countPlural=*": "Não foi possível chamar {countFormatted} pessoas: o push não foi entregue",
+        "reason=unsupported, countPlural=one": "Não foi possível chamar {countFormatted} pessoa: o Brigade ainda não envia pushes para Android",
+        "reason=unsupported, countPlural=*": "Não foi possível chamar {countFormatted} pessoas: o Brigade ainda não envia pushes para Android",
+        "reason=not_configured, countPlural=one": "Não foi possível chamar {countFormatted} pessoa: as notificações push não estão configuradas neste servidor",
+        "reason=not_configured, countPlural=*": "Não foi possível chamar {countFormatted} pessoas: as notificações push não estão configuradas neste servidor",
+        "reason=over_limit, countPlural=one": "Não foi possível chamar {countFormatted} pessoa: a chamada foi para celulares demais",
+        "reason=over_limit, countPlural=*": "Não foi possível chamar {countFormatted} pessoas: a chamada foi para celulares demais",
+        "reason=*, countPlural=one": "Não foi possível chamar {countFormatted} pessoa",
+        "reason=*, countPlural=*": "Não foi possível chamar {countFormatted} pessoas"
       }
     }
   ],

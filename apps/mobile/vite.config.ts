@@ -19,5 +19,8 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.ts", "plugins/**/*.test.ts"],
+    // Processed by Vite rather than loaded by Node, so src/lib/auth-client.test.ts's mocks of React Native and
+    // Expo reach it.
+    server: { deps: { inline: ["@better-auth/expo"] } },
   },
 });

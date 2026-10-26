@@ -22,6 +22,7 @@
     "cf-typegen:check": "wrangler types --check"
   },
   "dependencies": {
+    "@better-auth/expo": "1.7.13",
     "@freecorps/brigade-i18n": "workspace:*",
     "@freecorps/brigade-push": "workspace:*",
     "@freecorps/brigade-schema": "workspace:*",

@@ -5,7 +5,13 @@ import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { isId, MEMBER_NAME_MAX, newId, type Actor } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, describe, expect, test } from "vite-plus/test";
-import { INVALID_NAME_CODE, RATE_LIMIT, UNLIMITED_READS, WORKSPACE_LIMIT } from "../src/auth.ts";
+import {
+  APP_ORIGIN,
+  INVALID_NAME_CODE,
+  RATE_LIMIT,
+  UNLIMITED_READS,
+  WORKSPACE_LIMIT,
+} from "../src/auth.ts";
 import worker, { createWorkspace as postWorkspace, workerAuth } from "../src/index.ts";
 import type { SocketState } from "../src/workspace.ts";
 
@@ -721,6 +727,113 @@ describe("GET /sync/:workspaceId: the actor", () => {
       id: bia.user.id,
       role: "viewer",
     });
+  });
+});
+
+/**
+ * What the mobile app's Better Auth client (`@better-auth/expo`) sends: no `Origin` (React Native's fetch sets none),
+ * `expo-origin` with the app's scheme, and the session as a `Cookie` header it keeps in secure storage.
+ */
+const app = (
+  path: string,
+  init: { method?: string; body?: string; headers?: Record<string, string> } = {},
+) =>
+  exports.default.fetch(`${ORIGIN}${path}`, {
+    ...init,
+    headers: {
+      "expo-origin": APP_ORIGIN,
+      "Content-Type": "application/json",
+      "cf-connecting-ip": clientIp(),
+      ...init.headers,
+    },
+  });
+
+describe("the mobile app", () => {
+  test("signs in and out with its app origin and no Origin header", async () => {
+    const ana = await signUp("Ana");
+    const workspace = await createWorkspace(ana.cookie);
+    const signIn = await app("/auth/sign-in/email", {
+      method: "POST",
+      body: JSON.stringify({ email: ana.email, password: PASSWORD }),
+    });
+    expect(signIn.status).toBe(200);
+    const cookie = cookies(signIn);
+    expect((await session(cookie))?.session.activeOrganizationId).toBe(workspace.id);
+
+    const out = await app("/auth/sign-out", {
+      method: "POST",
+      headers: { Cookie: cookie },
+      body: "{}",
+    });
+    expect(out.status).toBe(200);
+    expect(await session(cookie)).toBeNull();
+  });
+
+  test("another expo-origin is refused, and a real Origin is never replaced by it", async () => {
+    const ana = await signUp("Ana");
+    const body = JSON.stringify({ email: ana.email, password: PASSWORD });
+    const other = await app("/auth/sign-in/email", {
+      method: "POST",
+      headers: { "expo-origin": "evil://" },
+      body,
+    });
+    expect(other.status).toBe(403);
+    // A page on another site cannot borrow the app's origin: its browser's Origin wins.
+    const page = await app("/auth/sign-in/email", {
+      method: "POST",
+      headers: { Origin: "https://evil.example.com" },
+      body,
+    });
+    expect(page.status).toBe(403);
+  });
+
+  test("the plugin's authorization proxy, an open redirect until social sign-in exists, is refused", async () => {
+    const response = await app(
+      `/auth/expo-authorization-proxy?authorizationURL=${encodeURIComponent("https://example.com/?state=x")}`,
+    );
+    expect(response.status).toBe(404);
+  });
+
+  test("its socket, with the session cookie and no Origin, acts as the member", async () => {
+    const ana = await signUp("Ana");
+    const workspace = await createWorkspace(ana.cookie);
+    const response = await upgrade(workspace.id, { Cookie: ana.cookie });
+    expect(response.status).toBe(101);
+    response.webSocket!.accept();
+    open.push(response.webSocket!);
+    expect(await socketActor(workspace.id)).toEqual({
+      kind: "user",
+      id: ana.user.id,
+      role: "owner",
+    });
+  });
+
+  test("its socket with React Native's default Origin, the socket URL's own, is accepted", async () => {
+    const ana = await signUp("Ana");
+    const workspace = await createWorkspace(ana.cookie);
+    // React Native turns ws:// into http:// (wss:// into https://) for the default Origin.
+    const response = await upgrade(workspace.id, { Cookie: ana.cookie, Origin: ORIGIN });
+    expect(response.status).toBe(101);
+    response.webSocket!.accept();
+    open.push(response.webSocket!);
+  });
+
+  test("its scheme is no origin for a socket, and a signed-out app gets 401 where the dev actor is off", async () => {
+    const ana = await signUp("Ana");
+    const workspace = await createWorkspace(ana.cookie);
+    const scheme = await upgrade(workspace.id, { Cookie: ana.cookie, Origin: APP_ORIGIN });
+    expect(scheme.status).toBe(403);
+
+    await app("/auth/sign-out", { method: "POST", headers: { Cookie: ana.cookie }, body: "{}" });
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(
+      new Request(`${ORIGIN}/sync/${workspace.id}`, {
+        headers: { Upgrade: "websocket", Cookie: ana.cookie },
+      }),
+      { ...env, SYNC_DEV_ACTOR: undefined } as unknown as Env,
+      ctx,
+    );
+    expect(response.status).toBe(401);
   });
 });
 

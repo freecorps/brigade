@@ -57,7 +57,8 @@ runQuery(queries, name, rawArgs, store, role, { onError? }) // → { ok: true, r
   integers; ISO 8601 only in event envelopes and the UI). `runMutation` checks the role against the access-control
   table (`can(role, permission)`, shaped for Better Auth's `createAccessControl`, RFC 0003), validates args, then
   runs `apply` and then `commit` in one `store.transaction`, so any failure writes nothing. Failures are typed
-  (`unknown_mutation`, `forbidden`, `invalid_args`, `not_found`, `invalid_transition`, `conflict`); an unexpected
+  (`unknown_mutation`, `forbidden`, `invalid_args`, `not_found`, `invalid_transition`, `conflict` for no change,
+  `limit_reached` for a per-member cap); an unexpected
   exception becomes `internal`, whose cause goes only to `onError` (server logs), never over the wire. Neither
   `runMutation` nor `runQuery` throws, whatever arrives off the wire (a non-string name is an unknown one; args
   that throw while being read are `internal`). System and integration actors carry a role and pass the same check.
@@ -341,8 +342,8 @@ server → client
   same Wi-Fi can use `vp dev`; Cloudflare's edge never serves a deployed Worker under such a host.
   Only `vp dev` and the tests set
   it, in their Vite configs; no environment in `apps/api/wrangler.jsonc` does (`apps/web/test/worker-config.test.ts`
-  checks each one), so every deployed Worker answers such an upgrade with `401`. The mobile app relies on it until
-  it can sign in. A request with a session always acts as its member, flag or not.
+  checks each one), so every deployed Worker answers such an upgrade with `401`. No app relies on it since the
+  mobile app signs in. A request with a session always acts as its member, flag or not.
 - **Provisioning:** when Better Auth creates a workspace (D1), the Worker calls `WorkspaceDO.provision()` over RPC.
   It claims the shard for the workspace and runs `workspace.create` as the new owner, so `workspace.created` goes
   through the outbox like any mutation (RFC 0005). It is de-duplicated like a socket's mutation and idempotent.
@@ -363,13 +364,21 @@ SyncClient (web/mobile)┤
 ```
 
 - The `api` Worker authenticates the upgrade request (`apps/api/src/actor.ts`): a cross-site `Origin` gets `403`
-  (browsers send cookies on a cross-site WebSocket upgrade and CORS does not apply to it; native clients send no
-  `Origin`), no Better Auth session gets `401`, and a user who is not a member of the workspace with a Brigade
+  (browsers send cookies on a cross-site WebSocket upgrade and CORS does not apply to it, and a browser always sends
+  the page's `Origin` on one), no Better Auth session gets `401`, and a user who is not a member of the workspace with a Brigade
   role gets `403`. Then it hands the socket to the shard (`stub.fetch`); the DO accepts it with the Hibernation
   API. The actor travels in a header on a request the Worker builds from scratch. **Not signed:** a Durable Object
   is reachable only through this Worker's binding, and the Worker never copies client headers onto that request, so
   a signature would protect nothing (decided in the auth slice; it replaces the "signed header" of the first
-  draft). Bearer tokens for mobile come with mobile sign-in.
+  draft).
+- **The mobile app** authenticates the same way, with no second kind of credential: Better Auth's Expo client keeps
+  the session in the phone's secure storage and the app sets it as the upgrade's `Cookie` header itself (React
+  Native's WebSocket takes headers). React Native sends either no `Origin` or, by default, the socket URL's own
+  origin (`ws://` read as `http://`), and both pass; the app's scheme (`brigade://`) is not accepted as a socket's
+  `Origin`, since the app never sends it there. A cookie header a page cannot set is what the app proves itself
+  with, so no bearer token is needed (decided in the mobile sign-in slice; the first draft planned bearer tokens).
+  The app makes one `SyncClient` per member and workspace and closes it on sign-out, so a phone signed in as someone
+  else never reuses an open socket.
 - For an entity shard, the Worker first checks that the entity belongs to the workspace (`inc_456` is in
   `WorkspaceDO(ws_123)`'s index) and names the shard from both ids (`ws_123:inc_456`), never from the client's id
   alone.

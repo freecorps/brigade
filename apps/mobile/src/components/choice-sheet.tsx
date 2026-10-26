@@ -1,7 +1,16 @@
 import { m } from "@freecorps/brigade-i18n";
 import { radius, spacing } from "@freecorps/brigade-ui";
 import { useState, type ReactNode } from "react";
-import { ActionSheetIOS, Modal, Pressable, StyleSheet, useColorScheme, View } from "react-native";
+import {
+  ActionSheetIOS,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useColorScheme,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
 
@@ -11,7 +20,8 @@ type Request = { title: string; choices: Choice<unknown>[]; pick: (value: unknow
 
 /**
  * Pick one of a few values. iOS shows the system action sheet; Android a plain dialog with one row per choice,
- * since React Native has no native list dialog there. Render `sheet` once in the screen.
+ * since React Native has no native list dialog there; a long list (every member, for a role) scrolls inside it,
+ * with Cancel always in view. Render `sheet` once in the screen.
  */
 export function useChoiceSheet(): {
   choose: <T>(title: string, choices: Choice<T>[], pick: (value: T) => void) => void;
@@ -45,6 +55,8 @@ export function useChoiceSheet(): {
 
 function ChoiceDialog({ request, onClose }: { request: Request; onClose: () => void }) {
   const colors = useTheme();
+  const dark = useColorScheme() === "dark";
+  const { height } = useWindowDimensions();
   return (
     <Modal transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <View style={{ flex: 1, justifyContent: "center", padding: spacing[6] }}>
@@ -53,14 +65,22 @@ function ChoiceDialog({ request, onClose }: { request: Request; onClose: () => v
           accessible={false}
           importantForAccessibility="no"
           onPress={onClose}
-          style={[StyleSheet.absoluteFill, { backgroundColor: "rgba(0, 0, 0, 0.4)" }]}
+          // Darker in dark mode, where a light scrim barely separates the card from the page.
+          style={[
+            StyleSheet.absoluteFill,
+            { backgroundColor: dark ? "rgba(0, 0, 0, 0.7)" : "rgba(0, 0, 0, 0.4)" },
+          ]}
         />
         <View
           style={{
+            maxHeight: height * 0.7,
             backgroundColor: colors.card,
             borderRadius: radius.xl,
             borderCurve: "continuous",
+            borderWidth: dark ? StyleSheet.hairlineWidth : 0,
+            borderColor: colors.border,
             paddingVertical: spacing[2],
+            overflow: "hidden",
           }}
         >
           <ThemedText
@@ -70,16 +90,18 @@ function ChoiceDialog({ request, onClose }: { request: Request; onClose: () => v
           >
             {request.title}
           </ThemedText>
-          {request.choices.map((choice) => (
-            <DialogRow
-              key={String(choice.value)}
-              label={choice.label}
-              onPress={() => {
-                onClose();
-                request.pick(choice.value);
-              }}
-            />
-          ))}
+          <ScrollView style={{ flexGrow: 0 }} persistentScrollbar>
+            {request.choices.map((choice) => (
+              <DialogRow
+                key={String(choice.value)}
+                label={choice.label}
+                onPress={() => {
+                  onClose();
+                  request.pick(choice.value);
+                }}
+              />
+            ))}
+          </ScrollView>
           <DialogRow label={m.declare_cancel()} muted onPress={onClose} />
         </View>
       </View>
@@ -105,6 +127,8 @@ function DialogRow({
         minHeight: spacing[12],
         justifyContent: "center",
         paddingHorizontal: spacing[6],
+        // A long name wraps; it keeps clear of the separators.
+        paddingVertical: spacing[2],
         backgroundColor: pressed ? colors.accent : "transparent",
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: colors.border,

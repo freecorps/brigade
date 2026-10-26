@@ -861,6 +861,80 @@ describe("heartbeats", () => {
     });
   });
 
+  test("a new URL: the old token is refused at once, the new one accepted, and neither leaves the shard", async () => {
+    const ws = await workspace();
+    const monitorId = newId("mon", Date.now(), random);
+    const old = newHeartbeatSecret(random);
+    expect(
+      await ws.run("monitor.createHeartbeat", {
+        id: monitorId,
+        name: "Nightly backup",
+        intervalSeconds: 60,
+        graceSeconds: 30,
+        tokenHash: await sha256Hex(old),
+      }),
+    ).toMatchObject({ ok: true });
+    const ping = (secret: string) =>
+      exports.default.fetch(`http://localhost/heartbeat/${heartbeatToken(ws.id, monitorId, secret)}`, {
+        method: "POST",
+      });
+    expect((await ping(old)).status).toBe(202);
+
+    const fresh = newHeartbeatSecret(random);
+    const tokenHash = await sha256Hex(fresh);
+    for (const role of ["responder", "viewer"] as const) {
+      expect(
+        await ws.run("monitor.rotateHeartbeat", { id: monitorId, tokenHash }, { ...admin, role }),
+      ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    }
+    expect((await ping(fresh)).status).toBe(404);
+
+    const { result, changes, outbox } = await ws.withShard((shard, _instance, sql) => {
+      const before = Date.now();
+      const done = shard.mutate({
+        clientId: "test",
+        mutationId: "rotate",
+        actor: admin,
+        name: "monitor.rotateHeartbeat",
+        args: { id: monitorId, tokenHash },
+        now: before,
+      });
+      const events = sql
+        .exec<{ event: string }>("select event from outbox order by seq")
+        .toArray()
+        .map((row) => row.event);
+      return { ...done, outbox: events };
+    });
+    expect(result).toMatchObject({ ok: true });
+    // What goes to sockets: the monitor row, never the server-only heartbeats table.
+    expect(changes.map((change) => change.table)).toEqual(["monitors"]);
+    expect(outbox.at(-1)).toContain("monitor.heartbeat_rotated");
+    for (const text of [JSON.stringify(changes), ...outbox]) {
+      expect(text).not.toContain(tokenHash);
+      expect(text).not.toContain(fresh);
+      expect(text).not.toContain(old);
+    }
+
+    expect((await ping(old)).status).toBe(404);
+    // The old pinger's last beat is long past the interval and grace; the rotation gave a fresh window, so the
+    // alarm reports no miss.
+    await ws.withShard((shard) => {
+      expect(shard.store.get("heartbeats", monitorId)?.lastPingAt).toBeNull();
+    });
+    await ws.withShard((_shard, instance) => instance.alarm());
+    await ws.withShard((shard) => {
+      expect(shard.store.get("monitors", monitorId)).toMatchObject({
+        status: "pending",
+        checks: [],
+      });
+      expect(shard.store.get("heartbeats", monitorId)).toMatchObject({ tokenHash, lastPingAt: null });
+    });
+    expect((await ping(fresh)).status).toBe(202);
+    await ws.withShard((shard) => {
+      expect(shard.store.get("monitors", monitorId)?.status).toBe("up");
+    });
+  });
+
   test("a D1 failure does not drop a real ping: the shard still decides", async () => {
     const ws = await workspace();
     const monitorId = newId("mon", Date.now(), random);

@@ -584,6 +584,51 @@ describe("monitor down → alert → incident", () => {
     });
   });
 
+  test("a TCP monitor whose probes stop reporting turns unknown on the shard alarm too", async () => {
+    const ws = await workspace();
+    const monitorId = newId("mon", Date.now(), random);
+    await ws.run("monitor.createTcp", {
+      id: monitorId,
+      name: "Database",
+      host: "db.example.com",
+      port: 5432,
+      intervalSeconds: 60,
+      timeoutSeconds: 5,
+      regions: ["weur"],
+    });
+    const at = Date.now();
+    const up = {
+      reportId: newId("rep", at, random),
+      id: monitorId,
+      at,
+      up: true,
+      latencyMs: 12,
+      colo: "CDG",
+      httpStatus: null,
+      error: null,
+    };
+    expect(await ws.stub.report("weur", [up])).toEqual([true]);
+    await ws.withShard((shard) => {
+      const monitor = shard.store.get("monitors", monitorId)!;
+      expect(monitor.status).toBe("up");
+      const old = Date.now() - staleAfterMs(monitor) - 1000;
+      shard.store.update("monitors", monitorId, {
+        checks: monitor.checks.map((check) => ({ ...check, at: old })),
+      });
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await ws.withShard((_shard, instance) => instance.alarm());
+    } finally {
+      error.mockRestore();
+    }
+    await ws.withShard((shard, _instance, sql) => {
+      expect(shard.store.get("monitors", monitorId)?.status).toBe("unknown");
+      expect(outbox(sql)).toContain("monitor.status_changed by sys_monitors");
+      expect(shard.store.scan("incidents")).toEqual([]);
+    });
+  });
+
   test("the shard alarm reschedules itself even when its work fails", async () => {
     const ws = await workspace();
     await ws.run("monitor.createHttp", {

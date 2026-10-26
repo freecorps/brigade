@@ -98,7 +98,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     on `PATCH`/`DELETE /workspaces/:id/members/:userId` (per member and workspace), since each call reads D1 and
     wakes the shard.
 - [ ] Monitors (HTTP/TCP/heartbeat) with quorum → alerts → incidents
-  - Done: HTTP and heartbeat monitors as mutations in `packages/schema` (owners and admins manage, everyone reads),
+  - Done: HTTP, TCP and heartbeat monitors as mutations in `packages/schema` (owners and admins manage, everyone reads),
     one `ProbeDO` per workspace and region with `locationHint` (only the six regions where objects spawn, S2), each
     result with the colo it ran from; SSRF rules on save and before every request, no redirects followed, bounded
     body and timeout; `POST /heartbeat/:token` with a hashed secret; majority quorum and 2 consecutive checks per
@@ -111,8 +111,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
     one-time heartbeat URL with Copy and a `curl` example; editing a monitor in place (owners and admins; the kind
     stays, an edit that changes nothing sends nothing, and the form says when saving starts the checks over) and
     deleting it from the edit form, confirmed with what happens to its firing alert and its incidents and, for a
-    heartbeat, its URL.
-  - Left: TCP checks (`connect()`); regenerating a heartbeat URL (no mutation for it yet); whether "No data" pages (Q17); member names for "Paused by" (today "you" or "a teammate"; the shard's member list now has them); regex,
+    heartbeat, its URL. TCP checks with `connect()`: up when the connection opens within the timeout, closed on
+    every path, in the probe's pool of six; the same host rules as HTTP and any port but 25; host and port in the
+    dashboard's form and rows (RFC 0007 "Check types").
+  - Left: regenerating a heartbeat URL (no mutation for it yet); whether "No data" pages (Q17); member names for "Paused by" (today "you" or "a teammate"; the shard's member list now has them); regex,
     headers and TLS expiry; configurable quorum and severity; alerting on a stalled probe (RFC 0007 "Watching the
     watcher"; today it is logged and re-pushed); `AlertGroupDO` and alert routes, moving monitor alerts out of the
     workspace shard;

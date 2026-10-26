@@ -21,8 +21,10 @@
   region has reported nothing for 15 minutes, which re-arms a probe whose alarm was lost. The shard's own alarm sets
   a fallback a minute out before its work and moves it to the next deadline after, and an accepted heartbeat ping
   re-arms it if it is missing.
-- **Cost of slow targets:** a probe runs at most 6 checks at once and waits up to the timeout (at most 30 s) for each,
-  so a region whose targets all time out keeps its object busy, and billed for duration, for about
+- **Cost of slow targets:** a probe runs at most 6 checks at once, HTTP and TCP together, and waits up to the timeout
+  (at most 30 s) for each. Six is also what a Worker allows: at most six connections waiting for their headers or to
+  open, the rest queued (and a queued check's timeout would already be running). So a region whose targets all
+  time out keeps its object busy, and billed for duration, for about
   `ceil(checks / 6) × timeout` per run instead of a few hundred milliseconds.
 
 ## Check types (v1)
@@ -36,7 +38,7 @@
   monitor is saved and again by the probe before every request (`targetProblem`). Also refused: `192.88.99.0/24`
   (6to4 relay), `2001:2::/48` (benchmarking), `2001:10::/28` and `2001:20::/28` (ORCHID, ORCHIDv2) and
   `3fff::/20` (documentation, RFC 9637).
-- **Ports:** only the default ports, 8080 and 8443, and the other ports Cloudflare proxies HTTP(S) on (2052, 2053,
+- **Ports (HTTP):** only the default ports, 8080 and 8443, and the other ports Cloudflare proxies HTTP(S) on (2052, 2053,
   2082, 2083, 2086, 2087, 2095, 2096, 8880): `MONITOR_PORTS`. Not "anything above 1024": Redis, Elasticsearch and
   friends listen there, and a check's error (`network` against `timeout`) would tell whether something answers, which
   makes a monitor a port scanner. A health endpoint on another port goes behind a proxy, or uses a heartbeat.
@@ -46,7 +48,31 @@
   3xx is the answer), at most 64 KiB of a body is read, and every request has its timeout. A public name that
   resolves to a private address is not caught (Workers cannot resolve names); deployed Workers cannot reach private
   networks.
-- TCP: connect via `connect()` (Sockets API). Not available for Cloudflare IP ranges.
+- TCP: connect via `connect()` (Sockets API). Built: a host (a name, or an IPv4 or IPv6 address, without a scheme,
+  port or path) and a port, interval 30 s to 24 h, timeout 1 to 30 s, regions as for HTTP (`monitor.createTcp`,
+  `monitor.updateTcp`; pause and delete are the same mutations for every kind, and a new host, port, timeout or
+  region set restarts it like an HTTP target).
+  - **Up** means the connection opened (`socket.opened`) within the timeout. Nothing is sent or read, and the socket
+    is closed straight after, on every path: opened, refused, failed or timed out. The timeout is the check's own
+    timer racing `opened`, so a connection that never answers cannot hold the probe past it; a late rejection is
+    handled, never unhandled. A failure is `timeout` or `network`; the runtime gives one error ("proxy request
+    failed") for a refused port, a name that does not resolve and an address Cloudflare refuses, so they are not
+    told apart. Latency is the time to open. Results then vote exactly like HTTP ones (two alike checks per
+    region, a majority of fresh regions).
+  - **Targets:** the same host rules as HTTP (`hostProblem`, shared by `targetProblem` and `tcpTargetProblem`; the
+    host is normalised by the same URL parser, so `127.1` or `2130706433` is loopback here too), checked on save
+    and again by the probe before every connection. Any port from 1 to 65535 except 25, which Cloudflare refuses
+    for every Worker (`TCP_BLOCKED_PORTS`), so a monitor on it could never pass.
+  - **Why any port, unlike HTTP:** whether something listens on a port is the whole answer of a TCP check, so the
+    HTTP allowlist's reason (a check's error must not reveal an open database port) cannot apply without making
+    the check useless. What bounds the scanning a monitor could do instead: public hosts only, one host and port per
+    monitor, at most one connection per region every 30 s, only owners and admins create monitors, and the error
+    does not tell refused from unreachable. Cloudflare's own rules still apply (no Cloudflare IP ranges, no private
+    networks, no port 25).
+  - **Limits:** `connect()` counts toward the six connections a Worker may have opening at once (the pool above);
+    an open socket keeps a Durable Object alive for up to 15 minutes, which a check never needs since it closes at
+    once. Locally (workerd under `vp dev` and the tests) `connect()` reaches loopback, so
+    `apps/api/test/monitors.test.ts` checks a real listener and a closed port as well as stubbed sockets.
 - Heartbeat (push-based): the monitored system calls Brigade; missing beats raise an alert. Covers cron jobs and internal hosts.
   Built: `POST /heartbeat/<workspace id>.<monitor id>.<secret>` (also under the dashboard's `/api`). The secret is
   32 random bytes made by the client, which shows the URL once and sends only its SHA-256; the shard stores the hash

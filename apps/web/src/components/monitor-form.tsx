@@ -234,7 +234,7 @@ export function MonitorForm({
           <div
             role="radiogroup"
             aria-labelledby={kindId}
-            className="grid w-full grid-cols-3 divide-x divide-border overflow-hidden rounded-md bg-card outline-1 -outline-offset-1 outline-input sm:w-fit"
+            className="grid w-full grid-cols-[repeat(3,minmax(max-content,1fr))] divide-x divide-border overflow-hidden rounded-md bg-card outline-1 -outline-offset-1 outline-input sm:w-fit"
           >
             {MONITOR_KINDS.map((kind) => (
               <label

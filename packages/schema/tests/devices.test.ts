@@ -5,6 +5,7 @@ import {
   mutations,
   newId,
   NOTIFIER_ACTOR,
+  ACCOUNT_ACTOR,
   runMutation,
   serverMutations,
   type Actor,
@@ -245,5 +246,38 @@ describe("notification.fail", () => {
       reason: "undelivered",
     });
     expect(Object.keys(mutations)).not.toContain("notification.fail");
+  });
+});
+
+describe("device.signOut", () => {
+  test("server only, as `ACCOUNT_ACTOR`: drops every device of the user, and only theirs", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const [one, two, other] = [deviceId(), deviceId(), deviceId()];
+    run(store, ana, "device.register", args(one));
+    run(
+      store,
+      ana,
+      "device.register",
+      args(two, { pushToken: "b".repeat(64), publicKey: OTHER_KEY }),
+    );
+    run(store, bia, "device.register", args(other, { pushToken: "c".repeat(64) }));
+    expect(Object.keys(mutations)).not.toContain("device.signOut");
+    expect(run(store, NOTIFIER_ACTOR, "device.signOut", { userId: "usr_ana" })).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
+    const result = run(store, ACCOUNT_ACTOR, "device.signOut", { userId: "usr_ana" });
+    expect(result.ok && result.events.map((event) => event.data)).toEqual([
+      { id: one, userId: "usr_ana", reason: "password_reset" },
+      { id: two, userId: "usr_ana", reason: "password_reset" },
+    ]);
+    expect(store.get("devices", one)).toBeUndefined();
+    expect(store.get("member_devices", two)).toBeUndefined();
+    expect(store.get("devices", other)).toBeDefined();
+    // Nothing left to drop.
+    expect(run(store, ACCOUNT_ACTOR, "device.signOut", { userId: "usr_ana" })).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
   });
 });

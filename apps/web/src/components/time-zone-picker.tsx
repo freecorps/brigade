@@ -1,5 +1,6 @@
 import { Combobox } from "@base-ui/react/combobox";
 import { m } from "@freecorps/brigade-i18n";
+import { canonicalTimeZone } from "@freecorps/brigade-schema";
 import { cn } from "cn";
 import { CheckIcon, ChevronsUpDownIcon } from "lucide-react";
 import { useState } from "react";
@@ -39,7 +40,8 @@ export function TimeZonePicker({
   const selected = groups.flatMap((group) => group.items).find((zone) => zone.value === value) ?? {
     value,
     label: zoneLabel(value),
-    offset: offsetLabel(value, Date.now()),
+    // A zone this runtime does not know (a draft being checked, or ICU skew) shows no offset rather than throwing.
+    offset: canonicalTimeZone(value) === undefined ? "" : offsetLabel(value, Date.now()),
     search: "",
   };
   return (

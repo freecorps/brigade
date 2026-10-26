@@ -144,6 +144,12 @@ describe("zoned time", () => {
       ["2012-01-01 09:00", "usr_bia"],
     ]);
     expect(layerShiftAt(s.layers[0], s.timeZone, at("2011-12-31", "12:00", s.timeZone))?.k).toBe(4);
+
+    // Hourly, right after the skipped day: the shift found is the one that really holds 09:30 on the 31st.
+    const hourly = layer({ startDate: "2011-12-29", unit: "hours", count: 1 });
+    const found = layerShiftAt(hourly, s.timeZone, at("2011-12-31", "09:30", s.timeZone));
+    expect(found && wall(found.start, s.timeZone)).toBe("2011-12-31 09:00");
+    expect(found && wall(found.end, s.timeZone)).toBe("2011-12-31 10:00");
   });
 
   test("rejects dates and times that do not exist", () => {

@@ -100,7 +100,8 @@ export function layerShiftAt(
   if (start === undefined) return undefined;
   const period = periodMinutes(layer);
   let k = Math.floor((localMinute(at, timeZone) - start) / period);
-  // The wall-clock guess is off by one at most around a transition; settle it on instants.
+  // The guess comes from `at`'s own wall time, which is never inside a skipped range (not even Pacific/Apia's whole
+  // 2011-12-30), so it is off by one at most around a transition; settle it on instants.
   for (let i = 0; i < 4 && k >= 0 && shiftStart(start, period, k, timeZone) > at; i++) k--;
   if (k < 0) {
     if (shiftStart(start, period, 0, timeZone) > at) return undefined;

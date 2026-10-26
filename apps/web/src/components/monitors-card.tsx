@@ -280,7 +280,7 @@ export function MonitorsCard() {
 }
 
 const ROW_GRID =
-  "relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 px-4 py-3 sm:px-6 md:grid-cols-[--spacing(28)_minmax(0,1fr)_minmax(0,18rem)_--spacing(30)]";
+  "relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 px-4 py-3 sm:px-6 md:grid-cols-[--spacing(28)_minmax(0,1fr)_minmax(0,18rem)_--spacing(30)] md:has-[[data-action]]:grid-cols-[--spacing(28)_minmax(0,1fr)_minmax(0,18rem)_--spacing(48)]";
 
 /**
  * One monitor. Phones stack the badge and name, the target, then the results; from `md` the badge, name and
@@ -398,7 +398,7 @@ function MonitorItem({
         {line ? <p className="text-muted-foreground">{line}</p> : null}
       </div>
       {actions.length > 0 ? (
-        <div className="col-start-2 row-start-1 flex gap-1 justify-self-end md:col-auto md:flex-col md:items-end">
+        <div className="col-start-2 row-start-1 flex gap-1 justify-self-end md:col-auto">
           {actions.includes("edit") ? (
             <Button
               variant="ghost"

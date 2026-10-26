@@ -130,8 +130,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
 - [ ] Brigade Sync in production for web + mobile
   - Done so far: D1 `brigade-db` and `brigade-db-staging` exist with the migrations applied. Left: production and
     staging queues, the first deploy, and the relay's production secrets.
-- [ ] Web dashboard: incident list/detail, monitors
-  - Done so far: the incident list, the incident page (`/incidents/<number>`) and the Monitors card.
+- [x] Web dashboard: incident list/detail, monitors
+  - The incident list, the incident page (`/incidents/<number>`), the Monitors card (create, edit, pause, delete;
+    HTTP, TCP and heartbeat) and the Members card.
 - [ ] Mobile: login, incident list/detail, push via relay, ack from notification
   - Done: email and password sign-in and sign-out with Better Auth's Expo integration (`@better-auth/expo`: the
     session in secure storage, sent as a `Cookie` header on Better Auth's routes and on the sync upgrade; the app's
@@ -181,7 +182,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     `DEAD_MAN_URL` on `brigade-api-dev` and later environments (owner's call, an account outside Cloudflare); proving
     each shard's own drain, APNs and D1, telling someone inside Brigade when it degrades, and an instance-operator
     role for `/health/paging`'s `external` (Q19).
-- [ ] i18n plumbing (en, pt-BR)
+- [x] i18n plumbing (en, pt-BR)
+  - Paraglide messages in `packages/i18n` with `en` and `pt-BR` for every user-facing string on the dashboard and
+    the mobile app, a language switch, and wording shared between them (RFC 0008).
 
 ## Phase 2 — On-call (4–6 weeks)
 

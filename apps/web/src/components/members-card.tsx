@@ -300,17 +300,9 @@ export function MembersList({
             </Button>
           </div>
         ) : !loading && members.length <= 1 ? (
-          <div className="flex flex-col items-start gap-3 rounded-md bg-muted p-4">
-            <p className="text-sm text-muted-foreground">
-              {m.members_part({ part: invite ? "empty_invite" : "empty", name: "" })}
-            </p>
-            {invite && !invite.opened ? (
-              <Button variant="outline" onClick={invite.open}>
-                <UserPlusIcon aria-hidden />
-                {m.invite_part({ part: "open", email: "", date: "", name: "" })}
-              </Button>
-            ) : null}
-          </div>
+          <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
+            {m.members_part({ part: invite ? "empty_invite" : "empty", name: "" })}
+          </p>
         ) : null}
       </CardContent>
     </Card>

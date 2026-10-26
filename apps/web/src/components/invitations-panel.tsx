@@ -258,7 +258,7 @@ export function InvitationsPanel({
           <h3 id={`${titleId}-pending`} className="text-sm font-medium text-muted-foreground">
             {m.invite_part({ part: "pending_title", email: "", date: "", name: "" })}
           </h3>
-          <ul className="-mx-4 divide-y border-y sm:-mx-6">
+          <ul className="-mx-4 divide-y border-t sm:-mx-6">
             {pending.map((invitation) => {
               const expired = invitation.expiresAt <= now;
               const manageable = roles.includes(invitation.role);

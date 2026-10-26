@@ -273,11 +273,12 @@ describe("the Members card and the verification notice", () => {
     await setI18nLocale("pt-BR");
     const owner = renderCard("owner", true);
     expect(owner.container.textContent).toContain("Convide sua equipe");
+    // The card's own Invite button, next to its heading: one per card.
     const buttons = [...owner.container.querySelectorAll("button")].filter(
       (b) => b.textContent === "Convidar",
     );
-    expect(buttons).toHaveLength(2);
-    await click(buttons[1]);
+    expect(buttons).toHaveLength(1);
+    await click(buttons[0]);
     expect(owner.opened()).toBe(1);
     act(() => root?.unmount());
     const viewer = renderCard("viewer", false);

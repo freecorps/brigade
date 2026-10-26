@@ -16,6 +16,7 @@ import {
   newId,
   ROTATION_UNITS,
   SCHEDULE_NAME_MAX,
+  trimSpace,
   wallMinute,
   wallParts,
   zonedInstant,
@@ -127,6 +128,30 @@ export function draftFromSchedule(row: ScheduleRow): ScheduleDraft {
   };
 }
 
+/**
+ * The draft without anyone who can no longer hold a shift: viewers and people gone from `members` (the shard's
+ * list), which the shard would refuse. A schedule normally has none (a member made a viewer or removed leaves the
+ * rotations in the same change), but one left behind would make every save fail, so the editor drops them when it
+ * opens and says so. `members` must be the loaded list: an empty one drops nobody.
+ */
+export function draftMembers(
+  draft: ScheduleDraft,
+  members: readonly MemberRow[],
+): { draft: ScheduleDraft; dropped: boolean } {
+  if (members.length === 0) return { draft, dropped: false };
+  const able = new Set(
+    members.filter((member) => member.role !== "viewer").map((member) => member.id),
+  );
+  let dropped = false;
+  const layers = draft.layers.map((layer) => {
+    const kept = layer.members.filter((id) => able.has(id));
+    if (kept.length === layer.members.length) return layer;
+    dropped = true;
+    return { ...layer, members: kept };
+  });
+  return { draft: dropped ? { ...draft, layers } : draft, dropped };
+}
+
 /** A layer's name, or "Primary" / "Layer 2" (by position) in the reader's language when it has none. */
 export function layerName(layer: Pick<ScheduleLayer, "name">, index: number): string {
   return layer.name.trim() || m.oncall_layer_name({ number: String(index + 1) });
@@ -143,20 +168,20 @@ const hasErrors = (errors: ScheduleErrors) =>
   errors.name || errors.timeZone || errors.layers.some((layer) => Object.keys(layer).length > 0);
 
 /**
- * The draft as `schedule.create` / `schedule.update` arguments, or what is wrong with it. Members are checked
- * against `members` (the shard's list, which the card subscribes to): a viewer or someone gone is dropped from the
- * draft when it opens (`draftMembers`), so here only an empty or overfull layer is wrong.
+ * The draft as `schedule.create` / `schedule.update` arguments, or what is wrong with it. Who may be in a layer is
+ * settled when the editor opens (`draftMembers`) and by the picker (`rotationChoices`), so here only an empty or
+ * overfull layer is wrong.
  */
 export function checkSchedule(id: string, draft: ScheduleDraft): CheckedSchedule {
   const errors: ScheduleErrors = { layers: draft.layers.map(() => ({})) };
-  const name = draft.name.trim();
+  const name = trimSpace(draft.name);
   if (name.length === 0 || name.length > SCHEDULE_NAME_MAX) errors.name = true;
   const timeZone = canonicalTimeZone(draft.timeZone);
   if (!timeZone) errors.timeZone = true;
   const layers: ScheduleLayer[] = draft.layers.map((layer, index) => {
     const issues: ScheduleErrors["layers"][number] = {};
     errors.layers[index] = issues;
-    if (layer.name.trim().length > LAYER_NAME_MAX) issues.name = true;
+    if (trimSpace(layer.name).length > LAYER_NAME_MAX) issues.name = true;
     if (layer.members.length === 0) issues.members = "empty";
     else if (layer.members.length > MAX_LAYER_MEMBERS) issues.members = "too_many";
     const date = wallMinute(layer.startDate, "00:00");
@@ -168,7 +193,7 @@ export function checkSchedule(id: string, draft: ScheduleDraft): CheckedSchedule
     if (!/^\d+$/.test(layer.count.trim()) || count < 1 || count > MAX_SHIFT_COUNT[layer.unit]) {
       issues.count = true;
     }
-    return { ...layer, name: layer.name.trim(), count };
+    return { ...layer, name: trimSpace(layer.name), count };
   });
   if (hasErrors(errors) || !timeZone) return { ok: false, errors };
   return { ok: true, args: { id, name, timeZone, layers } };
@@ -279,9 +304,13 @@ export function fromLocalInput(value: string, timeZone: string): number | undefi
 
 export type OverrideDraft = { userId: string; start: string; end: string };
 
-/** Starts at the next whole hour and runs 12 hours: covering a night. */
+/**
+ * Starts at the next whole hour on the schedule's wall clock (10:00 in Kathmandu, not 09:15 there because it is a
+ * whole hour in UTC) and runs 12 hours: covering a night.
+ */
 export function emptyOverride(userId: string, timeZone: string, now: number): OverrideDraft {
-  const start = Math.ceil((now + 1) / HOUR) * HOUR;
+  const minute = (Math.floor(localMinute(now, timeZone) / 60) + 1) * 60;
+  const start = zonedInstant(minute, timeZone);
   return {
     userId,
     start: localInput(start, timeZone),
@@ -395,7 +424,13 @@ export const fromNow = (instant: number, now: number, locale: Locale) =>
 
 /** `oncall_text` with only the inputs the variant uses. */
 export function text(
-  key: "your_time" | "members_max" | "choose_person" | "remove_override" | "layer_hidden",
+  key:
+    | "your_time"
+    | "members_max"
+    | "choose_person"
+    | "remove_override"
+    | "layer_hidden"
+    | "dropped_members",
   inputs: { name?: string; max?: string; time?: string } = {},
 ): string {
   return m.oncall_text({ text: key, name: "", max: "", time: "", ...inputs });

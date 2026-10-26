@@ -4,6 +4,8 @@ import {
   checkOverride,
   checkSchedule,
   draftFromSchedule,
+  draftMembers,
+  emptyOverride,
   fromLocalInput,
   handoffTime,
   hiddenLayers,
@@ -102,6 +104,45 @@ test("override times are read on the schedule's wall clock, not the browser's", 
       now,
     ),
   ).toEqual({ ok: false, errors: { userId: true, end: true } });
+});
+
+test("a new override starts at the next whole hour on the schedule's clock, even a quarter-hour zone's", () => {
+  // 09:20 in Kathmandu (+05:45) is 03:35 UTC: the next whole hour there is 10:00, not 04:00 UTC (09:45 there).
+  const now = Date.UTC(2026, 9, 27, 3, 35);
+  expect(emptyOverride("usr_ana", "Asia/Kathmandu", now)).toEqual({
+    userId: "usr_ana",
+    start: "2026-10-27T10:00",
+    end: "2026-10-27T22:00",
+  });
+  expect(emptyOverride("", "America/Sao_Paulo", Date.UTC(2026, 9, 27, 12)).start).toBe(
+    "2026-10-27T10:00",
+  );
+});
+
+test("opening the editor drops viewers and people who left from its layers, and says so", () => {
+  const members: MemberRow[] = [
+    { id: "usr_ana", name: "Ana", role: "admin", updatedAt: 0 },
+    { id: "usr_bia", name: "Bia", role: "viewer", updatedAt: 0 },
+    { id: "usr_caio", name: "Caio", role: "responder", updatedAt: 0 },
+  ];
+  const opened = draftMembers(
+    draft({
+      layers: [
+        { ...layer, members: ["usr_ana", "usr_bia", "usr_gone", "usr_caio"], count: "1" },
+        { ...layer, id: "lyr_2", members: ["usr_bia"], count: "1" },
+      ],
+    }),
+    members,
+  );
+  expect(opened.dropped).toBe(true);
+  expect(opened.draft.layers.map((l) => l.members)).toEqual([["usr_ana", "usr_caio"], []]);
+  // A layer left empty asks for someone, as any empty layer does.
+  const checked = checkSchedule(SCH, opened.draft);
+  expect(checked.ok ? null : checked.errors.layers).toEqual([{}, { members: "empty" }]);
+  // Nobody to drop, or no list yet: the draft as it was.
+  const kept = draft({ layers: [{ ...layer, members: ["usr_ana", "usr_caio"], count: "1" }] });
+  expect(draftMembers(kept, members)).toEqual({ draft: kept, dropped: false });
+  expect(draftMembers(kept, [])).toEqual({ draft: kept, dropped: false });
 });
 
 test("layers read as their rhythm, and viewers are never offered for a rotation", () => {
@@ -232,7 +273,11 @@ test("zones the runtime lists under an older name are found and shown by their c
   expect(labels).toEqual([...labels].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
   expect(new Set(zones.map((zone) => zone.value)).size).toBe(zones.length);
   // No label is a name IANA has replaced (every older spelling the runtime lists has a current one here).
-  expect(labels.filter((label) => /Calcutta|Katmandu|Kiev|Saigon|Rangoon|Godthab|Truk|Ponape/.test(label))).toEqual([]);
+  expect(
+    labels.filter((label) =>
+      /Calcutta|Katmandu|Kiev|Saigon|Rangoon|Godthab|Truk|Ponape/.test(label),
+    ),
+  ).toEqual([]);
 });
 
 test("a layer says who it has now, and whether a later layer or an override hides them", () => {

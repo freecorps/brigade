@@ -17,6 +17,7 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   CalendarClockIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   PencilIcon,
   PlusIcon,
@@ -52,6 +53,7 @@ import {
   checkOverride,
   checkSchedule,
   draftFromSchedule,
+  draftMembers,
   emptyOverride,
   emptySchedule,
   fromLocalInput,
@@ -234,6 +236,8 @@ export function OnCallCard() {
                 {editing === row.id ? (
                   <ScheduleForm
                     initial={draftFromSchedule(row)}
+                    // Only a loaded list can say someone is gone.
+                    loaded={members.status === "ready"}
                     editing={row}
                     members={members.rows}
                     choices={choices}
@@ -365,17 +369,22 @@ function ScheduleItem({
   const layersId = useId();
   const overridesId = useId();
   const [confirming, setConfirming] = useState<string | null>(null);
-  // Typing in a form re-renders the whole card; the handoffs only change with the schedule, overrides or clock.
-  const segments = useMemo(
-    () => nextHandoffs(row, overrides, now, now + UPCOMING_MS, UPCOMING_SHOWN + 1),
-    [row, overrides, now],
-  );
+  const segments = useHandoffs(row, overrides, now);
   const [current, ...upcoming] = segments;
+  const cancelRemove = (id: string) => {
+    setConfirming(null);
+    requestAnimationFrame(() =>
+      document
+        .querySelector<HTMLElement>(`[data-override="${id}"] [data-action="remove-override"]`)
+        ?.focus(),
+    );
+  };
   const own = overrides
     .filter((item) => item.scheduleId === row.id && item.end > now)
     .sort((a, b) => a.start - b.start);
   const name = (id: string | null) => (id === null ? m.oncall_nobody() : memberLabel(members, id));
-  const ends = current && current.end < now + UPCOMING_MS ? current.end : null;
+  // Only a handoff ends the current stretch: alone, it ends where the list stopped looking, which is no time to show.
+  const ends = current && segments.length > 1 ? current.end : null;
   const endsLocal = ends === null ? null : viewerTime(ends, row.timeZone, viewerZone, locale);
   const until =
     ends === null ? null : (
@@ -395,10 +404,7 @@ function ScheduleItem({
             {row.name}
           </h3>
           <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-            {m.oncall_time_zone({
-              zone: zoneLabel(row.timeZone),
-              offset: offsetLabel(row.timeZone, now),
-            })}
+            <ZoneLine timeZone={row.timeZone} now={now} />
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -550,6 +556,12 @@ function ScheduleItem({
                       role="alertdialog"
                       aria-label={m.oncall_action_on({ action: "remove_override", name: who })}
                       className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-2 pl-3"
+                      onKeyDown={(event) => {
+                        // From either button: Escape is Cancel.
+                        if (event.key !== "Escape") return;
+                        event.stopPropagation();
+                        cancelRemove(item.id);
+                      }}
                     >
                       <p className="min-w-0 flex-1 basis-48 font-medium [overflow-wrap:anywhere]">
                         {text("remove_override", { name: who })}
@@ -584,19 +596,7 @@ function ScheduleItem({
                         <Button
                           type="button"
                           variant="outline"
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") setConfirming(null);
-                          }}
-                          onClick={() => {
-                            setConfirming(null);
-                            requestAnimationFrame(() =>
-                              document
-                                .querySelector<HTMLElement>(
-                                  `[data-override="${item.id}"] [data-action="remove-override"]`,
-                                )
-                                ?.focus(),
-                            );
-                          }}
+                          onClick={() => cancelRemove(item.id)}
                         >
                           {m.oncall_action({ action: "cancel" })}
                         </Button>
@@ -612,6 +612,28 @@ function ScheduleItem({
       {overrideForm}
     </>
   );
+}
+
+/**
+ * `nextHandoffs` for the card, worked out again only when the schedule or its overrides change or the clock passes
+ * the next handoff: the card ticks every 30 seconds and re-renders on every keystroke in a form, and a schedule's
+ * handoffs stay the same in between.
+ */
+function useHandoffs(row: ScheduleRow, overrides: readonly OverrideRow[], now: number) {
+  const work = () => ({
+    row,
+    overrides,
+    segments: nextHandoffs(row, overrides, now, now + UPCOMING_MS, UPCOMING_SHOWN + 1),
+  });
+  const [cached, setCached] = useState(work);
+  const first = cached.segments[0];
+  if (cached.row !== row || cached.overrides !== overrides || (first && now >= first.end)) {
+    // Storing what this render worked out (React's "information from previous renders" pattern).
+    const fresh = work();
+    setCached(fresh);
+    return fresh.segments;
+  }
+  return cached.segments;
 }
 
 /** A layer on the dashboard: its rhythm, who it has now (and whether that is who is on call), its rotation. */
@@ -633,6 +655,8 @@ function LayerSummary({
   now: number;
 }) {
   const state = layerNow(layer, row.timeZone, now, current);
+  // Not started yet, but a later layer will have someone whenever it could: say so before it starts, too.
+  const neverShown = state.state === "starts" && hiddenLayers(row.layers)[index];
   const order = rotationFrom(layer.members, "shift" in state ? state.shift : 0);
   const shown = order.slice(0, ROTATION_SHOWN);
   const rest = order.slice(ROTATION_SHOWN);
@@ -666,12 +690,22 @@ function LayerSummary({
                   name: memberLabel(members, state.userId),
                 })}
           </p>
+          {neverShown ? (
+            <p className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
+              <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+              {text("layer_hidden")}
+            </p>
+          ) : null}
           {order.length > 1 ? (
             <div className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
               <p>{shown.map((id) => memberLabel(members, id)).join(" → ")}</p>
               {rest.length > 0 ? (
                 <details className="group">
-                  <summary className="inline-flex min-h-11 cursor-pointer items-center rounded-sm text-foreground underline-offset-4 outline-none select-none focus-visible:ring-3 focus-visible:ring-ring sm:min-h-8 [@media(hover:hover)]:hover:underline">
+                  <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-sm text-foreground underline-offset-4 outline-none select-none focus-visible:ring-3 focus-visible:ring-ring sm:min-h-8 [&::-webkit-details-marker]:hidden [@media(hover:hover)]:hover:underline">
+                    <ChevronRightIcon
+                      aria-hidden
+                      className="size-4 shrink-0 transition-transform duration-(--brigade-duration-fast) ease-out group-open:rotate-90 motion-reduce:transition-none"
+                    />
                     {m.oncall_more({ count: rest.length })}
                   </summary>
                   <p>→ {rest.map((id) => memberLabel(members, id)).join(" → ")}</p>
@@ -726,6 +760,7 @@ function Handoff({
 function ScheduleForm({
   initial,
   editing,
+  loaded = false,
   members,
   choices,
   viewerZone,
@@ -736,6 +771,8 @@ function ScheduleForm({
 }: {
   initial: ScheduleDraft;
   editing?: ScheduleRow;
+  /** Whether `members` is the shard's whole list yet (so people missing from it can be dropped). */
+  loaded?: boolean;
   members: readonly MemberRow[];
   choices: readonly MemberRow[];
   viewerZone: string;
@@ -744,7 +781,11 @@ function ScheduleForm({
   onSubmit: (draft: ScheduleDraft) => CheckedSchedule;
   onDelete?: () => void;
 }) {
-  const [draft, setDraft] = useState(initial);
+  // Viewers and people who left, still in a layer, would make every save fail: dropped once, when it opens.
+  const [opened] = useState(() =>
+    loaded ? draftMembers(initial, members) : { draft: initial, dropped: false },
+  );
+  const [draft, setDraft] = useState(opened.draft);
   const [errors, setErrors] = useState<ScheduleErrors | null>(null);
   const [confirming, setConfirming] = useState(false);
   const titleId = useId();
@@ -815,6 +856,15 @@ function ScheduleForm({
         </div>
       </div>
       <p className="text-sm text-muted-foreground">{m.oncall_layers_hint()}</p>
+      {opened.dropped ? (
+        <p
+          role="status"
+          className="flex items-start gap-1.5 text-sm text-amber-700 dark:text-amber-400"
+        >
+          <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+          {text("dropped_members")}
+        </p>
+      ) : null}
       {draft.layers.map((layer, index) => (
         <LayerFields
           key={layer.id}
@@ -1184,6 +1234,7 @@ function OverrideForm({
   const whoId = useId();
   const whoRef = useRef<HTMLSelectElement>(null);
   const startRef = useRef<HTMLInputElement>(null);
+  const endRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     (self ? startRef.current : whoRef.current)?.focus();
   }, [self]);
@@ -1201,8 +1252,14 @@ function OverrideForm({
       onSubmit={(event) => {
         event.preventDefault();
         const checked = checkOverride(schedule.id, schedule.timeZone, draft, Date.now());
-        if (checked.ok) onSubmit(checked.args);
-        else setErrors(checked.errors);
+        if (checked.ok) {
+          onSubmit(checked.args);
+          return;
+        }
+        setErrors(checked.errors);
+        // To the first field to fix, in the order they are laid out.
+        const { userId, start } = checked.errors;
+        (userId && !self ? whoRef : start ? startRef : endRef).current?.focus();
       }}
       onKeyDown={(event) => {
         if (event.key === "Escape" && !keepsEscape(event)) onCancel();
@@ -1214,10 +1271,7 @@ function OverrideForm({
           {m.oncall_override_title({ name: schedule.name })}
         </h4>
         <p className="text-sm text-muted-foreground">
-          {m.oncall_time_zone({
-            zone: zoneLabel(schedule.timeZone),
-            offset: offsetLabel(schedule.timeZone, now),
-          })}
+          <ZoneLine timeZone={schedule.timeZone} now={now} />
           {self ? ` · ${m.oncall_override_self()}` : ""}
         </p>
       </div>
@@ -1260,6 +1314,7 @@ function OverrideForm({
           onChange={(event) => setDraft({ ...draft, start: event.target.value })}
         />
         <Field
+          ref={endRef}
           type="datetime-local"
           label={m.oncall_field({ field: "end" })}
           value={draft.end}
@@ -1275,6 +1330,21 @@ function OverrideForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+/** "Times in America/Sao Paulo (UTC-03:00)", the offset kept on one line (a narrow card would break it at "-"). */
+function ZoneLine({ timeZone, now }: { timeZone: string; now: number }) {
+  const offset = offsetLabel(timeZone, now);
+  const line = m.oncall_time_zone({ zone: zoneLabel(timeZone), offset });
+  const at = line.lastIndexOf(offset);
+  if (at < 0) return line;
+  return (
+    <>
+      {line.slice(0, at)}
+      <span className="whitespace-nowrap">{offset}</span>
+      {line.slice(at + offset.length)}
+    </>
   );
 }
 

@@ -966,6 +966,7 @@
         "text=members_max": "Up to {max} people per layer.",
         "text=choose_person": "Choose a person…",
         "text=remove_override": "Remove {name}'s override?",
+        "text=dropped_members": "People who can no longer be on call (viewers, or members who left) were taken out of the layers below. Save to keep the change.",
         "text=*": "A later layer has someone at all times from this layer's start, so nobody in this one is ever on call."
       }
     }

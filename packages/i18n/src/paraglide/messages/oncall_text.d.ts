@@ -14,6 +14,7 @@ export type Oncall_TextInputs = {
 * | "members_max" | "Up to {max} people per layer." |
 * | "choose_person" | "Choose a person…" |
 * | "remove_override" | "Remove {name}'s override?" |
+* | "dropped_members" | "People who can no longer be on call (viewers, or members who left) were taken out of the layers below. Save to keep the change." |
 * | * | "A later layer has someone at all times from this layer's start, so nobody in this one is ever on call." |
 *
 * @param {Oncall_TextInputs} inputs

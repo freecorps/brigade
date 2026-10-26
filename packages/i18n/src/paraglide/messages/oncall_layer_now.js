@@ -23,8 +23,8 @@ export const oncall_layer_now = /** @type {((inputs: Oncall_Layer_NowInputs, opt
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.state === "active") return /** @type {LocalizedString} */ (`Agora: ${i?.name}`);
-		if (i?.state === "hidden") return /** @type {LocalizedString} */ (`Agora: ${i?.name}, oculto por uma camada posterior`);
-		if (i?.state === "overridden") return /** @type {LocalizedString} */ (`Agora: ${i?.name}, coberto por uma substituição`);
+		if (i?.state === "hidden") return /** @type {LocalizedString} */ (`Agora: ${i?.name}, mas uma camada posterior tem prioridade`);
+		if (i?.state === "overridden") return /** @type {LocalizedString} */ (`Agora: ${i?.name}, mas uma substituição tem prioridade`);
 		return /** @type {LocalizedString} */ (`Começa ${i?.name}`)
 	}
 	{

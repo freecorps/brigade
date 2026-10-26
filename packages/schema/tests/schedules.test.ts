@@ -548,6 +548,20 @@ describe("schedule mutations", () => {
       ).ok,
     ).toBe(true);
     expect(store.get("schedules", SCH)!.timeZone).toBe("America/Sao_Paulo");
+    // Names are trimmed; one of only spaces is no name.
+    expect(paths(run({ name: "   " }))).toEqual(["name"]);
+    const named = shard();
+    runMutation(
+      mutations,
+      "schedule.create",
+      createArgs({ name: "  Platform  ", layers: [layer({ name: " Nights " })] }),
+      named,
+      ctx("usr_ana", "owner"),
+    );
+    expect(named.get("schedules", SCH)).toMatchObject({
+      name: "Platform",
+      layers: [{ name: "Nights" }],
+    });
     expect(paths(run({ layers: [layer({ startDate: "2026-02-30" })] }))).toEqual([
       "layers[0].startDate",
     ]);

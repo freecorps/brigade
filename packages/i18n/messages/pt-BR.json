@@ -938,8 +938,8 @@
       "selectors": ["state"],
       "match": {
         "state=active": "Agora: {name}",
-        "state=hidden": "Agora: {name}, oculto por uma camada posterior",
-        "state=overridden": "Agora: {name}, coberto por uma substituição",
+        "state=hidden": "Agora: {name}, mas uma camada posterior tem prioridade",
+        "state=overridden": "Agora: {name}, mas uma substituição tem prioridade",
         "state=*": "Começa {name}"
       }
     }
@@ -966,6 +966,7 @@
         "text=members_max": "Até {max} pessoas por camada.",
         "text=choose_person": "Escolha uma pessoa…",
         "text=remove_override": "Remover a substituição de {name}?",
+        "text=dropped_members": "Quem não pode mais ficar de plantão (leitores ou quem saiu do espaço de trabalho) foi tirado das camadas abaixo. Salve para manter a mudança.",
         "text=*": "Uma camada posterior tem alguém o tempo todo desde o início desta, então ninguém nesta fica de plantão."
       }
     }

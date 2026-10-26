@@ -129,12 +129,14 @@ client → server
   subscribe  { subId, query, args, version?, epoch? }   // version and epoch together
   unsubscribe{ subId }
   mutate     { mutationId, name, args }
+  ping       {}                                   // exactly the text {"type":"ping"} (PING_FRAME)
 
 server → client
   snapshot   { subId, epoch, version, rows }
   patch      { epoch, version, subs: { [subId]: { upserts, deletes } } }
   mutationResult { mutationId, ok: true, version } | { mutationId, ok: false, error }
   error      { code, message, subId?, mutationId? }
+  pong       {}                                   // exactly {"type":"pong"} (PONG_FRAME)
 ```
 
 - `protocol` is `PROTOCOL_VERSION` (1). `token` is reserved and unused: the Worker authenticates the upgrade
@@ -197,6 +199,21 @@ server → client
   first, so a shard that keeps refusing is not retried in a tight loop. The shard may close the socket itself too.
   A `send` that throws on the client loses the frame, so the client closes the socket and reconnects the same
   way; the next connection replays `hello`, the unconfirmed mutations and the subscriptions.
+- **Heartbeat.** A socket can go half-open: the network goes (a phone changes networks, a NAT forgets the
+  flow) without a close reaching either side, and the OS may take minutes to notice, so the socket would stay
+  "open" and the UI Live while nothing arrives. So on an open socket the client sends `ping` 25 s after the open
+  or the last answer, less up to a fifth of jitter (20 to 25 s, so a fleet does not ping in step, and under the
+  common 30 s idle timeouts of proxies), and then waits 10 s for **any** frame: a `pong`, or data that arrived
+  meanwhile. Silence past that deadline counts as a lost connection: the client closes the socket and reconnects
+  with the normal backoff (reset, as after any close of a connection that delivered data), so `connectionState`
+  goes to `waiting` and lists show reconnecting, not Live. A dead socket is found within about 35 s. No pings
+  are sent while no socket is open, and the timers stop with the socket (`close()`, the idle close, any drop).
+  `heartbeat: { intervalMs, timeoutMs }` tunes it and `heartbeat: false` turns it off. The client has no
+  foreground/background hook: on a phone, timers stop with the app in the background, and on the way back the
+  next ping (or a deadline that ran out meanwhile) finds a socket the OS killed. The shard answers `ping` at any
+  time, before `hello` too, and the frame never touches the socket's state. It needs no protocol version: a client
+  that never pings works as before. A client that pings an older shard would get a `protocol` error and a
+  reconnect loop, so the shard ships first (the web app and the API deploy together; the mobile app follows).
 - **Never trust the wire.** `parseServerMessage` and `parseClientMessage` never throw; they return fresh objects
   or a reason, reject unknown fields (in nested objects and issues too), and check every id, version and row
   (a row `id`, and every id in `deletes`, is a non-empty string). Ids (`subId`, `mutationId`, `clientId`) are 1–64 characters of
@@ -307,6 +324,12 @@ server → client
   UTF-8 length of the state's JSON; the runtime stores the structured-clone encoding, under its 16 KiB limit, and
   the margin covers the difference. Handlers are synchronous, so a socket's frames are handled in arrival order and
   frames from different sockets never interleave.
+- **Pings never wake the shard:** the constructor (run on every wake) sets
+  `ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING_FRAME, PONG_FRAME))`, so the runtime answers
+  an exact `{"type":"ping"}` on every socket itself, hibernated or not, without running `webSocketMessage` or
+  billing duration (the pair is at most 2 048 characters each). The client always sends those exact bytes. A
+  `ping` spelled otherwise (spaces, key order) still parses and `webSocketMessage` answers it with `pong`
+  (`apps/api/test/sync.test.ts` checks both, and that the runtime recorded the auto-response).
 - **Close policy:**
   - Socket-level protocol error: `error { code: "protocol" }` without ids, then a close with code 1002. That covers
     a frame that cannot be parsed and has no readable id (not JSON, binary, unknown type, over 64 KiB without a

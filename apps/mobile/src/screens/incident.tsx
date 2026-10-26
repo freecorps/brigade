@@ -559,8 +559,7 @@ function UpdateForm({
     const typed = body;
     setBody("");
     void onPost(checked.args.body).then((notice) => {
-      if (notice?.reason === "invalid_args")
-        setBody((current) => (current === "" ? typed : current));
+      if (notice) setBody((current) => (current === "" ? typed : current));
     });
   };
 
@@ -830,7 +829,7 @@ function UpdateBody({ body }: { body: string }) {
       <Text
         key={index}
         accessibilityRole="link"
-        onPress={() => void Linking.openURL(part.url)}
+        onPress={() => void Linking.openURL(part.url).catch(() => {})}
         style={{ color: colors.primary, textDecorationLine: "underline" }}
       >
         {part.url}

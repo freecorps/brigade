@@ -245,6 +245,8 @@ export function noticeText(notice: Notice, place: NoticePlace): string {
   const incident = number
     ? m.incident_label({ number, title: notice.title })
     : m.incident_quoted_title({ title: notice.title });
+  // `to` is optional on the type; without it there is no status or severity to name, only the reason.
+  if (notice.to === undefined) return reason;
   if (notice.kind === "status") {
     const status = incidentStatusLabels[notice.to as IncidentStatus]();
     return place === "row"

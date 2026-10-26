@@ -79,8 +79,10 @@ function SignInForm() {
     setFailure(null);
   };
 
+  // State lags a render behind, so two quick taps would both pass a `busy` check.
+  const sending = useRef(false);
   const submit = async () => {
-    if (busy) return;
+    if (sending.current) return;
     const found = checkSignIn(values);
     setErrors(found);
     if (Object.keys(found).length > 0) {
@@ -90,6 +92,7 @@ function SignInForm() {
       if (process.env.EXPO_OS === "ios" && first) AccessibilityInfo.announceForAccessibility(first);
       return;
     }
+    sending.current = true;
     setBusy(true);
     setFailure(null);
     let error: Parameters<typeof authErrorMessage>[0] = null;
@@ -105,6 +108,7 @@ function SignInForm() {
     if (!error) return;
     const message = authErrorMessage(error, "sign-in");
     setFailure(message);
+    sending.current = false;
     setBusy(false);
     // VoiceOver has no live regions (accessibilityLiveRegion is Android's), so say it once.
     if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(message);

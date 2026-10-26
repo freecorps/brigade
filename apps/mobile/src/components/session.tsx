@@ -266,9 +266,12 @@ function ActiveWorkspace({
   const cookie = useRef("");
   // A refreshed session can come with a new cookie; the next socket sends it.
   useEffect(() => {
-    void authClient.getCookie().then((value) => {
-      cookie.current = value;
-    });
+    void authClient.getCookie().then(
+      (value) => {
+        cookie.current = value;
+      },
+      () => {},
+    );
   }, [sessionToken]);
 
   const [sync, setSync] = useState<WorkspaceSync | null>(null);
@@ -277,18 +280,23 @@ function ActiveWorkspace({
     if (!target) return;
     let made: WorkspaceSync | null = null;
     let live = true;
-    void authClient.getCookie().then((value) => {
-      if (!live) return;
-      cookie.current = value;
-      made = createWorkspaceSync({
-        server: target,
-        workspaceId,
-        actor: () => ({ kind: "user", id: userId, role: role.current }),
-        cookie: () => cookie.current,
+    // A cookie that cannot be read still opens the workspace: the upgrade then refuses it and the screen says so,
+    // instead of loading forever.
+    void authClient
+      .getCookie()
+      .catch(() => "")
+      .then((value) => {
+        if (!live) return;
+        cookie.current = value;
+        made = createWorkspaceSync({
+          server: target,
+          workspaceId,
+          actor: () => ({ kind: "user", id: userId, role: role.current }),
+          cookie: () => cookie.current,
+        });
+        setCurrentSync(made);
+        setSync(made);
       });
-      setCurrentSync(made);
-      setSync(made);
-    });
     return () => {
       live = false;
       // Closing drops the socket and every row it brought: nothing of this session outlives it.

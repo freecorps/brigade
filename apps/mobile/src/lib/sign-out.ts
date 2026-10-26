@@ -158,7 +158,7 @@ export async function signOutPhone(
   deps: SignOutDeps,
 ): Promise<"released" | "kept" | "stuck"> {
   const cookie = await deps.cookie().catch(() => "");
-  const released = deps.unregister ? await deps.unregister() : true;
+  const released = deps.unregister ? await deps.unregister().catch(() => false) : true;
   // Without a cookie there is nothing to finish with later.
   const keep = async (workspaceId: string | null) => {
     if (cookie === "") return false;

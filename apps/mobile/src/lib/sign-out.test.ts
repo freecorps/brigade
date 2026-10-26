@@ -168,6 +168,22 @@ test("signing out offline signs out here but keeps the session aside, unrevoked,
   expect(w.store.scan("devices")).toMatchObject([{ userId: ANA.id }]);
 });
 
+test("an unregister that throws is kept like one that timed out, not an error out of sign-out", async () => {
+  const w = world();
+  await registerPhone(phone(w.as(ANA)));
+  const deps = w.signOutDeps(ANA);
+  const result = await signOutPhone(
+    { userId: ANA.id, workspaceId: WORKSPACE },
+    { ...deps, unregister: () => Promise.reject(new Error("socket gone")) },
+  );
+  expect(result).toBe("kept");
+  expect(w.phoneState.cookie).toBe("");
+  expect(parseLeftovers(w.phoneState.kept)).toMatchObject([
+    { cookie: "ana-cookie", workspaceId: WORKSPACE },
+  ]);
+  expect(w.sessions.has("ana-cookie")).toBe(true);
+});
+
 test("back online, the kept session takes the phone off, so the next member to sign in is paged on it", async () => {
   const w = world();
   await registerPhone(phone(w.as(ANA)));

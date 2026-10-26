@@ -244,16 +244,18 @@ export function layerRhythm(layer: ScheduleLayer, locale: Locale): string {
   return `${length}, ${handoff}`;
 }
 
-/** A handoff time in the schedule's zone: "Mon, Oct 27, 09:00". */
+/** A handoff time in the schedule's zone: "Mon, Oct 27, 9:00 AM", the time in the locale's short style. */
 export function handoffTime(instant: number, timeZone: string, locale: Locale): string {
-  return formatDateTime(instant, locale, timeZone, {
+  const date = formatDateTime(instant, locale, timeZone, {
     weekday: "short",
     month: "short",
     day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
   });
+  return `${date}, ${formatDateTime(instant, locale, timeZone, { timeStyle: "short" })}`;
 }
+
+/** An IANA zone as people read it: "America/Sao Paulo". */
+export const zoneLabel = (zone: string) => zone.replaceAll("_", " ");
 
 /** Why the shard refused a schedule change, in the shared wording, with this card's "gone". */
 export function scheduleRefusal(code: string): string {

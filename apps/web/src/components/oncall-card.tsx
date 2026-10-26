@@ -15,6 +15,7 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   CalendarClockIcon,
+  CircleAlertIcon,
   PencilIcon,
   PlusIcon,
   Trash2Icon,
@@ -51,6 +52,7 @@ import {
   timeZones,
   UPCOMING_MS,
   UPCOMING_SHOWN,
+  zoneLabel,
   type CheckedSchedule,
   type LayerDraft,
   type OverrideDraft,
@@ -331,7 +333,7 @@ function ScheduleItem({
             {row.name}
           </h3>
           <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-            {m.oncall_time_zone({ zone: row.timeZone })}
+            {m.oncall_time_zone({ zone: zoneLabel(row.timeZone) })}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -360,7 +362,7 @@ function ScheduleItem({
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+      <div className="grid items-start gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <section
           aria-label={m.oncall_now()}
           className="flex min-w-0 flex-col gap-1.5 rounded-md bg-muted/50 p-3"
@@ -598,7 +600,7 @@ function ScheduleForm({
           >
             {zones.map((zone) => (
               <option key={zone} value={zone}>
-                {zone.replaceAll("_", " ")}
+                {zoneLabel(zone)}
               </option>
             ))}
           </select>
@@ -807,6 +809,7 @@ function LayerFields({
                     variant="ghost"
                     size="icon"
                     disabled={index === 0}
+                    className="disabled:border-transparent disabled:bg-transparent disabled:opacity-40"
                     aria-label={m.oncall_member_up({ name: label })}
                     onClick={() => move(index, index - 1)}
                   >
@@ -817,6 +820,7 @@ function LayerFields({
                     variant="ghost"
                     size="icon"
                     disabled={index === layer.members.length - 1}
+                    className="disabled:border-transparent disabled:bg-transparent disabled:opacity-40"
                     aria-label={m.oncall_member_down({ name: label })}
                     onClick={() => move(index, index + 1)}
                   >
@@ -864,7 +868,8 @@ function LayerFields({
           </>
         ) : null}
         {errors?.members ? (
-          <p id={membersErrorId} className="text-sm text-destructive">
+          <p id={membersErrorId} className="flex items-start gap-1.5 text-sm text-destructive">
+            <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
             {m.oncall_field_invalid({ field: "members" })}
           </p>
         ) : null}
@@ -922,7 +927,7 @@ function OverrideForm({
           {m.oncall_override_title({ name: schedule.name })}
         </h4>
         <p className="text-sm text-muted-foreground">
-          {m.oncall_time_zone({ zone: schedule.timeZone })}
+          {m.oncall_time_zone({ zone: zoneLabel(schedule.timeZone) })}
           {self ? ` · ${m.oncall_override_self()}` : ""}
         </p>
       </div>
@@ -948,7 +953,8 @@ function OverrideForm({
               ))}
             </select>
             {errors?.userId ? (
-              <p className="text-sm text-destructive">
+              <p className="flex items-start gap-1.5 text-sm text-destructive">
+                <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
                 {m.oncall_field_invalid({ field: "user" })}
               </p>
             ) : null}

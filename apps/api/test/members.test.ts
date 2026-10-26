@@ -6,7 +6,12 @@ import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { newId, type Actor, type Role } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, describe, expect, test } from "vite-plus/test";
-import { MEMBER_REPAIR_RETRY_MS, Membership } from "../src/members.ts";
+import {
+  MEMBER_REPAIR_DELAY_MS,
+  MEMBER_REPAIR_RETRY_MS,
+  Membership,
+  type MemberChangeResult,
+} from "../src/members.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { pageTargets } from "../src/paging.ts";
 import { Shard } from "../src/shard.ts";
@@ -536,6 +541,41 @@ describe("when one side fails", () => {
         state.storage.sql.exec("select * from member_repair").toArray(),
       ),
     ).toEqual([]);
+  });
+
+  test("a repair armed while the alarm drains the outbox keeps its alarm", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    const result = await runInDurableObject(t.stub, async (instance: WorkspaceDO, state) => {
+      await state.storage.deleteAlarm();
+      // The drain's send is where the alarm awaits longest: a leave whose shard step fails lands in it.
+      let left: MemberChangeResult | undefined;
+      Reflect.set(instance, "drainPaused", false);
+      Reflect.set(instance, "drain", {
+        drain: async () => {
+          left = await membership(t, state, { shardFails: true }).change(t.id, t.caio.id, t.caio.id, {
+            kind: "remove",
+          });
+        },
+        nextWake: () => null,
+        failed: () => {},
+      });
+      await instance.alarm();
+      return { left, alarm: await state.storage.getAlarm() };
+    });
+    expect(result.left).toEqual({ ok: false, code: "not_applied" });
+    // The alarm still points at the repair instead of going away with nothing else due.
+    expect(result.alarm).not.toBeNull();
+    expect(result.alarm).toBeLessThanOrEqual(Date.now() + MEMBER_REPAIR_DELAY_MS);
+    expect(await paged(t)).toEqual([t.caio.id]);
+
+    // As if MEMBER_REPAIR_DELAY_MS passed: the alarm reconciles them with nobody connecting.
+    await t.withShard((_shard, state) =>
+      state.storage.sql.exec("update member_repair set value = ?", Date.now() - 1),
+    );
+    expect(await runDurableObjectAlarm(t.stub)).toBe(true);
+    expect(await paged(t)).toEqual([]);
   });
 
   test("a repair that cannot read D1 stays due and tries again", async () => {

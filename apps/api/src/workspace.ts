@@ -339,9 +339,18 @@ export class WorkspaceDO extends DurableObject<Env> {
         }
       }
     }
-    // Read and set in one turn: a mutation committing meanwhile arms the drain after this, never before.
+    // Read and set in one turn: a mutation committing meanwhile arms the drain after this, never before. The repair
+    // time is read again here too: a member change that failed while the drain ran armed one that `repair` predates.
+    // One already due is `repairDue`'s to answer for, so a repair that failed to record its outcome never spins.
+    let armed: number | null = now + MONITOR_TICK_MS;
+    try {
+      const at = this.membership.repairAt();
+      armed = at !== null && at > now ? at : null;
+    } catch (error) {
+      this.log("reading the member repair failed", { error });
+    }
     const next = earliest(
-      earliest(monitors, repair),
+      earliest(monitors, earliest(repair, armed)),
       this.drainPaused ? null : this.drain.nextWake(Date.now()),
     );
     if (next === null) await this.ctx.storage.deleteAlarm();

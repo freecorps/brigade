@@ -23,6 +23,9 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "monitor:read": true,
     "monitor:manage": true,
     "device:register": true,
+    "schedule:read": true,
+    "schedule:manage": true,
+    "schedule:override": true,
   },
   admin: {
     "incident:read": true,
@@ -35,6 +38,9 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "monitor:read": true,
     "monitor:manage": true,
     "device:register": true,
+    "schedule:read": true,
+    "schedule:manage": true,
+    "schedule:override": true,
   },
   responder: {
     "incident:read": true,
@@ -47,6 +53,9 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "monitor:read": true,
     "monitor:manage": false,
     "device:register": true,
+    "schedule:read": true,
+    "schedule:manage": false,
+    "schedule:override": true,
   },
   viewer: {
     "incident:read": true,
@@ -59,6 +68,9 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "monitor:read": true,
     "monitor:manage": false,
     "device:register": true,
+    "schedule:read": true,
+    "schedule:manage": false,
+    "schedule:override": false,
   },
 };
 
@@ -74,6 +86,9 @@ test("every permission comes from the statement", () => {
     "monitor:read",
     "monitor:manage",
     "device:register",
+    "schedule:read",
+    "schedule:manage",
+    "schedule:override",
   ]);
 });
 

@@ -15,6 +15,7 @@ import { expireDevice, registerDevice, unregisterDevice } from "./devices.ts";
 import { failNotification } from "./notifications.ts";
 import { allMonitors, evaluateMonitor, monitorMutations, reportMonitorCheck } from "./monitors.ts";
 import { defineRegistry } from "./mutation.ts";
+import { allOverrides, allSchedules, scheduleMutations } from "./schedules.ts";
 import { incidentTimeline } from "./timeline.ts";
 import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";
 import { allMembers, createWorkspace, syncMember } from "./workspaces.ts";
@@ -28,6 +29,7 @@ export const mutations = defineRegistry([
   postIncidentUpdate,
   assignIncidentRole,
   ...monitorMutations,
+  ...scheduleMutations,
   registerDevice,
   unregisterDevice,
 ]);
@@ -39,6 +41,8 @@ export const queries = defineRegistry([
   incidentTimeline,
   allMembers,
   allMonitors,
+  allSchedules,
+  allOverrides,
 ]);
 
 /**
@@ -53,6 +57,7 @@ export const serverMutations = defineRegistry([
   postIncidentUpdate,
   assignIncidentRole,
   ...monitorMutations,
+  ...scheduleMutations,
   registerDevice,
   unregisterDevice,
   createWorkspace,

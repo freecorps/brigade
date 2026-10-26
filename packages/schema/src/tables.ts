@@ -2,6 +2,7 @@ import type { Role } from "./access.ts";
 import type { DevicePlatform, PushEnvironment } from "./devices.ts";
 import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
 import type { PageFailure } from "./notifications.ts";
+import type { RotationUnit } from "./schedules.ts";
 import type {
   AlertStatus,
   CheckSource,
@@ -186,6 +187,46 @@ export type DeviceRow = {
   updatedAt: number;
 };
 
+/**
+ * One layer (rotation) of a schedule (RFC 0003 "Schedules"): its members take shifts in the order listed, each
+ * `count` `unit`s long on the schedule's wall clock, the first starting at `startDate` `handoffTime` there.
+ */
+export type ScheduleLayer = {
+  id: string; // lyr_<ULID>, made by the client
+  name: string;
+  /** Member ids in rotation order. Empty only after the last of them left (a gap until someone edits it). */
+  members: string[];
+  /** `YYYY-MM-DD` in the schedule's time zone; a weekly rotation hands off on this date's weekday. */
+  startDate: string;
+  /** `HH:MM` on the schedule's wall clock. */
+  handoffTime: string;
+  unit: RotationUnit;
+  count: number;
+};
+
+/** An on-call schedule: its layers, stacked (a later layer wins where it has someone), in its own time zone. */
+export type ScheduleRow = {
+  id: string; // sch_<ULID>, made by the client
+  name: string;
+  /** IANA time zone every handoff is read in. */
+  timeZone: string;
+  layers: ScheduleLayer[];
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+};
+
+/** Someone covers a schedule over `[start, end)`, over every layer (RFC 0003 "Schedules"). */
+export type OverrideRow = {
+  id: string; // ovr_<ULID>, made by the client; of overlapping overrides the highest id wins
+  scheduleId: string;
+  userId: string;
+  start: number;
+  end: number;
+  createdAt: number;
+  createdBy: string;
+};
+
 /** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only. */
 export type CounterRow = { id: string; value: number };
 
@@ -199,6 +240,8 @@ export type BrigadeTables = {
   timeline: TimelineRow;
   members: MemberRow;
   devices: DeviceRow;
+  schedules: ScheduleRow;
+  overrides: OverrideRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -214,6 +257,8 @@ export const TABLES = {
   timeline: { serverOnly: false },
   members: { serverOnly: false },
   devices: { serverOnly: true },
+  schedules: { serverOnly: false },
+  overrides: { serverOnly: false },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

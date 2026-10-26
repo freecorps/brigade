@@ -35,7 +35,8 @@ export function StackStatusProvider({
   workspaceId: string;
   children: ReactNode;
 }) {
-  const [report, setReport] = useState<StackReport>();
+  // Tagged with its workspace, so switching workspaces never shows the previous one's result while the new check runs.
+  const [last, setLast] = useState<{ workspaceId: string; report: StackReport }>();
   const [run, setRun] = useState(0);
   const [checking, setChecking] = useState(true);
 
@@ -46,12 +47,13 @@ export function StackStatusProvider({
     setChecking(true);
     void checkStack(workspaceId, fetch, controller.signal).then((next) => {
       if (controller.signal.aborted) return;
-      setReport(next);
+      setLast({ workspaceId, report: next });
       setChecking(false);
     });
     return () => controller.abort();
   }, [run, workspaceId]);
 
+  const report = last?.workspaceId === workspaceId ? last.report : undefined;
   const recheck = useCallback(() => setRun((count) => count + 1), []);
   const value = useMemo(() => ({ report, checking, recheck }), [report, checking, recheck]);
   return <StackStatusContext value={value}>{children}</StackStatusContext>;

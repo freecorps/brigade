@@ -73,10 +73,8 @@ export function todayIn(timeZone: string, now: number): string {
 export function newLayer(index: number, timeZone: string, now: number): LayerDraft {
   return {
     id: newId("lyr", now, random),
-    name:
-      index === 0
-        ? m.oncall_layer_default()
-        : m.oncall_layer_numbered({ number: String(index + 1) }),
+    // "Primary" for the first.
+    name: m.oncall_layer_name({ number: String(index + 1) }),
     members: [],
     startDate: todayIn(timeZone, now),
     handoffTime: "09:00",
@@ -234,13 +232,8 @@ export function layerRhythm(layer: ScheduleLayer, locale: Locale): string {
   // The wall clock as if it were UTC: the time and weekday the layer says, whatever the zone.
   const at = minute * 60_000;
   const time = formatDateTime(at, locale, "UTC", { timeStyle: "short" });
-  const handoff =
-    layer.unit === "weeks"
-      ? m.oncall_handoff_weekly(
-          { day: formatDateTime(at, locale, "UTC", { weekday: "long" }), time },
-          { locale },
-        )
-      : m.oncall_handoff_daily({ time }, { locale });
+  const day = formatDateTime(at, locale, "UTC", { weekday: "long" });
+  const handoff = m.oncall_handoff({ unit: layer.unit, day, time }, { locale });
   return `${length}, ${handoff}`;
 }
 

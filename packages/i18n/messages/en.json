@@ -781,7 +781,6 @@
     }
   ],
   "oncall_title": "On call",
-  "oncall_schedule_add": "Add schedule",
   "oncall_schedules_count": [
     {
       "declarations": [
@@ -800,11 +799,9 @@
   ],
   "oncall_empty": "No on-call schedules yet. A schedule says who is on call and when they hand off.",
   "oncall_not_paging": "Schedules don't page anyone yet: pages still go to the incident's commander, or to everyone who can respond.",
-  "oncall_now": "On call now",
   "oncall_nobody": "Nobody on call",
   "oncall_until": "until {time}",
   "oncall_override_badge": "Override",
-  "oncall_upcoming": "Next handoffs",
   "oncall_upcoming_none": "No handoffs in the next 4 weeks",
   "oncall_shift_length": [
     {
@@ -820,26 +817,8 @@
       }
     }
   ],
-  "oncall_handoff_daily": "hands off at {time}",
-  "oncall_handoff_weekly": "hands off {day} at {time}",
   "oncall_layer_empty": "Nobody in this layer: a gap until someone is added",
   "oncall_time_zone": "Times in {zone}",
-  "oncall_layers": "Layers",
-  "oncall_edit": "Edit",
-  "oncall_edit_label": "Edit {name}",
-  "oncall_override_add": "Add override",
-  "oncall_override_add_label": "Add override to {name}",
-  "oncall_overrides": "Overrides",
-  "oncall_override_remove": "Remove override for {name}",
-  "oncall_form_new": "New schedule",
-  "oncall_form_edit": "Edit schedule",
-  "oncall_field_name": "Name",
-  "oncall_field_time_zone": "Time zone",
-  "oncall_field_layer_name": "Layer name",
-  "oncall_field_start_date": "Starts on",
-  "oncall_field_handoff_time": "Handoff time",
-  "oncall_field_count": "Shift length",
-  "oncall_field_unit": "Unit",
   "oncall_unit": [
     {
       "declarations": ["input unit"],
@@ -851,16 +830,8 @@
       }
     }
   ],
-  "oncall_field_members": "People, in rotation order",
   "oncall_member_add": "Add a person…",
-  "oncall_member_up": "Move {name} up",
-  "oncall_member_down": "Move {name} down",
-  "oncall_member_remove": "Remove {name} from the layer",
-  "oncall_layer_add": "Add layer",
-  "oncall_layer_remove": "Remove layer {name}",
   "oncall_layers_hint": "Layers stack: a later layer wins where it has someone on call. Handoffs follow the time zone's clock, also across daylight saving changes.",
-  "oncall_layer_default": "Primary",
-  "oncall_layer_numbered": "Layer {number}",
   "oncall_field_invalid": [
     {
       "declarations": ["input field"],
@@ -879,18 +850,95 @@
     }
   ],
   "oncall_count_invalid": "Enter a whole number from 1 to {max}.",
-  "oncall_create": "Create schedule",
-  "oncall_save": "Save changes",
-  "oncall_cancel": "Cancel",
-  "oncall_delete": "Delete schedule",
   "oncall_delete_confirm": "Delete {name}? Its overrides are deleted with it.",
-  "oncall_delete_yes": "Delete",
   "oncall_override_title": "Override on {name}",
-  "oncall_override_who": "Who covers",
-  "oncall_override_start": "From",
-  "oncall_override_end": "Until",
   "oncall_override_self": "You can add overrides for yourself.",
   "oncall_change_failed": "Couldn't change {name}: {reason}",
   "oncall_gone": "The schedule no longer exists.",
-  "oncall_unnamed": "Unnamed member"
+  "oncall_unnamed": "Unnamed member",
+  "oncall_field": [
+    {
+      "declarations": ["input field"],
+      "selectors": ["field"],
+      "match": {
+        "field=name": "Name",
+        "field=time_zone": "Time zone",
+        "field=layer_name": "Layer name",
+        "field=start_date": "Starts on",
+        "field=handoff_time": "Handoff time",
+        "field=count": "Shift length",
+        "field=unit": "Unit",
+        "field=members": "People, in rotation order",
+        "field=who": "Who covers",
+        "field=start": "From",
+        "field=*": "Until"
+      }
+    }
+  ],
+  "oncall_action": [
+    {
+      "declarations": ["input action"],
+      "selectors": ["action"],
+      "match": {
+        "action=add_schedule": "Add schedule",
+        "action=add_override": "Add override",
+        "action=add_layer": "Add layer",
+        "action=edit": "Edit",
+        "action=create": "Create schedule",
+        "action=save": "Save changes",
+        "action=cancel": "Cancel",
+        "action=delete_schedule": "Delete schedule",
+        "action=*": "Delete"
+      }
+    }
+  ],
+  "oncall_action_on": [
+    {
+      "declarations": ["input action", "input name"],
+      "selectors": ["action"],
+      "match": {
+        "action=edit": "Edit {name}",
+        "action=add_override": "Add override to {name}",
+        "action=remove_override": "Remove override for {name}",
+        "action=remove_layer": "Remove layer {name}",
+        "action=up": "Move {name} up",
+        "action=down": "Move {name} down",
+        "action=*": "Remove {name} from the layer"
+      }
+    }
+  ],
+  "oncall_heading": [
+    {
+      "declarations": ["input heading"],
+      "selectors": ["heading"],
+      "match": {
+        "heading=new": "New schedule",
+        "heading=edit": "Edit schedule",
+        "heading=layers": "Layers",
+        "heading=overrides": "Overrides",
+        "heading=now": "On call now",
+        "heading=*": "Next handoffs"
+      }
+    }
+  ],
+  "oncall_handoff": [
+    {
+      "declarations": ["input unit", "input day", "input time"],
+      "selectors": ["unit"],
+      "match": {
+        "unit=weeks": "hands off {day} at {time}",
+        "unit=*": "hands off at {time}"
+      }
+    }
+  ],
+  "oncall_layer_name": [
+    {
+      "declarations": ["input number"],
+      "selectors": ["number"],
+      "match": {
+        "number=1": "Primary",
+        "number=*": "Layer {number}"
+      }
+    }
+  ]
 }

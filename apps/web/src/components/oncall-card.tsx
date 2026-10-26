@@ -133,7 +133,7 @@ export function OnCallCard() {
               }}
             >
               <PlusIcon aria-hidden />
-              {m.oncall_schedule_add()}
+              {m.oncall_action({ action: "add_schedule" })}
             </Button>
           ) : null}
         </div>
@@ -341,22 +341,22 @@ function ScheduleItem({
             <Button
               variant="outline"
               data-action="override"
-              aria-label={m.oncall_override_add_label({ name: row.name })}
+              aria-label={m.oncall_action_on({ action: "add_override", name: row.name })}
               onClick={onOverride}
             >
               <CalendarClockIcon aria-hidden />
-              {m.oncall_override_add()}
+              {m.oncall_action({ action: "add_override" })}
             </Button>
           ) : null}
           {manage ? (
             <Button
               variant="outline"
               data-action="edit"
-              aria-label={m.oncall_edit_label({ name: row.name })}
+              aria-label={m.oncall_action_on({ action: "edit", name: row.name })}
               onClick={onEdit}
             >
               <PencilIcon aria-hidden />
-              {m.oncall_edit()}
+              {m.oncall_action({ action: "edit" })}
             </Button>
           ) : null}
         </div>
@@ -364,11 +364,11 @@ function ScheduleItem({
 
       <div className="grid items-start gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <section
-          aria-label={m.oncall_now()}
+          aria-label={m.oncall_heading({ heading: "now" })}
           className="flex min-w-0 flex-col gap-1.5 rounded-md bg-muted/50 p-3"
         >
           <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            {m.oncall_now()}
+            {m.oncall_heading({ heading: "now" })}
           </p>
           {current && current.userId !== null ? (
             <>
@@ -400,11 +400,11 @@ function ScheduleItem({
           )}
         </section>
         <section
-          aria-label={m.oncall_upcoming()}
+          aria-label={m.oncall_heading({ heading: "upcoming" })}
           className="flex min-w-0 flex-col gap-1.5 p-1 md:p-3"
         >
           <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            {m.oncall_upcoming()}
+            {m.oncall_heading({ heading: "upcoming" })}
           </p>
           {upcoming.length > 0 ? (
             <ol className="flex flex-col gap-1 text-sm">
@@ -424,7 +424,7 @@ function ScheduleItem({
         </section>
       </div>
 
-      <section aria-label={m.oncall_layers()} className="flex flex-col gap-2">
+      <section aria-label={m.oncall_heading({ heading: "layers" })} className="flex flex-col gap-2">
         <ol className="flex flex-col gap-2 text-sm">
           {row.layers.map((layer) => (
             <li key={layer.id} className="flex min-w-0 flex-col gap-0.5">
@@ -448,9 +448,12 @@ function ScheduleItem({
       </section>
 
       {own.length > 0 ? (
-        <section aria-label={m.oncall_overrides()} className="flex flex-col gap-1.5">
+        <section
+          aria-label={m.oncall_heading({ heading: "overrides" })}
+          className="flex flex-col gap-1.5"
+        >
           <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            {m.oncall_overrides()}
+            {m.oncall_heading({ heading: "overrides" })}
           </p>
           <ul className="flex flex-col gap-1 text-sm">
             {own.map((item) => {
@@ -470,7 +473,7 @@ function ScheduleItem({
                     <Button
                       variant="ghost"
                       size="icon"
-                      aria-label={m.oncall_override_remove({ name: who })}
+                      aria-label={m.oncall_action_on({ action: "remove_override", name: who })}
                       onClick={() => onRemoveOverride(item)}
                     >
                       <Trash2Icon aria-hidden />
@@ -575,12 +578,12 @@ function ScheduleForm({
       className="flex min-w-0 flex-col gap-4 rounded-md border bg-muted/40 p-4"
     >
       <h3 id={titleId} className="font-medium [overflow-wrap:anywhere]">
-        {editing ? m.oncall_form_edit() : m.oncall_form_new()}
+        {editing ? m.oncall_heading({ heading: "edit" }) : m.oncall_heading({ heading: "new" })}
       </h3>
       <div className="grid items-start gap-4 sm:grid-cols-2">
         <Field
           ref={nameRef}
-          label={m.oncall_field_name()}
+          label={m.oncall_field({ field: "name" })}
           value={draft.name}
           maxLength={160}
           autoComplete="off"
@@ -589,7 +592,7 @@ function ScheduleForm({
         />
         <div className="flex min-w-0 flex-col gap-1.5">
           <label htmlFor={zoneId} className="text-sm font-medium">
-            {m.oncall_field_time_zone()}
+            {m.oncall_field({ field: "time_zone" })}
           </label>
           <select
             id={zoneId}
@@ -640,13 +643,15 @@ function ScheduleForm({
           }
         >
           <PlusIcon aria-hidden />
-          {m.oncall_layer_add()}
+          {m.oncall_action({ action: "add_layer" })}
         </Button>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit">{editing ? m.oncall_save() : m.oncall_create()}</Button>
+        <Button type="submit">
+          {editing ? m.oncall_action({ action: "save" }) : m.oncall_action({ action: "create" })}
+        </Button>
         <Button type="button" variant="outline" onClick={onCancel}>
-          {m.oncall_cancel()}
+          {m.oncall_action({ action: "cancel" })}
         </Button>
         {editing && onDelete && !confirming ? (
           <Button
@@ -656,14 +661,14 @@ function ScheduleForm({
             onClick={() => setConfirming(true)}
           >
             <Trash2Icon aria-hidden />
-            {m.oncall_delete()}
+            {m.oncall_action({ action: "delete_schedule" })}
           </Button>
         ) : null}
       </div>
       {editing && onDelete && confirming ? (
         <div
           role="alertdialog"
-          aria-label={m.oncall_delete()}
+          aria-label={m.oncall_action({ action: "delete_schedule" })}
           className="flex flex-col gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
         >
           <p className="font-medium [overflow-wrap:anywhere]">
@@ -677,10 +682,10 @@ function ScheduleForm({
               autoFocus
               onClick={onDelete}
             >
-              {m.oncall_delete_yes()}
+              {m.oncall_action({ action: "delete" })}
             </Button>
             <Button type="button" variant="outline" onClick={() => setConfirming(false)}>
-              {m.oncall_cancel()}
+              {m.oncall_action({ action: "cancel" })}
             </Button>
           </div>
         </div>
@@ -723,7 +728,7 @@ function LayerFields({
       <div className="flex items-end gap-2">
         <Field
           className="flex-1"
-          label={m.oncall_field_layer_name()}
+          label={m.oncall_field({ field: "layer_name" })}
           value={layer.name}
           maxLength={120}
           autoComplete="off"
@@ -735,7 +740,7 @@ function LayerFields({
             type="button"
             variant="ghost"
             size="icon"
-            aria-label={m.oncall_layer_remove({ name: layer.name })}
+            aria-label={m.oncall_action_on({ action: "remove_layer", name: layer.name })}
             onClick={onRemove}
           >
             <Trash2Icon aria-hidden />
@@ -745,7 +750,7 @@ function LayerFields({
       <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field
           type="date"
-          label={m.oncall_field_start_date()}
+          label={m.oncall_field({ field: "start_date" })}
           value={layer.startDate}
           min="2000-01-01"
           max="2099-12-31"
@@ -754,7 +759,7 @@ function LayerFields({
         />
         <Field
           type="time"
-          label={m.oncall_field_handoff_time()}
+          label={m.oncall_field({ field: "handoff_time" })}
           value={layer.handoffTime}
           error={
             errors?.handoffTime ? m.oncall_field_invalid({ field: "handoff_time" }) : undefined
@@ -763,7 +768,7 @@ function LayerFields({
         />
         <Field
           inputMode="numeric"
-          label={m.oncall_field_count()}
+          label={m.oncall_field({ field: "count" })}
           value={layer.count}
           error={
             errors?.count
@@ -774,7 +779,7 @@ function LayerFields({
         />
         <div className="flex min-w-0 flex-col gap-1.5">
           <label htmlFor={unitId} className="text-sm font-medium">
-            {m.oncall_field_unit()}
+            {m.oncall_field({ field: "unit" })}
           </label>
           <select
             id={unitId}
@@ -792,7 +797,7 @@ function LayerFields({
       </div>
       <div className="flex min-w-0 flex-col gap-1.5">
         <p id={membersId} className="text-sm font-medium">
-          {m.oncall_field_members()}
+          {m.oncall_field({ field: "members" })}
         </p>
         {layer.members.length > 0 ? (
           <ol aria-labelledby={membersId} className="flex flex-col divide-y rounded-md border">
@@ -810,7 +815,7 @@ function LayerFields({
                     size="icon"
                     disabled={index === 0}
                     className="disabled:border-transparent disabled:bg-transparent disabled:opacity-40"
-                    aria-label={m.oncall_member_up({ name: label })}
+                    aria-label={m.oncall_action_on({ action: "up", name: label })}
                     onClick={() => move(index, index - 1)}
                   >
                     <ArrowUpIcon aria-hidden />
@@ -821,7 +826,7 @@ function LayerFields({
                     size="icon"
                     disabled={index === layer.members.length - 1}
                     className="disabled:border-transparent disabled:bg-transparent disabled:opacity-40"
-                    aria-label={m.oncall_member_down({ name: label })}
+                    aria-label={m.oncall_action_on({ action: "down", name: label })}
                     onClick={() => move(index, index + 1)}
                   >
                     <ArrowDownIcon aria-hidden />
@@ -830,7 +835,7 @@ function LayerFields({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    aria-label={m.oncall_member_remove({ name: label })}
+                    aria-label={m.oncall_action_on({ action: "remove_member", name: label })}
                     onClick={() =>
                       onChange({ members: layer.members.filter((member) => member !== id) })
                     }
@@ -935,7 +940,7 @@ function OverrideForm({
         {self ? null : (
           <div className="flex min-w-0 flex-col gap-1.5">
             <label htmlFor={whoId} className="text-sm font-medium">
-              {m.oncall_override_who()}
+              {m.oncall_field({ field: "who" })}
             </label>
             <select
               ref={whoRef}
@@ -945,7 +950,7 @@ function OverrideForm({
               aria-invalid={errors?.userId ? true : undefined}
               onChange={(event) => setDraft({ ...draft, userId: event.target.value })}
             >
-              <option value="">{m.oncall_override_who()}</option>
+              <option value="">{m.oncall_field({ field: "who" })}</option>
               {members.map((member) => (
                 <option key={member.id} value={member.id}>
                   {member.name || m.oncall_unnamed()}
@@ -963,23 +968,23 @@ function OverrideForm({
         <Field
           ref={startRef}
           type="datetime-local"
-          label={m.oncall_override_start()}
+          label={m.oncall_field({ field: "start" })}
           value={draft.start}
           error={errors?.start ? m.oncall_field_invalid({ field: "start" }) : undefined}
           onChange={(event) => setDraft({ ...draft, start: event.target.value })}
         />
         <Field
           type="datetime-local"
-          label={m.oncall_override_end()}
+          label={m.oncall_field({ field: "end" })}
           value={draft.end}
           error={errors?.end ? m.oncall_field_invalid({ field: "end" }) : undefined}
           onChange={(event) => setDraft({ ...draft, end: event.target.value })}
         />
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit">{m.oncall_override_add()}</Button>
+        <Button type="submit">{m.oncall_action({ action: "add_override" })}</Button>
         <Button type="button" variant="outline" onClick={onCancel}>
-          {m.oncall_cancel()}
+          {m.oncall_action({ action: "cancel" })}
         </Button>
       </div>
     </form>

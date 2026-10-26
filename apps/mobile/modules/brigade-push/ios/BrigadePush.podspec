@@ -1,5 +1,6 @@
-# The app's side of spike S1 (RFC 0006): the device key for encrypted pushes. The Notification Service Extension
-# compiles BrigadePushCrypto.swift too (plugins/notification-service.ts copies it into its target).
+# The app's side of spike S1 (RFC 0006): the device key for encrypted pushes, and the Acknowledge action on pages
+# (RFC 0004 "Clients"). The Notification Service Extension compiles BrigadePushCrypto.swift and BrigadePage.swift too
+# (plugins/notification-service.ts copies them into its target).
 Pod::Spec.new do |s|
   s.name           = 'BrigadePush'
   s.version        = '0.0.0'
@@ -13,6 +14,8 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
+  # PageActions joins its notification delegates to see the Acknowledge tap first.
+  s.dependency 'ExpoNotifications'
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

@@ -13,7 +13,8 @@ import {
 // The iOS Notification Service Extension that decrypts Brigade pushes (spike S1, RFC 0006). It adds:
 // - the push, App Group and time-sensitive entitlements to the app;
 // - a `BrigadeNotificationService` app extension target, embedded in the app, compiling
-//   modules/brigade-push/extension/NotificationService.swift and the app module's BrigadePushCrypto.swift;
+//   modules/brigade-push/extension/NotificationService.swift and the app module's BrigadePushCrypto.swift and
+//   BrigadePage.swift (the Acknowledge action's category, set on decrypted pages);
 // - `Localizable.strings` in `en` and `pt-BR` for both targets, generated from packages/i18n: the fallback
 //   title and body (`push_fallback_*`) that the payload's `loc-key`s and the extension use when a push cannot be
 //   decrypted.
@@ -35,10 +36,13 @@ export const NATIVE_LOCALES = ["en", "pt-BR"] as const;
 const here = dirname(fileURLToPath(import.meta.url));
 const MESSAGES_DIR = join(here, "../../../packages/i18n/messages");
 const MODULE_DIR = join(here, "../modules/brigade-push");
-const SOURCES = [
-  join(MODULE_DIR, "extension/NotificationService.swift"),
-  join(MODULE_DIR, "ios/BrigadePushCrypto.swift"),
-];
+/** The extension's Swift sources, copied into its folder and compiled by its target. */
+export const NSE_SOURCES = [
+  "extension/NotificationService.swift",
+  "ios/BrigadePushCrypto.swift",
+  "ios/BrigadePage.swift",
+] as const;
+const SOURCES = NSE_SOURCES.map((source) => join(MODULE_DIR, source));
 
 export interface NotificationServiceOptions {
   /** `aps-environment`: `development` for debug and ad hoc builds signed for the sandbox, else `production`. */
@@ -162,7 +166,7 @@ export function applyNotificationService(
   const resources = project.addBuildPhase([], "PBXResourcesBuildPhase", "Resources", target.uuid);
   project.addBuildPhase([], "PBXFrameworksBuildPhase", "Frameworks", target.uuid);
 
-  for (const file of ["NotificationService.swift", "BrigadePushCrypto.swift"]) {
+  for (const file of NSE_SOURCES.map((source) => source.split("/").pop()!)) {
     const ref = addFileReference(project, group.pbxGroup, file, "sourcecode.swift");
     addBuildFile(project, sources.buildPhase, ref, file, "Sources");
   }

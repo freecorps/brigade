@@ -7,6 +7,7 @@ import * as SystemUI from "expo-system-ui";
 import { useEffect, useMemo } from "react";
 import { Session } from "@/components/session";
 import { useIncomingCalls } from "@/hooks/use-incoming-calls";
+import { usePageActions } from "@/hooks/use-page-actions";
 import { LocaleContext } from "@/hooks/use-locale";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { useTheme } from "@/hooks/use-theme";
@@ -23,6 +24,8 @@ export default function RootLayout() {
   // the screens render and key the stack on it (packages/i18n/README.md, "UIs: the current locale").
   if (getLocale() !== locale) void setLocale(locale);
   const value = useMemo(() => ({ locale, timeZone }), [locale, timeZone]);
+  // Acknowledge on a page's notification, titled in this locale.
+  usePageActions(locale);
 
   // The root view behind screens and the keyboard, so transitions never flash the wrong ground.
   useEffect(() => {

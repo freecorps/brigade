@@ -214,7 +214,9 @@ export async function notifyPush(
   const workspace = env.WORKSPACE.getByName(event.workspaceId);
   const plan = await workspace.planPage(event);
   if (!plan.send) return false;
-  const sent = await Promise.all(plan.targets.map((target) => pushOne(event.workspaceId, plan, target, env, send)));
+  const sent = await Promise.all(
+    plan.targets.map((target) => pushOne(event.workspaceId, plan, target, env, send)),
+  );
   const final = !sent.some((one) => one.retry) || attempts >= MAX_PAGE_ATTEMPTS;
   await workspace.recordPage(
     event,

@@ -18,12 +18,7 @@ import {
 import type { MemberChangeResult } from "./members.ts";
 import { consumeDeadLetters, consumeEvents } from "./notify.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
-import {
-  ORGANIZATION_ID,
-  WORKSPACE_HEADER,
-  WORKSPACE_ID,
-  type AckResult,
-} from "./workspace.ts";
+import { ORGANIZATION_ID, WORKSPACE_HEADER, WORKSPACE_ID, type AckResult } from "./workspace.ts";
 
 export { ProbeDO } from "./probe.ts";
 export { WatchdogDO } from "./watchdog.ts";

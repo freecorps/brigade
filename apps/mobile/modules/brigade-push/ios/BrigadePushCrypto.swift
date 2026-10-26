@@ -29,6 +29,8 @@ public enum BrigadePushCrypto {
     public let body: String
     /// The incident a call's ack names (packages/push `PushContent.incident`); nil for plain alerts.
     public let incident: String?
+    /// The incident's workspace (`PushContent.workspace`), for the Acknowledge action; nil from older instances.
+    public let workspace: String?
   }
 
   /// The device public key as the instance needs it: uncompressed P-256 (65 bytes), base64url. Creates the key
@@ -58,7 +60,8 @@ public enum BrigadePushCrypto {
       let title = json["title"] as? String,
       let body = json["body"] as? String
     else { throw Failure.malformedContent }
-    return Content(title: title, body: body, incident: json["incident"] as? String)
+    return Content(
+      title: title, body: body, incident: json["incident"] as? String, workspace: json["workspace"] as? String)
   }
 
   // MARK: - Keychain

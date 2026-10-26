@@ -21,8 +21,15 @@ export function devHost(hostUri: string | null | undefined): string | undefined 
   return host || undefined;
 }
 
-/** Where the app signs in (Better Auth's base URL) and where a workspace's socket is. */
-export type Server = { auth: string; sync: (workspaceId: string) => string };
+/**
+ * Where the app signs in (Better Auth's base URL), where a workspace's socket is, and where a notification's
+ * Acknowledge action posts (RFC 0004 "Clients").
+ */
+export type Server = {
+  auth: string;
+  sync: (workspaceId: string) => string;
+  ack: (workspaceId: string, incidentId: string) => string;
+};
 
 /**
  * The Brigade the app talks to: the dashboard's origin, which serves `/api/auth` and `/api/sync` (apps/web/worker).
@@ -45,6 +52,8 @@ export function brigadeServer({
   return {
     auth: `${origin}/api/auth`,
     sync: (workspaceId) => `${socket}/api/sync/${encodeURIComponent(workspaceId)}`,
+    ack: (workspaceId, incidentId) =>
+      `${origin}/api/workspaces/${encodeURIComponent(workspaceId)}/incidents/${encodeURIComponent(incidentId)}/ack`,
   };
 }
 

@@ -11,6 +11,7 @@ import { useRef, useState, type ComponentRef, type Ref } from "react";
 import {
   AccessibilityInfo,
   ActivityIndicator,
+  Linking,
   Pressable,
   ScrollView,
   TextInput,
@@ -21,7 +22,7 @@ import { useSessionView } from "@/components/session";
 import { ThemedText } from "@/components/themed-text";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
-import { authClient } from "@/lib/auth-client";
+import { authClient, server } from "@/lib/auth-client";
 
 /**
  * Everything before a member is ready: the sign-in form, or why there is none yet (loading, no server, offline,
@@ -66,6 +67,7 @@ export function SignIn() {
 
 function SignInForm() {
   const colors = useTheme();
+  const forgotPassword = server?.forgotPassword;
   const [values, setValues] = useState<Record<SignInField, string>>({ email: "", password: "" });
   const [errors, setErrors] = useState<FieldErrors<SignInField>>({});
   const [failure, setFailure] = useState<string | null>(null);
@@ -176,6 +178,15 @@ function SignInForm() {
           {busy ? m.auth_signing_in() : m.auth_sign_in_submit()}
         </ThemedText>
       </Pressable>
+      {forgotPassword ? (
+        // The reset happens on the dashboard, where its email's link lands too.
+        <View style={{ alignItems: "flex-start" }}>
+          <TextButton
+            label={m.reset_page({ part: "forgot_link", email: "" })}
+            onPress={() => void Linking.openURL(forgotPassword).catch(() => {})}
+          />
+        </View>
+      ) : null}
       <ThemedText variant="caption">{m.mobile_session({ part: "sign_in_hint" })}</ThemedText>
     </View>
   );

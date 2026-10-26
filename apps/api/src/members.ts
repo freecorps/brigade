@@ -37,8 +37,14 @@ import {
 import type { Logger, Shard } from "./shard.ts";
 import type { RowChange } from "./store.ts";
 
-/** A member as D1 has them; `role` is Better Auth's text, which may not be a Brigade role. */
-export type DirectoryMember = { userId: string; role: string };
+/**
+ * A member as D1 has them; `role` is Better Auth's text, which may not be a Brigade role. `resetAt`: when their
+ * password was last reset (`user.passwordResetAt`, RFC 0002 "Auth"), or null.
+ */
+export type DirectoryMember = { userId: string; role: string; resetAt: number | null };
+
+/** A member as `member.reconcile` takes them. */
+type ReconciledMember = { id: string; role: Role; resetAt: number | null };
 
 /** The workspace's members in D1, oldest first. */
 export async function readDirectory(
@@ -47,7 +53,9 @@ export async function readDirectory(
 ): Promise<DirectoryMember[]> {
   const { results } = await db
     .prepare(
-      `select "userId", role from member where "organizationId" = ? order by "createdAt", id`,
+      `select m."userId", m.role, u."passwordResetAt" as "resetAt" from member m
+       left join "user" u on u.id = m."userId"
+       where m."organizationId" = ? order by m."createdAt", m.id`,
     )
     .bind(workspaceId)
     .all<DirectoryMember>();
@@ -135,8 +143,11 @@ export type MemberChangeResult =
       code: "forbidden" | "last_owner" | "not_found" | "conflict" | "unavailable" | "not_applied";
     };
 
-/** Why the shard closes a member's sockets: they are no longer a member, or their role changed. */
-export type SocketVerdict = "removed" | "role_changed";
+/**
+ * Why the shard closes a member's sockets: they are no longer a member, their role changed, or their password was
+ * reset, which ended every session (`signOutUser` in src/workspace.ts).
+ */
+export type SocketVerdict = "removed" | "role_changed" | "signed_out";
 
 /** After a `not_applied`, the shard's alarm reconciles the members this soon, whether or not anyone connects. */
 export const MEMBER_REPAIR_DELAY_MS = 10 * 1000;
@@ -171,7 +182,7 @@ export class Membership {
       /** Sends a committed version's patches to the open sockets. */
       committed(version: number, changes: RowChange[]): void;
       /** Closes every socket whose actor `judge` returns a verdict for. */
-      closeSockets(judge: (actor: Actor) => SocketVerdict | undefined): void;
+      closeSockets(judge: (actor: Actor, openedAt: number) => SocketVerdict | undefined): void;
       /** Brings the shard's alarm forward to `at` (or earlier); the alarm calls `repairDue`. */
       wake(at: number): void;
       /**
@@ -327,7 +338,7 @@ export class Membership {
    * when the copy's role lags. Touches no other member, so it works in a workspace too large to reconcile.
    * `not_applied` when the shard failed.
    */
-  private catchUp(targetId: string, members: { id: string; role: Role }[]): MemberChangeResult {
+  private catchUp(targetId: string, members: ReconciledMember[]): MemberChangeResult {
     const target = members.find((member) => member.id === targetId);
     const copy = this.options.shard.store.get("members", targetId);
     if (!target) {
@@ -393,7 +404,7 @@ export class Membership {
    * Runs `member.reconcile` as `MEMBERS_ACTOR` with D1's `members` and closes sockets acting as someone D1 no longer
    * has, or with a role it no longer gives them. Never throws.
    */
-  private repair(members: { id: string; role: Role }[]): Repair {
+  private repair(members: ReconciledMember[]): Repair {
     const { shard, log } = this.options;
     let outcome: Repair;
     try {
@@ -420,12 +431,14 @@ export class Membership {
       log("member reconcile failed", { error });
       return "failed";
     }
-    const roles = new Map(members.map((member) => [member.id, member.role]));
-    this.options.closeSockets((actor) => {
+    const byId = new Map(members.map((member) => [member.id, member]));
+    this.options.closeSockets((actor, openedAt) => {
       if (actor.kind !== "user") return undefined;
-      const role = roles.get(actor.id);
-      if (role === undefined) return "removed";
-      return role === actor.role ? undefined : "role_changed";
+      const member = byId.get(actor.id);
+      if (member === undefined) return "removed";
+      // Opened before the password reset that ended its session: its own close may have failed (RFC 0002 "Auth").
+      if (member.resetAt !== null && openedAt < member.resetAt) return "signed_out";
+      return member.role === actor.role ? undefined : "role_changed";
     });
     return outcome;
   }
@@ -439,7 +452,7 @@ export class Membership {
     if (this.queued) return this.queued;
     const run = this.exclusive(async () => {
       this.queued = undefined;
-      let members: { id: string; role: Role }[];
+      let members: ReconciledMember[];
       try {
         members = brigadeMembers(await readDirectory(this.options.db, workspaceId));
       } catch (error) {
@@ -481,7 +494,7 @@ export class Membership {
    * After D1 was read whole (`members`): forgets each recorded target `done` says is caught up, and the tombstones
    * of members D1 has again (re-added) or that ran out. Never throws.
    */
-  private settle(members: { id: string; role: Role }[], done: (userId: string) => boolean): void {
+  private settle(members: ReconciledMember[], done: (userId: string) => boolean): void {
     try {
       const { sql } = this.options;
       const targets = sql
@@ -636,8 +649,10 @@ export class Membership {
 }
 
 /** D1's members that hold a Brigade role: the only ones a socket may act as (src/actor.ts `memberRole`). */
-function brigadeMembers(directory: DirectoryMember[]): { id: string; role: Role }[] {
+function brigadeMembers(directory: DirectoryMember[]): ReconciledMember[] {
   return directory.flatMap((member) =>
-    isRole(member.role) ? [{ id: member.userId, role: member.role }] : [],
+    isRole(member.role)
+      ? [{ id: member.userId, role: member.role, resetAt: member.resetAt ?? null }]
+      : [],
   );
 }

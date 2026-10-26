@@ -4,9 +4,8 @@
 // first, then runs these, so they never decide a change on their own (apps/api/src/members.ts).
 
 import { can, ROLES, type Role } from "./access.ts";
-import { forgetDevice, type DeviceUnregistered } from "./devices.ts";
+import { dropDevices } from "./devices.ts";
 import { defineMutation, fail, ok, type Actor, type DomainEvent } from "./mutation.ts";
-import type { MutationStore } from "./mutation.ts";
 import { dropFromSchedules } from "./schedules.ts";
 import { v } from "./validate.ts";
 
@@ -68,21 +67,6 @@ export function checkMemberChange(
   return { ok: true };
 }
 
-/** Deletes every device of `userId` (they stop being paged right away), with a `device.unregistered` each. */
-function dropDevices(store: MutationStore, userId: string): DeviceUnregistered[] {
-  const events: DeviceUnregistered[] = [];
-  for (const device of store.scan("devices")) {
-    if (device.userId !== userId) continue;
-    forgetDevice(store, device.id);
-    events.push({
-      type: "device.unregistered",
-      subject: device.id,
-      data: { id: device.id, userId, reason: "member_removed" },
-    });
-  }
-  return events;
-}
-
 const memberId = v.string({ min: 1, max: 64 });
 
 /**
@@ -137,7 +121,7 @@ export const removeMember = defineMutation({
       return fail("forbidden", "Not allowed to remove this member");
     }
     if (store.get("members", args.id)) store.delete("members", args.id);
-    const devices = dropDevices(store, args.id);
+    const devices = dropDevices(store, args.id, "member_removed");
     const schedules = dropFromSchedules(store, args.id, ctx);
     const event: MemberRemoved = {
       type: "member.removed",
@@ -154,7 +138,8 @@ export const MAX_RECONCILED_MEMBERS = 1000;
 /**
  * Server only, as `MEMBERS_ACTOR`: makes the shard's member list agree with D1's (`members`, every member with a
  * Brigade role). A copy D1 no longer has is deleted with its devices (`member.removed`, `reconciled`); a copy whose
- * role differs takes D1's (`member.role_changed`); a device whose member D1 no longer has is dropped. Members D1
+ * role differs takes D1's (`member.role_changed`); a device whose member D1 no longer has is dropped, and so is one
+ * last registered before its member's password was reset (`resetAt`, D1's `user.passwordResetAt`). Members D1
  * has and the shard does not are left to `member.sync` (it needs their name). An empty list changes nothing: a
  * workspace always has an owner, so it can only be a read of the wrong workspace. Nothing to repair is a
  * `conflict`.
@@ -162,17 +147,26 @@ export const MAX_RECONCILED_MEMBERS = 1000;
 export const reconcileMembers = defineMutation({
   name: "member.reconcile",
   args: v.object({
-    members: v.array(v.object({ id: memberId, role: v.picklist(ROLES) }), {
-      max: MAX_RECONCILED_MEMBERS,
-    }),
+    members: v.array(
+      v.object({
+        id: memberId,
+        role: v.picklist(ROLES),
+        resetAt: v.optional(v.nullable(v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }))),
+      }),
+      { max: MAX_RECONCILED_MEMBERS },
+    ),
   }),
   permission: "members:manage",
   apply(store, args, ctx) {
     if (args.members.length === 0) return fail("invalid_args", "No members to reconcile with");
-    const roles = new Map<string, Role>(
-      args.members.map((member: { id: string; role: Role }) => [member.id, member.role]),
-    );
+    const members: { id: string; role: Role; resetAt: number | null }[] = args.members;
+    const roles = new Map<string, Role>(members.map((member) => [member.id, member.role]));
     const events: DomainEvent[] = [];
+    // Devices last registered before their member's password was reset: the reset's own `device.signOut` failed in
+    // this shard, and they may be someone else's phone (RFC 0002 "Auth"). The app registers again after signing in.
+    for (const { id, resetAt } of members) {
+      if (resetAt !== null) events.push(...dropDevices(store, id, "password_reset", resetAt));
+    }
     for (const current of store.scan("members")) {
       const role = roles.get(current.id);
       if (role === undefined) {
@@ -184,7 +178,7 @@ export const reconcileMembers = defineMutation({
         };
         events.push(
           event,
-          ...dropDevices(store, current.id),
+          ...dropDevices(store, current.id, "member_removed"),
           ...dropFromSchedules(store, current.id, ctx),
         );
       } else if (role !== current.role) {
@@ -205,7 +199,7 @@ export const reconcileMembers = defineMutation({
         .map((device) => device.userId)
         .filter((userId) => !roles.has(userId)),
     );
-    for (const userId of orphans) events.push(...dropDevices(store, userId));
+    for (const userId of orphans) events.push(...dropDevices(store, userId, "member_removed"));
     if (events.length === 0) return fail("conflict", "Members are up to date");
     return ok(...events);
   },

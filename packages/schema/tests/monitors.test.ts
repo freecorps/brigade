@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vite-plus/test";
 import {
+  ACCOUNT_ACTOR,
   activeIncidents,
   incidentTimeline,
   createMemoryStore,
@@ -646,6 +647,55 @@ describe("managing monitors", () => {
     expect(JSON.stringify(db.get("monitors", id))).not.toContain(HASH);
     const bad = { ...args, id: newId("mon", T, random), tokenHash: "not-a-hash" };
     expect(runMutation(mutations, "monitor.createHeartbeat", bad, db, as("admin")).ok).toBe(false);
+  });
+});
+
+describe("monitor.takeOver", () => {
+  // RFC 0002 "Auth": the owner of an address took back an account someone else signed up with; what that person
+  // set up must not be able to page the owner.
+  test("server only, as `ACCOUNT_ACTOR`: pauses every monitor and revokes every heartbeat URL", () => {
+    const db = store();
+    const down = createHttp(db, ["weur"]);
+    report(db, down, "weur", false);
+    const idle = createHttp(db, ["weur"], "Already paused");
+    runMutation(mutations, "monitor.setPaused", { id: idle, paused: true }, db, as("admin"));
+    const beat = newId("mon", T, random);
+    runMutation(
+      mutations,
+      "monitor.createHeartbeat",
+      { id: beat, name: "Backup", intervalSeconds: 3600, graceSeconds: 300, tokenHash: HASH },
+      db,
+      as("admin"),
+    );
+    const revoked = "b".repeat(64);
+    const account = { actor: ACCOUNT_ACTOR, now: T + 2000, server: true };
+
+    expect(Object.keys(mutations)).not.toContain("monitor.takeOver");
+    expect(
+      runMutation(serverMutations, "monitor.takeOver", { tokenHash: revoked }, db, system()),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    const result = runMutation(
+      serverMutations,
+      "monitor.takeOver",
+      { tokenHash: revoked },
+      db,
+      account,
+    );
+    expect(types(result)).toEqual([
+      "monitor.paused",
+      "alert.resolved",
+      "monitor.paused",
+      "monitor.heartbeat_revoked",
+    ]);
+    expect(db.scan("monitors").every((monitor) => monitor.paused)).toBe(true);
+    expect(db.get("monitors", down)).toMatchObject({ pausedBy: ACCOUNT_ACTOR.id, alertId: null });
+    expect(db.get("monitors", idle)).toMatchObject({ pausedBy: "usr_ana" });
+    expect(db.get("heartbeats", beat)).toMatchObject({ tokenHash: revoked });
+    expect(db.scan("alerts").every((alert) => alert.status === "resolved")).toBe(true);
+    // Nothing left to take over.
+    expect(
+      runMutation(serverMutations, "monitor.takeOver", { tokenHash: revoked }, db, account),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
   });
 });
 

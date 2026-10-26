@@ -9,7 +9,13 @@ import {
   type MemberChange,
   type Role,
 } from "@freecorps/brigade-schema";
-import { ACTOR_HEADER, MEMBER_NAME_HEADER, memberRole, resolveActor } from "./actor.ts";
+import {
+  ACTOR_HEADER,
+  MEMBER_NAME_HEADER,
+  memberRole,
+  RESET_AT_HEADER,
+  resolveActor,
+} from "./actor.ts";
 import {
   AUTH_BASE_PATH,
   createAuth,
@@ -87,9 +93,12 @@ export async function withoutInvitations(response: Response): Promise<Response> 
 /**
  * Other Better Auth routes refused. `/expo-authorization-proxy` (the `expo()` plugin's) redirects to any HTTPS URL it
  * is given, for social sign-in through the system browser; until that sign-in exists it would only be an open
- * redirect on Brigade's host.
+ * redirect on Brigade's host. `/reset-password/:token` (`REFUSED_PREFIXES`) redirects a reset token to a
+ * `callbackURL`, `brigade://` included, where any app claiming the scheme would get it; the reset email links to the
+ * dashboard's page instead, which posts the token to `/reset-password`.
  */
 const REFUSED_ROUTES = new Set(["/expo-authorization-proxy"]);
+const REFUSED_PREFIXES = ["/reset-password/"];
 
 export default {
   async fetch(request, env, ctx): Promise<Response> {
@@ -102,7 +111,8 @@ export default {
       const route = pathname.slice(AUTH_BASE_PATH.length);
       if (
         (route.startsWith("/organization/") && !ORGANIZATION_ROUTES.has(route)) ||
-        REFUSED_ROUTES.has(route)
+        REFUSED_ROUTES.has(route) ||
+        REFUSED_PREFIXES.some((prefix) => route.startsWith(prefix))
       ) {
         return json({ error: "not_found" }, 404);
       }
@@ -131,6 +141,7 @@ export default {
     if (pathname === "/receipts") return receiveReceipt(request, env);
 
     if (pathname === "/health/paging") return pagingHealth(request, env, auth);
+    if (pathname === "/account/takeover") return takeoverNotice(request, env, auth);
 
     const workspace = WORKSPACE_PATH.exec(pathname)?.[1];
     if (pathname !== "/health" && workspace === undefined) return json({ error: "not_found" }, 404);
@@ -252,11 +263,214 @@ export function workerAuth(
     // The web Worker forwards with the browser's URL, so this is the protocol the browser used.
     secureCookies: new URL(request.url).protocol === "https:",
     onWorkspaceCreated: onWorkspaceCreated ?? provisionWith(env),
+    onPasswordReset: signOutWith(env),
     // Made only when a verification email goes out, so other requests never read the email settings.
     get email() {
       return { sender: emailSender(env), dashboardUrl: (env as NotifyEnv).DASHBOARD_URL };
     },
   });
+}
+
+/** Tries per workspace at signing a reset account out (`signOutWith`), and the wait before each retry. */
+const SIGN_OUT_ATTEMPTS = 3;
+const SIGN_OUT_RETRY_MS = 250;
+
+/** An inherited workspace in the takeover notice: what Brigade paused there, or that it could not. */
+export type InheritedWorkspace = {
+  id: string;
+  name: string;
+  /** Names of the monitors paused. */
+  paused: string[];
+  /** Heartbeat URLs that stopped working. */
+  revoked: number;
+  /** The shard could not be reached: nothing there was paused, and the owner should look. */
+  failed: boolean;
+};
+
+/**
+ * After a password reset (RFC 0002 "Auth"): signs the user out of every workspace they belong to in D1, each shard
+ * dropping their devices and closing their sockets (`signOutUser`), tried `SIGN_OUT_ATTEMPTS` times. Never throws:
+ * the password is already changed and every session gone. A shard that still fails is logged; its member reconcile
+ * (the repair alarm the failure armed, or the next sync upgrade) drops the devices and sockets from before
+ * `user.passwordResetAt` instead.
+ *
+ * On a takeover (`takeOver`: the address was not verified until now), the shard of each workspace where the account is
+ * the only member also pauses its monitors and revokes its heartbeat URLs, and the owner is told once
+ * (`takeover_notice`, read by `GET /account/takeover`).
+ */
+export function signOutWith(
+  env: Env,
+  retryMs = SIGN_OUT_RETRY_MS,
+): NonNullable<AuthBindings["onPasswordReset"]> {
+  return async (userId, { takeOver, at }) => {
+    let workspaces: { id: string; name: string; members: number }[];
+    try {
+      const { results } = await env.DB.prepare(
+        `select m."organizationId" as id, o.name as name,
+           (select count(*) from member n where n."organizationId" = m."organizationId") as members
+         from member m join organization o on o.id = m."organizationId"
+         where m."userId" = ?`,
+      )
+        .bind(userId)
+        .all<{ id: string; name: string; members: number }>();
+      workspaces = results.filter((row) => WORKSPACE_ID.test(row.id));
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          message: "reading a reset account's workspaces failed",
+          error: String(error),
+        }),
+      );
+      return;
+    }
+    const inherited = await Promise.all(
+      workspaces.map(async (workspace): Promise<InheritedWorkspace | undefined> => {
+        const sole = takeOver && workspace.members === 1;
+        let failure: unknown;
+        for (let attempt = 1; attempt <= SIGN_OUT_ATTEMPTS; attempt++) {
+          if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, retryMs * attempt));
+          try {
+            const result = await env.WORKSPACE.getByName(workspace.id).signOutUser(
+              workspace.id,
+              userId,
+              { takeOver: sole },
+            );
+            if (!result.ok) {
+              // A shard never provisioned has nothing of theirs: no retry changes that.
+              failure = result.code;
+              break;
+            }
+            failure = undefined;
+            // The shard found another member after all, and took nothing over.
+            if (!sole || result.paused === undefined) return undefined;
+            const { paused, revoked = 0 } = result;
+            return { id: workspace.id, name: workspace.name, paused, revoked, failed: false };
+          } catch (error) {
+            failure = error;
+          }
+        }
+        console.error(
+          JSON.stringify({
+            message: "signing a reset account out of a workspace failed",
+            workspace: workspace.id,
+            error: String(failure),
+          }),
+        );
+        return sole
+          ? { id: workspace.id, name: workspace.name, paused: [], revoked: 0, failed: true }
+          : undefined;
+      }),
+    );
+    const notice = inherited.filter((workspace) => workspace !== undefined);
+    if (notice.length === 0) return;
+    try {
+      await recordNotice(env.DB, userId, notice, at);
+    } catch (error) {
+      console.error(
+        JSON.stringify({ message: "recording the takeover notice failed", error: String(error) }),
+      );
+    }
+  };
+}
+
+/** Tries at recording a takeover notice while another reset of the same account records its own. */
+const NOTICE_ATTEMPTS = 3;
+
+/**
+ * Records the takeover notice, merged into one already there: two resets of the account at once both take it over,
+ * and the second finds the monitors already paused, so its list alone would hide what the first paused. Per
+ * workspace, the paused names are joined, the larger revoked count kept, and it failed only if both failed. Written
+ * only over the row it read, so a reset never overwrites one that wrote in between.
+ */
+async function recordNotice(
+  db: D1Database,
+  userId: string,
+  notice: InheritedWorkspace[],
+  at: number,
+): Promise<void> {
+  for (let attempt = 1; attempt <= NOTICE_ATTEMPTS; attempt++) {
+    const row = await db
+      .prepare(`select workspaces from takeover_notice where "userId" = ?`)
+      .bind(userId)
+      .first<{ workspaces: string }>();
+    if (row === null) {
+      const inserted = await db
+        .prepare(
+          `insert into takeover_notice ("userId", workspaces, "createdAt") values (?, ?, ?)
+           on conflict ("userId") do nothing`,
+        )
+        .bind(userId, JSON.stringify(notice), at)
+        .run();
+      if (inserted.meta.changes === 1) return;
+      continue;
+    }
+    const merged = mergeNotice(JSON.parse(row.workspaces) as InheritedWorkspace[], notice);
+    const updated = await db
+      .prepare(`update takeover_notice set workspaces = ? where "userId" = ? and workspaces = ?`)
+      .bind(JSON.stringify(merged), userId, row.workspaces)
+      .run();
+    if (updated.meta.changes === 1) return;
+  }
+  throw new Error("the takeover notice kept changing");
+}
+
+function mergeNotice(
+  recorded: InheritedWorkspace[],
+  notice: InheritedWorkspace[],
+): InheritedWorkspace[] {
+  const merged = recorded.map((workspace) => ({ ...workspace }));
+  for (const workspace of notice) {
+    const same = merged.find((one) => one.id === workspace.id);
+    if (!same) {
+      merged.push(workspace);
+      continue;
+    }
+    same.paused = [...new Set([...same.paused, ...workspace.paused])];
+    same.revoked = Math.max(same.revoked, workspace.revoked);
+    same.failed = same.failed && workspace.failed;
+  }
+  return merged;
+}
+
+/**
+ * `GET /account/takeover`: the signed-in user's takeover notice (`signOutWith`), `{ notice: null }` without one;
+ * `DELETE` dismisses it. Only ever the session's own.
+ */
+export async function takeoverNotice(
+  request: Request,
+  env: Env,
+  auth: () => Auth,
+): Promise<Response> {
+  if (request.method !== "GET" && request.method !== "DELETE") {
+    return json({ error: "method_not_allowed" }, 405, { Allow: "GET, DELETE" });
+  }
+  const origin = request.headers.get("Origin");
+  if (request.method === "DELETE" && origin !== null && origin !== new URL(request.url).origin) {
+    return json({ error: "forbidden_origin" }, 403);
+  }
+  const headers = { "Cache-Control": "private, no-store" };
+  try {
+    const session = await auth().api.getSession({ headers: request.headers });
+    if (!session) return json({ error: "unauthenticated" }, 401);
+    if (request.method === "DELETE") {
+      await env.DB.prepare(`delete from takeover_notice where "userId" = ?`)
+        .bind(session.user.id)
+        .run();
+      return new Response(null, { status: 204, headers });
+    }
+    const row = await env.DB.prepare(
+      `select workspaces, "createdAt" as at from takeover_notice where "userId" = ?`,
+    )
+      .bind(session.user.id)
+      .first<{ workspaces: string; at: number }>();
+    const notice = row
+      ? { at: row.at, workspaces: JSON.parse(row.workspaces) as InheritedWorkspace[] }
+      : null;
+    return json({ notice }, 200, headers);
+  } catch (error) {
+    console.error(JSON.stringify({ message: "takeover notice failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
 }
 
 function provisionWith(env: Env): NonNullable<AuthBindings["onWorkspaceCreated"]> {
@@ -687,7 +901,8 @@ const ACK_STATUS: Partial<Record<Exclude<AckResult, { ok: true }>["code"], numbe
  * `GET /sync/:workspaceId` with `Upgrade: websocket`: hands the socket to the workspace's shard (RFC 0004
  * "Socket topology"). The Worker authenticates the upgrade (`resolveActor`: 401 without a session, 403 for a
  * non-member or another site's page) and forwards a request it builds itself, carrying only the upgrade, the
- * workspace id and the verified actor (with the member's name), so no client header reaches the shard.
+ * workspace id and the verified actor (with the member's name and when their password was last reset), so no client
+ * header reaches the shard.
  */
 async function openSync(
   request: Request,
@@ -711,6 +926,7 @@ async function openSync(
   if (resolved.name !== undefined) {
     headers.set(MEMBER_NAME_HEADER, encodeURIComponent(resolved.name));
   }
+  if (resolved.resetAt !== undefined) headers.set(RESET_AT_HEADER, String(resolved.resetAt));
   try {
     return await env.WORKSPACE.getByName(workspace).fetch(request.url, { headers });
   } catch (error) {

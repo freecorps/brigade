@@ -6,6 +6,7 @@
 import type { Locale } from "@freecorps/brigade-i18n";
 import {
   email_invite,
+  email_reset,
   email_text,
   email_verify,
   member_role,
@@ -146,8 +147,8 @@ export function renderEmail(
 }
 
 /**
- * An account email (verification, invitation): an optional greeting, paragraphs, one link as a button-like anchor,
- * then a footer. Every line is text, escaped as a whole in the HTML, like `renderEmail`.
+ * An account email (verification, password reset, invitation): an optional greeting, paragraphs, one link as a
+ * button-like anchor, then a footer. Every line is text, escaped as a whole in the HTML, like `renderEmail`.
  */
 function renderMessage(
   parts: {
@@ -205,6 +206,29 @@ export function renderVerificationEmail(
 }
 
 /**
+ * The password reset email (RFC 0002 "Auth"): `url` is the dashboard's `/reset-password` page. Like the verification
+ * email, nothing in it but the address: on an account nobody verified, whoever signed up typed the name.
+ */
+export function renderPasswordResetEmail(
+  to: { email: string },
+  url: string,
+  locale: Locale,
+): OutgoingEmail {
+  const text = (part: string) => email_reset({ part, email: to.email }, { locale });
+  return renderMessage(
+    {
+      subject: text("subject"),
+      lines: [text("intro")],
+      link: { label: text("open"), url },
+      after: [text("expires")],
+      footer: text("footer"),
+    },
+    to,
+    locale,
+  );
+}
+
+/**
  * The invitation email (RFC 0003 "Invitations"): who invited, to which workspace, as which role; `url` is the
  * dashboard's `/invitations/:id` page. The workspace's and inviter's names are what members typed.
  */
@@ -238,14 +262,15 @@ export function renderInvitationEmail(
 }
 
 /**
- * A page of the dashboard at `path` (with `search`), from `DASHBOARD_URL` when it is an http(s) origin, else from
- * `fallback` (the origin the request came through); undefined with neither.
+ * A page of the dashboard at `path` (with `search`, and `fragment` after the `#`), from `DASHBOARD_URL` when it is an
+ * http(s) origin, else from `fallback` (the origin the request came through); undefined with neither.
  */
 export function dashboardLink(
   path: string,
   search: Record<string, string>,
   dashboardUrl: string | undefined,
   fallback: string | null | undefined,
+  fragment: Record<string, string> = {},
 ): string | undefined {
   for (const candidate of [dashboardUrl, fallback]) {
     if (!candidate) continue;
@@ -258,6 +283,8 @@ export function dashboardLink(
     if (base.protocol !== "https:" && base.protocol !== "http:") continue;
     const url = new URL(path, base.origin);
     for (const [key, value] of Object.entries(search)) url.searchParams.set(key, value);
+    const hash = new URLSearchParams(fragment).toString();
+    if (hash) url.hash = hash;
     return url.href;
   }
   return undefined;

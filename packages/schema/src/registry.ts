@@ -18,9 +18,15 @@ import {
   planDeliveries,
   reportDeliveries,
 } from "./deliveries.ts";
-import { expireDevice, registerDevice, unregisterDevice } from "./devices.ts";
+import { expireDevice, registerDevice, signOutDevices, unregisterDevice } from "./devices.ts";
 import { failEmail, failNotification } from "./notifications.ts";
-import { allMonitors, evaluateMonitor, monitorMutations, reportMonitorCheck } from "./monitors.ts";
+import {
+  allMonitors,
+  evaluateMonitor,
+  monitorMutations,
+  reportMonitorCheck,
+  takeOverMonitors,
+} from "./monitors.ts";
 import { defineRegistry } from "./mutation.ts";
 import { allOverrides, allSchedules, scheduleMutations } from "./schedules.ts";
 import { allPolicies, policyMutations } from "./policies.ts";
@@ -91,6 +97,8 @@ export const serverMutations = defineRegistry([
   reportMonitorCheck,
   evaluateMonitor,
   expireDevice,
+  signOutDevices,
+  takeOverMonitors,
   failNotification,
   failEmail,
   planDeliveries,

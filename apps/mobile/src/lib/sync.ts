@@ -27,6 +27,11 @@ export function devHost(hostUri: string | null | undefined): string | undefined 
  */
 export type Server = {
   auth: string;
+  /**
+   * The dashboard's "Forgot your password?" page, opened in the browser: the reset email's link lands on the
+   * dashboard too, so the whole reset happens there (RFC 0002 "Auth").
+   */
+  forgotPassword: string;
   sync: (workspaceId: string) => string;
   ack: (workspaceId: string, incidentId: string) => string;
 };
@@ -51,6 +56,7 @@ export function brigadeServer({
   const socket = origin.replace(/^http/, "ws");
   return {
     auth: `${origin}/api/auth`,
+    forgotPassword: `${origin}/forgot-password`,
     sync: (workspaceId) => `${socket}/api/sync/${encodeURIComponent(workspaceId)}`,
     ack: (workspaceId, incidentId) =>
       `${origin}/api/workspaces/${encodeURIComponent(workspaceId)}/incidents/${encodeURIComponent(incidentId)}/ack`,

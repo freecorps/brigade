@@ -387,6 +387,7 @@ describe("GET /sync/:workspaceId", () => {
         actor: { kind: "user", id: "usr_dev", role: "responder" },
         clientId: "client-attached",
         subs: [{ subId: "one", query: "incident.byId", args: { id } }],
+        openedAt: expect.any(Number),
       });
     });
     a.send({ type: "unsubscribe", subId: "one" });

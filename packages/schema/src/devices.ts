@@ -30,10 +30,11 @@ export type PushEnvironment = (typeof PUSH_ENVIRONMENTS)[number];
 export const MAX_DEVICES_PER_MEMBER = 10;
 
 /**
- * Why a device stopped being paged: its member unregistered it, APNs said its token is gone, or its member left or
- * was removed from the workspace (`member.remove`, `member.reconcile`).
+ * Why a device stopped being paged: its member unregistered it, APNs said its token is gone, its member left or
+ * was removed from the workspace (`member.remove`, `member.reconcile`), or its member's password was reset
+ * (`device.signOut`).
  */
-export type DeviceRemoval = "unregistered" | "token_invalid" | "member_removed";
+export type DeviceRemoval = "unregistered" | "token_invalid" | "member_removed" | "password_reset";
 
 export type DeviceRegistered = DomainEvent<
   "device.registered",
@@ -49,6 +50,12 @@ export type DeviceUnregistered = DomainEvent<
  * mutations are reachable only from the shard's own code, so its role grants no member anything.
  */
 export const NOTIFIER_ACTOR: Actor = { kind: "system", id: "sys_notifier", role: "admin" };
+
+/**
+ * Who signs a user's devices out of a workspace when their password is reset (`device.signOut`, RFC 0002 "Auth").
+ * Server only, so its role grants no member anything.
+ */
+export const ACCOUNT_ACTOR: Actor = { kind: "system", id: "sys_account", role: "admin" };
 
 /** What a member's device looks like to the rest of the workspace: no token, no key. */
 export function deviceSummary(
@@ -74,6 +81,29 @@ export function deviceSummary(
 export function forgetDevice(store: MutationStore, id: string): void {
   store.delete("devices", id);
   if (store.get("member_devices", id)) store.delete("member_devices", id);
+}
+
+/**
+ * Forgets every device of `userId`, or only those last registered before `before`, with a `device.unregistered` for
+ * each.
+ */
+export function dropDevices(
+  store: MutationStore,
+  userId: string,
+  reason: DeviceRemoval,
+  before = Infinity,
+): DeviceUnregistered[] {
+  const events: DeviceUnregistered[] = [];
+  for (const device of store.scan("devices")) {
+    if (device.userId !== userId || device.updatedAt >= before) continue;
+    forgetDevice(store, device.id);
+    events.push({
+      type: "device.unregistered",
+      subject: device.id,
+      data: { id: device.id, userId, reason },
+    });
+  }
+  return events;
 }
 
 /** A native push token (APNs hex, FCM's own alphabet): printable ASCII without spaces, bounded. */
@@ -236,5 +266,30 @@ export const expireDevice = defineMutation({
       data: { id: args.id, userId: current.userId, reason: "token_invalid" },
     };
     return ok(event);
+  },
+});
+
+/**
+ * Server only, as `ACCOUNT_ACTOR`: stops paging every device of `userId` in this workspace, after their password was
+ * reset (RFC 0002 "Auth"). A reset ends every session, and a phone still registered would keep getting the
+ * account's pages without one: the phone of whoever held the account before (someone who signed up with another
+ * person's address, or took over the password). The app registers again when its member next signs in. `before`:
+ * only the devices last registered before then (the reset's time, when the shard catches up on a sign-out that
+ * failed: `WorkspaceDO.fetch`). Nothing to drop is a `conflict`.
+ */
+export const signOutDevices = defineMutation({
+  name: "device.signOut",
+  args: v.object({
+    userId: v.string({ min: 1, max: 64 }),
+    before: v.optional(v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER })),
+  }),
+  permission: "incident:update",
+  apply(store, args, ctx) {
+    if (ctx.actor.kind !== ACCOUNT_ACTOR.kind || ctx.actor.id !== ACCOUNT_ACTOR.id) {
+      return fail("forbidden", "Only the server signs devices out");
+    }
+    const events = dropDevices(store, args.userId, "password_reset", args.before ?? Infinity);
+    if (events.length === 0) return fail("conflict", "No devices to sign out");
+    return ok(...events);
   },
 });

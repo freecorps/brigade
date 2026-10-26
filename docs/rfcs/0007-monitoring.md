@@ -91,7 +91,9 @@
 - Heartbeat (push-based): the monitored system calls Brigade; missing beats raise an alert. Covers cron jobs and internal hosts.
   Built: `POST /heartbeat/<workspace id>.<monitor id>.<secret>` (also under the dashboard's `/api`). The secret is
   32 random bytes made by the client, which shows the URL once and sends only its SHA-256; the shard stores the hash
-  in a server-only table and compares in constant time. The Worker first checks that the workspace exists in D1
+  in a server-only table and compares in constant time. There is no rotation yet: a new URL is a new monitor. When the
+  owner of an address takes back an account someone else signed up with, every heartbeat URL in the workspaces it is
+  alone in is revoked (its hash replaced by random bytes) and every monitor there paused (RFC 0002 "Auth"). The Worker first checks that the workspace exists in D1
   (cached per isolate for 10 minutes), so a made-up workspace creates no Durable Object (Q16); if the D1 read fails, the ping goes to the shard
   anyway (fail open: a D1 outage must not page anyone for a missed beat). Every refusal is the same 404. A ping turns the monitor up;
   no ping within interval + grace (0 s to 24 h) is a failure, found by the workspace shard's alarm (at least once a

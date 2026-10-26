@@ -16,10 +16,18 @@ export const ACTOR_HEADER = "Brigade-Actor";
  * Latin-1), for the shard's member list (`member.sync`).
  */
 export const MEMBER_NAME_HEADER = "Brigade-Member-Name";
+/**
+ * Set next to `MEMBER_NAME_HEADER` when the member's password was ever reset: when (`user.passwordResetAt`, ms since
+ * the epoch, RFC 0002 "Auth"). The shard drops the member's devices from before it ahead of the socket.
+ */
+export const RESET_AT_HEADER = "Brigade-Reset-At";
 
-/** `name`: the member's name from Better Auth; absent for the dev actor, which has no user. */
+/**
+ * `name`: the member's name from Better Auth; `resetAt`: when their password was last reset, if ever. Both absent for
+ * the dev actor, which has no user.
+ */
 export type ActorResult =
-  | { ok: true; actor: Actor; name?: string }
+  | { ok: true; actor: Actor; name?: string; resetAt?: number }
   | { ok: false; response: Response };
 
 /** Hosts a local run serves on: the dev actor never applies to a request for any other host. */
@@ -73,9 +81,20 @@ export async function resolveActor(
     return refuse(401, "unauthenticated");
   }
 
-  const role = await memberRole(env.DB, workspaceId, session.user.id);
-  if (role === undefined) return refuse(403, "not_a_member");
-  return { ok: true, actor: { kind: "user", id: session.user.id, role }, name: session.user.name };
+  const member = await env.DB.prepare(
+    `select m.role, u."passwordResetAt" as "resetAt" from member m
+     left join "user" u on u.id = m."userId"
+     where m."organizationId" = ? and m."userId" = ? limit 1`,
+  )
+    .bind(workspaceId, session.user.id)
+    .first<{ role: string; resetAt: number | null }>();
+  if (!member || !isRole(member.role)) return refuse(403, "not_a_member");
+  return {
+    ok: true,
+    actor: { kind: "user", id: session.user.id, role: member.role },
+    name: session.user.name,
+    ...(member.resetAt !== null ? { resetAt: member.resetAt } : {}),
+  };
 }
 
 /** The user's Brigade role in the workspace, or undefined if they are not a member (or hold no Brigade role). */
@@ -107,6 +126,14 @@ export function readActor(headers: Headers): Actor | undefined {
   if (kind !== "user" && kind !== "system" && kind !== "integration") return undefined;
   if (typeof id !== "string" || id.length === 0 || !isRole(role)) return undefined;
   return { kind, id, role };
+}
+
+/** When the member's password was last reset, as the Worker set it on a forwarded upgrade, or undefined. */
+export function readResetAt(headers: Headers): number | undefined {
+  const raw = headers.get(RESET_AT_HEADER);
+  if (raw === null || !/^\d{1,16}$/.test(raw)) return undefined;
+  const at = Number(raw);
+  return Number.isSafeInteger(at) ? at : undefined;
 }
 
 /** The member name the Worker set on a forwarded upgrade, or undefined. */

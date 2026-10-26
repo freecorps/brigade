@@ -1603,5 +1603,99 @@
     }
   ],
   "auth_error_email_not_verified": "Confirm your email first: open the link Brigade sent you, then sign in.",
-  "auth_sign_up_invited_description": "Use the address the invitation was sent to. After you confirm it, you can accept the invitation."
+  "auth_sign_up_invited_description": "Use the address the invitation was sent to. After you confirm it, you can accept the invitation.",
+  "email_reset": [
+    {
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "Reset your Brigade password",
+        "part=intro": "Someone asked to reset the password of the Brigade account for {email}. If it was you, choose a new password with this link.",
+        "part=open": "Choose a new password",
+        "part=expires": "The link works once, for 1 hour. Setting a new password signs the account out everywhere, including phones, and confirms this email address.",
+        "part=footer": "If you didn't ask for this, ignore this email: your password stays as it is.",
+        "part=*": "Brigade"
+      }
+    }
+  ],
+  "reset_page": [
+    {
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
+      "match": {
+        "part=forgot_link": "Forgot your password?",
+        "part=forgot_page_title": "Forgot password",
+        "part=forgot_title": "Reset your password",
+        "part=forgot_description": "Enter the email you signed up with. We'll send you a link to choose a new password.",
+        "part=send": "Send the link",
+        "part=sending": "Sending…",
+        "part=sent_title": "Check your email",
+        "part=sent_body": "If {email} has a Brigade account, a link to choose a new password is on its way. It works for 1 hour. Check spam too.",
+        "part=other_address": "Use another address",
+        "part=rate_limited": "Too many links asked for this address. Try again in an hour.",
+        "part=not_configured": "This Brigade server can't send email yet. Ask whoever runs it.",
+        "part=failed": "Couldn't send the link. Try again.",
+        "part=back": "Back to sign in",
+        "part=reset_page_title": "New password",
+        "part=reset_title": "Choose a new password",
+        "part=reset_description": "Saving it signs your account out everywhere, including the app on your phone.",
+        "part=new_password_label": "New password",
+        "part=save": "Save new password",
+        "part=saving": "Saving…",
+        "part=done_title": "Password changed",
+        "part=done_body": "Sign in with your new password. Every session was signed out, and your email address is confirmed. Your phones get no pages until you sign in to the app again.",
+        "part=sign_in": "Sign in",
+        "part=invalid_title": "This link doesn't work",
+        "part=invalid_body": "It may have expired (links work for 1 hour), been used already, or been cut off. Ask for a new one.",
+        "part=request_new": "Send a new link",
+        "part=uncertain": "Brigade hit an error after receiving your new password, so it may already be saved. Try signing in with it; if that doesn't work, ask for a new link.",
+        "part=*": "Reset your password"
+      }
+    }
+  ],
+  "takeover_notice": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "You took this account back",
+        "part=body": "Someone signed up with your email address before you confirmed it, and created the workspaces below. They're yours now. So nobody else can page you through what they set up, Brigade paused every monitor there and turned off their heartbeat URLs.",
+        "part=after": "Resume the monitors you want to keep. A heartbeat needs a new monitor to get a new URL. Check each workspace's on-call schedules and escalation policies too.",
+        "part=failed": "Brigade couldn't reach this workspace, so nothing in it was paused. Check its monitors now.",
+        "part=nothing": "It had no monitors.",
+        "part=dismiss": "Got it",
+        "part=dismissing": "Hiding…",
+        "part=dismiss_failed": "Couldn't hide this notice. Try again.",
+        "part=*": "You took this account back"
+      }
+    }
+  ],
+  "takeover_paused_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} monitor paused",
+        "countPlural=*": "{countFormatted} monitors paused"
+      }
+    }
+  ],
+  "takeover_revoked_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} heartbeat URL turned off",
+        "countPlural=*": "{countFormatted} heartbeat URLs turned off"
+      }
+    }
+  ]
 }

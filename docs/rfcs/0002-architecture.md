@@ -98,8 +98,8 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
   request, created only when the request needs it. Workers never set `NODE_ENV`, so what Better Auth would derive
   from it is set explicitly: cookies are `Secure` (with the `__Secure-` prefix) when the request came over HTTPS,
   and rate limiting is on, counted in D1 (the `rateLimit` table, so every isolate sees the same counts) per client
-  IP from `cf-connecting-ip`: 3 per 10 s for sign-in and sign-up, 100 per minute for the other routes,
-  `/get-session` exempt. The organization plugin's routes are refused except the ones the dashboard reads
+  IP from `cf-connecting-ip`: 3 per 10 s for sign-in and sign-up, 3 per minute for asking for a password reset
+  and 10 for setting one, 100 per minute for the other routes, `/get-session` exempt. The organization plugin's routes are refused except the ones the dashboard reads
   (`get-full-organization`, `get-active-member`, `list`) and `set-active`, since the others would change D1
   without the shard or an event (RFC 0005); member roles, removal and leaving go through the API's own
   `/workspaces/:id/members/:userId` instead (RFC 0003 "Members"), and invitations through
@@ -121,8 +121,11 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
     `/callback*`, `/magic-link/verify*` and `/verify-email*`; none of those is configured now, so any app on the
     phone that claims the scheme gets nothing. Email verification never redirects there: its link opens the
     dashboard's `/verify-email` page, which calls `verify-email` without a `callbackURL`, so the plugin has no
-    redirect to append a session to. Before OAuth, magic links or password reset are enabled, those redirects need
-    PKCE or verified App Links / Universal Links instead of a custom scheme. The plugin also trusts `exp://` (Expo
+    redirect to append a session to. Password reset never redirects either: its link opens the dashboard's
+    `/reset-password` page, which posts the token to `/reset-password`; Better Auth's `GET /reset-password/:token`,
+    which would redirect the token to any trusted `callbackURL` (`brigade://…` included), is refused in
+    `apps/api/src/index.ts`, and `redirectTo` is dropped from every request for a reset. Before OAuth or magic links
+    are enabled, those redirects need PKCE or verified App Links / Universal Links instead of a custom scheme. The plugin also trusts `exp://` (Expo
     Go), but only when `NODE_ENV` is `development`. The app signs in against the dashboard's origin
     (`EXPO_PUBLIC_BRIGADE_URL`, or the dev server on the Metro host in development). Still to come: OAuth/OIDC with
     PKCE via the system browser and QR pairing.
@@ -144,17 +147,72 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
     timed release would let anyone take any account; and deleting a user there skipped the shard and its outbox
     (devices and escalation targets stayed behind). For the same reason Better Auth's user deletion and email change
     stay off (stated in `authOptions`): an address belongs to one account for good, so a link can only ever verify
-    that account. The way back is password reset (not built yet, roadmap): its link proves control of the address,
-    so using it must also mark the address verified and end the account's other sessions. **Unverified accounts sign
+    that account. The way back is password reset (below): its link proves control of the address, so using it marks
+    the address verified and ends every session. **Unverified accounts sign
     in** and create and use their own workspaces (sign-up creates the first one, and an unproven address harms nobody
     there); what needs a verified address is everything that reaches someone else's inbox or depends on owning the
     address: being emailed by the notifier, inviting (and resending), and accepting or declining an invitation. An
     unverified address can be invited (the invitation email is how its owner learns of it); its owner verifies before
     accepting. The dashboard shows a notice with a resend button until the address is verified; the shared sign-in
     wording (`authErrorMessage`, used by the dashboard and the mobile app) explains `EMAIL_NOT_VERIFIED` in case a
-    server requires verification to sign in. Password reset is still to come, on the same sender. Each user has a
+    server requires verification to sign in. Each user has a
     `locale` (`en`, `pt-BR`; D1 `user.locale`), the language Brigade writes to them in: set at sign-up (from the
     dashboard, else `Accept-Language`) and by the dashboard's language switch; the mobile app does not send it yet.
+  - **Password reset (built):** Better Auth's (`sendResetPassword`, `revokeSessionsOnPasswordReset`), on the same
+    sender. "Forgot your password?" on the dashboard's sign-in page opens `/forgot-password`; the mobile sign-in
+    screen opens that page in the browser rather than asking from the app, since the email's link lands on the
+    dashboard anyway and the whole reset then happens in one place. Asking (`/request-password-reset`) answers the
+    same for every address, with an account or not: the before hook counts the limits and answers, and Better
+    Auth's lookup, token and email run after the response (`waitUntil`), so neither the answer nor its timing says
+    whether an address has an account. It is limited per address and IP (3 an hour) and per address from anywhere
+    (10 a day), counted in D1's `rateLimit` table like verification's, for any address, so a 429 says nothing
+    either, and per IP (3 a minute). Keyed by address and IP so that someone asking for another person's address
+    uses up their own hourly count, not the owner's; only the daily cap is shared (Q21). Without a sender it answers
+    `503 EMAIL_NOT_CONFIGURED` for everyone. The email (`email_reset`, en and pt-BR, escaped) carries the address
+    and the link, never the name, and the link is the dashboard's `/reset-password#token=…` (from `DASHBOARD_URL`,
+    with the same dev-only fallback as verification): in the fragment, which the browser never sends to a server,
+    a proxy's log or a `Referer`. The token is Better Auth's: random, bound to the account (a `verification` row
+    holding the user id), usable once, for an hour (`RESET_TTL_S`). The page takes it out of the address bar as
+    soon as it reads it. Setting the new password (`/reset-password`, Better Auth's 8 to 128 characters) deletes
+    every session of the account and its other reset links, marks its address verified (the link reached the
+    address, as a verification link would) and records when (`user.passwordResetAt`), all through Better Auth's
+    adapter, and signs the account out of every workspace it belongs to: each shard drops its devices
+    (`device.signOut`, a server-only mutation with a `device.unregistered` `password_reset` for each, so phones
+    stop getting its pages) and closes its open sockets, which reconnect without a session and are refused. The
+    sockets close even when the mutation fails. A shard that fails is tried 3 times; one that still fails is
+    logged, the reset stands, and its member reconcile catches up: the failure arms the shard's repair alarm, and
+    every reconcile (that alarm, or any member's next sync upgrade) drops a member's devices last registered before
+    their `passwordResetAt` and closes their sockets opened before it (`member.reconcile`, RFC 0006 "Who is paged").
+    The member's own next sync upgrade does the device part first, before the socket opens (the Worker passes
+    `passwordResetAt` with the actor): the app registers the same device id with the same tokens after signing in,
+    a register that changes nothing is a `conflict` that leaves the device as it was, and a reconcile after it would
+    drop a phone the app shows as paged. `passwordResetAt` is the Worker's clock and a device's last registration
+    the shard's; both are Cloudflare's, far closer than the time a person takes to sign in again. If the server
+    fails after the password may have been saved, the page says so instead of suggesting the link again. The page
+    that confirms the new password says the member's phones get no pages until they sign in to the app again. The
+    app registers its phone again at the next sign-in; until then a page that would have reached it takes the
+    `no_devices` path (the member, now verified, is emailed for SEV1 and SEV2, and the escalation falls
+    back as for anyone without a phone).
+    **Taking back an address.** This is how the owner of an address someone else signed up with (and never
+    verified) gets it back: they reset the password and the account is theirs, with its address verified. A reset
+    is a takeover when the address was not verified before it. Whoever signed up loses every session, phone and
+    socket at once. An unverified account cannot invite, accept or decline invitations, or be emailed, so it has
+    no pending invitations of its own and is a member of no workspace but those it created, where it is the only
+    member. Those workspaces are kept (owned by the account, now the owner's): deleting them is not designed (RFC
+    0003), and removing the account from them would leave shards with nobody to own them. But what was set up in
+    them can still reach the owner: a heartbeat whose URL the other person kept, or an HTTP or TCP check on a host
+    they control, would page the owner whenever they chose. So on a takeover, in every workspace where the account
+    is the only member (the shard checks its own member list again, in case someone joined since), the shard also
+    pauses every monitor and revokes every heartbeat URL (`monitor.takeOver`, server only, as `ACCOUNT_ACTOR`:
+    `monitor.paused` with any firing alert resolved, and `monitor.heartbeat_revoked`, whose hash becomes random
+    bytes nobody holds a token for), and the dashboard tells the owner once which workspaces came with the account
+    and what was paused, or that a shard could not be reached (`takeover_notice` in D1,
+    `GET`/`DELETE /account/takeover`, en and pt-BR; two resets at once merge into one notice). The owner resumes what they
+    want to keep; a heartbeat needs a new monitor for a new URL. Schedules and escalation policies stay: they page
+    only members, and only for incidents, which in such a workspace only the owner or a monitor can open. What is
+    left is in Q21. The account's name and language are whatever the person who signed up chose; the owner changes
+    them in the dashboard. A reset of a verified account signs out the same way (a phone or socket someone who
+    learned the password left behind) but pauses nothing: the monitors are the owner's own.
 - **Workers tooling:** `wrangler` per app, invoked through `vp run` tasks. The Cloudflare Vite plugin
   (`@cloudflare/vite-plugin`) runs Workers inside the Vite dev server; validated with Vite+ in spike S5: the
   api Worker runs as an `auxiliaryWorkers` entry of apps/web in dev; apps/api tests use `@cloudflare/vitest-plugin`

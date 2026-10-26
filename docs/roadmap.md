@@ -88,12 +88,16 @@ Validate the risky assumptions before writing product code. Each spike produces 
     cross-workspace send caps, migration 0005), then the shard's
     `member.invited` / `member.added` / `invitation.revoked` / `invitation.declined` with the members' repair, the
     invitation email from the outbox, 7-day expiry and per-workspace caps (RFC 0002 "Auth", RFC 0003 "Invitations").
+  - Done: password reset ("Forgot your password?" on the dashboard's sign-in, and on the mobile sign-in screen as a
+    link to that page; the same answer for any address, limited per address and IP; the dashboard's
+    `/reset-password` page). Saving the new password ends every session, signs the account's devices and sockets out
+    of each workspace (`device.signOut`, with the member reconcile as its fallback) and marks the address verified,
+    which is how the owner of an address someone else signed up with takes the account back; that takeover also
+    pauses the monitors and revokes the heartbeat URLs of the workspaces the account is alone in, and tells the
+    owner once on the dashboard (RFC 0002 "Auth").
   - Left: switching workspaces in the
     UI, closing open sockets on sign-out or a revoked session (RFC 0004 "Session revocation"), mobile OAuth/OIDC with PKCE
-    via the system browser and QR pairing (mobile email and password sign-in is done, see the Mobile item), password reset
-    (on the email notifier's sender; also the way back to an address someone else signed up with and never verified,
-    so the reset link, which proves control of the address, must also mark it verified and end the account's other
-    sessions; RFC 0002 "Auth"),
+    via the system browser and QR pairing (mobile email and password sign-in is done, see the Mobile item),
     putting `/workspaces/:id` (the stack check) behind auth before `workers_dev` is turned on, and the production
     and staging secrets (owner approval). Also: a uniform sign-up response (the same answer whether or not the email
     is taken, so sign-up cannot enumerate accounts; until then only rate limiting slows it); applying
@@ -227,12 +231,12 @@ Validate the risky assumptions before writing product code. Each spike produces 
     by the dashboard), go out from the queue consumer with an email ledger in the shard, are retried with backoff,
     and a failure is an `email_failed` entry on the timeline. Push never waits on email. Capped at 5 emails per user
     per hour and 200 per workspace per day.
-  - Done since: the notifier emails verified addresses only, and the same sender sends email verification and
-    invitations (RFC 0005 "Email", "Abuse").
+  - Done since: the notifier emails verified addresses only, and the same sender sends email verification, password
+    reset and invitations (RFC 0005 "Email", "Abuse").
   - Left: onboarding a sending domain and setting `EMAIL_FROM` (and `DASHBOARD_URL`) per environment, and applying
     migrations 0003, 0004 and 0005 to the deployed databases (owner's call, apps/api/README.md "Email"); verification no
     longer blocks it. A dashboard switch for the two settings; a per-member opt-out; the mobile app sending the
-    user's language. Next on the same sender: password reset (RFC 0002 "Auth"), an email to operators
+    user's language. Next on the same sender: an email to operators
     when the paging pipeline degrades (Q19) and to owners when rotations change (Q20). VoIP call paging and the PSTN
     notifier are still to come.
 - [ ] Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup

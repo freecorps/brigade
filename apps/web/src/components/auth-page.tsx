@@ -34,7 +34,9 @@ export function AuthPage({
           {title}
         </h1>
         {description ? (
-          <p className="text-sm text-pretty text-muted-foreground">{description}</p>
+          <p className="text-sm text-pretty text-muted-foreground [overflow-wrap:anywhere]">
+            {description}
+          </p>
         ) : null}
       </div>
       {children}

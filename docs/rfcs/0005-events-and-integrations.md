@@ -26,7 +26,9 @@ Event types are versioned with the schema package and documented in the generate
 emit `monitor.created`, `monitor.updated`, `monitor.paused`, `monitor.resumed`, `monitor.deleted`, `monitor.checked`
 (when a source's verdict or failure reason changes; the 5-minute refreshes of an unchanged verdict are synced but
 emit nothing), `monitor.status_changed` (to `unknown` too, when probes stop reporting), `alert.fired` and
-`alert.resolved`, with actor `sys_monitors` for what the probes and heartbeats cause.
+`alert.resolved`, with actor `sys_monitors` for what the probes and heartbeats cause; and, when the owner of an
+address takes back an account someone else signed up with (RFC 0002 "Auth"), `monitor.paused` and
+`monitor.heartbeat_revoked` (`id`) with actor `sys_account`.
 
 Incidents emit `incident.declared`, `incident.status_changed`, `incident.severity_changed`,
 `incident.acknowledged`, `incident.update_posted` (`entryId`, `body`) and `incident.role_assigned` (`role`,
@@ -72,7 +74,8 @@ events of taking that member out of the rotations (above).
 
 Devices and paging emit `device.registered` (`id`, `userId`, `platform`, `environment`, `voip`: never the tokens or
 the key), `device.unregistered` (`reason`: `unregistered` by the member, `token_invalid` when APNs said the token is
-gone, `member_removed` when its member left or was removed) and `notification.failed` (`incidentId`, `eventId` of the event that asked for the page, `channel: "push"`,
+gone, `member_removed` when its member left or was removed, `password_reset` when its member's password was reset,
+from `device.signOut`, or from `member.reconcile` when that failed, RFC 0002 "Auth") and `notification.failed` (`incidentId`, `eventId` of the event that asked for the page, `channel: "push"`,
 `userId` or null, `reason`: `no_devices`, `undelivered`, `unsupported`, `not_configured`, `over_limit`,
 `dead_lettered`, and for escalation levels `nobody_on_call`, `schedule_missing`, `not_a_member`; `schedule`: the
 name of the schedule nobody was on call for, else null; `page`: the escalation run and step it belongs to, absent
@@ -171,7 +174,7 @@ or dependencies should not share the API's.
 
 The second notifier, in the same consumer (`apps/api/src/notify-email.ts`; the shard's side in `src/mailer.ts`).
 It also sends the account emails: email verification (RFC 0002 "Auth", sent by Better Auth through the same
-`EmailSender`) and invitations (`member.invited`, below); password reset is not built yet.
+`EmailSender`), password reset (RFC 0002 "Auth", the same) and invitations (`member.invited`, below).
 
 - **Provider-agnostic.** An `EmailSender` (`src/email.ts`) takes one rendered email (`to`, `subject`, `text`,
   `html`) and answers accepted, or refused with whether a retry may help; it never throws. Implementations:
@@ -244,14 +247,16 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   send per invitation per 5 minutes; and across every workspace, counted in D1, 3 a day to one address (its `+tags` counted as one), 50 a day
   from one inviter and 5 per invitation ever, so many workspaces cannot add up to flood one inbox. The verification
   email goes only to one's own address and never carries the name typed at sign-up: at most 3 per user in 15
-  minutes and 5 a day. An address someone else signed up with and never verified stays taken until password reset
-  exists (RFC 0002 "Auth"). Whether these caps are right in production is Q21's.
+  minutes and 5 a day. The password reset email goes to an address that has an account (the same answer either
+  way) and carries no name: at most 3 per address and IP an hour and 10 per address a day, counted for any address, and 3 per IP a
+  minute. An address someone else signed up with and never verified stays taken until its owner resets the
+  password, which takes the account back (RFC 0002 "Auth"). Whether these caps are right in production is Q21's.
 - **Push first.** Email only acts on failures push already recorded, so it can never delay or stop a page. The
   consumer handles a batch's messages in parallel and acks each on its own: a page in the same batch as an email
   goes to the relay without waiting for it (tested). Every wait on the email side is bounded (10 s a send, 5 s the
   D1 read).
 - **Not yet.** No email to Brigade's operators when the paging pipeline degrades (Q19), to owners when a rotation
-  changes (Q20), or for password reset; each can build on the `EmailSender`.
+  changes (Q20); each can build on the `EmailSender`.
 
 ## Provider interfaces (published in `packages/sdk`, MIT)
 

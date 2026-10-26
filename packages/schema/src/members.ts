@@ -4,7 +4,7 @@
 // first, then runs these, so they never decide a change on their own (apps/api/src/members.ts).
 
 import { can, ROLES, type Role } from "./access.ts";
-import { dropDevices } from "./devices.ts";
+import { dropDevices, forgetDevice, type DeviceUnregistered } from "./devices.ts";
 import { defineMutation, fail, ok, type Actor, type DomainEvent } from "./mutation.ts";
 import { dropFromSchedules } from "./schedules.ts";
 import { v } from "./validate.ts";
@@ -67,7 +67,6 @@ export function checkMemberChange(
   return { ok: true };
 }
 
-/** Deletes every device of `userId` (they stop being paged right away), with a `device.unregistered` each. */
 const memberId = v.string({ min: 1, max: 64 });
 
 /**
@@ -139,7 +138,8 @@ export const MAX_RECONCILED_MEMBERS = 1000;
 /**
  * Server only, as `MEMBERS_ACTOR`: makes the shard's member list agree with D1's (`members`, every member with a
  * Brigade role). A copy D1 no longer has is deleted with its devices (`member.removed`, `reconciled`); a copy whose
- * role differs takes D1's (`member.role_changed`); a device whose member D1 no longer has is dropped. Members D1
+ * role differs takes D1's (`member.role_changed`); a device whose member D1 no longer has is dropped, and so is one
+ * last registered before its member's password was reset (`resetAt`, D1's `user.passwordResetAt`). Members D1
  * has and the shard does not are left to `member.sync` (it needs their name). An empty list changes nothing: a
  * workspace always has an owner, so it can only be a read of the wrong workspace. Nothing to repair is a
  * `conflict`.
@@ -147,17 +147,38 @@ export const MAX_RECONCILED_MEMBERS = 1000;
 export const reconcileMembers = defineMutation({
   name: "member.reconcile",
   args: v.object({
-    members: v.array(v.object({ id: memberId, role: v.picklist(ROLES) }), {
-      max: MAX_RECONCILED_MEMBERS,
-    }),
+    members: v.array(
+      v.object({
+        id: memberId,
+        role: v.picklist(ROLES),
+        resetAt: v.optional(v.nullable(v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }))),
+      }),
+      { max: MAX_RECONCILED_MEMBERS },
+    ),
   }),
   permission: "members:manage",
   apply(store, args, ctx) {
     if (args.members.length === 0) return fail("invalid_args", "No members to reconcile with");
-    const roles = new Map<string, Role>(
-      args.members.map((member: { id: string; role: Role }) => [member.id, member.role]),
-    );
+    const members: { id: string; role: Role; resetAt: number | null }[] = args.members;
+    const roles = new Map<string, Role>(members.map((member) => [member.id, member.role]));
     const events: DomainEvent[] = [];
+    // Devices last registered before their member's password was reset: the reset's own `device.signOut` failed in
+    // this shard, and they may be someone else's phone (RFC 0002 "Auth"). The app registers again after signing in.
+    for (const { id, resetAt } of members) {
+      if (resetAt === null) continue;
+      const stale = store
+        .scan("devices")
+        .filter((device) => device.userId === id && device.updatedAt < resetAt);
+      for (const device of stale) {
+        forgetDevice(store, device.id);
+        const event: DeviceUnregistered = {
+          type: "device.unregistered",
+          subject: device.id,
+          data: { id: device.id, userId: id, reason: "password_reset" },
+        };
+        events.push(event);
+      }
+    }
     for (const current of store.scan("members")) {
       const role = roles.get(current.id);
       if (role === undefined) {

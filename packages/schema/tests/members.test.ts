@@ -359,6 +359,36 @@ describe("member.changeRole, member.remove, member.reconcile", () => {
     expect(store.scan("devices").map((device) => device.id)).toEqual(["dev_3"]);
   });
 
+  test("reconcile drops the devices a member last registered before their password was reset", () => {
+    const store = shard();
+    // Caio's second phone registered again after the reset (the owner signing in); Bia was never reset.
+    store.update("devices", "dev_2", { updatedAt: T });
+    const members = [
+      { id: "usr_ana", role: "owner", resetAt: null },
+      { id: "usr_bia", role: "admin" },
+      { id: "usr_caio", role: "responder", resetAt: T - 1 },
+      { id: "usr_duda", role: "viewer", resetAt: T - 1 },
+    ];
+    const system = ctx(MEMBERS_ACTOR.id, MEMBERS_ACTOR.role, "system");
+    expect(
+      runMutation(serverMutations, "member.reconcile", { members }, store, system),
+    ).toMatchObject({
+      ok: true,
+      events: [
+        {
+          type: "device.unregistered",
+          data: { id: "dev_1", userId: "usr_caio", reason: "password_reset" },
+        },
+      ],
+    });
+    expect(store.scan("devices").map((device) => device.id)).toEqual(["dev_2", "dev_3"]);
+    expect(store.get("member_devices", "dev_1")).toBeUndefined();
+    // Done: the same reset again finds nothing.
+    expect(
+      runMutation(serverMutations, "member.reconcile", { members }, store, system),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+  });
+
   test("reconcile with nothing to repair is a conflict, and an empty list changes nothing", () => {
     const store = shard();
     const members = ROLES.map((role, index) => ({

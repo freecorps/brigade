@@ -32,8 +32,9 @@ export async function requestPasswordReset(
 
 /**
  * What setting the new password came to. `invalid`: the link expired, was used already or is broken, and a new one
- * is needed; `too_short` / `too_long`: the server's length rule (the form checks it first); `rate_limited`, `network`
- * (the network or the server failed: the link may still work).
+ * is needed; `too_short` / `too_long`: the server's length rule (the form checks it first); `rate_limited`;
+ * `network`: the request never got an answer; `uncertain`: the server failed, possibly after it saved the password
+ * (what a reset does after, signing devices out, can fail on its own), so the link may be used up already.
  */
 export type ResetOutcome =
   | "done"
@@ -41,7 +42,8 @@ export type ResetOutcome =
   | "too_short"
   | "too_long"
   | "rate_limited"
-  | "network";
+  | "network"
+  | "uncertain";
 
 /** `POST /api/auth/reset-password` with the link's token. */
 export async function resetPassword(
@@ -61,7 +63,7 @@ export async function resetPassword(
   }
   if (response.ok) return "done";
   if (response.status === 429) return "rate_limited";
-  if (response.status >= 500) return "network";
+  if (response.status >= 500) return "uncertain";
   const body: unknown = await response.json().catch(() => null);
   const refused = code(body);
   if (refused === "PASSWORD_TOO_SHORT") return "too_short";
@@ -69,9 +71,14 @@ export async function resetPassword(
   return "invalid";
 }
 
-/** The reset link's token as the page reads it from `?token=`: Better Auth's are 24 characters, bounded here. */
+/** The reset link's token as the page reads it from `#token=`: Better Auth's are 24 characters, bounded here. */
 export function resetToken(value: unknown): string | undefined {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : undefined;
+}
+
+/** The token in a reset link's fragment (`token=…`, without the `#`), or undefined. */
+export function resetTokenFromHash(hash: string): string | undefined {
+  return resetToken(new URLSearchParams(hash.replace(/^#/, "")).get("token") ?? undefined);
 }
 
 function code(body: unknown): unknown {

@@ -262,14 +262,15 @@ export function renderInvitationEmail(
 }
 
 /**
- * A page of the dashboard at `path` (with `search`), from `DASHBOARD_URL` when it is an http(s) origin, else from
- * `fallback` (the origin the request came through); undefined with neither.
+ * A page of the dashboard at `path` (with `search`, and `fragment` after the `#`), from `DASHBOARD_URL` when it is an
+ * http(s) origin, else from `fallback` (the origin the request came through); undefined with neither.
  */
 export function dashboardLink(
   path: string,
   search: Record<string, string>,
   dashboardUrl: string | undefined,
   fallback: string | null | undefined,
+  fragment: Record<string, string> = {},
 ): string | undefined {
   for (const candidate of [dashboardUrl, fallback]) {
     if (!candidate) continue;
@@ -282,6 +283,8 @@ export function dashboardLink(
     if (base.protocol !== "https:" && base.protocol !== "http:") continue;
     const url = new URL(path, base.origin);
     for (const [key, value] of Object.entries(search)) url.searchParams.set(key, value);
+    const hash = new URLSearchParams(fragment).toString();
+    if (hash) url.hash = hash;
     return url.href;
   }
   return undefined;

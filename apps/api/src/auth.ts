@@ -105,9 +105,11 @@ export type AuthBindings = {
   email?: { sender: EmailSender | undefined; dashboardUrl?: string };
   /**
    * Called once a password reset went through, after Better Auth deleted the user's sessions and the address was
-   * marked verified: signs the user's devices and sockets out of every workspace (src/index.ts). Must not throw.
+   * marked verified (and `user.passwordResetAt` set): signs the user's devices and sockets out of every workspace
+   * (src/index.ts). `takeOver`: the address was not verified before, so this is its owner taking back an account
+   * someone else signed up with. Must not throw.
    */
-  onPasswordReset?: (userId: string) => Promise<void>;
+  onPasswordReset?: (userId: string, reset: { takeOver: boolean; at: number }) => Promise<void>;
 };
 
 /**
@@ -147,12 +149,14 @@ export const VERIFICATION_IP_LIMIT = { window: 60, max: 3 };
 /** How long a password reset link works, in seconds (Better Auth's default, stated). */
 export const RESET_TTL_S = 60 * 60;
 /**
- * Password reset emails per address (`/request-password-reset`), whether or not an account has it, so the answer
- * never tells the two apart: 3 an hour and 5 a day, counted in D1's `rateLimit` table like verification's, on top of
- * 3 per IP a minute (`RESET_IP_LIMIT`).
+ * Password reset emails (`/request-password-reset`), counted for any address, account or not, so the answer never
+ * tells the two apart, in D1's `rateLimit` table like verification's: 3 an hour per address from one IP, and 10 a day
+ * per address from anywhere, on top of 3 per IP a minute (`RESET_IP_LIMIT`). Keyed by address and IP, so someone
+ * asking for another person's address from their own network uses up their own hourly count, not the owner's; only
+ * the daily cap is shared, and it is loose enough that the owner still gets a link most days (Q21).
  */
 export const RESET_ADDRESS_LIMIT = { window: 60 * 60, max: 3 };
-export const RESET_DAILY_LIMIT = { window: 24 * 60 * 60, max: 5 };
+export const RESET_DAILY_LIMIT = { window: 24 * 60 * 60, max: 10 };
 export const RESET_IP_LIMIT = { window: 60, max: 3 };
 /** Attempts at setting the new password per IP a minute (`/reset-password`); its token cannot be guessed anyway. */
 export const RESET_SUBMIT_LIMIT = { window: 60, max: 10 };
@@ -174,8 +178,11 @@ export const INVALID_LOCALE_CODE = "INVALID_LOCALE";
  * RFC 0008): one of Brigade's locales exactly, or null on `/update-user` to unset it; a sign-up without one takes
  * the closest to the request's first `Accept-Language`, if any.
  */
-const beforeHook = (bindings: AuthBindings) =>
-  createAuthMiddleware(async (ctx) => {
+const beforeHook = (bindings: AuthBindings, background?: BackgroundReset) => {
+  // Requests whose limits `checkResetRequest` already counted and that it handed to this instance again in the
+  // background: let through as they are. Per instance, so per request.
+  const admitted = new WeakSet<Request>();
+  return createAuthMiddleware(async (ctx) => {
     if (ctx.path === "/send-verification-email") {
       // Only for oneself: Better Auth would otherwise email any unverified address it is given, signed in or not.
       const session = await getSessionFromCtx(ctx);
@@ -212,20 +219,34 @@ const beforeHook = (bindings: AuthBindings) =>
       }
       return;
     }
-    if (ctx.path === "/request-password-reset") return checkResetRequest(bindings, ctx);
+    if (ctx.path === "/request-password-reset") {
+      return checkResetRequest(bindings, ctx, background, admitted);
+    }
     return checkName(ctx);
   });
+};
+
+/** What `/request-password-reset` answers, for every address. Better Auth's own words, so both paths say the same. */
+export const RESET_REQUESTED = {
+  status: true,
+  message: "If this email exists in our system, check your email for the reset link",
+};
 
 /**
  * `/request-password-reset` (RFC 0002 "Auth"): the same answer for every address, account or not, except when email
  * is not set up at all (`EMAIL_NOT_CONFIGURED`, the same for everyone) or the address asked too often (counted for
  * any address, so a limit says nothing about whether it has an account). The link is always the dashboard's own
- * page, so whatever `redirectTo` the request names is dropped.
+ * page, so whatever `redirectTo` the request names is dropped. Answered here, before Better Auth looks the address
+ * up: the lookup, the token and the email run after the response (`waitUntil`), so its timing is the same for an
+ * address with an account and one without.
  */
 async function checkResetRequest(
   bindings: AuthBindings,
   ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0],
+  background: BackgroundReset | undefined,
+  admitted: WeakSet<Request>,
 ) {
+  if (ctx.request && admitted.has(ctx.request)) return;
   if (!bindings.email?.sender) {
     throw APIError.from("SERVICE_UNAVAILABLE", {
       code: EMAIL_NOT_CONFIGURED_CODE,
@@ -238,9 +259,10 @@ async function checkResetRequest(
   // Anything else is Better Auth's to refuse (400).
   if (typeof email !== "string" || email.length > 254) return;
   const address = email.trim().toLowerCase();
+  const ip = ctx.headers?.get("cf-connecting-ip") ?? "";
   const now = Date.now();
   for (const [key, limit] of [
-    [`reset:${address}`, RESET_ADDRESS_LIMIT],
+    [`reset:${address}:${ip}`, RESET_ADDRESS_LIMIT],
     [`reset-day:${address}`, RESET_DAILY_LIMIT],
   ] as const) {
     if ((await countRequest(bindings.database, key, limit.window, now)) > limit.max) {
@@ -251,8 +273,21 @@ async function checkResetRequest(
     }
   }
   const { redirectTo: _dropped, ...rest } = body as Record<string, unknown>;
-  return { context: { body: rest } };
+  if (!background || !bindings.waitUntil || !ctx.request) return { context: { body: rest } };
+  const request = ctx.request;
+  admitted.add(request);
+  bindings.waitUntil(
+    background(rest, request).catch((error: unknown) =>
+      console.error(
+        JSON.stringify({ message: "password reset request failed", error: String(error) }),
+      ),
+    ),
+  );
+  return RESET_REQUESTED;
 }
+
+/** Runs `/request-password-reset` again with `body`, through Better Auth (`createAuth`), after the response. */
+type BackgroundReset = (body: Record<string, unknown>, request: Request) => Promise<unknown>;
 
 /**
  * Counts one more request under `key` in D1's `rateLimit` table and answers the count in the current window
@@ -315,7 +350,7 @@ export function safeNext(value: string | null | undefined): string | undefined {
   return /^\/invitations\/inv_[0-9A-HJKMNP-TV-Z]{26}$/.test(value) ? value : undefined;
 }
 
-export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
+export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self: Self = noSelf) {
   const random = randomBytes;
   return {
     appName: "Brigade",
@@ -326,7 +361,7 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
     // (RFC 0002 "Auth").
     emailAndPassword: {
       enabled: true,
-      // Password reset (RFC 0002 "Auth"): the link is the dashboard's `/reset-password?token=…`, and using it proves
+      // Password reset (RFC 0002 "Auth"): the link is the dashboard's `/reset-password#token=…`, and using it proves
       // control of the address, so it also marks the address verified and ends every session. That is how an
       // address someone else signed up with and never verified comes back to its owner.
       resetPasswordTokenExpiresIn: RESET_TTL_S,
@@ -336,11 +371,13 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
       sendResetPassword: async ({ user, token }, request) => {
         const sender = bindings.email?.sender;
         if (!sender) return;
+        // In the fragment, which browsers never send: not to the dashboard, a proxy's log or a `Referer`.
         const link = dashboardLink(
           "/reset-password",
-          { token },
+          {},
           bindings.email?.dashboardUrl,
           linkFallback(sender, request ? new URL(request.url).origin : undefined),
+          { token },
         );
         if (!link) {
           console.error(
@@ -367,14 +404,12 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
           );
         }
       },
-      // After Better Auth set the password, consumed the token and deleted every session.
+      // After Better Auth set the password, consumed the token and deleted every session. `user` is as it was
+      // before the reset.
       onPasswordReset: async ({ user }) => {
-        // The link reached the address: it is proven, as a verification link would.
-        await bindings.database
-          .prepare(`update "user" set "emailVerified" = 1, "updatedAt" = ? where id = ?`)
-          .bind(new Date().toISOString(), user.id)
-          .run();
-        await bindings.onPasswordReset?.(user.id);
+        const at = Date.now();
+        await self.resetDone(user.id, at);
+        await bindings.onPasswordReset?.(user.id, { takeOver: !user.emailVerified, at });
       },
     },
     emailVerification: {
@@ -421,6 +456,8 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
     user: {
       additionalFields: {
         locale: { type: "string", required: false, input: true },
+        // When the password was last reset (ms since the epoch), set by `onPasswordReset` only (RFC 0002 "Auth").
+        passwordResetAt: { type: "number", required: false, input: false, returned: false },
       },
       // Stated, not left to the defaults: a verification link holds only the address, so it is safe only while an
       // address belongs to one account for good. With no way to delete a user or move them to another address, an
@@ -431,7 +468,7 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
     },
     // The dashboard is same-origin (Better Auth trusts its own base URL); the mobile app is `APP_ORIGIN`.
     trustedOrigins: [APP_ORIGIN],
-    hooks: { before: beforeHook(bindings) },
+    hooks: { before: beforeHook(bindings, self.requestReset) },
     // Stated, not left to the default: the mobile app keeps a session from an offline sign-out this long at most.
     session: { expiresIn: SESSION_LIFETIME_S },
     // Off by default on Workers (Better Auth enables it only when NODE_ENV is "production"). The in-memory store
@@ -535,6 +572,24 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
 /** Better Auth's error code when a user already belongs to `WORKSPACE_LIMIT` workspaces. */
 export const WORKSPACE_LIMIT_CODE = "YOU_HAVE_REACHED_THE_MAXIMUM_NUMBER_OF_ORGANIZATIONS";
 
+/**
+ * What hooks need of the instance `authOptions` configures (`createAuth`): its adapters, and its own
+ * `/request-password-reset`, run after the response.
+ */
+type Self = {
+  /**
+   * After a password reset: marks the address verified (the link reached it, as a verification link would) and
+   * records `passwordResetAt`, which lets each shard's member reconcile drop devices and sockets from before it should
+   * its own sign-out fail; then deletes the user's other reset links, any of which would reset the password again.
+   */
+  resetDone(userId: string, at: number): Promise<void>;
+  requestReset?: BackgroundReset;
+};
+
+const noSelf: Self = {
+  resetDone: () => Promise.reject(new Error("authOptions has no instance: use createAuth")),
+};
+
 type WorkspaceStore = {
   /** Deletes a workspace Better Auth just created, with its memberships. */
   undo(workspaceId: string): Promise<void>;
@@ -545,30 +600,52 @@ type WorkspaceStore = {
 export function createAuth(bindings: AuthBindings) {
   // The hook runs inside a request to this instance, so its context (and adapter) exists by then.
   const auth = betterAuth(
-    authOptions(bindings, {
-      async undo(workspaceId: string): Promise<void> {
-        const { adapter } = await auth.$context;
-        await adapter.deleteMany({
-          model: "member",
-          where: [{ field: "organizationId", value: workspaceId }],
-        });
-        await adapter.delete({
-          model: "organization",
-          where: [{ field: "id", value: workspaceId }],
-        });
+    authOptions(
+      bindings,
+      {
+        async undo(workspaceId: string): Promise<void> {
+          const { adapter } = await auth.$context;
+          await adapter.deleteMany({
+            model: "member",
+            where: [{ field: "organizationId", value: workspaceId }],
+          });
+          await adapter.delete({
+            model: "organization",
+            where: [{ field: "id", value: workspaceId }],
+          });
+        },
+        async rank(userId: string, workspaceId: string): Promise<number> {
+          const { adapter } = await auth.$context;
+          const memberships: { organizationId: string }[] = await adapter.findMany({
+            model: "member",
+            where: [{ field: "userId", value: userId }],
+            // Oldest first.
+            sortBy: { field: "createdAt", direction: "asc" },
+          });
+          const index = memberships.findIndex((member) => member.organizationId === workspaceId);
+          return index === -1 ? memberships.length : index;
+        },
       },
-      async rank(userId: string, workspaceId: string): Promise<number> {
-        const { adapter } = await auth.$context;
-        const memberships: { organizationId: string }[] = await adapter.findMany({
-          model: "member",
-          where: [{ field: "userId", value: userId }],
-          // Oldest first.
-          sortBy: { field: "createdAt", direction: "asc" },
-        });
-        const index = memberships.findIndex((member) => member.organizationId === workspaceId);
-        return index === -1 ? memberships.length : index;
+      {
+        async resetDone(userId: string, at: number): Promise<void> {
+          const { internalAdapter, adapter } = await auth.$context;
+          await internalAdapter.updateUser(userId, { emailVerified: true, passwordResetAt: at });
+          await adapter.deleteMany({
+            model: "verification",
+            where: [
+              { field: "value", value: userId },
+              { field: "identifier", operator: "starts_with", value: "reset-password:" },
+            ],
+          });
+        },
+        requestReset: (body: Record<string, unknown>, request: Request): Promise<unknown> =>
+          auth.api.requestPasswordReset({
+            body: body as { email: string },
+            headers: request.headers,
+            request,
+          }),
       },
-    }),
+    ),
   );
   return auth;
 }

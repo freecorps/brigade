@@ -27,6 +27,7 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
     "organization",
     "rateLimit",
     "session",
+    "takeover_notice",
     "user",
     "verification",
   ]);

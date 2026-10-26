@@ -35,6 +35,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "invalid_title" | "This link doesn't work" |
 * | "invalid_body" | "It may have expired (links work for 1 hour), been used already, or been cut off. Ask for a new one." |
 * | "request_new" | "Send a new link" |
+* | "uncertain" | "Brigade hit an error after receiving your new password, so it may already be saved. Try signing in with it; if that doesn't work, ask for a new link." |
 * | * | "Reset your password" |
 *
 * @param {Reset_PageInputs} inputs
@@ -69,6 +70,7 @@ export const reset_page = /** @type {((inputs: Reset_PageInputs, options?: { loc
 		if (i?.part === "invalid_title") return /** @type {LocalizedString} */ (`Este link não funciona`);
 		if (i?.part === "invalid_body") return /** @type {LocalizedString} */ (`Ele pode ter expirado (os links valem por 1 hora), já ter sido usado ou ter sido cortado. Peça um novo.`);
 		if (i?.part === "request_new") return /** @type {LocalizedString} */ (`Enviar um novo link`);
+		if (i?.part === "uncertain") return /** @type {LocalizedString} */ (`O Brigade teve um erro depois de receber sua nova senha, então ela pode já estar salva. Tente entrar com ela; se não funcionar, peça um novo link.`);
 		return /** @type {LocalizedString} */ (`Redefinir sua senha`)
 	}
 	{
@@ -97,6 +99,7 @@ export const reset_page = /** @type {((inputs: Reset_PageInputs, options?: { loc
 		if (i?.part === "invalid_title") return /** @type {LocalizedString} */ (`This link doesn't work`);
 		if (i?.part === "invalid_body") return /** @type {LocalizedString} */ (`It may have expired (links work for 1 hour), been used already, or been cut off. Ask for a new one.`);
 		if (i?.part === "request_new") return /** @type {LocalizedString} */ (`Send a new link`);
+		if (i?.part === "uncertain") return /** @type {LocalizedString} */ (`Brigade hit an error after receiving your new password, so it may already be saved. Try signing in with it; if that doesn't work, ask for a new link.`);
 		return /** @type {LocalizedString} */ (`Reset your password`)
 	}
 });

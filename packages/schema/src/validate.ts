@@ -88,6 +88,11 @@ function nullable<T>(inner: Validator<T>): Validator<T | null> {
   return (input, path = "") => (input === null ? valid(null) : inner(input, path));
 }
 
+/** Left out (or `undefined`), read as `null`; otherwise what `inner` accepts. */
+function optional<T>(inner: Validator<T>): Validator<T | null> {
+  return (input, path = "") => (input === undefined ? valid(null) : inner(input, path));
+}
+
 /**
  * An array of `min` to `max` items, each checked by `item`; with `unique`, no item twice. Longer input is refused
  * before any item is read.
@@ -147,4 +152,4 @@ function object<const S extends Record<string, Validator<unknown>>>(
   };
 }
 
-export const v = { string, picklist, id, object, integer, boolean, nullable, array };
+export const v = { string, picklist, id, object, integer, boolean, nullable, optional, array };

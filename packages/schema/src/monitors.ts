@@ -4,6 +4,7 @@
 // `incident.declare`, run as the monitors' system actor (RFC 0003 "Alert → incident flow", RFC 0004).
 
 import type { Actor } from "./mutation.ts";
+import { ACCOUNT_ACTOR } from "./devices.ts";
 import { idTime, isId } from "./id.ts";
 import { declareIncident, ID_CLOCK_SKEW_MS, INCIDENT_TITLE_MAX } from "./incidents.ts";
 import type { Severity } from "./lifecycle.ts";
@@ -826,6 +827,62 @@ export const setMonitorPaused = defineMutation({
       data: { id: args.id },
     };
     return ok(event, ...resolved);
+  },
+});
+
+export type HeartbeatRevoked = DomainEvent<"monitor.heartbeat_revoked", { id: string }>;
+
+/**
+ * Server only, as `ACCOUNT_ACTOR`: after the owner of an address took back an account someone else signed up with
+ * (a password reset of an unverified account, RFC 0002 "Auth"), in a workspace where that account is the only member.
+ * Whoever signed up could still page the owner through what they set up: a heartbeat whose URL they kept, or an HTTP
+ * or TCP check on a host they control. So every monitor is paused (as `monitor.setPaused` would, firing alerts
+ * resolved) and every heartbeat's hash becomes `tokenHash`, random bytes the shard made and nobody holds a token
+ * for. The owner resumes what they want to keep; a heartbeat needs a new monitor for a new URL. Nothing to change is
+ * a `conflict`.
+ */
+export const takeOverMonitors = defineMutation({
+  name: "monitor.takeOver",
+  args: v.object({ tokenHash: sha256Hex }),
+  permission: "monitor:manage",
+  apply(store, args, ctx) {
+    if (ctx.actor.kind !== ACCOUNT_ACTOR.kind || ctx.actor.id !== ACCOUNT_ACTOR.id) {
+      return fail("forbidden", "Only the server takes monitors over");
+    }
+    const events: DomainEvent[] = [];
+    for (const monitor of store.scan("monitors")) {
+      if (!monitor.paused) {
+        const resolved = resolveAlert(store, monitor, "paused", ctx);
+        store.update("monitors", monitor.id, {
+          paused: true,
+          pausedBy: ctx.actor.id,
+          pausedAt: ctx.now,
+          ...restart(ctx),
+          alertId: null,
+          incidentId: null,
+          updatedAt: ctx.now,
+        });
+        const event: MonitorPaused = {
+          type: "monitor.paused",
+          subject: monitor.id,
+          data: { id: monitor.id },
+        };
+        events.push(event, ...resolved);
+      }
+      const heartbeat =
+        monitor.kind === "heartbeat" ? store.get("heartbeats", monitor.id) : undefined;
+      if (heartbeat && heartbeat.tokenHash !== args.tokenHash) {
+        store.update("heartbeats", monitor.id, { tokenHash: args.tokenHash });
+        const event: HeartbeatRevoked = {
+          type: "monitor.heartbeat_revoked",
+          subject: monitor.id,
+          data: { id: monitor.id },
+        };
+        events.push(event);
+      }
+    }
+    if (events.length === 0) return fail("conflict", "Nothing to take over");
+    return ok(...events);
   },
 });
 

@@ -1,6 +1,6 @@
 import { m } from "@freecorps/brigade-i18n";
 import { checkPassword } from "@freecorps/brigade-i18n/auth";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { LoaderCircleIcon } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AuthPage } from "@/components/auth-page";
@@ -9,20 +9,15 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Field, FormError } from "@/components/ui/field";
 import { authClient } from "@/lib/auth";
 import { usePageTitle } from "@/lib/page-title";
-import { resetPassword, resetToken } from "@/lib/password-reset";
+import { resetPassword, resetTokenFromHash } from "@/lib/password-reset";
 
 /**
- * Where the password reset email's link lands: `?token=…`. The token is taken out of the address bar as soon as it
- * is read, so it stays in neither the history nor a copied link; the page keeps it until the new password is saved.
- * Saving ends every session of the account and confirms its address (RFC 0002 "Auth").
+ * Where the password reset email's link lands: `#token=…`, in the fragment, which the browser never sends to a server
+ * or in a `Referer`. The token is taken out of the address bar as soon as it is read, so it stays in neither the
+ * history nor a copied link; the page keeps it until the new password is saved. Saving ends every session of the
+ * account and confirms its address (RFC 0002 "Auth").
  */
-export const Route = createFileRoute("/reset-password")({
-  component: ResetPassword,
-  validateSearch: (search: Record<string, unknown>): { token?: string } => {
-    const token = resetToken(search.token);
-    return token ? { token } : {};
-  },
-});
+export const Route = createFileRoute("/reset-password")({ component: ResetPassword });
 
 const text = (part: string) => m.reset_page({ part, email: "" });
 
@@ -31,11 +26,11 @@ type State = "form" | "done" | "invalid";
 function ResetPassword() {
   usePreferences();
   usePageTitle(text("reset_page_title"));
-  const search = Route.useSearch();
+  const hash = useLocation({ select: (location) => location.hash });
   const navigate = useNavigate();
   const session = authClient.useSession();
   // Read once: the address bar loses it right after.
-  const [token] = useState(search.token);
+  const [token] = useState(() => resetTokenFromHash(hash));
   const [state, setState] = useState<State>(token ? "form" : "invalid");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | undefined>();
@@ -44,8 +39,8 @@ function ResetPassword() {
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (search.token) void navigate({ to: "/reset-password", search: {}, replace: true });
-  }, [navigate, search.token]);
+    if (hash) void navigate({ to: "/reset-password", hash: "", replace: true });
+  }, [navigate, hash]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -65,6 +60,8 @@ function ResetPassword() {
     else if (outcome === "too_short") setError(m.auth_error_password_short());
     else if (outcome === "too_long") setError(m.auth_error_password_long());
     else if (outcome === "rate_limited") setFailure(m.auth_error_rate_limited());
+    // Not "try again": the link may be used up, and the password saved.
+    else if (outcome === "uncertain") setFailure(text("uncertain"));
     else setFailure(m.auth_error_network());
   };
 

@@ -1648,7 +1648,53 @@
         "part=invalid_title": "This link doesn't work",
         "part=invalid_body": "It may have expired (links work for 1 hour), been used already, or been cut off. Ask for a new one.",
         "part=request_new": "Send a new link",
+        "part=uncertain": "Brigade hit an error after receiving your new password, so it may already be saved. Try signing in with it; if that doesn't work, ask for a new link.",
         "part=*": "Reset your password"
+      }
+    }
+  ],
+  "takeover_notice": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "You took this account back",
+        "part=body": "Someone signed up with your email address before you confirmed it, and created the workspaces below. They're yours now. So nobody else can page you through what they set up, Brigade paused every monitor there and turned off their heartbeat URLs.",
+        "part=after": "Resume the monitors you want to keep. A heartbeat needs a new monitor to get a new URL. Check each workspace's on-call schedules and escalation policies too.",
+        "part=failed": "Brigade couldn't reach this workspace, so nothing in it was paused. Check its monitors now.",
+        "part=nothing": "It had no monitors.",
+        "part=dismiss": "Got it",
+        "part=dismissing": "Hiding…",
+        "part=dismiss_failed": "Couldn't hide this notice. Try again.",
+        "part=*": "You took this account back"
+      }
+    }
+  ],
+  "takeover_paused_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} monitor paused",
+        "countPlural=*": "{countFormatted} monitors paused"
+      }
+    }
+  ],
+  "takeover_revoked_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} heartbeat URL turned off",
+        "countPlural=*": "{countFormatted} heartbeat URLs turned off"
       }
     }
   ]

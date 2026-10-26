@@ -41,6 +41,7 @@ describe("workspace.create", () => {
       "monitor.evaluate",
       "device.expire",
       "device.signOut",
+      "monitor.takeOver",
       "notification.fail",
       "notification.failEmail",
       "delivery.plan",

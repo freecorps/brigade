@@ -4,7 +4,7 @@
 // else signed up with and never verified.
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { newId, type Actor } from "@freecorps/brigade-schema";
+import { heartbeatToken, newHeartbeatSecret, newId, type Actor } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import {
@@ -16,10 +16,10 @@ import {
 } from "../src/auth.ts";
 import type { EmailSender, OutgoingEmail } from "../src/email.ts";
 import { renderPasswordResetEmail } from "../src/email-templates.ts";
-import { signOutWith } from "../src/index.ts";
+import { signOutWith, type InheritedWorkspace } from "../src/index.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { pageTargets } from "../src/paging.ts";
-import { Shard } from "../src/shard.ts";
+import { Shard, type MutateInput } from "../src/shard.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
 
 const ORIGIN = "http://api.test";
@@ -112,12 +112,15 @@ const verified = (userId: string) =>
     .first<{ v: number }>()
     .then((row) => row?.v);
 
+/** The token in a reset link: in its fragment, which browsers never send. */
+const tokenOf = (link: URL) => new URLSearchParams(link.hash.slice(1)).get("token")!;
+
 /** Asks for a reset of `email` and answers the link the reset email carries. */
-async function resetLink(email: string): Promise<URL> {
+async function resetLink(email: string, headers: Record<string, string> = {}): Promise<URL> {
   const sent = outbox();
   const resets = () =>
-    sent().filter((one) => one.to.email === email && one.text.includes("/reset-password?"));
-  expect((await requestReset(email)).status).toBe(200);
+    sent().filter((one) => one.to.email === email && one.text.includes("/reset-password#"));
+  expect((await requestReset(email, headers)).status).toBe(200);
   await vi.waitFor(() => expect(resets().length).toBeGreaterThan(0));
   return new URL(/https?:\/\/\S+/.exec(resets().at(-1)!.text)![0]);
 }
@@ -142,7 +145,8 @@ describe("asking for a reset", () => {
     const link = new URL(/https?:\/\/\S+/.exec(email.text)![0]);
     expect(link.origin).toBe(ORIGIN);
     expect(link.pathname).toBe("/reset-password");
-    expect([...link.searchParams.keys()]).toEqual(["token"]);
+    expect(link.search).toBe("");
+    expect([...new URLSearchParams(link.hash.slice(1)).keys()]).toEqual(["token"]);
     expect(sent().some((one) => one.to.email === nobody)).toBe(false);
   });
 
@@ -160,17 +164,18 @@ describe("asking for a reset", () => {
     expect(link.searchParams.get("callbackURL")).toBe(null);
   });
 
-  test("at most `RESET_ADDRESS_LIMIT` an hour per address, counted the same with or without an account", async () => {
+  test("at most `RESET_ADDRESS_LIMIT` an hour per address from one IP, counted the same with or without an account", async () => {
     const caio = await signUp("Caio");
     const nobody = address("Nobody");
+    const squatter = "192.0.2.240";
     const sent = outbox();
     for (let i = 0; i < RESET_ADDRESS_LIMIT.max; i++) {
-      expect((await requestReset(caio.email)).status).toBe(200);
+      expect((await askFrom(squatter, caio.email)).status).toBe(200);
       // The address as typed, in any case: one address.
-      expect((await requestReset(i === 0 ? nobody.toUpperCase() : nobody)).status).toBe(200);
+      expect((await askFrom(squatter, i === 0 ? nobody.toUpperCase() : nobody)).status).toBe(200);
     }
-    const known = await requestReset(caio.email);
-    const unknown = await requestReset(nobody);
+    const known = await askFrom(squatter, caio.email);
+    const unknown = await askFrom(squatter, nobody);
     expect(known.status).toBe(429);
     expect(unknown.status).toBe(429);
     await vi.waitFor(() =>
@@ -178,25 +183,30 @@ describe("asking for a reset", () => {
         RESET_ADDRESS_LIMIT.max,
       ),
     );
+    // Q21: someone asking for another person's address uses up their own count, not the owner's.
+    expect((await askFrom("192.0.2.241", caio.email)).status).toBe(200);
+    await vi.waitFor(() =>
+      expect(sent().filter((one) => one.to.email === caio.email)).toHaveLength(
+        RESET_ADDRESS_LIMIT.max + 1,
+      ),
+    );
   });
 
-  test("at most `RESET_DAILY_LIMIT` a day, however the hourly window resets", async () => {
+  test("at most `RESET_DAILY_LIMIT` a day per address, from any IP", async () => {
     const duda = await signUp("Duda");
     for (let i = 0; i < RESET_DAILY_LIMIT.max; i++) {
-      if (i > 0 && i % RESET_ADDRESS_LIMIT.max === 0) await hourPassed(duda.email);
       expect((await requestReset(duda.email)).status).toBe(200);
     }
-    await hourPassed(duda.email);
     expect((await requestReset(duda.email)).status).toBe(429);
   });
 
   test("requests at once each count: no more than the limit pass", async () => {
     const email = address("Eva");
     const statuses = await Promise.all(
-      Array.from({ length: RESET_ADDRESS_LIMIT.max + 3 }, () => requestReset(email)),
+      Array.from({ length: RESET_DAILY_LIMIT.max + 3 }, () => requestReset(email)),
     );
     expect(statuses.filter((response) => response.status === 200)).toHaveLength(
-      RESET_ADDRESS_LIMIT.max,
+      RESET_DAILY_LIMIT.max,
     );
   });
 
@@ -269,7 +279,7 @@ describe("asking for a reset", () => {
     expect(sent).toHaveLength(0);
     await ask("https://brigade.example.com");
     await vi.waitFor(() => expect(sent).toHaveLength(1));
-    expect(sent[0]!.text).toContain("https://brigade.example.com/reset-password?token=");
+    expect(sent[0]!.text).toContain("https://brigade.example.com/reset-password#token=");
   });
 
   test("Better Auth's redirect with the token in it is refused", async () => {
@@ -278,11 +288,16 @@ describe("asking for a reset", () => {
   });
 });
 
-/** Moves the start of the address's hourly window back past its end. */
-const hourPassed = (email: string) =>
-  env.DB.prepare(`update "rateLimit" set "lastRequest" = ? where key = ?`)
-    .bind(Date.now() - RESET_ADDRESS_LIMIT.window * 1000 - 1, `reset:${email}`)
+/**
+ * Asks for a reset of `email` from `ip`, after letting Better Auth's per-IP minute (`RESET_IP_LIMIT`) pass, so only
+ * Brigade's own counts can refuse it.
+ */
+async function askFrom(ip: string, email: string) {
+  await env.DB.prepare(`delete from "rateLimit" where key like ? and key not like 'reset%'`)
+    .bind(`%${ip}%`)
     .run();
+  return requestReset(email, { "cf-connecting-ip": ip });
+}
 
 describe("what the reset email says", () => {
   test("in the user's language, the address and the link escaped in the HTML", () => {
@@ -308,7 +323,7 @@ describe("setting the new password", () => {
     const hana = await signUp("Hana");
     const other = cookieOf(await signIn(hana.email, PASSWORD));
     expect(await verified(hana.id)).toBe(0);
-    const token = (await resetLink(hana.email)).searchParams.get("token")!;
+    const token = tokenOf(await resetLink(hana.email));
 
     const response = await reset(token);
     expect(response.status).toBe(200);
@@ -325,7 +340,7 @@ describe("setting the new password", () => {
 
   test("a password shorter than Better Auth's minimum is refused, and the link still works", async () => {
     const ivo = await signUp("Ivo");
-    const token = (await resetLink(ivo.email)).searchParams.get("token")!;
+    const token = tokenOf(await resetLink(ivo.email));
     const short = await reset(token, "seven77");
     expect(short.status).toBe(400);
     expect(await short.json()).toMatchObject({ code: "PASSWORD_TOO_SHORT" });
@@ -336,15 +351,14 @@ describe("setting the new password", () => {
 
   test("a used, expired or made-up token changes nothing", async () => {
     const jon = await signUp("Jon");
-    const used = (await resetLink(jon.email)).searchParams.get("token")!;
+    const used = tokenOf(await resetLink(jon.email));
     expect((await reset(used)).status).toBe(200);
     const again = await reset(used, "a third password, a third staple");
     expect(again.status).toBe(400);
     expect(await again.json()).toMatchObject({ code: "INVALID_TOKEN" });
 
     const kai = await signUp("Kai");
-    await hourPassed(jon.email);
-    const expired = (await resetLink(kai.email)).searchParams.get("token")!;
+    const expired = tokenOf(await resetLink(kai.email));
     await env.DB.prepare(`update verification set "expiresAt" = ? where identifier = ?`)
       .bind(new Date(Date.now() - 1000).toISOString(), `reset-password:${expired}`)
       .run();
@@ -408,6 +422,87 @@ const device = (w: Workspace, actor: Actor) =>
     return id;
   });
 
+/** Runs `name` in the shard as `actor`, as their client would. */
+const run = (w: Workspace, actor: Actor, name: string, args: Record<string, unknown>) =>
+  w.withShard((shard) => {
+    const { result } = shard.mutate({
+      clientId: "test",
+      mutationId: newId("mut", Date.now(), random),
+      actor,
+      name,
+      args,
+      now: Date.now(),
+      internal: true,
+    });
+    expect(result).toMatchObject({ ok: true });
+  });
+
+const sha256Hex = async (text: string) =>
+  [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+
+/** What someone who signed up could leave behind to page the account: a check on their host, a heartbeat URL. */
+async function plantMonitors(w: Workspace, actor: Actor) {
+  const check = newId("mon", Date.now(), random);
+  await run(w, actor, "monitor.createHttp", {
+    id: check,
+    name: "Their host",
+    url: "https://example.com/health",
+    method: "GET",
+    expectedStatus: null,
+    keyword: null,
+    intervalSeconds: 60,
+    timeoutSeconds: 10,
+    regions: ["weur"],
+  });
+  const beat = newId("mon", Date.now(), random);
+  const secret = newHeartbeatSecret(random);
+  await run(w, actor, "monitor.createHeartbeat", {
+    id: beat,
+    name: "Their cron",
+    intervalSeconds: 60,
+    graceSeconds: 30,
+    tokenHash: await sha256Hex(secret),
+  });
+  const ping = () =>
+    exports.default.fetch(`${ORIGIN}/heartbeat/${heartbeatToken(w.id, beat, secret)}`, {
+      method: "POST",
+    });
+  return { check, beat, ping };
+}
+
+const notice = (cookie: string, method = "GET") =>
+  api("/account/takeover", { method, headers: { Cookie: cookie } });
+
+/**
+ * Makes the shard's `device.signOut` throw, `times` times (every time without it), as a storage failure would.
+ * Undone by `vi.restoreAllMocks`.
+ */
+const failSignOut = (w: Workspace, times = Infinity) =>
+  runInDurableObject(w.stub, (instance: WorkspaceDO) => {
+    const shard = Reflect.get(instance, "shard") as Shard;
+    const mutate = shard.mutate.bind(shard);
+    let failures = 0;
+    vi.spyOn(shard, "mutate").mockImplementation((input: MutateInput) => {
+      if (input.name === "device.signOut" && failures++ < times) throw new Error("storage failed");
+      return mutate(input);
+    });
+  });
+
+/** The shard's devices, what a page would find, and the `device.unregistered` events in its outbox. */
+const pagedState = (w: Workspace) =>
+  w.withShard((shard, state) => ({
+    devices: shard.store.scan("devices").map((row) => row.id),
+    noDevices: pageTargets(shard.store, { roles: {} }, "sys_monitors").noDevices,
+    unregistered: state.storage.sql
+      .exec<{ event: string }>("select event from outbox order by seq")
+      .toArray()
+      .map((row) => JSON.parse(row.event) as BrigadeEvent)
+      .filter((event) => event.type === "device.unregistered")
+      .map((event) => event.data),
+  }));
+
 /** Opens a socket as `cookie`'s user; resolves with a promise of its close code. */
 async function connect(w: Workspace, cookie: string) {
   const response = await exports.default.fetch(`${ORIGIN}/sync/${w.id}`, {
@@ -437,12 +532,15 @@ describe("an address someone else signed up with", () => {
       "token",
     )!;
     const w = await workspaceOf(squatter);
-    const phone = await device(w, { kind: "user", id: squatter.id, role: "owner" });
+    const actor: Actor = { kind: "user", id: squatter.id, role: "owner" };
+    const phone = await device(w, actor);
+    const planted = await plantMonitors(w, actor);
+    expect((await planted.ping()).status).toBe(202);
     const { closed } = await connect(w, squatter.cookie);
 
     // The owner of the address, who has no session, asks from the sign-in page.
     const link = await resetLink(email);
-    expect((await reset(link.searchParams.get("token")!)).status).toBe(200);
+    expect((await reset(tokenOf(link))).status).toBe(200);
 
     expect(await sessionOf(squatter.cookie)).toBe(null);
     expect(await closed).toBe(1012);
@@ -451,26 +549,38 @@ describe("an address someone else signed up with", () => {
     });
     expect(again.status).toBe(401);
     // The squatter's phone is no longer paged as this account: a page finds no device and takes the fallback.
-    const after = await w.withShard((shard, state) => ({
-      devices: shard.store.scan("devices").map((row) => row.id),
-      noDevices: pageTargets(shard.store, { roles: {} }, "sys_monitors").noDevices,
-      unregistered: state.storage.sql
-        .exec<{ event: string }>("select event from outbox order by seq")
-        .toArray()
-        .map((row) => JSON.parse(row.event) as BrigadeEvent)
-        .filter((event) => event.type === "device.unregistered")
-        .map((event) => event.data),
-    }));
+    const after = await pagedState(w);
     expect(after.devices).toEqual([]);
     expect(after.noDevices).toEqual([squatter.id]);
     expect(after.unregistered).toEqual([
       { id: phone, userId: squatter.id, reason: "password_reset" },
     ]);
 
+    // Nothing the squatter set up can page the owner: every monitor is paused, and the heartbeat URL they kept no
+    // longer works.
+    const monitors = await w.withShard((shard) =>
+      shard.store.scan("monitors").map((row) => [row.id, row.paused, row.pausedBy]),
+    );
+    expect(monitors).toEqual([
+      [planted.check, true, "sys_account"],
+      [planted.beat, true, "sys_account"],
+    ]);
+    expect((await planted.ping()).status).toBe(404);
+
     // The owner signs in with the address, verified, and owns what the account held.
     const owner = await signIn(email, NEW_PASSWORD);
     expect(owner.status).toBe(200);
     const cookie = cookieOf(owner);
+    // Told once what they inherited and what Brigade paused.
+    const told = (await (await notice(cookie)).json()) as {
+      notice: { workspaces: InheritedWorkspace[] } | null;
+    };
+    expect(told.notice?.workspaces).toEqual([
+      { id: w.id, name: "Squat", paused: ["Their host", "Their cron"], revoked: 1, failed: false },
+    ]);
+    expect((await notice(cookie, "DELETE")).status).toBe(204);
+    expect(await (await notice(cookie)).json()).toEqual({ notice: null });
+    expect((await notice(squatter.cookie)).status).toBe(401);
     expect(await sessionOf(cookie)).toMatchObject({
       user: { id: squatter.id, emailVerified: true },
     });
@@ -495,6 +605,96 @@ describe("an address someone else signed up with", () => {
     expect(holders.results).toEqual([{ id: squatter.id }]);
   });
 
+  test("a reset of a verified account signs it out but leaves its monitors alone, with no notice", async () => {
+    const nara = await signUp("Nara");
+    await env.DB.prepare(`update "user" set "emailVerified" = 1 where id = ?`).bind(nara.id).run();
+    const w = await workspaceOf(nara);
+    const actor: Actor = { kind: "user", id: nara.id, role: "owner" };
+    await device(w, actor);
+    const planted = await plantMonitors(w, actor);
+    expect((await reset(tokenOf(await resetLink(nara.email)))).status).toBe(200);
+    expect((await pagedState(w)).devices).toEqual([]);
+    const paused = await w.withShard((shard) =>
+      shard.store.scan("monitors").map((row) => row.paused),
+    );
+    expect(paused).toEqual([false, false]);
+    expect((await planted.ping()).status).toBe(202);
+    const cookie = cookieOf(await signIn(nara.email, NEW_PASSWORD));
+    expect(await (await notice(cookie)).json()).toEqual({ notice: null });
+  });
+
+  test("a reset deletes the account's other links: none of them resets the password again", async () => {
+    const otto = await signUp("Otto");
+    const first = tokenOf(await resetLink(otto.email));
+    const second = tokenOf(await resetLink(otto.email));
+    expect((await reset(second)).status).toBe(200);
+    const again = await reset(first, "a third password, a third staple");
+    expect(again.status).toBe(400);
+    expect(await again.json()).toMatchObject({ code: "INVALID_TOKEN" });
+    expect((await signIn(otto.email, NEW_PASSWORD)).status).toBe(200);
+  });
+
+  // A paging path (AGENTS.md): a phone the reset could not sign out must not keep getting the account's pages.
+  test("a shard that fails once is tried again: the phone is signed out and no page reaches it", async () => {
+    const pia = await signUp("Pia");
+    const w = await workspaceOf(pia);
+    const phone = await device(w, { kind: "user", id: pia.id, role: "owner" });
+    const { closed } = await connect(w, pia.cookie);
+    await failSignOut(w, 1);
+    const errors = vi.spyOn(console, "error");
+
+    expect((await reset(tokenOf(await resetLink(pia.email)))).status).toBe(200);
+    expect(await closed).toBe(1012);
+    const after = await pagedState(w);
+    expect(after.devices).toEqual([]);
+    expect(after.noDevices).toEqual([pia.id]);
+    expect(after.unregistered).toEqual([{ id: phone, userId: pia.id, reason: "password_reset" }]);
+    expect(errors.mock.calls.flat().join("\n")).not.toContain(
+      "signing a reset account out of a workspace failed",
+    );
+  });
+
+  test("a shard that keeps failing still closes the sockets, and its member reconcile drops the phone", async () => {
+    const rui = await signUp("Rui");
+    const w = await workspaceOf(rui);
+    const actor: Actor = { kind: "user", id: rui.id, role: "owner" };
+    const phone = await device(w, actor);
+    const { closed } = await connect(w, rui.cookie);
+    await failSignOut(w);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect((await reset(tokenOf(await resetLink(rui.email)))).status).toBe(200);
+    expect(errors.mock.calls.flat().join("\n")).toContain(
+      "signing a reset account out of a workspace failed",
+    );
+    // The sockets close whatever happened; the phone is still registered for now.
+    expect(await closed).toBe(1012);
+    expect((await pagedState(w)).devices).toEqual([phone]);
+    // The failure armed the shard's member repair, which the alarm runs.
+    const repairAt = await w.withShard(
+      (_shard, state) =>
+        state.storage.sql
+          .exec<{ value: number }>("select value from member_repair where key = 'at'")
+          .toArray()[0]?.value,
+    );
+    expect(repairAt).toBeGreaterThan(0);
+    // The owner signs in again on their own phone meanwhile: registered after the reset, it stays.
+    const own = await device(w, actor);
+    // The told-once notice says the shard could not be reached.
+    const cookie = cookieOf(await signIn(rui.email, NEW_PASSWORD));
+    const told = (await (await notice(cookie)).json()) as {
+      notice: { workspaces: InheritedWorkspace[] } | null;
+    };
+    expect(told.notice?.workspaces).toMatchObject([{ id: w.id, failed: true, paused: [] }]);
+
+    vi.restoreAllMocks();
+    // What the repair alarm (or the next sync upgrade) runs.
+    await w.stub.reconcileMembers();
+    const after = await pagedState(w);
+    expect(after.devices).toEqual([own]);
+    expect(after.unregistered).toEqual([{ id: phone, userId: rui.id, reason: "password_reset" }]);
+  });
+
   test("a reset never fails for a shard that cannot sign the account out: it is logged", async () => {
     const lia = await signUp("Lia");
     // A workspace in D1 whose shard was never provisioned.
@@ -514,11 +714,13 @@ describe("an address someone else signed up with", () => {
       ),
     ]);
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    await expect(signOutWith(env)(lia.id)).resolves.toBeUndefined();
+    await expect(
+      signOutWith(env, 0)(lia.id, { takeOver: false, at: Date.now() }),
+    ).resolves.toBeUndefined();
     expect(errors.mock.calls.flat().join("\n")).toContain(
       "signing a reset account out of a workspace failed",
     );
-    const token = (await resetLink(lia.email)).searchParams.get("token")!;
+    const token = tokenOf(await resetLink(lia.email));
     expect((await reset(token)).status).toBe(200);
     expect(await verified(lia.id)).toBe(1);
   });

@@ -33,6 +33,7 @@ export type Reset_PageInputs = {
 * | "invalid_title" | "This link doesn't work" |
 * | "invalid_body" | "It may have expired (links work for 1 hour), been used already, or been cut off. Ask for a new one." |
 * | "request_new" | "Send a new link" |
+* | "uncertain" | "Brigade hit an error after receiving your new password, so it may already be saved. Try signing in with it; if that doesn't work, ask for a new link." |
 * | * | "Reset your password" |
 *
 * @param {Reset_PageInputs} inputs

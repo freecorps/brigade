@@ -8,7 +8,12 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import { PreferencesProvider } from "../src/components/preferences";
-import { requestPasswordReset, resetPassword, resetToken } from "../src/lib/password-reset";
+import {
+  requestPasswordReset,
+  resetPassword,
+  resetToken,
+  resetTokenFromHash,
+} from "../src/lib/password-reset";
 import { routeTree } from "../src/routeTree.gen";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -63,11 +68,16 @@ describe("the API client", () => {
       "too_long",
     );
     expect(await resetPassword("t", "x", answer(429, {}))).toBe("rate_limited");
-    expect(await resetPassword("t", "x", answer(502, {}))).toBe("network");
+    // The server failed, maybe after saving the password: not "try again".
+    expect(await resetPassword("t", "x", answer(502, {}))).toBe("uncertain");
   });
 
-  test("the token: Better Auth's alphabet, bounded", () => {
+  test("the token: Better Auth's alphabet, bounded, read from the fragment", () => {
     expect(resetToken("Ab3_x-9QwErTyUiOpAsDfGhJ")).toBe("Ab3_x-9QwErTyUiOpAsDfGhJ");
+    expect(resetTokenFromHash("#token=Ab3_x-9QwErTyUiOpAsDfGhJ")).toBe("Ab3_x-9QwErTyUiOpAsDfGhJ");
+    expect(resetTokenFromHash("token=Ab3_x")).toBe("Ab3_x");
+    expect(resetTokenFromHash("")).toBe(undefined);
+    expect(resetTokenFromHash("#token=<script>")).toBe(undefined);
     for (const value of ["", "a b", "<script>", "a".repeat(129), 42, undefined]) {
       expect(resetToken(value), String(value)).toBe(undefined);
     }
@@ -176,7 +186,7 @@ describe("the forgot-password page", () => {
 
 describe("the reset page", () => {
   test("takes the token out of the address bar, checks the length, then saves", async () => {
-    const router = await open("/reset-password?token=Ab3xQwErTyUiOpAsDfGhJkLz", () =>
+    const router = await open("/reset-password#token=Ab3xQwErTyUiOpAsDfGhJkLz", () =>
       Response.json({ status: true }),
     );
     expect(router.state.location.href).toBe("/reset-password");
@@ -197,7 +207,7 @@ describe("the reset page", () => {
   });
 
   test("an expired or used link asks for a new one", async () => {
-    await open("/reset-password?token=Ab3xQwErTyUiOpAsDfGhJkLz", () =>
+    await open("/reset-password#token=Ab3xQwErTyUiOpAsDfGhJkLz", () =>
       Response.json({ code: "INVALID_TOKEN" }, { status: 400 }),
     );
     await type(input("New password"), "correct horse battery staple");
@@ -208,6 +218,16 @@ describe("the reset page", () => {
     );
   });
 
+  test("a server failure after the password may be saved says so, not to try the link again", async () => {
+    await open("/reset-password#token=Ab3xQwErTyUiOpAsDfGhJkLz", () =>
+      Response.json({}, { status: 500 }),
+    );
+    await type(input("New password"), "correct horse battery staple");
+    await submit();
+    expect(document.body.textContent).toContain("it may already be saved");
+    expect(document.body.textContent).not.toContain("Could not reach Brigade");
+  });
+
   test("without a token there is nothing to save", async () => {
     await open("/reset-password", () => Response.json({}));
     expect(heading()).toBe("This link doesn't work");
@@ -216,7 +236,7 @@ describe("the reset page", () => {
 
   test("reads in pt-BR", async () => {
     void setLocale("pt-BR");
-    await open("/reset-password?token=Ab3xQwErTyUiOpAsDfGhJkLz", () => Response.json({}));
+    await open("/reset-password#token=Ab3xQwErTyUiOpAsDfGhJkLz", () => Response.json({}));
     expect(heading()).toBe("Escolha uma nova senha");
   });
 });

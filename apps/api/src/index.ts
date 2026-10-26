@@ -135,6 +135,7 @@ export default {
     if (pathname === "/receipts") return receiveReceipt(request, env);
 
     if (pathname === "/health/paging") return pagingHealth(request, env, auth);
+    if (pathname === "/account/takeover") return takeoverNotice(request, env, auth);
 
     const workspace = WORKSPACE_PATH.exec(pathname)?.[1];
     if (pathname !== "/health" && workspace === undefined) return json({ error: "not_found" }, 404);
@@ -264,22 +265,49 @@ export function workerAuth(
   });
 }
 
+/** Tries per workspace at signing a reset account out (`signOutWith`), and the wait before each retry. */
+export const SIGN_OUT_ATTEMPTS = 3;
+export const SIGN_OUT_RETRY_MS = 250;
+
+/** An inherited workspace in the takeover notice: what Brigade paused there, or that it could not. */
+export type InheritedWorkspace = {
+  id: string;
+  name: string;
+  /** Names of the monitors paused. */
+  paused: string[];
+  /** Heartbeat URLs that stopped working. */
+  revoked: number;
+  /** The shard could not be reached: nothing there was paused, and the owner should look. */
+  failed: boolean;
+};
+
 /**
  * After a password reset (RFC 0002 "Auth"): signs the user out of every workspace they belong to in D1, each shard
- * dropping their devices and closing their sockets (`signOutUser`). Never throws: the password is already changed and
- * every session gone; a shard that fails is logged, and its devices stay registered until the user's app signs in
- * again or unregisters them.
+ * dropping their devices and closing their sockets (`signOutUser`), tried `SIGN_OUT_ATTEMPTS` times. Never throws:
+ * the password is already changed and every session gone. A shard that still fails is logged; its member reconcile
+ * (the repair alarm the failure armed, or the next sync upgrade) drops the devices and sockets from before
+ * `user.passwordResetAt` instead.
+ *
+ * On a takeover (`takeOver`: the address was not verified until now), the shard of each workspace where the account is
+ * the only member also pauses its monitors and revokes its heartbeat URLs, and the owner is told once
+ * (`takeover_notice`, read by `GET /account/takeover`).
  */
-export function signOutWith(env: Env): NonNullable<AuthBindings["onPasswordReset"]> {
-  return async (userId) => {
-    let workspaces: string[];
+export function signOutWith(
+  env: Env,
+  retryMs = SIGN_OUT_RETRY_MS,
+): NonNullable<AuthBindings["onPasswordReset"]> {
+  return async (userId, { takeOver, at }) => {
+    let workspaces: { id: string; name: string; members: number }[];
     try {
       const { results } = await env.DB.prepare(
-        `select "organizationId" as id from member where "userId" = ?`,
+        `select m."organizationId" as id, o.name as name,
+           (select count(*) from member n where n."organizationId" = m."organizationId") as members
+         from member m join organization o on o.id = m."organizationId"
+         where m."userId" = ?`,
       )
         .bind(userId)
-        .all<{ id: string }>();
-      workspaces = results.map((row) => row.id).filter((id) => WORKSPACE_ID.test(id));
+        .all<{ id: string; name: string; members: number }>();
+      workspaces = results.filter((row) => WORKSPACE_ID.test(row.id));
     } catch (error) {
       console.error(
         JSON.stringify({
@@ -289,20 +317,99 @@ export function signOutWith(env: Env): NonNullable<AuthBindings["onPasswordReset
       );
       return;
     }
-    const outcomes = await Promise.allSettled(
-      workspaces.map((id) => env.WORKSPACE.getByName(id).signOutUser(id, userId)),
+    const inherited = await Promise.all(
+      workspaces.map(async (workspace): Promise<InheritedWorkspace | undefined> => {
+        const sole = takeOver && workspace.members === 1;
+        let failure: unknown;
+        for (let attempt = 1; attempt <= SIGN_OUT_ATTEMPTS; attempt++) {
+          if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, retryMs * attempt));
+          try {
+            const result = await env.WORKSPACE.getByName(workspace.id).signOutUser(
+              workspace.id,
+              userId,
+              { takeOver: sole },
+            );
+            if (!result.ok) {
+              // A shard never provisioned has nothing of theirs: no retry changes that.
+              failure = result.code;
+              break;
+            }
+            failure = undefined;
+            if (!sole) return undefined;
+            const { paused = [], revoked = 0 } = result;
+            return { id: workspace.id, name: workspace.name, paused, revoked, failed: false };
+          } catch (error) {
+            failure = error;
+          }
+        }
+        console.error(
+          JSON.stringify({
+            message: "signing a reset account out of a workspace failed",
+            workspace: workspace.id,
+            error: String(failure),
+          }),
+        );
+        return sole
+          ? { id: workspace.id, name: workspace.name, paused: [], revoked: 0, failed: true }
+          : undefined;
+      }),
     );
-    outcomes.forEach((outcome, index) => {
-      if (outcome.status === "fulfilled" && outcome.value.ok) return;
+    const notice = inherited.filter((workspace) => workspace !== undefined);
+    if (notice.length === 0) return;
+    try {
+      await env.DB.prepare(
+        `insert into takeover_notice ("userId", workspaces, "createdAt") values (?, ?, ?)
+         on conflict ("userId") do update set workspaces = excluded.workspaces, "createdAt" = excluded."createdAt"`,
+      )
+        .bind(userId, JSON.stringify(notice), at)
+        .run();
+    } catch (error) {
       console.error(
-        JSON.stringify({
-          message: "signing a reset account out of a workspace failed",
-          workspace: workspaces[index],
-          error: outcome.status === "rejected" ? String(outcome.reason) : outcome.value.code,
-        }),
+        JSON.stringify({ message: "recording the takeover notice failed", error: String(error) }),
       );
-    });
+    }
   };
+}
+
+/**
+ * `GET /account/takeover`: the signed-in user's takeover notice (`signOutWith`), `{ notice: null }` without one;
+ * `DELETE` dismisses it. Only ever the session's own.
+ */
+export async function takeoverNotice(
+  request: Request,
+  env: Env,
+  auth: () => Auth,
+): Promise<Response> {
+  if (request.method !== "GET" && request.method !== "DELETE") {
+    return json({ error: "method_not_allowed" }, 405, { Allow: "GET, DELETE" });
+  }
+  const origin = request.headers.get("Origin");
+  if (request.method === "DELETE" && origin !== null && origin !== new URL(request.url).origin) {
+    return json({ error: "forbidden_origin" }, 403);
+  }
+  const headers = { "Cache-Control": "private, no-store" };
+  try {
+    const session = await auth().api.getSession({ headers: request.headers });
+    if (!session) return json({ error: "unauthenticated" }, 401);
+    if (request.method === "DELETE") {
+      await env.DB.prepare(`delete from takeover_notice where "userId" = ?`)
+        .bind(session.user.id)
+        .run();
+      return new Response(null, { status: 204, headers });
+    }
+    const row = await env.DB.prepare(
+      `select workspaces, "createdAt" as at from takeover_notice where "userId" = ?`,
+    )
+      .bind(session.user.id)
+      .first<{ workspaces: string; at: number }>();
+    const notice = row
+      ? { at: row.at, workspaces: JSON.parse(row.workspaces) as InheritedWorkspace[] }
+      : null;
+    return json({ notice }, 200, headers);
+  } catch (error) {
+    console.error(JSON.stringify({ message: "takeover notice failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
 }
 
 function provisionWith(env: Env): NonNullable<AuthBindings["onWorkspaceCreated"]> {

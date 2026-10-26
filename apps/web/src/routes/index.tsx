@@ -10,6 +10,7 @@ import { PagingHealthNotice } from "@/components/paging-health";
 import { usePreferences } from "@/components/preferences";
 import { RequireWorkspace } from "@/components/session";
 import { StackCard } from "@/components/stack-card";
+import { TakeoverNotice } from "@/components/takeover-notice";
 import { VerifyNotice } from "@/components/verify-notice";
 import { authClient } from "@/lib/auth";
 import { usePageTitle } from "@/lib/page-title";
@@ -40,6 +41,7 @@ function Overview() {
       </div>
       <PagingHealthNotice />
       {user ? <VerifyNotice email={user.email} verified={user.emailVerified} /> : null}
+      {user ? <TakeoverNotice key={user.id} /> : null}
       <IncidentsCard />
       <OnCallCard />
       <EscalationCard />

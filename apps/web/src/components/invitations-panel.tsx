@@ -115,6 +115,8 @@ export function InvitationsPanel({
   // Said next to what it is about: a send by the form, a resend or revoke by the list.
   const [notice, setNotice] = useState<{ text: string; at: "form" | "list" } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // What `busy` guards, read by the handlers: two clicks before the re-render both see the old `busy`.
+  const busyRef = useRef(false);
   const [rowFailure, setRowFailure] = useState<{ id: string; message: string } | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -166,7 +168,7 @@ export function InvitationsPanel({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (busy || !verified) return;
+    if (busyRef.current || !verified) return;
     setFailure(null);
     setNotice(null);
     const invalid = checkEmail(email);
@@ -176,8 +178,10 @@ export function InvitationsPanel({
       return;
     }
     const address = email.trim();
+    busyRef.current = true;
     setBusy("form");
     const result = await api.invite(workspaceId, address, invitedRole);
+    busyRef.current = false;
     setBusy(null);
     if (!result.ok && result.error !== "not_applied") {
       if (result.error === "invalid_email") {
@@ -208,7 +212,8 @@ export function InvitationsPanel({
   };
 
   const act = async (invitation: PendingInvitation, kind: "resend" | "revoke") => {
-    if (busy) return;
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(invitation.id);
     setRowFailure(null);
     setConfirming(null);
@@ -222,6 +227,7 @@ export function InvitationsPanel({
       kind === "resend"
         ? await api.resend(workspaceId, invitation.id)
         : await api.revoke(workspaceId, invitation.id);
+    busyRef.current = false;
     setBusy(null);
     if (!result.ok && result.error !== "not_applied") {
       setRowFailure({
@@ -308,7 +314,8 @@ export function InvitationsPanel({
         // Nothing to fill in yet: what they can do now is confirm their own address.
         <div className="flex flex-col gap-2">
           <p className="max-w-prose text-sm text-pretty text-muted-foreground [overflow-wrap:anywhere]">
-            {part("unverified", { email: ownEmail })}
+            {/* The address comes with the session: until it does, nothing to point at yet. */}
+            {ownEmail ? part("unverified", { email: ownEmail }) : invitationErrorText("unverified")}
           </p>
           {verification.outcome ? (
             <p role="status" className="text-sm">
@@ -327,7 +334,7 @@ export function InvitationsPanel({
           <Button
             ref={verifyRef}
             type="button"
-            disabled={verification.sending}
+            disabled={verification.sending || !ownEmail}
             focusableWhenDisabled
             onClick={() => void verification.send()}
           >

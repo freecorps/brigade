@@ -7,7 +7,7 @@ import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
 import type { Role } from "@freecorps/brigade-schema";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import {
   InvitationsPanel,
   PENDING_SHOWN,
@@ -171,7 +171,12 @@ function fakeApi(list: PendingInvitation[] = []) {
 
 async function renderPanel(
   role: Role,
-  options: { verified?: boolean; list?: PendingInvitation[]; open?: boolean } = {},
+  options: {
+    verified?: boolean;
+    list?: PendingInvitation[];
+    open?: boolean;
+    ownEmail?: string;
+  } = {},
 ) {
   const { api, calls } = fakeApi(options.list);
   const container = document.createElement("div");
@@ -184,7 +189,7 @@ async function renderPanel(
           workspaceId="ws_1"
           role={role}
           verified={options.verified ?? true}
-          ownEmail="ana@example.com"
+          ownEmail={options.ownEmail ?? "ana@example.com"}
           open={options.open ?? true}
           setOpen={() => {}}
           api={api}
@@ -243,6 +248,39 @@ describe("the Invite form", () => {
     expect(byText(container, "Send invitation")).toBeUndefined();
     const again = byText(container, "Send the link again");
     expect(document.activeElement).toBe(again);
+  });
+
+  test("before the session gives the inviter's address, nothing points at a blank one or asks for it", async () => {
+    const fetching = vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("offline"));
+    const { container } = await renderPanel("owner", { verified: false, ownEmail: "" });
+    expect(container.textContent).toContain("Confirm your own email before you invite people.");
+    expect(container.textContent).not.toContain("sent to .");
+    await click(byText(container, "Send the link again"));
+    expect(fetching).not.toHaveBeenCalled();
+    fetching.mockRestore();
+  });
+
+  test("a double click sends once: Resend, Revoke and the Invite form", async () => {
+    const { container, calls } = await renderPanel("owner", { list: [pendingOne] });
+    const twice = (button: Element | null | undefined) =>
+      act(async () => {
+        (button as HTMLButtonElement).click();
+        (button as HTMLButtonElement).click();
+      });
+    await twice(byText(container, "Resend"));
+    expect(calls).toEqual([`resend ${ID}`]);
+    await click(byText(container, "Revoke"));
+    await twice(container.querySelector("[role=group] button"));
+    expect(calls).toEqual([`resend ${ID}`, `revoke ${ID}`]);
+    const input = container.querySelector<HTMLInputElement>("input[type=email]")!;
+    await act(async () => {
+      Reflect.set(HTMLInputElement.prototype, "value", "gil@example.com", input);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await twice(byText(container, "Send invitation"));
+    expect(calls.filter((call) => call.startsWith("invite"))).toEqual([
+      "invite gil@example.com responder",
+    ]);
   });
 
   test("pending invitations: an admin cannot touch an owner's; a refused resend says why", async () => {
@@ -450,7 +488,11 @@ describe("the Members card and the verification notice", () => {
     expect(container.textContent).toBe("");
     render(false);
     expect(container.textContent).toContain("We sent a link to ana@example.com.");
-    await click(byText(container, "Send the link again"));
+    // Twice before the re-render: still one email.
+    await act(async () => {
+      byText(container, "Send the link again")!.click();
+      byText(container, "Send the link again")!.click();
+    });
     expect(asked).toEqual(["ana@example.com"]);
     expect(container.textContent).toContain("Wait a few minutes");
   });

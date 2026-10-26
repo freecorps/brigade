@@ -166,15 +166,17 @@ const beforeHook = (bindings: AuthBindings) =>
           message: "Email is not set up",
         });
       }
-      // Better Auth refuses these itself; only an email that goes out counts.
+      // Refused here rather than left to Better Auth, so no version of it can mail an address other than the
+      // session's own.
       const email: unknown = Reflect.get(Object(ctx.body), "email");
-      if (
-        session.user.emailVerified ||
-        typeof email !== "string" ||
-        email.toLowerCase() !== session.user.email.toLowerCase()
-      ) {
-        return;
+      if (typeof email !== "string" || email.toLowerCase() !== session.user.email.toLowerCase()) {
+        throw APIError.from("FORBIDDEN", {
+          code: "FORBIDDEN",
+          message: "Only your own address can be verified",
+        });
       }
+      // Better Auth refuses this itself; only an email that goes out counts.
+      if (session.user.emailVerified) return;
       const now = Date.now();
       for (const [key, limit] of [
         [`verify:${session.user.id}`, VERIFICATION_RESEND_LIMIT],

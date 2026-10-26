@@ -397,15 +397,18 @@ export class Invitations {
       }
       if (this.sentToday(now) >= INVITATIONS_DAILY_CAP) return { ok: false, code: "rate_limited" };
       const expiresAt = now + INVITATION_TTL_MS;
+      const sendId = newId("snd", now, this.options.randomBytes);
       try {
         const [reserved, updated] = await db.batch([
-          this.reserveSend(invitationId, row.email, actorId, now, true),
+          this.reserveSend(invitationId, row.email, actorId, now, true, sendId),
           db
             .prepare(
               `update invitation set "expiresAt" = ?
                where id = ? and "organizationId" = ? and status = 'pending' and changes() = 1`,
             )
             .bind(iso(expiresAt), invitationId, workspaceId),
+          // An update that changed nothing sends nothing, so it must not count: the reservation goes with it.
+          db.prepare(`delete from invitation_send where id = ? and changes() = 0`).bind(sendId),
         ]);
         if (reserved!.meta.changes !== 1) {
           return await this.capped(invitationId, row.email, actorId, now);
@@ -686,7 +689,8 @@ export class Invitations {
   /**
    * The repair alarm's share, run under the member lock: runs every mutation a failed shard step left owed, as
    * `MEMBERS_ACTOR`, oldest first. An owed `member.add` runs only while D1 still has that member: one removed (or
-   * gone) since must not be added back, nor announced after their removal. True when none is left. Never throws.
+   * gone) since must not be added back, nor announced after their removal; one whose arguments cannot be read is
+   * dropped (logged). True when none is left. Never throws.
    */
   async repair(workspaceId: string | undefined): Promise<boolean> {
     let owed: { key: string; name: string; args: string }[];
@@ -704,7 +708,18 @@ export class Invitations {
     }
     let done = true;
     for (const { key, name, args } of owed) {
-      const parsed: unknown = JSON.parse(args);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(args);
+      } catch (error) {
+        // Nothing can ever run it: drop it rather than hold up the rest on every alarm.
+        this.options.log("invitation repair: dropping an owed mutation it cannot read", {
+          name,
+          error,
+        });
+        done = this.settleRepair(key) && done;
+        continue;
+      }
       if (name === "member.add") {
         // Without the workspace's id D1 cannot be asked, and "not in D1" would drop an add that is still owed:
         // leave it for a later alarm.
@@ -811,6 +826,7 @@ export class Invitations {
     inviterId: string,
     now: number,
     pending: boolean,
+    id = newId("snd", now, this.options.randomBytes),
   ): D1PreparedStatement {
     return this.options.db
       .prepare(
@@ -822,7 +838,7 @@ export class Invitations {
            and (?10 = 0 or exists (select 1 from invitation where id = ?2 and status = 'pending'))`,
       )
       .bind(
-        newId("snd", now, this.options.randomBytes),
+        id,
         invitationId,
         invitationAddressKey(email),
         inviterId,

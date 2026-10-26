@@ -130,10 +130,18 @@ describe("asking again", () => {
       body: JSON.stringify({ email: caio.email }),
     });
     expect(signedOut.status).toBe(401);
-    const other = await resend({ email: "someone-else@example.com", cookie: caio.cookie });
-    expect(other.status).toBe(400);
-
     const sent = outbox();
+    const other = await resend({ email: "someone-else@example.com", cookie: caio.cookie });
+    expect(other.status).toBe(403);
+    expect(await other.json()).toMatchObject({ code: "FORBIDDEN" });
+    const missing = await api("/auth/send-verification-email", {
+      method: "POST",
+      headers: { Cookie: caio.cookie },
+      body: JSON.stringify({}),
+    });
+    expect(missing.status).toBe(403);
+    // Neither counts against the person's own limit, and nothing goes to the other address.
+
     for (let i = 0; i < VERIFICATION_RESEND_LIMIT.max; i++) {
       expect((await resend(caio)).status).toBe(200);
     }
@@ -144,6 +152,7 @@ describe("asking again", () => {
         VERIFICATION_RESEND_LIMIT.max,
       ),
     );
+    expect(sent().some((one) => one.to.email === "someone-else@example.com")).toBe(false);
   });
 
   test("at most `VERIFICATION_DAILY_LIMIT` a day, however the short window resets", async () => {

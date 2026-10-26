@@ -1,6 +1,6 @@
 import { m } from "@freecorps/brigade-i18n";
 import { MailCheckIcon, SendIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { usePreferences } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
 import { resendVerification, type ResendError } from "@/lib/invitations";
@@ -13,8 +13,8 @@ type Resend = (
 ) => Promise<{ ok: true } | { ok: false; error: ResendError }>;
 
 /**
- * Asking Brigade for another verification link: `send` asks (once at a time), `outcome` is what to tell the person
- * after, `sending` while it runs. Shared by the notice and the Invite form.
+ * Asking Brigade for another verification link: `send` asks (once at a time, and never before `email` is known),
+ * `outcome` is what to tell the person after, `sending` while it runs. Shared by the notice and the Invite form.
  */
 export function useResendVerification(
   email: string,
@@ -22,10 +22,14 @@ export function useResendVerification(
   resend: Resend = resendVerification,
 ) {
   const [state, setState] = useState<"idle" | "sending" | "sent" | ResendError>("idle");
+  // A ref, not `state`: two clicks before the re-render both read the old state.
+  const sendingRef = useRef(false);
   const send = async () => {
-    if (state === "sending") return;
+    if (sendingRef.current || !email) return;
+    sendingRef.current = true;
     setState("sending");
     const result = await resend(email, next);
+    sendingRef.current = false;
     setState(result.ok ? "sent" : result.error);
   };
   const outcome =

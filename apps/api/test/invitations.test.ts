@@ -835,6 +835,64 @@ describe("failures", () => {
     expect(await events(t, "member.added")).toMatchObject([{ subject: guest.id }]);
   });
 
+  test("a resend whose update changes nothing answers `conflict` and counts no send", async () => {
+    const t = await team();
+    const email = address();
+    const id = await invited(t, email);
+    await allowResend(t, id);
+    // The invitation changed between the read and the batch: the update matches no row.
+    const moved = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql: string) =>
+            target.prepare(
+              sql.includes(`update invitation set "expiresAt"`) ? `${sql} and 0` : sql,
+            );
+        }
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const result = await t.withState((state) =>
+      invitations(state, { db: moved }).resend(t.id, t.ana.id, id, ORIGIN),
+    );
+    expect(result).toEqual({ ok: false, code: "conflict" });
+    const sends = await env.DB.prepare(
+      `select count(*) as n from invitation_send where "invitationId" = ?`,
+    )
+      .bind(id)
+      .first<{ n: number }>();
+    expect(sends?.n).toBe(1);
+    // A resend that goes through still counts.
+    expect((await resend(t, t.ana, id)).status).toBe(200);
+    const after = await env.DB.prepare(
+      `select count(*) as n from invitation_send where "invitationId" = ?`,
+    )
+      .bind(id)
+      .first<{ n: number }>();
+    expect(after?.n).toBe(2);
+  });
+
+  test("an owed mutation whose arguments cannot be read is dropped; the rest still run", async () => {
+    const t = await team();
+    const email = address();
+    await t.withState((state) =>
+      invitations(state, { shardFails: true }).invite(t.id, t.ana.id, email, "viewer", ORIGIN),
+    );
+    await t.withState((state) =>
+      state.storage.sql.exec(
+        "insert into invitation_repair (key, name, args, at) values ('corrupt', 'invitation.create', '{not json', 0)",
+      ),
+    );
+    expect(await t.withState((state) => invitations(state).repair(t.id))).toBe(true);
+    expect(
+      await t.withState((state) =>
+        state.storage.sql.exec("select count(*) as n from invitation_repair").one(),
+      ),
+    ).toEqual({ n: 0 });
+    expect(await events(t, "member.invited")).toHaveLength(1);
+  });
+
   test("a repair without the workspace's id keeps an owed `member.add` for later", async () => {
     const t = await team();
     const email = address();

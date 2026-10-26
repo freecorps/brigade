@@ -84,7 +84,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Done: email verification (sent at sign-up and on request, rate-limited per user and IP; the dashboard's notice
     and `/verify-email` page) and workspace invitations: owners and admins invite by email with a role, resend and
     revoke from the Members card, and the invitee accepts or declines on `/invitations/:id`, signed in with that
-    address and verified. D1 first (prefixed `inv_` rows, one pending per address, migration 0004), then the shard's
+    address and verified. D1 first (prefixed `inv_` rows, one pending per address, migration 0004; the
+    cross-workspace send caps, migration 0005), then the shard's
     `member.invited` / `member.added` / `invitation.revoked` / `invitation.declined` with the members' repair, the
     invitation email from the outbox, 7-day expiry and per-workspace caps (RFC 0002 "Auth", RFC 0003 "Invitations").
   - Left: switching workspaces in the
@@ -95,8 +96,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     sessions; RFC 0002 "Auth"),
     putting `/workspaces/:id` (the stack check) behind auth before `workers_dev` is turned on, and the production
     and staging secrets (owner approval). Also: a uniform sign-up response (the same answer whether or not the email
-    is taken, so sign-up cannot enumerate accounts; until then only rate limiting slows it); applying migration 0004
-    to the deployed databases; a `baseURL` per environment (`BETTER_AUTH_URL`, the dashboard's `/api/auth` origin)
+    is taken, so sign-up cannot enumerate accounts; until then only rate limiting slows it); applying
+    migrations 0003, 0004 and 0005 to the deployed databases; a `baseURL` per environment (`BETTER_AUTH_URL`, the dashboard's `/api/auth` origin)
     once deployed hostnames exist, so email links point at the dashboard rather than the API Worker; repairing a
     workspace whose shard was never provisioned because the Worker died between the D1 write and the RPC, or whose
     undo failed, and a shard that committed `workspace.create` before its RPC failed and was undone (it would
@@ -229,7 +230,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Done since: the notifier emails verified addresses only, and the same sender sends email verification and
     invitations (RFC 0005 "Email", "Abuse").
   - Left: onboarding a sending domain and setting `EMAIL_FROM` (and `DASHBOARD_URL`) per environment, and applying
-    migrations 0003 and 0004 to the deployed databases (owner's call, apps/api/README.md "Email"); verification no
+    migrations 0003, 0004 and 0005 to the deployed databases (owner's call, apps/api/README.md "Email"); verification no
     longer blocks it. A dashboard switch for the two settings; a per-member opt-out; the mobile app sending the
     user's language. Next on the same sender: password reset (RFC 0002 "Auth"), an email to operators
     when the paging pipeline degrades (Q19) and to owners when rotations change (Q20). VoIP call paging and the PSTN

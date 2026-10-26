@@ -875,9 +875,12 @@ describe("heartbeats", () => {
       }),
     ).toMatchObject({ ok: true });
     const ping = (secret: string) =>
-      exports.default.fetch(`http://localhost/heartbeat/${heartbeatToken(ws.id, monitorId, secret)}`, {
-        method: "POST",
-      });
+      exports.default.fetch(
+        `http://localhost/heartbeat/${heartbeatToken(ws.id, monitorId, secret)}`,
+        {
+          method: "POST",
+        },
+      );
     expect((await ping(old)).status).toBe(202);
 
     const fresh = newHeartbeatSecret(random);
@@ -927,7 +930,10 @@ describe("heartbeats", () => {
         status: "pending",
         checks: [],
       });
-      expect(shard.store.get("heartbeats", monitorId)).toMatchObject({ tokenHash, lastPingAt: null });
+      expect(shard.store.get("heartbeats", monitorId)).toMatchObject({
+        tokenHash,
+        lastPingAt: null,
+      });
     });
     expect((await ping(fresh)).status).toBe(202);
     await ws.withShard((shard) => {

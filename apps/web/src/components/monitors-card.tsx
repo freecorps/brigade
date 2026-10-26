@@ -337,7 +337,9 @@ export function MonitorsCard() {
               // Back to the row whose URL it was, or to the card's action.
               requestAnimationFrame(() => {
                 const edit = id
-                  ? document.querySelector<HTMLElement>(`[data-monitor="${id}"] [data-action="edit"]`)
+                  ? document.querySelector<HTMLElement>(
+                      `[data-monitor="${id}"] [data-action="edit"]`,
+                    )
                   : null;
                 (edit ?? addRef.current)?.focus();
               });

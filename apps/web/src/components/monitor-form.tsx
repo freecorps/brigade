@@ -635,10 +635,14 @@ function RotateHeartbeat({
             <p>{m.monitor_rotate({ part: "stops", name: "" })}</p>
             <p className="text-muted-foreground">
               {m.monitor_rotate({ part: "restart", name: "" })}
-              {monitorAlerting(row) ? ` ${m.monitor_rotate({ part: "restart_alert", name: "" })}` : null}
+              {monitorAlerting(row)
+                ? ` ${m.monitor_rotate({ part: "restart_alert", name: "" })}`
+                : null}
             </p>
             {changed ? (
-              <p className="text-muted-foreground">{m.monitor_rotate({ part: "unsaved", name: "" })}</p>
+              <p className="text-muted-foreground">
+                {m.monitor_rotate({ part: "unsaved", name: "" })}
+              </p>
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2">

@@ -682,7 +682,13 @@ describe("monitor.rotateHeartbeat", () => {
     const id = createBeat(db);
     for (const role of ["responder", "viewer"] as const) {
       expect(
-        runMutation(mutations, "monitor.rotateHeartbeat", { id, tokenHash: NEW_HASH }, db, as(role)),
+        runMutation(
+          mutations,
+          "monitor.rotateHeartbeat",
+          { id, tokenHash: NEW_HASH },
+          db,
+          as(role),
+        ),
       ).toMatchObject({ ok: false, error: { code: "forbidden" } });
     }
     expect(db.get("heartbeats", id)).toMatchObject({ tokenHash: HASH });
@@ -734,7 +740,13 @@ describe("monitor.rotateHeartbeat", () => {
     const db = store();
     const http = createHttp(db, ["weur"]);
     expect(
-      runMutation(mutations, "monitor.rotateHeartbeat", { id: http, tokenHash: NEW_HASH }, db, as("admin")),
+      runMutation(
+        mutations,
+        "monitor.rotateHeartbeat",
+        { id: http, tokenHash: NEW_HASH },
+        db,
+        as("admin"),
+      ),
     ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
     expect(
       runMutation(
@@ -746,7 +758,13 @@ describe("monitor.rotateHeartbeat", () => {
       ),
     ).toMatchObject({ ok: false, error: { code: "not_found" } });
     expect(
-      runMutation(mutations, "monitor.rotateHeartbeat", { id: http, tokenHash: "nope" }, db, as("admin")),
+      runMutation(
+        mutations,
+        "monitor.rotateHeartbeat",
+        { id: http, tokenHash: "nope" },
+        db,
+        as("admin"),
+      ),
     ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
   });
 
@@ -760,7 +778,13 @@ describe("monitor.rotateHeartbeat", () => {
 
     const at = T + 60_000;
     expect(
-      runMutation(mutations, "monitor.rotateHeartbeat", { id, tokenHash: NEW_HASH }, db, as("admin", at)).ok,
+      runMutation(
+        mutations,
+        "monitor.rotateHeartbeat",
+        { id, tokenHash: NEW_HASH },
+        db,
+        as("admin", at),
+      ).ok,
     ).toBe(true);
     expect(db.get("monitors", id)).toMatchObject({
       status: "pending",

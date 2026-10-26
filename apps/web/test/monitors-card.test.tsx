@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // MonitorsCard mounted with react-dom against the reference shard server from packages/sync's tests: the keyboard
-// flow of the create form, the confirmed pause, the heartbeat URL panel, and how a down, no-data or paused
-// monitor reads.
+// flow of the create and edit forms, the confirmed pause and delete, the heartbeat URL panel, how a down, no-data
+// or paused monitor reads, and what a viewer is offered (nothing to change).
 import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
 import { newId, type Actor, type MonitorRow } from "@freecorps/brigade-schema";
 import { createSyncClient, type SyncClient } from "@freecorps/brigade-sync";
@@ -70,14 +70,14 @@ function monitor(overrides: Partial<MonitorRow>): MonitorRow {
 }
 
 /** `rows` go straight into the shard's store; `created` through `monitor.createHttp`, as a member would. */
-async function mount(rows: MonitorRow[] = [], created: MonitorRow[] = []) {
+async function mount(rows: MonitorRow[] = [], created: MonitorRow[] = [], member: Actor = owner) {
   const timers = new FakeTimers();
   const server = new FakeServer(() => T0 + timers.now);
   const network = new FakeNetwork(server);
   client = createSyncClient({
     url: (shard) => `ws://test/api/sync/${shard}`,
-    actor: owner,
-    transport: network.transport(owner),
+    actor: member,
+    transport: network.transport(member),
     timers,
     now: () => T0 + timers.now,
     random: () => 0.5,
@@ -117,7 +117,7 @@ async function mount(rows: MonitorRow[] = [], created: MonitorRow[] = []) {
     root.render(
       <PreferencesProvider initialLocale="en">
         <SyncProvider client={syncClient} shard={SHARD}>
-          <MemberProvider workspaceId={SHARD} userId={owner.id} role="owner">
+          <MemberProvider workspaceId={SHARD} userId={member.id} role={member.role}>
             <MonitorsCard />
           </MemberProvider>
         </SyncProvider>
@@ -470,4 +470,146 @@ test("a numbered incident links to its page, by number", async () => {
   const link = document.querySelector(`[data-monitor="${down.id}"] a`)!;
   expect(link.getAttribute("href")).toBe("/incidents/1");
   expect(link.textContent).toBe("Open INC-1");
+});
+
+/** The input labelled `text` in the open form. */
+const field = (text: string) =>
+  $$("form input").find(
+    (input) => document.querySelector(`label[for="${input.id}"]`)?.textContent === text,
+  ) as HTMLInputElement;
+
+test("editing opens the monitor's values in place, says when saving starts it over, and saves", async () => {
+  const row = monitor({ id: newId("mon", T0, randomBytes), name: "Checkout" });
+  const view = await mount([], [row]);
+  const item = () => document.querySelector(`[data-monitor="${row.id}"]`)!;
+  await click(button("Edit", item()));
+  const form = item().querySelector("form")!;
+  expect(form.getAttribute("aria-label")).toBe("Edit Checkout");
+  // The kind is said, not offered, and focus is on the name.
+  expect(form.querySelector('input[type="radio"]')).toBeNull();
+  expect(form.textContent).toContain("HTTP check");
+  expect(document.activeElement).toBe(field("Name"));
+  expect(field("URL").value).toBe("https://example.com/health");
+
+  act(() => setValue(field("Name"), "Checkout API"));
+  expect(form.textContent).not.toContain("starts its checks over");
+  act(() => setValue(field("URL"), "https://example.com/ready"));
+  expect(form.textContent).toContain("Saving starts its checks over");
+
+  await click(button("Save changes", form));
+  await view.flush();
+  expect(view.shard.store.get("monitors", row.id)).toMatchObject({
+    name: "Checkout API",
+    url: "https://example.com/ready",
+    status: "pending",
+  });
+  expect(item().querySelector("form")).toBeNull();
+  await frame();
+  expect(document.activeElement).toBe(button("Edit", item()));
+});
+
+test("an edit that changes nothing just closes, and a refused value stays in its field", async () => {
+  const row = monitor({ id: newId("mon", T0, randomBytes) });
+  const view = await mount([], [row]);
+  const item = () => document.querySelector(`[data-monitor="${row.id}"]`)!;
+  const before = view.shard.store.get("monitors", row.id)!.updatedAt;
+
+  await click(button("Edit", item()));
+  act(() => setValue(field("Every (seconds)"), "5"));
+  await click(button("Save changes", item()));
+  await frame();
+  expect(item().textContent).toContain("Use whole seconds, from 30 to 86,400 (24 hours).");
+  expect(document.activeElement).toBe(field("Every (seconds)"));
+
+  act(() => setValue(field("Every (seconds)"), "60"));
+  await click(button("Save changes", item()));
+  await view.flush();
+  expect(item().querySelector("form")).toBeNull();
+  // Nothing was sent: the shard would have refused it as a conflict.
+  expect(view.shard.store.get("monitors", row.id)!.updatedAt).toBe(before);
+  expect(document.body.textContent).not.toContain("Couldn't change");
+});
+
+test("deleting asks first, says what happens to its alert and incident, and Escape keeps the editor", async () => {
+  const incidentId = newId("inc", T0, randomBytes);
+  const alertId = newId("alt", T0, randomBytes);
+  const row = monitor({ name: "Checkout", status: "down", incidentId, alertId });
+  const view = await mount([row]);
+  view.shard.store.insert("alerts", {
+    id: alertId,
+    fingerprint: `monitor:${row.id}`,
+    monitorId: row.id,
+    status: "firing",
+    firedAt: T0 - 1000,
+    resolvedAt: null,
+    incidentId,
+  });
+  const item = () => document.querySelector(`[data-monitor="${row.id}"]`)!;
+  await click(button("Edit", item()));
+  await click(button("Delete monitor", item()));
+  expect(item().textContent).toContain(
+    "Delete Checkout? Its checks stop and its results are gone for good.",
+  );
+  expect(item().textContent).toContain(
+    "Its firing alert resolves. The incident it opened stays open until someone resolves it.",
+  );
+  // Cancel has focus; Escape closes the prompt, not the form.
+  expect(document.activeElement?.textContent).toBe("Cancel");
+  await key(document.activeElement!, "Escape");
+  await frame();
+  expect(item().textContent).not.toContain("gone for good");
+  expect(item().querySelector("form")).not.toBeNull();
+  expect(document.activeElement).toBe(button("Delete monitor", item()));
+
+  await click(button("Delete monitor", item()));
+  await click(button("Delete", item()));
+  await view.flush();
+  expect(document.querySelector(`[data-monitor="${row.id}"]`)).toBeNull();
+  expect(view.shard.store.get("monitors", row.id)).toBeUndefined();
+  expect(view.shard.store.get("alerts", alertId)).toMatchObject({ status: "resolved" });
+  await frame();
+  expect(document.activeElement).toBe(button("Add monitor"));
+});
+
+test("deleting a quiet heartbeat says its URL stops working and its past incidents stay", async () => {
+  const row = monitor({
+    name: "Nightly backup",
+    kind: "heartbeat",
+    url: null,
+    method: null,
+    timeoutSeconds: null,
+    regions: [],
+    graceSeconds: 300,
+  });
+  await mount([row]);
+  const item = document.querySelector(`[data-monitor="${row.id}"]`)!;
+  await click(button("Edit", item));
+  expect(field("Grace (seconds)").value).toBe("300");
+  await click(button("Delete monitor", item));
+  expect(item.textContent).toContain("Incidents it opened before stay as they are.");
+  expect(item.textContent).toContain("Its heartbeat URL stops working.");
+  expect(item.textContent).not.toContain("firing alert");
+});
+
+test("a viewer reads monitors but is offered nothing to change", async () => {
+  const viewer: Actor = { kind: "user", id: "usr_viewer", role: "viewer" };
+  const row = monitor({ name: "Checkout", paused: true, pausedBy: "usr_dev", pausedAt: T0 });
+  await mount([row], [], viewer);
+  const item = document.querySelector(`[data-monitor="${row.id}"]`)!;
+  expect(item.textContent).toContain("Checkout");
+  expect(item.textContent).toContain("Paused by a teammate");
+  expect($$("button", item)).toEqual([]);
+  expect(button("Add monitor")).toBeUndefined();
+});
+
+test("opening one form closes the other", async () => {
+  const row = monitor({ id: newId("mon", T0, randomBytes) });
+  await mount([], [row]);
+  const item = () => document.querySelector(`[data-monitor="${row.id}"]`)!;
+  await click(button("Add monitor"));
+  await click(button("Edit", item()));
+  expect($$("form").map((form) => form.getAttribute("aria-label"))).toEqual(["Edit Checkout"]);
+  expect(button("Add monitor")).toBeTruthy();
+  await click(button("Add monitor"));
+  expect($$("form").map((form) => form.getAttribute("aria-label"))).toEqual(["Add monitor"]);
 });

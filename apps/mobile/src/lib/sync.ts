@@ -1,6 +1,7 @@
 // Which Brigade the app talks to, and as whom it runs optimistic mutations. Pure, so it is tested in Node;
 // src/lib/auth-client.ts and src/components/session.tsx build the clients from it with the native pieces.
 import { isRole, type Actor, type Role } from "@freecorps/brigade-schema";
+import type { ConnectionState } from "@freecorps/brigade-sync";
 
 /** The dashboard's dev server (`vp run dev`), which forwards `/api/auth/*` and `/api/sync/<workspace>` to the API. */
 export const DEV_SERVER_PORT = 5173;
@@ -93,4 +94,28 @@ export function knownWorkspace(
   } catch {
     return null;
   }
+}
+
+/**
+ * Watches a shard's socket for a connection that closes before it ever opened: the upgrade was refused (401 for a
+ * session the server no longer knows, 403 `not_a_member` for a member removed from the workspace) or the server
+ * could not be reached. A socket that opened and dropped later is not it. `dispose` stops watching.
+ */
+export function neverOpened(
+  client: {
+    connectionState(shard: string): ConnectionState;
+    onConnectionChange(shard: string, listener: () => void): () => void;
+  },
+  shard: string,
+): { promise: Promise<void>; dispose: () => void } {
+  let dispose = () => {};
+  const promise = new Promise<void>((resolve) => {
+    let opened = false;
+    dispose = client.onConnectionChange(shard, () => {
+      const state = client.connectionState(shard);
+      if (state === "open") opened = true;
+      else if (state === "waiting" && !opened) resolve();
+    });
+  });
+  return { promise, dispose };
 }

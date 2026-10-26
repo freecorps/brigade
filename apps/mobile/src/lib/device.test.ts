@@ -8,6 +8,7 @@ import {
   type BrigadeTables,
   type Store,
 } from "@freecorps/brigade-schema";
+import { createSyncClient, type SyncSocket } from "@freecorps/brigade-sync";
 import { expect, test } from "vite-plus/test";
 import {
   deviceId,
@@ -17,6 +18,7 @@ import {
   unregisterPhone,
   type DeviceDeps,
 } from "./device";
+import { neverOpened } from "./sync";
 
 // An uncompressed P-256 point's shape (0x04 then 64 bytes), base64url.
 const KEY = `BA${"abcdefghij".repeat(9).slice(0, 85)}`;
@@ -136,4 +138,68 @@ test("signing out offline gives up on unregistering after the timeout", async ()
   const hang: DeviceDeps["mutate"] = () => new Promise(() => {});
   expect(await unregisterPhone(phone(hang), 10)).toBe(false);
   expect(await unregisterPhone(phone(hang, { publicKey: null }), 10)).toBe(true);
+});
+
+/** A sync client whose sockets the test opens or refuses; `refuse` closes the next one before it opens. */
+function socketClient(answer: "refuse" | "open") {
+  const client = createSyncClient({
+    url: (shard) => `ws://10.0.2.2:5173/api/sync/${shard}`,
+    actor: { kind: "user", id: "usr_ana", role: "responder" },
+    // Long enough that no retry happens during a test.
+    backoff: { initialMs: 60_000, maxMs: 60_000 },
+    transport: () => {
+      const socket: SyncSocket = {
+        send: () => {},
+        close: () => {},
+        onopen: null,
+        onmessage: null,
+        onclose: null,
+        onerror: null,
+      };
+      setTimeout(() => {
+        // As React Native reports an upgrade answered 401 or 403: an error, then a close, never an open.
+        if (answer === "refuse") socket.onclose?.({} as never);
+        else socket.onopen?.({} as never);
+      }, 0);
+      return socket;
+    },
+    onWarning: () => {},
+  });
+  return client;
+}
+
+test("a socket the server refuses (a removed member) ends the unregister at once, not after the timeout", async () => {
+  const client = socketClient("refuse");
+  const refused = neverOpened(client, "org_test");
+  const started = Date.now();
+  const done = await unregisterPhone(
+    phone((name, args) => client.mutate("org_test", name, args as never)),
+    60_000,
+    refused.promise,
+  );
+  expect(done).toBe(false);
+  expect(Date.now() - started).toBeLessThan(1_000);
+  refused.dispose();
+  client.close();
+});
+
+test("a socket that opens is not taken for a refusal", async () => {
+  const client = socketClient("open");
+  const refused = neverOpened(client, "org_test");
+  let gaveUp = false;
+  void refused.promise.then(() => {
+    gaveUp = true;
+  });
+  // The shard never answers: only the timeout ends it.
+  expect(
+    await unregisterPhone(
+      phone((name, args) => client.mutate("org_test", name, args as never)),
+      20,
+      refused.promise,
+    ),
+  ).toBe(false);
+  expect(client.connectionState("org_test")).toBe("open");
+  expect(gaveUp).toBe(false);
+  refused.dispose();
+  client.close();
 });

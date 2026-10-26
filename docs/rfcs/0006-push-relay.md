@@ -99,20 +99,31 @@ socket. So someone who never opened Brigade is not paged (they have no device ei
   paged. The page path does not re-read D1: a D1 outage would then become a reason a page is late or missing.
 - **A handed-over phone** (same install, so the same device id, signed in as another member) keeps paging the first
   member until it unregisters: `device.register` refuses another member's device id (`forbidden`). Signing out
-  unregisters it, so the next member's sign-in registers it for them.
+  unregisters it, so the next member's sign-in registers it for them. Signing out first waits for a registration
+  already under way (asking for the key, permission or token): it sends nothing once sign-out has begun, and one
+  already sent is ahead of the unregister on the same socket, so the shard drops it again.
   - **Signed out offline** (`device.unregister` did not answer within 5 s): the app signs out on the phone only and
     keeps the member's session, unrevoked, in secure storage with their user and workspace ids, the auth server it
-    belongs to and when it was kept (`brigade_signed_out`, a list with one record per session,
+    belongs to and when the session expires (`brigade_signed_out`, a list with one record per session,
     apps/mobile/src/lib/sign-out.ts), and tells them the phone may still get their pages until it is back online.
+    The list holds at most 10: past that, the oldest record already off its shard (only its revoke left) is
+    dropped; one still on its shard never is, so an eleventh such sign-out is not kept and the app says the phone
+    may keep paging them (below).
     A sign-out whose `/sign-out` went unanswered is kept the same way, already off the shard. Every record is
     changed in turn and by its own session, so a second member's sign-out kept before the first is finished never
     replaces or clears it. At launch, whenever the phone reconnects or the app comes to the foreground, before any
     member's `device.register`, and while one is left on a backoff (30 s, 2 min, then every 10 min,
-    apps/mobile/src/lib/paging.ts), the app finishes each: `/get-session?disableRefresh=true` with that cookie (so
-    checking does not keep the session alive), `device.unregister` over a socket of its own as that member, then
-    `/sign-out`, and only then forgets it. A record is finished only against the server it was kept for (a
-    development build's server moves with the Metro host), and dropped once older than the session lifetime
-    (`SESSION_LIFETIME_S`, Better Auth's `expiresIn`). The session is not revoked first because only it can say
+    apps/mobile/src/lib/paging.ts), the app finishes each: `/get-session?disableRefresh=true` with that cookie (the
+    check itself does not extend the session, and it says when the session expires), `device.unregister` over a
+    socket of its own as that member, then `/sign-out`, and only then forgets it. The socket's upgrade does extend
+    the session (Better Auth renews one last renewed over a day ago on any use, and the upgrade is checked like
+    every other request), so before opening it the record's expiry moves to a full lifetime
+    (`SESSION_LIFETIME_S`, Better Auth's `expiresIn`) from then; it also takes any later expiry `/get-session`
+    reports. A record is finished only against the server it was kept for (a development build's server moves with
+    the Metro host); one kept for another server does not hold up registering for this one. A record is dropped
+    once past its expiry, when the server has forgotten the session. Not renewing on the upgrade instead would let
+    a member whose app keeps its socket open but rarely asks `/get-session` be signed out under them. The session
+    is not revoked first because only it can say
     whose device this is. Until it finishes, a next member who signs in sees "taken" (the phone still pages the
     other one), with Try again, instead of a claim that it pages them; once finished, the phone registers for
     them. If the session could not be read or stored either, nothing can finish it: the app says the phone may
@@ -126,6 +137,11 @@ socket. So someone who never opened Brigade is not paged (they have no device ei
     Taking over a device id on proof of the device key (a signature over a server nonce) would close this, but the
     key is HPKE-only today (P-256 key agreement in the Keychain) and Android has none; it waits for FCM. Member
     removal, once it exists (above), will drop a removed member's devices.
+  - **Removed from the workspace before the phone came back**: the session is alive, but the socket's upgrade
+    answers 403 `not_a_member`, so `device.unregister` never reaches the shard. A socket that closes before it
+    ever opens ends that try at once (no 10 s wait); the record stays pending and is tried on the backoff until its
+    session expires, since the shard still pages the removed member on this phone (Q18) and re-adding them lets it
+    finish. Until then the next member sees "taken".
 
 Content: title `SEV1 · INC-142` (codes, so no locale is needed), body the incident's title, and the incident id,
 sealed per device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id, so a repeat replaces

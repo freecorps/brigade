@@ -108,12 +108,14 @@ export async function registerPhone(
 
 /**
  * Unregisters this phone before sign-out, so it stops paging the member and the next one to sign in on it can
- * register it. Best effort: never throws, and gives up after `timeoutMs` so signing out offline still works (the
- * device then stays registered until its token expires or someone signs out on it online).
+ * register it. Best effort: never throws, and gives up after `timeoutMs`, or as soon as `giveUp` resolves (the
+ * socket was refused), so signing out offline still works (the device then stays registered until its token
+ * expires or someone signs out on it online).
  */
 export async function unregisterPhone(
   deps: Pick<DeviceDeps, "publicKey" | "mutate">,
   timeoutMs = 5_000,
+  giveUp?: Promise<unknown>,
 ): Promise<boolean> {
   if (!deps.publicKey) return true;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -131,7 +133,8 @@ export async function unregisterPhone(
     }
   })();
   try {
-    return await Promise.race([attempt, timeout]);
+    const refused = giveUp?.then(() => false as const) ?? timeout;
+    return await Promise.race([attempt, timeout, refused]);
   } finally {
     clearTimeout(timer);
   }

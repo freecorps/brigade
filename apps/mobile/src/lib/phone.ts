@@ -7,7 +7,7 @@ import * as SecureStore from "expo-secure-store";
 import { unregisterPhone, type DeviceDeps } from "@/lib/device";
 import { SESSION_LIFETIME_S } from "@freecorps/brigade-schema";
 import { leftovers, SIGNED_OUT_KEY, type FinishDeps } from "@/lib/sign-out";
-import { memberActor, type Server } from "@/lib/sync";
+import { memberActor, neverOpened, type Server } from "@/lib/sync";
 import { createWorkspaceSync, type WorkspaceSync } from "@/lib/sync-client";
 import { BrigadePush } from "../../modules/brigade-push";
 
@@ -79,9 +79,13 @@ export function finishDeps(server: Server): FinishDeps {
         actor: () => memberActor(leftover.userId, undefined),
         cookie: () => leftover.cookie,
       });
+      // A refused upgrade (the member was removed: 403) ends the try at once instead of after the timeout. It stays
+      // pending: nothing else can take the device off as them (RFC 0006 "A handed-over phone").
+      const refused = neverOpened(sync.client, sync.shard);
       try {
-        return await unregisterPhone(phoneDeps(sync), 10_000);
+        return await unregisterPhone(phoneDeps(sync), 10_000, refused.promise);
       } finally {
+        refused.dispose();
         sync.client.close();
       }
     },

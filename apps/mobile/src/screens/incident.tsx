@@ -667,6 +667,7 @@ const ENTRY_GLYPHS: Record<Exclude<TimelineRow["kind"], "status_changed">, Glyph
   update: { ios: "text.bubble", android: "chat", web: "chat" },
   alert_resolved: { ios: "heart.text.square", android: "monitor_heart", web: "monitor_heart" },
   page_failed: { ios: "phone.down", android: "phone_missed", web: "phone_missed" },
+  email_failed: { ios: "envelope.badge", android: "unsubscribe", web: "unsubscribe" },
   escalated: { ios: "bell.and.waves.left.and.right", android: "campaign", web: "campaign" },
   escalation_exhausted: { ios: "hourglass", android: "hourglass_empty", web: "hourglass_empty" },
 };
@@ -724,7 +725,7 @@ function Timeline({
         const glyph =
           entry.kind === "status_changed" ? STATUS_GLYPHS[entry.to] : ENTRY_GLYPHS[entry.kind];
         const tint =
-          entry.kind === "page_failed"
+          entry.kind === "page_failed" || entry.kind === "email_failed"
             ? colors.destructive
             : entry.kind === "update"
               ? colors.primary

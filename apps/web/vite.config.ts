@@ -32,7 +32,7 @@ function themeColor(): Plugin {
  * here instead; deployed Workers get them from `wrangler secret put`.
  */
 function localSecrets(): Record<string, string> {
-  const names = ["DEAD_MAN_URL", "RELAY_URL", "RELAY_SEND_TOKEN"];
+  const names = ["DEAD_MAN_URL", "RELAY_URL", "RELAY_SEND_TOKEN", "EMAIL_FROM", "DASHBOARD_URL"];
   return Object.fromEntries(
     names.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])),
   );
@@ -52,13 +52,14 @@ export default defineConfig(({ command, mode }) => ({
             // `vp dev` also runs the API Worker (and its WorkspaceDO), so one command serves the SPA,
             // this Worker and the API; the `API` service binding resolves to it by name. The build
             // only bundles this Worker: apps/api builds and deploys on its own.
-            // In dev it also gets the API's local-only vars (apps/api/vite.config.ts: the dev sync actor).
+            // In dev it also gets the API's local-only vars (apps/api/vite.config.ts: the dev sync actor, and
+            // the email notifier logging what it would send).
             auxiliaryWorkers:
               command === "serve"
                 ? [
                     {
                       configPath: "../api/wrangler.jsonc",
-                      config: { vars: { SYNC_DEV_ACTOR: "1", ...localSecrets() } },
+                      config: { vars: { SYNC_DEV_ACTOR: "1", EMAIL_LOG: "1", ...localSecrets() } },
                     },
                   ]
                 : [],

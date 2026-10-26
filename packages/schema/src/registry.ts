@@ -12,7 +12,7 @@ import {
   setIncidentStatus,
 } from "./incidents.ts";
 import { expireDevice, registerDevice, unregisterDevice } from "./devices.ts";
-import { failNotification } from "./notifications.ts";
+import { failEmail, failNotification } from "./notifications.ts";
 import { allMonitors, evaluateMonitor, monitorMutations, reportMonitorCheck } from "./monitors.ts";
 import { defineRegistry } from "./mutation.ts";
 import { allOverrides, allSchedules, scheduleMutations } from "./schedules.ts";
@@ -25,7 +25,7 @@ import {
 } from "./escalation.ts";
 import { incidentTimeline } from "./timeline.ts";
 import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";
-import { allMembers, createWorkspace, syncMember } from "./workspaces.ts";
+import { allMembers, createWorkspace, setEmailSettings, syncMember } from "./workspaces.ts";
 
 /** What clients may send over a socket. */
 export const mutations = defineRegistry([
@@ -40,6 +40,7 @@ export const mutations = defineRegistry([
   ...policyMutations,
   registerDevice,
   unregisterDevice,
+  setEmailSettings,
 ]);
 
 export const queries = defineRegistry([
@@ -70,6 +71,7 @@ export const serverMutations = defineRegistry([
   ...policyMutations,
   registerDevice,
   unregisterDevice,
+  setEmailSettings,
   createWorkspace,
   syncMember,
   changeMemberRole,
@@ -79,6 +81,7 @@ export const serverMutations = defineRegistry([
   evaluateMonitor,
   expireDevice,
   failNotification,
+  failEmail,
   startEscalation,
   advanceEscalation,
   fallbackEscalation,

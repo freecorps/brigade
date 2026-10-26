@@ -70,8 +70,8 @@ docs/rfcs/     Design documents
 the workspace (`spikes/*`) so CI checks and tests it. The PR that records the spike's result tears down what the
 spike deployed and deletes the folder; the write-up in `docs/spikes/` is what stays.
 
-The `brigade-events` consumer runs in the api Worker for now (its `queue` handler, push only); it becomes the
-separate notifier Worker of the runtime map when more notifiers (Slack, email) arrive (RFC 0005 "Notifiers").
+The `brigade-events` consumer runs in the api Worker for now (its `queue` handler: push, and email for pages that
+failed); it becomes the separate notifier Worker of the runtime map with Slack (RFC 0005 "Notifiers", "Email").
 
 Packages are MIT so third parties can build integrations without AGPL concerns; apps are AGPL (RFC 0009).
 
@@ -118,7 +118,14 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
     `brigade://…` valid, and the plugin's after-hook appends the session as `?cookie=` to redirects from
     `/callback*`, `/magic-link/verify*` and `/verify-email*`; none of those is configured now, so any app on the
     phone that claims the scheme gets nothing. Before OAuth, magic links, email verification or password reset are
-    enabled, those redirects need PKCE or verified App Links / Universal Links instead of a custom scheme. The
+    enabled, those redirects need PKCE or verified App Links / Universal Links instead of a custom scheme.
+    Email verification, password reset and invitations needed a way to send email: the email notifier's
+    `EmailSender` (RFC 0005 "Email", Cloudflare Email Sending) is that, so they are unblocked, and Better Auth's
+    `sendVerificationEmail`, `sendResetPassword` and the organization plugin's `sendInvitationEmail` can call it
+    (with templates in `packages/i18n`). None is built yet: until verification, an email goes to the address a user
+    signed up with, unproven. Each user has a `locale` (`en`, `pt-BR`; D1 `user.locale`), the language Brigade
+    writes to them in: set at sign-up (from the dashboard, else `Accept-Language`) and by the dashboard's language
+    switch; the mobile app does not send it yet. The
     plugin also trusts `exp://` (Expo Go), but only when `NODE_ENV` is `development`. The app signs in against the dashboard's origin (`EXPO_PUBLIC_BRIGADE_URL`, or
     the dev server on the Metro host in development). Still to come: OAuth/OIDC with PKCE via the system browser and
     QR pairing.

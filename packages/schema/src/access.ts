@@ -8,8 +8,9 @@ export type Role = (typeof ROLES)[number];
 /** Every resource and the actions on it. */
 export const statement = {
   incident: ["read", "declare", "update", "ack"],
-  // `read`: who is in the workspace (the shard's member list, RFC 0003); `create` only provisions a shard.
-  workspace: ["create", "read"],
+  // `read`: who is in the workspace (the shard's member list, RFC 0003); `create` only provisions a shard;
+  // `manage`: the workspace's own settings (who is emailed when paging fails, RFC 0005 "Email").
+  workspace: ["create", "read", "manage"],
   // `manage`: change another member's role or remove them (RFC 0003 "Members"). Not `member`: that is Better Auth's
   // own resource, which `apps/api/src/auth.ts` merges with this table.
   members: ["manage"],
@@ -35,7 +36,7 @@ type Grants = { readonly [R in Resource]?: readonly Statement[R][number][] };
 export const roles = {
   owner: {
     incident: ["read", "declare", "update", "ack"],
-    workspace: ["create", "read"],
+    workspace: ["create", "read", "manage"],
     members: ["manage"],
     monitor: ["read", "manage"],
     device: ["register"],
@@ -44,7 +45,7 @@ export const roles = {
   },
   admin: {
     incident: ["read", "declare", "update", "ack"],
-    workspace: ["read"],
+    workspace: ["read", "manage"],
     members: ["manage"],
     monitor: ["read", "manage"],
     device: ["register"],

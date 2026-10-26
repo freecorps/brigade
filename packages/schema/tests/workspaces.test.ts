@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vite-plus/test";
 import {
   createMemoryStore,
+  DEFAULT_EMAIL_SETTINGS,
+  emailSettings,
   mutations,
   serverMutations,
   newId,
@@ -35,6 +37,7 @@ describe("workspace.create", () => {
       "monitor.evaluate",
       "device.expire",
       "notification.fail",
+      "notification.failEmail",
       "escalation.start",
       "escalation.advance",
       "escalation.fallback",
@@ -112,5 +115,64 @@ describe("workspace.create", () => {
     const store = createMemoryStore<BrigadeTables>();
     const result = runMutation(serverMutations, "workspace.create", args, store, ctx());
     expect(result).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+  });
+});
+
+describe("workspace.setEmail", () => {
+  const provisioned = () => {
+    const store = createMemoryStore<BrigadeTables>();
+    runMutation(serverMutations, "workspace.create", { id: WS, name: "Acme" }, store, ctx());
+    return store;
+  };
+
+  test("both emails are on until an owner or admin turns them off; responders and viewers may not", () => {
+    const store = provisioned();
+    expect(emailSettings(store.get("workspace", WS))).toEqual(DEFAULT_EMAIL_SETTINGS);
+    expect(DEFAULT_EMAIL_SETTINGS).toEqual({ unpaged: true, nobodyPaged: true });
+    for (const role of ["responder", "viewer"] as const) {
+      const refused = runMutation(
+        mutations,
+        "workspace.setEmail",
+        { unpaged: false, nobodyPaged: true },
+        store,
+        ctx(role),
+      );
+      expect(refused, role).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    }
+    const result = runMutation(
+      mutations,
+      "workspace.setEmail",
+      { unpaged: false, nobodyPaged: true },
+      store,
+      ctx("admin"),
+    );
+    expect(result).toEqual({
+      ok: true,
+      events: [
+        {
+          type: "workspace.email_changed",
+          subject: WS,
+          data: { unpaged: false, nobodyPaged: true },
+        },
+      ],
+    });
+    expect(emailSettings(store.get("workspace", WS))).toEqual({
+      unpaged: false,
+      nobodyPaged: true,
+    });
+    // The same again changes nothing.
+    expect(
+      runMutation(
+        mutations,
+        "workspace.setEmail",
+        { unpaged: false, nobodyPaged: true },
+        store,
+        ctx(),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    // Both are required.
+    expect(
+      runMutation(mutations, "workspace.setEmail", { unpaged: true }, store, ctx()),
+    ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
   });
 });

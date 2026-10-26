@@ -660,6 +660,9 @@
         "kind=escalation_exhausted": "Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados",
         "kind=escalated_everyone_stalled": "Um nível de escalonamento continuou falhando, então todos que podem responder foram chamados",
         "kind=page_escalation_stalled": "Um nível de escalonamento não pôde ser disparado. O Brigade continua tentando e chama todos que podem responder se ainda falhar",
+        "kind=email_failed_unpaged": "Não foi possível enviar email para {a} avisando que a chamada não chegou",
+        "kind=email_failed_nobody_paged": "Não foi possível enviar email para {a} avisando que ninguém pôde ser chamado",
+        "kind=email_capped": "Não foi enviado email para {a}: o limite de emails do Brigade foi atingido",
         "kind=*": "{actor} alterou o incidente"
       }
     }
@@ -1201,6 +1204,38 @@
         "part=already": "Outra pessoa confirmou primeiro.",
         "part=failed": "Não foi possível confirmar. {reason}",
         "part=*": "Confirmar"
+      }
+    }
+  ],
+  "email_text": [
+    {
+      "declarations": [
+        "input part",
+        "input incident",
+        "input title",
+        "input workspace",
+        "input reason",
+        "input url"
+      ],
+      "selectors": ["part"],
+      "match": {
+        "part=unpaged_subject": "{incident}: {title} (o Brigade não conseguiu chamar você)",
+        "part=unpaged_intro": "O Brigade tentou chamar você sobre {incident} em {workspace}, mas a chamada não chegou ao seu celular: {reason}.",
+        "part=unpaged_reason_no_devices": "você não tem nenhum celular registrado no Brigade",
+        "part=unpaged_reason_undelivered": "a notificação push não foi entregue",
+        "part=unpaged_reason_unsupported": "o Brigade ainda não envia chamadas para celulares Android",
+        "part=unpaged_reason_not_configured": "as notificações push não estão configuradas neste servidor do Brigade",
+        "part=unpaged_reason_over_limit": "a chamada foi para mais celulares do que uma chamada alcança",
+        "part=unpaged_hint": "Para receber chamadas no celular, instale o app do Brigade, entre na sua conta e permita notificações.",
+        "part=unpaged_footer": "Você está recebendo este email porque pode responder a incidentes em {workspace}.",
+        "part=nobody_subject": "Ninguém pôde ser chamado para {incident}: {title}",
+        "part=nobody_intro": "Ninguém pôde ser chamado para {incident} em {workspace}. O Brigade tentou todos que podia e a chamada não chegou ao celular de ninguém, e ninguém confirmou o incidente.",
+        "part=nobody_timeline": "A linha do tempo do incidente mostra por que cada chamada falhou.",
+        "part=nobody_footer": "Você está recebendo este email porque é proprietário de {workspace}.",
+        "part=fact_incident": "Incidente: {incident}",
+        "part=fact_title": "Título: {title}",
+        "part=open": "Abrir o incidente",
+        "part=*": "Brigade"
       }
     }
   ]

@@ -660,6 +660,9 @@
         "kind=escalation_exhausted": "Nobody acknowledged after every level, so everyone who can respond was paged",
         "kind=escalated_everyone_stalled": "An escalation level kept failing to fire, so everyone who can respond was paged",
         "kind=page_escalation_stalled": "An escalation level couldn't fire. Brigade keeps trying, and pages everyone who can respond if it still can't",
+        "kind=email_failed_unpaged": "Couldn't email {a} that the page didn't reach them",
+        "kind=email_failed_nobody_paged": "Couldn't email {a} that nobody could be paged",
+        "kind=email_capped": "Didn't email {a}: the limit on Brigade's emails was reached",
         "kind=*": "{actor} changed the incident"
       }
     }
@@ -1201,6 +1204,38 @@
         "part=already": "Someone else acknowledged it first.",
         "part=failed": "Couldn't acknowledge it. {reason}",
         "part=*": "Acknowledge"
+      }
+    }
+  ],
+  "email_text": [
+    {
+      "declarations": [
+        "input part",
+        "input incident",
+        "input title",
+        "input workspace",
+        "input reason",
+        "input url"
+      ],
+      "selectors": ["part"],
+      "match": {
+        "part=unpaged_subject": "{incident}: {title} (Brigade couldn't page you)",
+        "part=unpaged_intro": "Brigade tried to page you about {incident} in {workspace}, but the page didn't reach your phone: {reason}.",
+        "part=unpaged_reason_no_devices": "you have no phone registered with Brigade",
+        "part=unpaged_reason_undelivered": "the push notification didn't go through",
+        "part=unpaged_reason_unsupported": "Brigade can't send pages to Android phones yet",
+        "part=unpaged_reason_not_configured": "push notifications aren't set up on this Brigade server",
+        "part=unpaged_reason_over_limit": "the page went to more phones than one page can reach",
+        "part=unpaged_hint": "To get pages on your phone, install the Brigade app, sign in and allow notifications.",
+        "part=unpaged_footer": "You're getting this email because you can respond to incidents in {workspace}.",
+        "part=nobody_subject": "Nobody could be paged for {incident}: {title}",
+        "part=nobody_intro": "Nobody could be paged for {incident} in {workspace}. Brigade tried everyone it could and the page reached no one's phone, and nobody has acknowledged the incident.",
+        "part=nobody_timeline": "The incident's timeline says why each page failed.",
+        "part=nobody_footer": "You're getting this email because you're an owner of {workspace}.",
+        "part=fact_incident": "Incident: {incident}",
+        "part=fact_title": "Title: {title}",
+        "part=open": "Open the incident",
+        "part=*": "Brigade"
       }
     }
   ]

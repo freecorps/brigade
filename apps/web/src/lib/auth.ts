@@ -1,10 +1,10 @@
 // Sign-up, sign-in and workspaces for the dashboard: the Better Auth client on the same origin (the web Worker
 // forwards `/api/auth/*` to the API Worker), the dashboard's own `POST /api/workspaces`, and the pure checks and
 // error wording the forms use (tested in test/auth.test.ts).
-import { m } from "@freecorps/brigade-i18n";
+import { m, type Locale } from "@freecorps/brigade-i18n";
 import { checkEmail, checkPassword, type FieldErrors } from "@freecorps/brigade-i18n/auth";
 import { memberName, WORKSPACE_NAME_MAX, workspaceName } from "@freecorps/brigade-schema";
-import { organizationClient } from "better-auth/client/plugins";
+import { inferAdditionalFields, organizationClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 
 // The sign-in checks and error wording are shared with the mobile app (packages/i18n).
@@ -26,12 +26,42 @@ export function makeAuthClient(customFetchImpl?: typeof fetch) {
   return createAuthClient({
     // Relative to the page: the dashboard and its API share an origin, in dev and deployed.
     baseURL: `${typeof window === "undefined" ? "http://localhost" : window.location.origin}/api/auth`,
-    plugins: [organizationClient()],
+    // `locale`: the language Brigade writes to the user in, emails included (apps/api src/auth.ts).
+    plugins: [
+      organizationClient(),
+      inferAdditionalFields({ user: { locale: { type: "string", required: false } } }),
+    ],
     ...(customFetchImpl ? { fetchOptions: { customFetchImpl } } : {}),
   });
 }
 
 export const authClient = makeAuthClient();
+
+/**
+ * Stores the language picked in the dashboard on the signed-in user, so emails come in it too (RFC 0008). Best
+ * effort: the switch itself never waits on it, and a failure leaves the one stored before. Saves run one at a time,
+ * and one overtaken by a newer pick before its turn is skipped, so the last language picked is the one stored.
+ */
+export function saveLocale(
+  locale: Locale,
+  client: Pick<typeof authClient, "updateUser"> = authClient,
+): Promise<boolean> {
+  wantedLocale = locale;
+  const save = savingLocale.then(async () => {
+    if (wantedLocale !== locale) return true;
+    try {
+      const { error } = await client.updateUser({ locale });
+      return !error;
+    } catch {
+      return false;
+    }
+  });
+  savingLocale = save;
+  return save;
+}
+
+let savingLocale: Promise<unknown> = Promise.resolve();
+let wantedLocale: Locale | null = null;
 
 /**
  * Opens a workspace `POST /workspaces` just created. `set-active` (not a plain session refetch) is what tells the

@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   fitMemberName,
   type Actor,
+  type EmailAbout,
   type MemberChange,
   type ProbeRegion,
 } from "@freecorps/brigade-schema";
@@ -24,6 +25,7 @@ import {
 } from "./members.ts";
 import { ESCALATION_RETRY_MS, Escalations } from "./escalation.ts";
 import { isProbeRegion, MONITOR_TICK_MS, Monitoring } from "./monitors.ts";
+import { Mailer, type EmailOutcome, type EmailPlan } from "./mailer.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
 import {
   Pager,
@@ -115,6 +117,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly drain: OutboxDrain;
   private readonly drainPaused: boolean;
   private readonly pager: Pager;
+  private readonly mailer: Mailer;
   private readonly escalations: Escalations;
   private readonly membership: Membership;
 
@@ -147,6 +150,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
       wake: (at) => this.wake(at, "escalation"),
+    });
+    // After the pager: it reads the page ledger the pager creates.
+    this.mailer = new Mailer({
+      storage: ctx.storage,
+      shard: this.shard,
+      log: (message, fields) => this.log(message, fields),
+      committed: (version, changes) => this.broadcast(version, changes, undefined),
     });
     this.escalations = new Escalations({
       shard: this.shard,
@@ -346,6 +356,27 @@ export class WorkspaceDO extends DurableObject<Env> {
   ): void {
     if (this.shard.workspace() !== event.workspaceId) return;
     this.pager.record(event, outcomes, final, skipped, Date.now());
+  }
+
+  /**
+   * The emails a failed page asks for (RPC from the queue consumer, src/notify-email.ts): see `Mailer.plan`. A shard
+   * that serves no workspace yet plans nothing.
+   */
+  planEmail(event: BrigadeEvent): EmailPlan {
+    if (this.shard.workspace() !== event.workspaceId) return { send: false, reason: "not_found" };
+    return this.mailer.plan(event, Date.now());
+  }
+
+  /** What one email's sends did (RPC from the queue consumer): see `Mailer.record`. */
+  recordEmail(
+    event: BrigadeEvent,
+    key: string,
+    about: EmailAbout,
+    outcomes: EmailOutcome[],
+    final: boolean,
+  ): void {
+    if (this.shard.workspace() !== event.workspaceId) return;
+    this.mailer.record(event, key, about, outcomes, final, Date.now());
   }
 
   /** A page the Queue gave up on (RPC from the dead-letter consumer): see `Pager.deadLettered`. */

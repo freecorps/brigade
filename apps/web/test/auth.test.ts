@@ -12,6 +12,7 @@ import {
   openWorkspace,
   PASSWORD_MAX,
   PASSWORD_MIN,
+  saveLocale,
 } from "../src/lib/auth";
 import { pageTitle } from "../src/lib/page-title";
 
@@ -217,5 +218,45 @@ describe("opening a new workspace when set-active fails", () => {
       });
       expect(reloaded).toBe(true);
     }
+  });
+});
+
+describe("the language emails are written in", () => {
+  test("a language switch stores it on the user; a failure is only reported", async () => {
+    const requests: { path: string; body: unknown }[] = [];
+    const client = makeAuthClient(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(String(input), init);
+      requests.push({ path: new URL(request.url).pathname, body: await request.json() });
+      return Response.json({ status: true });
+    });
+    expect(await saveLocale("pt-BR", client)).toBe(true);
+    expect(requests).toEqual([{ path: "/api/auth/update-user", body: { locale: "pt-BR" } }]);
+    const down = makeAuthClient((async () => {
+      throw new TypeError("Failed to fetch");
+    }) as typeof fetch);
+    expect(await saveLocale("en", down)).toBe(false);
+    const refused = makeAuthClient(async () => Response.json({ code: "x" }, { status: 401 }));
+    expect(await saveLocale("en", refused)).toBe(false);
+  });
+
+  test("quick switches are stored in the order picked: the last pick wins, one overtaken is skipped", async () => {
+    const stored: unknown[] = [];
+    let release!: () => void;
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    const client = makeAuthClient(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(String(input), init);
+      const { locale } = (await request.json()) as { locale: string };
+      if (stored.length === 0) await slow;
+      stored.push(locale);
+      return Response.json({ status: true });
+    });
+    const first = saveLocale("pt-BR", client);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = saveLocale("en", client);
+    const third = saveLocale("pt-BR", client);
+    release();
+    await Promise.all([first, second, third]);
+    // The first was already sent; "en" was overtaken by the third pick before its turn.
+    expect(stored).toEqual(["pt-BR", "pt-BR"]);
   });
 });

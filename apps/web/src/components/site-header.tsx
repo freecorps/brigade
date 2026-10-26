@@ -22,7 +22,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { authClient } from "@/lib/auth";
+import { authClient, saveLocale } from "@/lib/auth";
 import { isThemePreference, themePreferences, type ThemePreference } from "@/lib/theme";
 
 const LANGUAGE_NAMES: Record<Locale, () => string> = {
@@ -147,6 +147,7 @@ function BrigadeMark() {
 
 function LanguageMenu() {
   const { locale, setLocale } = usePreferences();
+  const signedIn = authClient.useSession().data != null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -165,7 +166,10 @@ function LanguageMenu() {
           <DropdownMenuRadioGroup
             value={locale}
             onValueChange={(value) => {
-              if (isLocale(value)) setLocale(value);
+              if (!isLocale(value)) return;
+              setLocale(value);
+              // Emails follow the dashboard's language (RFC 0008); the switch never waits for it.
+              if (signedIn) void saveLocale(value);
             }}
           >
             {locales.map((option) => (

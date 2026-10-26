@@ -184,7 +184,8 @@ export function OnCall() {
                           label={m.oncall_action({ action: "remove" })}
                           accessibilityLabel={m.oncall_action_on({
                             action: "remove_override",
-                            name: schedule.name,
+                            // With its start, so two overrides on one schedule read apart.
+                            name: `${schedule.name}, ${handoffTime(row.start, schedule.timeZone, locale)}`,
                           })}
                           destructive
                           onPress={() => remove(row, schedule)}

@@ -1,4 +1,6 @@
+import { TOKEN } from "@freecorps/brigade-sync/protocol";
 import {
+  isId,
   isRole,
   parseHeartbeatToken,
   workspaceName,
@@ -16,7 +18,12 @@ import {
 import type { MemberChangeResult } from "./members.ts";
 import { consumeDeadLetters, consumeEvents } from "./notify.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
-import { ORGANIZATION_ID, WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
+import {
+  ORGANIZATION_ID,
+  WORKSPACE_HEADER,
+  WORKSPACE_ID,
+  type AckResult,
+} from "./workspace.ts";
 
 export { ProbeDO } from "./probe.ts";
 export { WatchdogDO } from "./watchdog.ts";
@@ -26,6 +33,9 @@ const WORKSPACE_PATH = /^\/workspaces\/([^/]+)$/;
 const MEMBER_PATH = /^\/workspaces\/([^/]+)\/members\/([^/]+)$/;
 /** A user id as Better Auth makes them here (`usr_<ULID>`), or older plain ids: no encoding, bounded. */
 const USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const ACK_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/ack$/;
+/** The header naming one ack attempt, so a retry of a request whose answer was lost runs it once. */
+export const IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
 const READ_METHODS = ["GET", "HEAD"];
@@ -74,6 +84,8 @@ export default {
     if (pathname === "/workspaces") return createWorkspace(request, auth);
     const member = MEMBER_PATH.exec(pathname);
     if (member) return changeMember(request, env, auth, member[1]!, member[2]!);
+    const ack = ACK_PATH.exec(pathname);
+    if (ack) return acknowledgeIncident(request, env, auth, ack[1]!, ack[2]!);
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
 
@@ -344,6 +356,73 @@ export async function changeMember(
   }[result.code];
   return json({ error: result.code }, status);
 }
+
+/**
+ * `POST /workspaces/:id/incidents/:incidentId/ack` with an `Idempotency-Key`: acknowledges the incident as the
+ * signed-in member, for the app's notification action (RFC 0004 "Clients": plain HTTPS, since iOS suspends sockets
+ * in the background). Authenticated like the sync upgrade (the session's cookie, then the member's role in D1) and
+ * refused from another site like every cookie-authenticated write; the shard runs `incident.ack` as that member,
+ * with its RBAC and its event through the outbox (`WorkspaceDO.acknowledge`). The same key again answers what the
+ * first request did, so a retry after a lost answer is not reported as someone else's ack. Answers:
+ * 200 acknowledged; 409 `conflict` already acknowledged (by anyone); 409 `invalid_transition` the incident is no
+ * longer active; 404 no such incident; 403 `forbidden` (a viewer) or `not_a_member`; 401 without a session.
+ */
+export async function acknowledgeIncident(
+  request: Request,
+  env: Env,
+  lazyAuth: () => Auth,
+  workspaceId: string,
+  incidentId: string,
+): Promise<Response> {
+  if (request.method !== "POST")
+    return json({ error: "method_not_allowed" }, 405, { Allow: "POST" });
+  if (!ORGANIZATION_ID.test(workspaceId)) return json({ error: "invalid_workspace_id" }, 400);
+  // The charset has no `%`, so nothing here is decoded.
+  if (!isId("inc", incidentId)) return json({ error: "not_found" }, 404);
+  const key = request.headers.get(IDEMPOTENCY_KEY_HEADER);
+  if (key === null || !TOKEN.test(key)) return json({ error: "invalid_args" }, 400);
+  const origin = request.headers.get("Origin");
+  if (origin !== null && origin !== new URL(request.url).origin) {
+    return json({ error: "forbidden_origin" }, 403);
+  }
+  const session = await lazyAuth().api.getSession({ headers: request.headers });
+  if (!session) return json({ error: "unauthenticated" }, 401);
+
+  // Checked here first, so a made-up workspace or an outsider never wakes (or creates) a shard.
+  let role: Role | undefined;
+  try {
+    role = await memberRole(env.DB, workspaceId, session.user.id);
+  } catch (error) {
+    console.error(JSON.stringify({ message: "member lookup failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
+  if (role === undefined) return json({ error: "not_a_member" }, 403);
+
+  let result: AckResult;
+  try {
+    result = await env.WORKSPACE.getByName(workspaceId).acknowledge(
+      workspaceId,
+      { kind: "user", id: session.user.id, role },
+      incidentId,
+      key,
+    );
+  } catch (error) {
+    return failed("WorkspaceDO.acknowledge failed", workspaceId, error);
+  }
+  if (result.ok) return json({ ok: true });
+  const status = ACK_STATUS[result.code];
+  return json({ error: status === undefined ? "internal" : result.code }, status ?? 500);
+}
+
+/** The answer for each refusal of an ack; anything else (`internal`, `unknown_mutation`) is a 500. */
+const ACK_STATUS: Partial<Record<Exclude<AckResult, { ok: true }>["code"], number>> = {
+  conflict: 409,
+  invalid_transition: 409,
+  not_found: 404,
+  forbidden: 403,
+  not_a_member: 403,
+  invalid_args: 400,
+};
 
 /**
  * `GET /sync/:workspaceId` with `Upgrade: websocket`: hands the socket to the workspace's shard (RFC 0004

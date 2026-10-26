@@ -3,6 +3,7 @@ import {
   fitMemberName,
   type Actor,
   type MemberChange,
+  type MutationErrorCode,
   type ProbeRegion,
 } from "@freecorps/brigade-schema";
 import {
@@ -54,6 +55,12 @@ export const WORKSPACE_ID = /^(?:ws_[0-9A-HJKMNP-TV-Z]{26}|[a-z0-9][a-z0-9_-]{0,
  * of them takes a short, guessable dev-shard name.
  */
 export const ORGANIZATION_ID = /^ws_[0-9A-HJKMNP-TV-Z]{26}$/;
+
+/** The client id acks from a notification action run under (`WorkspaceDO.acknowledge`). */
+export const NOTIFICATION_CLIENT_ID = "notification";
+
+/** What `WorkspaceDO.acknowledge` did. */
+export type AckResult = { ok: true } | { ok: false; code: MutationErrorCode | "not_a_member" };
 
 /** Set by the Worker on the upgrade it forwards; the shard records it on first use. */
 export const WORKSPACE_HEADER = "Brigade-Workspace";
@@ -274,6 +281,41 @@ export class WorkspaceDO extends DurableObject<Env> {
       return Promise.resolve({ ok: false, code: "not_found" });
     }
     return this.membership.change(workspaceId, actorId, targetId, change);
+  }
+
+  /**
+   * `incident.ack` from a notification action (RPC from `POST /workspaces/:id/incidents/:incidentId/ack`, which
+   * checked the session and read the member's role in D1; RFC 0004 "Clients"). The same named mutation, RBAC and
+   * outbox event as an ack over Brigade Sync; it runs as a client mutation (never `internal`), from client id
+   * `notification`, de-duplicated by the request's key like a socket's mutation, and its patch reaches every open
+   * socket. A member removed within the tombstone is refused as their sync upgrade would be (`not_a_member`); a
+   * shard that serves another workspace, or none yet, answers `not_found`.
+   */
+  async acknowledge(
+    workspaceId: string,
+    actor: Actor,
+    incidentId: string,
+    mutationId: string,
+  ): Promise<AckResult> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    const now = Date.now();
+    const stored = this.shard.storedResult(actor.id, NOTIFICATION_CLIENT_ID, mutationId, now);
+    const { result, changes } = stored
+      ? { result: stored, changes: [] }
+      : this.shard.mutate({
+          clientId: NOTIFICATION_CLIENT_ID,
+          mutationId,
+          actor,
+          name: "incident.ack",
+          args: { id: incidentId },
+          now,
+        });
+    if (!result.ok) return { ok: false, code: result.error.code };
+    if (!stored) this.broadcast(result.version, changes, undefined);
+    return { ok: true };
   }
 
   /**

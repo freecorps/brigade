@@ -47,6 +47,7 @@ import {
 import { STATUS_ICONS } from "@/components/incident-badges";
 import { SeverityMenu, StatusMenu } from "@/components/incident-item";
 import { ANNOUNCE_MS, useNow } from "@/components/incidents-card";
+import { EscalationProgress } from "@/components/escalation-progress";
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
@@ -310,33 +311,44 @@ function Incident({ row }: { row: IncidentRow }) {
           </CardContent>
         </Card>
 
-        <Card aria-labelledby="roles-title" className="max-md:order-first">
-          <CardTitle id="roles-title" className="px-4 sm:px-6">
-            {m.incident_page({ part: "roles" })}
-          </CardTitle>
-          <CardContent className="flex flex-col gap-4">
-            <ul className="flex flex-col gap-3">
-              {INCIDENT_ROLES.map((role) => (
-                <RoleRow
-                  key={role}
-                  role={role}
-                  holder={row.roles?.[role] ?? null}
-                  who={who}
-                  members={assignable(members.rows)}
-                  pending={busy.has(`role/${role}`)}
-                  editable={editable}
-                  onAssign={onAssign}
-                />
-              ))}
-            </ul>
-            {members.status === "ready" && assignable(members.rows).length <= 1 ? (
-              <p className="text-xs text-muted-foreground">
-                {m.incident_page({ part: "no_members" })}
-              </p>
-            ) : null}
-            {noticesFor(["role"])}
-          </CardContent>
-        </Card>
+        <div className="flex min-w-0 flex-col gap-6 max-md:order-first">
+          <Card aria-labelledby="roles-title">
+            <CardTitle id="roles-title" className="px-4 sm:px-6">
+              {m.incident_page({ part: "roles" })}
+            </CardTitle>
+            <CardContent className="flex flex-col gap-4">
+              <ul className="flex flex-col gap-3">
+                {INCIDENT_ROLES.map((role) => (
+                  <RoleRow
+                    key={role}
+                    role={role}
+                    holder={row.roles?.[role] ?? null}
+                    who={who}
+                    members={assignable(members.rows)}
+                    pending={busy.has(`role/${role}`)}
+                    editable={editable}
+                    onAssign={onAssign}
+                  />
+                ))}
+              </ul>
+              {members.status === "ready" && assignable(members.rows).length <= 1 ? (
+                <p className="text-xs text-muted-foreground">
+                  {m.incident_page({ part: "no_members" })}
+                </p>
+              ) : null}
+              {noticesFor(["role"])}
+            </CardContent>
+          </Card>
+          {row.escalation ? (
+            <EscalationProgress
+              run={row.escalation}
+              who={who}
+              locale={locale}
+              timeZone={TIME_ZONE}
+              now={now}
+            />
+          ) : null}
+        </div>
       </div>
     </Shell>
   );

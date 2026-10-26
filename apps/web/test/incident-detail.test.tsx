@@ -208,7 +208,8 @@ test("the timeline comes before the roles in the page, and roles show first on p
   const timeline = card("Timeline")!;
   const roles = card("Roles")!;
   expect(timeline.compareDocumentPosition(roles) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(roles.className).toContain("max-md:order-first");
+  // The side column (roles, then the escalation) moves first on phones.
+  expect(roles.parentElement!.className).toContain("max-md:order-first");
 });
 
 test("a viewer sees badges and names, not controls that do nothing", async () => {

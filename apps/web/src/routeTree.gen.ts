@@ -12,7 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as SignUpRouteImport } from './routes/sign-up'
+import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as IncidentsNumberRouteImport } from './routes/incidents.$number'
+import { Route as InvitationsIdRouteImport } from './routes/invitations.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -29,9 +31,19 @@ const SignUpRoute = SignUpRouteImport.update({
   path: '/sign-up',
   getParentRoute: () => rootRouteImport,
 } as any)
+const VerifyEmailRoute = VerifyEmailRouteImport.update({
+  id: '/verify-email',
+  path: '/verify-email',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IncidentsNumberRoute = IncidentsNumberRouteImport.update({
   id: '/incidents/$number',
   path: '/incidents/$number',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InvitationsIdRoute = InvitationsIdRouteImport.update({
+  id: '/invitations/$id',
+  path: '/invitations/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -39,34 +51,61 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
+  '/verify-email': typeof VerifyEmailRoute
   '/incidents/$number': typeof IncidentsNumberRoute
+  '/invitations/$id': typeof InvitationsIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
+  '/verify-email': typeof VerifyEmailRoute
   '/incidents/$number': typeof IncidentsNumberRoute
+  '/invitations/$id': typeof InvitationsIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
   '/sign-up': typeof SignUpRoute
+  '/verify-email': typeof VerifyEmailRoute
   '/incidents/$number': typeof IncidentsNumberRoute
+  '/invitations/$id': typeof InvitationsIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/sign-in' | '/sign-up' | '/incidents/$number'
+  fullPaths:
+    | '/'
+    | '/sign-in'
+    | '/sign-up'
+    | '/verify-email'
+    | '/incidents/$number'
+    | '/invitations/$id'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/sign-in' | '/sign-up' | '/incidents/$number'
-  id: '__root__' | '/' | '/sign-in' | '/sign-up' | '/incidents/$number'
+  to:
+    | '/'
+    | '/sign-in'
+    | '/sign-up'
+    | '/verify-email'
+    | '/incidents/$number'
+    | '/invitations/$id'
+  id:
+    | '__root__'
+    | '/'
+    | '/sign-in'
+    | '/sign-up'
+    | '/verify-email'
+    | '/incidents/$number'
+    | '/invitations/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SignInRoute: typeof SignInRoute
   SignUpRoute: typeof SignUpRoute
+  VerifyEmailRoute: typeof VerifyEmailRoute
   IncidentsNumberRoute: typeof IncidentsNumberRoute
+  InvitationsIdRoute: typeof InvitationsIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -92,11 +131,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignUpRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/verify-email': {
+      id: '/verify-email'
+      path: '/verify-email'
+      fullPath: '/verify-email'
+      preLoaderRoute: typeof VerifyEmailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/incidents/$number': {
       id: '/incidents/$number'
       path: '/incidents/$number'
       fullPath: '/incidents/$number'
       preLoaderRoute: typeof IncidentsNumberRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/invitations/$id': {
+      id: '/invitations/$id'
+      path: '/invitations/$id'
+      fullPath: '/invitations/$id'
+      preLoaderRoute: typeof InvitationsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -106,7 +159,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SignInRoute: SignInRoute,
   SignUpRoute: SignUpRoute,
+  VerifyEmailRoute: VerifyEmailRoute,
   IncidentsNumberRoute: IncidentsNumberRoute,
+  InvitationsIdRoute: InvitationsIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

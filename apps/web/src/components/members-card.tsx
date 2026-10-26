@@ -1,8 +1,9 @@
 import { m } from "@freecorps/brigade-i18n";
 import type { MemberChange, Role } from "@freecorps/brigade-schema";
 import { cn } from "cn";
-import { LogOutIcon, RotateCwIcon, UserMinusIcon } from "lucide-react";
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { LogOutIcon, RotateCwIcon, UserMinusIcon, UserPlusIcon } from "lucide-react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { InvitationsPanel } from "@/components/invitations-panel";
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
@@ -28,11 +29,31 @@ import {
  * goes through the API (`/workspaces/:id/members/:userId`), which updates D1, the shard and paging together.
  */
 export function MembersCard() {
-  const { workspaceId } = useMember();
+  const { workspaceId, role } = useMember();
   const organization = authClient.useActiveOrganization();
+  const session = authClient.useSession();
+  const [inviting, setInviting] = useState(false);
   const members = listedMembers(organization.data?.members);
+  const manage = role === "owner" || role === "admin";
   return (
     <MembersList
+      invite={
+        manage
+          ? {
+              open: () => setInviting(true),
+              opened: inviting,
+              panel: (
+                <InvitationsPanel
+                  workspaceId={workspaceId}
+                  role={role}
+                  verified={session.data?.user.emailVerified === true}
+                  open={inviting}
+                  setOpen={setInviting}
+                />
+              ),
+            }
+          : undefined
+      }
       members={members}
       loading={organization.isPending && !organization.data}
       reload={organization.error && !organization.data ? () => organization.refetch() : undefined}
@@ -77,7 +98,13 @@ export function MembersList({
   change,
   refresh,
   left,
+  invite,
 }: {
+  /**
+   * Owners and admins: the Invite button (`open`, hidden while `opened`) and the invitations panel (the form and the
+   * pending invitations), shown under the card's heading.
+   */
+  invite?: { open: () => void; opened: boolean; panel: ReactNode };
   members: ListedMember[];
   loading: boolean;
   /** Set when the list failed to load (nothing to show): says so, with Try again, instead of an empty workspace. */
@@ -185,9 +212,17 @@ export function MembersList({
       className={cn(sorted.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
     >
       <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <CardTitle id="members-title" ref={titleRef} tabIndex={-1} className="outline-none">
-          {m.members_part({ part: "title", name: "" })}
-        </CardTitle>
+        <div className="flex items-start justify-between gap-4">
+          <CardTitle id="members-title" ref={titleRef} tabIndex={-1} className="outline-none">
+            {m.members_part({ part: "title", name: "" })}
+          </CardTitle>
+          {invite && !invite.opened ? (
+            <Button variant="outline" onClick={invite.open} className="-my-1.5 shrink-0">
+              <UserPlusIcon aria-hidden />
+              {m.invite_part({ part: "open", email: "", date: "", name: "" })}
+            </Button>
+          ) : null}
+        </div>
         <CardDescription className="flex flex-wrap gap-x-2">
           {reload && members.length === 0 ? null : loading ? (
             <span aria-hidden className="my-0.5 block h-4 w-24 rounded-sm bg-muted" />
@@ -200,6 +235,7 @@ export function MembersList({
         </p>
       </div>
       <CardContent className="flex flex-col gap-4">
+        {invite?.panel}
         {sorted.length > 0 ? (
           <div className="-mx-4 border-t sm:-mx-6">
             <ul aria-labelledby="members-title" className="divide-y">
@@ -264,9 +300,17 @@ export function MembersList({
             </Button>
           </div>
         ) : !loading && members.length <= 1 ? (
-          <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-            {m.members_part({ part: "empty", name: "" })}
-          </p>
+          <div className="flex flex-col items-start gap-3 rounded-md bg-muted p-4">
+            <p className="text-sm text-muted-foreground">
+              {m.members_part({ part: invite ? "empty_invite" : "empty", name: "" })}
+            </p>
+            {invite && !invite.opened ? (
+              <Button variant="outline" onClick={invite.open}>
+                <UserPlusIcon aria-hidden />
+                {m.invite_part({ part: "open", email: "", date: "", name: "" })}
+              </Button>
+            ) : null}
+          </div>
         ) : null}
       </CardContent>
     </Card>

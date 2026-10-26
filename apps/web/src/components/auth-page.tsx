@@ -12,15 +12,17 @@ export function AuthPage({
   footer,
 }: {
   title: string;
-  description: string;
-  children: ReactNode;
+  description?: string;
+  children?: ReactNode;
   footer?: ReactNode;
 }) {
   return (
     <div className="mx-auto flex w-full max-w-sm flex-col gap-6 px-4 py-8 sm:py-16">
       <div className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-semibold text-balance">{title}</h1>
-        <p className="text-sm text-pretty text-muted-foreground">{description}</p>
+        {description ? (
+          <p className="text-sm text-pretty text-muted-foreground">{description}</p>
+        ) : null}
       </div>
       {children}
       {footer ? <p className="text-sm text-muted-foreground">{footer}</p> : null}

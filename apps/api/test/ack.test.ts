@@ -6,10 +6,9 @@ import { runInDurableObject } from "cloudflare:test";
 import { newId, type Actor } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, describe, expect, test } from "vite-plus/test";
-import { IDEMPOTENCY_KEY_HEADER } from "../src/index.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
-import type { WorkspaceDO } from "../src/workspace.ts";
+import { IDEMPOTENCY_KEY_HEADER, type WorkspaceDO } from "../src/workspace.ts";
 
 const ORIGIN = "http://api.test";
 const PASSWORD = "correct horse battery staple";

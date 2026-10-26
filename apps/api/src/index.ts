@@ -29,8 +29,6 @@ const MEMBER_PATH = /^\/workspaces\/([^/]+)\/members\/([^/]+)$/;
 /** A user id as Better Auth makes them here (`usr_<ULID>`), or older plain ids: no encoding, bounded. */
 const USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const ACK_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/ack$/;
-/** The header naming one ack attempt, so a retry of a request whose answer was lost runs it once. */
-export const IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
 const READ_METHODS = ["GET", "HEAD"];

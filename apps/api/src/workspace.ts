@@ -56,6 +56,12 @@ export const WORKSPACE_ID = /^(?:ws_[0-9A-HJKMNP-TV-Z]{26}|[a-z0-9][a-z0-9_-]{0,
  */
 export const ORGANIZATION_ID = /^ws_[0-9A-HJKMNP-TV-Z]{26}$/;
 
+/**
+ * The header naming one ack from a notification, so a retry of a request whose answer was lost runs it once. Not in
+ * src/index.ts: every export of the Worker's entry must be a handler.
+ */
+export const IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
+
 /** The client id acks from a notification action run under (`WorkspaceDO.acknowledge`). */
 export const NOTIFICATION_CLIENT_ID = "notification";
 

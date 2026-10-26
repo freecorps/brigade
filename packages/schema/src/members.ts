@@ -85,7 +85,7 @@ const memberId = v.string({ min: 1, max: 64 });
 /**
  * Server only: a member's role changed in D1 (`from` → `to`, as D1 had them). Updates the shard's copy if it has
  * one (a member who never opened Brigade has none, and gets the new role from `member.sync` when they do) and
- * emits `member.role_changed`. A copy already at `to` is a `conflict`: the shard has the change.
+ * emits `member.role_changed`. Run once per change D1 made: the caller decides whether the shard still lags.
  */
 export const changeMemberRole = defineMutation({
   name: "member.changeRole",
@@ -93,9 +93,8 @@ export const changeMemberRole = defineMutation({
   permission: "members:manage",
   apply(store, args, ctx) {
     if (args.from === args.to) return fail("conflict", "Role is unchanged");
-    const current = store.get("members", args.id);
-    if (current?.role === args.to) return fail("conflict", "Member already has this role");
-    if (current) store.update("members", args.id, { role: args.to, updatedAt: ctx.now });
+    if (store.get("members", args.id))
+      store.update("members", args.id, { role: args.to, updatedAt: ctx.now });
     const event: MemberRoleChanged = {
       type: "member.role_changed",
       subject: args.id,
@@ -109,8 +108,8 @@ export const changeMemberRole = defineMutation({
  * Server only: a member left or was removed in D1 (`role`: theirs before). Deletes their copy and every device of
  * theirs in the same transaction, so no page plan made after it counts them (RFC 0006 "Who is paged"), and emits
  * `member.removed` (and `device.unregistered` per device). `left` is the actor themselves (any role); `removed`
- * needs `members:manage`. A shard with neither their copy nor a device of theirs already has the change
- * (`conflict`).
+ * needs `members:manage`. Emits even when the shard had neither (a member who never opened Brigade): the
+ * caller runs it once per removal D1 made.
  */
 export const removeMember = defineMutation({
   name: "member.remove",
@@ -127,10 +126,8 @@ export const removeMember = defineMutation({
     ) {
       return fail("forbidden", "Not allowed to remove this member");
     }
-    const current = store.get("members", args.id);
+    if (store.get("members", args.id)) store.delete("members", args.id);
     const devices = dropDevices(store, args.id);
-    if (!current && devices.length === 0) return fail("conflict", "Member is not in this shard");
-    if (current) store.delete("members", args.id);
     const event: MemberRemoved = {
       type: "member.removed",
       subject: args.id,

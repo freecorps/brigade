@@ -138,7 +138,7 @@ describe("member.changeRole, member.remove, member.reconcile", () => {
     }
   });
 
-  test("a role change updates the copy and emits member.role_changed; again is a conflict", () => {
+  test("a role change updates the copy and emits member.role_changed; only by owners and admins", () => {
     const store = shard();
     const args = { id: "usr_caio", from: "responder", to: "viewer" };
     expect(
@@ -155,7 +155,13 @@ describe("member.changeRole, member.remove, member.reconcile", () => {
     });
     expect(store.get("members", "usr_caio")).toMatchObject({ role: "viewer", updatedAt: T });
     expect(
-      runMutation(serverMutations, "member.changeRole", args, store, ctx("usr_bia", "admin")),
+      runMutation(
+        serverMutations,
+        "member.changeRole",
+        { ...args, to: "responder" },
+        store,
+        ctx("usr_bia", "admin"),
+      ),
     ).toMatchObject({ ok: false, error: { code: "conflict" } });
     expect(
       runMutation(
@@ -212,15 +218,25 @@ describe("member.changeRole, member.remove, member.reconcile", () => {
     });
     expect(store.get("members", "usr_caio")).toBeUndefined();
     expect(store.scan("devices").map((device) => device.id)).toEqual(["dev_3"]);
+    // A member who never opened Brigade has nothing in the shard, and their removal is still announced.
     expect(
       runMutation(
         serverMutations,
         "member.remove",
-        { id: "usr_caio", role: "responder", reason: "removed" },
+        { id: "usr_eva", role: "viewer", reason: "left" },
         store,
-        ctx("usr_bia", "admin"),
+        ctx("usr_eva", "viewer"),
       ),
-    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    ).toEqual({
+      ok: true,
+      events: [
+        {
+          type: "member.removed",
+          subject: "usr_eva",
+          data: { userId: "usr_eva", role: "viewer", reason: "left" },
+        },
+      ],
+    });
   });
 
   test("a member removed before they had a copy loses their devices too", () => {

@@ -116,8 +116,9 @@ const rank = (severity: Severity) => ["sev1", "sev2", "sev3", "sev4"].indexOf(se
  * device order; `noDevices` the members it is for who have none (a commander without a device included), so a page
  * that missed them says so.
  *
- * Members are the shard's member list (`member.sync`): a member removed or demoted in D1 is still paged until the
- * shard's list says otherwise (RFC 0006 "Who is paged").
+ * Members are the shard's member list (`member.sync`), never D1, so a D1 outage cannot delay a page. Member changes
+ * made through Brigade update it with D1 (`member.changeRole`, `member.remove`: row and devices); one made outside
+ * Brigade reaches it on the next sync upgrade into the workspace (`member.reconcile`, RFC 0006 "Who is paged").
  */
 export function pageTargets(
   store: Store<BrigadeTables>,

@@ -1,5 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
-import { fitMemberName, type Actor, type ProbeRegion } from "@freecorps/brigade-schema";
+import {
+  fitMemberName,
+  type Actor,
+  type MemberChange,
+  type ProbeRegion,
+} from "@freecorps/brigade-schema";
 import {
   encode,
   parseClientMessage,
@@ -9,6 +14,7 @@ import {
   type SubscriptionChanges,
 } from "@freecorps/brigade-sync/protocol";
 import { readActor, readMemberName } from "./actor.ts";
+import { Membership, type MemberChangeResult, type SocketVerdict } from "./members.ts";
 import { isProbeRegion, MONITOR_TICK_MS, Monitoring } from "./monitors.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
 import {
@@ -49,6 +55,8 @@ export const MAX_ATTACHMENT_BYTES = 8 * 1024;
 
 /** WebSocket close codes the shard uses. */
 export const CLOSE_PROTOCOL_ERROR = 1002;
+/** A member removed from the workspace: their client reconnects and the upgrade refuses them (403). */
+export const CLOSE_POLICY_VIOLATION = 1008;
 export const CLOSE_INTERNAL_ERROR = 1011;
 export const CLOSE_SERVICE_RESTART = 1012;
 
@@ -88,6 +96,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly drain: OutboxDrain;
   private readonly drainPaused: boolean;
   private readonly pager: Pager;
+  private readonly membership: Membership;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -122,6 +131,14 @@ export class WorkspaceDO extends DurableObject<Env> {
       randomBytes,
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
+    });
+    this.membership = new Membership({
+      db: env.DB,
+      shard: this.shard,
+      randomBytes,
+      log: (message, fields) => this.log(message, fields),
+      committed: (version, changes) => this.broadcast(version, changes, undefined),
+      closeSockets: (judge) => this.closeSockets(judge),
     });
     // Events left in the outbox (an alarm that failed to arm, a restart) arm the drain again whenever the object
     // wakes, so a backlog never waits for an unrelated change.
@@ -193,6 +210,33 @@ export class WorkspaceDO extends DurableObject<Env> {
     // Already provisioned (a retry): fine.
     if (result.error.code === "conflict") return { ok: true };
     return { ok: false, code: result.error.code };
+  }
+
+  /**
+   * A member change from `PATCH`/`DELETE /workspaces/:id/members/:userId` (RPC from the API Worker, which checked
+   * the session): `actorId` changes `targetId`'s role, removes them, or leaves (`targetId` is themselves). D1 first,
+   * then this shard's copy and the outbox, then the target's sockets close (src/members.ts). A shard that serves
+   * another workspace, or none yet, answers `not_found`.
+   */
+  changeMember(
+    workspaceId: string,
+    actorId: string,
+    targetId: string,
+    change: MemberChange,
+  ): Promise<MemberChangeResult> {
+    if (this.shard.workspace() !== workspaceId) {
+      return Promise.resolve({ ok: false, code: "not_found" });
+    }
+    return this.membership.change(workspaceId, actorId, targetId, change);
+  }
+
+  /**
+   * Makes this shard's member list agree with D1 and closes sockets D1 no longer backs (src/members.ts). Every sync
+   * upgrade starts one; exposed so a repair can be asked for directly.
+   */
+  reconcileMembers(): Promise<void> {
+    const workspace = this.shard.workspace();
+    return workspace === undefined ? Promise.resolve() : this.membership.reconcile(workspace);
   }
 
   /**
@@ -331,6 +375,11 @@ export class WorkspaceDO extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server);
     const state: SocketState = { workspace, actor, clientId: null, subs: [] };
     server.serializeAttachment(state);
+    // The Worker read the member's role before this request arrived, and a member change may have landed in
+    // between (or D1 was edited outside Brigade): check D1 again without holding up the socket. A socket D1 no
+    // longer backs is closed, and the member list's copy follows D1 (src/members.ts).
+    // Only a signed-in member's upgrade (the dev actor has no name and no D1 row).
+    if (name !== undefined) void this.membership.reconcile(workspace);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -359,6 +408,23 @@ export class WorkspaceDO extends DurableObject<Env> {
       else this.log("member sync refused", { code: result.error.code });
     } catch (error) {
       this.log("member sync failed", { error });
+    }
+  }
+
+  /** Closes every socket whose actor `judge` gives a verdict for: removed members' with 1008, others' with 1012. */
+  private closeSockets(judge: (actor: Actor) => SocketVerdict | undefined): void {
+    for (const ws of this.ctx.getWebSockets()) {
+      let verdict: SocketVerdict | undefined;
+      try {
+        const state = ws.deserializeAttachment() as SocketState | null;
+        if (!state || state.closed) continue;
+        verdict = judge(state.actor);
+      } catch (error) {
+        this.log("reading a socket's actor failed", { error });
+        verdict = "removed";
+      }
+      if (verdict === "removed") close(ws, CLOSE_POLICY_VIOLATION, "not a member");
+      else if (verdict === "role_changed") close(ws, CLOSE_SERVICE_RESTART, "role changed");
     }
   }
 

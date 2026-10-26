@@ -32,10 +32,15 @@
   // Inherited by the environments. Locally it never fires on its own: under `vp run dev` (the Vite plugin) run it with
   // POST /cdn-cgi/local/explorer/api/local/scheduled?worker=brigade-api (apps/api/README.md "Dead-man switch").
   "triggers": { "crons": ["* * * * *"] },
-  // Better Auth's tables (src/auth.ts); migrations/ holds their schema. No `database_id` for production and
-  // staging yet: those databases do not exist, and the first deploy (owner approval) creates and pins them.
+  // Better Auth's tables (src/auth.ts); migrations/ holds their schema. Production and staging databases exist with the
+  // migrations applied (apps/api/README.md "D1").
   "d1_databases": [
-    { "binding": "DB", "database_name": "brigade-db", "migrations_dir": "migrations" },
+    {
+      "binding": "DB",
+      "database_name": "brigade-db",
+      "database_id": "5c4a8554-647b-45c7-9a3e-d1ba3b23ed79",
+      "migrations_dir": "migrations",
+    },
   ],
   // The outbox drain's Queue and its consumer (RFC 0005; src/outbox.ts, src/notify.ts). Pages are urgent, so a
   // batch waits at most 1 s. The consumer gives up on a page after 5 attempts (`MAX_PAGE_ATTEMPTS`) and records it
@@ -105,7 +110,12 @@
         ],
       },
       "d1_databases": [
-        { "binding": "DB", "database_name": "brigade-db-staging", "migrations_dir": "migrations" },
+        {
+          "binding": "DB",
+          "database_name": "brigade-db-staging",
+          "database_id": "395f4384-29e7-4b20-8521-d0d0f3300beb",
+          "migrations_dir": "migrations",
+        },
       ],
       "queues": {
         "producers": [{ "binding": "EVENTS", "queue": "brigade-events-staging" }],

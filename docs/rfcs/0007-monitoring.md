@@ -77,14 +77,14 @@ verdict or failure reason changes.
   monitor is `unknown`, shown as "No data", never as up; a new monitor stays `pending` until the window passes. The
   shard's alarm re-evaluates every minute and runs `monitor.evaluate` when results went stale. A heartbeat's result
   never goes stale: the shard reports the missed ping itself.
-- **"No data" does not page** (open question Q17): it opens no incident, since the failure is Brigade's probes, but
+- **"No data" does not page** (decided, Q17): it opens no incident, since the failure is Brigade's probes, but
   it never resolves a firing alert either (no data is no recovery), the dashboard shows it, and
   `monitor.status_changed` goes to the outbox for notifiers. A down monitor whose probes die stays down-alerted.
   The other side of it: a monitor that goes down _after_ most of its probes died shows `unknown` and does not
   page, even when every surviving region sees it down (an up monitor in three regions whose `enam` and `weur`
   probes went silent, then `wnam` reports down: one fresh result is below the floor of two, so "No data", no
   alert, no incident). An outage that only the surviving probes see is therefore missed until enough regions report
-  again; whether to page on it, or to page Brigade's operators on `unknown`, is Q17.
+  again. That trade is accepted (Q17); watching Brigade's own probes belongs to the dead-man switch (Q19).
 - **Restarts:** creating a monitor, changing its target and resuming it set `restartedAt`; results from before it are
   refused. A status change does not move it, so a report computed before another region flipped the status and
   delivered after it still counts (no false recovery, no second incident). Until `AlertGroupDO` and alert routes
@@ -144,7 +144,7 @@ verdict or failure reason changes.
 
 - Internal self-check: a DO alarm verifies every `ProbeDO` reported recently and alerts on stalled probes.
   Built so far: the workspace shard's alarm logs a stalled region and pushes its config again, and a monitor whose
-  regions all go quiet turns "No data"; it does not page yet (Q17).
+  regions all go quiet turns "No data"; it does not page (Q17).
 
 ## Notes
 

@@ -81,7 +81,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     UI, closing open sockets on sign-out or role change (RFC 0004 "Session revocation"), mobile sign-in (PKCE via
     the system browser, QR pairing, bearer tokens on the upgrade), password reset (needs the email notifier),
     putting `/workspaces/:id` (the stack check) behind auth before `workers_dev` is turned on, and the production
-    and staging D1 databases and secrets (owner approval). Also: email verification (needs the email notifier), then
+    and staging secrets (owner approval). Also: email verification (needs the email notifier), then
     a uniform sign-up response (the same answer whether or not the email is taken, so sign-up cannot enumerate
     accounts; until then only rate limiting slows it); invitations, which need verified emails and Brigade's
     prefixed ids on the invitation rows they create, and which re-open the organization routes refused now, each
@@ -116,6 +116,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Left for later items: publishing an update to a status page (Phase 3), role definitions (Phase 3), editing an
     update, member names from invitations (members appear once they open Brigade), and the mobile incident detail.
 - [ ] Brigade Sync in production for web + mobile
+  - Done so far: D1 `brigade-db` and `brigade-db-staging` exist with the migrations applied. Left: production and
+    staging queues, the first deploy, and the relay's production secrets.
 - [ ] Web dashboard: incident list/detail, monitors
   - Done so far: the incident list, the incident page (`/incidents/<number>`) and the Monitors card.
 - [ ] Mobile: login, incident list/detail, push via relay, ack from notification

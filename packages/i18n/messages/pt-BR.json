@@ -1403,11 +1403,10 @@
   ],
   "email_verify": [
     {
-      "declarations": ["input part", "input name", "input email"],
+      "declarations": ["input part", "input email"],
       "selectors": ["part"],
       "match": {
         "part=subject": "Confirme seu email no Brigade",
-        "part=greeting": "Olá, {name},",
         "part=intro": "Confirme que {email} é o seu endereço. Até lá, o Brigade não envia emails sobre incidentes, e você não pode convidar pessoas nem aceitar convites.",
         "part=open": "Confirmar meu email",
         "part=expires": "O link vale por 24 horas.",

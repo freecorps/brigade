@@ -43,9 +43,7 @@ without a policy keeps the interim rule (commander, then every owner, admin and 
   whether a member may opt out of their own emails (deferred to notification preferences); whether the owners'
   email should also go to admins, or skip an owner who declared the incident; and whether the external dead-man
   switch should hear of it too. Email verification gates these emails now: only verified addresses get them (RFC
-  0005 "Email", "Abuse"), and the ledger still caps them (5 per user per hour, 200 per workspace per day). Invitations
-  are the one email to an unproven address, bounded by a verified inviter, 30 invitation emails per workspace per
-  day, one send per 5 minutes and 50 pending (RFC 0003 "Invitations"). Are those caps right in production?
+  0005 "Email", "Abuse"); the caps on them and on account emails are Q21's.
 - Should a level whose pushes all fail escalate before its timeout? Delivery receipts now say per device whether
   APNs refused a push and whether the phone opened it (RFC 0006 "Delivery receipts"), but a missing receipt is not
   proof a page was not shown (receipts are best effort), so only refusals could trigger it. An exhausted run
@@ -101,6 +99,23 @@ The first schedules slice made choices that are easy to change now and harder on
   per-member cap too (say 20), or is the admin's remove enough?
 
 ---
+
+## Q21 — Caps on email to people (RFC 0005 "Abuse", RFC 0003 "Invitations", RFC 0002 "Auth")
+
+Every email Brigade sends reaches an inbox someone else chose, so each kind is capped; the numbers are first guesses
+to confirm in production:
+
+- **Notifier emails** (a missed page, nobody paged): only to verified members, at most 5 per user per workspace an
+  hour and 200 per workspace a day, read when the plan is made (deliveries at once can overshoot by a batch).
+- **Invitations**, the one email to an unproven address: a verified inviter; per workspace 30 a day, 50 pending,
+  one send per invitation per 5 minutes; across workspaces, counted atomically in D1, 3 a day per invited address,
+  50 a day per inviter and 5 per invitation ever. Is 3 a day per address too few for someone invited to several
+  teams at once (a consultant, an onboarding day)? Should an address be able to opt out of invitations altogether?
+- **Verification**: one at sign-up, then at most 3 per user in 15 minutes and 5 a day. A squatted unverified
+  address is released by the next sign-up after 24 hours, unless the squatter shares a workspace with someone; is
+  24 hours right, and should a released account's empty workspace be cleaned up once deleting workspaces exists?
+- None of these counts the sender's own quota (Cloudflare Email Sending's limits answer `E_RATE_LIMIT_EXCEEDED`,
+  retried); a Brigade-wide daily ceiling may be needed before open sign-up on a shared instance.
 
 # Decided
 

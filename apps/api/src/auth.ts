@@ -20,7 +20,7 @@ import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { organization } from "better-auth/plugins";
 import { dashboardLink, renderVerificationEmail } from "./email-templates.ts";
-import type { EmailSender } from "./email.ts";
+import { linkFallback, type EmailSender } from "./email.ts";
 import { createAccessControl } from "better-auth/plugins/access";
 import { adminAc, defaultStatements, ownerAc } from "better-auth/plugins/organization/access";
 
@@ -77,8 +77,8 @@ export function authId(model: string, now: number, random: RandomBytes): string 
 }
 
 export type AuthBindings = {
-  /** The D1 database (a `D1Database` binding), or any database Better Auth's Kysely adapter takes. */
-  database: BetterAuthOptions["database"];
+  /** The D1 database (the `DB` binding): Better Auth's tables, and the counters and clean-ups Brigade runs there. */
+  database: D1Database;
   secret: string;
   /** Runs promises after the response (`ctx.waitUntil`). */
   waitUntil?: (promise: Promise<unknown>) => void;
@@ -95,7 +95,8 @@ export type AuthBindings = {
   /**
    * The email sender (`emailSender(env)`), for verification emails; none when email is not set up, and then none is
    * sent (and asking again answers `EMAIL_NOT_CONFIGURED`). `dashboardUrl`: the dashboard's origin for the link;
-   * without it, the origin the request came through (the dashboard's `/api/auth`).
+   * without it only the dev log sender uses the origin the request came through (`linkFallback`), and a real one
+   * sends nothing.
    */
   email?: { sender: EmailSender | undefined; dashboardUrl?: string };
 };
@@ -128,9 +129,16 @@ export const VERIFICATION_TTL_S = 24 * 60 * 60;
 /**
  * Verification emails one signed-in user may ask for again (`/send-verification-email`) per window, on top of the
  * per-IP rule (`VERIFICATION_IP_LIMIT`): counted per user in D1's `rateLimit` table, so asking from many addresses
- * floods nobody's inbox. The one sent at sign-up does not count.
+ * floods nobody's inbox. The one sent at sign-up does not count. `VERIFICATION_DAILY_LIMIT` bounds a day of them, so
+ * an account squatting someone else's address cannot keep mailing it 3 times every 15 minutes.
  */
 export const VERIFICATION_RESEND_LIMIT = { window: 15 * 60, max: 3 };
+export const VERIFICATION_DAILY_LIMIT = { window: 24 * 60 * 60, max: 5 };
+/**
+ * How old an unverified account must be before a new sign-up with its address replaces it (`releaseSquatted`): long
+ * past its verification link (`VERIFICATION_TTL_S`), so its owner had every chance to confirm it.
+ */
+export const UNVERIFIED_RELEASE_S = 24 * 60 * 60;
 export const VERIFICATION_IP_LIMIT = { window: 60, max: 3 };
 /** The answer when a verification email is asked for and email is not set up. */
 export const EMAIL_NOT_CONFIGURED_CODE = "EMAIL_NOT_CONFIGURED";
@@ -172,34 +180,95 @@ const beforeHook = (bindings: AuthBindings) =>
       ) {
         return;
       }
-      const key = `verify:${session.user.id}`;
       const now = Date.now();
-      const { adapter } = ctx.context;
-      const row = await adapter.findOne<{ count: number; lastRequest: number }>({
-        model: "rateLimit",
-        where: [{ field: "key", value: key }],
-      });
-      const fresh = !row || now - row.lastRequest > VERIFICATION_RESEND_LIMIT.window * 1000;
-      if (!fresh && row.count >= VERIFICATION_RESEND_LIMIT.max) {
-        throw APIError.from("TOO_MANY_REQUESTS", {
-          code: "TOO_MANY_REQUESTS",
-          message: "Too many verification emails",
-        });
-      }
-      if (!row) {
-        await adapter.create({ model: "rateLimit", data: { key, count: 1, lastRequest: now } });
-      } else {
-        // The window starts at the first request in it, so `lastRequest` moves only when a new one starts.
-        await adapter.update({
-          model: "rateLimit",
-          where: [{ field: "key", value: key }],
-          update: fresh ? { count: 1, lastRequest: now } : { count: row.count + 1 },
-        });
+      for (const [key, limit] of [
+        [`verify:${session.user.id}`, VERIFICATION_RESEND_LIMIT],
+        [`verify-day:${session.user.id}`, VERIFICATION_DAILY_LIMIT],
+      ] as const) {
+        if ((await countRequest(bindings.database, key, limit.window, now)) > limit.max) {
+          throw APIError.from("TOO_MANY_REQUESTS", {
+            code: "TOO_MANY_REQUESTS",
+            message: "Too many verification emails",
+          });
+        }
       }
       return;
     }
+    if (ctx.path === "/sign-up/email") await releaseSquatted(ctx, bindings.database);
     return checkName(ctx);
   });
+
+/**
+ * Counts one more request under `key` in D1's `rateLimit` table and answers the count in the current window
+ * (`window` seconds from its first request). One statement, so requests at once each get their own count.
+ */
+async function countRequest(
+  db: D1Database,
+  key: string,
+  window: number,
+  now: number,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      `insert into "rateLimit" (id, key, count, "lastRequest") values (?1, ?2, 1, ?3)
+       on conflict (key) do update set
+         count = case when ?3 - "lastRequest" > ?4 then 1 else count + 1 end,
+         "lastRequest" = case when ?3 - "lastRequest" > ?4 then ?3 else "lastRequest" end
+       returning count`,
+    )
+    // The window starts at the first request in it, so `lastRequest` moves only when a new one starts.
+    .bind(authId("rateLimit", now, randomBytes), key, now, window * 1000)
+    .first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
+const randomBytes: RandomBytes = (length) => crypto.getRandomValues(new Uint8Array(length));
+
+/**
+ * A sign-up with the address of an account nobody verified, older than `UNVERIFIED_RELEASE_S`, replaces that account
+ * (RFC 0002 "Auth"): otherwise anyone could hold someone else's address forever by signing up with it first. The old
+ * user goes with its sessions, accounts and memberships; a workspace they were alone in is left without members (its
+ * D1 row and shard stay, unreachable, as deleting a workspace is not designed yet). An account in a workspace with
+ * anyone else is kept, and the sign-up is refused as for any taken address: removing it would take a member from
+ * people who may count on them. Never throws for the sign-up's sake: a failure leaves the old account in place.
+ */
+async function releaseSquatted(
+  ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0],
+  db: D1Database,
+): Promise<void> {
+  const email: unknown = Reflect.get(Object(ctx.body), "email");
+  if (typeof email !== "string") return;
+  try {
+    const user = await db
+      .prepare(`select id, "emailVerified", "createdAt" from "user" where email = ?`)
+      .bind(email.trim().toLowerCase())
+      .first<{ id: string; emailVerified: number; createdAt: string }>();
+    if (!user || user.emailVerified === 1) return;
+    if (Date.now() - Date.parse(user.createdAt) < UNVERIFIED_RELEASE_S * 1000) return;
+    const shared = await db
+      .prepare(
+        `select count(*) as n from member m
+         where m."userId" = ?1
+           and exists (select 1 from member o where o."organizationId" = m."organizationId" and o."userId" != ?1)`,
+      )
+      .bind(user.id)
+      .first<{ n: number }>();
+    if ((shared?.n ?? 1) > 0) return;
+    // Still unverified in the same batch: a link opened meanwhile keeps the account.
+    const unverified = `(select "emailVerified" from "user" where id = ?1) = 0`;
+    await db.batch([
+      db.prepare(`delete from session where "userId" = ?1 and ${unverified}`).bind(user.id),
+      db.prepare(`delete from account where "userId" = ?1 and ${unverified}`).bind(user.id),
+      db.prepare(`delete from member where "userId" = ?1 and ${unverified}`).bind(user.id),
+      db.prepare(`delete from "user" where id = ?1 and "emailVerified" = 0`).bind(user.id),
+    ]);
+    console.log(JSON.stringify({ message: "unverified account replaced by a new sign-up" }));
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "releasing an unverified account failed", error: String(error) }),
+    );
+  }
+}
 
 const checkName = async (ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) => {
   if (!(NAME_PATHS as readonly string[]).includes(ctx.path)) return;
@@ -237,7 +306,7 @@ export function safeNext(value: string | null | undefined): string | undefined {
 }
 
 export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
-  const random: RandomBytes = (length) => crypto.getRandomValues(new Uint8Array(length));
+  const random = randomBytes;
   return {
     appName: "Brigade",
     basePath: AUTH_BASE_PATH,
@@ -258,13 +327,19 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
           "/verify-email",
           { token, ...(next ? { next } : {}) },
           bindings.email?.dashboardUrl,
-          request ? new URL(request.url).origin : undefined,
+          linkFallback(sender, request ? new URL(request.url).origin : undefined),
         );
-        if (!link) return;
+        if (!link) {
+          console.error(
+            JSON.stringify({ message: "verification email not sent: DASHBOARD_URL is not set" }),
+          );
+          return;
+        }
         const locale = Reflect.get(user, "locale");
+        // Never the name: whoever signs up types it, and this goes to an address nobody proved yet.
         const result = await sender.send(
           renderVerificationEmail(
-            { email: user.email, ...(user.name ? { name: user.name } : {}) },
+            { email: user.email },
             link,
             resolveLocale(typeof locale === "string" ? locale : undefined),
           ),

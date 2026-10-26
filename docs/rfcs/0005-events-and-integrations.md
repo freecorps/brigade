@@ -226,9 +226,10 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   and sends it in the invitee's `locale` if they have an account, else the inviter's (`email_invite`, escaped like
   the others). One no longer pending (accepted, declined, revoked, run out) is not sent. A failed send is retried
   like the notifier's (30 s to 4 minutes, 5 attempts), then only logged: the dashboard lists the invitation, and
-  Resend sends it again. The link is the dashboard's `/invitations/:id`, from `DASHBOARD_URL`, else the origin the
-  invitation was made through. The invited address need not be verified (that email is how its owner learns of it);
-  the inviter's must be.
+  Resend sends it again. The link is the dashboard's `/invitations/:id`, from `DASHBOARD_URL`; only the dev log sender
+  falls back on the origin the invitation was made through, so a deployed Worker without `DASHBOARD_URL` sends no
+  invitation (or verification) email rather than a link built from whatever host a request named. The invited
+  address need not be verified (that email is how its owner learns of it); the inviter's must be.
 - **Abuse.** An address is verified now (RFC 0002 "Auth"): the notifier's emails go only to members whose
   `user.emailVerified` is set, read in the same D1 query, so signing up with someone else's address no longer gets
   their inbox Brigade's emails; an unverified member is skipped with nothing recorded. The incident's title (in the
@@ -238,10 +239,13 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   from a workspace in a day (`EMAIL_WORKSPACE_DAILY_CAP`), counted from the emails that went out. Over either, the
   email is dropped, logged, and noted on the timeline (`email_failed`, `capped`) with `notification.failed`; it is
   not retried. The caps are read when the plan is made, so deliveries running at once can overshoot by a batch.
-  Invitations are the one email to an address nobody proved, so they have their own bounds: only a verified
-  member may invite, at most 30 invitation emails per workspace per day, one send per invitation per 5 minutes and
-  50 pending per workspace (RFC 0003 "Invitations"); the verification email goes only to one's own address, at most
-  3 per user in 15 minutes. Whether these caps are right in production is Q18's.
+  Invitations are the one email to an address nobody proved, so they have their own bounds (RFC 0003
+  "Invitations"): only a verified member may invite; per workspace, 30 invitation emails a day, 50 pending and one
+  send per invitation per 5 minutes; and across every workspace, counted in D1, 3 a day to one address, 50 a day
+  from one inviter and 5 per invitation ever, so many workspaces cannot add up to flood one inbox. The verification
+  email goes only to one's own address and never carries the name typed at sign-up: at most 3 per user in 15
+  minutes and 5 a day. An account squatting someone else's address unverified is replaced by the next sign-up with
+  that address after 24 hours (RFC 0002 "Auth"). Whether these caps are right in production is Q21's.
 - **Push first.** Email only acts on failures push already recorded, so it can never delay or stop a page. The
   consumer handles a batch's messages in parallel and acks each on its own: a page in the same batch as an email
   goes to the relay without waiting for it (tested). Every wait on the email side is bounded (10 s a send, 5 s the

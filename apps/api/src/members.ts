@@ -175,10 +175,10 @@ export class Membership {
       /** Brings the shard's alarm forward to `at` (or earlier); the alarm calls `repairDue`. */
       wake(at: number): void;
       /**
-       * More repair the same alarm runs after the reconcile (owed invitation mutations, src/invitations.ts): true
-       * when nothing is left. Never throws.
+       * More repair the same alarm runs after the reconcile, under the member lock (owed invitation mutations,
+       * src/invitations.ts): resolves true when nothing is left. Never rejects.
        */
-      repairMore?(): boolean;
+      repairMore?(workspaceId: string | undefined): Promise<boolean>;
     },
   ) {
     options.sql.exec(REPAIR_SCHEMA);
@@ -620,8 +620,11 @@ export class Membership {
     if (at === null) return null;
     if (at > now) return at;
     const reconciled = workspaceId === undefined || (await this.reconcile(workspaceId));
-    // Run whether or not the reconcile worked: it needs no D1.
-    const rest = this.options.repairMore?.() ?? true;
+    // Run whether or not the reconcile worked: most of it needs no D1. Under the member lock, so a member change
+    // cannot land between what it reads from D1 and what it writes to the shard.
+    const rest = this.options.repairMore
+      ? await this.exclusive(() => this.options.repairMore!(workspaceId))
+      : true;
     if (reconciled && rest) {
       this.setRepairAt(null);
       return null;

@@ -7,7 +7,7 @@
 import { resolveLocale } from "@freecorps/brigade-i18n";
 import { isRole } from "@freecorps/brigade-schema";
 import { dashboardLink, renderInvitationEmail } from "./email-templates.ts";
-import type { EmailSender } from "./email.ts";
+import { linkFallback, type EmailSender } from "./email.ts";
 import { INVITATION_CLAIM_MS } from "./invitations.ts";
 import { emailRetryDelay, MAX_EMAIL_ATTEMPTS, RECIPIENTS_TIMEOUT_MS } from "./notify-email.ts";
 import type { BrigadeEvent } from "./outbox.ts";
@@ -15,7 +15,10 @@ import type { BrigadeEvent } from "./outbox.ts";
 export type InviteNotifyEnv = {
   WORKSPACE: Env["WORKSPACE"];
   DB?: D1Database;
-  /** The dashboard's origin for the link; without it, the origin the invitation was made through. */
+  /**
+   * The dashboard's origin for the link. Without it only the dev log sender uses the origin the invitation was made
+   * through (`linkFallback`); a real sender sends nothing.
+   */
   DASHBOARD_URL?: string;
 };
 
@@ -78,9 +81,14 @@ export async function notifyInvitation(
     await workspace.recordInvitationEmail(event, plan.key, true);
     return undefined;
   }
-  const link = dashboardLink(`/invitations/${invitationId}`, {}, env.DASHBOARD_URL, plan.origin);
+  const link = dashboardLink(
+    `/invitations/${invitationId}`,
+    {},
+    env.DASHBOARD_URL,
+    linkFallback(sender, plan.origin),
+  );
   if (!link) {
-    log("invitation email not sent: no dashboard origin", { event: event.id });
+    log("invitation email not sent: DASHBOARD_URL is not set", { event: event.id });
     await workspace.recordInvitationEmail(event, plan.key, true);
     return undefined;
   }
@@ -109,6 +117,10 @@ export async function notifyInvitation(
   return done ? undefined : emailRetryDelay(attempts);
 }
 
+/**
+ * The invitation, its workspace and its inviter, and the invitee's language if they have an account: both addresses
+ * are stored lower-cased (Better Auth's `user`, `invitationEmail`), so they compare as they are, on `user`'s index.
+ */
 async function read(
   db: D1Database | undefined,
   workspaceId: string,
@@ -119,7 +131,7 @@ async function read(
     .prepare(
       `select i.email, i.role, i.status, i."expiresAt" as expiresAt, o.name as workspace,
               u.name as inviter, u.locale as inviterLocale,
-              (select locale from "user" where lower(email) = lower(i.email)) as inviteeLocale
+              (select locale from "user" where email = i.email) as inviteeLocale
        from invitation i join organization o on o.id = i."organizationId"
        left join "user" u on u.id = i."inviterId"
        where i.id = ? and i."organizationId" = ?`,

@@ -13,13 +13,18 @@
 //
 // The shard also keeps the invitation emails' ledger (`invitation_sends`): one row per email asked for, which counts
 // toward `INVITATIONS_DAILY_CAP` and `INVITATION_RESEND_INTERVAL_MS` and makes a redelivered event send nobody twice.
+// The caps that span workspaces (per invited address, per inviter, per invitation) are counted in D1's
+// `invitation_send` instead, written in the same batch as the invitation, so no other shard can slip past them.
 
 import {
   checkInvite,
   fitMemberName,
+  INVITATION_MAX_SENDS,
   INVITATION_RESEND_INTERVAL_MS,
   INVITATION_TTL_MS,
   INVITATIONS_DAILY_CAP,
+  INVITATIONS_PER_ADDRESS_DAILY_CAP,
+  INVITATIONS_PER_INVITER_DAILY_CAP,
   isRole,
   MAX_PENDING_INVITATIONS,
   MAX_WORKSPACE_MEMBERS,
@@ -54,7 +59,9 @@ export type InvitationStatus = "pending" | "accepted" | "rejected" | "canceled" 
  * Why an invitation request was refused:
  * - `forbidden`: the rules (`checkInvite`), or the caller is not a member who manages invitations;
  * - `already_member`, `already_invited` (a pending one for that address), `limit_reached` (`MAX_PENDING_INVITATIONS`),
- *   `rate_limited` (`INVITATIONS_DAILY_CAP`), `too_soon` (`INVITATION_RESEND_INTERVAL_MS`);
+ *   `rate_limited` (`INVITATIONS_DAILY_CAP`), `address_limited` (`INVITATIONS_PER_ADDRESS_DAILY_CAP`),
+ *   `inviter_limited` (`INVITATIONS_PER_INVITER_DAILY_CAP`), `send_limit` (`INVITATION_MAX_SENDS`), `too_soon`
+ *   (`INVITATION_RESEND_INTERVAL_MS`);
  * - `not_found` (no such pending invitation in this workspace), `expired`, `wrong_email` (signed in with another
  *   address), `unverified` (that address is not verified yet), `workspace_full` (`MAX_WORKSPACE_MEMBERS`),
  *   `workspace_limit` (the invitee already belongs to `WORKSPACE_LIMIT` workspaces);
@@ -67,6 +74,9 @@ export type InvitationCode =
   | "already_invited"
   | "limit_reached"
   | "rate_limited"
+  | "address_limited"
+  | "inviter_limited"
+  | "send_limit"
   | "too_soon"
   | "not_found"
   | "expired"
@@ -195,14 +205,16 @@ export async function previewInvitation(
     : row.status === "pending" && expiresAt <= now
       ? "expired"
       : (row.status as InvitationStatus);
+  const forYou = row.email.toLowerCase() === email.toLowerCase();
+  // Someone else's invitation: whose it is and what it offers are none of their business.
   return {
     id: row.id,
     workspace: { id: row.workspaceId, name: row.workspaceName },
-    invitedBy: row.inviter,
-    role: isRole(row.role) ? row.role : null,
+    invitedBy: forYou ? row.inviter : null,
+    role: forYou && isRole(row.role) ? row.role : null,
     status,
     expiresAt,
-    forYou: row.email.toLowerCase() === email.toLowerCase(),
+    forYou,
   };
 }
 
@@ -309,7 +321,7 @@ export class Invitations {
       const id = authId("invitation", now, this.options.randomBytes);
       const expiresAt = now + INVITATION_TTL_MS;
       try {
-        await db.batch([
+        const [, reserved] = await db.batch([
           // One that ran out still holds the address's pending slot (`invitation_pending_email_idx`).
           db
             .prepare(
@@ -317,19 +329,23 @@ export class Invitations {
                where "organizationId" = ? and email = ? and status = 'pending' and "expiresAt" <= ?`,
             )
             .bind(workspaceId, email, iso(now)),
+          this.reserveSend(id, email, actorId, now, false),
+          // `changes()` is the reservation's: no invitation without its email counted.
           db
             .prepare(
               `insert into invitation (id, "organizationId", email, role, status, "expiresAt", "createdAt", "inviterId")
-               values (?, ?, ?, ?, 'pending', ?, ?, ?)`,
+               select ?, ?, ?, ?, 'pending', ?, ?, ? where changes() = 1`,
             )
             .bind(id, workspaceId, email, role, iso(expiresAt), iso(now), actorId),
         ]);
+        if (reserved!.meta.changes !== 1) return await this.capped(id, email, actorId, now);
       } catch (error) {
         // The unique index: another pending invitation for that address got in first (D1 edited meanwhile).
         if (String(error).includes("UNIQUE")) return { ok: false, code: "already_invited" };
         log("invitation: writing D1 failed", { error });
         return { ok: false, code: "unavailable" };
       }
+      await this.pruneSends(now);
       const invitation: ListedInvitation = {
         id,
         email,
@@ -381,14 +397,19 @@ export class Invitations {
       if (this.sentToday(now) >= INVITATIONS_DAILY_CAP) return { ok: false, code: "rate_limited" };
       const expiresAt = now + INVITATION_TTL_MS;
       try {
-        const result = await db
-          .prepare(
-            `update invitation set "expiresAt" = ?
-             where id = ? and "organizationId" = ? and status = 'pending'`,
-          )
-          .bind(iso(expiresAt), invitationId, workspaceId)
-          .run();
-        if (result.meta.changes !== 1) return { ok: false, code: "conflict" };
+        const [reserved, updated] = await db.batch([
+          this.reserveSend(invitationId, row.email, actorId, now, true),
+          db
+            .prepare(
+              `update invitation set "expiresAt" = ?
+               where id = ? and "organizationId" = ? and status = 'pending' and changes() = 1`,
+            )
+            .bind(iso(expiresAt), invitationId, workspaceId),
+        ]);
+        if (reserved!.meta.changes !== 1) {
+          return await this.capped(invitationId, row.email, actorId, now);
+        }
+        if (updated!.meta.changes !== 1) return { ok: false, code: "conflict" };
       } catch (error) {
         log("invitation: writing D1 failed", { error });
         return { ok: false, code: "unavailable" };
@@ -478,12 +499,24 @@ export class Invitations {
       let added: boolean;
       try {
         const [, inserted] = await db.batch([
+          // The limits again, in SQL: another workspace's shard may have added the invitee meanwhile (it holds
+          // its own member lock, not this one), and a member change outside the shards may have filled this one.
           db
             .prepare(
               `update invitation set status = 'accepted'
-               where id = ? and status = 'pending' and "expiresAt" > ? and lower(email) = ?`,
+               where id = ?1 and status = 'pending' and "expiresAt" > ?2 and lower(email) = ?3
+                 and (select count(*) from member where "userId" = ?4) < ?5
+                 and (select count(*) from member where "organizationId" = ?6) < ?7`,
             )
-            .bind(row.id, iso(now), email),
+            .bind(
+              row.id,
+              iso(now),
+              email,
+              invitee.id,
+              WORKSPACE_LIMIT,
+              workspaceId,
+              MAX_WORKSPACE_MEMBERS,
+            ),
           // `changes()` is the update's: the member goes in only with the invitation it accepts.
           db
             .prepare(
@@ -650,10 +683,11 @@ export class Invitations {
   }
 
   /**
-   * The repair alarm's share: runs every mutation a failed shard step left owed, as `MEMBERS_ACTOR`, oldest first.
-   * True when none is left. Never throws.
+   * The repair alarm's share, run under the member lock: runs every mutation a failed shard step left owed, as
+   * `MEMBERS_ACTOR`, oldest first. An owed `member.add` runs only while D1 still has that member: one removed (or
+   * gone) since must not be added back, nor announced after their removal. True when none is left. Never throws.
    */
-  repair(): boolean {
+  async repair(workspaceId: string | undefined): Promise<boolean> {
     let owed: { key: string; name: string; args: string }[];
     try {
       owed = this.options.sql
@@ -669,18 +703,44 @@ export class Invitations {
     }
     let done = true;
     for (const { key, name, args } of owed) {
-      if (!this.run(MEMBERS_ACTOR, name, JSON.parse(args), Date.now())) {
+      const parsed: unknown = JSON.parse(args);
+      if (name === "member.add") {
+        let role: string | undefined;
+        try {
+          const userId = String(Reflect.get(Object(parsed), "id"));
+          role =
+            workspaceId === undefined
+              ? undefined
+              : await readRole(this.options.db, workspaceId, userId);
+        } catch (error) {
+          this.options.log("invitation repair: reading D1 failed", { error });
+          done = false;
+          continue;
+        }
+        // Gone from D1: the removal (or the reconcile) already settled the shard. Nothing is owed any more.
+        if (role === undefined) {
+          done = this.settleRepair(key) && done;
+          continue;
+        }
+      }
+      if (!this.run(MEMBERS_ACTOR, name, parsed, Date.now())) {
         done = false;
         continue;
       }
-      try {
-        this.options.sql.exec("delete from invitation_repair where key = ?", key);
-      } catch (error) {
-        this.options.log("settling the invitation repair failed", { error });
-        done = false;
-      }
+      done = this.settleRepair(key) && done;
     }
     return done;
+  }
+
+  /** Forgets an owed mutation once it ran (or is no longer owed); false when that failed. */
+  private settleRepair(key: string): boolean {
+    try {
+      this.options.sql.exec("delete from invitation_repair where key = ?", key);
+      return true;
+    } catch (error) {
+      this.options.log("settling the invitation repair failed", { error });
+      return false;
+    }
   }
 
   /**
@@ -730,6 +790,86 @@ export class Invitations {
     } catch (error) {
       // Without its row the email is not sent (`planEmail` finds nothing); the dashboard's Resend is the way back.
       this.options.log("recording an invitation send failed", { error });
+    }
+  }
+
+  /**
+   * Counts one more email of `invitationId` in D1's `invitation_send`, only while the caps that span workspaces all
+   * have room: `INVITATIONS_PER_ADDRESS_DAILY_CAP` for `email`, `INVITATIONS_PER_INVITER_DAILY_CAP` for `inviterId`
+   * and `INVITATION_MAX_SENDS` for the invitation (and, with `pending`, only while it is still pending). One
+   * statement, so D1 decides it atomically whichever shards are inviting at once.
+   */
+  private reserveSend(
+    invitationId: string,
+    email: string,
+    inviterId: string,
+    now: number,
+    pending: boolean,
+  ): D1PreparedStatement {
+    return this.options.db
+      .prepare(
+        `insert into invitation_send (id, "invitationId", email, "inviterId", at)
+         select ?1, ?2, ?3, ?4, ?5
+         where (select count(*) from invitation_send where email = ?3 and at > ?6) < ?7
+           and (select count(*) from invitation_send where "inviterId" = ?4 and at > ?6) < ?8
+           and (select count(*) from invitation_send where "invitationId" = ?2) < ?9
+           and (?10 = 0 or exists (select 1 from invitation where id = ?2 and status = 'pending'))`,
+      )
+      .bind(
+        newId("snd", now, this.options.randomBytes),
+        invitationId,
+        email,
+        inviterId,
+        now,
+        now - DAY_MS,
+        INVITATIONS_PER_ADDRESS_DAILY_CAP,
+        INVITATIONS_PER_INVITER_DAILY_CAP,
+        INVITATION_MAX_SENDS,
+        pending ? 1 : 0,
+      );
+  }
+
+  /** Which cap refused a `reserveSend` (read again after it); `conflict` when none did (no longer pending). */
+  private async capped(
+    invitationId: string,
+    email: string,
+    inviterId: string,
+    now: number,
+  ): Promise<InvitationResult<never>> {
+    const counts = await this.options.db
+      .prepare(
+        `select
+           (select count(*) from invitation_send where email = ?1 and at > ?4) as address,
+           (select count(*) from invitation_send where "inviterId" = ?2 and at > ?4) as inviter,
+           (select count(*) from invitation_send where "invitationId" = ?3) as sends`,
+      )
+      .bind(email, inviterId, invitationId, now - DAY_MS)
+      .first<{ address: number; inviter: number; sends: number }>();
+    if (counts && counts.sends >= INVITATION_MAX_SENDS) return { ok: false, code: "send_limit" };
+    if (counts && counts.address >= INVITATIONS_PER_ADDRESS_DAILY_CAP) {
+      return { ok: false, code: "address_limited" };
+    }
+    if (counts && counts.inviter >= INVITATIONS_PER_INVITER_DAILY_CAP) {
+      return { ok: false, code: "inviter_limited" };
+    }
+    return { ok: false, code: "conflict" };
+  }
+
+  /**
+   * Forgets D1's sends past every daily window, except those of a pending invitation (`INVITATION_MAX_SENDS` counts
+   * them for as long as it is pending). Best effort, after an invite.
+   */
+  private async pruneSends(now: number): Promise<void> {
+    try {
+      await this.options.db
+        .prepare(
+          `delete from invitation_send where at < ? and "invitationId" not in
+             (select id from invitation where status = 'pending')`,
+        )
+        .bind(now - 2 * DAY_MS)
+        .run();
+    } catch (error) {
+      this.options.log("pruning the invitation sends failed", { error });
     }
   }
 

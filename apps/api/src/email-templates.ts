@@ -181,18 +181,20 @@ function renderMessage(
   };
 }
 
-/** The email that proves an address (RFC 0002 "Auth"): `url` is the dashboard's `/verify-email` page. */
+/**
+ * The email that proves an address (RFC 0002 "Auth"): `url` is the dashboard's `/verify-email` page. Nothing in it is
+ * what the person signing up typed except the address itself, as it goes to an address nobody proved yet.
+ */
 export function renderVerificationEmail(
-  to: { email: string; name?: string },
+  to: { email: string },
   url: string,
   locale: Locale,
 ): OutgoingEmail {
-  const text = (part: string) =>
-    email_verify({ part, name: to.name ?? "", email: to.email }, { locale });
+  const text = (part: string) => email_verify({ part, email: to.email }, { locale });
   return renderMessage(
     {
       subject: text("subject"),
-      lines: [...(to.name ? [text("greeting")] : []), text("intro")],
+      lines: [text("intro")],
       link: { label: text("open"), url },
       after: [text("expires")],
       footer: text("footer"),

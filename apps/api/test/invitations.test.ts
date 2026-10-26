@@ -10,12 +10,17 @@ import {
   runInDurableObject,
 } from "cloudflare:test";
 import {
+  INVITATION_MAX_SENDS,
   INVITATION_RESEND_INTERVAL_MS,
   INVITATIONS_DAILY_CAP,
+  INVITATIONS_PER_ADDRESS_DAILY_CAP,
+  INVITATIONS_PER_INVITER_DAILY_CAP,
   isId,
   MAX_PENDING_INVITATIONS,
+  MAX_WORKSPACE_MEMBERS,
   newId,
 } from "@freecorps/brigade-schema";
+import { WORKSPACE_LIMIT } from "../src/auth.ts";
 import { describe, expect, test } from "vite-plus/test";
 import type { EmailSender, OutgoingEmail } from "../src/email.ts";
 import { Invitations } from "../src/invitations.ts";
@@ -138,6 +143,50 @@ const events = (t: Team, type: string) =>
 let invitees = 0;
 const address = () => `guest-${++invitees}@example.com`;
 
+/** `count` sends already counted in D1's `invitation_send` (the caps that span workspaces), an hour ago. */
+const sendsInD1 = (
+  count: number,
+  row: { email?: string; inviterId?: string; invitationId?: string },
+) =>
+  env.DB.batch(
+    Array.from({ length: count }, () =>
+      env.DB.prepare(
+        `insert into invitation_send (id, "invitationId", email, "inviterId", at) values (?, ?, ?, ?, ?)`,
+      ).bind(
+        newId("snd", Date.now(), random),
+        row.invitationId ?? newId("inv", Date.now(), random),
+        row.email ?? address(),
+        row.inviterId ?? "usr_someone_else",
+        Date.now() - 60 * 60 * 1000,
+      ),
+    ),
+  );
+
+/** Lets an invitation be sent again now (`INVITATION_RESEND_INTERVAL_MS` past its last send). */
+const allowResend = (t: Team, id: string) =>
+  t.withState((state) =>
+    state.storage.sql.exec(
+      "update invitation_sends set at = ? where invitation_id = ?",
+      Date.now() - INVITATION_RESEND_INTERVAL_MS - 1,
+      id,
+    ),
+  );
+
+const resend = (t: Team, by: Person, id: string) =>
+  api(`/workspaces/${t.id}/invitations/${id}/resend`, {
+    method: "POST",
+    headers: { Cookie: by.cookie },
+  });
+
+/** The shard's copy of a member (src/shard.ts), or undefined. */
+const shardMember = (t: Team, userId: string) =>
+  t.withState((state) =>
+    new Shard(state.storage, { shard: "workspace", randomBytes: random, log: () => {} }).store.get(
+      "members",
+      userId,
+    ),
+  );
+
 describe("inviting", () => {
   test("an owner invites by email: a prefixed id in D1, pending, and `member.invited` in the outbox", async () => {
     const t = await team();
@@ -214,6 +263,44 @@ describe("inviting", () => {
     const twice = await invite(t, t.bia, email, "viewer");
     expect(twice.status).toBe(409);
     expect(await twice.json()).toEqual({ error: "already_invited" });
+  });
+
+  test("an address that differs only in case is the same invitee: `already_invited`", async () => {
+    const t = await team();
+    const email = address();
+    await invited(t, email.toUpperCase());
+    const again = await invite(t, t.ana, email, "viewer");
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({ error: "already_invited" });
+  });
+
+  test("an admin cannot resend (nor revoke) an invitation to be an owner", async () => {
+    const t = await team();
+    const id = await invited(t, address(), "owner");
+    await allowResend(t, id);
+    const refused = await resend(t, t.bia, id);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: "forbidden" });
+    expect((await events(t, "member.invited")).length).toBe(1);
+  });
+
+  test("Better Auth's full organization never carries the invitations, for a viewer or an owner", async () => {
+    const t = await team();
+    const email = address();
+    await invited(t, email);
+    for (const person of [t.duda, t.ana]) {
+      const response = await api(
+        `/auth/organization/get-full-organization?organizationId=${t.id}`,
+        { headers: { Cookie: person.cookie } },
+      );
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      const body = JSON.parse(text) as Record<string, unknown>;
+      // The members are still there: the dashboard lists them from it.
+      expect(Array.isArray(body.members)).toBe(true);
+      expect(body).not.toHaveProperty("invitations");
+      expect(text).not.toContain(email);
+    }
   });
 
   test("Better Auth's own invitation routes stay refused", async () => {
@@ -296,7 +383,10 @@ describe("accepting and declining", () => {
     const preview = await answer(other, id);
     const body = await preview.text();
     expect(body).not.toContain(email);
-    expect(JSON.parse(body)).toMatchObject({ invitation: { forYou: false } });
+    // Nor who invited, nor as what: only that it is not for them.
+    expect(JSON.parse(body)).toMatchObject({
+      invitation: { forYou: false, invitedBy: null, role: null },
+    });
     for (const action of ["accept", "decline"] as const) {
       const refused = await answer(other, id, action);
       expect(refused.status).toBe(403);
@@ -357,6 +447,58 @@ describe("accepting and declining", () => {
     const second = await invited(t, email);
     expect((await row(first))?.status).toBe("expired");
     expect((await row(second))?.status).toBe("pending");
+  });
+
+  test("a workspace at `MAX_WORKSPACE_MEMBERS` refuses the acceptance: `workspace_full`", async () => {
+    const t = await team();
+    const email = address();
+    const id = await invited(t, email);
+    const guest = await signUp("Olavo", { email });
+    const now = new Date().toISOString();
+    // The team has 4; fill it with people who never signed in.
+    const extra = Array.from({ length: MAX_WORKSPACE_MEMBERS - 4 }, () =>
+      newId("usr", Date.now(), random),
+    );
+    await env.DB.batch(
+      extra.flatMap((userId) => [
+        env.DB.prepare(
+          `insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt") values (?, 'Filler', ?, 1, ?, ?)`,
+        ).bind(userId, `${userId.toLowerCase()}@example.com`, now, now),
+        env.DB.prepare(
+          `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, 'viewer', ?)`,
+        ).bind(newId("mem", Date.now(), random), t.id, userId, now),
+      ]),
+    );
+    const full = await answer(guest, id, "accept");
+    expect(full.status).toBe(409);
+    expect(await full.json()).toEqual({ error: "workspace_full" });
+    expect((await row(id))?.status).toBe("pending");
+    expect(await events(t, "member.added")).toEqual([]);
+  });
+
+  test("an invitee already in `WORKSPACE_LIMIT` workspaces is refused: `workspace_limit`", async () => {
+    const t = await team();
+    const email = address();
+    const id = await invited(t, email);
+    const guest = await signUp("Paulo", { email });
+    const now = new Date().toISOString();
+    await env.DB.batch(
+      Array.from({ length: WORKSPACE_LIMIT }, () => {
+        const workspaceId = newId("ws", Date.now(), random);
+        return [
+          env.DB.prepare(
+            `insert into organization (id, name, slug, "createdAt") values (?, 'Elsewhere', ?, ?)`,
+          ).bind(workspaceId, `ws-${workspaceId.toLowerCase()}`, now),
+          env.DB.prepare(
+            `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, 'owner', ?)`,
+          ).bind(newId("mem", Date.now(), random), workspaceId, guest.id, now),
+        ];
+      }).flat(),
+    );
+    const refused = await answer(guest, id, "accept");
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: "workspace_limit" });
+    expect((await row(id))?.status).toBe("pending");
   });
 
   test("declining marks it rejected and emits `invitation.declined`; it cannot be accepted after", async () => {
@@ -432,6 +574,47 @@ describe("the limits", () => {
     expect(capped.status).toBe(429);
     expect(await capped.json()).toEqual({ error: "rate_limited" });
     expect(await events(t, "member.invited")).toEqual([]);
+  });
+
+  test("one address gets at most `INVITATIONS_PER_ADDRESS_DAILY_CAP` invitation emails a day, from every workspace", async () => {
+    const [first, second] = await Promise.all([team(), team()]);
+    const email = address();
+    await invited(first!, email);
+    await sendsInD1(INVITATIONS_PER_ADDRESS_DAILY_CAP - 1, { email });
+    const capped = await invite(second!, second!.ana, email.toUpperCase(), "viewer");
+    expect(capped.status).toBe(429);
+    expect(await capped.json()).toEqual({ error: "address_limited" });
+    // Nothing of it in D1: no invitation without its email counted.
+    const rows = await env.DB.prepare(`select count(*) as n from invitation where email = ?`)
+      .bind(email)
+      .first<{ n: number }>();
+    expect(rows?.n).toBe(1);
+    expect(await events(second!, "member.invited")).toEqual([]);
+    // Another address from the same workspace still goes.
+    await invited(second!, address());
+  });
+
+  test("one inviter sends at most `INVITATIONS_PER_INVITER_DAILY_CAP` a day, from every workspace", async () => {
+    const t = await team();
+    await sendsInD1(INVITATIONS_PER_INVITER_DAILY_CAP, { inviterId: t.ana.id });
+    const capped = await invite(t, t.ana, address(), "viewer");
+    expect(capped.status).toBe(429);
+    expect(await capped.json()).toEqual({ error: "inviter_limited" });
+    // Bia, another manager of the same workspace, is not Ana.
+    await invited(t, address(), "viewer", t.bia);
+  });
+
+  test("one invitation sends at most `INVITATION_MAX_SENDS` emails, resends included", async () => {
+    const t = await team();
+    const id = await invited(t, address());
+    await sendsInD1(INVITATION_MAX_SENDS - 2, { invitationId: id });
+    await allowResend(t, id);
+    expect((await resend(t, t.ana, id)).status).toBe(200);
+    await allowResend(t, id);
+    const capped = await resend(t, t.ana, id);
+    expect(capped.status).toBe(409);
+    expect(await capped.json()).toEqual({ error: "send_limit" });
+    expect((await events(t, "member.invited")).length).toBe(2);
   });
 
   test("at most `MAX_PENDING_INVITATIONS` pending at once", async () => {
@@ -515,6 +698,75 @@ describe("failures", () => {
       .bind(email)
       .first<{ n: number }>();
     expect(pending?.n).toBe(0);
+  });
+
+  test("a pending invitation D1 got meanwhile (the unique index) is `already_invited`, and nothing is counted", async () => {
+    const t = await team();
+    const email = address();
+    await invited(t, email);
+    // A read that predates it: the shard's own check passes, D1's unique index does not.
+    const stale = new Proxy(env.DB, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (sql: string) =>
+            sql.includes("as pending")
+              ? { bind: () => ({ first: async () => ({ pending: 0, same: 0, member: 0 }) }) }
+              : target.prepare(sql);
+        }
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const result = await t.withState((state) =>
+      invitations(state, { db: stale }).invite(t.id, t.ana.id, email, "viewer", ORIGIN),
+    );
+    expect(result).toEqual({ ok: false, code: "already_invited" });
+    const sends = await env.DB.prepare(`select count(*) as n from invitation_send where email = ?`)
+      .bind(email)
+      .first<{ n: number }>();
+    expect(sends?.n).toBe(1);
+  });
+
+  test("the shard reads the invitee's address again: an unverified one is refused, whatever the Worker saw", async () => {
+    const t = await team();
+    const email = address();
+    const id = await invited(t, email);
+    const guest = await signUp("Quim", { email, verified: false });
+    const result = await t.withState((state) =>
+      invitations(state).accept(t.id, id, { id: guest.id, email }),
+    );
+    expect(result).toEqual({ ok: false, code: "unverified" });
+    expect((await row(id))?.status).toBe("pending");
+  });
+
+  test("a member removed before the repair alarm runs is not added back, nor announced after the removal", async () => {
+    const t = await team();
+    const email = address();
+    const id = await invited(t, email);
+    const guest = await signUp("Rui", { email });
+    const accepted = await t.withState((state) =>
+      invitations(state, { shardFails: true }).accept(t.id, id, { id: guest.id, email }),
+    );
+    expect(accepted).toEqual({ ok: false, code: "not_applied" });
+    // The owner removes them before the alarm catches up.
+    const removed = await api(`/workspaces/${t.id}/members/${guest.id}`, {
+      method: "DELETE",
+      headers: { Cookie: t.ana.cookie },
+    });
+    expect(removed.status).toBe(200);
+    await t.withState((state) =>
+      state.storage.sql.exec("update member_repair set value = ? where key = 'at'", Date.now() - 1),
+    );
+    expect(await runDurableObjectAlarm(t.stub)).toBe(true);
+    expect(await shardMember(t, guest.id)).toBeUndefined();
+    expect(await events(t, "member.added")).toEqual([]);
+    expect(await events(t, "member.removed")).toMatchObject([{ subject: guest.id }]);
+    // Nothing is owed any more.
+    expect(
+      await t.withState((state) =>
+        state.storage.sql.exec("select count(*) as n from invitation_repair").one(),
+      ),
+    ).toEqual({ n: 0 });
   });
 
   test("the shard failing after D1 answers `not_applied`, and the repair alarm emits what it owed", async () => {
@@ -630,6 +882,25 @@ describe("the invitation email", () => {
     // A redelivery later finds it done.
     expect(await deliver([event!], mail.sender)).toEqual({ acked: ["msg-0"], retried: [] });
     expect(mail.sent).toHaveLength(1);
+  });
+
+  test("a sender that delivers needs `DASHBOARD_URL`: no link from the invitation's origin, so no email", async () => {
+    const t = await team();
+    await invited(t, address());
+    const [event] = await events(t, "member.invited");
+    const mail = recorder();
+    const batch = createMessageBatch("brigade-events", [
+      { id: "msg-0", timestamp: new Date(), attempts: 1, body: event! },
+    ]);
+    const ctx = createExecutionContext();
+    await consumeEvents(
+      batch,
+      { WORKSPACE: env.WORKSPACE, DB: env.DB },
+      async () => Response.json({}),
+      mail.sender,
+    );
+    expect((await getQueueResult(batch, ctx)).explicitAcks).toEqual(["msg-0"]);
+    expect(mail.sent).toEqual([]);
   });
 
   test("nothing goes out once the invitation was revoked", async () => {

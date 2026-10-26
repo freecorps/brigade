@@ -128,12 +128,21 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
     PKCE via the system browser and QR pairing.
   - **Email verification (built):** Better Auth's, sent through the email notifier's `EmailSender` (RFC 0005
     "Email"; templates `email_verify` in `packages/i18n`, en and pt-BR, plain text and escaped HTML) at sign-up and
-    when the dashboard asks again. The link is the dashboard's `/verify-email?token=…` (from `DASHBOARD_URL`, else the
-    origin the request came through, never the API Worker's own `/auth` path) and works 24 hours; when the user was
-    answering an invitation it carries `next=/invitations/inv_…`, the only place it may lead (`safeNext`). Asking
-    again (`/send-verification-email`) needs a session and is for one's own address only (Better Auth would otherwise
-    email any unverified address it is given): at most 3 per user in 15 minutes, counted in D1's `rateLimit` table,
-    and 3 per IP a minute; it answers `503 EMAIL_NOT_CONFIGURED` when no sender is set up. **Unverified accounts sign
+    when the dashboard asks again. The link is the dashboard's `/verify-email?token=…` (from `DASHBOARD_URL`, never the
+    API Worker's own `/auth` path; only the dev log sender falls back on the origin the request came through, so a
+    deployed Worker without `DASHBOARD_URL` sends no verification email rather than a link to whatever host a request
+    named) and works 24 hours; when the user was answering an invitation it carries `next=/invitations/inv_…`, the
+    only place it may lead (`safeNext`), and sign-up from an invitation asks for that too. The email carries nothing
+    the person signing up typed except the address (no name). Asking again (`/send-verification-email`) needs a
+    session and is for one's own address only (Better Auth would otherwise email any unverified address it is given):
+    at most 3 per user in 15 minutes and 5 a day, counted in D1's `rateLimit` table (one upsert per counter, so
+    requests at once each count), and 3 per IP a minute; it answers `503 EMAIL_NOT_CONFIGURED` when no sender is set
+    up. **A squatted address is released:** a sign-up with the address of an account still unverified 24 hours after
+    it was created (`UNVERIFIED_RELEASE_S`, past its link) replaces that account: the old user goes with its
+    sessions, accounts and memberships, and a workspace it was alone in is left with no members (its D1 row and shard
+    stay, unreachable, since deleting a workspace is not designed). An unverified account in a workspace with anyone
+    else is kept, and the sign-up is refused as for any taken address; its owner can still verify it, and password
+    reset, once built, is the other way back. **Unverified accounts sign
     in** and create and use their own workspaces (sign-up creates the first one, and an unproven address harms nobody
     there); what needs a verified address is everything that reaches someone else's inbox or depends on owning the
     address: being emailed by the notifier, inviting (and resending), and accepting or declining an invitation. An

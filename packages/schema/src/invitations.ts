@@ -19,6 +19,15 @@ export const MAX_PENDING_INVITATIONS = 50;
  * an email from Brigade's domain to an address the inviter typed, naming the workspace they chose.
  */
 export const INVITATIONS_DAILY_CAP = 30;
+/**
+ * Invitation emails one address may get in a day, from every workspace together: many workspaces cannot add up to
+ * flood one inbox.
+ */
+export const INVITATIONS_PER_ADDRESS_DAILY_CAP = 3;
+/** Invitation emails one inviter may send in a day, from every workspace they manage together. */
+export const INVITATIONS_PER_INVITER_DAILY_CAP = 50;
+/** Emails one invitation may ever send (the first and its resends). */
+export const INVITATION_MAX_SENDS = 5;
 /** The shortest time between two sends of one invitation, so Resend cannot flood one inbox. */
 export const INVITATION_RESEND_INTERVAL_MS = 5 * 60 * 1000;
 /** The most members a workspace may have; accepting past it is refused (the dashboard lists 100 at most). */

@@ -108,6 +108,18 @@ export const logEmailSender: EmailSender = {
   },
 };
 
+/**
+ * The origin an email's dashboard link may fall back on when `DASHBOARD_URL` is not set: the request's (or the
+ * invitation's) origin, only for the dev log sender. A sender that delivers gets none, so a deployed Worker without
+ * `DASHBOARD_URL` sends no link built from whatever host a request came through (apps/api/README.md "Email").
+ */
+export function linkFallback(
+  sender: EmailSender,
+  origin: string | null | undefined,
+): string | undefined {
+  return sender === logEmailSender ? (origin ?? undefined) : undefined;
+}
+
 /** The sender the env configures, or undefined when email is not set up. */
 export function emailSender(env: EmailEnv): EmailSender | undefined {
   if (env.EMAIL && env.EMAIL_FROM) {

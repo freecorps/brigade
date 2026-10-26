@@ -69,6 +69,22 @@ const ORGANIZATION_ROUTES = new Set([
 ]);
 
 /**
+ * Better Auth's full organization joins in every invitation, addresses included, for any member who asks. The
+ * dashboard reads the members from it; invitations are only for those who manage them, through
+ * `GET /workspaces/:id/invitations`, so they are taken out here for everyone.
+ */
+export async function withoutInvitations(response: Response): Promise<Response> {
+  if (!response.ok || !response.headers.get("Content-Type")?.includes("application/json")) {
+    return response;
+  }
+  const body: unknown = await response.json();
+  if (typeof body === "object" && body !== null) Reflect.deleteProperty(body, "invitations");
+  const headers = new Headers(response.headers);
+  headers.delete("Content-Length");
+  return new Response(JSON.stringify(body), { status: response.status, headers });
+}
+
+/**
  * Other Better Auth routes refused. `/expo-authorization-proxy` (the `expo()` plugin's) redirects to any HTTPS URL it
  * is given, for social sign-in through the system browser; until that sign-in exists it would only be an open
  * redirect on Brigade's host.
@@ -90,7 +106,10 @@ export default {
       ) {
         return json({ error: "not_found" }, 404);
       }
-      return auth().handler(request);
+      const response = await auth().handler(request);
+      return route === "/organization/get-full-organization"
+        ? withoutInvitations(response)
+        : response;
     }
     const sync = SYNC_PATH.exec(pathname)?.[1];
     if (sync !== undefined) return openSync(request, env, auth, sync);
@@ -395,6 +414,9 @@ const INVITATION_STATUS: Record<InvitationCode, number> = {
   workspace_limit: 409,
   conflict: 409,
   rate_limited: 429,
+  address_limited: 429,
+  inviter_limited: 429,
+  send_limit: 409,
   too_soon: 429,
   not_found: 404,
   expired: 410,

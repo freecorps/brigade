@@ -3,7 +3,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 
 /** @typedef {import('../runtime.js').LocalizedString} LocalizedString */
 
-/** @typedef {{ part: NonNullable<unknown>, name: NonNullable<unknown>, email: NonNullable<unknown> }} Email_VerifyInputs */
+/** @typedef {{ part: NonNullable<unknown>, email: NonNullable<unknown> }} Email_VerifyInputs */
 
 
 
@@ -11,7 +11,6 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | part | output |
 * | --- | --- |
 * | "subject" | "Confirm your email for Brigade" |
-* | "greeting" | "Hi {name}," |
 * | "intro" | "Confirm that {email} is your address. Until you do, Brigade won't email you about incidents, and you can't invite people or accept invitations." |
 * | "open" | "Confirm my email" |
 * | "expires" | "The link works for 24 hours." |
@@ -26,7 +25,6 @@ export const email_verify = /** @type {((inputs: Email_VerifyInputs, options?: {
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.part === "subject") return /** @type {LocalizedString} */ (`Confirme seu email no Brigade`);
-		if (i?.part === "greeting") return /** @type {LocalizedString} */ (`Olá, ${i?.name},`);
 		if (i?.part === "intro") return /** @type {LocalizedString} */ (`Confirme que ${i?.email} é o seu endereço. Até lá, o Brigade não envia emails sobre incidentes, e você não pode convidar pessoas nem aceitar convites.`);
 		if (i?.part === "open") return /** @type {LocalizedString} */ (`Confirmar meu email`);
 		if (i?.part === "expires") return /** @type {LocalizedString} */ (`O link vale por 24 horas.`);
@@ -35,7 +33,6 @@ export const email_verify = /** @type {((inputs: Email_VerifyInputs, options?: {
 	}
 	{
 		if (i?.part === "subject") return /** @type {LocalizedString} */ (`Confirm your email for Brigade`);
-		if (i?.part === "greeting") return /** @type {LocalizedString} */ (`Hi ${i?.name},`);
 		if (i?.part === "intro") return /** @type {LocalizedString} */ (`Confirm that ${i?.email} is your address. Until you do, Brigade won't email you about incidents, and you can't invite people or accept invitations.`);
 		if (i?.part === "open") return /** @type {LocalizedString} */ (`Confirm my email`);
 		if (i?.part === "expires") return /** @type {LocalizedString} */ (`The link works for 24 hours.`);

@@ -1,16 +1,14 @@
 export type LocalizedString = import('../runtime.js').LocalizedString;
 export type Email_VerifyInputs = {
     part: NonNullable<unknown>;
-    name: NonNullable<unknown>;
     email: NonNullable<unknown>;
 };
 /** @typedef {import('../runtime.js').LocalizedString} LocalizedString */
-/** @typedef {{ part: NonNullable<unknown>, name: NonNullable<unknown>, email: NonNullable<unknown> }} Email_VerifyInputs */
+/** @typedef {{ part: NonNullable<unknown>, email: NonNullable<unknown> }} Email_VerifyInputs */
 /**
 * | part | output |
 * | --- | --- |
 * | "subject" | "Confirm your email for Brigade" |
-* | "greeting" | "Hi {name}," |
 * | "intro" | "Confirm that {email} is your address. Until you do, Brigade won't email you about incidents, and you can't invite people or accept invitations." |
 * | "open" | "Confirm my email" |
 * | "expires" | "The link works for 24 hours." |

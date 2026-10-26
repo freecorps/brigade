@@ -7,8 +7,11 @@ import {
   createAuth,
   EMAIL_NOT_CONFIGURED_CODE,
   safeNext,
+  UNVERIFIED_RELEASE_S,
+  VERIFICATION_DAILY_LIMIT,
   VERIFICATION_RESEND_LIMIT,
 } from "../src/auth.ts";
+import type { EmailSender, OutgoingEmail } from "../src/email.ts";
 import { renderVerificationEmail } from "../src/email-templates.ts";
 
 const ORIGIN = "http://api.test";
@@ -46,8 +49,8 @@ function outbox() {
     });
 }
 
-async function signUp(name: string, locale?: string) {
-  const email = `${name.toLowerCase()}-v${++people}@example.com`;
+async function signUp(name: string, locale?: string, address?: string) {
+  const email = address ?? `${name.toLowerCase()}-v${++people}@example.com`;
   const response = await api("/auth/sign-up/email", {
     method: "POST",
     body: JSON.stringify({ name, email, password: PASSWORD, ...(locale ? { locale } : {}) }),
@@ -82,6 +85,9 @@ describe("verifying an address", () => {
     await vi.waitFor(() => expect(sent().some((one) => one.to.email === ana.email)).toBe(true));
     const email = sent().find((one) => one.to.email === ana.email)!;
     expect(email.subject).toBe("Confirme seu email no Brigade");
+    // Nothing the person signing up typed but the address: it goes to an inbox nobody proved is theirs.
+    expect(email.to).toEqual({ email: ana.email });
+    expect(email.text).not.toContain("Ana");
     const link = /https?:\/\/\S+/.exec(email.text)![0];
     const url = new URL(link);
     expect(url.origin).toBe(ORIGIN);
@@ -141,6 +147,39 @@ describe("asking again", () => {
     );
   });
 
+  test("at most `VERIFICATION_DAILY_LIMIT` a day, however the short window resets", async () => {
+    const gil = await signUp("Gil");
+    const sent = outbox();
+    for (let i = 0; i < VERIFICATION_DAILY_LIMIT.max; i++) {
+      if (i > 0 && i % VERIFICATION_RESEND_LIMIT.max === 0) {
+        // The 15-minute window passed.
+        await env.DB.prepare(`update "rateLimit" set "lastRequest" = ? where key = ?`)
+          .bind(Date.now() - VERIFICATION_RESEND_LIMIT.window * 1000 - 1, `verify:${gil.id}`)
+          .run();
+      }
+      expect((await resend(gil)).status).toBe(200);
+    }
+    await env.DB.prepare(`update "rateLimit" set "lastRequest" = ? where key = ?`)
+      .bind(Date.now() - VERIFICATION_RESEND_LIMIT.window * 1000 - 1, `verify:${gil.id}`)
+      .run();
+    expect((await resend(gil)).status).toBe(429);
+    await vi.waitFor(() =>
+      expect(sent().filter((one) => one.to.email === gil.email)).toHaveLength(
+        VERIFICATION_DAILY_LIMIT.max,
+      ),
+    );
+  });
+
+  test("requests at once each count: no more than the limit go out", async () => {
+    const hana = await signUp("Hana");
+    const statuses = await Promise.all(
+      Array.from({ length: VERIFICATION_RESEND_LIMIT.max + 3 }, () => resend(hana)),
+    );
+    expect(statuses.filter((response) => response.status === 200)).toHaveLength(
+      VERIFICATION_RESEND_LIMIT.max,
+    );
+  });
+
   test("the invitation being answered rides along; any other place is dropped", async () => {
     const duda = await signUp("Duda");
     const sent = outbox();
@@ -191,30 +230,132 @@ describe("asking again", () => {
 });
 
 describe("what the verification email says", () => {
-  test("in the user's language, with what they typed escaped in the HTML", () => {
-    const name = `<img src=x onerror="alert(1)"> & Co`;
+  test("in the user's language, the address and the link escaped in the HTML", () => {
+    const email = `o'brien+<b>@example.com`;
     const link = "https://brigade.example.com/verify-email?token=a.b.c&next=%2Finvitations%2Finv_x";
-    const en = renderVerificationEmail({ email: "ana@example.com", name }, link, "en");
+    const en = renderVerificationEmail({ email }, link, "en");
     expect(en.subject).toBe("Confirm your email for Brigade");
-    expect(en.to).toEqual({ email: "ana@example.com", name });
-    expect(en.text).toContain(`Hi ${name},`);
+    expect(en.to).toEqual({ email });
+    expect(en.text).toContain(`Confirm that ${email} is your address.`);
     expect(en.text).toContain(link);
-    expect(en.html).not.toContain("<img");
-    expect(en.html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt; &amp; Co");
+    expect(en.html).not.toContain("<b>");
+    expect(en.html).toContain("o&#39;brien+&lt;b&gt;@example.com");
     expect(en.html).toContain(`href="${link.replace(/&/g, "&amp;")}"`);
     const pt = renderVerificationEmail({ email: "ana@example.com" }, link, "pt-BR");
     expect(pt.subject).toBe("Confirme seu email no Brigade");
-    expect(pt.text).not.toContain("Olá");
     expect(pt.html).toContain('lang="pt-BR"');
   });
 
-  test("a name with line breaks cannot add headers", () => {
-    const email = renderVerificationEmail(
-      { email: "ana@example.com", name: "Ana\r\nBcc: someone@example.com" },
-      "https://brigade.example.com/verify-email?token=t",
-      "en",
+  test("a sender that delivers needs `DASHBOARD_URL`: without it, no link from the request's origin", async () => {
+    const sent: OutgoingEmail[] = [];
+    const sender: EmailSender = {
+      id: "test",
+      async send(email) {
+        sent.push(email);
+        return { ok: true };
+      },
+    };
+    const signUpThrough = async (dashboardUrl: string | undefined, email: string) => {
+      const auth = createAuth({
+        database: env.DB,
+        secret: env.BETTER_AUTH_SECRET,
+        email: { sender, ...(dashboardUrl ? { dashboardUrl } : {}) },
+      });
+      const response = await auth.handler(
+        new Request(`${ORIGIN}/auth/sign-up/email`, {
+          method: "POST",
+          headers: {
+            Origin: ORIGIN,
+            "Content-Type": "application/json",
+            "cf-connecting-ip": clientIp(),
+          },
+          body: JSON.stringify({ name: "Ivo", email, password: PASSWORD }),
+        }),
+      );
+      expect(response.status).toBe(200);
+    };
+    const without = `ivo-v${++people}@example.com`;
+    const configured = `ivo-v${++people}@example.com`;
+    await signUpThrough(undefined, without);
+    await signUpThrough("https://brigade.example.com", configured);
+    await vi.waitFor(() => expect(sent.map((one) => one.to.email)).toContain(configured));
+    expect(sent.find((one) => one.to.email === configured)!.text).toContain(
+      "https://brigade.example.com/verify-email?token=",
     );
-    expect(email.to.name).toBe("Ana Bcc: someone@example.com");
-    expect(email.subject).not.toMatch(/[\r\n]/);
+    expect(sent.map((one) => one.to.email)).not.toContain(without);
+  });
+});
+
+describe("an address held by an account nobody verified", () => {
+  const age = (userId: string, seconds: number) =>
+    env.DB.prepare(`update "user" set "createdAt" = ? where id = ?`)
+      .bind(new Date(Date.now() - seconds * 1000).toISOString(), userId)
+      .run();
+  const session = (cookie: string) =>
+    api("/auth/get-session", { headers: { Cookie: cookie } }).then((response) => response.json());
+
+  test("a new sign-up replaces it once it is older than `UNVERIFIED_RELEASE_S`", async () => {
+    const squatter = await signUp("Jon");
+    const created = await api("/workspaces", {
+      method: "POST",
+      headers: { Cookie: squatter.cookie },
+      body: JSON.stringify({ name: "Taken" }),
+    });
+    expect(created.status).toBe(201);
+    const { id: workspaceId } = (await created.json()) as { id: string };
+    await age(squatter.id, UNVERIFIED_RELEASE_S + 60);
+
+    const owner = await signUp("Jo", undefined, squatter.email);
+    expect(owner.id).not.toBe(squatter.id);
+    const users = await env.DB.prepare(`select id from "user" where email = ?`)
+      .bind(squatter.email)
+      .all<{ id: string }>();
+    expect(users.results).toEqual([{ id: owner.id }]);
+    // The squatter's sessions went with them; their workspace is left without members.
+    expect(await session(squatter.cookie)).toBe(null);
+    const members = await env.DB.prepare(
+      `select count(*) as n from member where "organizationId" = ?`,
+    )
+      .bind(workspaceId)
+      .first<{ n: number }>();
+    expect(members?.n).toBe(0);
+    expect(await session(owner.cookie)).toMatchObject({ user: { id: owner.id } });
+  });
+
+  test("kept while young, once verified, or while in a workspace with anyone else", async () => {
+    const taken = async (email: string) => {
+      const response = await api("/auth/sign-up/email", {
+        method: "POST",
+        body: JSON.stringify({ name: "Kai", email, password: PASSWORD }),
+      });
+      expect(response.status).toBe(422);
+    };
+    const young = await signUp("Lu");
+    await age(young.id, UNVERIFIED_RELEASE_S - 60);
+    await taken(young.email);
+
+    const proven = await signUp("Mo");
+    await age(proven.id, UNVERIFIED_RELEASE_S + 60);
+    await env.DB.prepare(`update "user" set "emailVerified" = 1 where id = ?`)
+      .bind(proven.id)
+      .run();
+    await taken(proven.email);
+
+    const shared = await signUp("Ned");
+    const other = await signUp("Oli");
+    const created = await api("/workspaces", {
+      method: "POST",
+      headers: { Cookie: other.cookie },
+      body: JSON.stringify({ name: "Shared" }),
+    });
+    const { id: workspaceId } = (await created.json()) as { id: string };
+    await env.DB.prepare(
+      `insert into member (id, "organizationId", "userId", role, "createdAt") values (?, ?, ?, 'viewer', ?)`,
+    )
+      .bind(`mem_${crypto.randomUUID()}`, workspaceId, shared.id, new Date().toISOString())
+      .run();
+    await age(shared.id, UNVERIFIED_RELEASE_S + 60);
+    await taken(shared.email);
+    expect(await session(shared.cookie)).toMatchObject({ user: { id: shared.id } });
   });
 });

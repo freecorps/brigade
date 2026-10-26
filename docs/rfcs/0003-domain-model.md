@@ -156,19 +156,25 @@ stay refused (RFC 0002 "Auth"). The code is `apps/api/src/invitations.ts`; the r
   are stored trimmed and lower-cased.
 - **Accepting.** Signed in with the invited address (compared case-insensitively), and that address verified, read
   again from D1 (`wrong_email`, `unverified`). Someone signed in with another address learns only that the
-  invitation is not for them, never the invited address. Accepting adds the member with the invitation's role. Also
-  refused: an invitation no longer pending (`not_found`), one that ran out (`expired`, 410), a workspace at 100
-  members (`MAX_WORKSPACE_MEMBERS`, the most the dashboard lists), an invitee already in `WORKSPACE_LIMIT`
-  workspaces. Declining has the same checks, so an unproven account with someone else's address cannot decline for
+  invitation is not for them: never the invited address, who invited or the role. Accepting adds the member with
+  the invitation's role. Also refused: an invitation no longer pending (`not_found`), one that ran out (`expired`,
+  410), a workspace at 100 members (`MAX_WORKSPACE_MEMBERS`, the most the dashboard lists), an invitee already in
+  `WORKSPACE_LIMIT` workspaces. Both limits are checked again in the SQL that accepts, since another workspace's
+  shard (under its own lock) may add the invitee meanwhile; losing that race answers `conflict`. Declining has the same checks, so an unproven account with someone else's address cannot decline for
   them. An account may be created from the invitation without a workspace of its own (sign-up skips the workspace
   name when it comes from an invitation).
 - **Expiry and resending.** An invitation lasts 7 days (`INVITATION_TTL_MS`). Resend sends it again and restarts the
   7 days, including for one that ran out (it is still pending in D1). Inviting an address whose invitation ran out
   marks the old row `expired` and creates a new one.
-- **Limits** (RFC 0005 "Abuse"): at most 50 pending invitations per workspace (`MAX_PENDING_INVITATIONS`), 30
-  invitation emails (invitations and resends) per workspace per day (`INVITATIONS_DAILY_CAP`), and one send of an
-  invitation per 5 minutes (`INVITATION_RESEND_INTERVAL_MS`, `too_soon`). The daily count and the resend interval are
-  the shard's own ledger (`invitation_sends`), counted under the member lock.
+- **Limits** (RFC 0005 "Abuse", Q21): at most 50 pending invitations per workspace (`MAX_PENDING_INVITATIONS`), 30
+  invitation emails (invitations and resends) per workspace per day (`INVITATIONS_DAILY_CAP`, `rate_limited`), and
+  one send of an invitation per 5 minutes (`INVITATION_RESEND_INTERVAL_MS`, `too_soon`), counted in the shard's own
+  ledger (`invitation_sends`) under the member lock. Across workspaces, from D1's `invitation_send` (migration
+  0005): 3 invitation emails per invited address per day (`INVITATIONS_PER_ADDRESS_DAILY_CAP`, `address_limited`),
+  50 per inviter per day (`INVITATIONS_PER_INVITER_DAILY_CAP`, `inviter_limited`) and 5 per invitation ever
+  (`INVITATION_MAX_SENDS`, `send_limit`). The row is inserted only while all three have room, in the same D1 batch as
+  the invitation (or its new expiry), so shards inviting at once cannot pass them together. Rows past the daily
+  windows are pruned unless their invitation is still pending.
 - **Order: D1 first, then the shard,** as for member changes. The Worker checks the origin, the session and that the
   caller is a member (and, to invite or resend, that their address is verified), then calls the workspace shard
   (`WorkspaceDO.invite`, `resendInvitation`, `revokeInvitation`, `acceptInvitation`, `declineInvitation`), which
@@ -184,8 +190,9 @@ stay refused (RFC 0002 "Auth"). The code is `apps/api/src/invitations.ts`; the r
 - **Failure.** D1 failing changes nothing (`503 unavailable`). The shard failing after D1 committed answers `503
   not_applied` and records the mutation it owes (`invitation_repair`), then arms the member repair alarm, which runs
   every owed mutation again as `sys_members` until it is in (the same alarm and retry as member changes, run even
-  when the members reconcile fails, since it needs no D1). An acceptance that answered `not_applied` did join: the
-  dashboard opens the workspace.
+  when the members reconcile fails), under the member lock. An owed `member.add` runs only while D1 still has the
+  member: one removed before the alarm ran is not added back, and no `member.added` follows their removal. An
+  acceptance that answered `not_applied` did join: the dashboard opens the workspace.
 - **The email.** `member.invited` goes through the outbox like every event; the email notifier sends the invitation
   from it (RFC 0005 "Email"), once per `send`, skipping one no longer pending.
 

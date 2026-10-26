@@ -211,7 +211,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       committed: (version, changes) => this.broadcast(version, changes, undefined),
       closeSockets: (judge) => this.closeSockets(judge),
       wake: (at) => this.wake(at, "member repair"),
-      repairMore: () => this.invitations.repair(),
+      repairMore: (workspaceId) => this.invitations.repair(workspaceId),
     });
     this.invitations = new Invitations({
       db: env.DB,

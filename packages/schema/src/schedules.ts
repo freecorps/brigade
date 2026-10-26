@@ -18,7 +18,7 @@ import {
 import { defineQuery } from "./query.ts";
 import type { OverrideRow, ScheduleLayer, ScheduleRow } from "./tables.ts";
 import { v, type Issue, type Validator } from "./validate.ts";
-import { isTimeZone, localMinute, wallMinute, zonedInstant } from "./zoned.ts";
+import { canonicalTimeZone, localMinute, wallMinute, zonedInstant } from "./zoned.ts";
 
 /** How a layer's shift length is counted: on the schedule's wall clock, so a day is midnight to midnight there. */
 export const ROTATION_UNITS = ["hours", "days", "weeks"] as const;
@@ -125,7 +125,8 @@ const covers = (override: Pick<OverrideRow, "start" | "end">, at: number) =>
 
 /**
  * Who is on call for `schedule` at `at`, or null when nobody is (a gap):
- * 1. an override of this schedule covering `at` wins over everything; of several, the one added last (highest id);
+ * 1. an override of this schedule covering `at` wins over everything; of several, the one added last (the
+ *    shard's `createdAt`, then the highest id: ids are minted by clients, so they only break a tie);
  * 2. otherwise the last layer that has someone at `at` (layers are stacked: a later layer wins where it has
  *    someone, an earlier one shows through where it does not);
  * 3. in a layer, shift `k` goes to its `k mod n`-th member, in the order listed. A layer before its start or with
@@ -139,7 +140,13 @@ export function onCallAt(
   let override: OverrideRow | undefined;
   for (const candidate of overrides) {
     if (candidate.scheduleId !== schedule.id || !covers(candidate, at)) continue;
-    if (!override || candidate.id > override.id) override = candidate;
+    if (
+      !override ||
+      candidate.createdAt > override.createdAt ||
+      (candidate.createdAt === override.createdAt && candidate.id > override.id)
+    ) {
+      override = candidate;
+    }
   }
   if (override) {
     return { userId: override.userId, source: { kind: "override", overrideId: override.id } };
@@ -168,11 +175,51 @@ export type OnCallSegment = {
 /** At most this many layer handoffs are looked at per layer in one `nextHandoffs` call. */
 const MAX_LAYER_BOUNDARIES = 2000;
 
+/** A layer's handoffs after `from`, in order, one at a time. */
+type Cursor = { next: number; advance: () => void; seen: number };
+
+function layerCursor(
+  layer: ScheduleLayer,
+  timeZone: string,
+  from: number,
+): Cursor | undefined {
+  const start = startMinute(layer);
+  if (start === undefined || layer.members.length === 0) return undefined;
+  const period = periodMinutes(layer);
+  const first = shiftStart(start, period, 0, timeZone);
+  // One member holds every shift: the layer changes hands once, when it starts.
+  if (layer.members.length === 1) {
+    const cursor: Cursor = {
+      next: first > from ? first : Infinity,
+      advance: () => {
+        cursor.next = Infinity;
+      },
+      seen: 0,
+    };
+    return cursor;
+  }
+  let k = first > from ? 0 : (layerShiftAt(layer, timeZone, from)?.k ?? -1) + 1;
+  const cursor: Cursor = {
+    next: shiftStart(start, period, k, timeZone),
+    advance: () => {
+      k++;
+      cursor.seen++;
+      cursor.next = shiftStart(start, period, k, timeZone);
+    },
+    seen: 0,
+  };
+  return cursor;
+}
+
 /**
  * Who is on call from `from` until `until`, as consecutive segments: the first starts at `from` (with whoever is
  * on call then), each later one at a handoff, where the person on call changes. A layer handoff to the same
- * person (a one-member layer) is no handoff. At most `limit` segments; the last ends at the next handoff or at
- * `until`.
+ * person (a one-member layer, or a layer hidden by a later one or an override) is no handoff. At most `limit`
+ * segments; the last ends at the next handoff or at `until`.
+ *
+ * Handoffs are walked in order and the walk stops at the `limit`-th change, so the cost follows what is shown,
+ * not how many shifts fit before `until`. A layer whose handoffs all hide behind others is walked for at most
+ * `MAX_LAYER_BOUNDARIES` of them: past that, the last segment ends where the walk stopped, not at `until`.
  */
 export function nextHandoffs(
   schedule: Pick<ScheduleRow, "id" | "timeZone" | "layers">,
@@ -182,38 +229,47 @@ export function nextHandoffs(
   limit = 10,
 ): OnCallSegment[] {
   if (!(until > from) || limit < 1) return [];
-  const points = new Set<number>([from]);
-  const add = (at: number) => {
-    if (at > from && at < until) points.add(at);
-  };
+  const cursors: Cursor[] = [];
   for (const layer of schedule.layers) {
-    const start = startMinute(layer);
-    if (start === undefined || layer.members.length === 0) continue;
-    const period = periodMinutes(layer);
-    const current = layerShiftAt(layer, schedule.timeZone, from);
-    for (let k = current ? current.k + 1 : 0, n = 0; n < MAX_LAYER_BOUNDARIES; k++, n++) {
-      const at = shiftStart(start, period, k, schedule.timeZone);
-      if (at >= until) break;
-      add(at);
-    }
+    const cursor = layerCursor(layer, schedule.timeZone, from);
+    if (cursor) cursors.push(cursor);
   }
+  const edges: number[] = [];
   for (const override of overrides) {
     if (override.scheduleId !== schedule.id) continue;
-    add(override.start);
-    add(override.end);
+    for (const edge of [override.start, override.end]) if (edge > from && edge < until) edges.push(edge);
   }
-  const segments: OnCallSegment[] = [];
-  for (const at of [...points].sort((a, b) => a - b)) {
+  edges.sort((a, b) => a - b);
+  let edge = 0;
+
+  const first = onCallAt(schedule, overrides, from);
+  const segments: OnCallSegment[] = [
+    { start: from, end: until, userId: first?.userId ?? null, source: first?.source ?? null },
+  ];
+  let horizon = until;
+  for (;;) {
+    let at = edge < edges.length ? edges[edge] : Infinity;
+    for (const cursor of cursors) at = Math.min(at, cursor.next);
+    if (at >= horizon) break;
+    while (edge < edges.length && edges[edge] <= at) edge++;
+    for (const cursor of cursors) {
+      while (cursor.next <= at) {
+        cursor.advance();
+        if (cursor.seen >= MAX_LAYER_BOUNDARIES) {
+          horizon = Math.min(horizon, cursor.next);
+          cursor.next = Infinity;
+        }
+      }
+    }
     const who = onCallAt(schedule, overrides, at);
     const userId = who?.userId ?? null;
     const last = segments[segments.length - 1];
-    if (last && last.userId === userId) continue;
-    if (last) {
-      last.end = at;
-      if (segments.length === limit) return segments;
-    }
+    if (last.userId === userId) continue;
+    last.end = at;
+    if (segments.length === limit) return segments;
     segments.push({ start: at, end: until, userId, source: who?.source ?? null });
   }
+  segments[segments.length - 1].end = horizon;
   return segments;
 }
 
@@ -230,12 +286,16 @@ const invalid = (path: string, message: string) => ({
   issues: [{ path, message }],
 });
 
-/** An IANA time zone the runtime knows (the schedule's handoffs are read on its wall clock). */
+/**
+ * An IANA time zone the runtime knows (the schedule's handoffs are read on its wall clock), stored in the
+ * runtime's own spelling: "america/sao_paulo" is saved as "America/Sao_Paulo", so one zone has one name.
+ */
 const timeZone: Validator<string> = (input, path = "") => {
   if (typeof input !== "string" || !/^[A-Za-z][A-Za-z0-9_+\-/]{0,63}$/.test(input)) {
     return invalid(path, "Expected an IANA time zone");
   }
-  return isTimeZone(input) ? { ok: true, value: input } : invalid(path, "Unknown time zone");
+  const canonical = canonicalTimeZone(input);
+  return canonical ? { ok: true, value: canonical } : invalid(path, "Unknown time zone");
 };
 
 /** `YYYY-MM-DD`, a real date from 2000 to 2099. */

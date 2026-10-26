@@ -8,35 +8,46 @@
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 
+// Keyed on canonical names only (what `canonicalTimeZone` returns and schedules store), so odd spellings sent to
+// the validator ("america/sao_paulo") cannot grow it past the runtime's list of zones.
 const formatters = new Map<string, Intl.DateTimeFormat>();
 
 function formatter(timeZone: string): Intl.DateTimeFormat {
-  let format = formatters.get(timeZone);
-  if (!format) {
-    format = new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      hourCycle: "h23",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      era: "short",
-    });
-    formatters.set(timeZone, format);
-  }
+  const cached = formatters.get(timeZone);
+  if (cached) return cached;
+  const format = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    era: "short",
+  });
+  const canonical = format.resolvedOptions().timeZone;
+  const known = formatters.get(canonical);
+  if (known) return known;
+  if (canonical === timeZone) formatters.set(canonical, format);
   return format;
+}
+
+/**
+ * The runtime's own spelling of `value` as an IANA time zone (or "UTC"): "america/sao_paulo" is
+ * "America/Sao_Paulo". Undefined if the runtime does not know it.
+ */
+export function canonicalTimeZone(value: string): string | undefined {
+  try {
+    return formatter(value).resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Whether the runtime knows `value` as an IANA time zone (or "UTC"). */
 export function isTimeZone(value: string): boolean {
-  try {
-    formatter(value);
-    return true;
-  } catch {
-    return false;
-  }
+  return canonicalTimeZone(value) !== undefined;
 }
 
 /** The zone's offset from UTC at `instant`, in milliseconds (east positive). */
@@ -68,7 +79,9 @@ export function localMinute(instant: number, timeZone: string): number {
  */
 export function zonedInstant(minute: number, timeZone: string): number {
   const wall = minute * MINUTE_MS;
-  // Every transition is far less than a day long, and zones change offset at most once in a day around it.
+  // Zones change offset at most once in a day around any wall time, and no jump is longer than a day. The
+  // longest is Pacific/Apia's: it skipped 2011-12-30 whole (-10:00 to +14:00, across the date line), so every
+  // minute of that day is a gap and lands a day later, on the 31st at the same wall time.
   const before = zoneOffset(wall - DAY_MS, timeZone);
   const after = zoneOffset(wall + DAY_MS, timeZone);
   const valid = [before, after]

@@ -78,6 +78,9 @@ The first schedules slice made choices that are easy to change now and harder on
   (an override for another member, accepted by them)?
 - A layer emptied by removals stays, as a gap, until someone edits it. Should an empty schedule warn on the
   dashboard's overview once schedules page?
+- The cap of 100 overrides not yet ended is per schedule, not per member, so one responder adding overrides for
+  themselves can fill it and block everyone else's until theirs end or an admin removes them. Should there be a
+  per-member cap too (say 20), or is the admin's remove enough?
 
 ---
 

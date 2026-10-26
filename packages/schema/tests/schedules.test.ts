@@ -101,6 +101,49 @@ describe("zoned time", () => {
     expect(at("2019-02-16", "23:30", "America/Sao_Paulo")).toBe(Date.UTC(2019, 1, 17, 1, 30));
   });
 
+  test("half-hour and quarter-hour zones: Lord Howe's 30-minute DST, Kathmandu's +05:45", () => {
+    // Lord Howe, 2026-10-04: 02:00 (+10:30) → 02:30 (+11:00); 02:15 is skipped, 02:45 is not.
+    expect(wall(at("2026-10-04", "02:15", "Australia/Lord_Howe"), "Australia/Lord_Howe")).toBe(
+      "2026-10-04 02:45",
+    );
+    expect(at("2026-10-04", "02:45", "Australia/Lord_Howe")).toBe(Date.UTC(2026, 9, 3, 15, 45));
+    // 2027-04-04: 02:00 (+11:00) → 01:30 (+10:30); 01:45 happens twice, first at 14:45 UTC.
+    expect(at("2027-04-04", "01:45", "Australia/Lord_Howe")).toBe(Date.UTC(2027, 3, 3, 14, 45));
+    // A daily 02:15 handoff happens at 02:45 on the day it is skipped, and at 02:15 again the next day.
+    const s = schedule(
+      [layer({ startDate: "2026-10-01", handoffTime: "02:15", unit: "days" })],
+      "Australia/Lord_Howe",
+    );
+    const shift = layerShiftAt(s.layers[0], s.timeZone, at("2026-10-04", "12:00", s.timeZone))!;
+    expect([wall(shift.start, s.timeZone), wall(shift.end, s.timeZone)]).toEqual([
+      "2026-10-04 02:45",
+      "2026-10-05 02:15",
+    ]);
+    // Kathmandu: +05:45 all year, so 09:00 there is 03:15 UTC.
+    expect(at("2026-10-26", "09:00", "Asia/Kathmandu")).toBe(Date.UTC(2026, 9, 26, 3, 15));
+    expect(wall(Date.UTC(2026, 9, 26, 18, 15), "Asia/Kathmandu")).toBe("2026-10-27 00:00");
+  });
+
+  test("Pacific/Apia skipped 2011-12-30: its wall times land a day later, and that day's shift is empty", () => {
+    expect(wall(at("2011-12-30", "09:00", "Pacific/Apia"), "Pacific/Apia")).toBe("2011-12-31 09:00");
+    const s = schedule(
+      [layer({ startDate: "2011-12-27", unit: "days", members: ["usr_ana", "usr_bia"] })],
+      "Pacific/Apia",
+    );
+    const segments = nextHandoffs(
+      s,
+      [],
+      at("2011-12-29", "12:00", s.timeZone),
+      at("2012-01-01", "12:00", s.timeZone),
+    );
+    // Shift 3 (the 30th, Bia's) never happens: Ana holds the 29th's shift (2) straight into the 31st's (4).
+    expect(segments.map((segment) => [wall(segment.start, s.timeZone), segment.userId])).toEqual([
+      ["2011-12-29 12:00", "usr_ana"],
+      ["2012-01-01 09:00", "usr_bia"],
+    ]);
+    expect(layerShiftAt(s.layers[0], s.timeZone, at("2011-12-31", "12:00", s.timeZone))?.k).toBe(4);
+  });
+
   test("rejects dates and times that do not exist", () => {
     expect(wallMinute("2026-02-29", "09:00")).toBeUndefined();
     expect(wallMinute("2026-02-28", "24:00")).toBeUndefined();
@@ -174,6 +217,11 @@ describe("onCallAt", () => {
     expect(onCallAt(s, [two, one], start + HOUR)?.userId).toBe("usr_bia");
     expect(onCallAt(s, [one, two], start + 3 * HOUR)?.userId).toBe("usr_duda");
     expect(onCallAt(s, [one, two], end)?.userId).toBe("usr_ana");
+    // Ties go to the one the shard took last (`createdAt`), whatever ids a client minted.
+    const early = override({ id: OVR2, start, end, createdAt: T });
+    const late = override({ id: OVR1, userId: "usr_bia", start, end, createdAt: T + 1 });
+    expect(onCallAt(s, [early, late], start)?.userId).toBe("usr_bia");
+    expect(onCallAt(s, [late, { ...early, createdAt: T + 1 }], start)?.userId).toBe("usr_duda");
     // An override covers a gap too.
     expect(onCallAt(schedule([]), [one], start)?.userId).toBe("usr_duda");
     expect(onCallAt(schedule([]), [], start)).toBeNull();
@@ -286,6 +334,53 @@ describe("nextHandoffs", () => {
     expect(segments[1].end).toBe(T + 30 * DAY);
     expect(nextHandoffs(s, [], T, T)).toEqual([]);
   });
+
+  test("a one-member layer is one handoff, whatever its shift length", () => {
+    const s = schedule([
+      layer({ members: ["usr_ana", "usr_bia"], unit: "weeks" }),
+      layer({ id: LYR2, members: ["usr_caio"], startDate: "2026-11-02", unit: "hours", count: 1 }),
+    ]);
+    const segments = nextHandoffs(s, [], T, T + 60 * DAY);
+    expect(segments.map((segment) => [wall(segment.start, s.timeZone), segment.userId])).toEqual([
+      ["2026-10-26 09:00", "usr_bia"],
+      ["2026-11-02 09:00", "usr_caio"],
+    ]);
+    expect(segments[1].end).toBe(T + 60 * DAY);
+  });
+
+  test("a layer hidden for longer than the walk looks ends the list where it stopped, not at `until`", () => {
+    // Hourly, under a one-member layer covering everything: 2000 hidden handoffs, then the walk stops.
+    const s = schedule([
+      layer({ startDate: "2026-01-01", unit: "hours", count: 1 }),
+      layer({ id: LYR2, members: ["usr_eva"], startDate: "2026-01-01" }),
+    ]);
+    const segments = nextHandoffs(s, [], T, T + 365 * DAY);
+    expect(segments).toHaveLength(1);
+    expect(segments[0].userId).toBe("usr_eva");
+    expect(segments[0].end).toBeLessThan(T + 90 * DAY);
+    expect(segments[0].end).toBeGreaterThan(T + 80 * DAY);
+  });
+
+  test("stays cheap for a workspace full of hourly rotations (the dashboard runs it every 30 seconds)", () => {
+    // 50 schedules × 5 hourly layers, 28 days ahead, the dashboard's 5 segments: one-member layers and
+    // two-member ones under them.
+    const layers = (index: number) =>
+      Array.from({ length: 5 }, (_, i) =>
+        layer({
+          id: `lyr_01JB00000000000000000000${index}${i}`.slice(0, 30),
+          members: i % 2 === 0 ? ["usr_ana", "usr_bia"] : ["usr_caio"],
+          startDate: "2026-01-01",
+          unit: "hours",
+          count: 1,
+        }),
+      );
+    const started = performance.now();
+    for (let index = 0; index < 50; index++) {
+      nextHandoffs(schedule(layers(index)), [], T, T + 28 * DAY, 5);
+    }
+    // Was ~3 s before handoffs were walked lazily; leave room for slow CI machines.
+    expect(performance.now() - started).toBeLessThan(500);
+  });
 });
 
 // ---- Mutations ----------------------------------------------------------------------------------------------------
@@ -394,6 +489,18 @@ describe("schedule mutations", () => {
       result.ok ? [] : (result.error.issues ?? []).map((issue) => issue.path);
     expect(paths(run({ timeZone: "Mars/Olympus" }))).toEqual(["timeZone"]);
     expect(paths(run({ timeZone: "America/Sao Paulo" }))).toEqual(["timeZone"]);
+    // Any spelling the runtime knows is stored as the runtime spells it.
+    const store = shard();
+    expect(
+      runMutation(
+        mutations,
+        "schedule.create",
+        createArgs({ timeZone: "america/SAO_PAULO" }),
+        store,
+        ctx("usr_ana", "owner"),
+      ).ok,
+    ).toBe(true);
+    expect(store.get("schedules", SCH)!.timeZone).toBe("America/Sao_Paulo");
     expect(paths(run({ layers: [layer({ startDate: "2026-02-30" })] }))).toEqual([
       "layers[0].startDate",
     ]);
@@ -625,6 +732,29 @@ describe("members leaving the rotations", () => {
       userId: "usr_eva",
       source: { kind: "layer", layerId: LYR1 },
     });
+  });
+
+  test("member.remove with the role unknown (null) still takes them out of the rotations", () => {
+    const store = prepared();
+    const result = runMutation(
+      serverMutations,
+      "member.remove",
+      { id: "usr_caio", role: null, reason: "removed" },
+      store,
+      ctx("usr_ana", "owner"),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      events: [
+        { type: "member.removed", data: { role: null } },
+        { type: "schedule.updated", data: { reason: "member_removed", userId: "usr_caio" } },
+        { type: "schedule.override_removed", subject: OVR1 },
+      ],
+    });
+    expect(store.get("schedules", SCH)!.layers.map((l) => l.members)).toEqual([
+      ["usr_ana", "usr_eva"],
+      [],
+    ]);
   });
 
   test("leaving and a reconcile do the same, and a removed member's only layer becomes a visible gap", () => {

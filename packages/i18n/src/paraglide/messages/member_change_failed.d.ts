@@ -11,7 +11,7 @@ export type Member_Change_FailedInputs = {
 * | "last_owner" | "A workspace needs at least one owner. Make someone else an owner first." |
 * | "not_found" | "This person is no longer a member." |
 * | "conflict" | "Someone else changed this member meanwhile. Check the list and try again." |
-* | "not_applied" | "Saved. Paging catches up within a minute." |
+* | "not_applied" | "Saved. Paging catches up on its own within a minute." |
 * | "unavailable" | "Brigade couldn't reach its database. Nothing changed; try again." |
 * | "network" | "Couldn't confirm the change; check the list." |
 * | * | "Something went wrong. Try again." |

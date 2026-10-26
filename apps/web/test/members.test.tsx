@@ -153,10 +153,13 @@ describe("changeMember", () => {
   });
 });
 
+type Answer = { ok: true } | { ok: false; error: MemberChangeError };
+
 function render(
   as: { userId: string; role: Role },
   options: {
-    result?: { ok: true } | { ok: false; error: MemberChangeError };
+    /** One answer for every change, or one per change in order (the last repeats). */
+    result?: Answer | Answer[];
     locale?: "en" | "pt-BR";
     members?: ListedMember[];
   } = {},
@@ -176,7 +179,8 @@ function render(
             loading={false}
             change={async (userId, change) => {
               changes.push([userId, change]);
-              return options.result ?? { ok: true };
+              const answers = [options.result ?? { ok: true }].flat();
+              return answers[Math.min(changes.length, answers.length) - 1]!;
             }}
             refresh={async () => {}}
             left={() => leftCount++}
@@ -299,8 +303,8 @@ describe("MembersList", () => {
     expect(changes).toEqual([["usr_caio", { kind: "role", role: "viewer" }]]);
   });
 
-  test("a failure shows in the member's own row, and Try again sends the same request", async () => {
-    const { changes, row, button, container } = render(
+  test("not_applied is a quiet note, not an error: it is saved, and there is nothing to retry", async () => {
+    const { row, button, container } = render(
       { userId: "usr_ana", role: "owner" },
       { result: { ok: false, error: "not_applied" } },
     );
@@ -309,17 +313,66 @@ describe("MembersList", () => {
       select.value = "viewer";
       select.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    expect(row("usr_caio").querySelector('[role="status"]')?.textContent).toBe(
+      "Saved. Paging catches up on its own within a minute.",
+    );
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(button(row("usr_caio"), "Try again")).toBeUndefined();
+    // The control that started the change keeps focus.
+    expect(document.activeElement).toBe(select);
+  });
+
+  test("a failure shows in the member's own row; Try again sends the same request and keeps focus", async () => {
+    const { changes, row, button, container } = render(
+      { userId: "usr_ana", role: "owner" },
+      { result: { ok: false, error: "network" } },
+    );
+    const select = row("usr_caio").querySelector("select")!;
+    await act(async () => {
+      select.value = "viewer";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
     expect(row("usr_caio").querySelector('[role="alert"]')?.textContent).toContain(
-      "Saved. Paging catches up within a minute.",
+      "Couldn't confirm the change; check the list.",
     );
     expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
-    // The control that started the change keeps focus.
     expect(document.activeElement).toBe(select);
     await act(async () => button(row("usr_caio"), "Try again").click());
     expect(changes).toEqual([
       ["usr_caio", { kind: "role", role: "viewer" }],
       ["usr_caio", { kind: "role", role: "viewer" }],
     ]);
+    // Failed again: focus stays on Try again, which still shows.
+    expect(document.activeElement).toBe(button(row("usr_caio"), "Try again"));
+  });
+
+  test("opening a confirm clears the row's error, so a row never shows both", async () => {
+    const { row, button } = render(
+      { userId: "usr_ana", role: "owner" },
+      { result: { ok: false, error: "unavailable" } },
+    );
+    act(() => button(row("usr_caio"), "Remove").click());
+    const confirm = [...row("usr_caio").querySelectorAll("button")].find(
+      (b) => b.textContent === "Remove" && b.getAttribute("aria-expanded") === null,
+    )!;
+    await act(async () => confirm.click());
+    expect(row("usr_caio").querySelector('[role="alert"]')).not.toBeNull();
+    act(() => button(row("usr_caio"), "Remove").click());
+    expect(row("usr_caio").querySelector('[role="group"]')).not.toBeNull();
+    expect(row("usr_caio").querySelector('[role="alert"]')).toBeNull();
+  });
+
+  test("one's own leave answered not_a_member (an earlier attempt went through) goes back to the start", async () => {
+    const { row, button, left } = render(
+      { userId: "usr_caio", role: "responder" },
+      { result: { ok: false, error: "forbidden" } },
+    );
+    act(() => button(row("usr_caio"), "Leave workspace").click());
+    const confirm = [...row("usr_caio").querySelectorAll("button")].find(
+      (b) => b.textContent === "Leave workspace" && b.getAttribute("aria-expanded") === null,
+    )!;
+    await act(async () => confirm.click());
+    expect(left()).toBe(1);
   });
 
   test("after a removal, focus moves to the next member's first control", async () => {
@@ -364,6 +417,30 @@ describe("MembersList", () => {
     act(() => button(container, "Show all 30 members").click());
     expect(container.querySelectorAll("[data-member]")).toHaveLength(30);
     expect(container.textContent).not.toContain("Show all");
+  });
+
+  test("a collapsed list always keeps the signed-in member's own row, and Show all focuses a viewer's next row", () => {
+    const many: ListedMember[] = [
+      ...team,
+      ...Array.from({ length: 26 }, (_, index) => ({
+        userId: `usr_m${index}`,
+        name: `Member ${String(index).padStart(2, "0")}`,
+        email: `m${index}@example.com`,
+        role: "responder" as const,
+      })),
+    ];
+    // Duda is a viewer: sorted last of 30, past the first ten.
+    const { container, button, row } = render(
+      { userId: "usr_duda", role: "viewer" },
+      { members: many },
+    );
+    expect(container.querySelectorAll("[data-member]")).toHaveLength(11);
+    expect(row("usr_duda").textContent).toContain("Leave workspace");
+    act(() => button(container, "Show all 30 members").click());
+    // The first row Show all revealed has no control for a viewer: the row itself takes focus.
+    const first = container.querySelectorAll<HTMLElement>("[data-member]")[10]!;
+    expect(first.querySelector("select, button")).toBeNull();
+    expect(document.activeElement).toBe(first);
   });
 
   test("reads in Portuguese", () => {

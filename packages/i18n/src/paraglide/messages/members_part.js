@@ -50,7 +50,7 @@ export const members_part = /** @type {((inputs: Members_PartInputs, options?: {
 		if (i?.part === "empty") return /** @type {LocalizedString} */ (`Ainda não há mais ninguém neste espaço de trabalho.`);
 		if (i?.part === "demote") return /** @type {LocalizedString} */ (`Mudar papel`);
 		if (i?.part === "retry") return /** @type {LocalizedString} */ (`Tentar de novo`);
-		if (i?.part === "only_owner") return /** @type {LocalizedString} */ (`Você é o único proprietário. Torne outra pessoa proprietária antes de sair ou mudar seu papel.`);
+		if (i?.part === "only_owner") return /** @type {LocalizedString} */ (`Só você é proprietário deste espaço de trabalho. Torne outra pessoa proprietária antes de sair ou mudar seu papel.`);
 		return /** @type {LocalizedString} */ (`Membros`)
 	}
 	{

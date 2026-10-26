@@ -710,7 +710,7 @@
         "part=empty": "Ainda não há mais ninguém neste espaço de trabalho.",
         "part=demote": "Mudar papel",
         "part=retry": "Tentar de novo",
-        "part=only_owner": "Você é o único proprietário. Torne outra pessoa proprietária antes de sair ou mudar seu papel.",
+        "part=only_owner": "Só você é proprietário deste espaço de trabalho. Torne outra pessoa proprietária antes de sair ou mudar seu papel.",
         "part=*": "Membros"
       }
     }
@@ -724,7 +724,7 @@
         "reason=last_owner": "Um espaço de trabalho precisa de pelo menos um proprietário. Torne outra pessoa proprietária primeiro.",
         "reason=not_found": "Essa pessoa não é mais membro.",
         "reason=conflict": "Outra pessoa mudou este membro enquanto isso. Confira a lista e tente de novo.",
-        "reason=not_applied": "Salvo. Os chamados se atualizam em até um minuto.",
+        "reason=not_applied": "Salvo. Os chamados se atualizam sozinhos em até um minuto.",
         "reason=unavailable": "O Brigade não conseguiu acessar o banco de dados. Nada mudou; tente de novo.",
         "reason=network": "Não foi possível confirmar a mudança; confira a lista.",
         "reason=*": "Algo deu errado. Tente de novo."

@@ -724,7 +724,7 @@
         "reason=last_owner": "A workspace needs at least one owner. Make someone else an owner first.",
         "reason=not_found": "This person is no longer a member.",
         "reason=conflict": "Someone else changed this member meanwhile. Check the list and try again.",
-        "reason=not_applied": "Saved. Paging catches up within a minute.",
+        "reason=not_applied": "Saved. Paging catches up on its own within a minute.",
         "reason=unavailable": "Brigade couldn't reach its database. Nothing changed; try again.",
         "reason=network": "Couldn't confirm the change; check the list.",
         "reason=*": "Something went wrong. Try again."

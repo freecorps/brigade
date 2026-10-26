@@ -46,20 +46,24 @@ export function MembersCard() {
   );
 }
 
-/** Answers worth sending again as they were: the change may not have landed, or paging may still catch up. */
-const RETRYABLE: readonly MemberChangeError[] = [
-  "not_applied",
-  "unavailable",
-  "network",
-  "internal",
-];
+/**
+ * Answers worth sending again as they were: the change may not have landed. Not `not_applied`: D1 has the change
+ * and the shard's repair alarm catches paging up on its own, so it is a note, not an error.
+ */
+const RETRYABLE: readonly MemberChangeError[] = ["unavailable", "network", "internal"];
 
 /** A change waiting for its confirm: removing or leaving, or stepping one's own role down. */
 type Pending = { userId: string; change: MemberChange };
-/** A failed change, shown in its member's row; `retry` sends the same request again. */
-type Failure = { userId: string; message: string; retry: MemberChange | null };
-/** Where focus goes once a change settles: a member's control (found by `data-member`) or the card's title. */
-type FocusTarget = { userId: string; control: "role" | "remove" | "first" } | "title";
+/**
+ * A change that did not fully go through, shown in its member's row: an error (`retry` sends the same request
+ * again), or a `note` when it is saved and only paging is still catching up.
+ */
+type Failure = { userId: string; message: string; retry: MemberChange | null; note: boolean };
+/**
+ * Where focus goes once a change settles: a member's control (found by `data-member`), the row itself when it has
+ * none (a viewer's list), or the card's title.
+ */
+type FocusTarget = { userId: string; control: "role" | "remove" | "retry" | "first" } | "title";
 
 /** The card itself, with its data and actions passed in (its tests render it without Better Auth). */
 export function MembersList({
@@ -94,7 +98,8 @@ export function MembersList({
   const owners = members.filter((member) => member.role === "owner").length;
   const manage = role === "owner" || role === "admin";
   const sorted = sortMembers(members);
-  const visible = visibleMembers(sorted, expanded, touched ? [touched] : []);
+  // The signed-in member's own row (and its Leave) is always listed, wherever their role sorts them.
+  const visible = visibleMembers(sorted, expanded, touched ? [userId, touched] : [userId]);
 
   // Runs after the list re-renders (a removed row gone, a changed row re-sorted), so focus lands on what is there.
   useEffect(() => {
@@ -104,15 +109,17 @@ export function MembersList({
       titleRef.current?.focus();
       return;
     }
-    const row = cardRef.current?.querySelector(`[data-member="${focusTarget.userId}"]`);
+    const row = cardRef.current?.querySelector<HTMLElement>(
+      `[data-member="${focusTarget.userId}"]`,
+    );
     const control =
       row?.querySelector<HTMLElement>(`[data-control="${focusTarget.control}"]`) ??
       row?.querySelector<HTMLElement>("select, button");
-    if (control) control.focus();
-    else titleRef.current?.focus();
+    (control ?? row ?? titleRef.current)?.focus();
   }, [focusTarget, members]);
 
-  const run = async (target: ListedMember, request: MemberChange) => {
+  /** `fromRetry`: sent again from the row's Try again, which keeps focus while it still shows. */
+  const run = async (target: ListedMember, request: MemberChange, fromRetry = false) => {
     // The control that started a change stays focusable (`aria-disabled`), so every handler goes through here.
     if (busy !== null) return;
     setFailed(null);
@@ -121,16 +128,23 @@ export function MembersList({
     setTouched(target.userId);
     const result = await change(target.userId, request);
     const self = target.userId === userId;
-    // `not_found` on one's own leave: an earlier attempt already went through.
-    if (request.kind === "remove" && self && (result.ok || result.error === "not_found")) {
+    // `not_found` or `forbidden` (the API's `not_a_member`) on one's own leave: an earlier attempt already went
+    // through. A leave is otherwise refused only for the last owner (`last_owner`).
+    if (
+      request.kind === "remove" &&
+      self &&
+      (result.ok || result.error === "not_found" || result.error === "forbidden")
+    ) {
       left();
       return;
     }
+    const retry = !result.ok && RETRYABLE.includes(result.error) ? request : null;
     if (!result.ok) {
       setFailed({
         userId: target.userId,
         message: memberChangeReason(result.error),
-        retry: RETRYABLE.includes(result.error) ? request : null,
+        retry,
+        note: result.error === "not_applied",
       });
     }
     try {
@@ -147,7 +161,7 @@ export function MembersList({
     } else {
       setFocusTarget({
         userId: target.userId,
-        control: request.kind === "role" ? "role" : "remove",
+        control: fromRetry && retry ? "retry" : request.kind === "role" ? "role" : "remove",
       });
     }
   };
@@ -192,10 +206,12 @@ export function MembersList({
                   locked={busy !== null}
                   failure={failed?.userId === member.userId ? failed : null}
                   confirming={confirming?.userId === member.userId ? confirming.change : null}
-                  onConfirm={(pending) =>
-                    setConfirming(pending ? { userId: member.userId, change: pending } : null)
-                  }
-                  onChange={(request) => void run(member, request)}
+                  onConfirm={(pending) => {
+                    // A row shows either an outcome or a question, never both.
+                    if (pending) setFailed(null);
+                    setConfirming(pending ? { userId: member.userId, change: pending } : null);
+                  }}
+                  onChange={(request, fromRetry) => void run(member, request, fromRetry)}
                 />
               ))}
             </ul>
@@ -270,7 +286,7 @@ function MemberItem({
   failure: Failure | null;
   confirming: MemberChange | null;
   onConfirm: (pending: MemberChange | null) => void;
-  onChange: (change: MemberChange) => void;
+  onChange: (change: MemberChange, fromRetry?: boolean) => void;
 }) {
   const nameId = useId();
   const roleId = useId();
@@ -300,7 +316,12 @@ function MemberItem({
     else onChange({ kind: "role", role: next });
   };
   return (
-    <li data-member={member.userId} className="flex flex-col gap-2 px-4 py-3 sm:px-6">
+    // Focusable from script only: where focus lands on a row without controls (a viewer's list after Show all).
+    <li
+      data-member={member.userId}
+      tabIndex={-1}
+      className="flex flex-col gap-2 px-4 py-3 outline-none focus-visible:ring-3 focus-visible:ring-ring focus-visible:ring-inset sm:px-6"
+    >
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex min-w-0 flex-1 basis-56 flex-col gap-0.5">
           <p className="flex min-w-0 items-baseline gap-2">
@@ -333,6 +354,7 @@ function MemberItem({
                 data-control="role"
                 value={member.role}
                 aria-disabled={locked || undefined}
+                title={locked ? m.members_part({ part: "saving", name: "" }) : undefined}
                 aria-describedby={nameId}
                 onChange={(event) => pickRole(event.target.value as Role)}
                 className={SELECT}
@@ -351,24 +373,33 @@ function MemberItem({
               </Badge>
             </div>
           )}
-          {removable ? (
-            <Button
-              ref={askRef}
-              data-control="remove"
-              variant="ghost"
-              disabled={locked}
-              focusableWhenDisabled
-              aria-describedby={nameId}
-              aria-expanded={confirming?.kind === "remove"}
-              onClick={() => {
-                if (!locked) onConfirm({ kind: "remove" });
-              }}
-              className="ml-auto shrink-0 text-destructive hover:text-destructive sm:ml-0"
-            >
-              {choices.leave ? <LogOutIcon aria-hidden /> : <UserMinusIcon aria-hidden />}
-              {m.members_part({ part: choices.leave ? "leave" : "remove", name: "" })}
-            </Button>
-          ) : null}
+          {/* A fixed slot from `sm` up, so every row's role lines up whichever button (or none) follows; on
+              phones Leave takes its own line, Remove sits beside the role. */}
+          <div
+            className={cn(
+              "sm:flex sm:min-w-44 sm:basis-auto sm:justify-end",
+              !removable ? "hidden" : choices.leave ? "flex basis-full" : "ml-auto flex sm:ml-0",
+            )}
+          >
+            {removable ? (
+              <Button
+                ref={askRef}
+                data-control="remove"
+                variant="ghost"
+                disabled={locked}
+                focusableWhenDisabled
+                aria-describedby={nameId}
+                aria-expanded={confirming?.kind === "remove"}
+                onClick={() => {
+                  if (!locked) onConfirm({ kind: "remove" });
+                }}
+                className="shrink-0 text-destructive hover:text-destructive"
+              >
+                {choices.leave ? <LogOutIcon aria-hidden /> : <UserMinusIcon aria-hidden />}
+                {m.members_part({ part: choices.leave ? "leave" : "remove", name: "" })}
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
       {onlyOwner ? (
@@ -381,17 +412,22 @@ function MemberItem({
           {m.members_part({ part: "saving", name: "" })}
         </p>
       ) : null}
-      {failure ? (
+      {failure?.note ? (
+        <p role="status" className="max-w-prose text-sm text-muted-foreground">
+          {failure.message}
+        </p>
+      ) : failure ? (
         <div className="flex flex-col gap-2">
           <FormError>{failure.message}</FormError>
           {failure.retry ? (
             <Button
+              data-control="retry"
               variant="outline"
               disabled={locked}
               focusableWhenDisabled
               aria-describedby={nameId}
               onClick={() => {
-                if (!locked && failure.retry) onChange(failure.retry);
+                if (!locked && failure.retry) onChange(failure.retry, true);
               }}
               className="self-start"
             >

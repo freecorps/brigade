@@ -16,7 +16,7 @@ import {
   type QueryState,
   type SyncClientOptions,
 } from "../src/client.ts";
-import { MUTATION_RETENTION_MS } from "../src/protocol.ts";
+import { MUTATION_RETENTION_MS, PONG_FRAME } from "../src/protocol.ts";
 import { syncView } from "../src/view.ts";
 import { FakeNetwork, FakeServer, FakeTimers, type FakeSocket } from "./fake-server.ts";
 
@@ -1481,7 +1481,7 @@ test("a pong keeps the socket live, and pings go on every interval", async () =>
   expect(network.sockets).toHaveLength(1);
 });
 
-test("a socket silent past the deadline is dropped and the client reconnects and resumes", async () => {
+test("a socket silent past two deadlines in a row is dropped and the client reconnects and resumes", async () => {
   const { client, settle, network, timers, shard, warnings } = setup();
   const a = client(ana);
   const active = watch(a.query(SHARD, "incidents.active", {}));
@@ -1493,6 +1493,11 @@ test("a socket silent past the deadline is dropped and the client reconnects and
   timers.advance(PING_AT);
   await settle();
   expect(shard.pings).toBe(1);
+  // The first deadline only asks again.
+  timers.advance(DEADLINE);
+  await settle();
+  expect(shard.pings).toBe(2);
+  expect(a.connectionState(SHARD)).toBe("open");
   timers.advance(DEADLINE - 1);
   expect(a.connectionState(SHARD)).toBe("open");
   timers.advance(1);
@@ -1576,4 +1581,138 @@ test("heartbeat: false sends no pings and keeps a silent socket", async () => {
   await settle();
   expect(shard.pings).toBe(0);
   expect(a.connectionState(SHARD)).toBe("open");
+});
+
+/** Lets `ms` pass a second at a time with the network delivering, as time passes on a working link. */
+const running = (timers: FakeTimers, settle: () => Promise<void>) => async (ms: number) => {
+  for (let left = ms; left > 0; left -= 1000) {
+    timers.advance(Math.min(1000, left));
+    await settle();
+  }
+};
+
+test("a pong late by one deadline keeps the socket", async () => {
+  const { client, settle, network, timers, shard } = setup();
+  const live = running(timers, settle);
+  const a = client(ana);
+  watch(a.query(SHARD, "incidents.active", {}));
+  await settle();
+  shard.silent = true;
+  timers.advance(PING_AT + DEADLINE);
+  await settle();
+  // Its pong, queued behind something large, arrives during the second wait.
+  shard.silent = false;
+  network.sockets[0].deliver(PONG_FRAME);
+  await settle();
+  await live(10 * DEADLINE);
+  expect(a.connectionState(SHARD)).toBe("open");
+  expect(network.sockets).toHaveLength(1);
+});
+
+test("a slow snapshot holds back the deadline: no reconnect loop, and the socket stays once it lands", async () => {
+  const { client, settle, network, timers, shard, warnings } = setup();
+  const live = running(timers, settle);
+  shard.slow = true;
+  const a = client(ana);
+  const active = watch(a.query(SHARD, "incidents.active", {}));
+  await settle();
+  timers.advance(PING_AT);
+  await settle();
+  expect(shard.pings).toBe(1); // Its pong is held behind the snapshot.
+  await live(10 * DEADLINE);
+  expect(network.sockets).toHaveLength(1);
+  expect(a.connectionState(SHARD)).toBe("open");
+  expect(syncView(active.get().status, a.connectionState(SHARD), false)).toBe("connecting");
+
+  shard.deliverHeld();
+  await settle();
+  expect(active.get()).toMatchObject({ status: "ready" });
+  // The pong behind the snapshot answered the ping: the heartbeat goes on as usual.
+  timers.advance(PING_AT);
+  await settle();
+  expect(shard.pings).toBe(2);
+  await live(10 * DEADLINE);
+  expect(network.sockets).toHaveLength(1);
+  expect(a.connectionState(SHARD)).toBe("open");
+  expect(warnings).toEqual([]);
+});
+
+test("a shard that refuses ping is not pinged again, and the reconnect does not back off", async () => {
+  const { client, settle, network, timers, shard, warnings } = setup();
+  const live = running(timers, settle);
+  shard.refusesPing = true;
+  const a = client(ana);
+  const active = watch(a.query(SHARD, "incidents.active", {}));
+  await settle();
+  timers.advance(PING_AT);
+  await settle();
+  expect(network.sockets[0].closed).toBe(true);
+  expect(warnings).toContain(`${SHARD} refused the heartbeat ping; reconnecting without it`);
+  // The first retry delay, as after a healthy connection.
+  timers.advance(backoffDelay(0, 0.5));
+  await settle();
+  expect(network.sockets).toHaveLength(2);
+  expect(a.connectionState(SHARD)).toBe("open");
+  await live(10 * PING_AT);
+  expect(shard.pings).toBe(1);
+  expect(pings(network.sockets[1])).toBe(0);
+  expect(network.sockets).toHaveLength(2);
+  expect(active.get()).toMatchObject({ status: "ready" });
+});
+
+test("a deadline that fires late after a suspend asks again instead of dropping the socket", async () => {
+  const { client, settle, network, timers, shard, warnings } = setup();
+  const live = running(timers, settle);
+  const a = client(ana);
+  watch(a.query(SHARD, "incidents.active", {}));
+  await settle();
+  timers.advance(PING_AT);
+  // The app goes to the background before the pong is handled; its timers stop for ten minutes.
+  timers.suspend(10 * 60_000);
+  timers.advance(0);
+  expect(network.sockets[0].closed).toBe(false);
+  expect(pings(network.sockets[0])).toBe(2);
+  await settle();
+  await live(10 * DEADLINE);
+  expect(a.connectionState(SHARD)).toBe("open");
+  expect(network.sockets).toHaveLength(1);
+  expect(shard.pings).toBeGreaterThan(2); // And the heartbeat went on as usual.
+  expect(warnings).toEqual([]);
+});
+
+test("a send that throws on a ping drops the socket and the heartbeat starts over on the next one", async () => {
+  const { client, settle, network, timers, shard, warnings } = setup();
+  const live = running(timers, settle);
+  const a = client(ana);
+  watch(a.query(SHARD, "incidents.active", {}));
+  await settle();
+  const first = network.sockets[0];
+  first.send = () => {
+    throw new Error("buffer full");
+  };
+  timers.advance(PING_AT);
+  expect(warnings).toContain(`Could not send to ${SHARD}`);
+  expect(first.closed).toBe(true);
+  expect(a.connectionState(SHARD)).toBe("waiting");
+  // Only the retry is left: no deadline from the lost ping.
+  expect(timers.pending).toBe(1);
+  timers.advance(backoffDelay(0, 0.5));
+  await settle();
+  expect(a.connectionState(SHARD)).toBe("open");
+  timers.advance(PING_AT);
+  await settle();
+  expect(shard.pings).toBe(1);
+  await live(10 * DEADLINE);
+  expect(network.sockets).toHaveLength(2);
+  expect(warnings.some((warning) => warning.includes("heartbeat"))).toBe(false);
+});
+
+test("heartbeat times must be positive", () => {
+  const { client } = setup();
+  for (const heartbeat of [{ intervalMs: 0 }, { timeoutMs: -1 }, { intervalMs: Number.NaN }]) {
+    expect(() => client(ana, ana, { heartbeat })).toThrow(RangeError);
+  }
+  expect(() =>
+    client(ana, ana, { heartbeat: { intervalMs: 5000, timeoutMs: 2000 } }),
+  ).not.toThrow();
 });

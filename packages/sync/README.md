@@ -94,9 +94,11 @@ missing global with no option given). `src/` uses no DOM or Node APIs, and only 
   `protocol` error closes the socket and backs off without resetting the count. Mutations unconfirmed for 7 days
   fail with `expired`, on a timer, online or not.
 - **Heartbeat**: on an open socket it sends a ping every 20 to 25 s; if no frame (a pong or anything else) arrives
-  within 10 s it drops the socket and reconnects as above, so a half-open socket (the network gone without a
-  close) shows as reconnecting, not Live. The shard's runtime answers the ping without waking it. Tune or turn
-  it off with `heartbeat: { intervalMs, timeoutMs }` or `heartbeat: false`.
+  within two 10 s deadlines in a row it drops the socket and reconnects as above, so a half-open socket (the
+  network gone without a close) shows as reconnecting, not Live. No deadline runs while a subscription waits for
+  its snapshot, a deadline that fires late (JS was suspended) pings again instead, and a shard that refuses `ping`
+  (an older one) is not pinged again. The shard's runtime answers the ping without waking it. Tune or turn it off
+  with `heartbeat: { intervalMs, timeoutMs }` or `heartbeat: false`.
 - **No flicker**: a confirmed mutation stays in the view until every subscription of its shard is in sync on the
   current socket at its version, so a patch lost with a connection never makes its row disappear.
 - **Never trusts the wire**: malformed frames, and data older than what a subscription received on the current

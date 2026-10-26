@@ -204,16 +204,23 @@ server → client
   "open" and the UI Live while nothing arrives. So on an open socket the client sends `ping` 25 s after the open
   or the last answer, less up to a fifth of jitter (20 to 25 s, so a fleet does not ping in step, and under the
   common 30 s idle timeouts of proxies), and then waits 10 s for **any** frame: a `pong`, or data that arrived
-  meanwhile. Silence past that deadline counts as a lost connection: the client closes the socket and reconnects
-  with the normal backoff (reset, as after any close of a connection that delivered data), so `connectionState`
-  goes to `waiting` and lists show reconnecting, not Live. A dead socket is found within about 35 s. No pings
-  are sent while no socket is open, and the timers stop with the socket (`close()`, the idle close, any drop).
-  `heartbeat: { intervalMs, timeoutMs }` tunes it and `heartbeat: false` turns it off. The client has no
-  foreground/background hook: on a phone, timers stop with the app in the background, and on the way back the
-  next ping (or a deadline that ran out meanwhile) finds a socket the OS killed. The shard answers `ping` at any
-  time, before `hello` too, and the frame never touches the socket's state. It needs no protocol version: a client
-  that never pings works as before. A client that pings an older shard would get a `protocol` error and a
-  reconnect loop, so the shard ships first (the web app and the API deploy together; the mobile app follows).
+  meanwhile. A first silent deadline only sends another ping (the pong may be queued behind a large frame); a
+  second one in a row counts as a lost connection: the client closes the socket and reconnects with the normal
+  backoff (reset, as after any close of a connection that delivered data), so `connectionState` goes to `waiting`
+  and lists show reconnecting, not Live. A dead socket is found within about 45 s. While a subscription on the
+  socket waits for its snapshot (or resume answer), no deadline runs: a large snapshot on a slow link may take
+  longer than the deadline, its pong queued behind it, and dropping the socket would only ask for the same
+  snapshot again, in a loop. That list shows loading, not Live, meanwhile; the deadline starts again once nothing
+  waits. No pings are sent while no socket is open, and the timers stop with the socket (`close()`, the idle
+  close, any drop). `heartbeat: { intervalMs, timeoutMs }` tunes it (both positive, or the constructor throws)
+  and `heartbeat: false` turns it off. The client has no foreground/background hook: on a phone, timers stop with
+  the app in the background, and on the way back the next ping finds a socket the OS killed. A deadline that
+  fires more than twice its length after its ping (the timer ran late while JS was suspended) proves nothing, so
+  it sends a fresh ping and waits again instead of dropping the socket. The shard answers `ping` at any time,
+  before `hello` too, and the frame never touches the socket's state. It needs no protocol version: a client that
+  never pings works as before. An older shard answers `ping` with a `protocol` error and a close; a `protocol`
+  error while a ping is unanswered makes the client stop pinging that shard (with a warning) and reconnect with
+  the backoff reset, as after a healthy connection, so it degrades to no heartbeat rather than a reconnect loop.
 - **Never trust the wire.** `parseServerMessage` and `parseClientMessage` never throw; they return fresh objects
   or a reason, reject unknown fields (in nested objects and issues too), and check every id, version and row
   (a row `id`, and every id in `deletes`, is a non-empty string). Ids (`subId`, `mutationId`, `clientId`) are 1–64 characters of
@@ -327,7 +334,9 @@ server → client
 - **Pings never wake the shard:** the constructor (run on every wake) sets
   `ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING_FRAME, PONG_FRAME))`, so the runtime answers
   an exact `{"type":"ping"}` on every socket itself, hibernated or not, without running `webSocketMessage` or
-  billing duration (the pair is at most 2 048 characters each). The client always sends those exact bytes. A
+  billing duration (the pair is at most 2 048 characters each). The auto-replied pings may still count as billed
+  incoming WebSocket messages (at 20 messages per request): about 200 requests per socket per day, small but not
+  free. The client always sends those exact bytes. A
   `ping` spelled otherwise (spaces, key order) still parses and `webSocketMessage` answers it with `pong`
   (`apps/api/test/sync.test.ts` checks both, and that the runtime recorded the auto-response).
 - **Close policy:**

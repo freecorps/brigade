@@ -166,7 +166,8 @@ async function relayHealth(
   env: Pick<NotifyEnv, "RELAY_URL" | "RELAY_SEND_TOKEN">,
   send: Fetch,
 ): Promise<RelayHealth> {
-  if (!env.RELAY_URL) return "not_configured";
+  // No token is the same as no relay for paging (`pushOne` says `not_configured`), so say that, not "refused".
+  if (!env.RELAY_URL || !env.RELAY_SEND_TOKEN) return "not_configured";
   try {
     const response = await send(
       new Request(new URL("/send", env.RELAY_URL), {

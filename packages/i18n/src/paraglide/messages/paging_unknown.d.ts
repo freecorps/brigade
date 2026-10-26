@@ -5,7 +5,7 @@ export type Paging_UnknownInputs = {};
 /**
 * | output |
 * | --- |
-* | "The paging self-check hasn't run yet. Once it runs, a test page goes through Brigade every minute." |
+* | "The paging self-check hasn't run yet. Once it runs, a heartbeat goes through Brigade's event queue every minute and checks that the push relay accepts Brigad..." |
 *
 * @param {Paging_UnknownInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

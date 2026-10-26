@@ -302,6 +302,19 @@ describe("the heartbeat, end to end", () => {
     });
   });
 
+  test("a relay URL without a send token is not configured, not refused", async () => {
+    const { stub, heartbeats, notifyEnv } = watchdog();
+    await stub.beat();
+    const fake = relay();
+    const { RELAY_SEND_TOKEN: _token, ...withoutToken } = notifyEnv();
+    await deliver(await heartbeats(), withoutToken, fake.send);
+    expect(fake.auth).toEqual([]);
+    expect(await stub.health()).toMatchObject({
+      status: "degraded",
+      reasons: ["relay_not_configured"],
+    });
+  });
+
   test("a relay that answers its token check with anything but 400 invalid_body is unreachable", async () => {
     const { stub, heartbeats, notifyEnv } = watchdog();
     for (const status of [200, 404, 500]) {

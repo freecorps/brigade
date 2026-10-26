@@ -7,7 +7,7 @@ export type Paging_Last_OkInputs = {
 /**
 * | output |
 * | --- |
-* | "Last test page that got through: {time}" |
+* | "Last self-check that got through: {time}" |
 *
 * @param {Paging_Last_OkInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

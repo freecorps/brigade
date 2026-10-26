@@ -128,7 +128,7 @@ describe("PagingHealthNotice", () => {
     expect(shown.textContent).toBe("");
   });
 
-  test("degraded: an alert with every reason and when the last test page got through", async () => {
+  test("degraded: an alert with every reason and when the last self-check got through", async () => {
     const shown = await mount(
       answer({
         status: "degraded",
@@ -138,9 +138,11 @@ describe("PagingHealthNotice", () => {
     );
     const alert = shown.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain("Pages may not reach phones");
-    expect(alert?.textContent).toContain("Test pages stopped getting through the event queue");
+    expect(alert?.textContent).toContain(
+      "The self-check's heartbeat stopped getting through the event queue",
+    );
     expect(alert?.textContent).toContain("No push relay is set up");
-    expect(alert?.textContent).toContain("Last test page that got through:");
+    expect(alert?.textContent).toContain("Last self-check that got through:");
   });
 
   test("a relay that refuses the send token says so, in pt-BR too", async () => {

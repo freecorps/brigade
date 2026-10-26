@@ -5,7 +5,7 @@ export type Paging_Reason_Pipeline_SlowInputs = {};
 /**
 * | output |
 * | --- |
-* | "Test pages take more than two minutes to get through the event queue." |
+* | "The self-check's heartbeat takes more than two minutes to get through the event queue." |
 *
 * @param {Paging_Reason_Pipeline_SlowInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

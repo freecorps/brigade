@@ -1,4 +1,4 @@
-// The paging self-check (apps/api src/watchdog.ts, RFC 0007 "Watching the watcher"): whether a test page made it
+// The paging self-check (apps/api src/watchdog.ts, RFC 0007 "Watching the watcher"): whether a heartbeat made it
 // through the outbox, the queue, the consumer and the relay lately. Pure functions here; the notice lives in
 // src/components/paging-health.tsx.
 
@@ -19,7 +19,7 @@ export type DegradedReason = (typeof DEGRADED_REASONS)[number];
 export type PagingHealth = {
   status: "ok" | "degraded" | "unknown";
   reasons: DegradedReason[];
-  /** The last time a test page got all the way through, relay included. */
+  /** The last time a heartbeat got all the way through, relay token included. */
   lastOkAt: Date | null;
 };
 

@@ -34,6 +34,13 @@ Incidents emit `incident.declared`, `incident.status_changed`, `incident.severit
 the same transaction (RFC 0003 "Timeline, updates and roles"); the monitor recovery note rides with
 `alert.resolved`.
 
+On-call schedules (RFC 0003 "Schedules") emit `schedule.created` (`id`, `name`, `timeZone`, `layers`: how many),
+`schedule.updated` (the same, plus `reason`: `edited`, or `member_removed` with the `userId` taken out of the
+rotations), `schedule.deleted` (`id`, `overrides` deleted with it), `schedule.override_added` (`id`, `scheduleId`,
+`userId`, `start`, `end`) and `schedule.override_removed` (`id`, `scheduleId`, `userId`, `reason`: `removed`,
+`member_removed` or `expired`). A member removal or a change to viewer carries the schedule events with
+`member.removed` or `member.role_changed`, in the same transaction.
+
 Users, sessions and membership live in D1, written by Better Auth (RFC 0002), not by a shard. A change there that
 integrations care about is announced by the workspace shard: creating a workspace runs `workspace.create` in its
 new `WorkspaceDO` (`workspace.created`, subject the workspace id). Member changes made through Brigade emit

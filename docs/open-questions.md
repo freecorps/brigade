@@ -67,6 +67,18 @@ reasons and times to any member of a workspace; `external` (whether the check is
 since with open sign-up anyone can own a workspace and no workspace role stands in for the instance's operator, who
 reads it in the logs. Open: an instance-operator role (or an allowlist in configuration) to show it in the dashboard.
 
+## Q20 — On-call schedule choices to confirm (RFC 0003 "Schedules")
+
+The first schedules slice made choices that are easy to change now and harder once escalation pages from them:
+
+- A member removed from the workspace (or made a viewer) is taken out of every rotation and the rest move up, so
+  everyone's later shifts shift. The alternative keeps their slots as gaps. Which should it be, and should the
+  owners be told (an email once the email notifier exists)?
+- Responders may add and remove overrides for themselves only. Should they also swap a shift with someone else
+  (an override for another member, accepted by them)?
+- A layer emptied by removals stays, as a gap, until someone edits it. Should an empty schedule warn on the
+  dashboard's overview once schedules page?
+
 ---
 
 # Decided

@@ -4,6 +4,7 @@ import { IncidentsCard } from "@/components/incidents-card";
 import { LegendCard } from "@/components/legend-card";
 import { MembersCard } from "@/components/members-card";
 import { MonitorsCard } from "@/components/monitors-card";
+import { OnCallCard } from "@/components/oncall-card";
 import { PagingHealthNotice } from "@/components/paging-health";
 import { usePreferences } from "@/components/preferences";
 import { RequireWorkspace } from "@/components/session";
@@ -34,6 +35,7 @@ function Overview() {
       </div>
       <PagingHealthNotice />
       <IncidentsCard />
+      <OnCallCard />
       <MonitorsCard />
       <MembersCard />
       <StackCard />

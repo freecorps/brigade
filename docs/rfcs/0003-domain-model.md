@@ -140,6 +140,50 @@ would change D1 without the shard's copy or an event.
   which covers an upgrade the Worker authenticated just before a change landed. What is left is RFC 0004
   "Session revocation".
 
+## Schedules
+
+First slice of on-call (Phase 2), in `packages/schema` (`schedules.ts`, `zoned.ts`), stored in `WorkspaceDO`. It
+says who is on call; it does not change who is paged yet (RFC 0006 "Who is paged" keeps the interim rule until
+escalation policies exist).
+
+- **Schedule** (`schedules` table, query `schedules.all`): a name, an IANA time zone, and one to five **layers**
+  (rotations), kept in the schedule's own row so an edit to several layers is one mutation and never half applied.
+  A layer has a name, its members in rotation order (1 to 50, each once), a start date and a handoff time on the
+  schedule's wall clock (`YYYY-MM-DD`, `HH:MM`), and a shift length: `count` hours (up to 168), days (up to 31) or
+  weeks (up to 13). A weekly rotation hands off on the start date's weekday. Shift `k` (0 is the first) starts at the
+  start date and time plus `k` shift lengths and goes to member `k mod n`.
+- **Override** (`overrides` table, query `overrides.all`): a member covers a schedule over `[start, end)`, two
+  instants on whole minutes, at most 90 days apart, ending in the future. Overrides are instants, not wall-clock
+  times, so changing the schedule's time zone does not move them.
+- **Who is on call at instant T** (`onCallAt`): an override of the schedule covering T wins over everything; of
+  overlapping overrides, the one added last (highest id). Otherwise the last layer that has someone at T: layers are
+  stacked, a later layer wins where it has someone and an earlier one shows through where it does not (before its
+  start, or emptied). Nobody is a gap (`null`), shown as "Nobody on call". `nextHandoffs` lists the stretches from
+  now (each layer handoff and override edge where the person changes; a handoff to the same person is none), for
+  the dashboard's upcoming shifts.
+- **Wall-clock handoffs and DST.** Handoffs happen at the local time the layer says, in every unit, so a daily
+  09:00 handoff stays at 09:00 and the shift over a DST change lasts 23 or 25 hours (a weekly one 167 or 169).
+  Times are converted with `Intl.DateTimeFormat` alone (no Temporal: Workers, browsers and Hermes differ), like
+  Temporal's `compatible` disambiguation: a local time that happens twice is the earlier instant; one that never
+  happens (clocks set forward) moves forward by the gap, so a midnight handoff in Sao Paulo's old DST (midnight
+  skipped) happens at 01:00. An hourly shift whose start and end both fall in the skipped hour is empty and its
+  member is skipped that once. Tests cover New York, London and Sao Paulo's historical transitions.
+- **Who manages them** (`schedule:read`, `schedule:manage`, `schedule:override`): owners and admins create, edit and
+  delete schedules and add or remove anyone's override; **responders add and remove overrides for themselves only**
+  (covering a shift, "manage own on-call overrides" in the role table below), never someone else's and never the
+  rotations; viewers read. Members of a layer and of an override must be in the shard's member list and not
+  viewers (viewers only read, so they never hold a shift).
+- **Members leaving.** `member.remove` (removed, left or reconciled) and a change to `viewer` (`member.changeRole`,
+  `member.reconcile`) take the member out of every layer and delete their overrides in the same transaction
+  (`schedule.updated` with `reason: member_removed`, `schedule.override_removed` with `member_removed`). The rest
+  of each layer keeps its order and the rotation counts again from its start, so later shifts move up (as PagerDuty
+  does); the alternative, leaving their shifts as holes, keeps everyone else's dates but leaves time nobody covers,
+  which is worse once schedules page. A layer left with nobody is a visible gap until someone edits it; the editor
+  asks for at least one member. Promoting a viewer back does not restore their place.
+- **Limits.** 50 schedules per workspace, 100 overrides not yet ended per schedule; an override that ended over 30
+  days ago is deleted when the next one is added to its schedule (`schedule.override_removed`, `expired`), so the
+  table stays small. Deleting a schedule deletes its overrides.
+
 ## Alert → incident flow
 
 1. Alert arrives (monitor or webhook) → normalized to `AlertEvent { source, fingerprint, status: firing|resolved, labels, payload }`.

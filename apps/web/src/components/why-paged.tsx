@@ -231,9 +231,9 @@ export function WhyPagedView({
       <Link
         to="/incidents/$number"
         params={{ number: String(number) }}
-        className="-ml-1 inline-flex min-h-11 items-center gap-2 self-start rounded-md px-1 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring"
+        className="-ml-1 inline-flex min-h-11 max-w-full items-center gap-2 self-start rounded-md px-1 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring"
       >
-        <ArrowLeftIcon aria-hidden className="size-4" />
+        <ArrowLeftIcon aria-hidden className="size-4 shrink-0" />
         <span className="min-w-0 truncate">{whyText("back", { name: title })}</span>
       </Link>
       <header className="flex flex-col gap-3">

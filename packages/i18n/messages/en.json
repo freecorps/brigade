@@ -488,6 +488,33 @@
       }
     }
   ],
+  "monitor_edit": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=action": "Edit",
+        "part=form": "Edit {name}",
+        "part=restart": "Saving starts its checks over: the last results are dropped and it shows Waiting until its regions report again.",
+        "part=*": "Save changes"
+      }
+    }
+  ],
+  "monitor_delete": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=action": "Delete monitor",
+        "part=prompt": "Delete {name}? Its checks stop and its results are gone for good.",
+        "part=alert": "Its firing alert resolves. The incident it opened stays open until someone resolves it.",
+        "part=incidents": "Incidents it opened before stay as they are.",
+        "part=heartbeat": "Its heartbeat URL stops working.",
+        "part=*": "Delete"
+      }
+    }
+  ],
+  "monitor_gone": "It was deleted.",
   "incident_page": [
     {
       "declarations": ["input part"],

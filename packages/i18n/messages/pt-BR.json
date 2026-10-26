@@ -488,6 +488,33 @@
       }
     }
   ],
+  "monitor_edit": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=action": "Editar",
+        "part=form": "Editar {name}",
+        "part=restart": "Salvar recomeça as verificações: os últimos resultados são descartados e ele mostra Aguardando até as regiões responderem de novo.",
+        "part=*": "Salvar alterações"
+      }
+    }
+  ],
+  "monitor_delete": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=action": "Excluir monitor",
+        "part=prompt": "Excluir {name}? As verificações param e os resultados se perdem de vez.",
+        "part=alert": "O alerta ativo é resolvido. O incidente que ele abriu continua aberto até alguém resolvê-lo.",
+        "part=incidents": "Incidentes que ele abriu antes continuam como estão.",
+        "part=heartbeat": "A URL do heartbeat deixa de funcionar.",
+        "part=*": "Excluir"
+      }
+    }
+  ],
+  "monitor_gone": "Ele foi excluído.",
   "incident_page": [
     {
       "declarations": ["input part"],

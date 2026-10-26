@@ -1,19 +1,25 @@
 // Pure helpers for the Monitors card: how a monitor reads, how the create form turns into a mutation's args (checked
 // with the mutation's own validator, so a value the shard would refuse is caught in its field), and heartbeat URLs.
-import { formatNumber, type Locale } from "@freecorps/brigade-i18n";
+import { formatNumber, m, type Locale } from "@freecorps/brigade-i18n";
+import { mutationErrorReason } from "@freecorps/brigade-i18n/incident";
 import {
+  can,
   createHeartbeatMonitor,
   createHttpMonitor,
   heartbeatToken,
   isFresh,
   monitorSources,
   newHeartbeatSecret,
+  PROBE_REGIONS,
   type ArgsOf,
   type CheckSource,
   type HttpMethod,
   type MonitorCheck,
   type MonitorRow,
   type ProbeRegion,
+  type Role,
+  type updateHeartbeatMonitor,
+  type updateHttpMonitor,
 } from "@freecorps/brigade-schema";
 
 /** What the status badge says: a paused monitor is paused, whatever its last status. */
@@ -175,6 +181,96 @@ const DRAFT_FIELDS: readonly DraftField[] = [
   "graceSeconds",
   "regions",
 ];
+
+/** What an owner or admin can do to a monitor from its row; everyone else reads it (`monitor:manage`). */
+export type MonitorAction = "edit" | "pause" | "resume" | "delete";
+
+export function monitorActions(role: Role, row: Pick<MonitorRow, "paused">): MonitorAction[] {
+  if (!can(role, "monitor:manage")) return [];
+  return ["edit", row.paused ? "resume" : "pause", "delete"];
+}
+
+/** The edit form as it opens: the monitor's own values, typed back into strings. */
+export function draftFromRow(row: MonitorRow): MonitorDraft {
+  const number = (value: number | null, fallback: string) =>
+    value === null ? fallback : String(value);
+  return {
+    kind: row.kind,
+    name: row.name,
+    url: row.url ?? "",
+    method: row.method ?? "GET",
+    expectedStatus: number(row.expectedStatus, ""),
+    keyword: row.keyword ?? "",
+    intervalSeconds: String(row.intervalSeconds),
+    timeoutSeconds: number(row.timeoutSeconds, EMPTY_DRAFT.timeoutSeconds),
+    graceSeconds: number(row.graceSeconds, EMPTY_DRAFT.graceSeconds),
+    regions: row.kind === "http" ? [...row.regions] : EMPTY_DRAFT.regions,
+  };
+}
+
+export type CheckedEdit =
+  | { ok: true; kind: "http"; args: ArgsOf<typeof updateHttpMonitor>; changed: boolean }
+  | { ok: true; kind: "heartbeat"; args: ArgsOf<typeof updateHeartbeatMonitor>; changed: boolean }
+  | { ok: false; fields: DraftField[] };
+
+/**
+ * The update mutation's args for an edited `draft` of `row`, checked like a new monitor (the same validators and
+ * cross-field rule), and whether anything changed: the shard refuses an update that changes nothing, so the form
+ * just closes then. The kind never changes.
+ */
+export function checkEdit(draft: MonitorDraft, row: MonitorRow): CheckedEdit {
+  const checked = checkDraft({ ...draft, kind: row.kind }, row.id);
+  if (!checked.ok) return checked;
+  if (checked.kind === "heartbeat") {
+    const { id, name, intervalSeconds, graceSeconds } = checked.args;
+    const args = { id, name, intervalSeconds, graceSeconds };
+    const changed =
+      args.name !== row.name ||
+      args.intervalSeconds !== row.intervalSeconds ||
+      args.graceSeconds !== row.graceSeconds;
+    return { ok: true, kind: "heartbeat", args, changed };
+  }
+  const args = {
+    ...checked.args,
+    // The shard keeps them in `PROBE_REGIONS` order, so the comparison does too.
+    regions: PROBE_REGIONS.filter((region) => checked.args.regions.includes(region)),
+  };
+  const changed = (["name", "intervalSeconds", ...TARGET_FIELDS] as const).some(
+    (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key]),
+  );
+  return { ok: true, kind: "http", args, changed };
+}
+
+/**
+ * Whether saving `draft` starts the monitor's checks over, as `monitor.updateHttp` does: a change to what is
+ * checked (anything but the name and the interval) on a running HTTP monitor. Its results are dropped and it
+ * waits for its regions again. A heartbeat's edit never restarts it.
+ */
+export function editRestarts(draft: MonitorDraft, row: MonitorRow): boolean {
+  if (row.kind !== "http" || row.paused) return false;
+  const checked = checkEdit(draft, row);
+  if (!checked.ok || checked.kind !== "http") return false;
+  const { args } = checked;
+  return TARGET_FIELDS.some((key) => JSON.stringify(args[key]) !== JSON.stringify(row[key]));
+}
+
+/** What an HTTP check is: changing any of these starts it over (`monitor.updateHttp`). */
+const TARGET_FIELDS = [
+  "url",
+  "method",
+  "expectedStatus",
+  "keyword",
+  "timeoutSeconds",
+  "regions",
+] as const;
+
+/**
+ * Why the shard refused a change to a monitor, in the shared wording (`mutationErrorReason`), except "not found",
+ * whose shared sentence is about an incident.
+ */
+export function monitorRefusal(code: string): string {
+  return code === "not_found" ? m.monitor_gone() : mutationErrorReason(code);
+}
 
 /** A new heartbeat token, its SHA-256 (what the shard stores) and the URL to ping. */
 export async function newHeartbeat(

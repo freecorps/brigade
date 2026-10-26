@@ -1,6 +1,5 @@
 import { m, type Locale } from "@freecorps/brigade-i18n";
 import {
-  can,
   formatIncidentNumber,
   monitorAlerting,
   type MonitorCheck,
@@ -18,28 +17,41 @@ import {
   CopyIcon,
   OctagonAlertIcon,
   PauseIcon,
+  PencilIcon,
   PlayIcon,
   PlusIcon,
   XIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
-import { MonitorForm } from "@/components/monitor-form";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
+import { MonitorForm, type MonitorFormMode } from "@/components/monitor-form";
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { FormError } from "@/components/ui/field";
-import { formatAge, mutationErrorReason, queryErrorReason } from "@/lib/incidents";
+import { formatAge, queryErrorReason } from "@/lib/incidents";
 import {
   checkErrorReason,
   formatLatency,
   formatSeconds,
+  monitorActions,
   monitorBadge,
+  monitorRefusal,
   newHeartbeat,
   sourceChips,
   type CheckedDraft,
+  type CheckedEdit,
+  type MonitorAction,
   type MonitorBadge,
   type SourceChip,
 } from "@/lib/monitors";
@@ -59,18 +71,24 @@ const BADGES: Record<
 
 /**
  * The workspace's monitors, live from its shard (`useQuery("monitors.all")`): status, the last result from each
- * region with the colo it really ran from and why it failed, and for owners and admins the create form and
- * pause (confirmed) and resume.
+ * region with the colo it really ran from and why it failed, and for owners and admins the create form, editing
+ * and deleting (confirmed, in the edit form), and pause (confirmed) and resume. One form is open at a time.
  */
 export function MonitorsCard() {
   const { locale } = usePreferences();
   const { workspaceId, userId, role } = useMember();
-  const manage = can(role, "monitor:manage");
+  // Owners and admins (`monitor:manage`); everyone else reads.
+  const manage = monitorActions(role, { paused: false }).length > 0;
   const { rows, status, error } = useQuery("monitors.all", {});
   const createHttp = useMutation("monitor.createHttp");
   const createHeartbeat = useMutation("monitor.createHeartbeat");
+  const updateHttp = useMutation("monitor.updateHttp");
+  const updateHeartbeat = useMutation("monitor.updateHeartbeat");
   const setPaused = useMutation("monitor.setPaused");
+  const remove = useMutation("monitor.delete");
   const [adding, setAdding] = useState(false);
+  /** The monitor whose edit form is open. */
+  const [editing, setEditing] = useState<string | null>(null);
   const [refused, setRefused] = useState<string | null>(null);
   /** The heartbeat URL, shown once after its monitor was created (only its hash is stored). */
   const [ping, setPing] = useState<{ url: string; interval: number } | null>(null);
@@ -89,9 +107,7 @@ export function MonitorsCard() {
 
   const report = (name: string) => (outcome: MutationOutcome) => {
     if (!outcome.ok) {
-      setRefused(
-        m.monitor_change_failed({ name, reason: mutationErrorReason(outcome.error.code) }),
-      );
+      setRefused(m.monitor_change_failed({ name, reason: monitorRefusal(outcome.error.code) }));
     }
     return outcome.ok;
   };
@@ -128,6 +144,37 @@ export function MonitorsCard() {
     setRefused(null);
     void setPaused({ id: row.id, paused: !row.paused }).then(report(row.name));
   };
+  /** Focus goes back to the row's Edit button once the form is gone. */
+  const closeEdit = (id: string) => {
+    setEditing(null);
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>(`[data-monitor="${id}"] [data-action="edit"]`)?.focus(),
+    );
+  };
+  const onEdit = (row: MonitorRow) => {
+    setRefused(null);
+    setAdding(false);
+    setEditing(row.id);
+  };
+  const onSave = (row: MonitorRow, checked: Extract<CheckedEdit, { ok: true }>) => {
+    setRefused(null);
+    const sent = checked.kind === "http" ? updateHttp(checked.args) : updateHeartbeat(checked.args);
+    void sent.then(report(row.name));
+    closeEdit(row.id);
+  };
+  const onDelete = (row: MonitorRow) => {
+    setRefused(null);
+    void remove({ id: row.id }).then(report(row.name));
+    setEditing(null);
+    // The row is gone: focus goes to the card's own action.
+    requestAnimationFrame(() => addRef.current?.focus());
+  };
+  const editMode = (row: MonitorRow): MonitorFormMode => ({
+    kind: "edit",
+    row,
+    onSave: (checked) => onSave(row, checked),
+    onDelete: () => onDelete(row),
+  });
 
   const down = rows.filter(monitorAlerting).length;
   const loading = status !== "ready" && status !== "error";
@@ -147,6 +194,7 @@ export function MonitorsCard() {
               variant="outline"
               onClick={() => {
                 setRefused(null);
+                setEditing(null);
                 setAdding(true);
               }}
             >
@@ -175,7 +223,7 @@ export function MonitorsCard() {
       </div>
 
       <CardContent className="flex flex-col gap-5">
-        {adding ? <MonitorForm onCreate={onCreate} onCancel={close} /> : null}
+        {adding ? <MonitorForm mode={{ kind: "create", onCreate }} onCancel={close} /> : null}
         {ping ? (
           <PingUrl
             {...ping}
@@ -204,7 +252,14 @@ export function MonitorsCard() {
                 locale={locale}
                 now={now}
                 userId={userId}
-                onPause={manage ? onPause : undefined}
+                actions={monitorActions(role, row)}
+                onPause={onPause}
+                onEdit={onEdit}
+                edit={
+                  editing === row.id ? (
+                    <MonitorForm mode={editMode(row)} onCancel={() => closeEdit(row.id)} />
+                  ) : null
+                }
               />
             ))}
           </ul>
@@ -236,13 +291,21 @@ function MonitorItem({
   locale,
   now,
   userId,
+  actions,
   onPause,
+  onEdit,
+  edit,
 }: {
   row: MonitorRow;
   locale: Locale;
   now: number;
   userId: string;
-  onPause?: (row: MonitorRow) => void;
+  /** What this member may do here (`monitorActions`): none for responders and viewers. */
+  actions: readonly MonitorAction[];
+  onPause: (row: MonitorRow) => void;
+  onEdit: (row: MonitorRow) => void;
+  /** The open edit form, drawn in place of the row's content. */
+  edit: ReactNode;
 }) {
   const nameId = useId();
   const promptId = useId();
@@ -261,6 +324,13 @@ function MonitorItem({
     // The Pause button stays mounted while the prompt is open.
     pauseRef.current?.focus();
   };
+  if (edit) {
+    return (
+      <li data-monitor={row.id} className="px-4 py-3 sm:px-6">
+        {edit}
+      </li>
+    );
+  }
   const latest = row.checks.reduce<MonitorCheck | undefined>(
     (last, check) => (last && last.at >= check.at ? last : check),
     undefined,
@@ -327,10 +397,26 @@ function MonitorItem({
         )}
         {line ? <p className="text-muted-foreground">{line}</p> : null}
       </div>
-      {onPause ? (
-        <div className="col-start-2 row-start-1 justify-self-end md:col-auto">
-          {row.paused ? (
-            <Button variant="ghost" aria-describedby={nameId} onClick={() => onPause(row)}>
+      {actions.length > 0 ? (
+        <div className="col-start-2 row-start-1 flex gap-1 justify-self-end md:col-auto md:flex-col md:items-end">
+          {actions.includes("edit") ? (
+            <Button
+              variant="ghost"
+              data-action="edit"
+              aria-describedby={nameId}
+              onClick={() => onEdit(row)}
+            >
+              <PencilIcon aria-hidden />
+              {m.monitor_edit({ part: "action", name: "" })}
+            </Button>
+          ) : null}
+          {actions.includes("resume") ? (
+            <Button
+              variant="ghost"
+              data-action="pause"
+              aria-describedby={nameId}
+              onClick={() => onPause(row)}
+            >
               <PlayIcon aria-hidden />
               {m.monitor_pause_action({ action: "resume" })}
             </Button>
@@ -338,6 +424,7 @@ function MonitorItem({
             <Button
               ref={pauseRef}
               variant="ghost"
+              data-action="pause"
               aria-describedby={nameId}
               aria-expanded={confirming}
               onClick={() => setConfirming(true)}
@@ -348,7 +435,7 @@ function MonitorItem({
           )}
         </div>
       ) : null}
-      {confirming && onPause && !row.paused ? (
+      {confirming && actions.includes("pause") ? (
         // Pausing resolves a firing alert, so it asks first. Inline, next to the row it is about.
         <div
           role="group"
@@ -373,7 +460,9 @@ function MonitorItem({
                 setConfirming(false);
                 onPause(row);
                 requestAnimationFrame(() =>
-                  document.querySelector<HTMLElement>(`[data-monitor="${row.id}"] button`)?.focus(),
+                  document
+                    .querySelector<HTMLElement>(`[data-monitor="${row.id}"] [data-action="pause"]`)
+                    ?.focus(),
                 );
               }}
             >

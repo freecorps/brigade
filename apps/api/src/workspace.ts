@@ -6,6 +6,7 @@ import {
   type MemberChange,
   type MutationErrorCode,
   type ProbeRegion,
+  type Role,
 } from "@freecorps/brigade-schema";
 import {
   encode,
@@ -25,6 +26,13 @@ import {
   type SocketVerdict,
 } from "./members.ts";
 import { ESCALATION_RETRY_MS, Escalations } from "./escalation.ts";
+import {
+  Invitations,
+  type InvitationEmailPlan,
+  type InvitationResult,
+  type Invitee,
+  type ListedInvitation,
+} from "./invitations.ts";
 import { isProbeRegion, MONITOR_TICK_MS, Monitoring } from "./monitors.ts";
 import { Mailer, type EmailOutcome, type EmailPlan } from "./mailer.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
@@ -135,6 +143,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly mailer: Mailer;
   private readonly escalations: Escalations;
   private readonly membership: Membership;
+  private readonly invitations: Invitations;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -202,6 +211,16 @@ export class WorkspaceDO extends DurableObject<Env> {
       committed: (version, changes) => this.broadcast(version, changes, undefined),
       closeSockets: (judge) => this.closeSockets(judge),
       wake: (at) => this.wake(at, "member repair"),
+      repairMore: (workspaceId) => this.invitations.repair(workspaceId),
+    });
+    this.invitations = new Invitations({
+      db: env.DB,
+      shard: this.shard,
+      sql: ctx.storage.sql,
+      membership: this.membership,
+      randomBytes,
+      log: (message, fields) => this.log(message, fields),
+      committed: (version, changes) => this.broadcast(version, changes, undefined),
     });
     // Events left in the outbox (an alarm that failed to arm, a restart) arm the drain again whenever the object
     // wakes, so a backlog never waits for an unrelated change.
@@ -306,6 +325,79 @@ export class WorkspaceDO extends DurableObject<Env> {
       return Promise.resolve({ ok: false, code: "not_found" });
     }
     return this.membership.change(workspaceId, actorId, targetId, change);
+  }
+
+  /**
+   * Invitations (RPCs from `/workspaces/:id/invitations` and `/invitations/:id`, which checked the session and, for
+   * the first, that the caller is a member): D1 first, then this shard's event (src/invitations.ts). A shard that
+   * serves another workspace, or none yet, answers `not_found`.
+   */
+  invite(
+    workspaceId: string,
+    actorId: string,
+    email: string,
+    role: Role,
+    origin: string | null,
+  ): Promise<InvitationResult<{ invitation: ListedInvitation }>> {
+    if (this.shard.workspace() !== workspaceId) return notFound();
+    return this.invitations.invite(workspaceId, actorId, email, role, origin);
+  }
+
+  resendInvitation(
+    workspaceId: string,
+    actorId: string,
+    invitationId: string,
+    origin: string | null,
+  ): Promise<InvitationResult<{ expiresAt: number }>> {
+    if (this.shard.workspace() !== workspaceId) return notFound();
+    return this.invitations.resend(workspaceId, actorId, invitationId, origin);
+  }
+
+  revokeInvitation(
+    workspaceId: string,
+    actorId: string,
+    invitationId: string,
+  ): Promise<InvitationResult> {
+    if (this.shard.workspace() !== workspaceId) return notFound();
+    return this.invitations.revoke(workspaceId, actorId, invitationId);
+  }
+
+  acceptInvitation(
+    workspaceId: string,
+    invitationId: string,
+    invitee: Invitee,
+  ): Promise<InvitationResult<{ role: Role }>> {
+    if (this.shard.workspace() !== workspaceId) return notFound();
+    return this.invitations.accept(workspaceId, invitationId, invitee);
+  }
+
+  declineInvitation(
+    workspaceId: string,
+    invitationId: string,
+    invitee: Invitee,
+  ): Promise<InvitationResult> {
+    if (this.shard.workspace() !== workspaceId) return notFound();
+    return this.invitations.decline(workspaceId, invitationId, invitee);
+  }
+
+  /** The email a `member.invited` asks for (RPC from the queue consumer, src/notify-invite.ts). */
+  planInvitationEmail(event: BrigadeEvent): InvitationEmailPlan {
+    const data = event.data as { invitationId?: unknown; send?: unknown } | null;
+    if (
+      this.shard.workspace() !== event.workspaceId ||
+      event.type !== "member.invited" ||
+      typeof data?.invitationId !== "string" ||
+      typeof data.send !== "number"
+    ) {
+      return { send: false, reason: "nothing" };
+    }
+    return this.invitations.planEmail(data.invitationId, data.send, Date.now());
+  }
+
+  /** What an invitation email's send did (RPC from the queue consumer). */
+  recordInvitationEmail(event: BrigadeEvent, key: string, done: boolean): void {
+    if (this.shard.workspace() !== event.workspaceId) return;
+    this.invitations.recordEmail(key, done);
   }
 
   /**
@@ -982,6 +1074,11 @@ export class WorkspaceDO extends DurableObject<Env> {
       }),
     );
   }
+}
+
+/** What every invitation RPC answers for a shard that serves another workspace, or none yet. */
+function notFound(): Promise<{ ok: false; code: "not_found" }> {
+  return Promise.resolve({ ok: false, code: "not_found" });
 }
 
 function earliest(a: number | null, b: number | null): number | null {

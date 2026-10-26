@@ -10,6 +10,7 @@ import { formatIncidentNumber, type DeliveryError } from "@freecorps/brigade-sch
 import { emailSender, type EmailEnv, type EmailSender } from "./email.ts";
 import { asksForEmail } from "./mailer.ts";
 import { emailRetryDelay, notifyEmail, type EmailNotifyEnv } from "./notify-email.ts";
+import { asksForInvitation, notifyInvitation } from "./notify-invite.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 import {
   asksForPage,
@@ -81,13 +82,16 @@ export async function consumeEvents(
       if (seen.has(event.id)) return message.ack();
       seen.add(event.id);
       const email = asksForEmail(event);
-      const delay = email ? emailRetryDelay : retryDelay;
+      const invitation = asksForInvitation(event);
+      const delay = email || invitation ? emailRetryDelay : retryDelay;
       try {
         const delaySeconds = email
           ? await notifyEmail(event, message.attempts, env, mail)
-          : (await notifyPush(event, message.attempts, env, send))
-            ? retryDelay(message.attempts)
-            : undefined;
+          : invitation
+            ? await notifyInvitation(event, message.attempts, env, mail)
+            : (await notifyPush(event, message.attempts, env, send))
+              ? retryDelay(message.attempts)
+              : undefined;
         if (delaySeconds !== undefined) message.retry({ delaySeconds });
         else message.ack();
       } catch (error) {

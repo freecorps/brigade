@@ -764,6 +764,7 @@
         "part=demote": "Mudar papel",
         "part=retry": "Tentar de novo",
         "part=only_owner": "Só você é proprietário deste espaço de trabalho. Torne outra pessoa proprietária antes de sair ou mudar seu papel.",
+        "part=empty_invite": "Ainda não há mais ninguém neste espaço de trabalho. Convide sua equipe para ter quem colocar de plantão.",
         "part=*": "Membros"
       }
     }
@@ -806,6 +807,20 @@
       "match": {
         "countPlural=one": "Mostrar {countFormatted} membro",
         "countPlural=*": "Mostrar todos os {countFormatted} membros"
+      }
+    }
+  ],
+  "invite_show_all": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Mostrar {countFormatted} convite",
+        "countPlural=*": "Mostrar todos os {countFormatted} convites"
       }
     }
   ],
@@ -1399,5 +1414,194 @@
         "text=*": "Quem foi acionado"
       }
     }
-  ]
+  ],
+  "email_verify": [
+    {
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "Confirme seu email no Brigade",
+        "part=intro": "Confirme que {email} é o seu endereço. Até lá, o Brigade não envia emails sobre incidentes, e você não pode convidar pessoas nem aceitar convites.",
+        "part=open": "Confirmar meu email",
+        "part=expires": "O link vale por 24 horas.",
+        "part=footer": "Se você não criou uma conta no Brigade, ignore este email: nada acontece sem o link.",
+        "part=*": "Brigade"
+      }
+    }
+  ],
+  "email_invite": [
+    {
+      "declarations": ["input part", "input inviter", "input workspace", "input role"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "{inviter} convidou você para {workspace} no Brigade",
+        "part=intro": "{inviter} convidou você para entrar em {workspace} no Brigade, onde a equipe responde a incidentes, como {role}.",
+        "part=how": "Para aceitar, entre ou crie uma conta no Brigade com este endereço de email e confirme-o.",
+        "part=open": "Ver o convite",
+        "part=expires": "O convite expira em 7 dias.",
+        "part=footer": "Se você não esperava por isto, ignore este email: ninguém entra sem aceitar.",
+        "part=*": "Brigade"
+      }
+    }
+  ],
+  "verify_notice": [
+    {
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Confirme seu email",
+        "part=body": "Enviamos um link para {email}. Até você abri-lo, o Brigade não envia emails para você, e você não pode convidar pessoas nem aceitar convites.",
+        "part=resend": "Enviar o link de novo",
+        "part=sending": "Enviando…",
+        "part=sent": "Enviado. Abra o email mais recente do Brigade (veja também o spam).",
+        "part=rate_limited": "Você pediu vários links agora há pouco. Espere alguns minutos e tente de novo.",
+        "part=not_configured": "Este servidor do Brigade ainda não envia emails. Fale com quem o administra.",
+        "part=failed": "Não foi possível enviar o link. Tente de novo.",
+        "part=*": "Confirme seu email"
+      }
+    }
+  ],
+  "verify_page": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=page_title": "Confirmar email",
+        "part=checking": "Confirmando seu email…",
+        "part=done_title": "Email confirmado",
+        "part=done_body": "Agora o Brigade pode enviar emails para você, e você pode convidar pessoas e aceitar convites.",
+        "part=expired_title": "Este link expirou",
+        "part=expired_body": "Os links valem por 24 horas. Entre e peça um novo.",
+        "part=invalid_title": "Este link não funciona",
+        "part=invalid_body": "Ele pode ter sido cortado ao ser aberto. Entre e peça um novo.",
+        "part=failed_body": "Não foi possível falar com o Brigade. Verifique sua conexão e tente de novo.",
+        "part=retry": "Tentar de novo",
+        "part=continue": "Continuar",
+        "part=done_body_invitation": "Seu email está confirmado. Agora você pode aceitar o convite.",
+        "part=expired_body_signed_in": "Os links valem por 24 horas. Peça um novo pelo painel.",
+        "part=invalid_body_signed_in": "Ele pode ter sido cortado ao ser aberto. Peça um novo pelo painel.",
+        "part=open": "Abrir o painel",
+        "part=*": "Confirmar email"
+      }
+    }
+  ],
+  "invite_part": [
+    {
+      "declarations": ["input part", "input email", "input date", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=open": "Convidar",
+        "part=title": "Convidar alguém",
+        "part=hint": "A pessoa recebe um email com um link que vale por 7 dias. Só esse endereço pode aceitá-lo.",
+        "part=email_label": "Email",
+        "part=role_label": "Papel",
+        "part=submit": "Enviar convite",
+        "part=sending": "Enviando…",
+        "part=cancel": "Cancelar",
+        "part=sent": "Convite enviado para {email}.",
+        "part=unverified": "Confirme seu próprio email antes de convidar pessoas: abra o link que enviamos para {email}.",
+        "part=pending_title": "Convites pendentes",
+        "part=expires": "Expira em {date}",
+        "part=expired": "Expirado: reenvie para mais 7 dias",
+        "part=invited_by": "Convidado por {name}",
+        "part=resend": "Reenviar",
+        "part=resent": "Enviado de novo para {email}.",
+        "part=revoke": "Revogar",
+        "part=revoke_prompt": "Revogar o convite para {email}? O link deixa de funcionar.",
+        "part=revoked": "Convite para {email} revogado.",
+        "part=load_failed": "Não foi possível carregar os convites pendentes.",
+        "part=revoke_confirm": "Revogar convite",
+        "part=*": "Convidar"
+      }
+    }
+  ],
+  "invite_error": [
+    {
+      "declarations": ["input reason", "input email"],
+      "selectors": ["reason"],
+      "match": {
+        "reason=forbidden": "Você não pode fazer esta alteração.",
+        "reason=already_member": "{email} já é membro.",
+        "reason=already_invited": "{email} já tem um convite pendente. Reenvie-o pela lista.",
+        "reason=limit_reached": "Este espaço de trabalho tem convites pendentes demais. Revogue alguns antes.",
+        "reason=rate_limited": "Este espaço de trabalho enviou convites demais hoje. Tente de novo amanhã.",
+        "reason=address_limited": "{email} recebeu vários convites hoje. Tente de novo amanhã.",
+        "reason=inviter_limited": "Você enviou convites demais hoje. Tente de novo amanhã.",
+        "reason=send_limit": "O Brigade não vai enviar este convite de novo. Revogue-o e convide {email} de novo, se a pessoa ainda precisar.",
+        "reason=too_soon": "Este convite saiu há poucos minutos. Espere um pouco antes de reenviá-lo.",
+        "reason=not_found": "Este convite não está mais pendente.",
+        "reason=unverified": "Confirme seu próprio email antes de convidar pessoas.",
+        "reason=invalid_email": "Digite um endereço de email como nome@example.com.",
+        "reason=not_applied": "Salvo. O email sai em até um minuto.",
+        "reason=unavailable": "O Brigade não conseguiu acessar o banco de dados. Nada mudou; tente de novo.",
+        "reason=network": "Não foi possível confirmar a alteração; confira a lista.",
+        "reason=*": "Algo deu errado. Tente de novo."
+      }
+    }
+  ],
+  "accept_page": [
+    {
+      "declarations": [
+        "input part",
+        "input workspace",
+        "input inviter",
+        "input role",
+        "input email"
+      ],
+      "selectors": ["part"],
+      "match": {
+        "part=page_title": "Convite",
+        "part=title": "Entrar em {workspace}",
+        "part=body": "{inviter} convidou você para entrar em {workspace} no Brigade como {role}.",
+        "part=body_anonymous": "Você foi convidado para entrar em {workspace} no Brigade como {role}.",
+        "part=accept": "Aceitar e entrar",
+        "part=accepting": "Entrando…",
+        "part=decline": "Recusar",
+        "part=declining": "Recusando…",
+        "part=declined_title": "Convite recusado",
+        "part=declined_body": "Você não vai entrar em {workspace}. Quem convidou pode enviar um novo convite.",
+        "part=sign_in_title": "Entre para ver este convite",
+        "part=sign_in_body": "Entre, ou crie uma conta, com o endereço de email para o qual o convite foi enviado.",
+        "part=sign_in": "Entrar",
+        "part=sign_up": "Criar uma conta",
+        "part=wrong_email_title": "Este convite é para outro endereço de email",
+        "part=wrong_email_body": "Você entrou como {email}. Saia e entre com o endereço para o qual o convite foi enviado.",
+        "part=sign_out": "Sair",
+        "part=unverified_title": "Confirme seu email para aceitar",
+        "part=unverified_body": "Enviamos um link para {email}. Abra-o e você volta para cá.",
+        "part=expired_title": "Este convite expirou",
+        "part=expired_body": "Peça a quem convidou para enviá-lo de novo.",
+        "part=gone_title": "Este convite não está mais disponível",
+        "part=gone_body": "Ele já foi aceito, recusado ou revogado.",
+        "part=not_found_title": "Convite não encontrado",
+        "part=not_found_body": "Confira se você abriu o link inteiro do email.",
+        "part=member_title": "Você já está em {workspace}",
+        "part=open": "Abrir o painel",
+        "part=decline_prompt": "Recusar o convite para {workspace}? Para entrar depois, você vai precisar de um novo convite.",
+        "part=decline_confirm": "Recusar convite",
+        "part=cancel": "Cancelar",
+        "part=expired_body_named": "Peça a {inviter} para enviá-lo de novo.",
+        "part=unverified_notice_title": "Confirme seu email para aceitar",
+        "part=*": "Convite"
+      }
+    }
+  ],
+  "accept_error": [
+    {
+      "declarations": ["input reason", "input workspace"],
+      "selectors": ["reason"],
+      "match": {
+        "reason=workspace_full": "{workspace} atingiu o limite de membros. Peça a um proprietário para abrir espaço.",
+        "reason=workspace_limit": "Você já está no máximo de espaços de trabalho que o Brigade permite. Saia de um antes.",
+        "reason=already_member": "Você já é membro de {workspace}.",
+        "reason=conflict": "O convite mudou enquanto isso. Recarregue a página.",
+        "reason=not_applied": "Você entrou. Os chamados se ajustam sozinhos em até um minuto.",
+        "reason=unavailable": "O Brigade não conseguiu acessar o banco de dados. Nada mudou; tente de novo.",
+        "reason=network": "Não foi possível falar com o Brigade. Verifique sua conexão e tente de novo.",
+        "reason=*": "Algo deu errado. Tente de novo."
+      }
+    }
+  ],
+  "auth_error_email_not_verified": "Confirme seu email primeiro: abra o link que o Brigade enviou e depois entre.",
+  "auth_sign_up_invited_description": "Use o endereço para o qual o convite foi enviado. Depois de confirmá-lo, você pode aceitar o convite."
 }

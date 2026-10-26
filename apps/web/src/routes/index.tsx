@@ -10,6 +10,8 @@ import { PagingHealthNotice } from "@/components/paging-health";
 import { usePreferences } from "@/components/preferences";
 import { RequireWorkspace } from "@/components/session";
 import { StackCard } from "@/components/stack-card";
+import { VerifyNotice } from "@/components/verify-notice";
+import { authClient } from "@/lib/auth";
 import { usePageTitle } from "@/lib/page-title";
 
 export const Route = createFileRoute("/")({ component: Dashboard });
@@ -28,6 +30,8 @@ function Overview() {
   // components, and the root no longer remounts them on a locale change.
   usePreferences();
   usePageTitle(m.overview_title());
+  const session = authClient.useSession();
+  const user = session.data?.user;
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-10">
       <div className="flex flex-col gap-1">
@@ -35,6 +39,7 @@ function Overview() {
         <p className="max-w-prose text-sm text-muted-foreground">{m.overview_description()}</p>
       </div>
       <PagingHealthNotice />
+      {user ? <VerifyNotice email={user.email} verified={user.emailVerified} /> : null}
       <IncidentsCard />
       <OnCallCard />
       <EscalationCard />

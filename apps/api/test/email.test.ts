@@ -290,7 +290,7 @@ async function workspace(locales: Partial<Record<string, string>> = {}) {
     const userId = `${member.id}_${names}`;
     await env.DB.prepare(
       `insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt", locale)
-       values (?, ?, ?, 0, ?, ?, ?)`,
+       values (?, ?, ?, 1, ?, ?, ?)`,
     )
       .bind(
         userId,
@@ -842,6 +842,24 @@ describe("who must not be emailed", () => {
       retried: [],
     });
     expect(mail.sent).toEqual([]);
+    expect((await ws.timeline(incident)).map((row) => row.kind)).not.toContain("email_failed");
+  });
+
+  test("an address its owner never verified gets nothing, and nothing is recorded for it", async () => {
+    const ws = await workspace();
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    await deliver([event], undefined);
+    // Bia (a page missed her) and Olga (an owner) signed up with addresses they never proved.
+    for (const person of [ws.people.bia, ws.people.olga]) {
+      await env.DB.prepare(`update "user" set "emailVerified" = 0 where id = ?`)
+        .bind(person.id)
+        .run();
+    }
+    const mail = recorder();
+    await deliver([await ws.failureOf(ws.people.bia)], mail.sender);
+    await deliver([await ws.failureOf(ws.people.ana)], mail.sender);
+    // Ana's own email and the owners' one, to Ana alone: never Bia or Olga.
+    expect(mail.to()).toEqual([ws.address(ws.people.ana), ws.address(ws.people.ana)]);
     expect((await ws.timeline(incident)).map((row) => row.kind)).not.toContain("email_failed");
   });
 

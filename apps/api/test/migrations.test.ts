@@ -22,6 +22,7 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
     "account",
     "d1_migrations",
     "invitation",
+    "invitation_send",
     "member",
     "organization",
     "rateLimit",

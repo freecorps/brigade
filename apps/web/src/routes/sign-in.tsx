@@ -13,14 +13,21 @@ import {
   type FieldErrors,
   type SignInField,
 } from "@/lib/auth";
+import { isInvitationId } from "@/lib/invitations";
 import { usePageTitle } from "@/lib/page-title";
 
-export const Route = createFileRoute("/sign-in")({ component: SignIn });
+/** `?invitation=inv_…`: signing in to answer that invitation, which the page goes back to. */
+export const Route = createFileRoute("/sign-in")({
+  component: SignIn,
+  validateSearch: (search: Record<string, unknown>): { invitation?: string } =>
+    isInvitationId(search.invitation) ? { invitation: search.invitation } : {},
+});
 
 function SignIn() {
   usePreferences();
   usePageTitle(m.page_title_sign_in());
   const navigate = useNavigate();
+  const { invitation } = Route.useSearch();
   const session = authClient.useSession();
   const [values, setValues] = useState<Record<SignInField, string>>({ email: "", password: "" });
   const [errors, setErrors] = useState<FieldErrors<SignInField>>({});
@@ -29,7 +36,13 @@ function SignIn() {
   const refs = { email: useRef<HTMLInputElement>(null), password: useRef<HTMLInputElement>(null) };
 
   // Already signed in (another tab, a back button): the dashboard.
-  if (session.data && !busy) return <Navigate to="/" replace />;
+  if (session.data && !busy) {
+    return invitation ? (
+      <Navigate to="/invitations/$id" params={{ id: invitation }} replace />
+    ) : (
+      <Navigate to="/" replace />
+    );
+  }
 
   const set = (field: SignInField) => (value: string) => {
     setValues((current) => ({ ...current, [field]: value }));
@@ -56,7 +69,9 @@ function SignIn() {
         setBusy(false);
         return;
       }
-      await navigate({ to: "/", replace: true });
+      await (invitation
+        ? navigate({ to: "/invitations/$id", params: { id: invitation }, replace: true })
+        : navigate({ to: "/", replace: true }));
     } catch {
       setFailure(authErrorMessage(null, "sign-in"));
       setBusy(false);
@@ -72,6 +87,7 @@ function SignIn() {
           {m.auth_no_account()}{" "}
           <Link
             to="/sign-up"
+            search={invitation ? { invitation } : {}}
             className="font-medium text-primary underline-offset-4 hover:underline"
           >
             {m.auth_to_sign_up()}

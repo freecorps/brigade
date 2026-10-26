@@ -27,6 +27,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "demote" | "Change role" |
 * | "retry" | "Try again" |
 * | "only_owner" | "You're the only owner. Make someone else an owner before you can leave or change your role." |
+* | "empty_invite" | "Nobody else is in this workspace yet. Invite your team, so there's someone to put on call." |
 * | * | "Members" |
 *
 * @param {Members_PartInputs} inputs
@@ -53,6 +54,7 @@ export const members_part = /** @type {((inputs: Members_PartInputs, options?: {
 		if (i?.part === "demote") return /** @type {LocalizedString} */ (`Mudar papel`);
 		if (i?.part === "retry") return /** @type {LocalizedString} */ (`Tentar de novo`);
 		if (i?.part === "only_owner") return /** @type {LocalizedString} */ (`Só você é proprietário deste espaço de trabalho. Torne outra pessoa proprietária antes de sair ou mudar seu papel.`);
+		if (i?.part === "empty_invite") return /** @type {LocalizedString} */ (`Ainda não há mais ninguém neste espaço de trabalho. Convide sua equipe para ter quem colocar de plantão.`);
 		return /** @type {LocalizedString} */ (`Membros`)
 	}
 	{
@@ -73,6 +75,7 @@ export const members_part = /** @type {((inputs: Members_PartInputs, options?: {
 		if (i?.part === "demote") return /** @type {LocalizedString} */ (`Change role`);
 		if (i?.part === "retry") return /** @type {LocalizedString} */ (`Try again`);
 		if (i?.part === "only_owner") return /** @type {LocalizedString} */ (`You're the only owner. Make someone else an owner before you can leave or change your role.`);
+		if (i?.part === "empty_invite") return /** @type {LocalizedString} */ (`Nobody else is in this workspace yet. Invite your team, so there's someone to put on call.`);
 		return /** @type {LocalizedString} */ (`Members`)
 	}
 });

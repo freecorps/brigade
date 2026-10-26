@@ -60,10 +60,13 @@ knew it, `reason`: `removed`, `left`,
 or `reconciled` when the shard caught up with a change D1 had and it missed, actor `sys_members`; a member
 removed through Brigade whose copy a late sync upgrade restored is announced again as `reconciled`), subject the
 member, after D1 committed (RFC 0003 "Members"); a removal also emits `device.unregistered` (`member_removed`) for
-each of the member's devices. `member.added` waits for invitations; until then the creator's membership is part of
-`workspace.created` (`createdBy`). The API still refuses Better Auth's routes that would change a workspace or its
-members without an event (update, delete, member roles, removing or adding members, invitations, teams, leaving);
-see RFC 0002 "Auth". The shard's own copy of a member (`members`, written by `member.sync` when they open a socket)
+each of the member's devices. Invitations (RFC 0003 "Invitations") emit `member.invited` (`invitationId`, `role`,
+`invitedBy`, `expiresAt`, `send`; subject the invitation, never the address), `invitation.revoked` (`invitationId`,
+`revokedBy`), `invitation.declined` (`invitationId`, `userId`) and, on acceptance, `member.added` (`userId`, `role`,
+`invitationId`; subject the member, actor `sys_members`), each after D1 committed, with the same repair as member
+changes when the shard step fails. The creator's own membership is part of `workspace.created` (`createdBy`). The
+API still refuses Better Auth's routes that would change a workspace or its members without an event (update,
+delete, member roles, removing or adding members, its invitation routes, teams, leaving); see RFC 0002 "Auth". The shard's own copy of a member (`members`, written by `member.sync` when they open a socket)
 is a cache of D1, and `member.sync` emits nothing of its own; when it copies a viewer role it emits the schedule
 events of taking that member out of the rotations (above).
 
@@ -167,7 +170,8 @@ or dependencies should not share the API's.
 ## Email
 
 The second notifier, in the same consumer (`apps/api/src/notify-email.ts`; the shard's side in `src/mailer.ts`).
-It is the base for invitations, email verification and password reset (RFC 0002), which are not built yet.
+It also sends the account emails: email verification (RFC 0002 "Auth", sent by Better Auth through the same
+`EmailSender`) and invitations (`member.invited`, below); password reset is not built yet.
 
 - **Provider-agnostic.** An `EmailSender` (`src/email.ts`) takes one rendered email (`to`, `subject`, `text`,
   `html`) and answers accepted, or refused with whether a retry may help; it never throws. Implementations:
@@ -216,23 +220,38 @@ It is the base for invitations, email verification and password reset (RFC 0002)
   `notification.failed` (`channel: "email"`), which no notifier acts on (nothing loops). The shard being unreachable
   retries the message like any event and, past the Queue's retries, it is dead-lettered and dropped (logged): only
   pages are recorded from there.
-- **Abuse.** Until email verification exists, an address is whatever someone signed up with, and the incident's
-  title (in the subject and the body) is whatever a member typed: anyone can sign up with someone else's address,
-  declare incidents in their own workspace and have Brigade email that address their words, from Brigade's domain.
-  The ledger caps it: at most 5 emails to one user from a workspace in an hour (`EMAIL_USER_HOURLY_CAP`), and 200
+- **Invitations.** `member.invited` from the outbox leads to the invitation email (`src/notify-invite.ts`): the shard
+  claims it in its own ledger (`invitation_sends`, one row per `send`, held 60 s like the email ledger, so a
+  redelivery sends nobody twice), the consumer reads the invitation, the workspace's name and the inviter from D1
+  and sends it in the invitee's `locale` if they have an account, else the inviter's (`email_invite`, escaped like
+  the others). One no longer pending (accepted, declined, revoked, run out) is not sent. A failed send is retried
+  like the notifier's (30 s to 4 minutes, 5 attempts), then only logged: the dashboard lists the invitation, and
+  Resend sends it again. The link is the dashboard's `/invitations/:id`, from `DASHBOARD_URL`; only the dev log sender
+  falls back on the origin the invitation was made through, so a deployed Worker without `DASHBOARD_URL` sends no
+  invitation (or verification) email rather than a link built from whatever host a request named. The invited
+  address need not be verified (that email is how its owner learns of it); the inviter's must be.
+- **Abuse.** An address is verified now (RFC 0002 "Auth"): the notifier's emails go only to members whose
+  `user.emailVerified` is set, read in the same D1 query, so signing up with someone else's address no longer gets
+  their inbox Brigade's emails; an unverified member is skipped with nothing recorded. The incident's title (in the
+  subject and the body) is still whatever a member typed. Before verification, anyone could sign up with someone
+  else's address, declare incidents in their own workspace and have Brigade email that address their words. The
+  ledger still caps it: at most 5 emails to one user from a workspace in an hour (`EMAIL_USER_HOURLY_CAP`), and 200
   from a workspace in a day (`EMAIL_WORKSPACE_DAILY_CAP`), counted from the emails that went out. Over either, the
   email is dropped, logged, and noted on the timeline (`email_failed`, `capped`) with `notification.failed`; it is
   not retried. The caps are read when the plan is made, so deliveries running at once can overshoot by a batch.
-  They bound the damage, not the abuse (a new sign-up per address, ten workspaces per user), so the plan is that
-  verification gates email: only a verified address is emailed. Until then `EMAIL_FROM` is set on no deployed
-  environment (apps/api/README.md "Email").
+  Invitations are the one email to an address nobody proved, so they have their own bounds (RFC 0003
+  "Invitations"): only a verified member may invite; per workspace, 30 invitation emails a day, 50 pending and one
+  send per invitation per 5 minutes; and across every workspace, counted in D1, 3 a day to one address (its `+tags` counted as one), 50 a day
+  from one inviter and 5 per invitation ever, so many workspaces cannot add up to flood one inbox. The verification
+  email goes only to one's own address and never carries the name typed at sign-up: at most 3 per user in 15
+  minutes and 5 a day. An address someone else signed up with and never verified stays taken until password reset
+  exists (RFC 0002 "Auth"). Whether these caps are right in production is Q21's.
 - **Push first.** Email only acts on failures push already recorded, so it can never delay or stop a page. The
   consumer handles a batch's messages in parallel and acks each on its own: a page in the same batch as an email
   goes to the relay without waiting for it (tested). Every wait on the email side is bounded (10 s a send, 5 s the
   D1 read).
-- **Not yet.** Emails go to the address a user signed up with, which is not verified until email verification
-  exists (see "Abuse"). No email to Brigade's operators when the paging pipeline degrades (Q19), to owners when a rotation
-  changes (Q20), or for invitations; each can now build on the `EmailSender`.
+- **Not yet.** No email to Brigade's operators when the paging pipeline degrades (Q19), to owners when a rotation
+  changes (Q20), or for password reset; each can build on the `EmailSender`.
 
 ## Provider interfaces (published in `packages/sdk`, MIT)
 

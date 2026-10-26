@@ -764,6 +764,7 @@
         "part=demote": "Change role",
         "part=retry": "Try again",
         "part=only_owner": "You're the only owner. Make someone else an owner before you can leave or change your role.",
+        "part=empty_invite": "Nobody else is in this workspace yet. Invite your team, so there's someone to put on call.",
         "part=*": "Members"
       }
     }
@@ -806,6 +807,20 @@
       "match": {
         "countPlural=one": "Show all {countFormatted} member",
         "countPlural=*": "Show all {countFormatted} members"
+      }
+    }
+  ],
+  "invite_show_all": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Show all {countFormatted} invitation",
+        "countPlural=*": "Show all {countFormatted} invitations"
       }
     }
   ],
@@ -1399,5 +1414,194 @@
         "text=*": "Who was paged"
       }
     }
-  ]
+  ],
+  "email_verify": [
+    {
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "Confirm your email for Brigade",
+        "part=intro": "Confirm that {email} is your address. Until you do, Brigade won't email you about incidents, and you can't invite people or accept invitations.",
+        "part=open": "Confirm my email",
+        "part=expires": "The link works for 24 hours.",
+        "part=footer": "If you didn't create a Brigade account, ignore this email: nothing happens without the link.",
+        "part=*": "Brigade"
+      }
+    }
+  ],
+  "email_invite": [
+    {
+      "declarations": ["input part", "input inviter", "input workspace", "input role"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "{inviter} invited you to {workspace} on Brigade",
+        "part=intro": "{inviter} invited you to join {workspace} on Brigade, where the team responds to incidents, as {role}.",
+        "part=how": "To accept, sign in or create a Brigade account with this email address, and confirm it.",
+        "part=open": "See the invitation",
+        "part=expires": "The invitation expires in 7 days.",
+        "part=footer": "If you weren't expecting this, ignore this email: nobody joins without accepting.",
+        "part=*": "Brigade"
+      }
+    }
+  ],
+  "verify_notice": [
+    {
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Confirm your email",
+        "part=body": "We sent a link to {email}. Until you open it, Brigade won't email you, and you can't invite people or accept invitations.",
+        "part=resend": "Send the link again",
+        "part=sending": "Sending…",
+        "part=sent": "Sent. Open the newest email from Brigade (check spam too).",
+        "part=rate_limited": "You asked for several links just now. Wait a few minutes and try again.",
+        "part=not_configured": "This Brigade server can't send email yet. Ask whoever runs it.",
+        "part=failed": "Couldn't send the link. Try again.",
+        "part=*": "Confirm your email"
+      }
+    }
+  ],
+  "verify_page": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=page_title": "Confirm email",
+        "part=checking": "Confirming your email…",
+        "part=done_title": "Email confirmed",
+        "part=done_body": "Brigade can now email you, and you can invite people and accept invitations.",
+        "part=expired_title": "This link has expired",
+        "part=expired_body": "Links work for 24 hours. Sign in and ask for a new one.",
+        "part=invalid_title": "This link doesn't work",
+        "part=invalid_body": "It may have been cut off when you opened it. Sign in and ask for a new one.",
+        "part=failed_body": "Couldn't reach Brigade. Check your connection and try again.",
+        "part=retry": "Try again",
+        "part=continue": "Continue",
+        "part=done_body_invitation": "Your email is confirmed. You can accept the invitation now.",
+        "part=expired_body_signed_in": "Links work for 24 hours. Ask for a new one from the dashboard.",
+        "part=invalid_body_signed_in": "It may have been cut off when you opened it. Ask for a new one from the dashboard.",
+        "part=open": "Open the dashboard",
+        "part=*": "Confirm email"
+      }
+    }
+  ],
+  "invite_part": [
+    {
+      "declarations": ["input part", "input email", "input date", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=open": "Invite",
+        "part=title": "Invite someone",
+        "part=hint": "They get an email with a link that works for 7 days. Only that address can accept it.",
+        "part=email_label": "Email",
+        "part=role_label": "Role",
+        "part=submit": "Send invitation",
+        "part=sending": "Sending…",
+        "part=cancel": "Cancel",
+        "part=sent": "Invitation sent to {email}.",
+        "part=unverified": "Confirm your own email before you invite people: open the link we sent to {email}.",
+        "part=pending_title": "Pending invitations",
+        "part=expires": "Expires {date}",
+        "part=expired": "Expired: resend it to give it 7 more days",
+        "part=invited_by": "Invited by {name}",
+        "part=resend": "Resend",
+        "part=resent": "Sent again to {email}.",
+        "part=revoke": "Revoke",
+        "part=revoke_prompt": "Revoke the invitation to {email}? Its link stops working.",
+        "part=revoked": "Invitation to {email} revoked.",
+        "part=load_failed": "Couldn't load the pending invitations.",
+        "part=revoke_confirm": "Revoke invitation",
+        "part=*": "Invite"
+      }
+    }
+  ],
+  "invite_error": [
+    {
+      "declarations": ["input reason", "input email"],
+      "selectors": ["reason"],
+      "match": {
+        "reason=forbidden": "You can't make this change.",
+        "reason=already_member": "{email} is already a member.",
+        "reason=already_invited": "{email} already has a pending invitation. Resend it from the list.",
+        "reason=limit_reached": "This workspace has too many pending invitations. Revoke some first.",
+        "reason=rate_limited": "This workspace sent too many invitations today. Try again tomorrow.",
+        "reason=address_limited": "{email} got several invitations today. Try again tomorrow.",
+        "reason=inviter_limited": "You sent too many invitations today. Try again tomorrow.",
+        "reason=send_limit": "Brigade won't send this invitation again. Revoke it, then invite {email} again if they still need it.",
+        "reason=too_soon": "This invitation went out a few minutes ago. Wait a little before sending it again.",
+        "reason=not_found": "This invitation is no longer pending.",
+        "reason=unverified": "Confirm your own email before you invite people.",
+        "reason=invalid_email": "Enter an email address like name@example.com.",
+        "reason=not_applied": "Saved. The email goes out within a minute.",
+        "reason=unavailable": "Brigade couldn't reach its database. Nothing changed; try again.",
+        "reason=network": "Couldn't confirm the change; check the list.",
+        "reason=*": "Something went wrong. Try again."
+      }
+    }
+  ],
+  "accept_page": [
+    {
+      "declarations": [
+        "input part",
+        "input workspace",
+        "input inviter",
+        "input role",
+        "input email"
+      ],
+      "selectors": ["part"],
+      "match": {
+        "part=page_title": "Invitation",
+        "part=title": "Join {workspace}",
+        "part=body": "{inviter} invited you to join {workspace} on Brigade as {role}.",
+        "part=body_anonymous": "You're invited to join {workspace} on Brigade as {role}.",
+        "part=accept": "Accept and join",
+        "part=accepting": "Joining…",
+        "part=decline": "Decline",
+        "part=declining": "Declining…",
+        "part=declined_title": "Invitation declined",
+        "part=declined_body": "You won't join {workspace}. Whoever invited you can send a new invitation.",
+        "part=sign_in_title": "Sign in to see this invitation",
+        "part=sign_in_body": "Sign in, or create an account, with the email address the invitation was sent to.",
+        "part=sign_in": "Sign in",
+        "part=sign_up": "Create an account",
+        "part=wrong_email_title": "This invitation is for another email address",
+        "part=wrong_email_body": "You're signed in as {email}. Sign out, then sign in with the address the invitation was sent to.",
+        "part=sign_out": "Sign out",
+        "part=unverified_title": "Confirm your email to accept",
+        "part=unverified_body": "We sent a link to {email}. Open it, and you'll come back here.",
+        "part=expired_title": "This invitation has expired",
+        "part=expired_body": "Ask whoever invited you to send it again.",
+        "part=gone_title": "This invitation is no longer available",
+        "part=gone_body": "It was already accepted, declined or revoked.",
+        "part=not_found_title": "Invitation not found",
+        "part=not_found_body": "Check that you opened the whole link from the email.",
+        "part=member_title": "You're already in {workspace}",
+        "part=open": "Open the dashboard",
+        "part=decline_prompt": "Decline the invitation to {workspace}? To join later, you'd need a new invitation.",
+        "part=decline_confirm": "Decline invitation",
+        "part=cancel": "Cancel",
+        "part=expired_body_named": "Ask {inviter} to send it again.",
+        "part=unverified_notice_title": "Confirm your email to accept",
+        "part=*": "Invitation"
+      }
+    }
+  ],
+  "accept_error": [
+    {
+      "declarations": ["input reason", "input workspace"],
+      "selectors": ["reason"],
+      "match": {
+        "reason=workspace_full": "{workspace} has reached its member limit. Ask an owner to make room.",
+        "reason=workspace_limit": "You already belong to as many workspaces as Brigade allows. Leave one first.",
+        "reason=already_member": "You're already a member of {workspace}.",
+        "reason=conflict": "The invitation changed meanwhile. Reload the page.",
+        "reason=not_applied": "You joined. Paging catches up on its own within a minute.",
+        "reason=unavailable": "Brigade couldn't reach its database. Nothing changed; try again.",
+        "reason=network": "Couldn't reach Brigade. Check your connection and try again.",
+        "reason=*": "Something went wrong. Try again."
+      }
+    }
+  ],
+  "auth_error_email_not_verified": "Confirm your email first: open the link Brigade sent you, then sign in.",
+  "auth_sign_up_invited_description": "Use the address the invitation was sent to. After you confirm it, you can accept the invitation."
 }

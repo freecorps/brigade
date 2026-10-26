@@ -105,20 +105,22 @@ their args) is in its attachment, so the object can hibernate between frames. Ha
 synchronous, so frames are handled strictly in arrival order. The details and the reasons are in RFC 0004,
 "Shard server".
 
-| Table              | Holds                                                                                                                           |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `store_rows`       | Every row of every table in `TABLES` (incidents, counters) as JSON, keyed by (table, id), with the version that last changed it |
-| `shard_meta`       | `version` (one bump per committed mutation), `log_start`, the workspace id, and the `epoch` created with the storage            |
-| `change_log`       | (version, table, id) of every synced row each version changed; the last 1000 versions                                           |
-| `mutation_results` | The result of each (clientId, mutationId) the shard ran, kept 7 days from the run for de-duplication                            |
-| `outbox`           | RFC 0005 event envelopes, written in the mutation's transaction; drained to the `brigade-events` Queue by the shard alarm       |
-| `outbox_drain`     | The drain's backoff after a failed send: failures in a row and when to retry                                                    |
-| `member_repair`    | When the alarm reconciles the member list with D1 after a member change the shard missed                                        |
-| `page_deliveries`  | Per event, the devices a page reached (the push notifier's ledger; a redelivery skips them), kept 15 days                       |
-| `page_events`      | Events whose page is settled (sent everywhere, or recorded as failed): a redelivery does nothing, kept 15 days                  |
-| `receipt_key`      | The shard's own HMAC key for delivery receipt tokens (RFC 0006 "Delivery receipts"): random, made on first use, never sent      |
-| `receipt_rate`     | Delivery receipts per device in the current minute (at most 30)                                                                 |
-| `probe_pushes`     | Per region, the checks last pushed to its `ProbeDO` and when (monitoring, below)                                                |
+| Table               | Holds                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `store_rows`        | Every row of every table in `TABLES` (incidents, counters) as JSON, keyed by (table, id), with the version that last changed it |
+| `shard_meta`        | `version` (one bump per committed mutation), `log_start`, the workspace id, and the `epoch` created with the storage            |
+| `change_log`        | (version, table, id) of every synced row each version changed; the last 1000 versions                                           |
+| `mutation_results`  | The result of each (clientId, mutationId) the shard ran, kept 7 days from the run for de-duplication                            |
+| `outbox`            | RFC 0005 event envelopes, written in the mutation's transaction; drained to the `brigade-events` Queue by the shard alarm       |
+| `outbox_drain`      | The drain's backoff after a failed send: failures in a row and when to retry                                                    |
+| `member_repair`     | When the alarm reconciles the member list with D1 after a member change the shard missed                                        |
+| `invitation_sends`  | Each invitation email asked for (sent, held or done) and where the request came from; counts toward the daily invitation cap    |
+| `invitation_repair` | Invitation mutations owed after D1 committed and the shard step failed; the member repair alarm runs them again                 |
+| `page_deliveries`   | Per event, the devices a page reached (the push notifier's ledger; a redelivery skips them), kept 15 days                       |
+| `page_events`       | Events whose page is settled (sent everywhere, or recorded as failed): a redelivery does nothing, kept 15 days                  |
+| `receipt_key`       | The shard's own HMAC key for delivery receipt tokens (RFC 0006 "Delivery receipts"): random, made on first use, never sent      |
+| `receipt_rate`      | Delivery receipts per device in the current minute (at most 30)                                                                 |
+| `probe_pushes`      | Per region, the checks last pushed to its `ProbeDO` and when (monitoring, below)                                                |
 
 - **Epoch:** created with the storage and rotated by `WorkspaceDO.rotateEpoch()`, which every restore must call
   before the shard is reachable again (it also closes every socket with 1012). A resume from another epoch, from a
@@ -200,21 +202,38 @@ Which sender is used:
 (`EMAIL_FROM="Brigade <brigade@example.com>" vp run dev`) uses the binding instead, which wrangler simulates locally:
 it logs the message and writes it to a local file, and never sends. Never set `remote: true` on the binding.
 
-**To send for real** (owner's call, per environment). Blocked on every deployed environment until email
-verification lands (RFC 0005 "Email", "Abuse"): the caps bound what a sign-up can make Brigade send, but do not stop
-it.
+**To send for real** (owner's call, per environment). Email verification exists now, so the notifier only emails
+proven addresses (RFC 0005 "Email", "Abuse").
 
 1. Onboard a sending domain to Cloudflare Email Sending in the account (dashboard: Compute & AI > Email Service >
    Email Sending > Onboard Domain; it adds the SPF and DKIM records). Add a DMARC record if the domain has none.
 2. `wrangler secret put EMAIL_FROM` with a sender on that domain, `Brigade <brigade@your-domain>`.
-3. Optionally `wrangler secret put DASHBOARD_URL` with the dashboard's origin (`https://…`), so emails link to the
-   incident; without it they carry no link.
-4. Apply `migrations/0003_user_locale.sql` to the environment's D1 before deploying (`wrangler d1 migrations apply`):
-   the notifier reads `user.locale`.
+3. `wrangler secret put DASHBOARD_URL` with the dashboard's origin (`https://…`). Required wherever email is set up:
+   without it the notifier's emails carry no link to the incident, and no verification or invitation email is sent
+   at all (logged), since their link is the whole point and a deployed Worker never builds it from the host a
+   request named.
+4. Apply `migrations/0003_user_locale.sql`, `migrations/0004_invitations.sql` and
+   `migrations/0005_invitation_sends.sql` to the environment's D1 before deploying (`wrangler d1 migrations apply`):
+   the notifier reads `user.locale`, and invitations need the index and the sends table.
 
-Emails go to the address each user signed up with: email verification does not exist yet (RFC 0002), so an address
-is not proven to be theirs. What an email carries is the incident's number, severity and title and the workspace's
-name. At most 5 emails go to one user from a workspace in an hour, and 200 from a workspace in a day.
+These emails go only to addresses their owners verified (`user.emailVerified`): an unverified member is skipped.
+What an email carries is the incident's number, severity and title and the workspace's name. At most 5 emails go to
+one user from a workspace in an hour, and 200 from a workspace in a day.
+
+The same sender sends the account emails (RFC 0002 "Auth", RFC 0003 "Invitations"):
+
+- **Email verification**: sent at sign-up and when the dashboard asks again (signed in, for one's own address, at
+  most 3 per user in 15 minutes, 5 a day and 3 per IP a minute). It carries the address and the link, never the name
+  typed at sign-up. The link opens the dashboard's `/verify-email` page and works for 24 hours. Without a sender,
+  asking again answers `503 EMAIL_NOT_CONFIGURED`. An address someone signed up with and never verified stays taken until password reset exists (RFC 0002 "Auth").
+- **Invitations**: `member.invited` from the workspace shard's outbox, sent by the same queue consumer
+  (`src/notify-invite.ts`), in the invitee's language if they have an account, else the inviter's. The link opens the
+  dashboard's `/invitations/:id`. Capped per workspace and, counted in D1, per invited address, per inviter and per
+  invitation across every workspace (RFC 0003 "Invitations").
+
+Links use `DASHBOARD_URL`. Only the log double falls back on the origin the request came through (the dashboard's,
+under `vp run dev`). Under `vp run dev` the log double prints each email, link included, so a local sign-up is verified by
+opening the link from the terminal.
 
 ## Monitoring
 

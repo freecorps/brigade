@@ -5,14 +5,22 @@
 
 import type { Locale } from "@freecorps/brigade-i18n";
 import {
+  email_invite,
   email_text,
+  email_verify,
+  member_role,
   severity_named,
   severity_sev1,
   severity_sev2,
   severity_sev3,
   severity_sev4,
 } from "@freecorps/brigade-i18n/messages";
-import { formatIncidentNumber, type PageFailure, type Severity } from "@freecorps/brigade-schema";
+import {
+  formatIncidentNumber,
+  type PageFailure,
+  type Role,
+  type Severity,
+} from "@freecorps/brigade-schema";
 import { singleLine, type OutgoingEmail } from "./email.ts";
 
 /** What an email says about the incident: all of it user content except the severity and number. */
@@ -135,6 +143,124 @@ export function renderEmail(
     text: textBody,
     html,
   };
+}
+
+/**
+ * An account email (verification, invitation): an optional greeting, paragraphs, one link as a button-like anchor,
+ * then a footer. Every line is text, escaped as a whole in the HTML, like `renderEmail`.
+ */
+function renderMessage(
+  parts: {
+    subject: string;
+    lines: string[];
+    link: { label: string; url: string };
+    after: string[];
+    footer: string;
+  },
+  to: { email: string; name?: string },
+  locale: Locale,
+): OutgoingEmail {
+  const { subject, lines, link, after, footer } = parts;
+  const textBody = [...lines, `${link.label}: ${link.url}`, ...after, "--", footer].join("\n\n");
+  const paragraph = (line: string, style = "") =>
+    `<p style="margin:0 0 16px${style}">${escapeHtml(line)}</p>`;
+  const html = [
+    `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><title>${escapeHtml(singleLine(subject))}</title></head>`,
+    `<body style="margin:0;padding:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:15px;line-height:1.5;color:#111">`,
+    ...lines.map((line) => paragraph(line)),
+    `<p style="margin:0 0 16px"><a href="${escapeHtml(link.url)}" style="display:inline-block;padding:10px 16px;border-radius:6px;background:#111;color:#fff;text-decoration:none">${escapeHtml(link.label)}</a></p>`,
+    ...after.map((line) => paragraph(line)),
+    paragraph(footer, ";color:#666;font-size:13px"),
+    "</body></html>",
+  ].join("\n");
+  return {
+    to: to.name ? { email: to.email, name: singleLine(to.name) } : { email: to.email },
+    subject: singleLine(subject),
+    text: textBody,
+    html,
+  };
+}
+
+/**
+ * The email that proves an address (RFC 0002 "Auth"): `url` is the dashboard's `/verify-email` page. Nothing in it is
+ * what the person signing up typed except the address itself, as it goes to an address nobody proved yet.
+ */
+export function renderVerificationEmail(
+  to: { email: string },
+  url: string,
+  locale: Locale,
+): OutgoingEmail {
+  const text = (part: string) => email_verify({ part, email: to.email }, { locale });
+  return renderMessage(
+    {
+      subject: text("subject"),
+      lines: [text("intro")],
+      link: { label: text("open"), url },
+      after: [text("expires")],
+      footer: text("footer"),
+    },
+    to,
+    locale,
+  );
+}
+
+/**
+ * The invitation email (RFC 0003 "Invitations"): who invited, to which workspace, as which role; `url` is the
+ * dashboard's `/invitations/:id` page. The workspace's and inviter's names are what members typed.
+ */
+export function renderInvitationEmail(
+  invitation: { inviter: string; workspace: string; role: Role },
+  to: { email: string },
+  url: string,
+  locale: Locale,
+): OutgoingEmail {
+  const text = (part: string) =>
+    email_invite(
+      {
+        part,
+        inviter: invitation.inviter,
+        workspace: invitation.workspace,
+        role: member_role({ role: invitation.role }, { locale }),
+      },
+      { locale },
+    );
+  return renderMessage(
+    {
+      subject: text("subject"),
+      lines: [text("intro"), text("how")],
+      link: { label: text("open"), url },
+      after: [text("expires")],
+      footer: text("footer"),
+    },
+    to,
+    locale,
+  );
+}
+
+/**
+ * A page of the dashboard at `path` (with `search`), from `DASHBOARD_URL` when it is an http(s) origin, else from
+ * `fallback` (the origin the request came through); undefined with neither.
+ */
+export function dashboardLink(
+  path: string,
+  search: Record<string, string>,
+  dashboardUrl: string | undefined,
+  fallback: string | null | undefined,
+): string | undefined {
+  for (const candidate of [dashboardUrl, fallback]) {
+    if (!candidate) continue;
+    let base: URL;
+    try {
+      base = new URL(candidate);
+    } catch {
+      continue;
+    }
+    if (base.protocol !== "https:" && base.protocol !== "http:") continue;
+    const url = new URL(path, base.origin);
+    for (const [key, value] of Object.entries(search)) url.searchParams.set(key, value);
+    return url.href;
+  }
+  return undefined;
 }
 
 /** The incident's page on the dashboard, when `DASHBOARD_URL` is an http(s) origin and the incident has a number. */

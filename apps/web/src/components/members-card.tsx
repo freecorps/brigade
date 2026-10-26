@@ -39,7 +39,8 @@ export function MembersCard() {
       refresh={async () => {
         // `set-active` (not a refetch of one hook) refreshes the session, the workspace and the signed-in
         // member's own role together, as `openWorkspace` relies on. It refuses (403) someone D1 no longer has
-        // in the workspace, and clears it from their session.
+        // in the workspace. The removal itself already moved their sessions off it (`deleteMembership` in
+        // apps/api), and Better Auth's 403 also sets this session's active workspace to none.
         const { error } = await authClient.organization.setActive({ organizationId: workspaceId });
         return error?.status !== 403;
       }}

@@ -324,10 +324,12 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
-   * The shard's one alarm (RFC 0005, RFC 0007, RFC 0006 "Who is paged"): monitor upkeep (`Monitoring.tick`), a due
-   * member repair (`Membership.repairDue`: a member change D1 has and the shard missed), then draining the outbox to
-   * the Queue, so events either wrote go out in the same run. A fallback a tick from now is set first, so a failure
-   * never ends the chain; then the alarm moves to the earliest any of them needs, or goes when none needs it.
+   * The shard's one alarm (RFC 0005, RFC 0007, RFC 0006 "Who is paged"): monitor upkeep (`Monitoring.tick`), draining
+   * the outbox to the Queue, then a due member repair (`Membership.repairDue`: a member change D1 has and the shard
+   * missed), and the outbox again when the repair wrote events. The drain goes before the repair because the repair
+   * waits on D1 (and on any member change ahead of it in the member lock): a page never waits on D1. A fallback a
+   * tick from now is set first, so a failure never ends the chain; then the alarm moves to the earliest any of them
+   * needs, or goes when none needs it.
    */
   override async alarm(): Promise<void> {
     const now = Date.now();
@@ -338,26 +340,19 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("monitor tick failed", { error });
     }
+    await this.drainOutbox();
+    const before = this.backlog();
     let repair: number | null = now + MONITOR_TICK_MS;
     try {
       repair = await this.membership.repairDue(this.shard.workspace(), Date.now());
     } catch (error) {
       this.log("member repair failed", { error });
     }
-    if (!this.drainPaused) {
-      try {
-        await this.drain.drain(Date.now());
-      } catch (error) {
-        this.log("outbox drain failed", { error });
-        try {
-          this.drain.failed(Date.now(), error);
-        } catch (backoff) {
-          this.log("backing off the outbox drain failed", { error: backoff });
-        }
-      }
-    }
+    // Again only when the repair (or a mutation meanwhile) wrote events, or the backlog could not be read.
+    const after = this.backlog();
+    if (before === null || after === null || after > before) await this.drainOutbox();
     // Read and set in one turn: a mutation committing meanwhile arms the drain after this, never before. The repair
-    // time is read again here too: a member change that failed while the drain ran armed one that `repair` predates.
+    // time is read again here too: a member change that failed while a drain ran armed one `repair` may predate.
     // One already due is `repairDue`'s to answer for, so a repair that failed to record its outcome never spins.
     let armed: number | null = now + MONITOR_TICK_MS;
     try {
@@ -372,6 +367,31 @@ export class WorkspaceDO extends DurableObject<Env> {
     );
     if (next === null) await this.ctx.storage.deleteAlarm();
     else await this.ctx.storage.setAlarm(next);
+  }
+
+  /** The outbox's row count, or null when storage failed reading it (logged). */
+  private backlog(): number | null {
+    try {
+      return this.drain.backlog();
+    } catch (error) {
+      this.log("reading the outbox backlog failed", { error });
+      return null;
+    }
+  }
+
+  /** One outbox drain run, unless paused; a failed send backs off (`Drain.failed`). Never throws. */
+  private async drainOutbox(): Promise<void> {
+    if (this.drainPaused) return;
+    try {
+      await this.drain.drain(Date.now());
+    } catch (error) {
+      this.log("outbox drain failed", { error });
+      try {
+        this.drain.failed(Date.now(), error);
+      } catch (backoff) {
+        this.log("backing off the outbox drain failed", { error: backoff });
+      }
+    }
   }
 
   /**
@@ -421,8 +441,8 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
     const name = readMemberName(request.headers);
     // A member just removed here whose upgrade the Worker let through before the removal: refused, as the Worker
-    // would now, rather than have `member.sync` restore their copy.
-    if (name !== undefined && this.membership.gone(actor.id, Date.now())) {
+    // would now, rather than have `member.sync` restore their copy. A member D1 has again (re-added) is not.
+    if (name !== undefined && (await this.membership.refuses(workspace, actor.id, Date.now()))) {
       return Response.json({ error: "not_a_member" }, { status: 403 });
     }
     if (name !== undefined) this.syncMember(actor, name);

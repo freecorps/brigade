@@ -99,14 +99,18 @@ D1: a D1 outage must not become a reason a page is late or missing. How the copy
   (`MAX_RECONCILED_MEMBERS`) is never reconciled whole: the shard catches up only on the members whose change it
   recorded as missed (`member.remove` or `member.changeRole` each, as `sys_members`), and logs an error (`too many
   members to reconcile`) since edits made outside Brigade are not repaired there (accepted: far past any workspace
-  today; a paged reconcile comes with paged member lists, RFC 0003). A sync upgrade whose reconcile fails arms the
-  same alarm.
+  today; a paged reconcile comes with paged member lists, RFC 0003). The same goes for a removed member's stale
+  upgrade arriving after the 60 s tombstone (RFC 0003 "Stale upgrades"): it restores their copy and nothing there
+  removes it, and a role changed outside Brigade closes none of that member's sockets. A sync upgrade whose
+  reconcile fails arms the same alarm. The alarm drains the outbox before it runs a due repair (and again after, if
+  the repair wrote events), so a page never waits behind the repair's D1 read.
 - **Edits made outside Brigade** (straight in D1): reconciled on the next sync upgrade into the workspace by anyone
   (`member.reconcile`): a removed member's row and devices go, a changed role is copied, and their open sockets
   close. Until somebody opens Brigade, a member removed or demoted outside it is still paged (Q18).
 - Tests: `apps/api/test/members.test.ts` ("a removed member is deleted from D1 and the shard with every device, and is
   no longer paged", "a demoted member stops being paged at once", the "when one side fails" cases (among them "a
-  failed leave: the leaver's own retry stops their pages" and "a failed change is repaired by the shard's alarm"),
+  failed leave: the leaver's own retry stops their pages", "a failed change is repaired by the shard's alarm" and "an
+  alarm whose due repair hangs on D1 still drains the outbox first"),
   "rules come before any repair" and "edits made outside Brigade").
 - **A handed-over phone** (same install, so the same device id, signed in as another member) keeps paging the first
   member until it unregisters: `device.register` refuses another member's device id (`forbidden`). Signing out

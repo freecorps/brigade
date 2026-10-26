@@ -19,7 +19,8 @@
 // (as `MEMBERS_ACTOR`, never as the caller).
 //
 // A removal also leaves a short-lived tombstone (`MEMBER_TOMBSTONE_MS`): a sync upgrade the Worker authenticated
-// just before the removal, arriving after it, is refused instead of restoring the member's copy.
+// just before the removal, arriving after it, is refused instead of restoring the member's copy, unless D1 has the
+// member again (re-added), which the shard checks before refusing.
 
 import {
   can,
@@ -51,6 +52,19 @@ export async function readDirectory(
     .bind(workspaceId)
     .all<DirectoryMember>();
   return results;
+}
+
+/** `userId`'s role in the workspace as D1 has it (Better Auth's text), or undefined when they are not a member. */
+export async function readRole(
+  db: D1Database,
+  workspaceId: string,
+  userId: string,
+): Promise<string | undefined> {
+  const row = await db
+    .prepare(`select role from member where "organizationId" = ? and "userId" = ?`)
+    .bind(workspaceId, userId)
+    .first<{ role: string }>();
+  return row?.role;
 }
 
 /**
@@ -458,8 +472,14 @@ export class Membership {
         if (done(userId)) sql.exec("delete from member_repair where key = ?", `target:${userId}`);
       }
       sql.exec("delete from member_repair where key like 'gone:%' and value <= ?", Date.now());
-      for (const member of members) {
-        sql.exec("delete from member_repair where key = ?", `gone:${member.id}`);
+      const ids = new Set(members.map((member) => member.id));
+      const tombstones = sql
+        .exec<{ key: string }>("select key from member_repair where key like 'gone:%'")
+        .toArray()
+        .map((row) => row.key);
+      for (const key of tombstones) {
+        if (ids.has(key.slice("gone:".length)))
+          sql.exec("delete from member_repair where key = ?", key);
       }
     } catch (error) {
       this.options.log("settling the member repair failed", { error });
@@ -474,8 +494,36 @@ export class Membership {
     if (!(await this.reconcile(workspaceId))) this.armRepair(Date.now());
   }
 
+  /**
+   * Whether the shard refuses `userId`'s sync upgrade: they were removed within `MEMBER_TOMBSTONE_MS` and D1 does
+   * not have them again. A tombstone is checked against D1 under the member lock (so no change of theirs is halfway)
+   * before it refuses anyone, and dropped when D1 has them again (re-added: their own upgrade may well be the first to
+   * arrive). When D1 fails the tombstone stands. Never throws.
+   */
+  async refuses(workspaceId: string, userId: string, now: number): Promise<boolean> {
+    if (!this.gone(userId, now)) return false;
+    return this.exclusive(async () => {
+      if (!this.gone(userId, Date.now())) return false;
+      const { db, sql, log } = this.options;
+      let role: string | undefined;
+      try {
+        role = await readRole(db, workspaceId, userId);
+      } catch (error) {
+        log("checking a member tombstone against D1 failed", { error });
+        return true;
+      }
+      if (role === undefined || !isRole(role)) return true;
+      try {
+        sql.exec("delete from member_repair where key = ?", `gone:${userId}`);
+      } catch (error) {
+        log("dropping a member tombstone failed", { error });
+      }
+      return false;
+    });
+  }
+
   /** Whether `userId` was removed from this shard within `MEMBER_TOMBSTONE_MS` (and D1 has not re-added them). */
-  gone(userId: string, now: number): boolean {
+  private gone(userId: string, now: number): boolean {
     try {
       const row = this.options.sql
         .exec<{ value: number }>("select value from member_repair where key = ?", `gone:${userId}`)

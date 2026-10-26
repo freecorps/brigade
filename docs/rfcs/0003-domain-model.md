@@ -129,8 +129,10 @@ would change D1 without the shard's copy or an event.
   event: nothing in the shard is wrong (accepted).
 - **Stale upgrades.** A removal leaves a tombstone in the shard for 60 s (`member_repair`, `gone:<userId>`): a sync
   upgrade the Worker authenticated just before the removal and that reaches the shard after it is refused
-  (`403 not_a_member`) rather than letting `member.sync` restore the removed member's copy. A reconcile that finds
-  them in D1 again (re-added) drops it. One arriving later still restores the copy until its own reconcile removes
+  (`403 not_a_member`) rather than letting `member.sync` restore the removed member's copy. Before refusing, the
+  shard reads the member's row in D1 (under its member lock): if D1 has them again (re-added), the tombstone goes and
+  the upgrade goes on, so a re-added member's own first upgrade is not refused; if that read fails, the refusal
+  stands. A reconcile that finds them in D1 again drops it too. One arriving later still restores the copy until its own reconcile removes
   it again, a second `member.removed` (`reconciled`) for the same member (accepted).
 - **Open sockets.** After a change the shard closes the target's sockets: `1008` when removed (the client reconnects
   and the upgrade answers `403 not_a_member`), `1012` on a role change (it reconnects with the new role). The

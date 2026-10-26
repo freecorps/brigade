@@ -13,7 +13,7 @@ import {
   Membership,
   type MemberChangeResult,
 } from "../src/members.ts";
-import type { BrigadeEvent } from "../src/outbox.ts";
+import { OutboxDrain, type BrigadeEvent } from "../src/outbox.ts";
 import { pageTargets } from "../src/paging.ts";
 import { Shard } from "../src/shard.ts";
 import { WORKSPACE_HEADER, type SocketState, type WorkspaceDO } from "../src/workspace.ts";
@@ -261,6 +261,39 @@ const brokenDb = {
     throw new Error("D1 is down");
   },
 } as unknown as D1Database;
+
+/** A D1 whose every read never answers. */
+const hangingDb = {
+  prepare: () => ({
+    bind: () => ({ all: () => new Promise(() => {}), first: () => new Promise(() => {}) }),
+  }),
+} as unknown as D1Database;
+
+/**
+ * Unpauses the shard's outbox drain with one that records the event types it sends instead of queueing them;
+ * `drained` resolves when its first run that sent anything finishes.
+ */
+function recordingDrain(instance: WorkspaceDO, state: DurableObjectState) {
+  const sent: string[] = [];
+  let done: () => void = () => {};
+  const drained = new Promise<void>((resolve) => (done = resolve));
+  const drain = new OutboxDrain(
+    state.storage.sql,
+    async (messages) => {
+      for (const message of messages) sent.push((message.body as BrigadeEvent).type);
+    },
+    () => {},
+  );
+  const run = drain.drain.bind(drain);
+  drain.drain = async (now) => {
+    const count = await run(now);
+    if (count > 0) done();
+    return count;
+  };
+  Reflect.set(instance, "drainPaused", false);
+  Reflect.set(instance, "drain", drain);
+  return { sent, drained };
+}
 
 describe("PATCH /workspaces/:id/members/:userId: changing a role", () => {
   test("an owner demotes a responder: D1, the shard's copy and member.role_changed, and their socket closes", async () => {
@@ -640,6 +673,56 @@ describe("when one side fails", () => {
     expect(await paged(t)).toEqual([]);
   });
 
+  test("an alarm whose due repair hangs on D1 still drains the outbox first", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    // An event waiting in the outbox: Caio's phone registering.
+    await device(t, user(t.caio, "responder"));
+    const result = await runInDurableObject(t.stub, async (instance: WorkspaceDO, state) => {
+      const real: unknown = Reflect.get(instance, "membership");
+      state.storage.sql.exec(
+        "insert into member_repair (key, value) values ('at', ?) on conflict (key) do update set value = excluded.value",
+        Date.now() - 1,
+      );
+      Reflect.set(instance, "membership", membership(t, state, { db: hangingDb }));
+      const { sent, drained } = recordingDrain(instance, state);
+      let finished = false;
+      void instance.alarm().then(() => (finished = true));
+      await drained;
+      const backlog = state.storage.sql
+        .exec<{ n: number }>("select count(*) as n from outbox")
+        .one().n;
+      Reflect.set(instance, "membership", real);
+      Reflect.set(instance, "drainPaused", true);
+      return { sent, backlog, finished };
+    });
+    expect(result.sent).toContain("device.registered");
+    expect(result.backlog).toBe(0);
+    // The repair is still waiting on D1: the drain did not wait for it.
+    expect(result.finished).toBe(false);
+  });
+
+  test("events a due repair writes go out in the same alarm", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    const left = await runInDurableObject(t.stub, (_instance: WorkspaceDO, state) =>
+      membership(t, state, { shardFails: true }).change(t.id, t.caio.id, t.caio.id, {
+        kind: "remove",
+      }),
+    );
+    expect(left).toEqual({ ok: false, code: "not_applied" });
+    const sent = await runInDurableObject(t.stub, async (instance: WorkspaceDO, state) => {
+      state.storage.sql.exec("delete from outbox");
+      state.storage.sql.exec("update member_repair set value = ? where key = 'at'", Date.now() - 1);
+      const { sent } = recordingDrain(instance, state);
+      await instance.alarm();
+      Reflect.set(instance, "drainPaused", true);
+      return sent;
+    });
+    expect(sent).toContain("member.removed");
+    expect(await paged(t)).toEqual([]);
+  });
+
   test("a repair that cannot read D1 stays due and tries again", async () => {
     const t = await team();
     await connect(t, t.caio);
@@ -786,6 +869,41 @@ describe("a sync upgrade the Worker let through before a removal", () => {
     // Anyone's upgrade reconciles with D1, which has them again.
     await connect(t, t.duda);
     await connect(t, t.caio);
+  });
+
+  test("a re-added member's own upgrade, the first to arrive, is not refused", async () => {
+    const t = await team();
+    expect((await remove(t, t.ana, t.caio)).status).toBe(200);
+    await addMember(t.id, t.caio.id, "viewer");
+    // Nobody else connects first: the tombstone is checked against D1, which has them again.
+    await connect(t, t.caio);
+    expect(await t.withShard((shard) => shard.store.get("members", t.caio.id)?.role)).toBe(
+      "viewer",
+    );
+    expect(
+      await t.withShard((_shard, state) =>
+        state.storage.sql
+          .exec("select key from member_repair where key = ?", `gone:${t.caio.id}`)
+          .toArray(),
+      ),
+    ).toEqual([]);
+  });
+
+  test("a tombstone D1 cannot be checked against still refuses", async () => {
+    const t = await team();
+    expect((await remove(t, t.ana, t.caio)).status).toBe(200);
+    await addMember(t.id, t.caio.id, "viewer");
+    const real = await runInDurableObject(t.stub, (instance: WorkspaceDO, state) => {
+      const original: unknown = Reflect.get(instance, "membership");
+      Reflect.set(instance, "membership", membership(t, state, { db: brokenDb }));
+      return original;
+    });
+    const response = await staleUpgrade(t, t.caio, "viewer");
+    await runInDurableObject(t.stub, (instance: WorkspaceDO) => {
+      Reflect.set(instance, "membership", real);
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "not_a_member" });
   });
 
   test("whose reconcile then fails arms the repair alarm, which removes the copy it restored", async () => {

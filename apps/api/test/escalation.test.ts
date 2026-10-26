@@ -439,8 +439,11 @@ describe("fallbacks (the paging path's)", () => {
       new Restarted(state, env);
       await vi.waitFor(async () => expect(await state.storage.getAlarm()).not.toBeNull());
     });
-    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
-    expect((await ws.levels(incident)).map((one) => one.level)).toEqual([1, 2]);
+    // The re-armed alarm is already due, so the runtime may fire it before this does: either way the level fires.
+    await runDurableObjectAlarm(ws.stub);
+    await vi.waitFor(async () =>
+      expect((await ws.levels(incident)).map((one) => one.level)).toEqual([1, 2]),
+    );
   });
 
   test("a dead-lettered level is recorded on the timeline", async () => {

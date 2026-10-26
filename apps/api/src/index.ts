@@ -33,6 +33,7 @@ import type { MemberChangeResult } from "./members.ts";
 import { emailSender } from "./email.ts";
 import { consumeDeadLetters, consumeEvents, type NotifyEnv } from "./notify.ts";
 import { receiptWorkspace, type ReceiptResult } from "./receipts.ts";
+import { beginSlackInstall } from "./slack-bridge.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
 import {
   IDEMPOTENCY_KEY_HEADER,
@@ -43,6 +44,7 @@ import {
 } from "./workspace.ts";
 
 export { ProbeDO } from "./probe.ts";
+export { SlackBridge } from "./slack-bridge.ts";
 export { WatchdogDO } from "./watchdog.ts";
 export { WorkspaceDO } from "./workspace.ts";
 
@@ -54,6 +56,7 @@ const INVITATIONS_PATH = /^\/workspaces\/([^/]+)\/invitations$/;
 const INVITATION_PATH = /^\/workspaces\/([^/]+)\/invitations\/([^/]+?)(\/resend)?$/;
 const INVITEE_PATH = /^\/invitations\/([^/]+?)(?:\/(accept|decline))?$/;
 const ACK_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/ack$/;
+const SLACK_INSTALL_PATH = /^\/workspaces\/([^/]+)\/slack\/install$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
 const READ_METHODS = ["GET", "HEAD"];
@@ -136,6 +139,8 @@ export default {
     if (invitee) return answerInvitation(request, env, auth, invitee[1]!, invitee[2]);
     const ack = ACK_PATH.exec(pathname);
     if (ack) return acknowledgeIncident(request, env, auth, ack[1]!, ack[2]!);
+    const slackInstall = SLACK_INSTALL_PATH.exec(pathname)?.[1];
+    if (slackInstall !== undefined) return beginSlackInstall(request, env, auth, slackInstall);
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
     if (pathname === "/receipts") return receiveReceipt(request, env);

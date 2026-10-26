@@ -26,6 +26,7 @@
     "@freecorps/brigade-i18n": "workspace:*",
     "@freecorps/brigade-push": "workspace:*",
     "@freecorps/brigade-schema": "workspace:*",
+    "@freecorps/brigade-slack": "workspace:*",
     "@freecorps/brigade-sync": "workspace:*",
     "better-auth": "1.7.13"
   },

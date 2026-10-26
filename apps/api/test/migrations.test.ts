@@ -27,6 +27,7 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
     "organization",
     "rateLimit",
     "session",
+    "slack_team",
     "takeover_notice",
     "user",
     "verification",

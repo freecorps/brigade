@@ -1,4 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
+import type { SlackActResult } from "@freecorps/brigade-slack/bridge";
+import type { SlackPostOutcome } from "@freecorps/brigade-slack/notifier";
 import {
   ACCOUNT_ACTOR,
   fitMemberName,
@@ -47,6 +49,7 @@ import {
 } from "./paging.ts";
 import type { ProbeReport } from "./probe.ts";
 import { Receipts, type ReceiptResult } from "./receipts.ts";
+import { SlackDesk, type SlackPlan, type SlackShardAction } from "./slack.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
 import type { RowChange } from "./store.ts";
 
@@ -156,6 +159,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly pager: Pager;
   private readonly receipts: Receipts;
   private readonly mailer: Mailer;
+  private readonly slack: SlackDesk;
   private readonly escalations: Escalations;
   private readonly membership: Membership;
   private readonly invitations: Invitations;
@@ -201,6 +205,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     this.mailer = new Mailer({
       storage: ctx.storage,
       shard: this.shard,
+      log: (message, fields) => this.log(message, fields),
+      committed: (version, changes) => this.broadcast(version, changes, undefined),
+    });
+    this.slack = new SlackDesk({
+      storage: ctx.storage,
+      shard: this.shard,
+      randomBytes,
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
     });
@@ -639,6 +650,78 @@ export class WorkspaceDO extends DurableObject<Env> {
   ): void {
     if (this.shard.workspace() !== event.workspaceId) return;
     this.mailer.record(event, key, about, outcomes, final, Date.now());
+  }
+
+  /**
+   * Starts a Slack install for `userId` (RPC from `POST /workspaces/:id/slack/install`, which checked the session and
+   * that they manage the workspace; RFC 0011 "Installing"): a one-time state nonce, or null when too many are pending
+   * or this shard serves another workspace.
+   */
+  slackBeginInstall(workspaceId: string, userId: string): Promise<string | null> {
+    if (this.shard.workspace() !== workspaceId) return Promise.resolve(null);
+    return this.slack.beginInstall(userId, Date.now());
+  }
+
+  /** The member who started the install `nonce` names, once (RPC from `SlackBridge.completeInstall`). */
+  slackTakeState(workspaceId: string, nonce: string): Promise<string | null> {
+    if (this.shard.workspace() !== workspaceId) return Promise.resolve(null);
+    return this.slack.takeState(nonce, Date.now());
+  }
+
+  /** `slack.connect` as the member who installed (RPC from `SlackBridge.completeInstall`). */
+  async slackConnect(
+    workspaceId: string,
+    actor: Actor,
+    args: Record<string, unknown>,
+    key: string,
+  ): Promise<{ ok: true } | { ok: false; code: MutationErrorCode | "not_a_member" }> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    const result = this.slack.connect(actor, args, key, Date.now());
+    return result.ok ? { ok: true } : { ok: false, code: result.error.code };
+  }
+
+  /** The Slack team this workspace is connected to, if any (RPC from `SlackBridge`, when a team changes hands). */
+  slackTeam(): string | null {
+    return this.slack.team();
+  }
+
+  /** The sealed token and names for `teamId` (RPC from `SlackBridge.context`); null when not connected to it. */
+  slackContext(teamId: string): ReturnType<SlackDesk["context"]> {
+    return this.slack.context(teamId);
+  }
+
+  /**
+   * A Slack user's action as `actor`, the member their email maps to (RPC from `SlackBridge.act`, which read the role
+   * in D1). A member removed within the tombstone is refused as for a sync upgrade.
+   */
+  async slackAct(
+    workspaceId: string,
+    teamId: string,
+    actor: Actor,
+    action: SlackShardAction,
+    key: string,
+  ): Promise<SlackActResult> {
+    if (this.shard.workspace() !== workspaceId)
+      return { ok: false, code: "not_connected", locale: null };
+    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+      return { ok: false, code: "unmapped", locale: null };
+    }
+    return this.slack.act(teamId, actor, action, key, Date.now());
+  }
+
+  /** What the Slack notifier should do for `event` (RPC from the queue consumer): see `SlackDesk.plan`. */
+  planSlack(event: BrigadeEvent): SlackPlan {
+    if (this.shard.workspace() !== event.workspaceId) return { send: false, reason: "not_found" };
+    return this.slack.plan(event, Date.now());
+  }
+
+  /** What delivering `event`'s Slack message did (RPC from the queue consumer): see `SlackDesk.record`. */
+  recordSlack(event: BrigadeEvent, outcome: SlackPostOutcome): { retryAt: number | null } {
+    if (this.shard.workspace() !== event.workspaceId) return { retryAt: null };
+    return this.slack.record(event, outcome, Date.now());
   }
 
   /** A page the Queue gave up on (RPC from the dead-letter consumer): see `Pager.deadLettered`. */

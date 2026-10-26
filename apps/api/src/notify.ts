@@ -1,5 +1,6 @@
 // The `brigade-events` consumer (RFC 0005 "Delivery", RFC 0002 runtime map): routes each event to its notifiers:
-// a page that failed to email (src/notify-email.ts), everything else to push. Push: for an event that pages, the
+// a page that failed to email (src/notify-email.ts), everything else to push, and an incident's events to Slack as
+// well (src/notify-slack.ts), next to push and never ahead of it. Push: for an event that pages, the
 // workspace shard plans who gets it, each device's push is sealed to its own key (HPKE, `packages/push`) and sent
 // through the relay (RFC 0006), and the outcomes go back to the shard. Delivery is at-least-once, so the shard's page
 // ledger, keyed by `event.id`, makes a redelivery page nobody twice. What the Queue gives up on lands in
@@ -11,6 +12,7 @@ import { emailSender, type EmailEnv, type EmailSender } from "./email.ts";
 import { asksForEmail } from "./mailer.ts";
 import { emailRetryDelay, notifyEmail, type EmailNotifyEnv } from "./notify-email.ts";
 import { asksForInvitation, notifyInvitation } from "./notify-invite.ts";
+import { notifySlack, type SlackNotifyEnv } from "./notify-slack.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 import {
   asksForPage,
@@ -19,6 +21,7 @@ import {
   type PageTarget,
   type SendFailure,
 } from "./paging.ts";
+import { asksForSlack } from "./slack.ts";
 import { HEARTBEAT_EVENT, isSystemEvent, WATCHDOG_NAME, type RelayHealth } from "./watchdog.ts";
 import { WORKSPACE_ID } from "./workspace.ts";
 
@@ -42,7 +45,8 @@ export const RELAY_HEALTH_TIMEOUT_MS = 5000;
 
 /** Optional: an instance without a relay still runs, and every page it would send is recorded as failed. */
 export type NotifyEnv = EmailEnv &
-  EmailNotifyEnv & {
+  EmailNotifyEnv &
+  SlackNotifyEnv & {
     WORKSPACE: Env["WORKSPACE"];
     /** The dead-man switch's watchdog (src/watchdog.ts); without it a heartbeat is logged and dropped. */
     WATCHDOG?: Env["WATCHDOG"];
@@ -84,6 +88,17 @@ export async function consumeEvents(
       const email = asksForEmail(event);
       const invitation = asksForInvitation(event);
       const delay = email || invitation ? emailRetryDelay : retryDelay;
+      // Slack runs alongside push, never before it, and its failures stay its own: a Slack outage or a shard error on
+      // its side only asks for a later delivery, which the page ledger makes a no-op for push.
+      const slack = asksForSlack(event)
+        ? notifySlack(event, env, send).catch((error: unknown) => {
+            log("slack notifier failed", { event: event.id, error: String(error) });
+            // Past the Queue's retries, give Slack up rather than send a page event to the dead-letter queue.
+            return message.attempts > QUEUE_MAX_RETRIES - 1
+              ? undefined
+              : retryDelay(message.attempts);
+          })
+        : Promise.resolve(undefined);
       try {
         const delaySeconds = email
           ? await notifyEmail(event, message.attempts, env, mail)
@@ -92,9 +107,12 @@ export async function consumeEvents(
             : (await notifyPush(event, message.attempts, env, send))
               ? retryDelay(message.attempts)
               : undefined;
-        if (delaySeconds !== undefined) message.retry({ delaySeconds });
+        // A page's own retry comes first (it is the sooner and the one that matters); Slack's otherwise.
+        const next = delaySeconds ?? (await slack);
+        if (next !== undefined) message.retry({ delaySeconds: next });
         else message.ack();
       } catch (error) {
+        await slack;
         // The shard was unreachable or threw: nothing was recorded, so the whole page runs again.
         log("event handling failed", { event: event.id, type: event.type, error: String(error) });
         if (message.attempts > QUEUE_MAX_RETRIES) {

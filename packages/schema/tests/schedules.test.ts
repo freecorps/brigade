@@ -350,13 +350,35 @@ describe("nextHandoffs", () => {
     expect(segments[1].end).toBe(T + 60 * DAY);
   });
 
-  test("a layer hidden for longer than the walk looks ends the list where it stopped, not at `until`", () => {
-    // Hourly, under a one-member layer covering everything: 2000 hidden handoffs, then the walk stops.
+  test("a layer under a later one that has started is not walked: it never shows again", () => {
+    // Hourly, under a one-member layer covering everything: the list runs to `until`, not to a walk limit.
     const s = schedule([
       layer({ startDate: "2026-01-01", unit: "hours", count: 1 }),
       layer({ id: LYR2, members: ["usr_eva"], startDate: "2026-01-01" }),
     ]);
-    const segments = nextHandoffs(s, [], T, T + 365 * DAY);
+    expect(nextHandoffs(s, [], T, T + 365 * DAY)).toEqual([
+      { start: T, end: T + 365 * DAY, userId: "usr_eva", source: { kind: "layer", layerId: LYR2 } },
+    ]);
+    // One that starts later still hands over to it at its start, and is skipped from then on.
+    const later = schedule([
+      layer({ members: ["usr_ana", "usr_bia"], startDate: "2026-01-01", unit: "hours", count: 1 }),
+      layer({ id: LYR2, members: ["usr_eva"], startDate: "2026-10-28" }),
+    ]);
+    const segments = nextHandoffs(later, [], T, T + 365 * DAY, 100);
+    expect(segments.at(-1)).toEqual({
+      start: at("2026-10-28", "09:00", later.timeZone),
+      end: T + 365 * DAY,
+      userId: "usr_eva",
+      source: { kind: "layer", layerId: LYR2 },
+    });
+    expect(segments.length).toBeGreaterThan(40);
+  });
+
+  test("a layer hidden for longer than the walk looks ends the list where it stopped, not at `until`", () => {
+    // Hourly, under an override covering everything: 2000 hidden handoffs, then the walk stops.
+    const s = schedule([layer({ startDate: "2026-01-01", unit: "hours", count: 1 })]);
+    const cover = override({ userId: "usr_eva", start: T - DAY, end: T + 400 * DAY });
+    const segments = nextHandoffs(s, [cover], T, T + 365 * DAY);
     expect(segments).toHaveLength(1);
     expect(segments[0].userId).toBe("usr_eva");
     expect(segments[0].end).toBeLessThan(T + 90 * DAY);
@@ -381,6 +403,29 @@ describe("nextHandoffs", () => {
       nextHandoffs(schedule(layers(index)), [], T, T + 28 * DAY, 5);
     }
     // Was ~3 s before handoffs were walked lazily; leave room for slow CI machines.
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  test("stays cheap when fast rotations hide under a one-member layer", () => {
+    // 50 schedules × 4 hourly two-member layers under a one-member one: nothing ever hands off, so a walk of the
+    // hidden layers would look at 2000 handoffs each (~160 ms a schedule, ~8 s for the dashboard).
+    const layers = (index: number) => [
+      ...Array.from({ length: 4 }, (_, i) =>
+        layer({
+          id: `lyr_01JB00000000000000000000${index}${i}`.slice(0, 30),
+          members: ["usr_ana", "usr_bia"],
+          startDate: "2026-01-01",
+          unit: "hours",
+          count: 1,
+        }),
+      ),
+      layer({ id: LYR2, members: ["usr_caio"], startDate: "2026-01-01" }),
+    ];
+    const started = performance.now();
+    for (let index = 0; index < 50; index++) {
+      const segments = nextHandoffs(schedule(layers(index)), [], T, T + 28 * DAY, 5);
+      expect(segments).toHaveLength(1);
+    }
     expect(performance.now() - started).toBeLessThan(500);
   });
 });
@@ -832,5 +877,44 @@ describe("members leaving the rotations", () => {
       ],
     });
     expect(store.get("schedules", SCH)!.layers[0].members).toEqual(["usr_ana", "usr_caio"]);
+  });
+
+  test("member.sync that copies a viewer role D1 got outside Brigade takes them out too, with events", () => {
+    const store = prepared();
+    const renamed = runMutation(
+      serverMutations,
+      "member.sync",
+      { id: "usr_eva", name: "Eva", role: "responder" },
+      store,
+      ctx("usr_eva", "responder"),
+    );
+    // A plain refresh stays silent and keeps them on call.
+    expect(renamed).toEqual({ ok: true, events: [] });
+    const viewer = runMutation(
+      serverMutations,
+      "member.sync",
+      { id: "usr_eva", name: "Eva", role: "viewer" },
+      store,
+      ctx("usr_eva", "viewer"),
+    );
+    expect(viewer).toMatchObject({
+      ok: true,
+      events: [
+        { type: "schedule.updated", data: { reason: "member_removed", userId: "usr_eva" } },
+        { type: "schedule.override_removed", subject: OVR2 },
+      ],
+    });
+    expect(store.get("members", "usr_eva")!.role).toBe("viewer");
+    expect(store.get("schedules", SCH)!.layers[0].members).toEqual(["usr_ana", "usr_caio"]);
+    // The schedule stays editable: nobody left in it is a viewer.
+    const row = store.get("schedules", SCH)!;
+    const edited = runMutation(
+      mutations,
+      "schedule.update",
+      { id: SCH, name: "Platform 2", timeZone: row.timeZone, layers: row.layers },
+      store,
+      ctx("usr_ana", "owner"),
+    );
+    expect(edited.ok).toBe(true);
   });
 });

@@ -401,8 +401,36 @@ export function text(
   return m.oncall_text({ text: key, name: "", max: "", time: "", ...inputs });
 }
 
-/** An IANA zone as people read it: "America/Sao Paulo". */
-export const zoneLabel = (zone: string) => zone.replaceAll("_", " ");
+/**
+ * The names IANA uses today for zones some runtimes still list under an older one (V8's ICU says
+ * "Asia/Calcutta"; IANA's `zone.tab` says "Asia/Kolkata"). Schedules keep storing the runtime's spelling (any
+ * runtime accepts either); this is only for reading and finding them. Found by diffing V8's
+ * `Intl.supportedValuesOf("timeZone")` against IANA's `zone.tab`.
+ */
+const MODERN_ZONES: Record<string, string> = {
+  "Africa/Asmera": "Africa/Asmara",
+  "America/Buenos_Aires": "America/Argentina/Buenos_Aires",
+  "America/Catamarca": "America/Argentina/Catamarca",
+  "America/Coral_Harbour": "America/Atikokan",
+  "America/Cordoba": "America/Argentina/Cordoba",
+  "America/Godthab": "America/Nuuk",
+  "America/Indianapolis": "America/Indiana/Indianapolis",
+  "America/Jujuy": "America/Argentina/Jujuy",
+  "America/Louisville": "America/Kentucky/Louisville",
+  "America/Mendoza": "America/Argentina/Mendoza",
+  "Asia/Calcutta": "Asia/Kolkata",
+  "Asia/Katmandu": "Asia/Kathmandu",
+  "Asia/Rangoon": "Asia/Yangon",
+  "Asia/Saigon": "Asia/Ho_Chi_Minh",
+  "Atlantic/Faeroe": "Atlantic/Faroe",
+  "Europe/Kiev": "Europe/Kyiv",
+  "Pacific/Enderbury": "Pacific/Kanton",
+  "Pacific/Ponape": "Pacific/Pohnpei",
+  "Pacific/Truk": "Pacific/Chuuk",
+};
+
+/** An IANA zone as people read it, by its current name: "America/Sao Paulo", "Asia/Kolkata" for "Asia/Calcutta". */
+export const zoneLabel = (zone: string) => (MODERN_ZONES[zone] ?? zone).replaceAll("_", " ");
 
 /** A zone's offset from UTC at `instant`: "UTC+00:00", "UTC+05:45", "UTC-03:00". */
 export function offsetLabel(timeZone: string, instant: number): string {
@@ -415,22 +443,26 @@ export function offsetLabel(timeZone: string, instant: number): string {
 export type ZoneChoice = { value: string; label: string; offset: string; search: string };
 export type ZoneGroup = { value: "suggested" | "all"; items: ZoneChoice[] };
 
-/** Lowercased, without accents, with `_`, `/` and `-` as spaces: "São_Paulo" and "sao paulo" match. */
+/**
+ * Lowercased, without accents, with `_` and `/` as spaces: "São_Paulo" and "sao paulo" match. `-` stays, since it
+ * is an offset's sign ("utc-3"); a hyphenated name ("Port-au-Prince") is found by any of its parts.
+ */
 const fold = (value: string) =>
   value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/[_/]+/g, " ");
 
 /**
  * The time zone picker's choices at `now`: the viewer's zone and the zones the workspace's schedules already use
- * first, then every zone the runtime knows, each once, with its UTC offset.
+ * first, then every zone the runtime knows, each once, with its UTC offset and its current name (`zoneLabel`).
  */
 export function zoneGroups(now: number, viewerZone: string, used: readonly string[]): ZoneGroup[] {
   const choice = (zone: string): ZoneChoice => {
     const offset = offsetLabel(zone, now);
     const label = zoneLabel(zone);
+    // The label has the current name, `zone` the runtime's (older) one: either finds it.
     return { value: zone, label, offset, search: fold(`${label} ${zone} ${offset}`) };
   };
-  // In this runtime's spelling, so each zone is listed once (V8 says "Asia/Calcutta" where others say
-  // "Asia/Kolkata"; its own list agrees with it).
+  // In this runtime's spelling, so each zone is listed once: V8 lists "Asia/Calcutta" (shown as "Asia/Kolkata")
+  // and resolves "Asia/Kolkata" to it, so a schedule saved elsewhere as "Asia/Kolkata" matches the same entry.
   const suggested = [
     ...new Set(
       [viewerZone, ...used].flatMap((zone) => {
@@ -439,10 +471,14 @@ export function zoneGroups(now: number, viewerZone: string, used: readonly strin
       }),
     ),
   ];
-  const rest = timeZones().filter((zone) => !suggested.includes(zone));
+  // By the name shown, so "Asia/Kolkata" sits among the K's, not where "Asia/Calcutta" would.
+  const rest = timeZones()
+    .filter((zone) => !suggested.includes(zone))
+    .map(choice)
+    .sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
   return [
     { value: "suggested", items: suggested.map(choice) },
-    { value: "all", items: rest.map(choice) },
+    { value: "all", items: rest },
   ];
 }
 

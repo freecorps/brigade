@@ -18,6 +18,7 @@ import {
   viewerTime,
   withTimeZone,
   zoneGroups,
+  zoneLabel,
   type ScheduleDraft,
 } from "@/lib/oncall";
 
@@ -197,6 +198,41 @@ test("the time zone picker matches a city anywhere, or an offset, and lists the 
   expect(find("utc+5:45")).toEqual([kathmandu]);
   expect(find("new york")).toContain("America/New_York");
   expect(find("-03")).toContain("America/Sao_Paulo");
+});
+
+test("zones the runtime lists under an older name are found and shown by their current one", () => {
+  const at = Date.UTC(2026, 9, 27, 12);
+  const [suggested, all] = zoneGroups(at, "UTC", []);
+  const zones = [...(suggested?.items ?? []), ...(all?.items ?? [])];
+  const find = (query: string) =>
+    zones.filter((zone) => matchZone(zone, query)).map((zone) => zone.label);
+  // The real list (V8 here, as in Chrome and Workers): each city by its current name, under either spelling.
+  for (const [query, label] of [
+    ["kolkata", "Asia/Kolkata"],
+    ["calcutta", "Asia/Kolkata"],
+    ["kathmandu", "Asia/Kathmandu"],
+    ["kyiv", "Europe/Kyiv"],
+    ["ho chi minh", "Asia/Ho Chi Minh"],
+    ["yangon", "Asia/Yangon"],
+    ["rangoon", "Asia/Yangon"],
+    ["nuuk", "America/Nuuk"],
+    ["chuuk", "Pacific/Chuuk"],
+    ["pohnpei", "Pacific/Pohnpei"],
+    ["kanton", "Pacific/Kanton"],
+  ] as const) {
+    expect(find(query), query).toEqual([label]);
+  }
+  // Stored as the runtime spells it, whichever name was picked or saved elsewhere.
+  const kolkata = zones.find((zone) => zone.label === "Asia/Kolkata");
+  expect(kolkata?.value).toBe(canonicalTimeZone("Asia/Kolkata"));
+  expect(zoneLabel("Asia/Calcutta")).toBe("Asia/Kolkata");
+  expect(zoneLabel("Asia/Kolkata")).toBe("Asia/Kolkata");
+  // Listed by the name shown, each zone once.
+  const labels = (all?.items ?? []).map((zone) => zone.label);
+  expect(labels).toEqual([...labels].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+  expect(new Set(zones.map((zone) => zone.value)).size).toBe(zones.length);
+  // No label is a name IANA has replaced (every older spelling the runtime lists has a current one here).
+  expect(labels.filter((label) => /Calcutta|Katmandu|Kiev|Saigon|Rangoon|Godthab|Truk|Ponape/.test(label))).toEqual([]);
 });
 
 test("a layer says who it has now, and whether a later layer or an override hides them", () => {

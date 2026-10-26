@@ -13,9 +13,10 @@ import {
 } from "@/lib/oncall";
 
 /**
- * A searchable time zone picker (Base UI's Combobox): typing matches a city anywhere in the zone's name ("paulo",
- * "kolkata") or an offset ("+05:45", "utc-3"). The viewer's zone and the zones the workspace already uses come
- * first; every zone shows its UTC offset now. Only zones the runtime knows can be picked, in its own spelling.
+ * A searchable time zone picker (Base UI's Combobox): typing matches a city anywhere in the zone's name, current
+ * or older ("paulo", "kolkata" or "calcutta"), or an offset ("+05:45", "utc-3"). The viewer's zone and the zones
+ * the workspace already uses come first; every zone shows its current name and its UTC offset now. Only zones the
+ * runtime knows can be picked, and the value is the runtime's spelling ("Asia/Calcutta" in V8).
  */
 export function TimeZonePicker({
   id,
@@ -108,7 +109,7 @@ export function TimeZonePicker({
                             </span>
                           ) : null}
                         </span>
-                        <span className="col-start-3 text-xs text-muted-foreground tabular-nums">
+                        <span className="col-start-3 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
                           {zone.offset}
                         </span>
                       </Combobox.Item>

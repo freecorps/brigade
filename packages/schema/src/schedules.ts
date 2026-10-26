@@ -178,15 +178,25 @@ const MAX_LAYER_BOUNDARIES = 2000;
 /** A layer's handoffs after `from`, in order, one at a time. */
 type Cursor = { next: number; advance: () => void; seen: number };
 
-function layerCursor(layer: ScheduleLayer, timeZone: string, from: number): Cursor | undefined {
+/**
+ * `layer`'s handoffs after `from` and before `hiddenFrom` (when a later layer with people starts: from then on it
+ * always has someone, so this layer never shows again and its handoffs change nothing).
+ */
+function layerCursor(
+  layer: ScheduleLayer,
+  timeZone: string,
+  from: number,
+  hiddenFrom: number,
+): Cursor | undefined {
   const start = startMinute(layer);
   if (start === undefined || layer.members.length === 0) return undefined;
   const period = periodMinutes(layer);
   const first = shiftStart(start, period, 0, timeZone);
+  const shown = (at: number) => (at < hiddenFrom ? at : Infinity);
   // One member holds every shift: the layer changes hands once, when it starts.
   if (layer.members.length === 1) {
     const cursor: Cursor = {
-      next: first > from ? first : Infinity,
+      next: first > from ? shown(first) : Infinity,
       advance: () => {
         cursor.next = Infinity;
       },
@@ -196,11 +206,11 @@ function layerCursor(layer: ScheduleLayer, timeZone: string, from: number): Curs
   }
   let k = first > from ? 0 : (layerShiftAt(layer, timeZone, from)?.k ?? -1) + 1;
   const cursor: Cursor = {
-    next: shiftStart(start, period, k, timeZone),
+    next: shown(shiftStart(start, period, k, timeZone)),
     advance: () => {
       k++;
       cursor.seen++;
-      cursor.next = shiftStart(start, period, k, timeZone);
+      cursor.next = shown(shiftStart(start, period, k, timeZone));
     },
     seen: 0,
   };
@@ -214,8 +224,10 @@ function layerCursor(layer: ScheduleLayer, timeZone: string, from: number): Curs
  * segments; the last ends at the next handoff or at `until`.
  *
  * Handoffs are walked in order and the walk stops at the `limit`-th change, so the cost follows what is shown,
- * not how many shifts fit before `until`. A layer whose handoffs all hide behind others is walked for at most
- * `MAX_LAYER_BOUNDARIES` of them: past that, the last segment ends where the walk stopped, not at `until`.
+ * not how many shifts fit before `until`. A layer is not walked past the start of a later one with people: it
+ * never shows again. A layer whose handoffs hide otherwise (behind a long override, say) is
+ * walked for at most `MAX_LAYER_BOUNDARIES` of them: past that, the last segment ends where the walk stopped, not
+ * at `until`.
  */
 export function nextHandoffs(
   schedule: Pick<ScheduleRow, "id" | "timeZone" | "layers">,
@@ -225,11 +237,22 @@ export function nextHandoffs(
   limit = 10,
 ): OnCallSegment[] {
   if (!(until > from) || limit < 1) return [];
+  // A layer with people has someone at every moment from its start on, so once a later one has started an earlier
+  // one never shows again: its handoffs from then on are skipped, which keeps a fast rotation under a one-member
+  // layer from walking `MAX_LAYER_BOUNDARIES` hidden handoffs on every call.
+  const starts = schedule.layers.map((layer) => {
+    const start = startMinute(layer);
+    return start === undefined || layer.members.length === 0
+      ? Infinity
+      : shiftStart(start, periodMinutes(layer), 0, schedule.timeZone);
+  });
   const cursors: Cursor[] = [];
-  for (const layer of schedule.layers) {
-    const cursor = layerCursor(layer, schedule.timeZone, from);
+  schedule.layers.forEach((layer, index) => {
+    const hiddenFrom = Math.min(...starts.slice(index + 1));
+    if (hiddenFrom <= from) return;
+    const cursor = layerCursor(layer, schedule.timeZone, from, hiddenFrom);
     if (cursor) cursors.push(cursor);
-  }
+  });
   const edges: number[] = [];
   for (const override of overrides) {
     if (override.scheduleId !== schedule.id) continue;

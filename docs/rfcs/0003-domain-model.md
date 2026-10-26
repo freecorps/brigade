@@ -147,8 +147,10 @@ says who is on call; it does not change who is paged yet (RFC 0006 "Who is paged
 escalation policies exist).
 
 - **Schedule** (`schedules` table, query `schedules.all`): a name, an IANA time zone (stored as the runtime spells
-  it, so `america/sao_paulo` is saved as `America/Sao_Paulo`; Workers' V8 keeps ICU's older names, such as
-  `Asia/Calcutta` for `Asia/Kolkata`, and every runtime accepts both), and one to five **layers**
+  it, so `america/sao_paulo` is saved as `America/Sao_Paulo`; Workers' and Chrome's V8 keep ICU's older names, such
+  as `Asia/Calcutta` for `Asia/Kolkata`, and every runtime accepts both; the dashboard shows and finds a zone by
+  IANA's current name, from a small map of the older names V8 lists, so "kolkata" finds `Asia/Calcutta` and it reads
+  as Asia/Kolkata), and one to five **layers**
   (rotations), kept in the schedule's own row so an edit to several layers is one mutation and never half applied.
   A layer has an optional name (unnamed, it reads as "Primary", "Layer 2" in each reader's language), its members in rotation order (1 to 50, each once), a start date and a handoff time on the
   schedule's wall clock (`YYYY-MM-DD`, `HH:MM`), and a shift length: `count` hours (up to 168), days (up to 31) or
@@ -164,8 +166,9 @@ escalation policies exist).
   start, or emptied). Nobody is a gap (`null`), shown as "Nobody on call". `nextHandoffs` lists the stretches from
   now (each layer handoff and override edge where the person changes; a handoff to the same person is none), for
   the dashboard's upcoming shifts. It walks handoffs in order and stops at the last one it shows, and a one-member
-  layer has one handoff (its start), so a page of hourly rotations costs what it shows; a layer hidden behind others
-  is walked for at most 2000 handoffs, and the list then ends where it stopped.
+  layer has one handoff (its start), so a page of hourly rotations costs what it shows; a layer is not walked past
+  the start of a later layer with people (it never shows again), and a layer hidden otherwise (behind a long
+  override) is walked for at most 2000 handoffs, the list then ending where it stopped.
 - **Wall-clock handoffs and DST.** Handoffs happen at the local time the layer says, in every unit, so a daily
   09:00 handoff stays at 09:00 and the shift over a DST change lasts 23 or 25 hours (a weekly one 167 or 169).
   Times are converted with `Intl.DateTimeFormat` alone (no Temporal: Workers, browsers and Hermes differ), like

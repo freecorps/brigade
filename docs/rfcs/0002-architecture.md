@@ -210,7 +210,8 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
     bytes nobody holds a token for), and the dashboard tells the owner once which workspaces came with the account
     and what was paused, or that a shard could not be reached (`takeover_notice` in D1,
     `GET`/`DELETE /account/takeover`, en and pt-BR; two resets at once merge into one notice). The owner resumes what they
-    want to keep; a heartbeat needs a new monitor for a new URL. Schedules and escalation policies stay: they page
+    want to keep and gives a heartbeat they keep a new URL (`monitor.rotateHeartbeat`, New URL in its edit form;
+    RFC 0007). Schedules and escalation policies stay: they page
     only members, and only for incidents, which in such a workspace only the owner or a monitor can open. What is
     left is in Q21. The account's name and language are whatever the person who signed up chose; the owner changes
     them in the dashboard. A reset of a verified account signs out the same way (a phone or socket someone who

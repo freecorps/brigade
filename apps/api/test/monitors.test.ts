@@ -861,6 +861,174 @@ describe("heartbeats", () => {
     });
   });
 
+  test("a new URL: the old token is refused at once, the new one accepted, and neither leaves the shard", async () => {
+    const ws = await workspace();
+    const monitorId = newId("mon", Date.now(), random);
+    const old = newHeartbeatSecret(random);
+    expect(
+      await ws.run("monitor.createHeartbeat", {
+        id: monitorId,
+        name: "Nightly backup",
+        intervalSeconds: 60,
+        graceSeconds: 30,
+        tokenHash: await sha256Hex(old),
+      }),
+    ).toMatchObject({ ok: true });
+    const ping = (secret: string) =>
+      exports.default.fetch(
+        `http://localhost/heartbeat/${heartbeatToken(ws.id, monitorId, secret)}`,
+        {
+          method: "POST",
+        },
+      );
+    expect((await ping(old)).status).toBe(202);
+
+    const fresh = newHeartbeatSecret(random);
+    const tokenHash = await sha256Hex(fresh);
+    for (const role of ["responder", "viewer"] as const) {
+      expect(
+        await ws.run("monitor.rotateHeartbeat", { id: monitorId, tokenHash }, { ...admin, role }),
+      ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    }
+    expect((await ping(fresh)).status).toBe(404);
+
+    const { result, changes, outbox } = await ws.withShard((shard, _instance, sql) => {
+      const before = Date.now();
+      const done = shard.mutate({
+        clientId: "test",
+        mutationId: "rotate",
+        actor: admin,
+        name: "monitor.rotateHeartbeat",
+        args: { id: monitorId, tokenHash },
+        now: before,
+      });
+      const events = sql
+        .exec<{ event: string }>("select event from outbox order by seq")
+        .toArray()
+        .map((row) => row.event);
+      return { ...done, outbox: events };
+    });
+    expect(result).toMatchObject({ ok: true });
+    // What goes to sockets: the monitor row, never the server-only heartbeats table.
+    expect(changes.map((change) => change.table)).toEqual(["monitors"]);
+    expect(outbox.at(-1)).toContain("monitor.heartbeat_rotated");
+    for (const text of [JSON.stringify(changes), ...outbox]) {
+      expect(text).not.toContain(tokenHash);
+      expect(text).not.toContain(fresh);
+      expect(text).not.toContain(old);
+    }
+
+    expect((await ping(old)).status).toBe(404);
+    // The old pinger's last beat is long past the interval and grace; the rotation gave a fresh window, so the
+    // alarm reports no miss.
+    await ws.withShard((shard) => {
+      expect(shard.store.get("heartbeats", monitorId)?.lastPingAt).toBeNull();
+    });
+    await ws.withShard((_shard, instance) => instance.alarm());
+    await ws.withShard((shard) => {
+      expect(shard.store.get("monitors", monitorId)).toMatchObject({
+        status: "pending",
+        checks: [],
+      });
+      expect(shard.store.get("heartbeats", monitorId)).toMatchObject({
+        tokenHash,
+        lastPingAt: null,
+      });
+    });
+    expect((await ping(fresh)).status).toBe(202);
+    await ws.withShard((shard) => {
+      expect(shard.store.get("monitors", monitorId)?.status).toBe("up");
+    });
+  });
+
+  test("a rotated heartbeat whose new URL is never pinged still pages, and a firing one keeps its one alert", async () => {
+    const ws = await workspace();
+    const monitorId = newId("mon", Date.now(), random);
+    const secret = newHeartbeatSecret(random);
+    expect(
+      await ws.run("monitor.createHeartbeat", {
+        id: monitorId,
+        name: "Nightly backup",
+        intervalSeconds: 60,
+        graceSeconds: 30,
+        tokenHash: await sha256Hex(secret),
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      (
+        await exports.default.fetch(
+          `http://localhost/heartbeat/${heartbeatToken(ws.id, monitorId, secret)}`,
+          { method: "POST" },
+        )
+      ).status,
+    ).toBe(202);
+    const late = (60 + 30) * 1000;
+    const clock = vi.spyOn(Date, "now");
+    const start = Date.now();
+    const rotate = (at: number) =>
+      ws.withShard(async (shard) => {
+        const { result } = shard.mutate({
+          clientId: "test",
+          mutationId: `rotate-${at}`,
+          actor: admin,
+          name: "monitor.rotateHeartbeat",
+          args: { id: monitorId, tokenHash: await sha256Hex(newHeartbeatSecret(random)) },
+          now: at,
+        });
+        expect(result).toMatchObject({ ok: true });
+      });
+    const alarmAt = async (at: number) => {
+      clock.mockReturnValue(at);
+      await ws.withShard((_shard, instance) => instance.alarm());
+      return ws.withShard((shard, _instance, sql) => ({
+        monitor: shard.store.get("monitors", monitorId)!,
+        incidents: shard.store.scan("incidents"),
+        fired: sql
+          .exec<{ event: string }>("select event from outbox order by seq")
+          .toArray()
+          .filter((row) => row.event.includes('"alert.fired"')).length,
+      }));
+    };
+    try {
+      // Rotated 10 s after the last ping to the old URL, and nothing ever pings the new one.
+      const rotated = start + 10_000;
+      await rotate(rotated);
+      // Past the old ping's deadline: the rotation's fresh window holds.
+      expect((await alarmAt(start + late + 1)).monitor.status).toBe("pending");
+      // Past the rotation's own deadline: the miss is reported and pages.
+      const missed = await alarmAt(rotated + late + 1);
+      expect(missed.monitor).toMatchObject({
+        status: "down",
+        alertId: expect.any(String),
+        checks: [expect.objectContaining({ up: false, error: "missed" })],
+      });
+      expect(missed.fired).toBe(1);
+      expect(missed.incidents).toEqual([
+        expect.objectContaining({ id: missed.monitor.incidentId, status: "triage" }),
+      ]);
+
+      // Rotated again while down and paging: a miss after the new window keeps the same alert, no second one.
+      const again = rotated + late + 60_000;
+      await rotate(again);
+      expect((await alarmAt(again + 1000)).monitor).toMatchObject({
+        status: "pending",
+        alertId: missed.monitor.alertId,
+      });
+      const still = await alarmAt(again + late + 1);
+      expect(still.monitor).toMatchObject({
+        status: "down",
+        alertId: missed.monitor.alertId,
+        incidentId: missed.monitor.incidentId,
+      });
+      expect(still.fired).toBe(1);
+      expect(still.incidents).toEqual([
+        expect.objectContaining({ id: missed.monitor.incidentId, status: "triage" }),
+      ]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test("a D1 failure does not drop a real ping: the shard still decides", async () => {
     const ws = await workspace();
     const monitorId = newId("mon", Date.now(), random);

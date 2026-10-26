@@ -26,7 +26,8 @@ Event types are versioned with the schema package and documented in the generate
 emit `monitor.created`, `monitor.updated`, `monitor.paused`, `monitor.resumed`, `monitor.deleted`, `monitor.checked`
 (when a source's verdict or failure reason changes; the 5-minute refreshes of an unchanged verdict are synced but
 emit nothing), `monitor.status_changed` (to `unknown` too, when probes stop reporting), `alert.fired` and
-`alert.resolved`, with actor `sys_monitors` for what the probes and heartbeats cause; and, when the owner of an
+`alert.resolved`, with actor `sys_monitors` for what the probes and heartbeats cause; `monitor.heartbeat_rotated`
+(`id`; never the token or its hash) when an owner or admin gives a heartbeat a new URL; and, when the owner of an
 address takes back an account someone else signed up with (RFC 0002 "Auth"), `monitor.paused` and
 `monitor.heartbeat_revoked` (`id`) with actor `sys_account`.
 

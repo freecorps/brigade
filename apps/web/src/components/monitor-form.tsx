@@ -17,7 +17,7 @@ import {
 } from "@freecorps/brigade-schema";
 import { useSyncClient } from "@freecorps/brigade-sync/react";
 import { cn } from "cn";
-import { CheckIcon, CircleAlertIcon, Trash2Icon } from "lucide-react";
+import { CheckIcon, CircleAlertIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, FormError } from "@/components/ui/field";
@@ -79,6 +79,8 @@ export type MonitorFormMode =
       /** Called only when something changed; the form is closed by its owner. */
       onSave: (checked: Extract<CheckedEdit, { ok: true }>) => void;
       onDelete: () => void;
+      /** A heartbeat's new URL (`monitor.rotateHeartbeat`), once confirmed; the form is closed by its owner. */
+      onRotate?: () => void;
     };
 
 /**
@@ -473,6 +475,10 @@ export function MonitorForm({
         )}
       </div>
 
+      {mode.kind === "edit" && mode.row.kind === "heartbeat" && mode.onRotate ? (
+        <RotateHeartbeat row={mode.row} changed={changed} onRotate={mode.onRotate} />
+      ) : null}
+
       <div>
         {/* Always there, so the note is announced when an edit starts to restart the checks. */}
         <div aria-live="polite">
@@ -551,6 +557,105 @@ function DiscardChanges({
           {m.monitor_discard({ part: name === null ? "discard_new" : "discard", name: "" })}
         </Button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * A heartbeat's URL: only its hash is kept, so it cannot be shown again, only replaced. New URL asks first in place:
+ * the current URL stops working at once, and the monitor starts over (`monitor.rotateHeartbeat`). Unsaved edits in
+ * the form are said to be dropped, since confirming closes it. Escape in the prompt closes only the prompt.
+ */
+function RotateHeartbeat({
+  row,
+  changed,
+  onRotate,
+}: {
+  row: MonitorRow;
+  changed: boolean;
+  onRotate: () => void;
+}) {
+  const labelId = useId();
+  const hintId = useId();
+  const promptId = useId();
+  const groupId = useId();
+  const [asking, setAsking] = useState(false);
+  const askRef = useRef<HTMLButtonElement>(null);
+  const keepRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (asking) keepRef.current?.focus();
+  }, [asking]);
+  const cancel = () => {
+    askRef.current?.focus();
+    setAsking(false);
+  };
+  return (
+    <div role="group" aria-labelledby={labelId} className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="flex min-w-0 flex-1 basis-60 flex-col gap-0.5">
+          <p id={labelId} className="text-sm font-medium">
+            {m.monitor_rotate({ part: "label", name: "" })}
+          </p>
+          <p id={hintId} className="text-sm text-muted-foreground">
+            {m.monitor_rotate({ part: "hint", name: "" })}
+          </p>
+        </div>
+        <Button
+          ref={askRef}
+          type="button"
+          variant="outline"
+          aria-describedby={hintId}
+          aria-expanded={asking}
+          aria-controls={asking ? groupId : undefined}
+          onClick={() => setAsking(true)}
+        >
+          <RefreshCwIcon aria-hidden />
+          {m.monitor_rotate({ part: "action", name: "" })}
+        </Button>
+      </div>
+      {asking ? (
+        <div
+          id={groupId}
+          role="group"
+          aria-labelledby={promptId}
+          onKeyDown={(event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+              // The form's own Escape would close the whole editor.
+              event.preventDefault();
+              event.stopPropagation();
+              cancel();
+            }
+          }}
+          className="flex flex-col gap-3 rounded-md border bg-card p-3 text-sm"
+        >
+          <div id={promptId} className="flex flex-col gap-1">
+            <p className="font-medium [overflow-wrap:anywhere]">
+              {m.monitor_rotate({ part: "prompt", name: row.name })}
+            </p>
+            <p>{m.monitor_rotate({ part: "stops", name: "" })}</p>
+            <p className="text-muted-foreground">
+              {m.monitor_rotate({ part: "restart", name: "" })}
+              {monitorAlerting(row)
+                ? ` ${m.monitor_rotate({ part: "restart_alert", name: "" })}`
+                : null}
+            </p>
+            {changed ? (
+              <p className="text-muted-foreground">
+                {m.monitor_rotate({ part: "unsaved", name: "" })}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" onClick={onRotate}>
+              <RefreshCwIcon aria-hidden />
+              {m.monitor_rotate({ part: "confirm", name: "" })}
+            </Button>
+            <Button ref={keepRef} type="button" variant="ghost" onClick={cancel}>
+              {m.monitor_rotate({ part: "keep", name: "" })}
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

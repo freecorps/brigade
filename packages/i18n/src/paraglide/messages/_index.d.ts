@@ -182,6 +182,7 @@ export * from './monitor_last_result.js';
 export * from './monitor_limit_reached.js';
 export * from './monitor_pause_action.js';
 export * from './monitor_region.js';
+export * from './monitor_rotate.js';
 export * from './monitor_status.js';
 export * from './monitors_count.js';
 export * from './monitors_down_count.js';

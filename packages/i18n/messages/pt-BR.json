@@ -549,6 +549,26 @@
       }
     }
   ],
+  "monitor_rotate": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=label": "URL de heartbeat",
+        "part=hint": "O Brigade guarda só um hash dela, então a URL atual não pode ser mostrada de novo. Uma nova URL substitui a atual.",
+        "part=action": "Nova URL",
+        "part=prompt": "Criar uma nova URL para {name}?",
+        "part=stops": "A URL atual para de funcionar na hora; atualize o que envia pings para ela.",
+        "part=restart": "O monitor recomeça em Aguardando, com um intervalo e uma tolerância inteiros antes de um ping perdido contar.",
+        "part=restart_alert": "O alerta ativo continua até a nova URL receber um ping.",
+        "part=unsaved": "As outras alterações neste formulário não serão salvas.",
+        "part=confirm": "Criar nova URL",
+        "part=keep": "Manter a URL atual",
+        "part=shown": "Nova URL de {name}, mostrada só uma vez",
+        "part=*": "Nova URL"
+      }
+    }
+  ],
   "monitor_gone": "Ele foi excluído.",
   "monitor_discard": [
     {
@@ -1664,7 +1684,7 @@
       "match": {
         "part=title": "Você recuperou esta conta",
         "part=body": "Alguém se cadastrou com o seu e-mail antes de você confirmá-lo e criou os espaços de trabalho abaixo. Agora eles são seus. Para que ninguém mais possa acionar você pelo que foi configurado ali, o Brigade pausou todos os monitores e desativou as URLs de heartbeat.",
-        "part=after": "Retome os monitores que quiser manter. Um heartbeat precisa de um novo monitor para ter uma nova URL. Confira também as escalas e as políticas de escalonamento de cada espaço de trabalho.",
+        "part=after": "Retome os monitores que quiser manter. Dê a cada heartbeat que você mantiver uma nova URL (Nova URL no formulário Editar) antes de retomá-lo. Confira também as escalas e as políticas de escalonamento de cada espaço de trabalho.",
         "part=failed": "O Brigade não conseguiu acessar este espaço de trabalho, então nada nele foi pausado. Confira os monitores agora.",
         "part=nothing": "Não havia monitores.",
         "part=dismiss": "Entendi",

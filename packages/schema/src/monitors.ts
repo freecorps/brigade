@@ -764,6 +764,45 @@ export const updateHeartbeatMonitor = defineMutation({
   },
 });
 
+export type HeartbeatRotated = DomainEvent<"monitor.heartbeat_rotated", { id: string }>;
+
+/**
+ * A new URL for a heartbeat: as at create, the client makes the token, shows it once and sends only its SHA-256.
+ * The old hash is replaced at once, so the old URL is refused from the next ping. The monitor starts over like a
+ * changed target (RFC 0007 "Rotating a heartbeat URL"): `pending`, its last result dropped, and a full interval plus
+ * grace from now before a missed ping counts, so whatever pinged the old URL going quiet does not page while the new
+ * one is being set up. A firing alert stays until the new URL is pinged. A paused monitor only gets the new hash; resuming
+ * starts it over anyway.
+ */
+export const rotateHeartbeat = defineMutation({
+  name: "monitor.rotateHeartbeat",
+  args: v.object({ id: monitorId, tokenHash: sha256Hex }),
+  permission: "monitor:manage",
+  apply(store, args, ctx) {
+    const monitor = store.get("monitors", args.id);
+    if (!monitor) return fail("not_found", "Monitor not found");
+    if (monitor.kind !== "heartbeat") return fail("invalid_args", "Not a heartbeat monitor");
+    // Server only, like at create: a client's optimistic store never holds the hash.
+    if (ctx.server) {
+      const heartbeat = store.get("heartbeats", args.id);
+      if (heartbeat?.tokenHash === args.tokenHash) return fail("conflict", "Nothing to change");
+      const row = { id: args.id, tokenHash: args.tokenHash, lastPingAt: null };
+      if (heartbeat) store.update("heartbeats", args.id, row);
+      else store.insert("heartbeats", row);
+    }
+    store.update("monitors", args.id, {
+      ...(monitor.paused ? {} : restart(ctx)),
+      updatedAt: ctx.now,
+    });
+    const event: HeartbeatRotated = {
+      type: "monitor.heartbeat_rotated",
+      subject: args.id,
+      data: { id: args.id },
+    };
+    return ok(event);
+  },
+});
+
 /**
  * Resolves the monitor's firing alert, if any. The incident it opened stays for people to close; its timeline
  * says why the alert ended (the monitor recovered, or someone paused or deleted it).
@@ -838,8 +877,8 @@ export type HeartbeatRevoked = DomainEvent<"monitor.heartbeat_revoked", { id: st
  * Whoever signed up could still page the owner through what they set up: a heartbeat whose URL they kept, or an HTTP
  * or TCP check on a host they control. So every monitor is paused (as `monitor.setPaused` would, firing alerts
  * resolved) and every heartbeat's hash becomes `tokenHash`, random bytes the shard made and nobody holds a token
- * for. The owner resumes what they want to keep; a heartbeat needs a new monitor for a new URL. Nothing to change is
- * a `conflict`.
+ * for. The owner resumes what they want to keep and gives a heartbeat a new URL (`monitor.rotateHeartbeat`). Nothing to
+ * change is a `conflict`.
  */
 export const takeOverMonitors = defineMutation({
   name: "monitor.takeOver",
@@ -1112,6 +1151,7 @@ export const monitorMutations = [
   updateHttpMonitor,
   updateTcpMonitor,
   updateHeartbeatMonitor,
+  rotateHeartbeat,
   setMonitorPaused,
   deleteMonitor,
 ] as const;

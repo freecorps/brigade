@@ -17,6 +17,12 @@ export const LOCAL_VARS = { SYNC_DEV_ACTOR: "1", EMAIL_LOG: "1" };
  */
 const TEST_AUTH_SECRET = "brigade-tests-only-secret-not-for-deployments";
 
+/**
+ * Test-only key for sealing Slack bot tokens (src/slack-token.ts): 32 bytes of 7s, base64url. Not a credential: it
+ * seals made-up tokens inside one test run. Deployed Workers get SLACK_TOKEN_KEY from `wrangler secret put`.
+ */
+const TEST_SLACK_TOKEN_KEY = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
+
 export default defineConfig(async ({ command, mode }) => ({
   // The Vite plugin runs the Worker in dev and build; tests run it through the Vitest plugin instead.
   // `workspaceSource()` resolves packages/schema and packages/sync to their TypeScript source (RFC 0002).
@@ -29,6 +35,7 @@ export default defineConfig(async ({ command, mode }) => ({
               bindings: {
                 ...LOCAL_VARS,
                 BETTER_AUTH_SECRET: TEST_AUTH_SECRET,
+                SLACK_TOKEN_KEY: TEST_SLACK_TOKEN_KEY,
                 // Tests read events from the outbox; test/outbox.test.ts drives the drain itself.
                 OUTBOX_DRAIN: "paused",
                 // The dead-man switch's ping (src/watchdog.ts): a loopback URL nothing listens on;

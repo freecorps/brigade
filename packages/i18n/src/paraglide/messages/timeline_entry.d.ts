@@ -47,6 +47,10 @@ export type Timeline_EntryInputs = {
 * | "email_failed_unpaged" | "Couldn't email {a} that the page didn't reach them" |
 * | "email_failed_nobody_paged" | "Couldn't email {a} that nobody could be paged" |
 * | "email_capped" | "Didn't email {a}: the limit on Brigade's emails was reached" |
+* | "slack_failed_no_channel" | "Couldn't post to Slack: the channel is gone, or Brigade isn't in it" |
+* | "slack_failed_not_authorized" | "Couldn't post to Slack: Slack refused Brigade's access" |
+* | "slack_failed_rate_limited" | "Couldn't post to Slack: Slack kept asking Brigade to slow down" |
+* | "slack_failed_undelivered" | "Couldn't post to Slack" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs

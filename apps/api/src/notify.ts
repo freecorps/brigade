@@ -1,5 +1,6 @@
 // The `brigade-events` consumer (RFC 0005 "Delivery", RFC 0002 runtime map): routes each event to its notifiers:
-// a page that failed to email (src/notify-email.ts), everything else to push. Push: for an event that pages, the
+// a page that failed to email (src/notify-email.ts), everything else to push, and an incident's events to Slack as
+// well (src/notify-slack.ts), next to push and never ahead of it. Push: for an event that pages, the
 // workspace shard plans who gets it, each device's push is sealed to its own key (HPKE, `packages/push`) and sent
 // through the relay (RFC 0006), and the outcomes go back to the shard. Delivery is at-least-once, so the shard's page
 // ledger, keyed by `event.id`, makes a redelivery page nobody twice. What the Queue gives up on lands in
@@ -11,6 +12,7 @@ import { emailSender, type EmailEnv, type EmailSender } from "./email.ts";
 import { asksForEmail } from "./mailer.ts";
 import { emailRetryDelay, notifyEmail, type EmailNotifyEnv } from "./notify-email.ts";
 import { asksForInvitation, notifyInvitation } from "./notify-invite.ts";
+import { notifySlack, type SlackNotifyEnv } from "./notify-slack.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 import {
   asksForPage,
@@ -19,6 +21,7 @@ import {
   type PageTarget,
   type SendFailure,
 } from "./paging.ts";
+import { asksForSlack } from "./slack.ts";
 import { HEARTBEAT_EVENT, isSystemEvent, WATCHDOG_NAME, type RelayHealth } from "./watchdog.ts";
 import { WORKSPACE_ID } from "./workspace.ts";
 
@@ -35,6 +38,12 @@ export const QUEUE_MAX_RETRIES = 10;
 /** Delay before redelivering a page that failed: 5, 10, 20, 40 s. Pages are urgent; giving up takes about 75 s. */
 export const PAGE_RETRY_FIRST_SECONDS = 5;
 export const PAGE_RETRY_MAX_SECONDS = 60;
+/**
+ * How long the consumer waits on Slack for one event before it lets the message go with a retry. A batch settles only
+ * when its slowest message does, and the next batch (with its pages) waits for that; Slack must never be the reason.
+ * The incident's claim and the Slack ledger (src/slack.ts) make the retry safe: it waits out the claim and re-plans.
+ */
+export const SLACK_BUDGET_MS = 3000;
 /** How long the relay gets per send. */
 export const RELAY_TIMEOUT_MS = 10_000;
 /** How long the relay's token check gets when the dead-man switch's heartbeat comes through. */
@@ -42,7 +51,8 @@ export const RELAY_HEALTH_TIMEOUT_MS = 5000;
 
 /** Optional: an instance without a relay still runs, and every page it would send is recorded as failed. */
 export type NotifyEnv = EmailEnv &
-  EmailNotifyEnv & {
+  EmailNotifyEnv &
+  SlackNotifyEnv & {
     WORKSPACE: Env["WORKSPACE"];
     /** The dead-man switch's watchdog (src/watchdog.ts); without it a heartbeat is logged and dropped. */
     WATCHDOG?: Env["WATCHDOG"];
@@ -57,13 +67,14 @@ export type Fetch = (request: Request) => Promise<Response>;
 /**
  * The queue handler: one message per event; each is acked or retried on its own, all of a batch's at once, so a
  * page never waits for an email in the same batch. Never throws. `mail` is the email sender (`emailSender`, none
- * when email is not set up).
+ * when email is not set up). `waitUntil` is the invocation's: a Slack call past its budget runs on under it.
  */
 export async function consumeEvents(
   batch: MessageBatch<unknown>,
   env: NotifyEnv,
   send: Fetch = (request) => fetch(request),
   mail: EmailSender | undefined = emailSender(env),
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<void> {
   const seen = new Set<string>();
   await Promise.all(
@@ -84,6 +95,27 @@ export async function consumeEvents(
       const email = asksForEmail(event);
       const invitation = asksForInvitation(event);
       const delay = email || invitation ? emailRetryDelay : retryDelay;
+      // Slack runs alongside push, never before it, and its failures stay its own: a Slack outage or a shard error on
+      // its side only asks for a later delivery, which the page ledger makes a no-op for push.
+      const slack = asksForSlack(event)
+        ? withinSlackBudget(
+            notifySlack(event, env, send).catch((error: unknown) => {
+              log("slack notifier failed", { event: event.id, error: String(error) });
+              return retryDelay(message.attempts);
+            }),
+            event,
+            message.attempts,
+            waitUntil,
+          ).then((seconds) => {
+            // Past the Queue's retries, give Slack up rather than send a page event to the dead-letter queue.
+            if (seconds === undefined || message.attempts <= QUEUE_MAX_RETRIES) return seconds;
+            log("slack given up: out of queue retries", {
+              event: event.id,
+              attempts: message.attempts,
+            });
+            return undefined;
+          })
+        : Promise.resolve(undefined);
       try {
         const delaySeconds = email
           ? await notifyEmail(event, message.attempts, env, mail)
@@ -92,9 +124,14 @@ export async function consumeEvents(
             : (await notifyPush(event, message.attempts, env, send))
               ? retryDelay(message.attempts)
               : undefined;
-        if (delaySeconds !== undefined) message.retry({ delaySeconds });
+        // Slack's work always finishes (within its budget) before the message is settled. A page's own retry comes
+        // first: never put off behind Slack's backoff, and an early Slack retry only finds its event held again.
+        const slackSeconds = await slack;
+        const next = delaySeconds ?? slackSeconds;
+        if (next !== undefined) message.retry({ delaySeconds: next });
         else message.ack();
       } catch (error) {
+        await slack;
         // The shard was unreachable or threw: nothing was recorded, so the whole page runs again.
         log("event handling failed", { event: event.id, type: event.type, error: String(error) });
         if (message.attempts > QUEUE_MAX_RETRIES) {
@@ -111,6 +148,32 @@ export async function consumeEvents(
       }
     }),
   );
+}
+
+/**
+ * Slack's answer for one event, or a retry once `SLACK_BUDGET_MS` has passed without one. The late call runs on under
+ * `waitUntil`, so a message Slack accepted still has its `ts` recorded and the retry updates it rather than posting
+ * again; until then its claim stands, so the retry neither posts twice at once nor waits forever.
+ */
+async function withinSlackBudget(
+  slack: Promise<number | undefined>,
+  event: BrigadeEvent,
+  attempts: number,
+  waitUntil: ((promise: Promise<unknown>) => void) | undefined,
+): Promise<number | undefined> {
+  waitUntil?.(slack);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const overrun = new Promise<number>((resolve) => {
+    timer = setTimeout(() => {
+      log("slack notifier overran its budget: retrying later", { event: event.id });
+      resolve(retryDelay(attempts));
+    }, SLACK_BUDGET_MS);
+  });
+  try {
+    return await Promise.race([slack, overrun]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

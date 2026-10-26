@@ -9,6 +9,7 @@ import { OnCallCard } from "@/components/oncall-card";
 import { PagingHealthNotice } from "@/components/paging-health";
 import { usePreferences } from "@/components/preferences";
 import { RequireWorkspace } from "@/components/session";
+import { SlackCard } from "@/components/slack-card";
 import { StackCard } from "@/components/stack-card";
 import { TakeoverNotice } from "@/components/takeover-notice";
 import { VerifyNotice } from "@/components/verify-notice";
@@ -47,6 +48,7 @@ function Overview() {
       <EscalationCard />
       <MonitorsCard />
       <MembersCard />
+      <SlackCard />
       <StackCard />
       <LegendCard />
     </div>

@@ -144,6 +144,9 @@ export function entryText(entry: TimelineRow, who: People): string {
         entry.reason === "capped" ? "email_capped" : `email_failed_${entry.about}`,
         personName(entry.userId, who, "object"),
       );
+    case "slack_failed":
+      // Written by the notifier: about the channel message, not who wrote it.
+      return say(`slack_failed_${entry.reason}`);
   }
 }
 

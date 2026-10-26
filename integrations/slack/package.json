@@ -1,0 +1,48 @@
+{
+  "name": "@freecorps/brigade-slack",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Freecorps Brigade's Slack app: the Worker for /inc, the Acknowledge button and installation, and the incident message the API posts (RFC 0011).",
+  "license": "AGPL-3.0-only",
+  "author": "Freecorps Tecnologia da Informação LTDA",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freecorps/brigade.git",
+    "directory": "integrations/slack"
+  },
+  "type": "module",
+  "exports": {
+    "./bridge": {
+      "@freecorps/source": "./src/bridge.ts",
+      "default": "./src/bridge.ts"
+    },
+    "./notifier": {
+      "@freecorps/source": "./src/notifier.ts",
+      "default": "./src/notifier.ts"
+    },
+    "./people": {
+      "@freecorps/source": "./src/people.ts",
+      "default": "./src/people.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "dev": "CLOUDFLARE_ENV=dev vp dev",
+    "build": "vp build",
+    "build:dev": "CLOUDFLARE_ENV=dev vp build",
+    "test": "wrangler types --check && vp test",
+    "check": "vp check",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@freecorps/brigade-i18n": "workspace:*",
+    "@freecorps/brigade-schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.65.0",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:",
+    "wrangler": "^4.152.0"
+  }
+}

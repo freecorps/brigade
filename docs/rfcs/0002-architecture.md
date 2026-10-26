@@ -60,7 +60,7 @@ packages/
   push/        Push payload encryption (HPKE on WebCrypto) and envelope (RFC 0006)     (MIT)
   ui/          Shared design tokens (web + mobile)                                     (MIT)
 integrations/
-  slack/       ChatProvider implementation (Worker, bound via service binding)        (AGPL-3.0)
+  slack/       Slack app Worker (RFC 0011): binds to the API's SlackBridge entrypoint (AGPL-3.0)
   ...
 spikes/        Throwaway spike code: not product, never published, private packages   (AGPL-3.0)
 docs/rfcs/     Design documents
@@ -71,7 +71,9 @@ the workspace (`spikes/*`) so CI checks and tests it. The PR that records the sp
 spike deployed and deletes the folder; the write-up in `docs/spikes/` is what stays.
 
 The `brigade-events` consumer runs in the api Worker for now (its `queue` handler: push, and email for pages that
-failed); it becomes the separate notifier Worker of the runtime map with Slack (RFC 0005 "Notifiers", "Email").
+failed); it becomes the separate notifier Worker of the runtime map later (RFC 0005 "Notifiers", "Email"). Slack's notifier
+runs there too, importing its renderer from `integrations/slack`, because the Slack Worker binds to the API and a
+binding back would be a cycle Cloudflare cannot deploy from nothing (RFC 0011 "Shape").
 
 Packages are MIT so third parties can build integrations without AGPL concerns; apps are AGPL (RFC 0009).
 

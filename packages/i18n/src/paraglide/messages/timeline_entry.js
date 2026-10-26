@@ -47,6 +47,10 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "email_failed_unpaged" | "Couldn't email {a} that the page didn't reach them" |
 * | "email_failed_nobody_paged" | "Couldn't email {a} that nobody could be paged" |
 * | "email_capped" | "Didn't email {a}: the limit on Brigade's emails was reached" |
+* | "slack_failed_no_channel" | "Couldn't post to Slack: the channel is gone, or Brigade isn't in it" |
+* | "slack_failed_not_authorized" | "Couldn't post to Slack: Slack refused Brigade's access" |
+* | "slack_failed_rate_limited" | "Couldn't post to Slack: Slack kept asking Brigade to slow down" |
+* | "slack_failed_undelivered" | "Couldn't post to Slack" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs
@@ -93,6 +97,10 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "email_failed_unpaged") return /** @type {LocalizedString} */ (`Não foi possível enviar email para ${i?.a} avisando que a chamada não chegou`);
 		if (i?.kind === "email_failed_nobody_paged") return /** @type {LocalizedString} */ (`Não foi possível enviar email para ${i?.a} avisando que ninguém pôde ser chamado`);
 		if (i?.kind === "email_capped") return /** @type {LocalizedString} */ (`Não foi enviado email para ${i?.a}: o limite de emails do Brigade foi atingido`);
+		if (i?.kind === "slack_failed_no_channel") return /** @type {LocalizedString} */ (`Não foi possível publicar no Slack: o canal não existe mais ou o Brigade não está nele`);
+		if (i?.kind === "slack_failed_not_authorized") return /** @type {LocalizedString} */ (`Não foi possível publicar no Slack: o Slack recusou o acesso do Brigade`);
+		if (i?.kind === "slack_failed_rate_limited") return /** @type {LocalizedString} */ (`Não foi possível publicar no Slack: o Slack continuou pedindo ao Brigade para esperar`);
+		if (i?.kind === "slack_failed_undelivered") return /** @type {LocalizedString} */ (`Não foi possível publicar no Slack`);
 		return /** @type {LocalizedString} */ (`${i?.actor} alterou o incidente`)
 	}
 	{
@@ -133,6 +141,10 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "email_failed_unpaged") return /** @type {LocalizedString} */ (`Couldn't email ${i?.a} that the page didn't reach them`);
 		if (i?.kind === "email_failed_nobody_paged") return /** @type {LocalizedString} */ (`Couldn't email ${i?.a} that nobody could be paged`);
 		if (i?.kind === "email_capped") return /** @type {LocalizedString} */ (`Didn't email ${i?.a}: the limit on Brigade's emails was reached`);
+		if (i?.kind === "slack_failed_no_channel") return /** @type {LocalizedString} */ (`Couldn't post to Slack: the channel is gone, or Brigade isn't in it`);
+		if (i?.kind === "slack_failed_not_authorized") return /** @type {LocalizedString} */ (`Couldn't post to Slack: Slack refused Brigade's access`);
+		if (i?.kind === "slack_failed_rate_limited") return /** @type {LocalizedString} */ (`Couldn't post to Slack: Slack kept asking Brigade to slow down`);
+		if (i?.kind === "slack_failed_undelivered") return /** @type {LocalizedString} */ (`Couldn't post to Slack`);
 		return /** @type {LocalizedString} */ (`${i?.actor} changed the incident`)
 	}
 });

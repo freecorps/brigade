@@ -248,8 +248,8 @@ How a page uses them is RFC 0006 "Who is paged".
   (`exhausted`), keeping when it ended, so none of its pages is sent after a reopen. A reopened incident starts no
   run by itself; its next page does (as a page to an acknowledged incident is not sent).
 - Every level fired is an `escalation.paged` event and an `escalated` timeline entry; levels that could not be
-  paged are `page_failed` entries ("Couldn't page Primary: nobody on call"). Delivery receipts (did the phone show
-  it) and "why wasn't I paged" stay Phase 2's later items.
+  paged are `page_failed` entries ("Couldn't page Primary: nobody on call"). What each page did on each phone, and
+  why someone was or was not paged, is RFC 0006 "Delivery receipts".
 
 ## Tenancy and access control
 

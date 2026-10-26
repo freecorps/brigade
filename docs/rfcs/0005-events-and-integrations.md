@@ -74,7 +74,10 @@ gone, `member_removed` when its member left or was removed) and `notification.fa
 `dead_lettered`, and for escalation levels `nobody_on_call`, `schedule_missing`, `not_a_member`; `schedule`: the
 name of the schedule nobody was on call for, else null; `page`: the escalation run and step it belongs to, absent
 outside a run), with actor
-`sys_notifier` for what the notifier records. `notification.failed` rides with a `page_failed` timeline entry. The
+`sys_notifier` for what the notifier records. Delivery receipts (RFC 0006 "Delivery receipts") emit
+`notification.planned` (`incidentId`, `eventId`, `devices`: how many new, `page`), `notification.sent` (`incidentId`,
+`eventId`, `accepted`, `failed`: one attempt's outcome) and `notification.delivered` (`incidentId`, `eventId`,
+`userId`, `deviceId`: the phone opened it), actor `sys_notifier`; no notifier acts on them. `notification.failed` rides with a `page_failed` timeline entry. The
 email notifier's own failures are `notification.failed` with `channel: "email"` (`incidentId`, `eventId`: the push
 failure the email was about, `userId`, `reason`: `undelivered`, or `capped` when a cap dropped it, `about`: `unpaged` or `nobody_paged`), with an
 `email_failed` entry ("Couldn't email Ana that nobody could be paged"). Changing who is emailed emits
@@ -154,10 +157,11 @@ or dependencies should not share the API's.
   times (`max_retries: 5`, no dead-letter queue of its own, so spent retries delete the message: nothing loops).
 - **The outbox.** A row the drain cannot read (not JSON) or too large for the Queue is logged and dropped, so it
   never blocks the events after it; any drain that throws (storage) backs off like a failed send.
-- **Not yet.** Delivery receipts (did the phone show it, did anyone see it) and the "why wasn't I paged" view are
-  Phase 2; until then "delivered" means the relay and APNs accepted the push. Escalating early when a level's pushes all
-  fail (rather than at its timeout) waits for delivery receipts. Outside the incident, a failed page reaches people
-  by email (below).
+- **Delivery receipts.** Each page records a row per device, from planned to accepted by APNs, and the phone reports
+  when it opened it (RFC 0006 "Delivery receipts"); the dashboard explains from them why someone was or was not
+  paged. None of it is in a page's way: recording fails open. Escalating early when a level's pushes all fail
+  (rather than at its timeout) is still open (Q18). Outside the incident, a failed page reaches people by email
+  (below).
 
 ## Email
 

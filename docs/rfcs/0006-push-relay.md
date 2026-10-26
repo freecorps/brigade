@@ -116,7 +116,8 @@ chain:
   the alarm never comes straight back to it.
 - A level reached on some device whose push then fails (relay down, APNs refusing) is recorded when the page
   settles (RFC 0005 "Notifiers") and escalates at its timeout, not before: retries take about 75 s and a level's
-  timeout is at least a minute. Escalating early on a failed delivery is left for delivery receipts.
+  timeout is at least a minute. Escalating early on a failed delivery is still open (Q18), now that receipts say
+  which pushes APNs refused ("Delivery receipts").
 - **Timers survive restarts.** The run and its timer are in the shard's storage; the alarm is set whenever a run
   starts or advances, and the object re-arms it from the earliest timer every time it wakes, so an eviction or a
   deploy mid-escalation resumes on time (or at once, if the level was due meanwhile). The alarm fires due levels
@@ -238,8 +239,9 @@ D1: a D1 outage must not become a reason a page is late or missing. How the copy
     treating a 403 `not_a_member` as finished (the device is gone with the membership) would end that sooner and
     is left for the app. A removal made outside Brigade takes effect at the next sync upgrade into the workspace.
 
-Content: title `SEV1 · INC-142` (codes, so no locale is needed), body the incident's title, the incident id and its
-workspace id (for the Acknowledge action), sealed per device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id, so a repeat replaces
+Content: title `SEV1 · INC-142` (codes, so no locale is needed), body the incident's title, the incident id, its
+workspace id (for the Acknowledge action) and the page's receipt token and URL ("Delivery receipts"), sealed per
+device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id, so a repeat replaces
 the notification. What happens when a page fails is RFC 0005 "Notifiers".
 
 ## Acting from the notification
@@ -282,6 +284,65 @@ mutation, RBAC and event as acknowledging in the app (RFC 0004 "Acknowledging fr
 - **Android** gets the same JavaScript path (`page-action.ts`, `use-page-actions.ts`) with a notification action
   button once pages reach Android (FCM); the hook registers nothing there yet. Its background time comes from the
   notification's broadcast receiver, not a background task.
+
+## Delivery receipts
+
+What each page did on each phone, so a member (or whoever is on call with them) can see why they were or were not
+paged, without logs.
+
+**Stages**, per page (the event that asked for it) and device, one synced row each (`deliveries`, id
+`<incident>:<event>:<device>`, packages/schema `deliveries.ts`):
+
+1. **planned**: the shard picked the device for the page (`delivery.plan`, in `Pager.plan`), with the escalation run
+   and step it belongs to. A retry keeps the first plan.
+2. **sent**: the notifier handed it to the relay (`delivery.report`, with how long the relay took, so the time is
+   the hand-over's, never before the plan) and **accepted**: the relay answered that APNs took it. A failed attempt
+   records why: `not_configured`, `unsupported`, `seal_failed`, `relay_unreachable`, `relay_refused`,
+   `token_invalid` (APNs `BadDeviceToken`, `Unregistered`: the device is dropped), `apns_refused`, `apns_unavailable`
+   (429, 5xx), with APNs' own reason when it gave one; an accepted retry clears it. `attempts` counts them.
+3. **delivered**: the phone's extension opened (decrypted) the page and said so (`delivery.confirm`), once.
+
+Shown and acted on (the person saw it, tapped Acknowledge) are not stages yet: the ack is on the incident already,
+and "shown" needs the app, not the extension. Each write emits its event through the outbox (RFC 0005), actor
+`sys_notifier`. Rows are kept with the incident, like its timeline.
+
+**How the phone reports, without a session.** The extension has the device key (App Group Keychain) but not the
+member's session cookie, and must not need one. So the page carries its own proof: when the shard plans a page it
+mints a token per device, `v1.<workspace>.<incident>.<event>.<device>.<expiry>.<mac>`, the MAC an HMAC-SHA256 under a
+random key only that shard holds (`receipt_key`, made on first use, never sent anywhere), and the notifier seals the
+token inside that device's page with the receipt URL (`DASHBOARD_URL` + `/api/receipts`; no URL, no receipt). Only
+that device can open the page, so only it ever sees the token; the relay sees ciphertext. The extension posts
+`{ "token" }` to the URL; the Worker reads only the workspace the token names, checks it exists in D1 (a made-up
+one costs a D1 read, no Durable Object; a D1 outage asks the shard anyway) and hands the token to that shard, which
+checks the MAC (constant time), the expiry (30 minutes, `RECEIPT_TTL_MS`: APNs keeps a page 15), a per-device rate
+(30 a minute) and that the page was planned for that device. So a token cannot be forged or altered, names one
+page on one device (another page, device or workspace is refused, `403`), expires (`410`), and records once: a
+replay answers `200` and changes nothing. Answers say only whether it was recorded. A key never rotates today; a
+restore keeps it with the shard's storage. Tests: `apps/api/test/receipts.test.ts`.
+
+**Never in a page's way** (the paging path's rule). Minting a token, recording a plan or an outcome each fail
+open: logged, and the page goes out without a token or a row (tested: a shard that cannot mint still pages). The
+token rides in the sealed plaintext only when it fits; a page that would not fit with it goes without. The
+extension starts the receipt request and shows the page at once, without waiting for it (5 s timeout, ephemeral
+session, no cookies, no retry, the token never logged), and only for a page it decrypted: the fallback text has no
+token. So receipts are **best effort**: iOS may end the extension before the request leaves, a phone offline after
+showing the page never reports, and VoIP call pushes (RFC 0010) and Android send none yet. A missing receipt means
+"not confirmed", never "not shown", and the dashboard says so.
+
+**Privacy.** A receipt says when a phone was reachable. Rows and device summaries are synced only within the
+workspace (every member, viewers included, as for the timeline), carry no token, key or content, and the event
+data names only ids. Devices themselves stay server-only; a token-free summary of each (`member_devices`: platform,
+APNs environment, whether it takes calls, registered, last heard from: the latest registration or receipt) is kept
+with it by `device.register` and dropped with it. A device registered before summaries gets one the next time the
+app registers it.
+
+**"Why wasn't I paged?"** The dashboard's incident page lists everyone who can respond (and anyone a page touched)
+with the outcome in a word, and `/incidents/<n>?why=<member>` explains one member step by step from what members
+already hold (`whyPaged` in packages/sync, pure; wording in en and pt-BR): whether they can be paged (a viewer, gone),
+which rule paged (the policy, or the interim rule), each page (were they on it, and if not why: not on call for its
+schedule and who was, a level that names others, the commander paged first, they declared it), each device's stages
+with times and errors, the phones they have now and when each was last heard from, the email about a missed page
+(expected, failed, capped, off) and who acknowledged. The mobile app's own view of it comes later.
 
 ## Driver abstraction
 

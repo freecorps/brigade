@@ -273,7 +273,8 @@ mutation, RBAC and event as acknowledging in the app (RFC 0004 "Acknowledging fr
   workspace (a viewer, or removed); sign in first. The app does not open.
 - **Offline (the fallback).** When every try failed, the notification says Brigade could not be reached and is a page
   again (`active`, the same category and ids), so trying again is one tap away. Nothing waits on the phone: an
-  unacknowledged page keeps escalating on the instance (Phase 2). A tap in the foreground is handled the same way,
+  unacknowledged page keeps escalating on the instance (its run fires the next level at its timeout, "Who is paged").
+  An ack that gets through is `incident.ack`, which ends the run, so a level already queued pages nobody. A tap in the foreground is handled the same way,
   but pages show no banner while Brigade is open (it sets no foreground handler), and the incident on screen shows
   the ack.
 - **Calls** (`kind: "call"`, RFC 0010) keep their own ack: 1 on CallKit's keypad or the call screen, over Brigade

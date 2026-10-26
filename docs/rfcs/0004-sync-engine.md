@@ -463,14 +463,16 @@ to every open socket; nothing is applied on the phone first.
   never wakes a shard. The shard also refuses a member removed within the tombstone (`not_a_member`), as it refuses
   their upgrade. A request with another site's `Origin` is refused (403 `forbidden_origin`), like every
   cookie-authenticated write; the app sends no `Origin`. Only workspace ids (`ws_<ULID>`), never dev shards.
-- **Idempotent per tap:** client id `notification`, mutation id the key, de-duplicated by the shard like a socket's
-  mutation. The app makes one key per tap and keeps it across its retries, so a retry whose first answer was lost is
+- **Idempotent per tap:** client id `notification`, mutation id the incident id and the key (`<incidentId>:<key>`, so
+  the same key on another incident's page is another ack), de-duplicated by the shard like a socket's mutation. The app makes one key per tap and keeps it across its retries, so a retry whose first answer was lost is
   still answered "acknowledged" instead of "someone already did". A second tap, or anyone else's ack, is the
   mutation's `conflict`.
 - **Answers:** 200 acknowledged; 409 `conflict` (already acknowledged) or `invalid_transition` (resolved or declined);
   404 no such incident; 403 `forbidden` (a viewer) or `not_a_member`; 401 no session; 503 when D1 or the shard cannot
   be reached. The app tries again on a network failure, a timeout, 429 or 5xx, never on a refusal.
-- Escalate gets the same shape once escalation runs exist (IncidentDO). Tests: `apps/api/test/ack.test.ts`.
+- **Stops the escalation:** it is `incident.ack`, so it ends the incident's escalation run (`acknowledged`, its
+  timer cleared) and a level already queued pages nobody (RFC 0006 "Who is paged"). An Escalate action would take the
+  same shape. Tests: `apps/api/test/ack.test.ts`.
 
 ## Server-side writes
 

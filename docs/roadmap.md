@@ -147,8 +147,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     registration").
   - Done: ack from the notification on iOS: an Acknowledge action on decrypted pages (Face ID or the passcode on a
     locked phone), sent in the background over HTTPS as `incident.ack` (`POST /api/workspaces/:id/incidents/:id/ack`,
-    idempotent per tap) and answered with a quiet notification; offline, the answer is a page again with the action
-    (RFC 0004 "Acknowledging from a notification", RFC 0006 "Acting from the notification").
+    idempotent per tap, so it stops the escalation run like any ack) and answered with a quiet notification;
+    offline, the answer is a page again with the action (RFC 0004 "Acknowledging from a notification", RFC 0006
+    "Acting from the notification").
   - Left: ack from the notification on an iPhone (the action, a locked phone, a cold background launch); the iOS end to end on
     a phone (sign in, registered, a page received and opened on its incident); FCM for Android (until then Android
     says it is not paged); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the

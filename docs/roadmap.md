@@ -144,7 +144,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     found the phone taken or failed is retried on a backoff and from Try again); a sync heartbeat, so a half-open
     socket (the network gone without a close) shows as reconnecting, not Live (RFC 0004 "Heartbeat"); incident and sign-in wording shared with the dashboard through
     `packages/i18n` and `packages/sync` (#20) (RFC 0002 "Auth", RFC 0004 "Socket topology", RFC 0006 "Device
-    registration").
+    registration"); changes the shard has not confirmed kept across a restart, in a file per member and workspace
+    with the sync client's id, shown again as not sent yet and sent with the same ids once online, and dropped on
+    sign-out (RFC 0004 "Clients").
   - Done: ack from the notification on iOS: an Acknowledge action on decrypted pages (Face ID or the passcode on a
     locked phone), sent in the background over HTTPS as `incident.ack` (`POST /api/workspaces/:id/incidents/:id/ack`,
     idempotent per tap, so it stops the escalation run like any ack) and answered with a quiet notification;
@@ -153,9 +155,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Left: ack from the notification on an iPhone (the action, a locked phone, a cold background launch); the iOS end to end on
     a phone (sign in, registered, a page received and opened on its incident); FCM for Android (until then Android
     says it is not paged); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
-    session's active one); creating an account or workspace from the app; editing and deleting updates; persisting
-    pending mutations across a restart (they are memory-only in `src/lib/sync-client.ts`, so an update queued
-    offline is lost if the app is killed; the timeline says to keep Brigade open); a tablet layout.
+    session's active one); creating an account or workspace from the app; editing and deleting updates; a tablet
+    layout.
 - [ ] Event outbox + queue + push notifier
   - Done: the shard alarm drains the outbox to `brigade-events` (`-dev`, `-staging`) in commit order, in bounded
     batches, deleting rows only after the send, with exponential backoff; a consumer in the API Worker routes events

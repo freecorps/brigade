@@ -21,14 +21,19 @@
     "not_found_handling": "single-page-application",
     // Only API calls reach the Worker (worker/index.ts strips the prefix); everything else is an
     // asset or index.html.
-    "run_worker_first": ["/api", "/api/*"],
+    // and /slack/* (the Slack app, RFC 0011) goes to the SLACK binding where an environment has one.
+    "run_worker_first": ["/api", "/api/*", "/slack/*"],
   },
   // In `vp dev` the API Worker runs alongside as an auxiliary worker (vite.config.ts).
   "services": [{ "binding": "API", "service": "brigade-api" }],
   // Service bindings are not inherited, so each environment names its own API Worker.
   "env": {
     "dev": {
-      "services": [{ "binding": "API", "service": "brigade-api-dev" }],
+      // SLACK: the Slack app's Worker (integrations/slack), so far only in dev.
+      "services": [
+        { "binding": "API", "service": "brigade-api-dev" },
+        { "binding": "SLACK", "service": "brigade-slack-dev" },
+      ],
     },
     "staging": {
       "services": [{ "binding": "API", "service": "brigade-api-staging" }],

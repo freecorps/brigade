@@ -2,6 +2,8 @@
 // `run_worker_first: ["/api", "/api/*"]` sends only API calls here, and they go to the API Worker through the
 // `API` service binding with the `/api` prefix stripped, so `/api/health` reaches the API's `/health`.
 // Neither Worker has a public URL yet (wrangler.jsonc): the API still has an open dev route.
+// `/slack/*` goes to the Slack app's Worker (integrations/slack, RFC 0011) through the optional `SLACK` binding,
+// unchanged, so Slack's requests and the OAuth redirect share the dashboard's origin; without it, 404.
 
 const API_PREFIX = "/api";
 
@@ -13,7 +15,11 @@ export interface Upstream {
 export interface Upstreams {
   API: Upstream;
   ASSETS: Upstream;
+  /** The Slack Worker; only environments with a Slack app bind it. */
+  SLACK?: Upstream;
 }
+
+const SLACK_PREFIX = "/slack/";
 
 /** `/api/x` → `/x`, `/api` → `/`; undefined for paths outside `/api`. */
 export function apiPath(pathname: string): string | undefined {
@@ -24,6 +30,7 @@ export function apiPath(pathname: string): string | undefined {
 
 export async function handle(request: Request, env: Upstreams): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname.startsWith(SLACK_PREFIX)) return slack(request, env);
   const path = apiPath(url.pathname);
   if (path === undefined) return env.ASSETS.fetch(request);
 
@@ -38,6 +45,19 @@ export async function handle(request: Request, env: Upstreams): Promise<Response
       JSON.stringify({ message: "API service binding failed", path, error: String(error) }),
     );
     return Response.json({ error: "api_unreachable" }, { status: 502 });
+  }
+}
+
+/** `/slack/*` as it came (path, method, headers, body: Slack signs the raw body), to the Slack Worker. */
+async function slack(request: Request, env: Upstreams): Promise<Response> {
+  if (!env.SLACK) return Response.json({ error: "not_found" }, { status: 404 });
+  try {
+    return await env.SLACK.fetch(request);
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "Slack service binding failed", error: String(error) }),
+    );
+    return Response.json({ error: "slack_unreachable" }, { status: 502 });
   }
 }
 

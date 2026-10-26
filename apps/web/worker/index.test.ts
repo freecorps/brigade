@@ -90,3 +90,28 @@ describe("web worker routing", () => {
     expect(api.seen).toHaveLength(0);
   });
 });
+
+describe("Slack routing", () => {
+  test("forwards /slack/* to the Slack binding unchanged: path, method, headers and the signed body", async () => {
+    const { api, assets, env } = bindings();
+    const slack = upstream(async (request) => Response.json({ body: await request.text() }));
+    const request = new Request("http://web.test/slack/commands", {
+      method: "POST",
+      headers: { "X-Slack-Signature": "v0=test" },
+      body: "text=declare+x",
+    });
+    const response = await handle(request, { ...env, SLACK: slack.binding });
+    expect(await response.json()).toEqual({ body: "text=declare+x" });
+    expect(slack.seen[0]?.url).toBe("http://web.test/slack/commands");
+    expect(slack.seen[0]?.headers.get("X-Slack-Signature")).toBe("v0=test");
+    expect(api.seen).toHaveLength(0);
+    expect(assets.seen).toHaveLength(0);
+  });
+
+  test("without a Slack binding, /slack/* is a 404, not the SPA", async () => {
+    const { assets, env } = bindings();
+    const response = await handle(new Request("http://web.test/slack/install?state=x"), env);
+    expect(response.status).toBe(404);
+    expect(assets.seen).toHaveLength(0);
+  });
+});

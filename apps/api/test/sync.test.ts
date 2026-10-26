@@ -3,7 +3,12 @@ import { env, exports } from "cloudflare:workers";
 import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { isId, newId } from "@freecorps/brigade-schema";
-import { MAX_CLIENT_MESSAGE_LENGTH, PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
+import {
+  MAX_CLIENT_MESSAGE_LENGTH,
+  PING_FRAME,
+  PONG_FRAME,
+  PROTOCOL_VERSION,
+} from "@freecorps/brigade-sync/protocol";
 import worker from "../src/index.ts";
 import { MAX_SUBSCRIPTIONS, type SocketState } from "../src/workspace.ts";
 
@@ -132,6 +137,38 @@ describe("GET /sync/:workspaceId", () => {
     expect(post.status).toBe(405);
     expect(post.headers.get("Allow")).toBe("GET");
     expect((await exports.default.fetch("http://localhost/sync/acme/x")).status).toBe(404);
+  });
+
+  test("the runtime answers a ping with a pong itself, before hello too, without the handler", async () => {
+    const ws = workspace();
+    const a = await connect(ws);
+    a.send(PING_FRAME);
+    expect(await a.next()).toEqual({ type: "pong" });
+    // The auto-response answered it: the shard records when it did, and the socket still takes a hello.
+    const answered = await runInDurableObject(env.WORKSPACE.getByName(ws), (_instance, state) => {
+      const pair = state.getWebSocketAutoResponse();
+      const [socket] = state.getWebSockets();
+      return {
+        request: pair?.request,
+        response: pair?.response,
+        at: socket ? state.getWebSocketAutoResponseTimestamp(socket) : null,
+      };
+    });
+    expect(answered).toMatchObject({ request: PING_FRAME, response: PONG_FRAME });
+    expect(answered.at).toBeInstanceOf(Date);
+    a.hello();
+    a.send(active("s1"));
+    expect(await a.next()).toMatchObject({ type: "snapshot", subId: "s1" });
+    a.send(PING_FRAME);
+    expect(await a.next()).toEqual({ type: "pong" });
+  });
+
+  test("a ping in another spelling reaches the handler and gets a pong too", async () => {
+    const a = (await connect(workspace())).hello();
+    a.send('{ "type": "ping" }');
+    expect(await a.next()).toEqual({ type: "pong" });
+    a.send(active("s1"));
+    expect(await a.next()).toMatchObject({ type: "snapshot", subId: "s1" });
   });
 
   test("a client subscribes and gets a snapshot at the shard's epoch and version", async () => {

@@ -54,10 +54,16 @@ export class FakeTimers implements Timers {
         .sort((a, b) => a[1].at - b[1].at || a[0] - b[0])[0];
       if (!due) break;
       this.tasks.delete(due[0]);
-      this.now = due[1].at;
+      // A task overdue after `suspend` runs late, at the current time.
+      this.now = Math.max(this.now, due[1].at);
       due[1].callback();
     }
     this.now = end;
+  }
+
+  /** Time passes with no task run, as when JS is suspended (an app in the background); `advance` runs them late. */
+  suspend(ms: number): void {
+    this.now += ms;
   }
 
   get pending(): number {
@@ -204,15 +210,26 @@ export class Connection {
 
   /** Every message the server sent on this connection. */
   readonly out: ServerMessage[] = [];
+  /** Held back by a slow link (`ShardServer.slow`): a snapshot and everything sent after it, in order. */
+  private readonly held: ServerMessage[] = [];
 
   send(message: ServerMessage): void {
     if (!this.alive) return;
+    if (this.held.length > 0 || (this.shard.slow && message.type === "snapshot")) {
+      this.held.push(message);
+      return;
+    }
     this.out.push(message);
     this.socket.deliver(encode(message));
   }
 
   receive(data: string): void {
     if (this.alive) this.shard.handle(this, data);
+  }
+
+  /** The held frames finally arrive. */
+  release(): void {
+    for (const message of this.held.splice(0)) this.send(message);
   }
 
   /** The server closes the socket. */
@@ -249,6 +266,13 @@ export class ShardServer {
    * (empty `subs`), as the protocol requires. Off only to test the client without it.
    */
   confirmPatches = true;
+  /** Pings received; with `silent` set, they get no pong (a half-open socket, or a stuck shard). */
+  pings = 0;
+  silent = false;
+  /** An older shard that does not know `ping`: a protocol error, then a close. */
+  refusesPing = false;
+  /** A slow link: snapshots, and what follows them on their socket, wait for `deliverHeld`. */
+  slow = false;
   /** Frames the parser refused. */
   readonly refused: string[] = [];
 
@@ -283,6 +307,12 @@ export class ShardServer {
     this.epoch = `ep${++ShardServer.epochs}`;
   }
 
+  /** Ends the slow link: every held frame arrives. */
+  deliverHeld(): void {
+    this.slow = false;
+    for (const connection of this.connections) connection.release();
+  }
+
   handle(connection: Connection, data: string): void {
     const parsed = parseClientMessage(data);
     if (!parsed.ok) {
@@ -291,6 +321,17 @@ export class ShardServer {
       return;
     }
     const message = parsed.message;
+    // The shard's runtime answers a ping itself, before `hello` too (a WebSocket auto-response).
+    if (message.type === "ping") {
+      this.pings++;
+      if (this.refusesPing) {
+        connection.send({ type: "error", code: "protocol", message: "unknown message type" });
+        connection.kill();
+        return;
+      }
+      if (!this.silent) connection.send({ type: "pong" });
+      return;
+    }
     if (message.type !== "hello" && connection.clientId === undefined) {
       connection.send({ type: "error", code: "protocol", message: "hello first" });
       return;

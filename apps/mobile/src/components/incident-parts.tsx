@@ -128,8 +128,8 @@ const CONNECTION: Record<
   SyncView,
   { text: () => string; glyph?: Glyph; tone: "ok" | "muted" | "bad" }
 > = {
-  // From the socket's state: with no heartbeat yet, a half-open socket (the network gone without a close) stays
-  // Live until the OS times it out (roadmap, Mobile).
+  // From the socket's state. The sync client's heartbeat drops a half-open socket (the network gone without a
+  // close) within about 35 s, so it turns to reconnecting instead of staying Live (RFC 0004 "Heartbeat").
   live: { text: m.sync_live, tone: "ok" },
   connecting: { text: m.sync_connecting, tone: "muted" },
   reconnecting: {

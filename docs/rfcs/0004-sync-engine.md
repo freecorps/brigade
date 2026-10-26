@@ -129,17 +129,19 @@ client → server
   subscribe  { subId, query, args, version?, epoch? }   // version and epoch together
   unsubscribe{ subId }
   mutate     { mutationId, name, args }
+  ping       {}                                   // exactly the text {"type":"ping"} (PING_FRAME)
 
 server → client
   snapshot   { subId, epoch, version, rows }
   patch      { epoch, version, subs: { [subId]: { upserts, deletes } } }
   mutationResult { mutationId, ok: true, version } | { mutationId, ok: false, error }
   error      { code, message, subId?, mutationId? }
+  pong       {}                                   // exactly {"type":"pong"} (PONG_FRAME)
 ```
 
 - `protocol` is `PROTOCOL_VERSION` (1). `token` is reserved and unused: the Worker authenticates the upgrade
   ("Socket topology"). The shard handles a socket's frames one at a time, in arrival order. `hello` comes first:
-  any frame before it (a `mutate` included) gets a `protocol` error, and a compliant client never sends one.
+  any frame before it except `ping` (a `mutate` included) gets a `protocol` error, and a compliant client never sends one.
 - **Versions** are per shard: monotonic safe integers, one per change (mutation). A subscription's `version` is the
   last one the client received for it.
 - **Epoch.** Versions only compare within one epoch: an opaque id (a token) the shard creates when its storage is
@@ -197,6 +199,28 @@ server → client
   first, so a shard that keeps refusing is not retried in a tight loop. The shard may close the socket itself too.
   A `send` that throws on the client loses the frame, so the client closes the socket and reconnects the same
   way; the next connection replays `hello`, the unconfirmed mutations and the subscriptions.
+- **Heartbeat.** A socket can go half-open: the network goes (a phone changes networks, a NAT forgets the
+  flow) without a close reaching either side, and the OS may take minutes to notice, so the socket would stay
+  "open" and the UI Live while nothing arrives. So on an open socket the client sends `ping` 25 s after the open
+  or the last answer, less up to a fifth of jitter (20 to 25 s, so a fleet does not ping in step, and under the
+  common 30 s idle timeouts of proxies), and then waits 10 s for **any** frame: a `pong`, or data that arrived
+  meanwhile. A first silent deadline only sends another ping (the pong may be queued behind a large frame); a
+  second one in a row counts as a lost connection: the client closes the socket and reconnects with the normal
+  backoff (reset, as after any close of a connection that delivered data), so `connectionState` goes to `waiting`
+  and lists show reconnecting, not Live. A dead socket is found within about 45 s. While a subscription on the
+  socket waits for its snapshot (or resume answer), no deadline runs: a large snapshot on a slow link may take
+  longer than the deadline, its pong queued behind it, and dropping the socket would only ask for the same
+  snapshot again, in a loop. That list shows loading, not Live, meanwhile; the deadline starts again once nothing
+  waits. No pings are sent while no socket is open, and the timers stop with the socket (`close()`, the idle
+  close, any drop). `heartbeat: { intervalMs, timeoutMs }` tunes it (both positive, or the constructor throws)
+  and `heartbeat: false` turns it off. The client has no foreground/background hook: on a phone, timers stop with
+  the app in the background, and on the way back the next ping finds a socket the OS killed. A deadline that
+  fires more than twice its length after its ping (the timer ran late while JS was suspended) proves nothing, so
+  it sends a fresh ping and waits again instead of dropping the socket. The shard answers `ping` at any time,
+  before `hello` too, and the frame never touches the socket's state. It needs no protocol version: a client that
+  never pings works as before. An older shard answers `ping` with a `protocol` error and a close; a `protocol`
+  error while a ping is unanswered makes the client stop pinging that shard (with a warning) and reconnect with
+  the backoff reset, as after a healthy connection, so it degrades to no heartbeat rather than a reconnect loop.
 - **Never trust the wire.** `parseServerMessage` and `parseClientMessage` never throw; they return fresh objects
   or a reason, reject unknown fields (in nested objects and issues too), and check every id, version and row
   (a row `id`, and every id in `deletes`, is a non-empty string). Ids (`subId`, `mutationId`, `clientId`) are 1–64 characters of
@@ -307,10 +331,18 @@ server → client
   UTF-8 length of the state's JSON; the runtime stores the structured-clone encoding, under its 16 KiB limit, and
   the margin covers the difference. Handlers are synchronous, so a socket's frames are handled in arrival order and
   frames from different sockets never interleave.
+- **Pings never wake the shard:** the constructor (run on every wake) sets
+  `ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING_FRAME, PONG_FRAME))`, so the runtime answers
+  an exact `{"type":"ping"}` on every socket itself, hibernated or not, without running `webSocketMessage` or
+  billing duration (the pair is at most 2 048 characters each). The auto-replied pings may still count as billed
+  incoming WebSocket messages (at 20 messages per request): about 200 requests per socket per day, small but not
+  free. The client always sends those exact bytes. A
+  `ping` spelled otherwise (spaces, key order) still parses and `webSocketMessage` answers it with `pong`
+  (`apps/api/test/sync.test.ts` checks both, and that the runtime recorded the auto-response).
 - **Close policy:**
   - Socket-level protocol error: `error { code: "protocol" }` without ids, then a close with code 1002. That covers
     a frame that cannot be parsed and has no readable id (not JSON, binary, unknown type, over 64 KiB without a
-    readable id), a second `hello`, another protocol version and any frame before `hello`, a `mutate` included
+    readable id), a second `hello`, another protocol version and any frame before `hello` except `ping`, a `mutate` included
     (see "Protocol"): after the close the client reconnects and replays the mutation behind a `hello`.
   - After `hello`, a frame the parser refuses but whose id is readable is refused alone and the socket stays open:
     a `subscribe` gets `error { subId, code: "invalid_args" }` (its one answer) and, like any `subscribe`,

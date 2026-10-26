@@ -28,6 +28,10 @@
 // - The server keeps each mutation result for `MUTATION_RETENTION_MS` after running it, keyed by
 //   (clientId, mutationId). The client never re-sends a mutation older than that (by its own clock, since the
 //   mutation was created): it fails it with `expired` instead, as the server may no longer recognise a retry.
+// - Heartbeat: while a socket is open the client sends `PING_FRAME` now and then, and the server answers
+//   `PONG_FRAME`, at any time (before `hello` too). The shard has the runtime answer it without waking (a
+//   WebSocket auto-response matches the exact text), so the ping is always these exact bytes. A socket that stays
+//   silent past the client's deadline is treated as dead (a half-open socket: the network gone without a close).
 
 import type { MutationError, MutationErrorCode } from "@freecorps/brigade-schema";
 
@@ -43,6 +47,10 @@ export const MUTATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
  * client refuses to send a larger `mutate`; the server refuses to parse a larger frame.
  */
 export const MAX_CLIENT_MESSAGE_LENGTH = 64 * 1024;
+
+/** The heartbeat's frames, byte for byte: the server's auto-response matches the exact text of the ping. */
+export const PING_FRAME = '{"type":"ping"}';
+export const PONG_FRAME = '{"type":"pong"}';
 
 /** A row as it travels: a JSON object with a string `id`. Its table is the subscribed query's table. */
 export type WireRow = { id: string; [column: string]: unknown };
@@ -91,7 +99,15 @@ export type MutateMessage = {
   args: unknown;
 };
 
-export type ClientMessage = HelloMessage | SubscribeMessage | UnsubscribeMessage | MutateMessage;
+/** Heartbeat: always sent as `PING_FRAME`. The server answers `pong`, before `hello` too. */
+export type PingMessage = { type: "ping" };
+
+export type ClientMessage =
+  | HelloMessage
+  | SubscribeMessage
+  | UnsubscribeMessage
+  | MutateMessage
+  | PingMessage;
 
 // ---------------------------------------------------------------------------------------------- server → client
 
@@ -153,7 +169,15 @@ export type ErrorMessage = {
   mutationId?: string;
 };
 
-export type ServerMessage = SnapshotMessage | PatchMessage | MutationResultMessage | ErrorMessage;
+/** The answer to a `ping`; any frame tells the client the socket is alive, this one carries nothing else. */
+export type PongMessage = { type: "pong" };
+
+export type ServerMessage =
+  | SnapshotMessage
+  | PatchMessage
+  | MutationResultMessage
+  | ErrorMessage
+  | PongMessage;
 
 // --------------------------------------------------------------------------------------------------- parsing
 
@@ -332,6 +356,9 @@ export function parseServerMessage(data: unknown): Parsed<ServerMessage> {
         if (has(obj, "mutationId")) message.mutationId = token(obj, "mutationId");
         return message;
       }
+      case "pong":
+        only(obj, ["type"]);
+        return { type: "pong" };
       default:
         return fail("unknown message type");
     }
@@ -384,6 +411,9 @@ export function parseClientMessage(data: unknown): Parsed<ClientMessage> {
             name: text(obj, "name"),
             args: obj.args,
           };
+        case "ping":
+          only(obj, ["type"]);
+          return { type: "ping" };
         default:
           return fail("unknown message type");
       }

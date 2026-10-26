@@ -38,6 +38,7 @@ describe("workspace.create", () => {
       "escalation.start",
       "escalation.advance",
       "escalation.fallback",
+      "escalation.repage",
     ]);
     const result = runMutation(
       mutations,

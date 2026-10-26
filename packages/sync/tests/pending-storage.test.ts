@@ -196,16 +196,16 @@ test("a saved change past the retention window fails as expired and is never sen
   expect(shard.runs).toBe(0);
 });
 
-test("a saved change dated after now (the clock moved back) fails as expired and is never sent", async () => {
+test("a saved change dated well after now (the clock moved back) fails as expired and is never sent", async () => {
   const { client, settle, storage, incidentId, shard, network } = setup();
   const after = client(ana);
   const id = incidentId();
   const [restored] = after.restore(SHARD, [
     {
-      mutationId: newId("mut", T0 + 60_000, () => new Uint8Array(10).fill(7)),
+      mutationId: newId("mut", T0 + 10 * 60_000, () => new Uint8Array(10).fill(7)),
       name: "incident.declare",
       args: { id, title: "From the future", severity: "sev3" },
-      createdAt: T0 + 60_000,
+      createdAt: T0 + 10 * 60_000,
     },
   ]);
   expect(await restored.outcome).toMatchObject({ ok: false, error: { code: "expired" } });

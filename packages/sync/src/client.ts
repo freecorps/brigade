@@ -356,6 +356,9 @@ export function backoffDelay(attempt: number, random: number, backoff: Backoff =
 
 // ------------------------------------------------------------------------------------------------- client
 
+/** How far in the future a restored change may say it was made and still be sent (a corrected clock). */
+const RESTORE_CLOCK_SLACK_MS = 5 * 60 * 1000;
+
 export class SyncClient<
   Q extends QueryRegistry = typeof brigadeQueries,
   M extends MutationRegistry = typeof brigadeMutations,
@@ -519,9 +522,10 @@ export class SyncClient<
           outcome = Promise.resolve(
             failure("too_many_pending", "Too many changes are waiting to be sent"),
           );
-        } else if (createdAt > this.now()) {
-          // Made "later than now": a clock that was wrong then, or is now. Its retention window cannot be told,
-          // and its id's time may be one the shard refuses, so it is not re-sent.
+        } else if (createdAt > this.now() + RESTORE_CLOCK_SLACK_MS) {
+          // Made well "later than now": a clock that was wrong then, or is now. Its retention window cannot be told,
+          // and its id's time may be one the shard refuses, so it is not re-sent. A few minutes is a clock the
+          // phone corrected while the app was closed, and still sent.
           outcome = Promise.resolve(failure("expired", "The change waited too long to be sent"));
         } else {
           const actor = this.options.actor;

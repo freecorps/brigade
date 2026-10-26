@@ -175,7 +175,7 @@
   "severity_named": "{code} {name}",
   "declare_submit_severity": "Declarar {severity}",
   "mobile_sync_retrying": "O app continua tentando sozinho.",
-  "mobile_sync_offline_hint": "Não foi possível conectar ao Brigade agora. Suas alterações são enviadas quando a conexão voltar, mesmo que o app seja fechado até lá.",
+  "mobile_sync_offline_hint": "Não foi possível conectar ao Brigade agora. Suas alterações ficam guardadas se você fechar o Brigade e são enviadas quando ele estiver aberto e conseguir conectar.",
   "mobile_change_hint": "Abre as opções",
   "mobile_session": [
     {
@@ -209,9 +209,9 @@
         "part=sign_out_stuck_body": "O Brigade não conseguiu falar com o servidor nem guardar sua sessão para concluir a saída depois, então não consegue liberar este telefone sozinho. Para parar os chamados, entre aqui de novo com conexão e saia.",
         "part=try_again": "Tentar de novo",
         "part=offline": "Sem conexão",
-        "part=incident_stale_hint": "Mostrando este incidente como recebido por último. Suas alterações são enviadas quando a conexão voltar, mesmo que o Brigade seja fechado até lá.",
+        "part=incident_stale_hint": "Mostrando este incidente como recebido por último. Suas alterações ficam guardadas se você fechar o Brigade e são enviadas quando ele estiver aberto e conseguir conectar.",
         "part=update_sending": "Enviando…",
-        "part=update_waiting": "Ainda não enviada. O Brigade a envia quando voltar a responder, mesmo depois de o app ser fechado.",
+        "part=update_waiting": "Ainda não enviada. Fica guardada se você fechar o Brigade e é enviada quando ele estiver aberto e conseguir conectar.",
         "part=show_password": "Mostrar senha",
         "part=hide_password": "Ocultar senha",
         "part=*": "Brigade"

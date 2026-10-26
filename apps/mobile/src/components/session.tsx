@@ -292,7 +292,14 @@ function ActiveWorkspace({
       authClient.getCookie().catch(() => ""),
       openQueue(pendingFiles, { userId, workspaceId }, () =>
         newId("cli", Date.now(), getRandomBytes),
-      ).catch(() => undefined),
+      ).catch((error: unknown) => {
+        // Changes made this launch then live only in memory, as before restarts kept them.
+        console.warn(
+          "Brigade could not open the queue of unsent changes; they won't survive a restart",
+          error,
+        );
+        return undefined;
+      }),
     ]).then(([value, queue]) => {
       if (!live) return;
       cookie.current = value;

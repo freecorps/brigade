@@ -45,7 +45,8 @@ export function extractionRules(folder: string): string {
 /**
  * Points the `<application>` at the rules. Throws if it already has others (another plugin's, such as
  * expo-secure-store's): one set of rules has to say both, and silently keeping either would back up the queue or
- * lose the other's exclusions.
+ * lose the other's exclusions. This only sees plugins whose manifest mod ran before this one: list this plugin last
+ * in `app.config.ts`, after any other that sets backup rules.
  */
 export function applyBackupRules(application: { $: Record<string, string | undefined> }): void {
   const wanted = {

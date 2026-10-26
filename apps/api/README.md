@@ -332,8 +332,9 @@ types stay the same with or without one.
 ## Deploying dev
 
 The `dev` environment (`brigade-api-dev`, `brigade-web-dev`, `brigade-relay-dev`) is for testing on a real phone.
-Only the dashboard Worker has a public URL, `https://brigade-web-dev.<subdomain>.workers.dev`; `<subdomain>` is the
-account's workers.dev subdomain, which names the account, so it is never committed (code, docs, fixtures, `eas.json`).
+The dashboard Worker has a public URL, `https://brigade-web-dev.<subdomain>.workers.dev`, and so does the relay
+(`brigade-relay-dev`, bearer token on every send); the API Worker has none. `<subdomain>` is the account's
+workers.dev subdomain, which names the account, so it is never committed (code, docs, fixtures, `eas.json`).
 The API needs nothing for that origin: Better Auth takes its base URL from the request (the web Worker forwards the
 browser's URL), trusts its own origin and the app's `brigade://`, and sets `Secure` cookies over HTTPS. No
 `BETTER_AUTH_URL` or cookie domain is set.

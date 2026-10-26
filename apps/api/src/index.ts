@@ -192,14 +192,16 @@ export async function workspaceInfo(
   }
   // Checked before any decoding: the charset has no `%`, so encoded or malformed input is rejected.
   if (!ORGANIZATION_ID.test(workspaceId)) return json({ error: "invalid_workspace_id" }, 400);
-  const session = await lazyAuth().api.getSession({ headers: request.headers });
-  if (!session) return json({ error: "unauthenticated" }, 401);
   try {
+    const session = await lazyAuth().api.getSession({ headers: request.headers });
+    if (!session) return json({ error: "unauthenticated" }, 401);
     if ((await memberRole(env.DB, workspaceId, session.user.id)) === undefined) {
       return json({ error: "not_a_member" }, 403);
     }
   } catch (error) {
-    console.error(JSON.stringify({ message: "member lookup failed", error: String(error) }));
+    console.error(
+      JSON.stringify({ message: "session or member lookup failed", error: String(error) }),
+    );
     return json({ error: "unavailable" }, 503);
   }
   try {

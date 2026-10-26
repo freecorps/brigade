@@ -98,8 +98,8 @@ function finishLeftover(target: Server): Promise<FinishResult> {
 function usePaging(
   enabled: boolean,
   online: boolean,
-  register: (() => Promise<Paging>) | null,
-): { paging: Paging; retry: () => Promise<void> } {
+  register: ((proceed: () => boolean) => Promise<Paging>) | null,
+): { paging: Paging; retry: () => Promise<void>; stop: () => Promise<void> } {
   const [paging, setPaging] = useState<Paging>("pending");
   const cycle = useRef<ReturnType<typeof pagingCycle> | null>(null);
   useEffect(() => {
@@ -121,7 +121,7 @@ function usePaging(
     });
     return () => {
       foreground.remove();
-      made.stop();
+      void made.stop();
       if (cycle.current === made) cycle.current = null;
     };
   }, [enabled, register]);
@@ -133,7 +133,8 @@ function usePaging(
     if (back) void cycle.current?.retry();
   }, [online]);
   const retry = useCallback(() => cycle.current?.retry() ?? Promise.resolve(), []);
-  return { paging, retry };
+  const stop = useCallback(() => cycle.current?.stop() ?? Promise.resolve(), []);
+  return { paging, retry, stop };
 }
 
 /**
@@ -298,10 +299,19 @@ function ActiveWorkspace({
   }, [userId, workspaceId]);
 
   // Someone who signed out offline first: their device has to come off the shard before this one can take it.
-  const register = useMemo(() => (sync ? () => registerPhone(phoneDeps(sync)) : null), [sync]);
-  const { paging, retry: retryPaging } = usePaging(register !== null, online, register);
+  const register = useMemo(
+    () => (sync ? (proceed: () => boolean) => registerPhone(phoneDeps(sync), proceed) : null),
+    [sync],
+  );
+  const {
+    paging,
+    retry: retryPaging,
+    stop: stopPaging,
+  } = usePaging(register !== null, online, register);
 
   const leave = useCallback(async () => {
+    // No registration the cycle started may reach the shard after the phone comes off it below.
+    await stopPaging();
     const result = await signOutPhone(
       { userId, workspaceId },
       {
@@ -317,7 +327,7 @@ function ActiveWorkspace({
     );
     await SecureStore.deleteItemAsync(WORKSPACE_KEY).catch(() => {});
     return result;
-  }, [sync, userId, workspaceId]);
+  }, [sync, userId, workspaceId, stopPaging]);
 
   const ready = Boolean(sync && workspaceName !== undefined && (liveRole ?? known?.role));
   const value = useMemo<SessionView>(() => {

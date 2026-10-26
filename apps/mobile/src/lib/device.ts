@@ -81,7 +81,11 @@ export type DeviceDeps = {
  * Registers this phone for pages on the signed-in member's workspace, after sign-in (RFC 0006 "Device
  * registration"). Its id comes from its key, so registering again with nothing changed is a no-op (`conflict`).
  */
-export async function registerPhone(deps: DeviceDeps): Promise<Paging> {
+export async function registerPhone(
+  deps: DeviceDeps,
+  /** Asked right before `device.register` goes out; false sends nothing (the member is signing out). */
+  proceed: () => boolean = () => true,
+): Promise<Paging> {
   if (!deps.publicKey) return "unsupported";
   try {
     const publicKey = await deps.publicKey();
@@ -92,6 +96,7 @@ export async function registerPhone(deps: DeviceDeps): Promise<Paging> {
       platform: deps.platform,
       apsEnvironment: deps.apsEnvironment,
     });
+    if (!proceed()) return "pending";
     const result = await deps.mutate("device.register", args);
     // `conflict`: registered already with these values. The member's device limit is `limit_reached`.
     if (result.ok || result.error.code === "conflict") return "on";

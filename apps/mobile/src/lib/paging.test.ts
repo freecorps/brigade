@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import type { Paging } from "./device";
+import { registerPhone, type DeviceDeps, type Paging } from "./device";
 import { pagingCycle, retryDelay, type PagingDeps } from "./paging";
 import type { FinishResult } from "./sign-out";
 
@@ -166,6 +166,66 @@ test("a stopped cycle neither reports nor tries again", async () => {
   expect(time.pending()).toEqual([]);
   await cycle.retry();
   expect(p.log).toEqual(["finish"]);
+});
+
+test("signing out while a registration waits for the push token sends no device.register", async () => {
+  const time = clock();
+  const sent: string[] = [];
+  let token!: (value: string) => void;
+  const deps: DeviceDeps = {
+    platform: "ios",
+    apsEnvironment: "development",
+    publicKey: async () => `BA${"abcdefghij".repeat(9).slice(0, 85)}`,
+    permission: async () => true,
+    pushToken: () =>
+      new Promise((resolve) => {
+        token = resolve;
+      }),
+    mutate: async (name) => {
+      sent.push(name);
+      return { ok: true };
+    },
+  };
+  const shown: Paging[] = [];
+  const cycle = pagingCycle({
+    finish: async () => "none",
+    register: (proceed) => registerPhone(deps, proceed),
+    onPaging: (paging) => shown.push(paging),
+    setTimer: time.setTimer,
+  });
+  await time.settle();
+  // Sign-out starts: it waits for the registration still asking for the token.
+  let stopped = false;
+  const stopping = cycle.stop().then(() => {
+    stopped = true;
+  });
+  await time.settle();
+  expect(stopped).toBe(false);
+  token("ab".repeat(32));
+  await stopping;
+  // Only now does it unregister, and nothing it would have to undo went out.
+  expect(sent).toEqual([]);
+  expect(shown).toEqual([]);
+  expect(time.pending()).toEqual([]);
+});
+
+test("stopping during a registration already sent resolves without waiting for the shard's answer", async () => {
+  const time = clock();
+  const sent: string[] = [];
+  const cycle = pagingCycle({
+    finish: async () => "none",
+    register: async (proceed) => {
+      if (!proceed()) return "pending";
+      sent.push("device.register");
+      // Offline: the shard never answers. The unregister sent after it on the same socket undoes it.
+      return new Promise<Paging>(() => {});
+    },
+    onPaging: () => {},
+    setTimer: time.setTimer,
+  });
+  await time.settle();
+  await cycle.stop();
+  expect(sent).toEqual(["device.register"]);
 });
 
 test("a finish or registration that throws counts as not done, not as a crash", async () => {

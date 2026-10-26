@@ -4,8 +4,9 @@ import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import worker, { WorkspaceDO } from "../src/index.ts";
 
 // store_rows, shard_meta, change_log, mutation_results, outbox, outbox_drain, page_deliveries, page_events,
-// receipt_key, receipt_rate, email_sends, email_keys, probe_pushes and member_repair, created when the shard starts.
-const SYNC_TABLES = 14;
+// receipt_key, receipt_rate, email_sends, email_keys, probe_pushes, member_repair, invitation_sends and
+// invitation_repair, created when the shard starts.
+const SYNC_TABLES = 16;
 
 const api = (path: string, init?: RequestInit) =>
   exports.default.fetch(`http://api.test${path}`, init);

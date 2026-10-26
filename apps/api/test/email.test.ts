@@ -845,6 +845,24 @@ describe("who must not be emailed", () => {
     expect((await ws.timeline(incident)).map((row) => row.kind)).not.toContain("email_failed");
   });
 
+  test("an address its owner never verified gets nothing, and nothing is recorded for it", async () => {
+    const ws = await workspace();
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    await deliver([event], undefined);
+    // Bia (a page missed her) and Olga (an owner) signed up with addresses they never proved.
+    for (const person of [ws.people.bia, ws.people.olga]) {
+      await env.DB.prepare(`update "user" set "emailVerified" = 0 where id = ?`)
+        .bind(person.id)
+        .run();
+    }
+    const mail = recorder();
+    await deliver([await ws.failureOf(ws.people.bia)], mail.sender);
+    await deliver([await ws.failureOf(ws.people.ana)], mail.sender);
+    // Ana's own email and the owners' one, to Ana alone: never Bia or Olga.
+    expect(mail.to()).toEqual([ws.address(ws.people.ana), ws.address(ws.people.ana)]);
+    expect((await ws.timeline(incident)).map((row) => row.kind)).not.toContain("email_failed");
+  });
+
   test("a user of another workspace, even an owner there, is never picked", async () => {
     const ws = await workspace();
     const other = await workspace();

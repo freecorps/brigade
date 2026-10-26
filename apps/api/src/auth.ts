@@ -163,6 +163,15 @@ const beforeHook = (bindings: AuthBindings) =>
           message: "Email is not set up",
         });
       }
+      // Better Auth refuses these itself; only an email that goes out counts.
+      const email: unknown = Reflect.get(Object(ctx.body), "email");
+      if (
+        session.user.emailVerified ||
+        typeof email !== "string" ||
+        email.toLowerCase() !== session.user.email.toLowerCase()
+      ) {
+        return;
+      }
       const key = `verify:${session.user.id}`;
       const now = Date.now();
       const { adapter } = ctx.context;

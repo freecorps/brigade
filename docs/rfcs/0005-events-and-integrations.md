@@ -287,6 +287,13 @@ interface Notifier {
 
 ## Slack (first ChatProvider)
 
+The first slice is designed in RFC 0011: install, `/inc declare` and `ack`, an Acknowledge button and one message per
+incident. It emits `slack.connected` (`teamId`, `teamName`, `replaced`), `slack.configured` (`channelId`, `locale`)
+and `slack.disconnected` (`teamId`), never the token; a message the notifier gave up on is `notification.failed`
+with `channel: "slack"` (`incidentId`, `eventId`, `userId: null`, `reason`: `no_channel`, `not_authorized`,
+`rate_limited`, `undelivered`) and a `slack_failed` timeline entry. The notifier runs in the API's consumer next to push
+(RFC 0011 "Shape": no binding cycle), so the notifier Worker has not split off yet.
+
 - Distributed as an **app manifest** in the repo: each instance creates its own Slack app in one click (see open question Q6).
 - `/inc` declare, `/inc update`, `/inc severity`, `/inc resolve`; buttons for ack/escalate.
 - Per-incident channel, pinned summary message kept in sync, timeline mirrored both ways (opt-in per message).

@@ -1,0 +1,37 @@
+# The Slack app for one Brigade instance (RFC 0011). Create it at https://api.slack.com/apps → Create New App →
+# From a manifest, after replacing brigade.example.com with the instance's dashboard origin (DASHBOARD_URL): Slack
+# reaches the Slack Worker through the dashboard's Worker, which forwards /slack/* to it.
+_metadata:
+  major_version: 2
+  minor_version: 1
+display_information:
+  name: Brigade
+  description: Declare and acknowledge incidents, and follow them in a channel.
+  background_color: "#1f2937"
+features:
+  bot_user:
+    display_name: brigade
+    always_online: true
+  slash_commands:
+    - command: /inc
+      url: https://brigade.example.com/slack/commands
+      description: Declare or acknowledge an incident
+      usage_hint: "declare <title> [sev1-sev4] | ack [INC-12]"
+      should_escape: false
+oauth_config:
+  redirect_urls:
+    - https://brigade.example.com/slack/oauth/callback
+  scopes:
+    bot:
+      - commands
+      - chat:write
+      - chat:write.public
+      - users:read
+      - users:read.email
+settings:
+  interactivity:
+    is_enabled: true
+    request_url: https://brigade.example.com/slack/interactions
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

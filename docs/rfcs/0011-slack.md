@@ -185,14 +185,14 @@ Every Slack-visible string is in `packages/i18n` (`slack_text`, en and pt-BR), t
 
 ## Secrets and configuration
 
-| Where        | Name                   | What                                                                         |
-| ------------ | ---------------------- | ---------------------------------------------------------------------------- |
-| slack Worker | `SLACK_SIGNING_SECRET` | Verifies every request from Slack                                             |
-| slack Worker | `SLACK_CLIENT_ID`      | OAuth (not secret, kept with the others so no app id is in the repo)          |
-| slack Worker | `SLACK_CLIENT_SECRET`  | OAuth code exchange                                                           |
-| slack Worker | `DASHBOARD_URL`        | The public origin: redirect URI, links back                                   |
-| api Worker   | `SLACK_TOKEN_KEY`      | AES-256-GCM key for bot tokens (32 bytes, base64url)                          |
-| api Worker   | `DASHBOARD_URL`        | Already there (email links); the message's "Open in Brigade"                  |
+| Where        | Name                   | What                                                                 |
+| ------------ | ---------------------- | -------------------------------------------------------------------- |
+| slack Worker | `SLACK_SIGNING_SECRET` | Verifies every request from Slack                                    |
+| slack Worker | `SLACK_CLIENT_ID`      | OAuth (not secret, kept with the others so no app id is in the repo) |
+| slack Worker | `SLACK_CLIENT_SECRET`  | OAuth code exchange                                                  |
+| slack Worker | `DASHBOARD_URL`        | The public origin: redirect URI, links back                          |
+| api Worker   | `SLACK_TOKEN_KEY`      | AES-256-GCM key for bot tokens (32 bytes, base64url)                 |
+| api Worker   | `DASHBOARD_URL`        | Already there (email links); the message's "Open in Brigade"         |
 
 Only `-dev` names are configured (`brigade-slack-dev`, its bindings to `brigade-api-dev`, and `brigade-web-dev`'s
 `SLACK` binding); staging and production follow with their deploys (owner's call). `integrations/slack/README.md`

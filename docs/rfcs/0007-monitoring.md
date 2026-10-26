@@ -91,13 +91,27 @@
 - Heartbeat (push-based): the monitored system calls Brigade; missing beats raise an alert. Covers cron jobs and internal hosts.
   Built: `POST /heartbeat/<workspace id>.<monitor id>.<secret>` (also under the dashboard's `/api`). The secret is
   32 random bytes made by the client, which shows the URL once and sends only its SHA-256; the shard stores the hash
-  in a server-only table and compares in constant time. There is no rotation yet: a new URL is a new monitor. When the
+  in a server-only table and compares in constant time. When the
   owner of an address takes back an account someone else signed up with, every heartbeat URL in the workspaces it is
-  alone in is revoked (its hash replaced by random bytes) and every monitor there paused (RFC 0002 "Auth"). The Worker first checks that the workspace exists in D1
+  alone in is revoked (its hash replaced by random bytes) and every monitor there paused (RFC 0002 "Auth"); a new URL
+  comes from rotating it (below). The Worker first checks that the workspace exists in D1
   (cached per isolate for 10 minutes), so a made-up workspace creates no Durable Object (Q16); if the D1 read fails, the ping goes to the shard
   anyway (fail open: a D1 outage must not page anyone for a missed beat). Every refusal is the same 404. A ping turns the monitor up;
   no ping within interval + grace (0 s to 24 h) is a failure, found by the workspace shard's alarm (at least once a
   minute), and with one source that is the quorum.
+- **Rotating a heartbeat URL** (`monitor.rotateHeartbeat`, owners and admins: `monitor:manage`): for a leaked URL, or
+  one revoked by a takeover. As at create, the client makes the secret, shows the URL once and sends only its
+  SHA-256; the shard replaces the stored hash in the same transaction, so the old URL gets the same 404 from the next
+  ping, and emits `monitor.heartbeat_rotated` (`id` only; the hash stays in the server-only table and is never in a
+  synced row or an event). In the dashboard it is New URL in the heartbeat's edit form, confirmed first ("The current
+  URL stops working at once; update whatever pings it").
+  - **Grace (decided):** rotating starts the monitor over, like a changed HTTP or TCP target: `pending`, its last
+    result dropped, `restartedAt` now and the last ping forgotten, so the first deadline is a full interval plus
+    grace from the rotation. Whatever pinged the old URL goes quiet the moment it is rotated; without the restart the
+    monitor would page on the old ping's deadline while someone is still updating the job. A miss computed before
+    the rotation is refused (`restartedAt`), and a firing alert stays (no second one) until the new URL is pinged,
+    which resolves it. The cost: a monitor rotated while its job is really broken pages
+    one interval plus grace later than it would have. A paused monitor only gets the new hash; resuming restarts it.
 - No ICMP. Internal networks only via heartbeat or Cloudflare Tunnel.
 
 ## Quorum and flapping
@@ -128,7 +142,7 @@ verdict or failure reason changes.
   probes went silent, then `wnam` reports down: one fresh result is below the floor of two, so "No data", no
   alert, no incident). An outage that only the surviving probes see is therefore missed until enough regions report
   again. That trade is accepted (Q17); watching Brigade's own probes belongs to the dead-man switch (Q19).
-- **Restarts:** creating a monitor, changing its target and resuming it set `restartedAt`; results from before it are
+- **Restarts:** creating a monitor, changing its target, resuming it and rotating a heartbeat's URL set `restartedAt`; results from before it are
   refused. A status change does not move it, so a report computed before another region flipped the status and
   delivered after it still counts (no false recovery, no second incident). Until `AlertGroupDO` and alert routes
   exist, the workspace shard is the alert's home: the server-only mutation `monitor.report`, run as the system actor

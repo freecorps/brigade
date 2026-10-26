@@ -141,12 +141,15 @@ export function MonitorsCard() {
     setEditing(target.kind === "edit" ? target.id : null);
   };
   /** Opens `target`, unless the open form has changes: then that form asks first. */
+  const [asked, setAsked] = useState(0);
   const ask = (target: Opening) => {
-    if (changed.current && (adding || editing !== null)) setPending(target);
-    else open(target);
+    if (changed.current && (adding || editing !== null)) {
+      setPending(target);
+      setAsked((count) => count + 1);
+    } else open(target);
   };
   const discard: DiscardPrompt | null = pending
-    ? { onDiscard: () => open(pending), onKeep: () => setPending(null) }
+    ? { onDiscard: () => open(pending), onKeep: () => setPending(null), asked }
     : null;
   const onCreate = async (checked: Extract<CheckedDraft, { ok: true }>) => {
     setRefused(null);
@@ -188,9 +191,10 @@ export function MonitorsCard() {
   };
   const onEdit = (row: MonitorRow) => ask({ kind: "edit", id: row.id });
   /**
-   * The form closes as the edit is sent, before the shard answers. A refusal that only a race can cause (someone
-   * deleted it, `not_found`; or made the same change first, `conflict`) is said above the list, and the draft is
-   * gone: what was typed is not kept to try again.
+   * The form closes as the edit is sent, before the shard answers. Only the fields edited here are sent over the
+   * live row (`rebaseDraft`), so a teammate's change to another field stays. A refusal that only a race can cause
+   * (someone deleted it, `not_found`; or the live row already has these values, `conflict`) is said above the
+   * list, and the draft is gone: what was typed is not kept to try again.
    */
   const onSave = (row: MonitorRow, checked: Extract<CheckedEdit, { ok: true }>) => {
     setRefused(null);

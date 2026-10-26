@@ -12,6 +12,7 @@ import {
   checkEdit,
   checkErrorReason,
   draftChanged,
+  rebaseDraft,
   draftFromRow,
   editRestarts,
   EMPTY_DRAFT,
@@ -329,4 +330,24 @@ test("a draft has changes once it differs from what it opened with; region order
   expect(draftChanged({ ...initial, regions: initial.regions.slice(1) }, initial)).toBe(true);
   expect(draftChanged(EMPTY_DRAFT, EMPTY_DRAFT)).toBe(false);
   expect(draftChanged({ ...EMPTY_DRAFT, kind: "heartbeat" }, EMPTY_DRAFT)).toBe(true);
+});
+
+test("saving an edit keeps a teammate's change to another field made while the form was open", () => {
+  const opened = row();
+  const initial = draftFromRow(opened);
+  // Here: only the interval. Meanwhile a teammate renamed it and moved its URL.
+  const draft = { ...initial, intervalSeconds: "120" };
+  const live = row({ name: "Checkout API", url: "https://example.com/ready" });
+  const checked = checkEdit(rebaseDraft(draft, initial, live), live);
+  expect(checked).toMatchObject({
+    ok: true,
+    changed: true,
+    args: { name: "Checkout API", url: "https://example.com/ready", intervalSeconds: 120 },
+  });
+  // Regions picked again in another order are not an edit, so the live ones stay.
+  const regions = rebaseDraft({ ...initial, regions: [...initial.regions].reverse() }, initial, {
+    ...live,
+    regions: ["enam"],
+  });
+  expect(regions.regions).toEqual(["enam"]);
 });

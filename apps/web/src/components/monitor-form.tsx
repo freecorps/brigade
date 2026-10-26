@@ -24,6 +24,7 @@ import {
   checkDraft,
   checkEdit,
   draftChanged,
+  rebaseDraft,
   draftFromRow,
   editRestarts,
   EMPTY_DRAFT,
@@ -72,15 +73,19 @@ export type MonitorFormMode =
       onDelete: () => void;
     };
 
-/** Set while another form was asked for and this one has changes: it asks whether to drop them. */
-export type DiscardPrompt = { onDiscard: () => void; onKeep: () => void };
+/**
+ * Set while another form was asked for and this one has changes: it asks whether to drop them. `asked` counts the
+ * asks, so asking again while the prompt is up brings focus back to it.
+ */
+export type DiscardPrompt = { onDiscard: () => void; onKeep: () => void; asked: number };
 
 /**
  * A new HTTP check or heartbeat, or an existing one's settings. Checked on submit with the mutation's own validator,
  * so a value the shard would refuse is marked in its field, with what to fix, and the draft stays. Creating:
  * `onCreate` sends it, and the form closes when it resolves true. Editing: the values are the monitor's, an edit
  * that changes nothing just closes, saving says when it starts the checks over, and Delete asks first, saying what
- * happens to its alert and incidents. The name field takes focus when the form opens; Escape cancels. `onChanged`
+ * happens to its alert and incidents. The name field takes focus when the form opens; Escape and Cancel close it,
+ * changes and all, without asking: they are the explicit way out, unlike opening another form. `onChanged`
  * hears whether the draft differs from what it opened with, and `discard` asks, at the top, before it is dropped.
  */
 export function MonitorForm({
@@ -138,7 +143,7 @@ export function MonitorForm({
     event.preventDefault();
     if (sending) return;
     if (mode.kind === "edit") {
-      const checked = checkEdit(draft, mode.row);
+      const checked = checkEdit(rebaseDraft(draft, initial, mode.row), mode.row);
       if (!checked.ok) return refuse(checked.fields);
       // The shard refuses an edit that changes nothing: there is nothing to send.
       if (checked.changed) mode.onSave(checked);
@@ -167,7 +172,7 @@ export function MonitorForm({
   };
 
   const http = draft.kind === "http";
-  const restarts = editing ? editRestarts(draft, editing) : false;
+  const restarts = editing ? editRestarts(rebaseDraft(draft, initial, editing), editing) : false;
   return (
     <form
       ref={formRef}
@@ -419,10 +424,15 @@ export function MonitorForm({
  * Asked when another monitor's form was opened while this one has changes: Keep editing (focused, and Escape)
  * stays here, Discard changes opens the other one.
  */
-function DiscardChanges({ name, onDiscard, onKeep }: { name: string | null } & DiscardPrompt) {
+function DiscardChanges({
+  name,
+  onDiscard,
+  onKeep,
+  asked,
+}: { name: string | null } & DiscardPrompt) {
   const promptId = useId();
   const keepRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => keepRef.current?.focus(), []);
+  useEffect(() => keepRef.current?.focus(), [asked]);
   return (
     <div
       role="group"
@@ -447,7 +457,7 @@ function DiscardChanges({ name, onDiscard, onKeep }: { name: string | null } & D
           {m.monitor_discard({ part: "keep", name: "" })}
         </Button>
         <Button type="button" variant="ghost" onClick={onDiscard}>
-          {m.monitor_discard({ part: "discard", name: "" })}
+          {m.monitor_discard({ part: name === null ? "discard_new" : "discard", name: "" })}
         </Button>
       </div>
     </div>

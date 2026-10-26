@@ -12,6 +12,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | --- | --- |
 * | "prompt" | "Discard your changes to {name}?" |
 * | "prompt_new" | "Discard this new monitor?" |
+* | "discard_new" | "Discard" |
 * | "discard" | "Discard changes" |
 * | * | "Keep editing" |
 *
@@ -24,12 +25,14 @@ export const monitor_discard = /** @type {((inputs: Monitor_DiscardInputs, optio
 	if (locale === "pt-BR") {
 		if (i?.part === "prompt") return /** @type {LocalizedString} */ (`Descartar as alterações em ${i?.name}?`);
 		if (i?.part === "prompt_new") return /** @type {LocalizedString} */ (`Descartar este novo monitor?`);
+		if (i?.part === "discard_new") return /** @type {LocalizedString} */ (`Descartar`);
 		if (i?.part === "discard") return /** @type {LocalizedString} */ (`Descartar alterações`);
 		return /** @type {LocalizedString} */ (`Continuar editando`)
 	}
 	{
 		if (i?.part === "prompt") return /** @type {LocalizedString} */ (`Discard your changes to ${i?.name}?`);
 		if (i?.part === "prompt_new") return /** @type {LocalizedString} */ (`Discard this new monitor?`);
+		if (i?.part === "discard_new") return /** @type {LocalizedString} */ (`Discard`);
 		if (i?.part === "discard") return /** @type {LocalizedString} */ (`Discard changes`);
 		return /** @type {LocalizedString} */ (`Keep editing`)
 	}

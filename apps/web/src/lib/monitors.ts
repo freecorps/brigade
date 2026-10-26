@@ -220,6 +220,27 @@ export function draftChanged(draft: MonitorDraft, initial: MonitorDraft): boolea
   return JSON.stringify(normal(draft)) !== JSON.stringify(normal(initial));
 }
 
+/**
+ * `draft` laid over `row` as it is now: only the fields edited since the form opened (`initial`) come from the draft,
+ * the rest from the live row. A teammate's change to another field while the form was open is kept, not reverted by
+ * the snapshot the form opened with (`monitor.updateHttp` takes every field).
+ */
+export function rebaseDraft(
+  draft: MonitorDraft,
+  initial: MonitorDraft,
+  row: MonitorRow,
+): MonitorDraft {
+  const same = (key: keyof MonitorDraft) =>
+    key === "regions"
+      ? !draftChanged({ ...initial, regions: draft.regions }, initial)
+      : draft[key] === initial[key];
+  const live = draftFromRow(row);
+  const keys = Object.keys(draft) as (keyof MonitorDraft)[];
+  return Object.fromEntries(
+    keys.map((key) => [key, same(key) ? live[key] : draft[key]]),
+  ) as MonitorDraft;
+}
+
 export type CheckedEdit =
   | { ok: true; kind: "http"; args: ArgsOf<typeof updateHttpMonitor>; changed: boolean }
   | { ok: true; kind: "heartbeat"; args: ArgsOf<typeof updateHeartbeatMonitor>; changed: boolean }

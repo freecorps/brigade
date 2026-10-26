@@ -10,6 +10,7 @@ export type Monitor_DiscardInputs = {
 * | --- | --- |
 * | "prompt" | "Discard your changes to {name}?" |
 * | "prompt_new" | "Discard this new monitor?" |
+* | "discard_new" | "Discard" |
 * | "discard" | "Discard changes" |
 * | * | "Keep editing" |
 *

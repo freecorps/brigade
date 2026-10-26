@@ -525,6 +525,7 @@
       "match": {
         "part=prompt": "Descartar as alterações em {name}?",
         "part=prompt_new": "Descartar este novo monitor?",
+        "part=discard_new": "Descartar",
         "part=discard": "Descartar alterações",
         "part=*": "Continuar editando"
       }

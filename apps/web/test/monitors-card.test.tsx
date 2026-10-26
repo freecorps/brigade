@@ -652,6 +652,12 @@ test("opening another form while one has changes asks first; Keep editing stays,
 
   await click(button("Add monitor"));
   expect(item(first).textContent).toContain("Discard your changes to Alpha?");
+  // Asking again while the prompt is up brings focus back to it, and Escape still answers it.
+  await click(button("Edit", item(second)));
+  expect(document.activeElement).toBe(button("Keep editing", item(first)));
+  await key(document.activeElement!, "Escape");
+  expect(item(first).textContent).not.toContain("Discard your changes");
+  await click(button("Add monitor"));
   await click(button("Keep editing", item(first)));
   expect($$("form").map(formName)).toEqual(["Edit Alpha"]);
   expect(document.activeElement).toBe(field("Name"));
@@ -668,7 +674,7 @@ test("opening another form while one has changes asks first; Keep editing stays,
   act(() => setValue(field("Name"), "Search"));
   await click(button("Edit", item(first)));
   expect(document.body.textContent).toContain("Discard this new monitor?");
-  await click(button("Discard changes"));
+  await click(button("Discard"));
   expect($$("form").map(formName)).toEqual(["Edit Alpha"]);
   expect(field("Name").value).toBe("Alpha");
 });

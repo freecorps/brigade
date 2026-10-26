@@ -91,8 +91,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "stage_none" | "Not reached" |
 * | "stage_stopped" | "Stopped here" |
 * | "stuck_note" | "Brigade planned this page but never sent it. Pages go out within seconds, so it's stuck." |
-* | "pages_same" | "Same outcome as the {detail} pages before it" |
-* | "pages_same_one" | "Same outcome as the page before it" |
+* | "pages_same" | "Same outcome as {detail} earlier pages to this level" |
+* | "pages_same_one" | "Same outcome as the earlier page to this level" |
 * | "pages_show_all" | "Show all {detail} pages" |
 * | "miss_no_devices" | "no phone registered" |
 * | "miss_undelivered" | "the page didn't go through" |
@@ -195,8 +195,8 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "stage_none") return /** @type {LocalizedString} */ (`Não chegou aqui`);
 		if (i?.text === "stage_stopped") return /** @type {LocalizedString} */ (`Parou aqui`);
 		if (i?.text === "stuck_note") return /** @type {LocalizedString} */ (`O Brigade planejou este acionamento, mas nunca o enviou. Acionamentos saem em segundos, então ele travou.`);
-		if (i?.text === "pages_same") return /** @type {LocalizedString} */ (`Mesmo resultado dos ${i?.detail} acionamentos anteriores`);
-		if (i?.text === "pages_same_one") return /** @type {LocalizedString} */ (`Mesmo resultado do acionamento anterior`);
+		if (i?.text === "pages_same") return /** @type {LocalizedString} */ (`Mesmo resultado dos ${i?.detail} acionamentos anteriores deste nível`);
+		if (i?.text === "pages_same_one") return /** @type {LocalizedString} */ (`Mesmo resultado do acionamento anterior deste nível`);
 		if (i?.text === "pages_show_all") return /** @type {LocalizedString} */ (`Mostrar todos os ${i?.detail} acionamentos`);
 		if (i?.text === "miss_no_devices") return /** @type {LocalizedString} */ (`nenhum celular registrado`);
 		if (i?.text === "miss_undelivered") return /** @type {LocalizedString} */ (`o acionamento não foi entregue`);
@@ -293,8 +293,8 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "stage_none") return /** @type {LocalizedString} */ (`Not reached`);
 		if (i?.text === "stage_stopped") return /** @type {LocalizedString} */ (`Stopped here`);
 		if (i?.text === "stuck_note") return /** @type {LocalizedString} */ (`Brigade planned this page but never sent it. Pages go out within seconds, so it's stuck.`);
-		if (i?.text === "pages_same") return /** @type {LocalizedString} */ (`Same outcome as the ${i?.detail} pages before it`);
-		if (i?.text === "pages_same_one") return /** @type {LocalizedString} */ (`Same outcome as the page before it`);
+		if (i?.text === "pages_same") return /** @type {LocalizedString} */ (`Same outcome as ${i?.detail} earlier pages to this level`);
+		if (i?.text === "pages_same_one") return /** @type {LocalizedString} */ (`Same outcome as the earlier page to this level`);
 		if (i?.text === "pages_show_all") return /** @type {LocalizedString} */ (`Show all ${i?.detail} pages`);
 		if (i?.text === "miss_no_devices") return /** @type {LocalizedString} */ (`no phone registered`);
 		if (i?.text === "miss_undelivered") return /** @type {LocalizedString} */ (`the page didn't go through`);

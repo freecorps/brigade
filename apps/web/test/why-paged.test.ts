@@ -92,17 +92,20 @@ describe("the step-by-step view", () => {
     );
   });
 
-  test("twenty pages with the same outcome read as one, the latest per level", () => {
-    const pages = [
-      ...Array.from({ length: 19 }, (_, index) => page(index + 1)),
-      page(20, { level: 2 }),
-    ];
+  test("twenty pages with the same outcome read as one per level, the latest", () => {
+    // Twenty rounds alternating levels 1 and 2, as a repeating policy pages them.
+    const pages = Array.from({ length: 20 }, (_, index) =>
+      page(index + 1, {
+        level: (index % 2) + 1,
+        ...(index % 2 === 0 ? { misses: [], targeted: "not_on_call" as const } : {}),
+      }),
+    );
     const groups = pageGroups(pages);
-    expect(groups.map(({ page: one, earlier }) => [one.step, earlier])).toEqual([
-      [19, 18],
-      [20, 0],
+    expect(groups.map(({ page: one, earlier }) => [one.step, one.level, earlier])).toEqual([
+      [19, 1, 9],
+      [20, 2, 9],
     ]);
-    // A different outcome on the same level starts a group of its own.
+    // A different outcome on a level starts a run of its own.
     const changed = pageGroups([page(1), page(2, { misses: [] }), page(3)]);
     expect(changed.map(({ earlier }) => earlier)).toEqual([0, 0, 0]);
   });

@@ -148,7 +148,7 @@ export function PagingCard({
                   </span>
                   <span
                     className={cn(
-                      "flex min-w-0 items-center gap-1.5 text-xs sm:shrink-0",
+                      "flex min-w-0 flex-1 items-center gap-1.5 text-xs sm:flex-none sm:shrink-0",
                       TONE[verdictTone(verdict)],
                     )}
                   >

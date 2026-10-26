@@ -84,24 +84,27 @@ export function byUrgency<T extends { verdict: WhyVerdict }>(rows: readonly T[])
 }
 
 /**
- * The pages to show in full: of each run of consecutive pages to the same level with the same outcome for the
- * member, the latest, with how many came before it. Twenty identical "Level 1 · Round 4" pages read as one.
+ * The pages to show in full: of each level's pages in a row with the same outcome for the member (other levels'
+ * pages in between do not break the run), the latest, with how many came before it, in the latest's place. Twenty
+ * rounds of "Level 1, Level 2" read as two pages.
  */
 export function pageGroups(pages: readonly WhyPage[]): { page: WhyPage; earlier: number }[] {
-  const groups: { page: WhyPage; earlier: number; key: string }[] = [];
+  const groups: ({ page: WhyPage; earlier: number; key: string } | null)[] = [];
+  const latest = new Map<string, number>();
   for (const page of pages) {
+    const level = page.step === null ? "interim" : String(page.level);
     const key = outcomeKey(page);
-    const last = groups[groups.length - 1];
-    if (last && last.key === key)
-      groups[groups.length - 1] = { page, earlier: last.earlier + 1, key };
-    else groups.push({ page, earlier: 0, key });
+    const index = latest.get(level);
+    const prior = index === undefined ? null : groups[index]!;
+    if (prior && prior.key === key) groups[index!] = null;
+    groups.push({ page, earlier: prior && prior.key === key ? prior.earlier + 1 : 0, key });
+    latest.set(level, groups.length - 1);
   }
-  return groups.map(({ page, earlier }) => ({ page, earlier }));
+  return groups.flatMap((group) => (group ? [{ page: group.page, earlier: group.earlier }] : []));
 }
 
 function outcomeKey(page: WhyPage): string {
   return JSON.stringify([
-    page.step === null ? "interim" : page.level,
     page.targeted,
     page.deliveries
       .map(({ row, stage, stuck }) => [row.deviceId, stage, row.error, row.reason, stuck].join("/"))
@@ -110,7 +113,7 @@ function outcomeKey(page: WhyPage): string {
   ]);
 }
 
-/** "Same outcome as the 3 pages before it". */
+/** "Same outcome as 3 earlier pages to this level". */
 export function sameOutcomeText(earlier: number): string {
   return earlier === 1 ? say("pages_same_one") : say("pages_same", { detail: String(earlier) });
 }

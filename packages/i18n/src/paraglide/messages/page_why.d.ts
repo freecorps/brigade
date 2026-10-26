@@ -91,8 +91,8 @@ export type Page_WhyInputs = {
 * | "stage_none" | "Not reached" |
 * | "stage_stopped" | "Stopped here" |
 * | "stuck_note" | "Brigade planned this page but never sent it. Pages go out within seconds, so it's stuck." |
-* | "pages_same" | "Same outcome as the {detail} pages before it" |
-* | "pages_same_one" | "Same outcome as the page before it" |
+* | "pages_same" | "Same outcome as {detail} earlier pages to this level" |
+* | "pages_same_one" | "Same outcome as the earlier page to this level" |
 * | "pages_show_all" | "Show all {detail} pages" |
 * | "miss_no_devices" | "no phone registered" |
 * | "miss_undelivered" | "the page didn't go through" |

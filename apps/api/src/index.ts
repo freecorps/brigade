@@ -1,5 +1,7 @@
 import { TOKEN } from "@freecorps/brigade-sync/protocol";
 import {
+  can,
+  invitationEmail,
   isId,
   isRole,
   parseHeartbeatToken,
@@ -15,8 +17,15 @@ import {
   type Auth,
   type AuthBindings,
 } from "./auth.ts";
+import {
+  invitationWorkspace,
+  listInvitations,
+  previewInvitation,
+  type InvitationCode,
+} from "./invitations.ts";
 import type { MemberChangeResult } from "./members.ts";
-import { consumeDeadLetters, consumeEvents } from "./notify.ts";
+import { emailSender } from "./email.ts";
+import { consumeDeadLetters, consumeEvents, type NotifyEnv } from "./notify.ts";
 import { receiptWorkspace, type ReceiptResult } from "./receipts.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
 import {
@@ -35,6 +44,9 @@ const WORKSPACE_PATH = /^\/workspaces\/([^/]+)$/;
 const MEMBER_PATH = /^\/workspaces\/([^/]+)\/members\/([^/]+)$/;
 /** A user id as Better Auth makes them here (`usr_<ULID>`), or older plain ids: no encoding, bounded. */
 const USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const INVITATIONS_PATH = /^\/workspaces\/([^/]+)\/invitations$/;
+const INVITATION_PATH = /^\/workspaces\/([^/]+)\/invitations\/([^/]+?)(\/resend)?$/;
+const INVITEE_PATH = /^\/invitations\/([^/]+?)(?:\/(accept|decline))?$/;
 const ACK_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/ack$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
@@ -45,8 +57,9 @@ const MAX_BODY_LENGTH = 4096;
 /**
  * The organization plugin's routes the dashboard calls. Every other `/auth/organization/*` route (update, delete,
  * member roles, removing or adding members, invitations, teams, leaving) is refused: Better Auth would change D1
- * without the shard's copy of the members or a `workspace.*` / `member.*` event in its outbox (RFC 0005). Creating
- * goes through `POST /workspaces`; member roles, removing and leaving through `/workspaces/:id/members/:userId`.
+ * without the shard's copy of the members or a `workspace.*` / `member.*` / `invitation.*` event in its outbox
+ * (RFC 0005). Creating goes through `POST /workspaces`; member roles, removing and leaving through
+ * `/workspaces/:id/members/:userId`; invitations through `/workspaces/:id/invitations` and `/invitations/:id`.
  */
 const ORGANIZATION_ROUTES = new Set([
   "/organization/get-full-organization",
@@ -84,6 +97,14 @@ export default {
     if (pathname === "/workspaces") return createWorkspace(request, auth);
     const member = MEMBER_PATH.exec(pathname);
     if (member) return changeMember(request, env, auth, member[1]!, member[2]!);
+    const invitations = INVITATIONS_PATH.exec(pathname);
+    if (invitations) return workspaceInvitations(request, env, auth, invitations[1]!);
+    const invitation = INVITATION_PATH.exec(pathname);
+    if (invitation) {
+      return changeInvitation(request, env, auth, invitation[1]!, invitation[2]!, !!invitation[3]);
+    }
+    const invitee = INVITEE_PATH.exec(pathname);
+    if (invitee) return answerInvitation(request, env, auth, invitee[1]!, invitee[2]);
     const ack = ACK_PATH.exec(pathname);
     if (ack) return acknowledgeIncident(request, env, auth, ack[1]!, ack[2]!);
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
@@ -212,6 +233,10 @@ export function workerAuth(
     // The web Worker forwards with the browser's URL, so this is the protocol the browser used.
     secureCookies: new URL(request.url).protocol === "https:",
     onWorkspaceCreated: onWorkspaceCreated ?? provisionWith(env),
+    // Made only when a verification email goes out, so other requests never read the email settings.
+    get email() {
+      return { sender: emailSender(env), dashboardUrl: (env as NotifyEnv).DASHBOARD_URL };
+    },
   });
 }
 
@@ -356,6 +381,217 @@ export async function changeMember(
     not_applied: 503,
   }[result.code];
   return json({ error: result.code }, status);
+}
+
+/** The answer for each invitation refusal (src/invitations.ts `InvitationCode`). */
+const INVITATION_STATUS: Record<InvitationCode, number> = {
+  forbidden: 403,
+  wrong_email: 403,
+  unverified: 403,
+  already_member: 409,
+  already_invited: 409,
+  limit_reached: 409,
+  workspace_full: 409,
+  workspace_limit: 409,
+  conflict: 409,
+  rate_limited: 429,
+  too_soon: 429,
+  not_found: 404,
+  expired: 410,
+  unavailable: 503,
+  not_applied: 503,
+};
+
+function invitationAnswer(
+  result: { ok: true } | { ok: false; code: InvitationCode },
+  status = 200,
+): Response {
+  if (!result.ok) return json({ error: result.code }, INVITATION_STATUS[result.code]);
+  return json(result, status);
+}
+
+/** A cookie-authenticated request from another site: refused, as Better Auth does on its own routes. */
+function crossSite(request: Request): boolean {
+  const origin = request.headers.get("Origin");
+  return origin !== null && origin !== new URL(request.url).origin;
+}
+
+/** The request's JSON body (at most `MAX_BODY_LENGTH` bytes) as an object, or undefined. */
+async function readObject(request: Request): Promise<Record<string, unknown> | undefined> {
+  const text = await readBounded(request, MAX_BODY_LENGTH);
+  if (text === undefined) return undefined;
+  try {
+    const body: unknown = JSON.parse(text);
+    return typeof body === "object" && body !== null && !Array.isArray(body)
+      ? (body as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `GET /workspaces/:id/invitations` lists the pending invitations (owners and admins: they are the ones who manage
+ * them); `POST` `{ email, role }` invites someone (RFC 0003 "Invitations"). The Worker checks the origin, the
+ * session, that the caller is a member and, to invite, that their own address is verified (an invitation is an email
+ * from Brigade to an address they typed); the shard checks the rules and limits against D1, writes D1, then its
+ * outbox (`member.invited`, which the email notifier sends). Answers 201 with the invitation.
+ */
+export async function workspaceInvitations(
+  request: Request,
+  env: Env,
+  lazyAuth: () => Auth,
+  workspaceId: string,
+): Promise<Response> {
+  if (request.method !== "GET" && request.method !== "POST") {
+    return json({ error: "method_not_allowed" }, 405, { Allow: "GET, POST" });
+  }
+  if (!ORGANIZATION_ID.test(workspaceId)) return json({ error: "invalid_workspace_id" }, 400);
+  if (crossSite(request)) return json({ error: "forbidden_origin" }, 403);
+  const session = await lazyAuth().api.getSession({ headers: request.headers });
+  if (!session) return json({ error: "unauthenticated" }, 401);
+  let role: Role | undefined;
+  try {
+    role = await memberRole(env.DB, workspaceId, session.user.id);
+  } catch (error) {
+    console.error(JSON.stringify({ message: "member lookup failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
+  if (role === undefined) return json({ error: "not_a_member" }, 403);
+  if (!can(role, "members:manage")) return json({ error: "forbidden" }, 403);
+
+  if (request.method === "GET") {
+    try {
+      return json({ invitations: await listInvitations(env.DB, workspaceId) }, 200, {
+        "Cache-Control": "private, no-store",
+      });
+    } catch (error) {
+      console.error(
+        JSON.stringify({ message: "listing invitations failed", error: String(error) }),
+      );
+      return json({ error: "unavailable" }, 503);
+    }
+  }
+
+  if (!session.user.emailVerified) return json({ error: "unverified" }, 403);
+  const body = await readObject(request);
+  const email = invitationEmail(body?.email);
+  const invited = body?.role;
+  if (!email || !isRole(invited)) return json({ error: "invalid_args" }, 400);
+  try {
+    const result = await env.WORKSPACE.getByName(workspaceId).invite(
+      workspaceId,
+      session.user.id,
+      email,
+      invited,
+      new URL(request.url).origin,
+    );
+    return invitationAnswer(result, 201);
+  } catch (error) {
+    return failed("WorkspaceDO.invite failed", workspaceId, error);
+  }
+}
+
+/**
+ * `DELETE /workspaces/:id/invitations/:invitationId` revokes a pending invitation; `POST …/resend` sends it again
+ * with a new expiry (at most once every five minutes, within the workspace's daily cap). Owners and admins; an admin
+ * never touches an invitation to be an owner. The same checks as inviting, then the shard (`invitation.revoked`, or
+ * `member.invited` again).
+ */
+export async function changeInvitation(
+  request: Request,
+  env: Env,
+  lazyAuth: () => Auth,
+  workspaceId: string,
+  invitationId: string,
+  resend: boolean,
+): Promise<Response> {
+  const method = resend ? "POST" : "DELETE";
+  if (request.method !== method)
+    return json({ error: "method_not_allowed" }, 405, { Allow: method });
+  if (!ORGANIZATION_ID.test(workspaceId)) return json({ error: "invalid_workspace_id" }, 400);
+  if (!isId("inv", invitationId)) return json({ error: "not_found" }, 404);
+  if (crossSite(request)) return json({ error: "forbidden_origin" }, 403);
+  const session = await lazyAuth().api.getSession({ headers: request.headers });
+  if (!session) return json({ error: "unauthenticated" }, 401);
+  try {
+    if ((await memberRole(env.DB, workspaceId, session.user.id)) === undefined) {
+      return json({ error: "not_a_member" }, 403);
+    }
+  } catch (error) {
+    console.error(JSON.stringify({ message: "member lookup failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
+  if (resend && !session.user.emailVerified) return json({ error: "unverified" }, 403);
+  try {
+    const shard = env.WORKSPACE.getByName(workspaceId);
+    return invitationAnswer(
+      resend
+        ? await shard.resendInvitation(
+            workspaceId,
+            session.user.id,
+            invitationId,
+            new URL(request.url).origin,
+          )
+        : await shard.revokeInvitation(workspaceId, session.user.id, invitationId),
+    );
+  } catch (error) {
+    return failed("WorkspaceDO invitation change failed", workspaceId, error);
+  }
+}
+
+/**
+ * The invitee's side: `GET /invitations/:id` (what the dashboard's accept page shows: the workspace, who invited,
+ * the role, whether it can still be accepted and whether it is for the signed-in address, never the address itself),
+ * `POST /invitations/:id/accept` and `POST /invitations/:id/decline`. Signed in, with the invited address, verified;
+ * the shard checks it all again against D1 (src/invitations.ts). Accepting answers the workspace id and role, so the
+ * dashboard can open it. An invitation id is a ULID nobody can guess: the link in the email is the only way to it.
+ */
+export async function answerInvitation(
+  request: Request,
+  env: Env,
+  lazyAuth: () => Auth,
+  invitationId: string,
+  action: string | undefined,
+): Promise<Response> {
+  const method = action === undefined ? "GET" : "POST";
+  if (request.method !== method)
+    return json({ error: "method_not_allowed" }, 405, { Allow: method });
+  if (!isId("inv", invitationId)) return json({ error: "not_found" }, 404);
+  if (crossSite(request)) return json({ error: "forbidden_origin" }, 403);
+  const session = await lazyAuth().api.getSession({ headers: request.headers });
+  if (!session) return json({ error: "unauthenticated" }, 401);
+  let workspaceId: string | undefined;
+  try {
+    if (action === undefined) {
+      const preview = await previewInvitation(env.DB, invitationId, session.user.email, Date.now());
+      if (!preview) return json({ error: "not_found" }, 404);
+      return json({ invitation: preview }, 200, { "Cache-Control": "private, no-store" });
+    }
+    workspaceId = await invitationWorkspace(env.DB, invitationId);
+  } catch (error) {
+    console.error(JSON.stringify({ message: "invitation lookup failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
+  if (workspaceId === undefined) return json({ error: "not_found" }, 404);
+  if (!session.user.emailVerified) return json({ error: "unverified" }, 403);
+  const invitee = { id: session.user.id, email: session.user.email };
+  try {
+    const shard = env.WORKSPACE.getByName(workspaceId);
+    if (action === "accept") {
+      const result = await shard.acceptInvitation(workspaceId, invitationId, invitee);
+      // `not_applied`: D1 has the member; the dashboard can open the workspace while the shard catches up.
+      if (!result.ok && result.code === "not_applied") {
+        return json({ error: "not_applied", workspaceId }, 503);
+      }
+      if (!result.ok) return invitationAnswer(result);
+      const accepted = { ...result, workspaceId };
+      return invitationAnswer(accepted);
+    }
+    return invitationAnswer(await shard.declineInvitation(workspaceId, invitationId, invitee));
+  } catch (error) {
+    return failed("WorkspaceDO invitation answer failed", workspaceId, error);
+  }
 }
 
 /**

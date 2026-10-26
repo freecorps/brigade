@@ -290,7 +290,7 @@ async function workspace(locales: Partial<Record<string, string>> = {}) {
     const userId = `${member.id}_${names}`;
     await env.DB.prepare(
       `insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt", locale)
-       values (?, ?, ?, 0, ?, ?, ?)`,
+       values (?, ?, ?, 1, ?, ?, ?)`,
     )
       .bind(
         userId,

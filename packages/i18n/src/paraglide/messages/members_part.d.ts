@@ -25,6 +25,7 @@ export type Members_PartInputs = {
 * | "demote" | "Change role" |
 * | "retry" | "Try again" |
 * | "only_owner" | "You're the only owner. Make someone else an owner before you can leave or change your role." |
+* | "empty_invite" | "Nobody else is in this workspace yet. Invite your team, so there's someone to put on call." |
 * | * | "Members" |
 *
 * @param {Members_PartInputs} inputs

@@ -41,6 +41,10 @@ export function authErrorMessage(error: AuthFailure, during: "sign-in" | "sign-u
   const status = error?.status ?? 0;
   if (status === 0) return m.auth_error_network();
   if (status === 429) return m.auth_error_rate_limited();
+  // Brigade signs unverified accounts in (RFC 0002 "Auth"); a server that requires verification answers this.
+  if (during === "sign-in" && error?.code === "EMAIL_NOT_VERIFIED") {
+    return m.auth_error_email_not_verified();
+  }
   if (during === "sign-in" && (status === 401 || error?.code === "INVALID_EMAIL_OR_PASSWORD")) {
     return m.auth_error_credentials();
   }

@@ -169,8 +169,9 @@ async function sendJob(
 type Recipient = { userId: string; email: string; name: string | null; locale: string | null };
 
 /**
- * The recipients' addresses, names and locales from D1, for members of the workspace only: a member removed since
- * the page is not emailed about it. D1 is the authority for addresses (the shard keeps none) and for who the owners
+ * The recipients' addresses, names and locales from D1, for members of the workspace whose address is verified
+ * only: a member removed since the page is not emailed about it, nor one who never proved their address (nothing is
+ * recorded for them: there is no email to retry). D1 is the authority for addresses (the shard keeps none) and for who the owners
  * are (the shard's list has only those who opened Brigade).
  */
 async function lookUp(
@@ -180,8 +181,10 @@ async function lookUp(
 ): Promise<Recipient[]> {
   if (!db) throw new Error("no D1 binding");
   if ("userIds" in to && to.userIds.length === 0) return [];
+  // Verified addresses only (RFC 0005 "Abuse"): an unproven address may be someone else's.
   const select = `select u.id as userId, u.email as email, u.name as name, u.locale as locale
-    from "member" m join "user" u on u.id = m.userId where m.organizationId = ?`;
+    from "member" m join "user" u on u.id = m.userId
+    where m.organizationId = ? and u.emailVerified = 1`;
   const query =
     "owners" in to
       ? db

@@ -17,8 +17,10 @@ import {
 import { isLocale, resolveLocale } from "@freecorps/brigade-i18n";
 import { expo } from "@better-auth/expo";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { organization } from "better-auth/plugins";
+import { dashboardLink, renderVerificationEmail } from "./email-templates.ts";
+import type { EmailSender } from "./email.ts";
 import { createAccessControl } from "better-auth/plugins/access";
 import { adminAc, defaultStatements, ownerAc } from "better-auth/plugins/organization/access";
 
@@ -90,6 +92,12 @@ export type AuthBindings = {
    * deleted again (see createAuth) and the request fails, so no workspace exists without its shard.
    */
   onWorkspaceCreated?: (workspace: { id: string; name: string; ownerId: string }) => Promise<void>;
+  /**
+   * The email sender (`emailSender(env)`), for verification emails; none when email is not set up, and then none is
+   * sent (and asking again answers `EMAIL_NOT_CONFIGURED`). `dashboardUrl`: the dashboard's origin for the link;
+   * without it, the origin the request came through (the dashboard's `/api/auth`).
+   */
+  email?: { sender: EmailSender | undefined; dashboardUrl?: string };
 };
 
 /**
@@ -115,6 +123,17 @@ export const UNLIMITED_READS = [
  * other site. A browser page cannot send it: browsers set `Origin` themselves, and the plugin never replaces one.
  */
 export const APP_ORIGIN = "brigade://";
+/** How long an email verification link works, in seconds. */
+export const VERIFICATION_TTL_S = 24 * 60 * 60;
+/**
+ * Verification emails one signed-in user may ask for again (`/send-verification-email`) per window, on top of the
+ * per-IP rule (`VERIFICATION_IP_LIMIT`): counted per user in D1's `rateLimit` table, so asking from many addresses
+ * floods nobody's inbox. The one sent at sign-up does not count.
+ */
+export const VERIFICATION_RESEND_LIMIT = { window: 15 * 60, max: 3 };
+export const VERIFICATION_IP_LIMIT = { window: 60, max: 3 };
+/** The answer when a verification email is asked for and email is not set up. */
+export const EMAIL_NOT_CONFIGURED_CODE = "EMAIL_NOT_CONFIGURED";
 /** Workspaces one user may belong to; bounds `POST /workspaces` (each one also provisions a shard). */
 export const WORKSPACE_LIMIT = 10;
 /** Better Auth's routes that set a user's name. */
@@ -131,7 +150,49 @@ export const INVALID_LOCALE_CODE = "INVALID_LOCALE";
  * RFC 0008): one of Brigade's locales exactly, or null on `/update-user` to unset it; a sign-up without one takes
  * the closest to the request's first `Accept-Language`, if any.
  */
-const checkName = createAuthMiddleware(async (ctx) => {
+const beforeHook = (bindings: AuthBindings) =>
+  createAuthMiddleware(async (ctx) => {
+    if (ctx.path === "/send-verification-email") {
+      // Only for oneself: Better Auth would otherwise email any unverified address it is given, signed in or not.
+      const session = await getSessionFromCtx(ctx);
+      if (!session)
+        throw APIError.from("UNAUTHORIZED", { code: "UNAUTHORIZED", message: "Sign in" });
+      if (!bindings.email?.sender) {
+        throw APIError.from("SERVICE_UNAVAILABLE", {
+          code: EMAIL_NOT_CONFIGURED_CODE,
+          message: "Email is not set up",
+        });
+      }
+      const key = `verify:${session.user.id}`;
+      const now = Date.now();
+      const { adapter } = ctx.context;
+      const row = await adapter.findOne<{ count: number; lastRequest: number }>({
+        model: "rateLimit",
+        where: [{ field: "key", value: key }],
+      });
+      const fresh = !row || now - row.lastRequest > VERIFICATION_RESEND_LIMIT.window * 1000;
+      if (!fresh && row.count >= VERIFICATION_RESEND_LIMIT.max) {
+        throw APIError.from("TOO_MANY_REQUESTS", {
+          code: "TOO_MANY_REQUESTS",
+          message: "Too many verification emails",
+        });
+      }
+      if (!row) {
+        await adapter.create({ model: "rateLimit", data: { key, count: 1, lastRequest: now } });
+      } else {
+        // The window starts at the first request in it, so `lastRequest` moves only when a new one starts.
+        await adapter.update({
+          model: "rateLimit",
+          where: [{ field: "key", value: key }],
+          update: fresh ? { count: 1, lastRequest: now } : { count: row.count + 1 },
+        });
+      }
+      return;
+    }
+    return checkName(ctx);
+  });
+
+const checkName = async (ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) => {
   if (!(NAME_PATHS as readonly string[]).includes(ctx.path)) return;
   const body: unknown = ctx.body;
   if (typeof body !== "object" || body === null) return;
@@ -155,7 +216,16 @@ const checkName = createAuthMiddleware(async (ctx) => {
   }
   if (Object.keys(checked).length === 0) return;
   return { context: { body: { ...body, ...checked } } };
-});
+};
+
+/**
+ * Where the verification page sends the user after: a dashboard path of Brigade's own (the invitation they were
+ * answering), never another site. Undefined for anything else.
+ */
+export function safeNext(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  return /^\/invitations\/inv_[0-9A-HJKMNP-TV-Z]{26}$/.test(value) ? value : undefined;
+}
 
 export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
   const random: RandomBytes = (length) => crypto.getRandomValues(new Uint8Array(length));
@@ -164,7 +234,43 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
     basePath: AUTH_BASE_PATH,
     secret: bindings.secret,
     database: bindings.database,
+    // Unverified accounts sign in and use their own workspaces; verification gates email, inviting and joining
+    // (RFC 0002 "Auth").
     emailAndPassword: { enabled: true },
+    emailVerification: {
+      sendOnSignUp: true,
+      expiresIn: VERIFICATION_TTL_S,
+      // Never awaited by the request (Better Auth runs it in `backgroundTasks`), and never throws.
+      sendVerificationEmail: async ({ user, token, url }, request) => {
+        const sender = bindings.email?.sender;
+        if (!sender) return;
+        const next = safeNext(new URL(url).searchParams.get("callbackURL"));
+        const link = dashboardLink(
+          "/verify-email",
+          { token, ...(next ? { next } : {}) },
+          bindings.email?.dashboardUrl,
+          request ? new URL(request.url).origin : undefined,
+        );
+        if (!link) return;
+        const locale = Reflect.get(user, "locale");
+        const result = await sender.send(
+          renderVerificationEmail(
+            { email: user.email, ...(user.name ? { name: user.name } : {}) },
+            link,
+            resolveLocale(typeof locale === "string" ? locale : undefined),
+          ),
+        );
+        if (!result.ok) {
+          console.error(
+            JSON.stringify({
+              message: "verification email refused",
+              sender: sender.id,
+              code: result.code,
+            }),
+          );
+        }
+      },
+    },
     // The language Brigade writes to the user in (emails, RFC 0008); null: English. Checked by `checkName`.
     user: {
       additionalFields: {
@@ -173,7 +279,7 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
     },
     // The dashboard is same-origin (Better Auth trusts its own base URL); the mobile app is `APP_ORIGIN`.
     trustedOrigins: [APP_ORIGIN],
-    hooks: { before: checkName },
+    hooks: { before: beforeHook(bindings) },
     // Stated, not left to the default: the mobile app keeps a session from an offline sign-out this long at most.
     session: { expiresIn: SESSION_LIFETIME_S },
     // Off by default on Workers (Better Auth enables it only when NODE_ENV is "production"). The in-memory store
@@ -182,7 +288,10 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore) {
       enabled: true,
       storage: "database",
       ...RATE_LIMIT,
-      customRules: Object.fromEntries(UNLIMITED_READS.map((path) => [path, false as const])),
+      customRules: {
+        ...Object.fromEntries(UNLIMITED_READS.map((path) => [path, false as const])),
+        "/send-verification-email": VERIFICATION_IP_LIMIT,
+      },
     },
     databaseHooks: {
       session: {

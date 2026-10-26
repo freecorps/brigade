@@ -49,6 +49,8 @@ function monitor(overrides: Partial<MonitorRow>): MonitorRow {
     method: "GET",
     expectedStatus: null,
     keyword: null,
+    host: null,
+    port: null,
     timeoutSeconds: 10,
     regions: ["wnam", "enam", "weur"],
     intervalSeconds: 60,
@@ -754,4 +756,62 @@ test("a pause prompt open when someone else pauses the monitor does not come bac
     await view.flush();
   }
   expect(item().textContent).not.toContain("Pause this monitor?");
+});
+
+test("a TCP port: host and port fields, a refused host says what to fix, and the row reads host:port", async () => {
+  const view = await mount();
+  await click(button("Add monitor"));
+  const kind = $$('input[type="radio"]').find(
+    (radio) => (radio as HTMLInputElement).value === "tcp",
+  );
+  await click(kind);
+  const form = document.querySelector("form")!;
+  // Host and port instead of the URL; the regions and the timeout stay.
+  expect(field("URL")).toBeUndefined();
+  expect(field("Host")).toBeDefined();
+  expect(field("Port")).toBeDefined();
+  expect(form.textContent).toContain("How long the connection may take to open.");
+  expect($$('input[type="checkbox"]', form)).toHaveLength(6);
+
+  act(() => setValue(field("Name"), "Database"));
+  act(() => setValue(field("Host"), "10.0.0.5"));
+  act(() => setValue(field("Port"), "25"));
+  await click(button("Create monitor"));
+  await frame();
+  expect(form.textContent).toContain(
+    "Use a public host name or IP address, without http:// or a port.",
+  );
+  expect(document.activeElement).toBe(field("Host"));
+  act(() => setValue(field("Host"), "db.example.com"));
+  await click(button("Create monitor"));
+  await frame();
+  expect(form.textContent).toContain(
+    "Use a port from 1 to 65535. Port 25 is blocked by Cloudflare.",
+  );
+  expect(document.activeElement).toBe(field("Port"));
+
+  act(() => setValue(field("Port"), "5432"));
+  await click(button("Create monitor"));
+  await view.flush();
+  const [created] = view.shard.store.scan("monitors");
+  expect(created).toMatchObject({
+    kind: "tcp",
+    name: "Database",
+    host: "db.example.com",
+    port: 5432,
+    url: null,
+    regions: ["enam", "weur"],
+  });
+  const item = document.querySelector(`[data-monitor="${created!.id}"]`)!;
+  expect(item.textContent).toContain("db.example.com:5432");
+
+  // Editing keeps the kind and opens with its host and port.
+  await click(button("Edit", item));
+  expect(item.querySelector("form")?.textContent).toContain("TCP port");
+  expect(field("Host").value).toBe("db.example.com");
+  act(() => setValue(field("Port"), "5433"));
+  expect(item.textContent).toContain("Saving starts its checks over");
+  await click(button("Save changes", item));
+  await view.flush();
+  expect(view.shard.store.get("monitors", created!.id)).toMatchObject({ port: 5433 });
 });

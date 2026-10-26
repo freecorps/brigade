@@ -8,6 +8,7 @@ export type Monitor_KindInputs = {
 * | kind | output |
 * | --- | --- |
 * | "http" | "HTTP check" |
+* | "tcp" | "TCP port" |
 * | * | "Heartbeat" |
 *
 * @param {Monitor_KindInputs} inputs

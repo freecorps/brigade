@@ -5,6 +5,7 @@ import {
   MAX_INTERVAL_SECONDS,
   MAX_TIMEOUT_SECONDS,
   MIN_INTERVAL_SECONDS,
+  MONITOR_HOST_MAX,
   MONITOR_KEYWORD_MAX,
   MONITOR_KINDS,
   MONITOR_NAME_MAX,
@@ -51,6 +52,8 @@ export const CONFIRM_DESTRUCTIVE =
 const FIELD_KEYS: Record<DraftField, string> = {
   name: "name",
   url: "url",
+  host: "host",
+  port: "port",
   expectedStatus: "expected_status",
   keyword: "keyword",
   intervalSeconds: "interval",
@@ -80,7 +83,7 @@ export type MonitorFormMode =
 export type DiscardPrompt = { onDiscard: () => void; onKeep: () => void; asked: number };
 
 /**
- * A new HTTP check or heartbeat, or an existing one's settings. Checked on submit with the mutation's own validator,
+ * A new HTTP check, TCP port or heartbeat, or an existing one's settings. Checked on submit with the mutation's own validator,
  * so a value the shard would refuse is marked in its field, with what to fix, and the draft stays. Creating:
  * `onCreate` sends it, and the form closes when it resolves true. Editing: the values are the monitor's, an edit
  * that changes nothing just closes, saving says when it starts the checks over, and Delete asks first, saying what
@@ -172,6 +175,9 @@ export function MonitorForm({
   };
 
   const http = draft.kind === "http";
+  const tcp = draft.kind === "tcp";
+  /** Checked from the probe regions, with a timeout: HTTP and TCP. */
+  const probed = http || tcp;
   const restarts = editing ? editRestarts(rebaseDraft(draft, initial, editing), editing) : false;
   return (
     <form
@@ -213,7 +219,7 @@ export function MonitorForm({
           <div
             role="radiogroup"
             aria-labelledby={kindId}
-            className="grid w-full grid-cols-2 divide-x divide-border overflow-hidden rounded-md bg-card outline-1 -outline-offset-1 outline-input sm:w-fit"
+            className="grid w-full grid-cols-3 divide-x divide-border overflow-hidden rounded-md bg-card outline-1 -outline-offset-1 outline-input sm:w-fit"
           >
             {MONITOR_KINDS.map((kind) => (
               <label
@@ -292,6 +298,33 @@ export function MonitorForm({
               />
             ) : null}
           </div>
+        </>
+      ) : null}
+
+      {tcp ? (
+        <div className="grid items-start gap-4 sm:grid-cols-[minmax(0,1fr)_9rem]">
+          <Field
+            label={m.monitor_field_label({ field: "host" })}
+            hint={m.monitor_field_hint({ field: "host" })}
+            placeholder="db.example.com"
+            maxLength={MONITOR_HOST_MAX}
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            {...text("host")}
+          />
+          <Field
+            label={m.monitor_field_label({ field: "port" })}
+            inputMode="numeric"
+            placeholder="5432"
+            maxLength={5}
+            {...text("port")}
+          />
+        </div>
+      ) : null}
+
+      {probed ? (
+        <>
           <fieldset
             className="flex flex-col gap-1.5"
             aria-describedby={invalid.has("regions") ? regionsErrorId : undefined}
@@ -366,10 +399,10 @@ export function MonitorForm({
           placeholder={String(MIN_INTERVAL_SECONDS)}
           {...text("intervalSeconds")}
         />
-        {http ? (
+        {probed ? (
           <Field
             label={m.monitor_field_label({ field: "timeout" })}
-            hint={m.monitor_field_hint({ field: "timeout" })}
+            hint={m.monitor_field_hint({ field: tcp ? "timeout_tcp" : "timeout" })}
             inputMode="numeric"
             maxLength={String(MAX_TIMEOUT_SECONDS).length}
             {...text("timeoutSeconds")}
@@ -394,7 +427,7 @@ export function MonitorForm({
               className="mb-4 rounded-md bg-card px-3 py-2 text-sm text-muted-foreground"
             >
               {m.monitor_edit({ part: "restart", name: "" })}
-              {/* `monitor.updateHttp` starts it over from Waiting but keeps its alert and incident. */}
+              {/* `monitor.updateHttp` and `updateTcp` start it over from Waiting but keeps its alert and incident. */}
               {editing && monitorAlerting(editing)
                 ? ` ${m.monitor_edit({ part: "restart_alert", name: "" })}`
                 : null}

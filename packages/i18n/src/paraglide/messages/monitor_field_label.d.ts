@@ -10,6 +10,8 @@ export type Monitor_Field_LabelInputs = {
 * | "kind" | "Monitor type" |
 * | "name" | "Name" |
 * | "url" | "URL" |
+* | "host" | "Host" |
+* | "port" | "Port" |
 * | "method" | "Method" |
 * | "expected_status" | "Expected status" |
 * | "keyword" | "Text the page must contain" |

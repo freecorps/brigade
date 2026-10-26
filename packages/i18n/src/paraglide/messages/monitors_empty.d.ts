@@ -5,7 +5,7 @@ export type Monitors_EmptyInputs = {};
 /**
 * | output |
 * | --- |
-* | "Nothing is watched yet. Add an HTTP check, or a heartbeat for jobs that should check in." |
+* | "Nothing is watched yet. Add an HTTP check, a TCP port, or a heartbeat for jobs that should check in." |
 *
 * @param {Monitors_EmptyInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

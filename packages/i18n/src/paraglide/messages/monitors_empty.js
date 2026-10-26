@@ -10,7 +10,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 /**
 * | output |
 * | --- |
-* | "Nothing is watched yet. Add an HTTP check, or a heartbeat for jobs that should check in." |
+* | "Nothing is watched yet. Add an HTTP check, a TCP port, or a heartbeat for jobs that should check in." |
 *
 * @param {Monitors_EmptyInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options
@@ -19,6 +19,6 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 export const monitors_empty = /** @type {((inputs?: Monitors_EmptyInputs, options?: { locale?: "en" | "pt-BR" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Monitors_EmptyInputs, { locale?: "en" | "pt-BR" }, {}>} */ ((inputs = {}, options = {}) => {
 	void inputs;
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
-	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("Nada é monitorado ainda. Adicione uma verificação HTTP, ou um heartbeat para tarefas que devem dar sinal de vida.")
-	return /** @type {LocalizedString} */ ("Nothing is watched yet. Add an HTTP check, or a heartbeat for jobs that should check in.")
+	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("Nada é monitorado ainda. Adicione uma verificação HTTP, uma porta TCP, ou um heartbeat para tarefas que devem dar sinal de vida.")
+	return /** @type {LocalizedString} */ ("Nothing is watched yet. Add an HTTP check, a TCP port, or a heartbeat for jobs that should check in.")
 });

@@ -96,6 +96,7 @@ export function MonitorsCard() {
   const updateHttp = useMutation("monitor.updateHttp");
   const updateTcp = useMutation("monitor.updateTcp");
   const updateHeartbeat = useMutation("monitor.updateHeartbeat");
+  const rotateHeartbeat = useMutation("monitor.rotateHeartbeat");
   const setPaused = useMutation("monitor.setPaused");
   const remove = useMutation("monitor.delete");
   const [adding, setAdding] = useState(false);
@@ -109,8 +110,15 @@ export function MonitorsCard() {
   const onChanged = useCallback((value: boolean) => {
     changed.current = value;
   }, []);
-  /** The heartbeat URL, shown once after its monitor was created (only its hash is stored). */
-  const [ping, setPing] = useState<{ url: string; interval: number } | null>(null);
+  /**
+   * The heartbeat URL, shown once after its monitor was created or given a new URL (only its hash is stored).
+   * `rotated` names the monitor whose URL was replaced: the panel says which, and focus goes back to its row.
+   */
+  const [ping, setPing] = useState<{
+    url: string;
+    interval: number;
+    rotated?: { id: string; name: string };
+  } | null>(null);
   const addRef = useRef<HTMLButtonElement>(null);
   /** Set when the form closes, so focus goes back to "Add monitor" once it is mounted again. */
   const restoreFocus = useRef(false);
@@ -221,11 +229,40 @@ export function MonitorsCard() {
     // The row is gone: focus goes to the card's own action.
     requestAnimationFrame(() => addRef.current?.focus());
   };
+  /**
+   * A heartbeat's new URL: made and hashed here like at create, so the shard never sees it, and shown once above the
+   * list (its Copy button takes focus). The form closes as it is sent; a refusal takes the URL back, since it would
+   * never work.
+   */
+  const onRotate = async (row: MonitorRow) => {
+    setRefused(null);
+    let heartbeat: Awaited<ReturnType<typeof newHeartbeat>>;
+    try {
+      heartbeat = await newHeartbeat(window.location.origin, workspaceId, row.id);
+    } catch {
+      setRefused(m.monitor_change_failed({ name: row.name, reason: m.sync_error_internal() }));
+      return;
+    }
+    void rotateHeartbeat({ id: row.id, tokenHash: heartbeat.tokenHash }).then((outcome) => {
+      if (!report(row.name)(outcome)) {
+        setPing((shown) => (shown?.url === heartbeat.url ? null : shown));
+      }
+    });
+    changed.current = false;
+    setPending(null);
+    setEditing(null);
+    setPing({
+      url: heartbeat.url,
+      interval: row.intervalSeconds,
+      rotated: { id: row.id, name: row.name },
+    });
+  };
   const editMode = (row: MonitorRow): MonitorFormMode => ({
     kind: "edit",
     row,
     onSave: (checked) => onSave(row, checked),
     onDelete: () => onDelete(row),
+    onRotate: () => void onRotate(row),
   });
 
   // The monitor being edited was deleted elsewhere: its form went with its row, so focus goes to the card's action.
@@ -288,11 +325,22 @@ export function MonitorsCard() {
         ) : null}
         {ping ? (
           <PingUrl
-            {...ping}
+            // A new URL is a new panel: not copied yet.
+            key={ping.url}
+            url={ping.url}
+            interval={ping.interval}
+            name={ping.rotated?.name ?? null}
             locale={locale}
             onDismiss={() => {
+              const id = ping.rotated?.id;
               setPing(null);
-              requestAnimationFrame(() => addRef.current?.focus());
+              // Back to the row whose URL it was, or to the card's action.
+              requestAnimationFrame(() => {
+                const edit = id
+                  ? document.querySelector<HTMLElement>(`[data-monitor="${id}"] [data-action="edit"]`)
+                  : null;
+                (edit ?? addRef.current)?.focus();
+              });
             }}
           />
         ) : null}
@@ -694,16 +742,18 @@ function DismissableError({ children, onDismiss }: { children: string; onDismiss
 
 /**
  * The heartbeat URL, once: the shard keeps only its hash, so it cannot be shown again. Copy is the first action
- * and takes focus; closing before copying asks first.
+ * and takes focus; closing before copying asks first. `name` is set for a monitor's new URL, which the title names.
  */
 function PingUrl({
   url,
   interval,
+  name,
   locale,
   onDismiss,
 }: {
   url: string;
   interval: number;
+  name: string | null;
   locale: Locale;
   onDismiss: () => void;
 }) {
@@ -738,7 +788,11 @@ function PingUrl({
     <div className="flex flex-col gap-3 rounded-md border border-primary/40 bg-primary/5 p-3 text-sm">
       <div className="flex items-start gap-3">
         <div id={textId} className="flex min-w-0 flex-1 flex-col gap-1">
-          <p className="font-semibold">{m.monitor_heartbeat({ part: "once", interval: "" })}</p>
+          <p className="font-semibold [overflow-wrap:anywhere]">
+            {name === null
+              ? m.monitor_heartbeat({ part: "once", interval: "" })
+              : m.monitor_rotate({ part: "shown", name })}
+          </p>
           <p>{m.monitor_heartbeat({ part: "send", interval: formatSeconds(interval, locale) })}</p>
         </div>
         <Button

@@ -293,9 +293,10 @@ export class WorkspaceDO extends DurableObject<Env> {
    * `incident.ack` from a notification action (RPC from `POST /workspaces/:id/incidents/:incidentId/ack`, which
    * checked the session and read the member's role in D1; RFC 0004 "Clients"). The same named mutation, RBAC and
    * outbox event as an ack over Brigade Sync; it runs as a client mutation (never `internal`), from client id
-   * `notification`, de-duplicated by the request's key like a socket's mutation, and its patch reaches every open
-   * socket. A member removed within the tombstone is refused as their sync upgrade would be (`not_a_member`); a
-   * shard that serves another workspace, or none yet, answers `not_found`.
+   * `notification`, de-duplicated by the incident and the request's key like a socket's mutation, and its patch
+   * reaches every open socket. It stops the incident's escalation run, as any ack does. A member removed within the
+   * tombstone is refused as their sync upgrade would be (`not_a_member`); a shard that serves another workspace, or
+   * none yet, answers `not_found`.
    */
   async acknowledge(
     workspaceId: string,
@@ -308,12 +309,14 @@ export class WorkspaceDO extends DurableObject<Env> {
       return { ok: false, code: "not_a_member" };
     }
     const now = Date.now();
-    const stored = this.shard.storedResult(actor.id, NOTIFICATION_CLIENT_ID, mutationId, now);
+    // The key names a tap on one incident's page: the same key for another incident is another ack.
+    const id = `${incidentId}:${mutationId}`;
+    const stored = this.shard.storedResult(actor.id, NOTIFICATION_CLIENT_ID, id, now);
     const { result, changes } = stored
       ? { result: stored, changes: [] }
       : this.shard.mutate({
           clientId: NOTIFICATION_CLIENT_ID,
-          mutationId,
+          mutationId: id,
           actor,
           name: "incident.ack",
           args: { id: incidentId },

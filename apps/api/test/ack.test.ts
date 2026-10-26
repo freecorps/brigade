@@ -2,10 +2,18 @@
 // through the Worker, authenticated like the sync upgrade, running `incident.ack` in the shard as the member with
 // its RBAC, its event through the outbox and its patch to open sockets.
 import { env, exports } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
-import { newId, type Actor } from "@freecorps/brigade-schema";
+import {
+  createExecutionContext,
+  createMessageBatch,
+  getQueueResult,
+  runDurableObjectAlarm,
+  runInDurableObject,
+} from "cloudflare:test";
+import { generateRecipient, toBase64url } from "@freecorps/brigade-push";
+import { MONITOR_ACTOR, newId, type Actor } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
+import { consumeEvents, type Fetch } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import { IDEMPOTENCY_KEY_HEADER, type WorkspaceDO } from "../src/workspace.ts";
@@ -16,6 +24,7 @@ const random = (n: number) => crypto.getRandomValues(new Uint8Array(n));
 
 const open: WebSocket[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const ws of open.splice(0)) {
     try {
       ws.close(1000, "done");
@@ -95,17 +104,18 @@ async function team() {
       ),
     );
   const owner: Actor = { kind: "user", id: ana!.id, role: "owner" };
-  const run = (name: string, args: unknown) =>
+  const run = (name: string, args: unknown, actor: Actor = owner, internal = false) =>
     withShard((shard) => {
       const { result } = shard.mutate({
         clientId: "test",
         mutationId: newId("mut", Date.now(), random),
-        actor: owner,
+        actor,
         name,
         args,
         now: Date.now(),
+        internal,
       });
-      expect(result.ok).toBe(true);
+      expect(result, name).toMatchObject({ ok: true });
     });
   const incident = newId("inc", Date.now(), random);
   await run("incident.declare", { id: incident, title: "Checkout down", severity: "sev1" });
@@ -138,6 +148,41 @@ const acks = (t: Team) =>
       .map((row) => JSON.parse(row.event) as BrigadeEvent)
       .filter((event) => event.type === "incident.acknowledged"),
   );
+
+const owner = (t: Team): Actor => ({ kind: "user", id: t.ana.id, role: "owner" });
+
+const events = (t: Team, subject: string) =>
+  t.withShard((_shard, state) =>
+    state.storage.sql
+      .exec<{ event: string }>("select event from outbox order by seq")
+      .toArray()
+      .map((row) => JSON.parse(row.event) as BrigadeEvent)
+      .filter((event) => event.subject === subject),
+  );
+
+/** A relay that accepts every push and remembers which device tokens it got. */
+function relay() {
+  const tokens: string[] = [];
+  const send: Fetch = async (request) => {
+    tokens.push(((await request.json()) as { deviceToken: string }).deviceToken);
+    return Response.json({ status: 200 });
+  };
+  return { tokens, send };
+}
+
+/** Hands one event to the notifier, as the Queue would. */
+async function deliver(event: BrigadeEvent, send: Fetch) {
+  const batch = createMessageBatch("brigade-events", [
+    { id: "msg-0", timestamp: new Date(), attempts: 1, body: event },
+  ]);
+  const ctx = createExecutionContext();
+  await consumeEvents(
+    batch,
+    { WORKSPACE: env.WORKSPACE, RELAY_URL: "https://relay.test", RELAY_SEND_TOKEN: "test-token" },
+    send,
+  );
+  return getQueueResult(batch, ctx);
+}
 
 const incidentRow = (t: Team) => t.withShard((shard) => shard.store.get("incidents", t.incident));
 
@@ -189,9 +234,12 @@ describe("POST /workspaces/:id/incidents/:incidentId/ack", () => {
     const viewer = await ack(t, t.duda);
     expect(viewer.status).toBe(403);
     expect(await viewer.json()).toEqual({ error: "forbidden" });
+    const shards = vi.spyOn(env.WORKSPACE, "getByName");
     const outsider = await ack(t, t.eva);
     expect(outsider.status).toBe(403);
     expect(await outsider.json()).toEqual({ error: "not_a_member" });
+    expect(shards).not.toHaveBeenCalled();
+    shards.mockRestore();
     expect((await incidentRow(t))?.acknowledgedAt).toBeNull();
     expect(await acks(t)).toHaveLength(0);
   });
@@ -218,6 +266,101 @@ describe("POST /workspaces/:id/incidents/:incidentId/ack", () => {
     const unknown = await ack(t, t.caio, { incident: newId("inc", Date.now(), random) });
     expect(unknown.status).toBe(404);
     expect(await acks(t)).toHaveLength(0);
+  });
+
+  test("the same key on another incident's page acknowledges that incident, not answered with the first's", async () => {
+    const t = await team();
+    const second = newId("inc", Date.now(), random);
+    await t.run("incident.declare", { id: second, title: "Search is slow", severity: "sev2" });
+    expect((await ack(t, t.caio, { key: "tap-1" })).status).toBe(200);
+    const other = await ack(t, t.caio, { key: "tap-1", incident: second });
+    expect(other.status).toBe(200);
+    const row = await t.withShard((shard) => shard.store.get("incidents", second));
+    expect(row?.acknowledgedBy).toBe(t.caio.id);
+    expect((await acks(t)).map((event) => event.subject).sort()).toEqual(
+      [t.incident, second].sort(),
+    );
+  });
+
+  test("an incident of another workspace is not found, and stays unacknowledged", async () => {
+    const t = await team();
+    const elsewhere = await team();
+    const response = await ack(t, t.caio, { incident: elsewhere.incident });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "not_found" });
+    expect((await incidentRow(elsewhere))?.acknowledgedAt).toBeNull();
+    expect(await acks(t)).toHaveLength(0);
+    expect(await acks(elsewhere)).toHaveLength(0);
+  });
+
+  test("ends a running escalation: the run is acknowledged, its timer cleared, and a level already queued pages nobody", async () => {
+    const t = await team();
+    const caio: Actor = { kind: "user", id: t.caio.id, role: "responder" };
+    for (const [actor, name] of [
+      [owner(t), "Ana"],
+      [caio, "Caio"],
+    ] as const) {
+      await t.run("member.sync", { id: actor.id, name, role: actor.role }, actor, true);
+      const recipient = await generateRecipient();
+      await t.run(
+        "device.register",
+        {
+          id: newId("dev", Date.now(), random),
+          platform: "ios",
+          environment: "sandbox",
+          pushToken: toBase64url(random(32)).replace(/[-_]/g, "a"),
+          voipToken: null,
+          publicKey: toBase64url(recipient.publicKey),
+        },
+        actor,
+        true,
+      );
+    }
+    // Caio first, then Ana, 5 minutes each.
+    await t.run("escalation.createPolicy", {
+      id: newId("esc", Date.now(), random),
+      name: "Checkout",
+      levels: [caio.id, t.ana.id].map((id) => ({
+        id: newId("lvl", Date.now(), random),
+        targets: [{ kind: "member", id }],
+        timeoutMinutes: 5,
+      })),
+      repeat: 3,
+      isDefault: true,
+    });
+    const incident = newId("inc", Date.now(), random);
+    await t.run(
+      "incident.declare",
+      { id: incident, title: "Checkout is down", severity: "sev1" },
+      MONITOR_ACTOR,
+      true,
+    );
+    const declared = (await events(t, incident)).find((e) => e.type === "incident.declared")!;
+    await deliver(declared, relay().send);
+    const escalation = () =>
+      t.withShard((shard) => shard.store.get("incidents", incident)?.escalation);
+    expect(await escalation()).toMatchObject({ status: "running" });
+    // Level 1 times out: the alarm queues level 2.
+    await t.withShard((shard) => {
+      const at = Date.now() - 1;
+      const row = shard.store.get("incidents", incident)!;
+      shard.store.update("incidents", incident, { escalation: { ...row.escalation!, nextAt: at } });
+      shard.store.update("escalation_timers", incident, { at });
+    });
+    expect(await runDurableObjectAlarm(t.stub)).toBe(true);
+    const paged = (await events(t, incident)).filter((e) => e.type === "escalation.paged");
+    expect(paged).toHaveLength(2);
+
+    expect((await ack(t, t.caio, { incident })).status).toBe(200);
+    expect(await escalation()).toMatchObject({ status: "acknowledged", nextAt: null });
+    expect(await t.withShard((shard) => shard.store.scan("escalation_timers"))).toEqual([]);
+    const { tokens, send } = relay();
+    await deliver(paged[1]!, send);
+    expect(tokens).toEqual([]);
+    await runDurableObjectAlarm(t.stub);
+    expect((await events(t, incident)).filter((e) => e.type === "escalation.paged")).toHaveLength(
+      2,
+    );
   });
 
   test("refuses no session, another site, a missing or malformed key, bad ids and other methods", async () => {

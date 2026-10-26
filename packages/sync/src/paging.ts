@@ -231,6 +231,8 @@ export function whyPaged(input: WhyInput): WhyPaged {
   let verdict: WhyVerdict;
   if (best === "delivered" || best === "accepted") verdict = best;
   else if (deliveries.some(({ row, stuck }) => row.error === null && !stuck)) verdict = "sending";
+  // A send that failed is a concrete error; it comes before a phone the page never went out to.
+  else if (deliveries.some(({ row }) => row.error !== null)) verdict = "failed";
   else if (deliveries.some(({ stuck }) => stuck)) verdict = "stuck";
   else if (deliveries.length > 0) verdict = "failed";
   else if (misses.length > 0) verdict = "missed";

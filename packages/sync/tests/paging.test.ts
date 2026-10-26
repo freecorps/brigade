@@ -174,6 +174,18 @@ describe("whyPaged", () => {
     expect(whyPaged(input({ deliveries: [planned] })).verdict).toBe("sending");
   });
 
+  test("a phone whose send failed is failed, even when another phone's page is stuck", () => {
+    const stuckRow = delivery({ sentAt: null, acceptedAt: null, attempts: 0 });
+    const failedRow = delivery({
+      id: `${INC}:${RUN}:dev_01JBDDDDDDDDDDDDDDDDDDDDDD`,
+      deviceId: "dev_01JBDDDDDDDDDDDDDDDDDDDDDD",
+      acceptedAt: null,
+      error: "relay_unreachable",
+    });
+    const why = whyPaged(input({ deliveries: [stuckRow, failedRow], now: T + PAGE_STUCK_MS }));
+    expect(why.verdict).toBe("failed");
+  });
+
   test("planned and never sent past the retry window: stuck, not sending forever", () => {
     const planned = delivery({ sentAt: null, acceptedAt: null, attempts: 0 });
     const at = (now: number) => whyPaged(input({ deliveries: [planned], now }));

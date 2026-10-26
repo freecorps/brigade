@@ -28,7 +28,7 @@ export interface PushReceipt {
   token: string;
 }
 
-/** Longest receipt URL and token the extension accepts; a longer one is never sealed. */
+/** Longest receipt URL and token the extension accepts; `sealPush` leaves a longer one out instead of sealing it. */
 export const PUSH_RECEIPT_MAX_LENGTH = 512;
 
 /** The encrypted push as it travels: HPKE's encapsulated key and ciphertext, base64url. */
@@ -65,7 +65,8 @@ export async function sealPush(
       body,
       incident,
       workspace,
-      receipt: receipt && { url: receipt.url, token: receipt.token },
+      // One the extension would drop anyway only costs bytes a page may need.
+      receipt: receipt && parseReceipt(receipt) && { url: receipt.url, token: receipt.token },
     }),
   );
   if (plaintext.length > PUSH_PLAINTEXT_MAX_BYTES) {

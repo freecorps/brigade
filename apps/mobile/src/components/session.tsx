@@ -310,7 +310,7 @@ function ActiveWorkspace({
   const register = useMemo(
     () =>
       sync ? (proceed: () => boolean) => registerPhone(phoneDeps(sync, server), proceed) : null,
-    [sync],
+    [sync, server],
   );
   const {
     paging,

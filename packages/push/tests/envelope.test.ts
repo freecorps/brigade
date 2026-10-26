@@ -67,6 +67,21 @@ describe("sealPush and openPush", () => {
     }
   });
 
+  test("a receipt the extension would drop is left out of the sealed page, not sealed", async () => {
+    const recipient = await generateRecipient();
+    const content = {
+      title: "SEV1",
+      body: "Checkout down",
+      receipt: { url: "https://brigade.example/api/receipts", token: "x".repeat(513) },
+    };
+    const opened = await openPush(
+      recipient,
+      await sealPush(toBase64url(recipient.publicKey), content),
+    );
+    expect(opened.receipt).toBeUndefined();
+    expect(opened.title).toBe("SEV1");
+  });
+
   test("another device cannot open it", async () => {
     const a = await generateRecipient();
     const b = await generateRecipient();

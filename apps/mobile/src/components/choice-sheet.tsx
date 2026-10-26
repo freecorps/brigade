@@ -127,6 +127,8 @@ function DialogRow({
         minHeight: spacing[12],
         justifyContent: "center",
         paddingHorizontal: spacing[6],
+        // A long name wraps; it keeps clear of the separators.
+        paddingVertical: spacing[2],
         backgroundColor: pressed ? colors.accent : "transparent",
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: colors.border,

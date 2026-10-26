@@ -11,6 +11,7 @@ export * from "./incidents.ts";
 export * from "./timeline.ts";
 export * from "./workspaces.ts";
 export * from "./members.ts";
+export * from "./invitations.ts";
 export * from "./monitors.ts";
 export * from "./zoned.ts";
 export * from "./schedules.ts";

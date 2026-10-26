@@ -174,9 +174,22 @@ export class Membership {
       closeSockets(judge: (actor: Actor) => SocketVerdict | undefined): void;
       /** Brings the shard's alarm forward to `at` (or earlier); the alarm calls `repairDue`. */
       wake(at: number): void;
+      /**
+       * More repair the same alarm runs after the reconcile (owed invitation mutations, src/invitations.ts): true
+       * when nothing is left. Never throws.
+       */
+      repairMore?(): boolean;
     },
   ) {
     options.sql.exec(REPAIR_SCHEMA);
+  }
+
+  /**
+   * Runs `task` after every earlier one of this shard's member changes, reconciles and invitation changes
+   * (src/invitations.ts) has finished: the member lock.
+   */
+  locked<T>(task: () => Promise<T>): Promise<T> {
+    return this.exclusive(task);
   }
 
   /** Runs `task` after every earlier one of this shard's member changes and reconciles has finished. */
@@ -561,7 +574,7 @@ export class Membership {
    * records `targetId`, the member whose change the shard missed, so a workspace too large to reconcile still
    * catches up on them.
    */
-  private armRepair(now: number, targetId?: string): void {
+  armRepair(now: number, targetId?: string): void {
     try {
       if (targetId !== undefined) {
         this.options.sql.exec(
@@ -606,7 +619,10 @@ export class Membership {
     const at = this.repairAt();
     if (at === null) return null;
     if (at > now) return at;
-    if (workspaceId === undefined || (await this.reconcile(workspaceId))) {
+    const reconciled = workspaceId === undefined || (await this.reconcile(workspaceId));
+    // Run whether or not the reconcile worked: it needs no D1.
+    const rest = this.options.repairMore?.() ?? true;
+    if (reconciled && rest) {
       this.setRepairAt(null);
       return null;
     }

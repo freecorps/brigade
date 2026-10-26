@@ -31,6 +31,7 @@ import {
   startEscalation,
 } from "./escalation.ts";
 import { incidentTimeline } from "./timeline.ts";
+import { invitationMutations } from "./invitations.ts";
 import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";
 import { allMembers, createWorkspace, setEmailSettings, syncMember } from "./workspaces.ts";
 
@@ -86,6 +87,7 @@ export const serverMutations = defineRegistry([
   changeMemberRole,
   removeMember,
   reconcileMembers,
+  ...invitationMutations,
   reportMonitorCheck,
   evaluateMonitor,
   expireDevice,

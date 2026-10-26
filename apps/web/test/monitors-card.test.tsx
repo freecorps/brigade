@@ -742,3 +742,16 @@ test("when the monitor being edited is deleted elsewhere, focus goes to Add moni
   expect(document.querySelector("form")).toBeNull();
   expect(document.activeElement).toBe(button("Add monitor"));
 });
+
+test("a pause prompt open when someone else pauses the monitor does not come back on resume", async () => {
+  const row = monitor({ id: newId("mon", T0, randomBytes) });
+  const view = await mount([], [row]);
+  const item = () => document.querySelector(`[data-monitor="${row.id}"]`)!;
+  await click(button("Pause", item()));
+  expect(item().textContent).toContain("Pause this monitor?");
+  for (const paused of [true, false]) {
+    expect(view.shard.write(owner, "monitor.setPaused", { id: row.id, paused }).ok).toBe(true);
+    await view.flush();
+  }
+  expect(item().textContent).not.toContain("Pause this monitor?");
+});

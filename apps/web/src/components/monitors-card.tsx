@@ -384,8 +384,9 @@ function MonitorItem({
     // The Pause button stays mounted while the prompt is open.
     pauseRef.current?.focus();
   };
-  // A pause prompt left open does not come back once the edit form closes.
-  if (edit && confirming) setConfirming(false);
+  // A pause prompt left open does not come back once the edit form closes, or after someone else paused it (it
+  // would pop up again on a later resume). Adjusted while rendering, React's pattern for state that follows props.
+  if ((edit || row.paused) && confirming) setConfirming(false);
   if (edit) {
     return (
       <li data-monitor={row.id} className="px-4 py-3 sm:px-6">

@@ -92,15 +92,17 @@ D1: a D1 outage must not become a reason a page is late or missing. How the copy
 - **Through Brigade** (the dashboard's Members section): D1 first, then, in one shard transaction, the role changes
   (`member.role_changed`; demoted to viewer, they are no longer paged) or the member's row and every device of theirs
   are deleted (`member.removed`, `device.unregistered` with `member_removed` each), so no page planned after that
-  reaches them. If the shard step fails after D1 committed, the request answers `not_applied`; it is repaired by
-  sending it again or by the next sync upgrade into the workspace (below). Until one of those, the member is still
-  paged as before (the API said so: never silent).
+  reaches them. If the shard step fails after D1 committed, the request answers `not_applied` and the shard's alarm
+  reconciles with D1 within 10 s (again every 30 s while D1 fails), with no socket needed; sending the request again
+  (the leaver included, though D1 no longer has them) or the next sync upgrade repairs it sooner. Until then the
+  member is still paged as before (the API said so: never silent).
 - **Edits made outside Brigade** (straight in D1): reconciled on the next sync upgrade into the workspace by anyone
   (`member.reconcile`): a removed member's row and devices go, a changed role is copied, and their open sockets
   close. Until somebody opens Brigade, a member removed or demoted outside it is still paged (Q18).
 - Tests: `apps/api/test/members.test.ts` ("a removed member is deleted from D1 and the shard with every device, and is
-  no longer paged", "a demoted member stops being paged at once", the "when one side fails" and "edits made outside
-  Brigade" cases).
+  no longer paged", "a demoted member stops being paged at once", the "when one side fails" cases (among them "a
+  failed leave: the leaver's own retry stops their pages" and "a failed change is repaired by the shard's alarm"),
+  "rules come before any repair" and "edits made outside Brigade").
 - **A handed-over phone** (same install, so the same device id, signed in as another member) keeps paging the first
   member until it unregisters: `device.register` refuses another member's device id (`forbidden`). Signing out
   unregisters it, so the next member's sign-in registers it for them. Signing out does not wait for a registration

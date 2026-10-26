@@ -39,9 +39,10 @@ large one where most never install the app.
 
 Who counts as a member is the shard's copy of the member list, not D1 (RFC 0006 "Who is paged"). Member changes made
 through Brigade (roles, removal, leaving) update it with D1 and drop a removed member's devices at once (RFC 0003
-"Members"), and every sync upgrade into the workspace reconciles it with D1. What is left is an edit made in D1
-outside Brigade while nobody opens Brigade: that member is paged as before until someone does. Should the shard
-also reconcile on a timer (its alarm reading D1 every few minutes, off the page path), or is the next upgrade enough?
+"Members"), every sync upgrade into the workspace reconciles it with D1, and a change whose shard step failed after
+D1 committed arms the shard's alarm to reconcile within seconds. What is left is an edit made in D1 outside Brigade
+while nobody opens Brigade: that member is paged as before until someone does. Should the shard also reconcile on a
+timer (its alarm reading D1 every few minutes, off the page path), or is the next upgrade enough?
 And should the app treat `403 not_a_member` on a kept sign-out as finished, since the removal already freed the
 phone (RFC 0006 "A handed-over phone")?
 

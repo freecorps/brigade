@@ -79,8 +79,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     migrations applied.
   - Done: member management: changing roles, removing members and leaving (`/workspaces/:id/members/:userId` and
     the dashboard's Members section), D1 first and then the shard's member list and devices with
-    `member.role_changed` / `member.removed`, a reconcile with D1 on every sync upgrade, and the member's open
-    sockets closed on a change (RFC 0003 "Members").
+    `member.role_changed` / `member.removed`, a reconcile with D1 on every sync upgrade and from the shard's alarm
+    after a failed shard step, and the member's open sockets closed on a change (RFC 0003 "Members").
   - Left: invitations (with `member.added`; they need verified email), switching workspaces in the
     UI, closing open sockets on sign-out or a revoked session (RFC 0004 "Session revocation"), mobile OAuth/OIDC with PKCE
     via the system browser and QR pairing (mobile email and password sign-in is done, see the Mobile item), password reset (needs the email notifier),
@@ -94,7 +94,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     workspace whose shard was never provisioned because the Worker died between the D1 write and the RPC, or whose
     undo failed, and a shard that committed `workspace.create` before its RPC failed and was undone (it would
     announce a workspace D1 no longer has: tombstone it with a compensating event); and sign-in limits keyed by
-    account as well as IP, since 3 tries per 10 s per IP can briefly lock out a team behind one NAT.
+    account as well as IP, since 3 tries per 10 s per IP can briefly lock out a team behind one NAT; and a rate limit
+    on `PATCH`/`DELETE /workspaces/:id/members/:userId` (per member and workspace), since each call reads D1 and
+    wakes the shard.
 - [ ] Monitors (HTTP/TCP/heartbeat) with quorum → alerts → incidents
   - Done: HTTP and heartbeat monitors as mutations in `packages/schema` (owners and admins manage, everyone reads),
     one `ProbeDO` per workspace and region with `locationHint` (only the six regions where objects spawn, S2), each

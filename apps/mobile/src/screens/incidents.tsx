@@ -46,6 +46,7 @@ import {
   useNow,
 } from "@/components/incident-parts";
 import { useChoiceSheet } from "@/components/choice-sheet";
+import { OnCallStatus } from "@/components/oncall";
 import { Row, Section } from "@/components/section";
 import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
@@ -189,6 +190,7 @@ function IncidentList({ onReload }: { onReload: () => void }) {
       contentContainerStyle={[padding, { gap: spacing[6] }]}
     >
       <PagingNotice />
+      <OnCallStatus />
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing[3] }}>
         <ConnectionStatus view={view} />
         {status === "ready" ? (

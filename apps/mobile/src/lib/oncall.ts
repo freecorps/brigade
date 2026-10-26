@@ -113,7 +113,11 @@ export function onCallStatus(view: OnCallView): OnCallStatus {
  */
 export function statusTime(at: number, now: number, locale: Locale, timeZone: string): string {
   const day = (instant: number) =>
-    formatDateTime(instant, locale, timeZone, { year: "numeric", month: "numeric", day: "numeric" });
+    formatDateTime(instant, locale, timeZone, {
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+    });
   const time = formatDateTime(at, locale, timeZone, { timeStyle: "short" });
   if (day(at) === day(now)) return time;
   const date =

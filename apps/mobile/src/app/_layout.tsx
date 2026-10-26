@@ -54,6 +54,7 @@ export default function RootLayout() {
             <Stack.Protected guard={signedIn}>
               <Stack.Screen name="index" options={{ title: m.incidents_title() }} />
               <Stack.Screen name="incidents/[number]" options={{ title: "" }} />
+              <Stack.Screen name="oncall" options={{ title: m.oncall_title() }} />
               <Stack.Screen name="push" options={{ title: m.push_title() }} />
               <Stack.Screen name="call-test" options={{ title: m.call_test_title() }} />
               <Stack.Screen

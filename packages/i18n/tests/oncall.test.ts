@@ -30,7 +30,10 @@ test("times say their zone, and the viewer's own time when their clock reads dif
 test("zones read by their current name, and members by theirs or as unnamed", () => {
   expect(zoneLabel("Asia/Calcutta")).toBe("Asia/Kolkata");
   expect(zoneLabel("America/Sao_Paulo")).toBe("America/Sao Paulo");
-  const members = [{ id: "usr_ana", name: "Ana" }, { id: "usr_nameless", name: null }] as MemberRow[];
+  const members = [
+    { id: "usr_ana", name: "Ana" },
+    { id: "usr_nameless", name: null },
+  ] as MemberRow[];
   expect(memberLabel(members, "usr_ana")).toBe("Ana");
   expect(memberLabel(members, "usr_nameless")).toBe("Unnamed member");
   // Gone from the list (removed since): never a raw id.

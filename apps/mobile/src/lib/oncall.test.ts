@@ -52,7 +52,11 @@ test("on call now: until the handoff, in the schedule's own zone, and the next s
     Date.UTC(2026, 10, 2, 12),
     Date.UTC(2026, 10, 16, 12),
   ]);
-  expect(onCallStatus(view)).toEqual({ kind: "on", until: Date.UTC(2026, 9, 26, 12), schedules: 1 });
+  expect(onCallStatus(view)).toEqual({
+    kind: "on",
+    until: Date.UTC(2026, 9, 26, 12),
+    schedules: 1,
+  });
   expect(view.schedules[0]).toMatchObject({ userId: ME, override: false });
 });
 
@@ -62,7 +66,12 @@ test("not on call: the next shift, or none in the next four weeks", () => {
   expect(onCallStatus(view)).toEqual({ kind: "off", next: Date.UTC(2026, 10, 2, 12) });
   expect(view.schedules[0]).toMatchObject({ userId: "usr_bia", until: Date.UTC(2026, 10, 2, 12) });
 
-  const elsewhere = onCallView([schedule({ layers: [layer({ members: ["usr_bia"] })] })], [], ME, NOW);
+  const elsewhere = onCallView(
+    [schedule({ layers: [layer({ members: ["usr_bia"] })] })],
+    [],
+    ME,
+    NOW,
+  );
   expect(onCallStatus(elsewhere)).toEqual({ kind: "off", next: null });
   // One person holds every shift: no handoff to end theirs.
   expect(elsewhere.schedules[0]).toMatchObject({ userId: "usr_bia", until: null });
@@ -82,13 +91,25 @@ test("nobody on call: a layer with nobody is a gap, said as nobody", () => {
 
 test("an override puts the member on call, shows as theirs, and one that ended or is someone else's does not", () => {
   const mine = override({ start: NOW - HOUR, end: NOW + 4 * HOUR });
-  const theirs = override({ id: "ovr_01JB0000000000000000000002", userId: "usr_bia", start: NOW + 5 * HOUR, end: NOW + 6 * HOUR });
-  const ended = override({ id: "ovr_01JB0000000000000000000003", start: NOW - 3 * HOUR, end: NOW - 2 * HOUR });
-  const orphan = override({ id: "ovr_01JB0000000000000000000004", scheduleId: "sch_gone", start: NOW, end: NOW + HOUR });
+  const theirs = override({
+    id: "ovr_01JB0000000000000000000002",
+    userId: "usr_bia",
+    start: NOW + 5 * HOUR,
+    end: NOW + 6 * HOUR,
+  });
+  const ended = override({
+    id: "ovr_01JB0000000000000000000003",
+    start: NOW - 3 * HOUR,
+    end: NOW - 2 * HOUR,
+  });
+  const orphan = override({
+    id: "ovr_01JB0000000000000000000004",
+    scheduleId: "sch_gone",
+    start: NOW,
+    end: NOW + HOUR,
+  });
   const view = onCallView([schedule()], [mine, theirs, ended, orphan], ME, NOW);
-  expect(view.current).toEqual([
-    expect.objectContaining({ end: NOW + 4 * HOUR, override: true }),
-  ]);
+  expect(view.current).toEqual([expect.objectContaining({ end: NOW + 4 * HOUR, override: true })]);
   expect(view.schedules[0]).toMatchObject({ userId: ME, override: true, until: NOW + 4 * HOUR });
   expect(view.overrides.map((item) => item.row.id)).toEqual([mine.id]);
 });
@@ -99,12 +120,24 @@ test("on call on several schedules: until the last one hands off; one with no en
     name: "Database",
     layers: [layer({ unit: "hours", count: 12, startDate: "2026-10-27", handoffTime: "08:00" })],
   });
-  const view = onCallView([schedule({ layers: [layer({ startDate: "2026-10-26" })] }), other], [], ME, NOW);
+  const view = onCallView(
+    [schedule({ layers: [layer({ startDate: "2026-10-26" })] }), other],
+    [],
+    ME,
+    NOW,
+  );
   // Database: 08:00-20:00 São Paulo is the member's; Platform runs the week to Monday.
   expect(view.current.map((shift) => shift.schedule.name)).toEqual(["Database", "Platform"]);
-  expect(onCallStatus(view)).toEqual({ kind: "on", until: Date.UTC(2026, 10, 2, 12), schedules: 2 });
+  expect(onCallStatus(view)).toEqual({
+    kind: "on",
+    until: Date.UTC(2026, 10, 2, 12),
+    schedules: 2,
+  });
 
-  const solo = schedule({ id: "sch_01JB0000000000000000000003", layers: [layer({ members: [ME] })] });
+  const solo = schedule({
+    id: "sch_01JB0000000000000000000003",
+    layers: [layer({ members: [ME] })],
+  });
   expect(onCallStatus(onCallView([solo, other], [], ME, NOW))).toEqual({
     kind: "on",
     until: null,
@@ -125,15 +158,22 @@ test("handoffs follow the schedule's clock across a daylight saving change, and 
     Date.UTC(2026, 10, 3, 14),
   ]);
   // Kiritimati is UTC+14: its Tuesday 09:00 is Monday 19:00 UTC, so its week ends on a Monday in UTC.
-  const far = schedule({ timeZone: "Pacific/Kiritimati", layers: [layer({ startDate: "2026-10-27" })] });
+  const far = schedule({
+    timeZone: "Pacific/Kiritimati",
+    layers: [layer({ startDate: "2026-10-27" })],
+  });
   expect(onCallView([far], [], ME, NOW).current[0]?.end).toBe(Date.UTC(2026, 10, 2, 19));
 });
 
 test("a fast rotation lists only the member's next few shifts", () => {
-  const hourly = schedule({ layers: [layer({ unit: "hours", count: 1, startDate: "2026-10-27" })] });
+  const hourly = schedule({
+    layers: [layer({ unit: "hours", count: 1, startDate: "2026-10-27" })],
+  });
   const view = onCallView([hourly], [], ME, NOW);
   expect(view.next).toHaveLength(NEXT_SHOWN);
-  expect(view.next.every((shift) => shift.end !== null && shift.end - shift.start === HOUR)).toBe(true);
+  expect(view.next.every((shift) => shift.end !== null && shift.end - shift.start === HOUR)).toBe(
+    true,
+  );
 });
 
 test("status times are as short as still clear, on the viewer's clock", () => {

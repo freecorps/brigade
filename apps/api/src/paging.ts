@@ -207,14 +207,30 @@ type Recipients = { targets: PageTarget[]; noDevices: string[]; skipped: Skipped
 /**
  * Whether an `escalation.paged` event belongs to the incident's run as it is now: any page of the run under way, or
  * of the run that ended on paging everyone (a level's event still being retried when a later level ended the run
- * still pages; an ack, resolving or a reopen are the plan's to catch). One from a run since stopped (acknowledged,
- * then reopened) or replaced pages nobody.
+ * still pages). One from a run since stopped or closed (acknowledged or resolved, an ended run included, then
+ * reopened) or replaced pages nobody.
  */
 function current(event: BrigadeEvent, incident: IncidentRow): boolean {
   const data = event.data as Partial<EscalationPaged["data"]> | null;
   const run = incident.escalation;
   if (!run || data?.run !== run.eventId) return false;
   return run.status === "running" || run.status === "exhausted";
+}
+
+/**
+ * Whether `event` asked for a page the incident's last run already answered: an event from before that run started,
+ * not the one that started it, once the run is no longer under way (a SEV3 declaration still being retried after a
+ * severity raise started a run that has since ended). It starts no new run and pages nobody; it belongs to no page of
+ * the run (`pageOf`).
+ */
+function superseded(event: BrigadeEvent, run: Escalation | null | undefined): boolean {
+  return (
+    run != null &&
+    event.type !== "escalation.paged" &&
+    run.eventId !== event.id &&
+    run.status !== "running" &&
+    Date.parse(event.time) < run.startedAt
+  );
 }
 
 const fromMiss = (miss: EscalationMiss): SkippedMember => ({
@@ -258,6 +274,11 @@ export class Pager {
       return { send: false, reason: "stale" };
     }
     const run = incident.escalation;
+    if (superseded(event, run)) {
+      // An older page than the run's own, which has ended since: the run paged for it.
+      this.finish(event.id, now);
+      return { send: false, reason: "stale" };
+    }
     if (run?.eventId === event.id && run.paged > run.pages.length) {
       // A redelivery of the event that started the run, long after: the row no longer keeps its first page (only the
       // last few), and the run moved on from it many pages ago.
@@ -292,11 +313,17 @@ export class Pager {
       this.finish(event.id, now);
       return { send: false, reason: "nobody" };
     }
+    // A page made again for a lost one skips the devices the lost one reached before the Queue gave up on it.
+    const lost =
+      event.type === "escalation.paged"
+        ? (event.data as Partial<EscalationPaged["data"]> | null)?.lost
+        : undefined;
     const delivered = new Set(
       sql
         .exec<{ device_id: string }>(
-          "select device_id from page_deliveries where event_id = ?",
+          "select device_id from page_deliveries where event_id in (?, ?)",
           event.id,
+          lost ?? event.id,
         )
         .toArray()
         .map((row) => row.device_id),
@@ -516,13 +543,15 @@ export class Pager {
       open &&
       event.type !== "escalation.paged" &&
       run?.eventId !== event.id &&
-      run?.status !== "running"
+      run?.status !== "running" &&
+      !superseded(event, run)
     ) {
       this.start(event, incident, now);
     }
     if (open) this.fail(event, incident.id, null, "dead_lettered", now);
     // The lost page is still the run's last: nothing would page its members until the next level's timeout, or ever,
-    // when the run ended on it (everyone who can respond). It is paged again, on an event of its own.
+    // when the run ended on it (everyone who can respond). It is paged again, on an event of its own, once: that
+    // event lost too is only recorded (`lastPage`).
     const after = this.options.shard.store.get("incidents", incident.id)?.escalation;
     const step = after && this.lastPage(event, after);
     if (open && after && step !== undefined) {
@@ -532,7 +561,7 @@ export class Pager {
         "escalation",
         `${ended ? "fallback" : "repage"}:${after.eventId}:${step}`,
         ended ? "escalation.fallback" : "escalation.repage",
-        { incidentId: incident.id, step },
+        { incidentId: incident.id, step, lost: event.id },
         now,
       );
     }
@@ -542,7 +571,8 @@ export class Pager {
 
   /**
    * The step of `run`'s last page when `event` is that page (a level's or an end's own event, or the event that
-   * started the run while its first page is the only one): a page the dead-letter consumer can page again.
+   * started the run while its first page is the only one): a page the dead-letter consumer can page again. Not a page
+   * that was itself made again (`lost`): a lost page is paged again once.
    */
   private lastPage(event: BrigadeEvent, run: Escalation): number | undefined {
     const last = run.pages[run.pages.length - 1];
@@ -551,6 +581,7 @@ export class Pager {
     if ((run.status === "exhausted") !== (last.level === null)) return undefined;
     if (event.type === "escalation.paged") {
       const data = event.data as Partial<EscalationPaged["data"]> | null;
+      if (data?.lost !== undefined) return undefined;
       return data?.run === run.eventId && data.step === run.paged ? run.paged : undefined;
     }
     return run.eventId === event.id && run.paged === 1 ? 1 : undefined;

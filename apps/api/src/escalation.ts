@@ -104,7 +104,13 @@ export class Escalations {
         NOTIFIER_ACTOR,
       );
       if (now - since >= ESCALATION_STALL_MS) {
-        let fallback = this.run("escalation", `fallback:${key}`, "escalation.fallback", args, now);
+        let fallback = this.run(
+          "escalation",
+          `fallback:${key}`,
+          "escalation.fallback",
+          { ...args, lost: null },
+          now,
+        );
         if (fallback.ok && this.stillDue(timer.id, step, now)) {
           fallback = { ok: false, code: "not_advanced" };
         }

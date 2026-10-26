@@ -654,6 +654,8 @@
         "kind=escalated_everyone": "Nenhum nível alcançou ninguém, então todos que podem responder foram chamados",
         "kind=escalated_everyone_later": "Nenhum nível seguinte alcançou ninguém, então todos que podem responder foram chamados",
         "kind=escalated_started_aware": "Nível {a}: {b}",
+        "kind=escalated_again": "Nível {a} chamado de novo: a chamada anterior se perdeu",
+        "kind=escalated_everyone_again": "Todos que podem responder chamados de novo: a chamada anterior se perdeu",
         "kind=page_nobody_else": "Ninguém mais foi chamado: só quem declarou pode responder",
         "kind=escalation_exhausted": "Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados",
         "kind=escalated_everyone_stalled": "Um nível de escalonamento continuou falhando, então todos que podem responder foram chamados",

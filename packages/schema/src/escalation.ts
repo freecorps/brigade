@@ -3,7 +3,7 @@
 // A level is resolved when it fires: schedules to whoever is on call at that instant. A level nobody on it can be
 // reached at is skipped at once; when no level is left, when every level and repeat went unacknowledged, or when a
 // level keeps failing to fire, the run falls back to the interim rule (everyone who can respond) and ends.
-// `incident.ack` and resolving stop a run (incidents.ts).
+// `incident.ack` and resolving stop a run, and close one that ended (incidents.ts).
 
 import type { Actor } from "./mutation.ts";
 import { isActive } from "./lifecycle.ts";
@@ -58,6 +58,12 @@ export type EscalationPaged = DomainEvent<
      * there), so this one asks for no page of its own.
      */
     started: boolean;
+    /**
+     * For a page made again because the run's last page was lost with its event (`escalation.repage`,
+     * `escalation.fallback` on the ended run): that event, so devices it reached are not pushed twice. If this one is
+     * lost too, it is only recorded, never paged a third time.
+     */
+    lost?: string;
   }
 >;
 export type EscalationExhausted = DomainEvent<
@@ -167,6 +173,7 @@ function pageOf(
   missed: EscalationMiss[],
   reason: EscalationReason,
   at: number,
+  again = false,
 ): EscalationPage {
   return {
     level,
@@ -176,12 +183,14 @@ function pageOf(
     missed: missed.slice(0, MAX_PAGE_MISSES),
     missedCount: missed.length,
     reason,
+    ...(again && { again }),
   };
 }
 
 /**
  * Writes `page` to the run (ending it when it is the interim rule's), its timeline entry, and its event, which
- * carries every miss (`missed`; the page keeps the first few).
+ * carries every miss (`missed`; the page keeps the first few). A page made `again` (for `lost`, the event of the page
+ * lost) changes nothing else of the run: an ended run keeps when it ended, and the timeline says it was made again.
  */
 function paged(
   store: MutationStore,
@@ -190,8 +199,9 @@ function paged(
   page: EscalationPage,
   missed: EscalationMiss[],
   ctx: { now: number; actor: Actor; server: boolean },
+  lost?: string,
 ): DomainEvent[] {
-  const ends = page.level === null;
+  const ends = page.level === null && !page.again;
   const next: Escalation = {
     ...run,
     ...(ends && { status: "exhausted", nextAt: null, endedAt: ctx.now }),
@@ -202,7 +212,7 @@ function paged(
   store.update("incidents", incident.id, { escalation: next, updatedAt: ctx.now });
   // `timelineSeq` as it is now: an earlier entry in this transaction moved it.
   const current = store.get("incidents", incident.id)!;
-  if (page.reason === "exhausted") {
+  if (page.reason === "exhausted" && !page.again) {
     appendTimeline(
       store,
       current,
@@ -225,6 +235,7 @@ function paged(
         reason: page.reason,
         ...(later && { later }),
         ...(run.paged === 0 && page.userIds.includes(run.causedBy) && { causedBy: run.causedBy }),
+        ...(page.again && { again: true }),
       },
       ctx,
     );
@@ -243,6 +254,7 @@ function paged(
       started: run.paged === 0,
       run: run.eventId,
       step: next.paged,
+      ...(lost !== undefined && { lost }),
     },
   };
   return [event];
@@ -369,21 +381,26 @@ export const advanceEscalation = defineMutation({
  * stop this. `conflict` once the run moved on.
  *
  * Also from the dead-letter consumer, for a run that ended on a page to everyone who can respond when that page was
- * lost with its event (`step` the run's last): everyone who can respond is paged again, as that page would have (its
- * round and reason), on an event of its own.
+ * lost with its event (`lost`; `step` the run's last): everyone who can respond is paged again, as that page would
+ * have (its round and reason), on an event of its own, once. `lost` is null from the alarm.
  */
 export const fallbackEscalation = defineMutation({
   name: "escalation.fallback",
   args: v.object({
     incidentId: v.id("inc"),
     step: v.integer({ min: 1, max: Number.MAX_SAFE_INTEGER }),
+    lost: v.nullable(v.id("evt")),
   }),
   permission: "incident:update",
   apply(store, args, ctx) {
     const incident = store.get("incidents", args.incidentId);
     const run = incident?.escalation;
     const last = run?.pages[run.pages.length - 1];
-    const lost = run?.status === "exhausted" && args.step === run.paged && last?.level === null;
+    const lost =
+      args.lost !== null &&
+      run?.status === "exhausted" &&
+      args.step === run.paged &&
+      last?.level === null;
     if (!incident || !run || (run.status !== "running" && !lost)) {
       return fail("not_found", "No escalation under way");
     }
@@ -397,9 +414,10 @@ export const fallbackEscalation = defineMutation({
           store,
           incident,
           run,
-          pageOf(null, last.round, [], [], last.reason, ctx.now),
+          pageOf(null, last.round, [], [], last.reason, ctx.now, true),
           [],
           ctx,
+          args.lost!,
         ),
       );
     }
@@ -412,7 +430,8 @@ export const fallbackEscalation = defineMutation({
 
 /**
  * Server only, as `ESCALATION_ACTOR`, from the dead-letter consumer: the running run's last page (a level, `step` the
- * run's page count) was lost with its event, so the same members are paged again, on an event of its own. The next
+ * run's page count) was lost with its event (`lost`), so the same members are paged again, on an event of its own,
+ * once (that page lost too is only recorded). The next
  * level keeps its time: the re-page is a second chance, not a new timeout. Whoever caused the run's first page was
  * counted as reached without a push, so a re-page of that page leaves them out. `conflict` once the run moved on.
  */
@@ -421,6 +440,7 @@ export const repageEscalation = defineMutation({
   args: v.object({
     incidentId: v.id("inc"),
     step: v.integer({ min: 1, max: Number.MAX_SAFE_INTEGER }),
+    lost: v.id("evt"),
   }),
   permission: "incident:update",
   apply(store, args, ctx) {
@@ -439,9 +459,10 @@ export const repageEscalation = defineMutation({
         store,
         incident,
         run,
-        pageOf(last.level, last.round, userIds, [], last.reason, ctx.now),
+        pageOf(last.level, last.round, userIds, [], last.reason, ctx.now, true),
         [],
         ctx,
+        args.lost,
       ),
     );
   },

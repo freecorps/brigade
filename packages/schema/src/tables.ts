@@ -73,6 +73,8 @@ export type EscalationPage = {
   missed: EscalationMiss[];
   missedCount: number;
   reason: EscalationReason;
+  /** The run's page before this one paged again: its event was lost (RFC 0006 "A lost page"). */
+  again?: boolean;
 };
 
 export type EscalationStatus = "running" | "acknowledged" | "resolved" | "exhausted";
@@ -180,6 +182,8 @@ export type TimelineEntry =
       later?: boolean;
       /** The run's first page: who caused it, reached without a push (they know). */
       causedBy?: string;
+      /** The page before paged again, the same level and people: its event was lost. */
+      again?: boolean;
     }
   /** Every level and repeat was paged and nobody acknowledged, so everyone who can respond was paged. */
   | { kind: "escalation_exhausted"; levels: number; rounds: number };

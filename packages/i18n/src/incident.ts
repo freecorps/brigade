@@ -116,6 +116,8 @@ export function entryText(entry: TimelineRow, who: People): string {
       return say(`page_failed_${entry.reason}`, personName(entry.userId, who, "object"));
     case "escalated": {
       if (entry.level === null) {
+        // A page made again because its event was lost: about the page, not why it went to everyone.
+        if (entry.again) return say("escalated_everyone_again");
         if (entry.reason === "stalled") return say("escalated_everyone_stalled");
         return say(entry.later ? "escalated_everyone_later" : "escalated_everyone");
       }
@@ -128,6 +130,7 @@ export function entryText(entry: TimelineRow, who: People): string {
       const names = entry.userIds
         .map((id) => (aware(id) ? declarer(id, who) : personName(id, who)))
         .join(", ");
+      if (entry.again) return say("escalated_again", level);
       if (entry.userIds.length > 0 && entry.userIds.every(aware)) {
         return say("escalated_started_aware", level, names);
       }

@@ -318,6 +318,27 @@ describe("a run on the incident page", () => {
         who,
       ),
     ).toBe("Paged level 1: Ana, you (declared it)");
+    // A page made again because its event was lost says so, whoever it went to.
+    const again = entry({
+      kind: "escalated",
+      level: 2,
+      round: 0,
+      userIds: ["usr_ana"],
+      reason: "timeout",
+      again: true,
+    });
+    const everyoneAgain = entry({
+      kind: "escalated",
+      level: null,
+      round: 0,
+      userIds: [],
+      reason: "exhausted",
+      again: true,
+    });
+    expect(entryText(again, who)).toBe("Level 2 paged again: the earlier page was lost");
+    expect(entryText(everyoneAgain, who)).toBe(
+      "Everyone who can respond paged again: the earlier page was lost",
+    );
     const nobodyElse = entry({ kind: "page_failed", userId: null, reason: "nobody_else" });
     expect(entryText(nobodyElse, who)).toBe(
       "Nobody else was paged: only the person who declared it can respond",
@@ -328,6 +349,10 @@ describe("a run on the incident page", () => {
       "Ninguém mais foi chamado: só quem declarou pode responder",
     );
     expect(entryText(gap, who)).toBe("Não foi possível chamar Primary: ninguém de plantão");
+    expect(entryText(again, who)).toBe("Nível 2 chamado de novo: a chamada anterior se perdeu");
+    expect(entryText(everyoneAgain, who)).toBe(
+      "Todos que podem responder chamados de novo: a chamada anterior se perdeu",
+    );
     expect(entryText(entry({ kind: "escalation_exhausted", levels: 2, rounds: 1 }), who)).toBe(
       "Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados",
     );

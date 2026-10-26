@@ -64,6 +64,8 @@ export function formatIncidentNumber(number: number | null): string | null {
  * Stops the incident's escalation run, if one is under way (RFC 0003 "Escalation run"): `acknowledged` by
  * `incident.ack`, `resolved` when the incident leaves the active statuses. In the same transaction as the change, so
  * no level fires after it, whichever route ran the mutation. The timer is server-only; clients only see the run stop.
+ * A run that ended on paging everyone (`exhausted`) is closed the same way, keeping when it ended: its pages still
+ * send while it is the incident's last word, and must not once the incident is reopened.
  */
 function stopEscalation(
   store: MutationStore,
@@ -72,7 +74,12 @@ function stopEscalation(
   ctx: MutationContext,
 ): void {
   const run = incident.escalation;
-  if (!run || run.status !== "running") return;
+  if (!run) return;
+  if (run.status === "exhausted") {
+    store.update("incidents", incident.id, { escalation: { ...run, status } });
+    return;
+  }
+  if (run.status !== "running") return;
   store.update("incidents", incident.id, {
     escalation: { ...run, status, nextAt: null, endedAt: ctx.now },
   });

@@ -129,17 +129,24 @@ chain:
   never meets the first run's results. A level's event carries its run and page count: one from a run that has
   stopped (acknowledged and then reopened, or replaced by a new run) sends nothing, while any page of the run under
   way, or of a run that ended by paging everyone, still sends (a level's event the Queue is still retrying when a
-  later level ended the run is not dropped). A redelivery of the event that started a run after the run moved past
-  the pages the incident row keeps sends nothing.
+  later level ended the run is not dropped). Acknowledging or resolving closes an ended run too (keeping when it
+  ended), so after a reopen none of its pages sends. A redelivery of the event that started a run after the run moved
+  past the pages the incident row keeps sends nothing, and so does an event older than the run that has ended since
+  (a SEV3 declaration still being retried after a severity raise started the run): it starts no new run.
 - **A lost page.** A dead-lettered page is recorded like any dead-lettered page (`dead_lettered`). A dead-lettered
   **first** page (the shard never planned it, so no run started) starts the run when it is recorded, so the next
   levels still fire on time. When the lost page is still the run's last, nothing would page its members until the
   next level's timeout, or ever when the run ended on it, so the shard pages it again on an event of its own, once:
   a level's members (`escalation.repage`; whoever caused the run's first page still counts as reached, and the next
   level keeps its time) or everyone who can respond, as that page would have (`escalation.fallback` on the ended
-  run, with its reason). Another event's page lost meanwhile (an incident declared before a later event started the
-  run) is recorded on no page of the run. A failed page is recorded with the run and page it belongs to, so the
-  incident page puts a slow failure on the right level.
+  run, with its reason, and the run keeps when it ended). That event names the lost one (`lost`): devices the lost
+  page reached before the Queue gave up are not pushed again, and if it is lost too it is only recorded, never paged
+  a third time. The timeline says so ("Level 2 paged again: the earlier page was lost"). A lost page the run has
+  moved past (a later level fired meanwhile) is only recorded, and so is a severity raised mid-run whose page (the
+  level paged last, again) is lost: that level was already paged once. Another event's page lost meanwhile (an
+  incident declared before a later event started the run) is recorded on no page of the run, and starts no run once
+  that one ended. A failed page is recorded with the run and page it belongs to, so the incident page puts a slow
+  failure on the right level.
 
 **The interim rule** (no default policy, and the last fallback above): the incident commander if one is assigned,
 can still respond (not a viewer), did not cause the event and has a registered device; otherwise every member who

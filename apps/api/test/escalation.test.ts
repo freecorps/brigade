@@ -469,6 +469,98 @@ describe("fallbacks (the paging path's)", () => {
     expect(await pagedMembers(ws, tokens)).toEqual([eva.id]);
   });
 
+  test("a level paged again whose own event is lost too is only recorded, never paged a third time", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, relay().send);
+    await ws.due(incident);
+    await runDurableObjectAlarm(ws.stub);
+    const second = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[1]!;
+    await deadLetter(second);
+    const again = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[2]!;
+    expect(again.data).toMatchObject({ level: 2, step: 3, lost: second.id });
+    expect(
+      (await ws.timeline(incident)).filter((row) => row.kind === "escalated").at(-1),
+    ).toMatchObject({ level: 2, again: true });
+    await deadLetter(again);
+    expect(await ws.levels(incident)).toHaveLength(3);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "running", paged: 3 });
+    expect(
+      (await ws.timeline(incident))
+        .filter((row) => row.kind === "page_failed")
+        .map((row) => [row.reason, row.step]),
+    ).toEqual([
+      ["dead_lettered", 2],
+      ["dead_lettered", 3],
+    ]);
+  });
+
+  test("a level paged again skips the devices the lost page reached before the Queue gave up", async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    await withPolicy(ws, [
+      { targets: [{ kind: "schedule", id: SCHEDULE }] },
+      {
+        targets: [
+          { kind: "member", id: eva.id },
+          { kind: "member", id: bia.id },
+        ],
+      },
+    ]);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, relay().send);
+    await ws.due(incident);
+    await runDurableObjectAlarm(ws.stub);
+    const second = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[1]!;
+    // Eva's push went out before the Queue gave up on the event (the shard recorded it, then a later try threw).
+    await ws.withShard((shard, state) => {
+      const device = shard.store.scan("devices").find((one) => one.userId === eva.id)!;
+      state.storage.sql.exec(
+        "insert into page_deliveries (event_id, device_id, user_id, at) values (?, ?, ?, ?)",
+        second.id,
+        device.id,
+        eva.id,
+        Date.now(),
+      );
+    });
+    await deadLetter(second);
+    const again = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[2]!;
+    expect(again.data).toMatchObject({ level: 2, userIds: [eva.id, bia.id], lost: second.id });
+    const { tokens, send } = relay();
+    await deliver(again, send);
+    expect(await pagedMembers(ws, tokens)).toEqual([bia.id]);
+    // Eva, reached by the lost page, is not recorded as missed by this one.
+    expect(
+      (await ws.timeline(incident)).filter((row) => row.kind === "page_failed" && row.step === 3),
+    ).toEqual([]);
+  });
+
+  test("a lost level page dead-lettered after the run moved on is recorded, not paged again", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws, undefined, 1);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, relay().send);
+    await ws.due(incident);
+    await runDurableObjectAlarm(ws.stub);
+    const second = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[1]!;
+    // Level 1 again (the repeat) fires before level 2's event gives up.
+    await ws.due(incident);
+    await runDurableObjectAlarm(ws.stub);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "running", paged: 3 });
+    await deadLetter(second);
+    expect((await ws.levels(incident)).map((one) => [one.level, one.round])).toEqual([
+      [1, 0],
+      [2, 0],
+      [1, 1],
+    ]);
+    expect((await ws.timeline(incident)).filter((row) => row.kind === "page_failed")).toEqual([
+      expect.objectContaining({ reason: "dead_lettered", run: event.id, step: 2 }),
+    ]);
+  });
+
   test("a first page dead-lettered before it was planned starts the run and pages level 1 again at once", async () => {
     const ws = await workspace();
     for (const member of [caio, eva]) await ws.device(member);
@@ -540,6 +632,48 @@ describe("fallbacks (the paging path's)", () => {
     // Nor is the run's page paged again.
     expect(await ws.escalation(incident)).toMatchObject({ eventId: raised.id, paged: 1 });
   });
+
+  for (const how of ["delivered", "dead-lettered"] as const) {
+    test(`a declaration ${how} after a later event's run ended starts no new run`, async () => {
+      const ws = await workspace();
+      for (const member of [bia, caio, eva]) await ws.device(member);
+      await withPolicy(ws);
+      // Declared at SEV3, its page still with the Queue; raised to SEV1, that page starts the run, which ends.
+      const { event: declared, incident } = await ws.declare(MONITOR_ACTOR, "sev3");
+      await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev1" }, false);
+      const raised = (await ws.events(incident)).find(
+        (e) => e.type === "incident.severity_changed",
+      )!;
+      await deliver(raised, relay().send);
+      for (let i = 0; i < 2; i++) {
+        await ws.due(incident);
+        await runDurableObjectAlarm(ws.stub);
+      }
+      expect(await ws.escalation(incident)).toMatchObject({
+        eventId: raised.id,
+        status: "exhausted",
+        paged: 3,
+      });
+      const { tokens, send } = relay();
+      if (how === "delivered") await deliver(declared, send);
+      else await deadLetter(declared);
+      expect(tokens).toEqual([]);
+      expect(await ws.escalation(incident)).toMatchObject({
+        eventId: raised.id,
+        status: "exhausted",
+        paged: 3,
+      });
+      expect(await ws.levels(incident)).toHaveLength(3);
+      const failed = (await ws.timeline(incident)).filter((row) => row.kind === "page_failed");
+      if (how === "delivered") expect(failed).toEqual([]);
+      else {
+        expect(failed).toEqual([
+          expect.objectContaining({ userId: null, reason: "dead_lettered" }),
+        ]);
+        expect(failed[0]).not.toHaveProperty("run");
+      }
+    });
+  }
 
   test("a level the shard keeps refusing is on the timeline at once, and pages everyone after 3 minutes", async () => {
     const ws = await workspace();
@@ -754,6 +888,34 @@ describe("fallbacks (the paging path's)", () => {
     ]);
   });
 
+  test("an end page paged again whose own event is lost too is only recorded, and the run keeps its end", async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    await withPolicy(ws, [{ targets: [{ kind: "member", id: eva.id }] }]);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, relay().send);
+    await ws.due(incident);
+    await runDurableObjectAlarm(ws.stub);
+    const ended = (await ws.escalation(incident))!;
+    const end = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[1]!;
+    await deadLetter(end);
+    const again = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[2]!;
+    expect(again.data).toMatchObject({ level: null, reason: "exhausted", step: 3, lost: end.id });
+    await deadLetter(again);
+    expect(await ws.levels(incident)).toHaveLength(3);
+    expect(await ws.escalation(incident)).toMatchObject({
+      status: "exhausted",
+      paged: 3,
+      endedAt: ended.endedAt,
+    });
+    const entries = await ws.timeline(incident);
+    expect(entries.filter((row) => row.kind === "escalation_exhausted")).toHaveLength(1);
+    expect(entries.filter((row) => row.kind === "escalated").at(-1)).toMatchObject({
+      level: null,
+      again: true,
+    });
+  });
+
   test("a redelivered first page after the run moved past the pages the row keeps sends nothing", async () => {
     const ws = await workspace();
     for (const member of [caio, eva]) await ws.device(member);
@@ -814,6 +976,35 @@ describe("fallbacks (the paging path's)", () => {
     const { tokens, send } = relay();
     await deliver(queued, send);
     expect(tokens).toEqual([]);
+  });
+
+  test("a run that ended pages nobody from its old events once the incident is resolved and reopened", async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, relay().send);
+    await ws.due(incident);
+    await runDurableObjectAlarm(ws.stub);
+    await ws.due(incident);
+    await runDurableObjectAlarm(ws.stub);
+    const [, second, end] = (await ws.events(incident)).filter(
+      (e) => e.type === "escalation.paged",
+    );
+    const ended = (await ws.escalation(incident))!;
+    expect(ended).toMatchObject({ status: "exhausted", paged: 3 });
+    await ws.run(caio, "incident.setStatus", { id: incident, status: "resolved" }, false);
+    expect(await ws.escalation(incident)).toMatchObject({
+      status: "resolved",
+      endedAt: ended.endedAt,
+    });
+    await ws.run(caio, "incident.setStatus", { id: incident, status: "investigating" }, false);
+    // Level 2's event, still with the Queue, sends nothing; the end page lost is not paged again.
+    const { tokens, send } = relay();
+    await deliver(second!, send);
+    expect(tokens).toEqual([]);
+    await deadLetter(end!);
+    expect(await ws.levels(incident)).toHaveLength(3);
   });
 });
 

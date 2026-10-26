@@ -10,6 +10,7 @@ export * from "./query.ts";
 export * from "./incidents.ts";
 export * from "./timeline.ts";
 export * from "./workspaces.ts";
+export * from "./members.ts";
 export * from "./monitors.ts";
 export * from "./devices.ts";
 export * from "./notifications.ts";

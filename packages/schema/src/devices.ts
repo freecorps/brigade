@@ -22,8 +22,11 @@ export type PushEnvironment = (typeof PUSH_ENVIRONMENTS)[number];
 /** Devices one member may register in one workspace; a page fans out to all of them. */
 export const MAX_DEVICES_PER_MEMBER = 10;
 
-/** Why a device stopped being paged. */
-export type DeviceRemoval = "unregistered" | "token_invalid";
+/**
+ * Why a device stopped being paged: its member unregistered it, APNs said its token is gone, or its member left or
+ * was removed from the workspace (`member.remove`, `member.reconcile`).
+ */
+export type DeviceRemoval = "unregistered" | "token_invalid" | "member_removed";
 
 export type DeviceRegistered = DomainEvent<
   "device.registered",

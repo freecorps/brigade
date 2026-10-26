@@ -16,6 +16,7 @@ import { failNotification } from "./notifications.ts";
 import { allMonitors, evaluateMonitor, monitorMutations, reportMonitorCheck } from "./monitors.ts";
 import { defineRegistry } from "./mutation.ts";
 import { incidentTimeline } from "./timeline.ts";
+import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";
 import { allMembers, createWorkspace, syncMember } from "./workspaces.ts";
 
 /** What clients may send over a socket. */
@@ -42,7 +43,7 @@ export const queries = defineRegistry([
 
 /**
  * Every mutation the shard runs: what clients may send (`mutations`) plus the server-only ones, which only the
- * shard's own code runs (provisioning, monitor reports), never a socket's `mutate`.
+ * shard's own code runs (provisioning, monitor reports, member changes), never a socket's `mutate`.
  */
 export const serverMutations = defineRegistry([
   declareIncident,
@@ -56,6 +57,9 @@ export const serverMutations = defineRegistry([
   unregisterDevice,
   createWorkspace,
   syncMember,
+  changeMemberRole,
+  removeMember,
+  reconcileMembers,
   reportMonitorCheck,
   evaluateMonitor,
   expireDevice,

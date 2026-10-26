@@ -1752,6 +1752,8 @@
         "part=add": "Add to Slack",
         "part=adding": "Opening Slack…",
         "part=connected": "Connected to {team}",
+        "part=load_failed": "Couldn't load the Slack connection, so Brigade can't tell whether it's connected.",
+        "part=retry": "Try again",
         "part=not_connected": "Not connected to a Slack workspace.",
         "part=channel_label": "Channel ID",
         "part=channel_hint": "In Slack, open the channel's details and copy the ID at the bottom. It starts with C, or G for a private channel, where Brigade must be invited.",

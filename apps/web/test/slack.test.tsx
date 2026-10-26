@@ -31,7 +31,7 @@ const connection: SlackRow = {
 };
 
 function render(props: Partial<Parameters<typeof SlackPanel>[0]> = {}) {
-  const calls = { add: 0, saves: [] as unknown[], disconnects: 0 };
+  const calls = { add: 0, saves: [] as unknown[], disconnects: 0, retries: 0 };
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -40,6 +40,7 @@ function render(props: Partial<Parameters<typeof SlackPanel>[0]> = {}) {
       <SlackPanel
         connection={null}
         loading={false}
+        failed={false}
         manage
         result={null}
         onAdd={async () => {
@@ -52,6 +53,9 @@ function render(props: Partial<Parameters<typeof SlackPanel>[0]> = {}) {
         onDisconnect={async () => {
           calls.disconnects++;
           return true;
+        }}
+        onRetry={() => {
+          calls.retries++;
         }}
         {...props}
       />,
@@ -113,6 +117,30 @@ describe("SlackPanel", () => {
     act(() => button(container, "Add to Slack")!.click());
     expect(calls.add).toBe(1);
     expect(container.textContent).toContain("Not connected to a Slack workspace.");
+  });
+
+  test("a connection that could not be read is not shown as disconnected, and can be asked for again", () => {
+    const { container, calls } = render({ failed: true });
+    expect(container.textContent).toContain("Couldn't load the Slack connection");
+    expect(container.textContent).not.toContain("Not connected");
+    expect(button(container, "Add to Slack")).toBeUndefined();
+    act(() => button(container, "Try again")!.click());
+    expect(calls.retries).toBe(1);
+    expect(calls.add).toBe(0);
+  });
+
+  test("while it loads, neither a state nor Add to Slack", () => {
+    const { container } = render({ loading: true });
+    expect(container.textContent).not.toContain("Not connected");
+    expect(container.textContent).not.toContain("Couldn't load");
+    expect(container.querySelectorAll("button")).toHaveLength(0);
+  });
+
+  test("the error reads in Portuguese too", () => {
+    void setI18nLocale("pt-BR");
+    const { container } = render({ failed: true, manage: false });
+    expect(container.textContent).toContain("Não foi possível carregar a conexão com o Slack");
+    expect(button(container, "Tentar de novo")).toBeDefined();
   });
 
   test("responders and viewers read it and get no buttons", () => {

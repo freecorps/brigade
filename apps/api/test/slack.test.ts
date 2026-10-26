@@ -685,6 +685,7 @@ async function deliver(events: BrigadeEvent[], send: Fetch, attempts = 1) {
     };
   }
   const ctx = createExecutionContext();
+  const started = Date.now();
   await consumeEvents(
     batch,
     {
@@ -696,9 +697,14 @@ async function deliver(events: BrigadeEvent[], send: Fetch, attempts = 1) {
       DASHBOARD_URL: "https://brigade.test",
     },
     send,
+    undefined,
+    (promise) => ctx.waitUntil(promise),
   );
+  // How long the batch took to settle; work left to `waitUntil` finishes before the result below.
+  const settledIn = Date.now() - started;
   const result = await getQueueResult(batch, ctx);
   return {
+    settledIn,
     explicitAcks: result.explicitAcks,
     retryMessages: result.retryMessages.map(({ msgId }) => ({
       msgId,
@@ -1018,14 +1024,54 @@ describe("the incident message", () => {
       usersInfo,
     );
     const event = (await eventsOf(t, "incident.declared"))[0]!;
-    // Never answers and ignores its abort signal: only the consumer's own budget can end the wait.
-    const hanging = slackApi({ "chat.postMessage": () => new Promise<Response>(() => {}) });
-    const started = Date.now();
+    // Answers long after the budget and ignores its abort signal: only the consumer's own budget can end the wait.
+    const hanging = slackApi({
+      "chat.postMessage": () =>
+        new Promise<Response>((resolve) =>
+          setTimeout(() => resolve(Response.json({ ok: true, ts: "1" })), SLACK_BUDGET_MS + 4000),
+        ),
+    });
     const result = await deliver([event], hanging.send);
-    const took = Date.now() - started;
-    expect(took).toBeGreaterThanOrEqual(SLACK_BUDGET_MS - 100);
-    expect(took).toBeLessThan(SLACK_BUDGET_MS + 2000);
+    expect(result.settledIn).toBeGreaterThanOrEqual(SLACK_BUDGET_MS - 100);
+    expect(result.settledIn).toBeLessThan(SLACK_BUDGET_MS + 2000);
     expect(hanging.pushes).toEqual(["c".repeat(64)]);
     expect(result.retryMessages).toEqual([{ msgId: "msg-0", delaySeconds: expect.any(Number) }]);
+  }, 15_000);
+
+  test("a Slack that answers after the budget still records its message: the retry updates it, never posts again", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    const event = await declared(t, teamId);
+    // Slack accepts the post, but only once the consumer has stopped waiting for it.
+    const late = slackApi({
+      "chat.postMessage": () =>
+        new Promise<Response>((resolve) =>
+          setTimeout(
+            () => resolve(Response.json({ ok: true, ts: "1790000000.000042" })),
+            SLACK_BUDGET_MS + 500,
+          ),
+        ),
+    });
+    const first = await deliver([event], late.send);
+    expect(first.settledIn).toBeLessThan(SLACK_BUDGET_MS + 400);
+    expect(first.retryMessages).toEqual([{ msgId: "msg-0", delaySeconds: expect.any(Number) }]);
+    const recorded = await t.withShard(
+      (_shard, state) =>
+        state.storage.sql.exec<{ ts: string | null }>("select ts from slack_messages").toArray()[0]
+          ?.ts,
+    );
+    expect(recorded).toBe("1790000000.000042");
+    // The Queue's retry, and the incident's next change: neither posts a second message.
+    await t.withShard((_shard, state) =>
+      state.storage.sql.exec("update slack_messages set claimed_until = 0"),
+    );
+    await deliver([event], late.send, 2);
+    const incident = (await incidents(t))[0]!;
+    await t.run("incident.setSeverity", { id: incident.id, severity: "sev2" }, owner(t));
+    await deliver(await eventsOf(t, "incident.severity_changed"), late.send);
+    expect(late.calls.filter((call) => call.method === "chat.postMessage")).toHaveLength(1);
+    const updates = late.calls.filter((call) => call.method === "chat.update");
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.body.ts).toBe("1790000000.000042");
   }, 15_000);
 });

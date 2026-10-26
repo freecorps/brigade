@@ -171,9 +171,9 @@ export default {
    * `brigade-events` (RFC 0005): the shards' drained outboxes, routed to notifiers (src/notify.ts); and its
    * dead-letter queue, `brigade-events-dlq`, where what the first gave up on is recorded.
    */
-  async queue(batch, env): Promise<void> {
+  async queue(batch, env, ctx): Promise<void> {
     if (batch.queue.startsWith("brigade-events-dlq")) await consumeDeadLetters(batch, env);
-    else await consumeEvents(batch, env);
+    else await consumeEvents(batch, env, undefined, undefined, (promise) => ctx.waitUntil(promise));
   },
 
   /**

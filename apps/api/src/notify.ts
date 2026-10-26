@@ -67,13 +67,14 @@ export type Fetch = (request: Request) => Promise<Response>;
 /**
  * The queue handler: one message per event; each is acked or retried on its own, all of a batch's at once, so a
  * page never waits for an email in the same batch. Never throws. `mail` is the email sender (`emailSender`, none
- * when email is not set up).
+ * when email is not set up). `waitUntil` is the invocation's: a Slack call past its budget runs on under it.
  */
 export async function consumeEvents(
   batch: MessageBatch<unknown>,
   env: NotifyEnv,
   send: Fetch = (request) => fetch(request),
   mail: EmailSender | undefined = emailSender(env),
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<void> {
   const seen = new Set<string>();
   await Promise.all(
@@ -104,6 +105,7 @@ export async function consumeEvents(
             }),
             event,
             message.attempts,
+            waitUntil,
           ).then((seconds) => {
             // Past the Queue's retries, give Slack up rather than send a page event to the dead-letter queue.
             if (seconds === undefined || message.attempts <= QUEUE_MAX_RETRIES) return seconds;
@@ -149,15 +151,17 @@ export async function consumeEvents(
 }
 
 /**
- * Slack's answer for one event, or a retry once `SLACK_BUDGET_MS` has passed without one. The late call is left to
- * finish or be cut off with the invocation; either way its claim stands until it expires, so the retry neither posts
- * twice at once nor waits forever.
+ * Slack's answer for one event, or a retry once `SLACK_BUDGET_MS` has passed without one. The late call runs on under
+ * `waitUntil`, so a message Slack accepted still has its `ts` recorded and the retry updates it rather than posting
+ * again; until then its claim stands, so the retry neither posts twice at once nor waits forever.
  */
 async function withinSlackBudget(
   slack: Promise<number | undefined>,
   event: BrigadeEvent,
   attempts: number,
+  waitUntil: ((promise: Promise<unknown>) => void) | undefined,
 ): Promise<number | undefined> {
+  waitUntil?.(slack);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const overrun = new Promise<number>((resolve) => {
     timer = setTimeout(() => {

@@ -15,6 +15,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "add" | "Add to Slack" |
 * | "adding" | "Opening Slack…" |
 * | "connected" | "Connected to {team}" |
+* | "load_failed" | "Couldn't load the Slack connection, so Brigade can't tell whether it's connected." |
+* | "retry" | "Try again" |
 * | "not_connected" | "Not connected to a Slack workspace." |
 * | "channel_label" | "Channel ID" |
 * | "channel_hint" | "In Slack, open the channel's details and copy the ID at the bottom. It starts with C, or G for a private channel, where Brigade must be invited." |
@@ -51,6 +53,8 @@ export const slack_card = /** @type {((inputs: Slack_CardInputs, options?: { loc
 		if (i?.part === "add") return /** @type {LocalizedString} */ (`Adicionar ao Slack`);
 		if (i?.part === "adding") return /** @type {LocalizedString} */ (`Abrindo o Slack…`);
 		if (i?.part === "connected") return /** @type {LocalizedString} */ (`Conectado a ${i?.team}`);
+		if (i?.part === "load_failed") return /** @type {LocalizedString} */ (`Não foi possível carregar a conexão com o Slack, então o Brigade não sabe se ela existe.`);
+		if (i?.part === "retry") return /** @type {LocalizedString} */ (`Tentar de novo`);
 		if (i?.part === "not_connected") return /** @type {LocalizedString} */ (`Não conectado a um workspace do Slack.`);
 		if (i?.part === "channel_label") return /** @type {LocalizedString} */ (`ID do canal`);
 		if (i?.part === "channel_hint") return /** @type {LocalizedString} */ (`No Slack, abra os detalhes do canal e copie o ID no final. Ele começa com C, ou G para um canal privado, no qual o Brigade precisa ser convidado.`);
@@ -81,6 +85,8 @@ export const slack_card = /** @type {((inputs: Slack_CardInputs, options?: { loc
 		if (i?.part === "add") return /** @type {LocalizedString} */ (`Add to Slack`);
 		if (i?.part === "adding") return /** @type {LocalizedString} */ (`Opening Slack…`);
 		if (i?.part === "connected") return /** @type {LocalizedString} */ (`Connected to ${i?.team}`);
+		if (i?.part === "load_failed") return /** @type {LocalizedString} */ (`Couldn't load the Slack connection, so Brigade can't tell whether it's connected.`);
+		if (i?.part === "retry") return /** @type {LocalizedString} */ (`Try again`);
 		if (i?.part === "not_connected") return /** @type {LocalizedString} */ (`Not connected to a Slack workspace.`);
 		if (i?.part === "channel_label") return /** @type {LocalizedString} */ (`Channel ID`);
 		if (i?.part === "channel_hint") return /** @type {LocalizedString} */ (`In Slack, open the channel's details and copy the ID at the bottom. It starts with C, or G for a private channel, where Brigade must be invited.`);

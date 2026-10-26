@@ -1,7 +1,7 @@
 import { m } from "@freecorps/brigade-i18n";
 import { can, SLACK_LOCALES, type SlackLocale, type SlackRow } from "@freecorps/brigade-schema";
 import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
-import { CircleCheckIcon, HashIcon, LoaderCircleIcon } from "lucide-react";
+import { CircleCheckIcon, HashIcon, LoaderCircleIcon, RotateCwIcon } from "lucide-react";
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { CONFIRM_DESTRUCTIVE } from "@/components/monitor-form";
 import { useMember } from "@/components/session";
@@ -30,10 +30,8 @@ const LANGUAGE_NAMES: Record<SlackLocale, () => string> = {
  * admins change it; everyone else reads it.
  */
 export function SlackCard() {
-  const { role, workspaceId } = useMember();
-  const connection = useQuery("slack.connection", {});
-  const configure = useMutation("slack.configure");
-  const disconnect = useMutation("slack.disconnect");
+  // Try again mounts the query anew: a refused subscription that gets a new listener asks the shard again.
+  const [attempt, setAttempt] = useState(0);
   // How an install that just came back ended (`?slack=…`), read once and taken off the URL.
   const [result, setResult] = useState<ReturnType<typeof slackResult>>(null);
   useEffect(() => {
@@ -45,9 +43,29 @@ export function SlackCard() {
     window.history.replaceState(window.history.state, "", url);
   }, []);
   return (
+    <SlackConnection
+      key={attempt}
+      result={result}
+      setResult={setResult}
+      onRetry={() => setAttempt((count) => count + 1)}
+    />
+  );
+}
+
+function SlackConnection({
+  result,
+  setResult,
+  onRetry,
+}: Pick<PanelProps, "result" | "onRetry"> & { setResult: (result: PanelProps["result"]) => void }) {
+  const { role, workspaceId } = useMember();
+  const connection = useQuery("slack.connection", {});
+  const configure = useMutation("slack.configure");
+  const disconnect = useMutation("slack.disconnect");
+  return (
     <SlackPanel
       connection={connection.rows[0] ?? null}
-      loading={connection.status !== "ready" && connection.status !== "error"}
+      loading={connection.status === "loading"}
+      failed={connection.status === "error"}
       manage={can(role, "workspace:manage")}
       result={result}
       onAdd={async () => {
@@ -57,6 +75,7 @@ export function SlackCard() {
       }}
       onSave={async (channelId, locale) => (await configure({ channelId, locale })).ok}
       onDisconnect={async () => (await disconnect({})).ok}
+      onRetry={onRetry}
     />
   );
 }
@@ -64,23 +83,28 @@ export function SlackCard() {
 type PanelProps = {
   connection: SlackRow | null;
   loading: boolean;
+  /** The shard refused or could not answer `slack.connection`: whether Slack is connected is unknown. */
+  failed: boolean;
   manage: boolean;
   result: { ok: boolean; part: string } | null;
   onAdd: () => Promise<void>;
   /** Resolves true once the shard saved it. */
   onSave: (channelId: string | null, locale: SlackLocale) => Promise<boolean>;
   onDisconnect: () => Promise<boolean>;
+  onRetry: () => void;
 };
 
 /** The card itself, without the hooks: what each state looks like (tested and screenshotted with made-up data). */
 export function SlackPanel({
   connection,
   loading,
+  failed,
   manage,
   result,
   onAdd,
   onSave,
   onDisconnect,
+  onRetry,
 }: PanelProps) {
   const [adding, setAdding] = useState(false);
   return (
@@ -90,7 +114,7 @@ export function SlackPanel({
           <CardTitle id="slack-title" className="truncate">
             {slackText("title")}
           </CardTitle>
-          {manage && !connection && !loading ? (
+          {manage && !connection && !loading && !failed ? (
             <Button
               variant="outline"
               disabled={adding}
@@ -121,7 +145,15 @@ export function SlackPanel({
             <FormError>{slackText(result.part)}</FormError>
           )
         ) : null}
-        {loading ? null : connection ? (
+        {loading ? null : failed ? (
+          <div className="flex flex-col items-start gap-2">
+            <FormError>{slackText("load_failed")}</FormError>
+            <Button variant="outline" onClick={onRetry}>
+              <RotateCwIcon aria-hidden />
+              {slackText("retry")}
+            </Button>
+          </div>
+        ) : connection ? (
           <Connected
             connection={connection}
             manage={manage}

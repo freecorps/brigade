@@ -14,6 +14,8 @@ export type Slack_CardInputs = {
 * | "add" | "Add to Slack" |
 * | "adding" | "Opening Slack…" |
 * | "connected" | "Connected to {team}" |
+* | "load_failed" | "Couldn't load the Slack connection, so Brigade can't tell whether it's connected." |
+* | "retry" | "Try again" |
 * | "not_connected" | "Not connected to a Slack workspace." |
 * | "channel_label" | "Channel ID" |
 * | "channel_hint" | "In Slack, open the channel's details and copy the ID at the bottom. It starts with C, or G for a private channel, where Brigade must be invited." |

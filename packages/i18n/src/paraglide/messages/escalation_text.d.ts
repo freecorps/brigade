@@ -43,6 +43,7 @@ export type Escalation_TextInputs = {
 * | "missed" | "Couldn't page" |
 * | "declarer_you" | "You (declared it)" |
 * | "declarer" | "{name} (declared it)" |
+* | "declarer_you_object" | "you (declared it)" |
 * | "replaces_default" | "Replaces {name} as the default." |
 * | "level_empty_draft" | "Nobody to page yet: add a schedule or a person, or remove this level." |
 * | * | "Escalation" |

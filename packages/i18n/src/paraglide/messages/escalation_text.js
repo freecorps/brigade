@@ -41,6 +41,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "missed" | "Couldn't page" |
 * | "declarer_you" | "You (declared it)" |
 * | "declarer" | "{name} (declared it)" |
+* | "declarer_you_object" | "you (declared it)" |
 * | "replaces_default" | "Replaces {name} as the default." |
 * | "level_empty_draft" | "Nobody to page yet: add a schedule or a person, or remove this level." |
 * | * | "Escalation" |
@@ -83,6 +84,7 @@ export const escalation_text = /** @type {((inputs: Escalation_TextInputs, optio
 		if (i?.text === "missed") return /** @type {LocalizedString} */ (`Não foi possível chamar`);
 		if (i?.text === "declarer_you") return /** @type {LocalizedString} */ (`Você (declarou)`);
 		if (i?.text === "declarer") return /** @type {LocalizedString} */ (`${i?.name} (declarou)`);
+		if (i?.text === "declarer_you_object") return /** @type {LocalizedString} */ (`você (declarou)`);
 		if (i?.text === "replaces_default") return /** @type {LocalizedString} */ (`Substitui ${i?.name} como padrão.`);
 		if (i?.text === "level_empty_draft") return /** @type {LocalizedString} */ (`Ninguém para chamar ainda: adicione uma escala ou uma pessoa, ou remova este nível.`);
 		return /** @type {LocalizedString} */ (`Escalonamento`)
@@ -119,6 +121,7 @@ export const escalation_text = /** @type {((inputs: Escalation_TextInputs, optio
 		if (i?.text === "missed") return /** @type {LocalizedString} */ (`Couldn't page`);
 		if (i?.text === "declarer_you") return /** @type {LocalizedString} */ (`You (declared it)`);
 		if (i?.text === "declarer") return /** @type {LocalizedString} */ (`${i?.name} (declared it)`);
+		if (i?.text === "declarer_you_object") return /** @type {LocalizedString} */ (`you (declared it)`);
 		if (i?.text === "replaces_default") return /** @type {LocalizedString} */ (`Replaces ${i?.name} as the default.`);
 		if (i?.text === "level_empty_draft") return /** @type {LocalizedString} */ (`Nobody to page yet: add a schedule or a person, or remove this level.`);
 		return /** @type {LocalizedString} */ (`Escalation`)

@@ -126,8 +126,12 @@ export type EscalationPolicyRow = {
   updatedAt: number;
 };
 
-/** Server-only: when a running escalation's next level fires, so the shard's alarm reads only running ones. */
-export type EscalationTimerRow = { id: string; at: number };
+/**
+ * Server-only: when a running escalation's next level fires, so the shard's alarm reads only running ones.
+ * `failingSince`: when the alarm first found the level due and could not fire it (absent while it fires), so the
+ * stall fallback is measured from the first refusal, however late the alarm came.
+ */
+export type EscalationTimerRow = { id: string; at: number; failingSince?: number | null };
 
 /** What a timeline entry records, by `kind` (RFC 0003 "TimelineEntry"). */
 export type TimelineEntry =
@@ -150,7 +154,18 @@ export type TimelineEntry =
    * A page reached nobody, or not `userId` on any of their devices (`notification.fail`, RFC 0005); `schedule` names
    * an escalation level's schedule that had nobody on call (absent on other entries).
    */
-  | { kind: "page_failed"; userId: string | null; reason: PageFailure; schedule?: string | null }
+  | {
+      kind: "page_failed";
+      userId: string | null;
+      reason: PageFailure;
+      schedule?: string | null;
+      /**
+       * The escalation page it belongs to: the run (its `eventId`) and the page's step (1-based count of the run's
+       * pages), so a page's failures are told apart from the next one's. Absent outside a run.
+       */
+      run?: string;
+      step?: number;
+    }
   /**
    * An escalation level was paged (RFC 0006 "Who is paged"): `level` 1-based, or null for everyone who can respond;
    * `reason` says why this level (`EscalationReason`).
@@ -161,6 +176,10 @@ export type TimelineEntry =
       round: number;
       userIds: string[];
       reason: EscalationReason;
+      /** Everyone who can respond after earlier levels paged someone: no later level could reach anyone. */
+      later?: boolean;
+      /** The run's first page: who caused it, reached without a push (they know). */
+      causedBy?: string;
     }
   /** Every level and repeat was paged and nobody acknowledged, so everyone who can respond was paged. */
   | { kind: "escalation_exhausted"; levels: number; rounds: number };

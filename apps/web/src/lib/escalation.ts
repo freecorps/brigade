@@ -14,7 +14,6 @@ import {
   onCallAt,
   POLICY_NAME_MAX,
   type Escalation,
-  type EscalationPage,
   type EscalationPolicyRow,
   type EscalationTarget,
   type IncidentRow,
@@ -238,11 +237,21 @@ export type RunStatus =
   | { kind: "acknowledged"; by: string; at: number }
   | { kind: "running" }
   | { kind: "resolved"; at: number }
-  | { kind: "fallback"; reason: "unreachable" | "exhausted" | "stalled"; at: number };
+  | {
+      kind: "fallback";
+      reason: "unreachable" | "exhausted" | "stalled";
+      /** An earlier level paged someone: no later level could reach anyone. */
+      later: boolean;
+      /** The page to everyone who can respond reached nobody (nobody else can respond, or none could be paged). */
+      nobody: boolean;
+      at: number;
+    };
 
 export function runStatus(
   run: Escalation,
   incident: Pick<IncidentRow, "acknowledgedAt" | "acknowledgedBy">,
+  members: readonly MemberRow[],
+  timeline: readonly TimelineRow[],
 ): RunStatus {
   if (incident.acknowledgedAt != null && incident.acknowledgedBy != null) {
     return { kind: "acknowledged", by: incident.acknowledgedBy, at: incident.acknowledgedAt };
@@ -253,7 +262,12 @@ export function runStatus(
     const last = run.pages[run.pages.length - 1];
     const reason =
       last?.reason === "exhausted" || last?.reason === "stalled" ? last.reason : "unreachable";
-    return { kind: "fallback", reason, at };
+    const later = run.pages.some((page) => page.level !== null) || run.paged > run.pages.length;
+    const failed = pageFailures(run, timeline, run.paged);
+    // Nobody to page (an empty list) counts as nobody reached.
+    const everyone = everyoneWhoCanRespond(members, run.causedBy);
+    const nobody = failed.nobody || everyone.every((member) => failed.users.has(member.id));
+    return { kind: "fallback", reason, later, nobody, at };
   }
   return { kind: "resolved", at };
 }
@@ -266,23 +280,40 @@ const DELIVERY_FAILURES: readonly PageFailure[] = [
   "over_limit",
 ];
 
+/** Failures a page whose push was attempted can record, besides members not reached: it found nobody to page. */
+const NOBODY_FAILURES: readonly PageFailure[] = ["no_devices", "nobody_else"];
+
 /**
- * The members each page reached whose push then failed, from the incident's `page_failed` entries: those for one
- * of the page's members, recorded after it was paged and before the next page. Index-aligned with `pages`.
+ * The `page_failed` entries of the run's page `step` (1-based, of every page the run made): the members it did not
+ * reach, by reason, and whether it found nobody at all (an entry for no one in particular).
  */
-export function failedDeliveries(
-  pages: readonly EscalationPage[],
+function pageFailures(
+  run: Escalation,
   timeline: readonly TimelineRow[],
-): Set<string>[] {
-  return pages.map((page, index) => {
-    const until = pages[index + 1]?.at ?? Number.POSITIVE_INFINITY;
+  step: number,
+): { users: Map<string, PageFailure>; nobody: boolean } {
+  const users = new Map<string, PageFailure>();
+  let nobody = false;
+  for (const row of timeline) {
+    if (row.kind !== "page_failed" || row.run !== run.eventId || row.step !== step) continue;
+    if (row.userId !== null) users.set(row.userId, row.reason);
+    else if (NOBODY_FAILURES.includes(row.reason)) nobody = true;
+  }
+  return { users, nobody };
+}
+
+/**
+ * The members each page reached whose push then failed, from the incident's `page_failed` entries recorded for that
+ * page (by the run and the page's step), so a slow failure of one page is never put on the next. Index-aligned with
+ * `run.pages`.
+ */
+export function failedDeliveries(run: Escalation, timeline: readonly TimelineRow[]): Set<string>[] {
+  // `pages` keeps the last few: page `index` is the run's step `dropped + index + 1`.
+  const dropped = run.paged - run.pages.length;
+  return run.pages.map((page, index) => {
     const failed = new Set<string>();
-    for (const row of timeline) {
-      if (row.kind !== "page_failed" || row.userId === null) continue;
-      if (row.at < page.at || row.at >= until) continue;
-      if (page.userIds.includes(row.userId) && DELIVERY_FAILURES.includes(row.reason)) {
-        failed.add(row.userId);
-      }
+    for (const [userId, reason] of pageFailures(run, timeline, dropped + index + 1).users) {
+      if (page.userIds.includes(userId) && DELIVERY_FAILURES.includes(reason)) failed.add(userId);
     }
     return failed;
   });

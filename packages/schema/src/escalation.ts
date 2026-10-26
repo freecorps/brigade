@@ -210,6 +210,10 @@ function paged(
       ctx,
     );
   } else {
+    // Everyone, after a level earlier in the run paged someone (the pages kept, or more than they hold).
+    const later =
+      page.level === null &&
+      (run.pages.some((one) => one.level !== null) || run.paged > run.pages.length);
     appendTimeline(
       store,
       current,
@@ -219,6 +223,8 @@ function paged(
         round: page.round,
         userIds: page.userIds,
         reason: page.reason,
+        ...(later && { later }),
+        ...(run.paged === 0 && page.userIds.includes(run.causedBy) && { causedBy: run.causedBy }),
       },
       ctx,
     );
@@ -244,7 +250,7 @@ function paged(
 
 function setTimer(store: MutationStore, incidentId: string, at: number): void {
   if (store.get("escalation_timers", incidentId))
-    store.update("escalation_timers", incidentId, { at });
+    store.update("escalation_timers", incidentId, { at, failingSince: null });
   else store.insert("escalation_timers", { id: incidentId, at });
 }
 
@@ -357,10 +363,13 @@ export const advanceEscalation = defineMutation({
 });
 
 /**
- * Server only, as `ESCALATION_ACTOR`, from the shard's alarm: the run's level `step` has been due for
- * `ESCALATION_STALL_MS` and `escalation.advance` keeps refusing it (a bug, or a row it cannot read), so everyone who
- * can respond is paged (the interim rule, `reason: "stalled"`) and the run ends. Reads nothing of the run's levels, so
- * whatever stops the level does not stop this. `conflict` once the run moved on.
+ * Server only, as `ESCALATION_ACTOR`, from the shard's alarm: `escalation.advance` has been refusing the run's level
+ * `step` for `ESCALATION_STALL_MS` (a bug, or a row it cannot read), so everyone who can respond is paged (the interim
+ * rule, `reason: "stalled"`) and the run ends. Reads nothing of the run's levels, so whatever stops the level does not
+ * stop this. `conflict` once the run moved on.
+ *
+ * Also from the dead-letter consumer, for a run that ended on its first page (no level could reach anyone) when that
+ * page was lost with its event (`step` 1): everyone who can respond is paged again, on an event of its own.
  */
 export const fallbackEscalation = defineMutation({
   name: "escalation.fallback",
@@ -372,10 +381,24 @@ export const fallbackEscalation = defineMutation({
   apply(store, args, ctx) {
     const incident = store.get("incidents", args.incidentId);
     const run = incident?.escalation;
-    if (!incident || !run || run.status !== "running") {
+    const lost =
+      run?.status === "exhausted" &&
+      run.paged === 1 &&
+      args.step === 1 &&
+      run.pages.length === 1 &&
+      run.pages[0].level === null;
+    if (!incident || !run || (run.status !== "running" && !lost)) {
       return fail("not_found", "No escalation under way");
     }
     if (run.paged !== args.step) return fail("conflict", "The run moved on");
+    if (lost) {
+      if (!isActive(incident.status) || incident.acknowledgedAt != null) {
+        return fail("conflict", "Incident is not waiting for a page");
+      }
+      return ok(
+        ...paged(store, incident, run, pageOf(null, 0, [], [], "unreachable", ctx.now), [], ctx),
+      );
+    }
     const round = run.pages[run.pages.length - 1]?.round ?? 0;
     return ok(
       ...paged(store, incident, run, pageOf(null, round, [], [], "stalled", ctx.now), [], ctx),

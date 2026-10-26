@@ -58,8 +58,15 @@ export function statusText(status: RunStatus, who: People, now: number, locale: 
         time: formatAge(status.at, now, locale),
         level: "",
       });
-    case "fallback":
-      return m.escalation_progress({ part: `fallback_${status.reason}`, time: "", level: "" });
+    case "fallback": {
+      const cause =
+        status.reason === "unreachable" && status.later ? "unreachable_later" : status.reason;
+      return m.escalation_progress({
+        part: `fallback_${cause}${status.nobody ? "_nobody" : ""}`,
+        time: "",
+        level: "",
+      });
+    }
   }
 }
 
@@ -92,7 +99,7 @@ export function EscalationProgress({
   timeZone: string;
   now: number;
 }) {
-  const status = runStatus(run, incident);
+  const status = runStatus(run, incident, members, timeline);
   const running = run.status === "running" && status.kind === "running";
   const next = running ? nextStep(run) : null;
   const StatusIcon =
@@ -103,7 +110,7 @@ export function EscalationProgress({
         : status.kind === "fallback"
           ? TriangleAlertIcon
           : CircleCheckIcon;
-  const failed = failedDeliveries(run.pages, timeline);
+  const failed = failedDeliveries(run, timeline);
   // `pages` keeps the last few: the first page of the run is the one at index `paged - pages.length` from 0.
   const dropped = run.paged - run.pages.length;
   const rows = run.pages.map((page, index) => ({
@@ -310,7 +317,9 @@ function PageRow({
               {everyone.map((member) => personName(member.id, who)).join(", ")}
             </p>
           </div>
-        ) : null}
+        ) : (
+          <p className="text-muted-foreground">{escalationText("nobody_reached")}</p>
+        )}
         {misses.length > 0 ? (
           <p className="text-amber-700 [overflow-wrap:anywhere] dark:text-amber-400">
             {escalationText("missed")}: {misses.join(", ")}

@@ -101,15 +101,19 @@ chain:
 - When no level from there to the last can be reached, the run falls back to the **interim rule** (commander, then
   everyone who can respond), recorded as level "everyone who can respond", and ends there (`exhausted`): there is
   nothing left to escalate to. Its own failures are recorded as the interim rule's always were.
-- **A run that ends unacknowledged** (every level and repeat paged, nobody acknowledged) falls back to the interim
-  rule once the same way, then ends. This also covers a run whose only reach was whoever declared it (on call and
-  counted as reached, so nobody was pushed): it must not end silently, so everyone else who can respond is paged
-  at the last level's timeout.
+- **A run that ends unacknowledged** (every level and repeat paged, nobody acknowledged) pages everyone who can
+  respond once, then ends: every member who can respond, the commander included and not asked first (they had
+  their chance), except whoever caused the run's first page. This also covers a run whose only reach was whoever
+  declared it (on call and counted as reached, so nobody was pushed): it must not end silently, so everyone else who
+  can respond is paged at the last level's timeout. When nobody else can respond, that is recorded ("Nobody else was
+  paged: only the person who declared it can respond", `nobody_else`).
 - **A level that cannot fire** (`escalation.advance` refusing it while the run is due and still running: a bug, or a
   row it cannot read) is never dropped. Its first failure goes on the timeline ("An escalation level couldn't fire",
-  `escalation_stalled`), it is tried again every minute, and once it has been due for 3 minutes the shard pages the
-  interim rule through a mutation that does not read the levels (`escalation.fallback`, `reason: "stalled"`) and the
-  run ends.
+  `escalation_stalled`), it is tried again every minute, and 3 minutes after its first failure (stored on its timer, so
+  an alarm that came late still retries first) the shard pages everyone who can respond, as for a run that ends
+  unacknowledged, through a mutation that does not read the levels (`escalation.fallback`, `reason: "stalled"`), and
+  the run ends. An "ok" that left the level due (a stored result the run did not move past) counts as a failure, so
+  the alarm never comes straight back to it.
 - A level reached on some device whose push then fails (relay down, APNs refusing) is recorded when the page
   settles (RFC 0005 "Notifiers") and escalates at its timeout, not before: retries take about 75 s and a level's
   timeout is at least a minute. Escalating early on a failed delivery is left for delivery receipts.
@@ -119,13 +123,18 @@ chain:
   **before** monitor upkeep, the outbox drain and the member repair (each level is a synchronous mutation, at most
   50 per run, the rest right after), and the drain that follows sends their events; no level ever waits on D1.
 - **Idempotency.** Each level is its own event, so the page ledger (RFC 0005) de-duplicates it like any page; the
-  start is de-duplicated by the event that asked for it (`start:<event id>`), and a level by the run's page count,
-  (`advance:<incident>:<page count>`), so a redelivered event or a repeated alarm never pages a level twice. A level's
+  start is de-duplicated by the event that asked for it (`start:<event id>`), and a level by its run and the run's page
+  count (`advance:<run event id>:<page count>`, likewise `fallback:` and the stall's entry), so a redelivered event or
+  a repeated alarm never pages a level twice, and a later run on the same incident (reopened) never meets the first
+  run's results. A level's
   event carries its run
   and page count: one from a run that has stopped (acknowledged and then reopened, or replaced by a new run) sends
   nothing. A dead-lettered level is recorded like any dead-lettered page; a dead-lettered **first** page (the shard
   never planned it, so no run started) starts the run when it is recorded, its first level marked as not paged, so
-  the next levels still fire on time.
+  the next levels still fire on time. When that first page was already the interim rule (no level could reach
+  anyone, so the run ended on it), nothing would page again: everyone who can respond is paged anew, on an event of
+  its own (`escalation.fallback` on the ended run, once). A failed page is recorded with the run and page it belongs
+  to, so the incident page puts a slow failure on the right level.
 
 **The interim rule** (no default policy, and the last fallback above): the incident commander if one is assigned,
 can still respond (not a viewer), did not cause the event and has a registered device; otherwise every member who

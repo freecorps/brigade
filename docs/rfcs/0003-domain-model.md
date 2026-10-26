@@ -240,7 +240,8 @@ How a page uses them is RFC 0006 "Who is paged".
   Queue). **Next level.** At `nextAt` the shard's alarm runs `escalation.advance`: the next level, or level 1 of the
   next round, or, past the last round, `exhausted`: nobody acknowledged, so everyone who can respond is paged once
   (the interim rule, RFC 0006) and the run ends (a timeline entry, `escalation.exhausted`). A level `escalation.advance`
-  keeps refusing is recorded at once and, after 3 minutes, ends the run the same way (`escalation.fallback`).
+  keeps refusing is recorded at once and, 3 minutes after its first refusal, ends the run the same way
+  (`escalation.fallback`).
 - **Stop.** `incident.ack` (any responder, through any route: the mutation does it, not an endpoint) sets the run
   `acknowledged`, and a status change out of the active ones (resolved, declined) sets it `resolved`; both delete
   the timer in the same transaction, so no level fires after them. A reopened incident starts no run by itself; its

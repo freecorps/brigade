@@ -142,7 +142,9 @@ const rank = (severity: Severity) => ["sev1", "sev2", "sev3", "sev4"].indexOf(se
  * member who can respond, did not cause the event and has a device; otherwise every member who can respond (owner,
  * admin, responder; viewers only read), except who caused it. `targets` are their registered devices, in member then
  * device order; `noDevices` the members it is for who have none (a commander without a device included), so a page
- * that missed them says so.
+ * that missed them says so. With `everyone` (an escalation run's fallback after nobody acknowledged, or a level that
+ * kept failing to fire) the commander is not asked first: every member who can respond is paged, the commander
+ * included, except who caused it.
  *
  * Members are the shard's member list (`member.sync`), never D1, so a D1 outage cannot delay a page. Member changes
  * made through Brigade update it with D1 (`member.changeRole`, `member.remove`: row and devices); one made outside
@@ -152,6 +154,7 @@ export function pageTargets(
   store: Store<BrigadeTables>,
   incident: Pick<IncidentRow, "roles">,
   actorId: string,
+  everyone = false,
 ): { targets: PageTarget[]; noDevices: string[] } {
   const members = store.scan("members");
   const devices = store.scan("devices");
@@ -167,7 +170,7 @@ export function pageTargets(
         publicKey,
       }));
   const noDevices: string[] = [];
-  const commander = incident.roles?.commander;
+  const commander = everyone ? undefined : incident.roles?.commander;
   if (
     commander !== undefined &&
     commander !== actorId &&
@@ -268,7 +271,15 @@ export class Pager {
       // Each member the page was for is told apart; with none at all, a member who declared it by hand knows, and a
       // monitor's incident says nobody was paged.
       if (skipped.length > 0) this.settle(event, incident.id, skipped, now);
-      else if (event.actor.kind !== "user") this.fail(event, incident.id, null, "no_devices", now);
+      else if (event.actor.kind !== "user") {
+        this.fail(
+          event,
+          incident.id,
+          null,
+          this.nobodyElse(event, incident) ? "nobody_else" : "no_devices",
+          now,
+        );
+      }
       this.finish(event.id, now);
       return { send: false, reason: "nobody" };
     }
@@ -326,8 +337,15 @@ export class Pager {
     if (event.type === "escalation.paged") {
       const data = event.data as EscalationPaged["data"];
       const missed = (data.missed ?? []).map(fromMiss);
-      // The interim rule as the last fallback: whoever caused the run's first page still knows.
-      if (data.level === null) return this.interim(incident, missed);
+      // The interim rule as the last fallback: whoever caused the run's first page still knows. After nobody
+      // acknowledged (or a level kept failing) it is everyone, not the commander first: the commander had their chance.
+      if (data.level === null) {
+        return this.interim(
+          incident,
+          missed,
+          data.reason === "exhausted" || data.reason === "stalled",
+        );
+      }
       return { ...this.devicesOf(data.userIds ?? [], null), skipped: missed };
     }
     let run = incident.escalation;
@@ -368,10 +386,26 @@ export class Pager {
     return true;
   }
 
-  /** RFC 0006's interim rule, excluding whoever caused the run's first page (they know). */
-  private interim(incident: IncidentRow, skipped: SkippedMember[]): Recipients {
+  /**
+   * RFC 0006's interim rule, excluding whoever caused the run's first page (they know); with `everyone`, every member
+   * who can respond, without asking the commander first.
+   */
+  private interim(incident: IncidentRow, skipped: SkippedMember[], everyone = false): Recipients {
     const causedBy = incident.escalation?.causedBy ?? "";
-    return { ...pageTargets(this.options.shard.store, incident, causedBy), skipped };
+    return { ...pageTargets(this.options.shard.store, incident, causedBy, everyone), skipped };
+  }
+
+  /**
+   * Whether an escalation's page to everyone who can respond found nobody because the only member who can respond is
+   * whoever caused the run's first page (they declared it, and know).
+   */
+  private nobodyElse(event: BrigadeEvent, incident: IncidentRow): boolean {
+    if (event.type !== "escalation.paged") return false;
+    if ((event.data as Partial<EscalationPaged["data"]> | null)?.level !== null) return false;
+    const causedBy = incident.escalation?.causedBy;
+    const member =
+      causedBy === undefined ? undefined : this.options.shard.store.get("members", causedBy);
+    return member !== undefined && member.role !== "viewer";
   }
 
   /** The devices of `userIds` who are still members who can respond; `except` (who caused the page) is not sent to. */
@@ -477,6 +511,25 @@ export class Pager {
       this.start(event, incident, now);
     }
     if (open) this.fail(event, incident.id, null, "dead_lettered", now);
+    // The run ended on that page (no level could reach anyone, so it was everyone who can respond), and the page is
+    // lost: nothing would page again. Everyone who can respond is paged anew, on an event of its own.
+    const after = this.options.shard.store.get("incidents", incident.id)?.escalation;
+    if (
+      open &&
+      after?.eventId === event.id &&
+      after.status === "exhausted" &&
+      after.paged === 1 &&
+      after.pages[0]?.level === null
+    ) {
+      this.run(
+        ESCALATION_ACTOR,
+        "escalation",
+        `fallback:${event.id}:1`,
+        "escalation.fallback",
+        { incidentId: incident.id, step: 1 },
+        now,
+      );
+    }
     this.finish(event.id, now);
     return open ? "recorded" : "closed";
   }
@@ -518,6 +571,7 @@ export class Pager {
     this.options.log("page failed", { event: event.id, incident: incidentId, userId, reason });
     // One entry per member, and per schedule nobody was on call for.
     const key = schedule?.id && userId === null ? `-:${schedule.id}` : (userId ?? "-");
+    const page = this.pageOf(event, incidentId);
     this.run(
       NOTIFIER_ACTOR,
       "notifier",
@@ -529,9 +583,31 @@ export class Pager {
         userId,
         reason,
         ...(schedule ? { schedule: schedule.name } : {}),
+        ...(page && { page }),
       },
       now,
     );
+  }
+
+  /**
+   * Which page of the incident's escalation run `event` is, so its failures go with that page: a level's own event,
+   * the event that started the run (its first page), or a severity raised mid-run (the level paged last, again).
+   */
+  private pageOf(
+    event: BrigadeEvent,
+    incidentId: string,
+  ): { run: string; step: number } | undefined {
+    const run = this.options.shard.store.get("incidents", incidentId)?.escalation;
+    if (!run) return undefined;
+    if (event.type === "escalation.paged") {
+      const data = event.data as Partial<EscalationPaged["data"]> | null;
+      return data?.run === run.eventId && typeof data.step === "number"
+        ? { run: data.run, step: data.step }
+        : undefined;
+    }
+    if (run.eventId === event.id) return { run: run.eventId, step: 1 };
+    if (run.status === "running" && run.paged > 0) return { run: run.eventId, step: run.paged };
+    return undefined;
   }
 
   /** A server-only mutation as `actor`, de-duplicated by `mutationId`. */

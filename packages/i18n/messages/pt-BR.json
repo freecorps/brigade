@@ -652,6 +652,9 @@
         "kind=escalated_timeout": "Ninguém confirmou, então o nível {a} foi chamado: {b}",
         "kind=escalated_unreachable": "Os níveis anteriores não alcançaram ninguém, então o nível {a} foi chamado: {b}",
         "kind=escalated_everyone": "Nenhum nível alcançou ninguém, então todos que podem responder foram chamados",
+        "kind=escalated_everyone_later": "Nenhum nível seguinte alcançou ninguém, então todos que podem responder foram chamados",
+        "kind=escalated_started_aware": "Nível {a}: {b}",
+        "kind=page_nobody_else": "Ninguém mais foi chamado: só quem declarou pode responder",
         "kind=escalation_exhausted": "Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados",
         "kind=escalated_everyone_stalled": "Um nível de escalonamento continuou falhando, então todos que podem responder foram chamados",
         "kind=page_escalation_stalled": "Um nível de escalonamento não pôde ser disparado. O Brigade continua tentando e chama todos que podem responder se ainda falhar",
@@ -1059,6 +1062,7 @@
         "text=missed": "Não foi possível chamar",
         "text=declarer_you": "Você (declarou)",
         "text=declarer": "{name} (declarou)",
+        "text=declarer_you_object": "você (declarou)",
         "text=replaces_default": "Substitui {name} como padrão.",
         "text=level_empty_draft": "Ninguém para chamar ainda: adicione uma escala ou uma pessoa, ou remova este nível.",
         "text=*": "Escalonamento"
@@ -1161,6 +1165,11 @@
         "part=fallback_unreachable": "Nenhum nível alcançou ninguém: todos que podem responder foram chamados",
         "part=fallback_exhausted": "Ninguém confirmou depois de todos os níveis: todos que podem responder foram chamados",
         "part=fallback_stalled": "Um nível continuou falhando: todos que podem responder foram chamados",
+        "part=fallback_unreachable_later": "Nenhum nível seguinte alcançou ninguém: todos que podem responder foram chamados",
+        "part=fallback_unreachable_nobody": "Nenhum nível alcançou ninguém. Tentamos todos que podem responder: ninguém pôde ser chamado",
+        "part=fallback_unreachable_later_nobody": "Nenhum nível seguinte alcançou ninguém. Tentamos todos que podem responder: ninguém pôde ser chamado",
+        "part=fallback_exhausted_nobody": "Ninguém confirmou depois de todos os níveis. Tentamos todos que podem responder: ninguém pôde ser chamado",
+        "part=fallback_stalled_nobody": "Um nível continuou falhando. Tentamos todos que podem responder: ninguém pôde ser chamado",
         "part=*": "Escalonamento"
       }
     }
@@ -1185,7 +1194,7 @@
       "selectors": ["part"],
       "match": {
         "part=action": "Confirmar",
-        "part=hint": "Para as chamadas: nenhum outro nível de escalonamento é disparado.",
+        "part=hint": "Interrompe as chamadas: nenhum outro nível de escalonamento é disparado.",
         "part=by": "Confirmado por {name}, {time}",
         "part=already": "Outra pessoa confirmou primeiro.",
         "part=failed": "Não foi possível confirmar. {reason}",

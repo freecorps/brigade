@@ -11,6 +11,15 @@ const scheduleName: Validator<string | null | undefined> = (input, path = "") =>
     ? { ok: true, value: undefined }
     : v.nullable(v.string({ max: 80 }))(input, path);
 
+/** The escalation page a failure belongs to; absent outside a run. */
+const pageRef: Validator<{ run: string; step: number } | undefined> = (input, path = "") =>
+  input === undefined
+    ? { ok: true, value: undefined }
+    : v.object({ run: v.id("evt"), step: v.integer({ min: 1, max: Number.MAX_SAFE_INTEGER }) })(
+        input,
+        path,
+      );
+
 /**
  * Why a page reached nobody (or not one member):
  * - `no_devices`: the member has no device registered (with `userId: null`, no one the page was for has one);
@@ -25,7 +34,8 @@ const scheduleName: Validator<string | null | undefined> = (input, path = "") =>
  * - `schedule_missing`: an escalation level's schedule was deleted after the run started (`userId: null`);
  * - `not_a_member`: an escalation level's member left the workspace or became a viewer;
  * - `escalation_stalled`: an escalation level is due but could not fire (`userId: null`); the shard tries again every
- *   minute, and past `ESCALATION_STALL_MS` pages everyone who can respond (`escalation.fallback`).
+ *   minute, and `ESCALATION_STALL_MS` after the first failure pages everyone who can respond (`escalation.fallback`);
+ * - `nobody_else`: everyone who can respond was paged, and the only one who can is whoever declared it (`userId: null`).
  */
 export const PAGE_FAILURES = [
   "no_devices",
@@ -38,6 +48,7 @@ export const PAGE_FAILURES = [
   "schedule_missing",
   "not_a_member",
   "escalation_stalled",
+  "nobody_else",
 ] as const;
 export type PageFailure = (typeof PAGE_FAILURES)[number];
 
@@ -68,6 +79,7 @@ export const failNotification = defineMutation({
     userId: v.nullable(v.string({ min: 1, max: 64 })),
     reason: v.picklist(PAGE_FAILURES),
     schedule: scheduleName,
+    page: pageRef,
   }),
   permission: "incident:update",
   apply(store, args, ctx) {
@@ -82,6 +94,7 @@ export const failNotification = defineMutation({
         userId: args.userId,
         reason: args.reason,
         ...(args.schedule == null ? {} : { schedule: args.schedule }),
+        ...(args.page && { run: args.page.run, step: args.page.step }),
       },
       ctx,
     );

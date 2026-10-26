@@ -36,6 +36,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "escalated_timeout" | "Nobody acknowledged, so level {a} was paged: {b}" |
 * | "escalated_unreachable" | "Earlier levels couldn't reach anyone, so level {a} was paged: {b}" |
 * | "escalated_everyone" | "No level could reach anyone, so everyone who can respond was paged" |
+* | "escalated_everyone_later" | "No later level could reach anyone, so everyone who can respond was paged" |
+* | "escalated_started_aware" | "Level {a}: {b}" |
+* | "page_nobody_else" | "Nobody else was paged: only the person who declared it can respond" |
 * | "escalation_exhausted" | "Nobody acknowledged after every level, so everyone who can respond was paged" |
 * | "escalated_everyone_stalled" | "An escalation level kept failing to fire, so everyone who can respond was paged" |
 * | "page_escalation_stalled" | "An escalation level couldn't fire. Brigade keeps trying, and pages everyone who can respond if it still can't" |
@@ -74,6 +77,9 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "escalated_timeout") return /** @type {LocalizedString} */ (`Ninguém confirmou, então o nível ${i?.a} foi chamado: ${i?.b}`);
 		if (i?.kind === "escalated_unreachable") return /** @type {LocalizedString} */ (`Os níveis anteriores não alcançaram ninguém, então o nível ${i?.a} foi chamado: ${i?.b}`);
 		if (i?.kind === "escalated_everyone") return /** @type {LocalizedString} */ (`Nenhum nível alcançou ninguém, então todos que podem responder foram chamados`);
+		if (i?.kind === "escalated_everyone_later") return /** @type {LocalizedString} */ (`Nenhum nível seguinte alcançou ninguém, então todos que podem responder foram chamados`);
+		if (i?.kind === "escalated_started_aware") return /** @type {LocalizedString} */ (`Nível ${i?.a}: ${i?.b}`);
+		if (i?.kind === "page_nobody_else") return /** @type {LocalizedString} */ (`Ninguém mais foi chamado: só quem declarou pode responder`);
 		if (i?.kind === "escalation_exhausted") return /** @type {LocalizedString} */ (`Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados`);
 		if (i?.kind === "escalated_everyone_stalled") return /** @type {LocalizedString} */ (`Um nível de escalonamento continuou falhando, então todos que podem responder foram chamados`);
 		if (i?.kind === "page_escalation_stalled") return /** @type {LocalizedString} */ (`Um nível de escalonamento não pôde ser disparado. O Brigade continua tentando e chama todos que podem responder se ainda falhar`);
@@ -106,6 +112,9 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "escalated_timeout") return /** @type {LocalizedString} */ (`Nobody acknowledged, so level ${i?.a} was paged: ${i?.b}`);
 		if (i?.kind === "escalated_unreachable") return /** @type {LocalizedString} */ (`Earlier levels couldn't reach anyone, so level ${i?.a} was paged: ${i?.b}`);
 		if (i?.kind === "escalated_everyone") return /** @type {LocalizedString} */ (`No level could reach anyone, so everyone who can respond was paged`);
+		if (i?.kind === "escalated_everyone_later") return /** @type {LocalizedString} */ (`No later level could reach anyone, so everyone who can respond was paged`);
+		if (i?.kind === "escalated_started_aware") return /** @type {LocalizedString} */ (`Level ${i?.a}: ${i?.b}`);
+		if (i?.kind === "page_nobody_else") return /** @type {LocalizedString} */ (`Nobody else was paged: only the person who declared it can respond`);
 		if (i?.kind === "escalation_exhausted") return /** @type {LocalizedString} */ (`Nobody acknowledged after every level, so everyone who can respond was paged`);
 		if (i?.kind === "escalated_everyone_stalled") return /** @type {LocalizedString} */ (`An escalation level kept failing to fire, so everyone who can respond was paged`);
 		if (i?.kind === "page_escalation_stalled") return /** @type {LocalizedString} */ (`An escalation level couldn't fire. Brigade keeps trying, and pages everyone who can respond if it still can't`);

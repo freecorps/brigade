@@ -11,7 +11,7 @@ import type { RowChange } from "./store.ts";
 export const MAX_LEVELS_PER_ALARM = 50;
 /**
  * A level that could not fire (a bug, or a row the mutation refuses) is tried again this much later, and logged; its
- * first failure goes on the timeline, and past `ESCALATION_STALL_MS` everyone who can respond is paged instead.
+ * first failure goes on the timeline, and `ESCALATION_STALL_MS` after it everyone who can respond is paged instead.
  */
 export const ESCALATION_RETRY_MS = 60 * 1000;
 
@@ -52,16 +52,15 @@ export class Escalations {
     for (const timer of timers.slice(0, MAX_LEVELS_PER_ALARM)) {
       const run = shard.store.get("incidents", timer.id)?.escalation;
       // The step (pages so far) names the level: a repeated alarm finds the run moved on (`conflict`), so a level
-      // fires once.
+      // fires once. Ids name the run too: a later run on the same incident starts again at step 1.
       const step = Math.max(1, run?.paged ?? 0);
+      const key = `${run?.eventId ?? timer.id}:${step}`;
       const args = { incidentId: timer.id, step };
-      const result = this.run(
-        "escalation",
-        `advance:${timer.id}:${step}`,
-        "escalation.advance",
-        args,
-        now,
-      );
+      let result = this.run("escalation", `advance:${key}`, "escalation.advance", args, now);
+      // An "ok" that left the level due (a stored result the run did not move past) fired nothing: a refusal, or the
+      // alarm would come straight back to it.
+      if (result.ok && this.stillDue(timer.id, step, now))
+        result = { ok: false, code: "not_advanced" };
       if (result.ok) {
         fired++;
         continue;
@@ -74,19 +73,26 @@ export class Escalations {
         continue;
       }
       if (current.nextAt > now) {
-        shard.store.update("escalation_timers", timer.id, { at: current.nextAt });
+        shard.store.update("escalation_timers", timer.id, {
+          at: current.nextAt,
+          failingSince: null,
+        });
         continue;
       }
       // Due and still running, yet refused: never drop it (that would end the escalation quietly). The first failure
-      // goes on the timeline; past `ESCALATION_STALL_MS` everyone who can respond is paged, by a mutation that does
+      // goes on the timeline; `ESCALATION_STALL_MS` after it everyone who can respond is paged, by a mutation that does
       // not read the level; until then (or if that fails too) it is tried again.
       this.options.log("escalation level could not fire", {
         incident: timer.id,
         code: result.code,
       });
+      const since = timer.failingSince ?? now;
+      if (timer.failingSince == null) {
+        shard.store.update("escalation_timers", timer.id, { failingSince: since });
+      }
       this.run(
         "notifier",
-        `fail:stall:${timer.id}:${step}`,
+        `fail:stall:${key}`,
         "notification.fail",
         {
           incidentId: timer.id,
@@ -97,14 +103,11 @@ export class Escalations {
         now,
         NOTIFIER_ACTOR,
       );
-      if (now - current.nextAt >= ESCALATION_STALL_MS) {
-        const fallback = this.run(
-          "escalation",
-          `fallback:${timer.id}:${step}`,
-          "escalation.fallback",
-          args,
-          now,
-        );
+      if (now - since >= ESCALATION_STALL_MS) {
+        let fallback = this.run("escalation", `fallback:${key}`, "escalation.fallback", args, now);
+        if (fallback.ok && this.stillDue(timer.id, step, now)) {
+          fallback = { ok: false, code: "not_advanced" };
+        }
         if (fallback.ok) {
           fired++;
           continue;
@@ -119,6 +122,17 @@ export class Escalations {
       }
     }
     return { fired, next: timers.length > MAX_LEVELS_PER_ALARM ? now : this.nextAt() };
+  }
+
+  /** Whether the incident's run is still running at `step` with its level due by `now`: nothing fired. */
+  private stillDue(incidentId: string, step: number, now: number): boolean {
+    const run = this.options.shard.store.get("incidents", incidentId)?.escalation;
+    return (
+      run?.status === "running" &&
+      Math.max(1, run.paged) === step &&
+      run.nextAt !== null &&
+      run.nextAt <= now
+    );
   }
 
   /**

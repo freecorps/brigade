@@ -25,7 +25,7 @@ export const incident_ack = /** @type {((inputs: Incident_AckInputs, options?: {
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.part === "action") return /** @type {LocalizedString} */ (`Confirmar`);
-		if (i?.part === "hint") return /** @type {LocalizedString} */ (`Para as chamadas: nenhum outro nível de escalonamento é disparado.`);
+		if (i?.part === "hint") return /** @type {LocalizedString} */ (`Interrompe as chamadas: nenhum outro nível de escalonamento é disparado.`);
 		if (i?.part === "by") return /** @type {LocalizedString} */ (`Confirmado por ${i?.name}, ${i?.time}`);
 		if (i?.part === "already") return /** @type {LocalizedString} */ (`Outra pessoa confirmou primeiro.`);
 		if (i?.part === "failed") return /** @type {LocalizedString} */ (`Não foi possível confirmar. ${i?.reason}`);

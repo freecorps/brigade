@@ -177,37 +177,69 @@ describe("a run on the incident page", () => {
   test("an ack reads first whatever the run's status; a fallback says why it paged everyone", () => {
     const acked = { acknowledgedAt: 50, acknowledgedBy: "usr_ana" };
     const open = { acknowledgedAt: null, acknowledgedBy: null };
-    const ended = (reason: EscalationPage["reason"]): Escalation => ({
-      ...run([page(1), page(null, 0, { reason })]),
+    const members = [{ id: "usr_ana", name: "Ana", role: "owner", updatedAt: 0 }] as MemberRow[];
+    const ended = (pages: Escalation["pages"]): Escalation => ({
+      ...run(pages),
       status: "exhausted",
       endedAt: 40,
     });
-    expect(runStatus(ended("exhausted"), acked)).toEqual({
+    const last = (reason: EscalationPage["reason"]) => ended([page(1), page(null, 0, { reason })]);
+    expect(runStatus(last("exhausted"), acked, members, [])).toEqual({
       kind: "acknowledged",
       by: "usr_ana",
       at: 50,
     });
-    expect(runStatus(run([page(1)]), open)).toEqual({ kind: "running" });
+    expect(runStatus(run([page(1)]), open, members, [])).toEqual({ kind: "running" });
     for (const reason of ["unreachable", "exhausted", "stalled"] as const) {
-      expect(runStatus(ended(reason), open)).toEqual({ kind: "fallback", reason, at: 40 });
+      expect(runStatus(last(reason), open, members, [])).toEqual({
+        kind: "fallback",
+        reason,
+        later: true,
+        nobody: false,
+        at: 40,
+      });
     }
+    // No level at all could reach anyone: not "later".
+    const first = ended([page(null, 0, { reason: "unreachable" })]);
+    expect(runStatus(first, open, members, [])).toMatchObject({ later: false, nobody: false });
+    // Nobody to page, or nobody the page could reach: "tried everyone, nobody could be paged".
+    expect(runStatus(first, open, [], [])).toMatchObject({ nobody: true });
+    const failed = {
+      kind: "page_failed",
+      at: 1,
+      userId: "usr_ana",
+      reason: "no_devices",
+      run: first.eventId,
+      step: 1,
+    } as TimelineRow;
+    expect(runStatus(first, open, members, [failed])).toMatchObject({ nobody: true });
+    // A failure of another run's page is not this one's.
+    const other = { ...failed, run: "evt_01JB0000000000000000000009" } as TimelineRow;
+    expect(runStatus(first, open, members, [other])).toMatchObject({ nobody: false });
   });
 
-  test("a reached member whose push failed is marked on the page that reached them", () => {
-    const failed = (at: number, userId: string, reason: string) =>
-      ({ kind: "page_failed", at, userId, reason }) as TimelineRow;
-    const pages = [
+  test("a reached member whose push failed is marked on the page it belongs to, however late", () => {
+    const failed = (at: number, userId: string, reason: string, step: number) =>
+      ({ kind: "page_failed", at, userId, reason, run: RUN, step }) as TimelineRow;
+    const RUN = "evt_01JB0000000000000000000001";
+    const pages = run([
       page(1, 0, { at: 10, userIds: ["usr_ana", "usr_bia"] }),
-      page(2, 0, { at: 20, userIds: ["usr_eva"] }),
-    ];
-    const marked = failedDeliveries(pages, [
-      failed(12, "usr_ana", "undelivered"),
-      // A member a level could not page at all is the page's miss, not a failed push.
-      failed(12, "usr_bia", "no_devices"),
-      failed(25, "usr_eva", "not_configured"),
-      failed(26, "usr_ana", "undelivered"),
+      page(2, 0, { at: 20, userIds: ["usr_eva", "usr_ana"] }),
     ]);
-    expect(marked.map((set) => [...set])).toEqual([["usr_ana"], ["usr_eva"]]);
+    const marked = failedDeliveries(pages, [
+      failed(12, "usr_ana", "undelivered", 1),
+      // A member a level could not page at all is the page's miss, not a failed push.
+      failed(12, "usr_bia", "no_devices", 1),
+      failed(25, "usr_eva", "not_configured", 2),
+      // Level 1's retries for Bia ran out after level 2 fired: level 1's, not level 2's.
+      failed(26, "usr_bia", "undelivered", 1),
+    ]);
+    expect(marked.map((set) => [...set].sort())).toEqual([["usr_ana", "usr_bia"], ["usr_eva"]]);
+    // With the first pages dropped from the row, steps still line up.
+    const capped = { ...pages, paged: 5 };
+    expect(
+      failedDeliveries(capped, [failed(30, "usr_eva", "undelivered", 5)]).map((set) => [...set]),
+    ).toEqual([[], ["usr_eva"]]);
   });
 
   test("a level's timeout says what comes after it", () => {
@@ -250,7 +282,51 @@ describe("a run on the incident page", () => {
         who,
       ),
     ).toBe("No level could reach anyone, so everyone who can respond was paged");
+    expect(
+      entryText(
+        entry({
+          kind: "escalated",
+          level: null,
+          round: 0,
+          userIds: [],
+          reason: "unreachable",
+          later: true,
+        }),
+        who,
+      ),
+    ).toBe("No later level could reach anyone, so everyone who can respond was paged");
+    // Whoever declared it, on the run's first level, was not pushed: not "Paged".
+    const declarer = entry({
+      kind: "escalated",
+      level: 1,
+      round: 0,
+      userIds: ["usr_me"],
+      reason: "started",
+      causedBy: "usr_me",
+    });
+    expect(entryText(declarer, who)).toBe("Level 1: you (declared it)");
+    expect(
+      entryText(
+        entry({
+          kind: "escalated",
+          level: 1,
+          round: 0,
+          userIds: ["usr_ana", "usr_me"],
+          reason: "started",
+          causedBy: "usr_me",
+        }),
+        who,
+      ),
+    ).toBe("Paged level 1: Ana, you (declared it)");
+    const nobodyElse = entry({ kind: "page_failed", userId: null, reason: "nobody_else" });
+    expect(entryText(nobodyElse, who)).toBe(
+      "Nobody else was paged: only the person who declared it can respond",
+    );
     await setLocale("pt-BR");
+    expect(entryText(declarer, who)).toBe("Nível 1: você (declarou)");
+    expect(entryText(nobodyElse, who)).toBe(
+      "Ninguém mais foi chamado: só quem declarou pode responder",
+    );
     expect(entryText(gap, who)).toBe("Não foi possível chamar Primary: ninguém de plantão");
     expect(entryText(entry({ kind: "escalation_exhausted", levels: 2, rounds: 1 }), who)).toBe(
       "Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados",

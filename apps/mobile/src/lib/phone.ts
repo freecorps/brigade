@@ -11,7 +11,7 @@ import { memberActor, neverOpened, type Server } from "@/lib/sync";
 import { createWorkspaceSync, type WorkspaceSync } from "@/lib/sync-client";
 import { BrigadePush } from "../../modules/brigade-push";
 
-export function phoneDeps(sync: WorkspaceSync): DeviceDeps {
+export function phoneDeps(sync: WorkspaceSync, server?: Server): DeviceDeps {
   const keys = BrigadePush;
   return {
     platform: process.env.EXPO_OS === "ios" ? "ios" : "android",
@@ -26,6 +26,12 @@ export function phoneDeps(sync: WorkspaceSync): DeviceDeps {
     },
     pushToken: async () => String((await Notifications.getDevicePushTokenAsync()).data),
     mutate: (name, args) => sync.client.mutate(sync.shard, name, args as never),
+    // Delivery receipts go only to the instance this phone registered with (RFC 0006 "Delivery receipts").
+    ...(server && keys?.setReceiptOrigin
+      ? {
+          receiptOrigin: { origin: server.auth, keep: (origin) => keys.setReceiptOrigin?.(origin) },
+        }
+      : {}),
   };
 }
 

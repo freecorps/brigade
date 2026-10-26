@@ -216,6 +216,7 @@ export * from './page_title_create_workspace.js';
 export * from './page_title_loading.js';
 export * from './page_title_sign_in.js';
 export * from './page_title_sign_up.js';
+export * from './page_why.js';
 export * from './paging_degraded.js';
 export * from './paging_last_ok.js';
 export * from './paging_reason_no_beat.js';

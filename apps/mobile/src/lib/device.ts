@@ -70,6 +70,12 @@ export type DeviceDeps = {
   /** Asks for notification permission once; true when granted. */
   permission: () => Promise<boolean>;
   pushToken: () => Promise<string>;
+  /**
+   * The instance this phone registers with (`https://brigade.example.com`) and where to keep it for the Notification
+   * Service Extension (the App Group): it posts delivery receipts to that origin only, whatever URL a page names
+   * (RFC 0006 "Delivery receipts"). Absent where there is no extension.
+   */
+  receiptOrigin?: { origin: string; keep: (origin: string) => void };
   /** Runs a mutation on the workspace's shard. */
   mutate: (
     name: "device.register" | "device.unregister",
@@ -99,10 +105,37 @@ export async function registerPhone(
     if (!proceed()) return "pending";
     const result = await deps.mutate("device.register", args);
     // `conflict`: registered already with these values. The member's device limit is `limit_reached`.
-    if (result.ok || result.error.code === "conflict") return "on";
+    if (result.ok || result.error.code === "conflict") {
+      keepReceiptOrigin(deps);
+      return "on";
+    }
     return result.error.code === "forbidden" ? "taken" : "failed";
   } catch {
     return "failed";
+  }
+}
+
+/**
+ * The instance's origin (scheme, host, port) from any of its URLs; undefined unless http(s). The extension compares
+ * a receipt URL's origin with it.
+ */
+export function instanceOrigin(url: string): string | undefined {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Never in registration's way: without it the extension only sends no receipts. */
+function keepReceiptOrigin(deps: DeviceDeps): void {
+  const origin = deps.receiptOrigin && instanceOrigin(deps.receiptOrigin.origin);
+  if (!origin) return;
+  try {
+    deps.receiptOrigin!.keep(origin);
+  } catch {
+    // An app binary from before receipts has no such call.
   }
 }
 

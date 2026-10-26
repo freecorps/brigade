@@ -15,6 +15,11 @@ public class BrigadePushModule: Module {
       PageActions.shared.finish(id)
     }
 
+    /// Keeps the registered instance's origin for the extension, which sends delivery receipts only there.
+    Function("setReceiptOrigin") { (origin: String) -> Bool in
+      return BrigadePushCrypto.setReceiptOrigin(origin)
+    }
+
     /// Whether this OS can decrypt pushes in the extension (HPKE needs iOS 17).
     Constant("canDecrypt") { () -> Bool in
       if #available(iOS 17.0, *) { return true }

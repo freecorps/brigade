@@ -46,7 +46,9 @@ without a policy keeps the interim rule (commander, then every owner, admin and 
   does not own with words it chose (RFC 0005 "Email", "Abuse"): the ledger caps it (5 emails per user per hour, 200
   per workspace per day), and the plan is that verification gates email, so no deployed environment sets
   `EMAIL_FROM` before it. Are those caps right once it does?
-- Should a level whose pushes all fail escalate before its timeout (needs delivery receipts)? An exhausted run
+- Should a level whose pushes all fail escalate before its timeout? Delivery receipts now say per device whether
+  APNs refused a push and whether the phone opened it (RFC 0006 "Delivery receipts"), but a missing receipt is not
+  proof a page was not shown (receipts are best effort), so only refusals could trigger it. An exhausted run
   already falls back to everyone who can respond once (RFC 0006 "Who is paged"); should a workspace be able to turn
   that off, or point it at a smaller group?
 - Every member without a device the page was for still gets their own "Couldn't page …" line: right for a small

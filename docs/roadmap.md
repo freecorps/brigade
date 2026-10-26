@@ -172,8 +172,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     a real push end to end from the deployed API to a device; VoIP call pages (`kind: "call"`, Phase 2 with RFC 0010); FCM for Android
     (Android devices are recorded as `unsupported`); replaying dead-lettered pages (today they are recorded, not
     re-sent); a member removed or demoted in D1 outside Brigade is still paged until the next sync upgrade
-    reconciles the shard (RFC 0006 "Who is paged", Q18); delivery receipts
-    and "why wasn't I paged" (Phase 2); holding back lower-urgency pushes while a page may be undelivered (RFC 0006
+    reconciles the shard (RFC 0006 "Who is paged", Q18); holding back lower-urgency pushes while a page may be undelivered (RFC 0006
     "Offline phones"); what is left of who is paged (Q18).
 - [x] External dead-man switch
   - A Cron Trigger beats once a minute into the `WatchdogDO`'s outbox; the beat goes through the alarm, the outbox
@@ -229,7 +228,13 @@ Validate the risky assumptions before writing product code. Each spike produces 
     when the paging pipeline degrades (Q19) and to owners when rotations change (Q20). VoIP call paging and the PSTN
     notifier are still to come.
 - [ ] Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup
-- [ ] Delivery receipts and "why wasn't I paged" debugging view
+- [x] Delivery receipts and "why wasn't I paged" debugging view
+  - Each page is a row per device (`deliveries`, synced to members): planned, handed to the relay, accepted by
+    APNs (or the error, with APNs' reason), opened on the phone. The iOS Notification Service Extension reports
+    the last with a single-page token sealed inside the page (`POST /receipts`, no session), never waiting on it.
+    The incident page lists who was paged; `?why=<member>` explains it step by step (RFC 0006 "Delivery receipts").
+  - Left: receipts from VoIP call pushes (RFC 0010) and Android (FCM); "shown" and "opened by the person" stages;
+    escalating early when every push of a level is refused (Q18); the mobile app's own why-not-paged screen.
 
 ## Phase 3 — Parity where it matters (6–8 weeks)
 

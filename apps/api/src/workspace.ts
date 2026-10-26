@@ -36,6 +36,7 @@ import {
   type SkippedMember,
 } from "./paging.ts";
 import type { ProbeReport } from "./probe.ts";
+import { Receipts, type ReceiptResult } from "./receipts.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
 import type { RowChange } from "./store.ts";
 
@@ -130,6 +131,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly drain: OutboxDrain;
   private readonly drainPaused: boolean;
   private readonly pager: Pager;
+  private readonly receipts: Receipts;
   private readonly mailer: Mailer;
   private readonly escalations: Escalations;
   private readonly membership: Membership;
@@ -163,6 +165,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
       wake: (at) => this.wake(at, "escalation"),
+    });
+    this.receipts = new Receipts({
+      storage: ctx.storage,
+      shard: this.shard,
+      randomBytes,
+      log: (message, fields) => this.log(message, fields),
+      committed: (version, changes) => this.broadcast(version, changes, undefined),
     });
     // After the pager: it reads the page ledger the pager creates.
     this.mailer = new Mailer({
@@ -390,9 +399,38 @@ export class WorkspaceDO extends DurableObject<Env> {
    * What the push notifier should send for `event` (RPC from the queue consumer, src/notify.ts): see `Pager.plan`.
    * A shard that serves no workspace yet plans nothing.
    */
-  planPage(event: BrigadeEvent): PagePlan {
+  async planPage(event: BrigadeEvent): Promise<PagePlan> {
     if (this.shard.workspace() !== event.workspaceId) return { send: false, reason: "not_found" };
-    return this.pager.plan(event, Date.now());
+    const now = Date.now();
+    const plan = this.pager.plan(event, now);
+    if (!plan.send) return plan;
+    // Each device's receipt token (RFC 0006 "Delivery receipts"). Never in the page's way: without one the page
+    // goes out all the same, and only its delivered stage stays unknown.
+    try {
+      const tokens = await this.receipts.mint(
+        { workspaceId: event.workspaceId, incidentId: plan.incident.id, eventId: event.id },
+        plan.targets.map((target) => target.deviceId),
+        now,
+      );
+      return {
+        ...plan,
+        targets: plan.targets.map((target) => ({
+          ...target,
+          receipt: tokens.get(target.deviceId),
+        })),
+      };
+    } catch (error) {
+      this.log("minting receipt tokens failed", { event: event.id, error: String(error) });
+      return plan;
+    }
+  }
+
+  /**
+   * A phone's delivery receipt (RPC from the Worker's `POST /receipts`, which read nothing but the token's
+   * workspace): see `Receipts.receive`. A shard that serves no workspace yet, or another, answers `invalid`.
+   */
+  receipt(token: string): Promise<ReceiptResult> {
+    return this.receipts.receive(token, Date.now());
   }
 
   /**

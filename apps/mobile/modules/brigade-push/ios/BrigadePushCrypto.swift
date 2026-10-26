@@ -31,6 +31,73 @@ public enum BrigadePushCrypto {
     public let incident: String?
     /// The incident's workspace (`PushContent.workspace`), for the Acknowledge action; nil from older instances.
     public let workspace: String?
+    /// Where to report that this page was opened, and its single-page token (packages/push `PushReceipt`); nil when
+    /// the page carries none or one the extension would not send.
+    public let receipt: Receipt?
+  }
+
+  /// A delivery receipt (RFC 0006 "Delivery receipts"): an https URL and an opaque token, each at most
+  /// `PUSH_RECEIPT_MAX_LENGTH` (packages/push `parseReceipt`, which this mirrors).
+  public struct Receipt {
+    public let url: URL
+    public let token: String
+
+    static let maxLength = 512
+
+    init?(_ value: Any?) {
+      guard
+        let value = value as? [String: Any],
+        let raw = value["url"] as? String,
+        let token = value["token"] as? String,
+        raw.count <= Self.maxLength, token.count <= Self.maxLength, !token.isEmpty,
+        token.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "._~-".contains($0)) }),
+        let url = URL(string: raw), let host = url.host, url.user == nil, url.password == nil
+      else { return nil }
+      let loopback = host == "localhost" || host == "127.0.0.1"
+      guard url.scheme == "https" || (url.scheme == "http" && loopback) else { return nil }
+      self.url = url
+      self.token = token
+    }
+
+    /// `scheme://host[:port]`, lowercased, as JavaScript's `URL.origin` says it (the default port left out); nil
+    /// without a scheme or host.
+    static func origin(of url: URL) -> String? {
+      guard let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased(), !host.isEmpty else {
+        return nil
+      }
+      let defaultPort = scheme == "https" ? 443 : scheme == "http" ? 80 : nil
+      guard let port = url.port, port != defaultPort else { return "\(scheme)://\(host)" }
+      return "\(scheme)://\(host):\(port)"
+    }
+
+    /// Whether this receipt goes to the instance the app registered the phone with (`receiptOrigin()`). A page names
+    /// its own receipt URL; only one on that origin is ever posted to, so a page sealed by anyone else holding the
+    /// device's public key cannot make the phone call out elsewhere.
+    public var isForRegisteredInstance: Bool {
+      guard let registered = BrigadePushCrypto.receiptOrigin(), let origin = Self.origin(of: url) else { return false }
+      return origin == registered
+    }
+  }
+
+  // MARK: - Receipt origin
+
+  private static let receiptOriginKey = "receipt-origin-v1"
+
+  /// Keeps the origin of the instance the app registered this phone with, in the App Group's defaults, where the
+  /// extension reads it (RFC 0006 "Delivery receipts"). False for anything but an http(s) origin.
+  public static func setReceiptOrigin(_ value: String) -> Bool {
+    guard
+      let url = URL(string: value), url.scheme == "https" || url.scheme == "http",
+      let origin = Receipt.origin(of: url),
+      let defaults = UserDefaults(suiteName: appGroup)
+    else { return false }
+    defaults.set(origin, forKey: receiptOriginKey)
+    return true
+  }
+
+  /// The registered instance's origin; nil until the app registered the phone since it learned to keep it.
+  public static func receiptOrigin() -> String? {
+    return UserDefaults(suiteName: appGroup)?.string(forKey: receiptOriginKey)
   }
 
   /// The device public key as the instance needs it: uncompressed P-256 (65 bytes), base64url. Creates the key
@@ -61,7 +128,8 @@ public enum BrigadePushCrypto {
       let body = json["body"] as? String
     else { throw Failure.malformedContent }
     return Content(
-      title: title, body: body, incident: json["incident"] as? String, workspace: json["workspace"] as? String)
+      title: title, body: body, incident: json["incident"] as? String, workspace: json["workspace"] as? String,
+      receipt: Receipt(json["receipt"]))
   }
 
   // MARK: - Keychain

@@ -1,4 +1,5 @@
 import type { Role } from "./access.ts";
+import type { DeliveryError } from "./deliveries.ts";
 import type { DevicePlatform, PushEnvironment } from "./devices.ts";
 import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
 import type { EmailAbout, EmailFailure, PageFailure } from "./notifications.ts";
@@ -336,6 +337,52 @@ export type DeviceRow = {
 };
 
 /**
+ * A member's device as every member of the workspace sees it (RFC 0006 "Delivery receipts"): written with `devices`
+ * by `device.register` (no token, no key) and dropped with it. `lastSeenAt`: when the device last registered or
+ * sent a delivery receipt, the latest sign that it was online.
+ */
+export type DeviceSummaryRow = {
+  id: string; // the device's id (dev_<ULID>)
+  userId: string;
+  platform: DevicePlatform;
+  environment: PushEnvironment;
+  /** Whether it registered a PushKit token for calls. */
+  voip: boolean;
+  registeredAt: number;
+  lastSeenAt: number;
+};
+
+/**
+ * What one page did on one device (RFC 0006 "Delivery receipts"): planned when the shard picked the device, sent
+ * when the notifier handed it to the relay, accepted when the relay said APNs took it, delivered when the phone's
+ * extension reported it opened it. Each stage is a time or null; `error` is the last failed attempt's, cleared once
+ * accepted. Written by `delivery.plan`, `delivery.report` and `delivery.confirm`.
+ */
+export type DeliveryRow = {
+  id: string; // `<incident id>:<event id>:<device id>` (`deliveryId`)
+  incidentId: string;
+  /** The event that asked for the page. */
+  eventId: string;
+  deviceId: string;
+  userId: string;
+  platform: DevicePlatform;
+  environment: PushEnvironment;
+  /** The escalation page it belongs to (its run and step); null outside a run. */
+  run: string | null;
+  step: number | null;
+  plannedAt: number;
+  /** When the last attempt was handed to the relay. */
+  sentAt: number | null;
+  acceptedAt: number | null;
+  deliveredAt: number | null;
+  attempts: number;
+  error: DeliveryError | null;
+  /** APNs' own reason with `error` (`BadDeviceToken`), when it gave one. */
+  reason: string | null;
+  updatedAt: number;
+};
+
+/**
  * One layer (rotation) of a schedule (RFC 0003 "Schedules"): its members take shifts in the order listed, each
  * `count` `unit`s long on the schedule's wall clock, the first starting at `startDate` `handoffTime` there.
  */
@@ -389,6 +436,8 @@ export type BrigadeTables = {
   timeline: TimelineRow;
   members: MemberRow;
   devices: DeviceRow;
+  member_devices: DeviceSummaryRow;
+  deliveries: DeliveryRow;
   schedules: ScheduleRow;
   overrides: OverrideRow;
   escalation_policies: EscalationPolicyRow;
@@ -408,6 +457,8 @@ export const TABLES = {
   timeline: { serverOnly: false },
   members: { serverOnly: false },
   devices: { serverOnly: true },
+  member_devices: { serverOnly: false },
+  deliveries: { serverOnly: false },
   schedules: { serverOnly: false },
   overrides: { serverOnly: false },
   escalation_policies: { serverOnly: false },

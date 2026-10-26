@@ -51,6 +51,7 @@ import { SeverityMenu, StatusMenu } from "@/components/incident-item";
 import { ANNOUNCE_MS, useNow } from "@/components/incidents-card";
 import { EscalationProgress } from "@/components/escalation-progress";
 import { usePreferences } from "@/components/preferences";
+import { PagingCard, WhyPagedView, type PagingData } from "@/components/why-paged";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
@@ -110,15 +111,15 @@ export function parseIncidentNumber(raw: string): number | null {
  * timeline with the written updates, newest first. Everything is live from the workspace shard, and every change
  * shows at once and settles when the shard confirms it, like the incident list.
  */
-export function IncidentPage({ number }: { number: number | null }) {
+export function IncidentPage({ number, why }: { number: number | null; why?: string }) {
   usePreferences();
-  return number === null ? <NotFound /> : <ByNumber number={number} />;
+  return number === null ? <NotFound /> : <ByNumber number={number} why={why} />;
 }
 
-function ByNumber({ number }: { number: number }) {
+function ByNumber({ number, why }: { number: number; why?: string }) {
   const { rows, status, error } = useQuery("incident.byNumber", { number });
   const row = rows[0];
-  if (row) return <Incident row={row} />;
+  if (row) return <Incident row={row} why={why} />;
   if (status === "error") return <LoadFailed code={error?.code} />;
   if (status === "ready") return <NotFound />;
   return <Loading />;
@@ -184,7 +185,7 @@ function Problem({ title, text }: { title: string; text: string }) {
 /** Busy keys: `status`, `severity`, `update`, `role/<role>`. */
 type Busy = ReadonlyMap<string, number>;
 
-function Incident({ row }: { row: IncidentRow }) {
+function Incident({ row, why }: { row: IncidentRow; why?: string }) {
   const { locale } = usePreferences();
   const member = useMember();
   const connection = useConnectionState();
@@ -199,6 +200,9 @@ function Incident({ row }: { row: IncidentRow }) {
   // What the escalation card forecasts the next level from (whoever is on call now).
   const schedules = useQuery("schedules.all", {});
   const overrides = useQuery("overrides.all", {});
+  // What each page did on each phone, and the phones members have (RFC 0006 "Delivery receipts").
+  const deliveries = useQuery("incident.deliveries", { id: row.id });
+  const devices = useQuery("devices.all", {});
 
   const setStatus = useMutation("incident.setStatus");
   const setSeverity = useMutation("incident.setSeverity");
@@ -277,6 +281,39 @@ function Incident({ row }: { row: IncidentRow }) {
   const acked = row.acknowledgedAt != null && row.acknowledgedBy != null;
   const canAck = can(member.role, "incident:ack") && isActive(row.status) && !acked;
   const escalating = row.escalation?.status === "running" && !acked;
+  const paging: PagingData = {
+    incident: row,
+    members: members.rows,
+    devices: devices.rows,
+    deliveries: deliveries.rows,
+    timeline: timeline.rows,
+    schedules: schedules.rows,
+    now,
+  };
+
+  // Every query the explanation reads must have loaded: empty lists while they fill would read as "no phone".
+  const feeds = [members, timeline, schedules, deliveries, devices];
+  const pagingFailed = feeds.find((feed) => feed.status === "error");
+  const pagingReady = feeds.every((feed) => feed.status === "ready");
+
+  if (why !== undefined && row.number !== null) {
+    if (pagingFailed) return <LoadFailed code={pagingFailed.error?.code} />;
+    if (!pagingReady) return <Loading />;
+    return (
+      <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-10">
+        <WhyPagedView
+          data={paging}
+          who={who}
+          userId={why}
+          number={row.number}
+          title={`${number} ${row.title}`}
+          locale={locale}
+          timeZone={TIME_ZONE}
+          now={now}
+        />
+      </div>
+    );
+  }
 
   return (
     <Shell>
@@ -378,7 +415,8 @@ function Incident({ row }: { row: IncidentRow }) {
         </Card>
 
         <div className="flex min-w-0 flex-col gap-6 max-md:order-first">
-          <Card aria-labelledby="roles-title">
+          {/* While a run is on, the escalation and who it paged come first on wide screens, the roles after. */}
+          <Card aria-labelledby="roles-title" className={cn(row.escalation && "md:order-last")}>
             <CardTitle id="roles-title" className="px-4 sm:px-6">
               {m.incident_page({ part: "roles" })}
             </CardTitle>
@@ -421,6 +459,9 @@ function Incident({ row }: { row: IncidentRow }) {
                 now={now}
               />
             </div>
+          ) : null}
+          {row.number !== null && pagingReady ? (
+            <PagingCard data={paging} who={who} number={row.number} />
           ) : null}
         </div>
       </div>

@@ -11,6 +11,13 @@ import {
   setIncidentSeverity,
   setIncidentStatus,
 } from "./incidents.ts";
+import {
+  allDevices,
+  confirmDelivery,
+  incidentDeliveries,
+  planDeliveries,
+  reportDeliveries,
+} from "./deliveries.ts";
 import { expireDevice, registerDevice, unregisterDevice } from "./devices.ts";
 import { failEmail, failNotification } from "./notifications.ts";
 import { allMonitors, evaluateMonitor, monitorMutations, reportMonitorCheck } from "./monitors.ts";
@@ -53,6 +60,8 @@ export const queries = defineRegistry([
   allSchedules,
   allOverrides,
   allPolicies,
+  incidentDeliveries,
+  allDevices,
 ]);
 
 /**
@@ -82,6 +91,9 @@ export const serverMutations = defineRegistry([
   expireDevice,
   failNotification,
   failEmail,
+  planDeliveries,
+  reportDeliveries,
+  confirmDelivery,
   startEscalation,
   advanceEscalation,
   fallbackEscalation,

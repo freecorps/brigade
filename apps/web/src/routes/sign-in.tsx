@@ -117,6 +117,12 @@ function SignIn() {
           onChange={(event) => set("password")(event.target.value)}
           error={errors.password}
         />
+        <Link
+          to="/forgot-password"
+          className="self-start text-sm font-medium text-primary underline-offset-4 hover:underline"
+        >
+          {m.reset_page({ part: "forgot_link", email: "" })}
+        </Link>
         {failure ? <FormError>{failure}</FormError> : null}
         <Button type="submit" disabled={busy} focusableWhenDisabled className="mt-2 w-full">
           {busy ? (

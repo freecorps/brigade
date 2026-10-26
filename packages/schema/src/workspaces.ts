@@ -102,9 +102,10 @@ export const createWorkspace = defineMutation({
  * Server only: copies the member a socket acts as into the shard's member list (`members`), from what the Worker
  * read in D1 when it authenticated the upgrade (RFC 0004 "Socket topology"). D1 stays the authority on membership:
  * this is a cache of it, so roles can point at members and the dashboard can show their names, and like a
- * monitor's refreshed latency it is `silent` (no outbox event). Membership changes themselves (`member.added`,
- * `member.role_changed`, `member.removed`) are announced by the mutations that make them once invitations exist
- * (RFC 0005), and those will write this table too. A member can only copy themselves; no change is a `conflict`.
+ * monitor's refreshed latency it is `silent` (no outbox event). Membership changes themselves are announced by the
+ * mutations that apply them (`member.changeRole`, `member.remove`, `member.reconcile` in members.ts; `member.added`
+ * once invitations exist), which write this table too. A member can only copy themselves; no change is a
+ * `conflict`.
  */
 export const syncMember = defineMutation({
   name: "member.sync",

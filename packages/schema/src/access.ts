@@ -10,6 +10,9 @@ export const statement = {
   incident: ["read", "declare", "update", "ack"],
   // `read`: who is in the workspace (the shard's member list, RFC 0003); `create` only provisions a shard.
   workspace: ["create", "read"],
+  // `manage`: change another member's role or remove them (RFC 0003 "Members"). Not `member`: that is Better Auth's
+  // own resource, which `apps/api/src/auth.ts` merges with this table.
+  members: ["manage"],
   monitor: ["read", "manage"],
   // `register`: a member's own devices for paging (RFC 0006); every role, so anyone can be reached.
   device: ["register"],
@@ -28,12 +31,14 @@ export const roles = {
   owner: {
     incident: ["read", "declare", "update", "ack"],
     workspace: ["create", "read"],
+    members: ["manage"],
     monitor: ["read", "manage"],
     device: ["register"],
   },
   admin: {
     incident: ["read", "declare", "update", "ack"],
     workspace: ["read"],
+    members: ["manage"],
     monitor: ["read", "manage"],
     device: ["register"],
   },

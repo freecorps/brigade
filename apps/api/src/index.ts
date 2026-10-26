@@ -1,5 +1,11 @@
-import { isRole, parseHeartbeatToken, workspaceName, type Role } from "@freecorps/brigade-schema";
-import { ACTOR_HEADER, MEMBER_NAME_HEADER, resolveActor } from "./actor.ts";
+import {
+  isRole,
+  parseHeartbeatToken,
+  workspaceName,
+  type MemberChange,
+  type Role,
+} from "@freecorps/brigade-schema";
+import { ACTOR_HEADER, MEMBER_NAME_HEADER, memberRole, resolveActor } from "./actor.ts";
 import {
   AUTH_BASE_PATH,
   createAuth,
@@ -7,15 +13,19 @@ import {
   type Auth,
   type AuthBindings,
 } from "./auth.ts";
+import type { MemberChangeResult } from "./members.ts";
 import { consumeDeadLetters, consumeEvents } from "./notify.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
-import { WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
+import { ORGANIZATION_ID, WORKSPACE_HEADER, WORKSPACE_ID } from "./workspace.ts";
 
 export { ProbeDO } from "./probe.ts";
 export { WatchdogDO } from "./watchdog.ts";
 export { WorkspaceDO } from "./workspace.ts";
 
 const WORKSPACE_PATH = /^\/workspaces\/([^/]+)$/;
+const MEMBER_PATH = /^\/workspaces\/([^/]+)\/members\/([^/]+)$/;
+/** A user id as Better Auth makes them here (`usr_<ULID>`), or older plain ids: no encoding, bounded. */
+const USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
 const READ_METHODS = ["GET", "HEAD"];
@@ -24,8 +34,9 @@ const MAX_BODY_LENGTH = 4096;
 
 /**
  * The organization plugin's routes the dashboard calls. Every other `/auth/organization/*` route (update, delete,
- * member roles, removing or adding members, invitations, teams, leaving) is refused until it emits its
- * `workspace.*` / `member.*` event through the shard's outbox (RFC 0005); creating goes through `POST /workspaces`.
+ * member roles, removing or adding members, invitations, teams, leaving) is refused: Better Auth would change D1
+ * without the shard's copy of the members or a `workspace.*` / `member.*` event in its outbox (RFC 0005). Creating
+ * goes through `POST /workspaces`; member roles, removing and leaving through `/workspaces/:id/members/:userId`.
  */
 const ORGANIZATION_ROUTES = new Set([
   "/organization/get-full-organization",
@@ -61,6 +72,8 @@ export default {
     const sync = SYNC_PATH.exec(pathname)?.[1];
     if (sync !== undefined) return openSync(request, env, auth, sync);
     if (pathname === "/workspaces") return createWorkspace(request, auth);
+    const member = MEMBER_PATH.exec(pathname);
+    if (member) return changeMember(request, env, auth, member[1]!, member[2]!);
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
 
@@ -246,6 +259,90 @@ export async function createWorkspace(request: Request, lazyAuth: () => Auth): P
     console.error(JSON.stringify({ message: "Creating a workspace failed", error: String(error) }));
     return json({ error: "internal" }, 500);
   }
+}
+
+/**
+ * `PATCH /workspaces/:id/members/:userId` `{ role }` changes a member's role; `DELETE` removes them, or, for one's
+ * own id, leaves the workspace (RFC 0003 "Members"). The Worker checks the origin, the session and that the caller
+ * is a member; the workspace's shard checks the rules against D1, writes D1, then its own copy and the outbox, and
+ * closes the member's sockets (src/members.ts). `not_applied` (503): D1 has the change and the shard not yet; the
+ * shard's alarm reconciles it within seconds, and the same request again finishes it sooner.
+ */
+export async function changeMember(
+  request: Request,
+  env: Env,
+  lazyAuth: () => Auth,
+  workspaceId: string,
+  userId: string,
+): Promise<Response> {
+  if (request.method !== "PATCH" && request.method !== "DELETE") {
+    return json({ error: "method_not_allowed" }, 405, { Allow: "PATCH, DELETE" });
+  }
+  if (!ORGANIZATION_ID.test(workspaceId)) return json({ error: "invalid_workspace_id" }, 400);
+  if (!USER_ID.test(userId)) return json({ error: "not_found" }, 404);
+  const origin = request.headers.get("Origin");
+  if (origin !== null && origin !== new URL(request.url).origin) {
+    return json({ error: "forbidden_origin" }, 403);
+  }
+  const session = await lazyAuth().api.getSession({ headers: request.headers });
+  if (!session) return json({ error: "unauthenticated" }, 401);
+
+  let change: MemberChange = { kind: "remove" };
+  if (request.method === "PATCH") {
+    const text = await readBounded(request, MAX_BODY_LENGTH);
+    let body: unknown;
+    try {
+      body = text === undefined ? undefined : JSON.parse(text);
+    } catch {
+      body = undefined;
+    }
+    const role = typeof body === "object" && body !== null ? Reflect.get(body, "role") : undefined;
+    if (!isRole(role)) return json({ error: "invalid_args" }, 400);
+    change = { kind: "role", role };
+  }
+
+  // Checked here first, so a made-up workspace or an outsider never wakes (or creates) a shard. One exception: a
+  // leave D1 already has but the shard missed (`not_applied`) may be sent again by the leaver, so they stop being
+  // paged without waiting for the shard's repair; the shard finishes it only if it still has their copy or devices.
+  // Every other answer to a non-member is the same 403, whether or not the workspace exists (open question Q16).
+  // The leave retry does take longer for a workspace that exists (it asks the shard); that is safe only because a
+  // workspace id is a ULID nobody can guess, which `ORGANIZATION_ID` holds this route to.
+  let member: boolean;
+  try {
+    member = (await memberRole(env.DB, workspaceId, session.user.id)) !== undefined;
+    if (!member) {
+      const retryingLeave =
+        request.method === "DELETE" &&
+        userId === session.user.id &&
+        (await workspaceExists(env.DB, workspaceId));
+      if (!retryingLeave) return json({ error: "not_a_member" }, 403);
+    }
+  } catch (error) {
+    console.error(JSON.stringify({ message: "member lookup failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
+  let result: MemberChangeResult;
+  try {
+    const shard = env.WORKSPACE.getByName(workspaceId);
+    result = member
+      ? await shard.changeMember(workspaceId, session.user.id, userId, change)
+      : await shard.finishLeave(workspaceId, session.user.id);
+  } catch (error) {
+    return failed("WorkspaceDO.changeMember failed", workspaceId, error);
+  }
+  if (result.ok) return json({ ok: true });
+  if (!member && (result.code === "not_found" || result.code === "forbidden")) {
+    return json({ error: "not_a_member" }, 403);
+  }
+  const status = {
+    forbidden: 403,
+    not_found: 404,
+    last_owner: 409,
+    conflict: 409,
+    unavailable: 503,
+    not_applied: 503,
+  }[result.code];
+  return json({ error: result.code }, status);
 }
 
 /**

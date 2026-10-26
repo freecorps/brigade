@@ -660,5 +660,101 @@
         "kind=*": "Não foi possível alterar {role}. {reason}"
       }
     }
+  ],
+  "members_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countExact = count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countExact", "countPlural"],
+      "match": {
+        "countExact=0, countPlural=*": "Nenhum membro",
+        "countExact=*, countPlural=one": "{countFormatted} membro",
+        "countExact=*, countPlural=*": "{countFormatted} membros"
+      }
+    }
+  ],
+  "member_role": [
+    {
+      "declarations": ["input role"],
+      "selectors": ["role"],
+      "match": {
+        "role=owner": "Proprietário",
+        "role=admin": "Admin",
+        "role=responder": "Respondedor",
+        "role=viewer": "Leitor",
+        "role=*": "Membro"
+      }
+    }
+  ],
+  "members_part": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Membros",
+        "part=description": "Proprietários e admins mudam papéis e removem membros. Quem é removido deixa de receber chamados na hora.",
+        "part=read_only": "Só proprietários e admins mudam papéis ou removem membros.",
+        "part=you": "Você",
+        "part=unnamed": "Membro sem nome",
+        "part=role_label": "Papel",
+        "part=remove": "Remover",
+        "part=leave": "Sair do espaço de trabalho",
+        "part=remove_prompt": "Remover {name} do espaço de trabalho? A pessoa perde o acesso e deixa de receber chamados na hora.",
+        "part=leave_prompt": "Sair deste espaço de trabalho? Você perde o acesso e deixa de receber chamados na hora.",
+        "part=cancel": "Cancelar",
+        "part=saving": "Salvando…",
+        "part=empty": "Ainda não há mais ninguém neste espaço de trabalho.",
+        "part=load_failed": "Não foi possível carregar os membros.",
+        "part=demote": "Mudar papel",
+        "part=retry": "Tentar de novo",
+        "part=only_owner": "Só você é proprietário deste espaço de trabalho. Torne outra pessoa proprietária antes de sair ou mudar seu papel.",
+        "part=*": "Membros"
+      }
+    }
+  ],
+  "member_change_failed": [
+    {
+      "declarations": ["input reason"],
+      "selectors": ["reason"],
+      "match": {
+        "reason=forbidden": "Você não pode fazer essa mudança.",
+        "reason=last_owner": "Um espaço de trabalho precisa de pelo menos um proprietário. Torne outra pessoa proprietária primeiro.",
+        "reason=not_found": "Essa pessoa não é mais membro.",
+        "reason=conflict": "Outra pessoa mudou este membro enquanto isso. Confira a lista e tente de novo.",
+        "reason=not_applied": "Salvo. Os chamados se atualizam sozinhos em até um minuto.",
+        "reason=unavailable": "O Brigade não conseguiu acessar o banco de dados. Nada mudou; tente de novo.",
+        "reason=network": "Não foi possível confirmar a mudança; confira a lista.",
+        "reason=*": "Algo deu errado. Tente de novo."
+      }
+    }
+  ],
+  "member_demote_prompt": [
+    {
+      "declarations": ["input kind", "input role"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=owner": "Mudar seu papel para {role}? Você deixa de gerenciar proprietários; só um proprietário pode devolvê-lo.",
+        "kind=all": "Mudar seu papel para {role}? Você deixa de gerenciar membros e proprietários; só um proprietário pode devolvê-lo.",
+        "kind=*": "Mudar seu papel para {role}? Você deixa de gerenciar membros; só um proprietário ou admin pode devolvê-lo."
+      }
+    }
+  ],
+  "members_show_all": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Mostrar {countFormatted} membro",
+        "countPlural=*": "Mostrar todos os {countFormatted} membros"
+      }
+    }
   ]
 }

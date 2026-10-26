@@ -1,5 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
-import { fitMemberName, type Actor, type ProbeRegion } from "@freecorps/brigade-schema";
+import {
+  fitMemberName,
+  type Actor,
+  type MemberChange,
+  type ProbeRegion,
+} from "@freecorps/brigade-schema";
 import {
   encode,
   parseClientMessage,
@@ -9,6 +14,12 @@ import {
   type SubscriptionChanges,
 } from "@freecorps/brigade-sync/protocol";
 import { readActor, readMemberName } from "./actor.ts";
+import {
+  MEMBER_REPAIR_RETRY_MS,
+  Membership,
+  type MemberChangeResult,
+  type SocketVerdict,
+} from "./members.ts";
 import { isProbeRegion, MONITOR_TICK_MS, Monitoring } from "./monitors.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
 import {
@@ -35,6 +46,12 @@ export interface WorkspaceInfo {
  */
 export const WORKSPACE_ID = /^(?:ws_[0-9A-HJKMNP-TV-Z]{26}|[a-z0-9][a-z0-9_-]{0,62})$/;
 
+/**
+ * A workspace's own id alone (`ws_<ULID>`, src/auth.ts `authId`): what routes for D1's workspaces accept, so none
+ * of them takes a short, guessable dev-shard name.
+ */
+export const ORGANIZATION_ID = /^ws_[0-9A-HJKMNP-TV-Z]{26}$/;
+
 /** Set by the Worker on the upgrade it forwards; the shard records it on first use. */
 export const WORKSPACE_HEADER = "Brigade-Workspace";
 
@@ -49,6 +66,8 @@ export const MAX_ATTACHMENT_BYTES = 8 * 1024;
 
 /** WebSocket close codes the shard uses. */
 export const CLOSE_PROTOCOL_ERROR = 1002;
+/** A member removed from the workspace: their client reconnects and the upgrade refuses them (403). */
+export const CLOSE_POLICY_VIOLATION = 1008;
 export const CLOSE_INTERNAL_ERROR = 1011;
 export const CLOSE_SERVICE_RESTART = 1012;
 
@@ -82,12 +101,18 @@ const MAX_SALVAGE_LENGTH = 1024 * 1024;
  * Hibernation API; every handler is synchronous, so a socket's frames are handled strictly in arrival order and
  * frames from different sockets never interleave.
  */
+/** How long the alarm waits on a due member repair before it lets the repair finish in the background. */
+export const REPAIR_BUDGET_MS = 5 * 1000;
+
 export class WorkspaceDO extends DurableObject<Env> {
+  /** `REPAIR_BUDGET_MS`; a field so tests can shorten it. */
+  private repairBudgetMs = REPAIR_BUDGET_MS;
   private readonly shard: Shard;
   private readonly monitoring: Monitoring;
   private readonly drain: OutboxDrain;
   private readonly drainPaused: boolean;
   private readonly pager: Pager;
+  private readonly membership: Membership;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -123,12 +148,29 @@ export class WorkspaceDO extends DurableObject<Env> {
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
     });
+    this.membership = new Membership({
+      db: env.DB,
+      shard: this.shard,
+      randomBytes,
+      sql: ctx.storage.sql,
+      log: (message, fields) => this.log(message, fields),
+      committed: (version, changes) => this.broadcast(version, changes, undefined),
+      closeSockets: (judge) => this.closeSockets(judge),
+      wake: (at) => this.wake(at, "member repair"),
+    });
     // Events left in the outbox (an alarm that failed to arm, a restart) arm the drain again whenever the object
     // wakes, so a backlog never waits for an unrelated change.
     try {
       if (!this.drainPaused && this.drain.backlog() > 0) this.armDrain();
     } catch (error) {
       this.log("arming the outbox drain failed", { error: String(error) });
+    }
+    // Likewise a member repair whose alarm failed to arm.
+    try {
+      const repairAt = this.membership.repairAt();
+      if (repairAt !== null) this.wake(repairAt, "member repair");
+    } catch (error) {
+      this.log("arming the member repair failed", { error: String(error) });
     }
   }
 
@@ -196,6 +238,44 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
+   * A member change from `PATCH`/`DELETE /workspaces/:id/members/:userId` (RPC from the API Worker, which checked
+   * the session): `actorId` changes `targetId`'s role, removes them, or leaves (`targetId` is themselves). D1 first,
+   * then this shard's copy and the outbox, then the target's sockets close (src/members.ts). A shard that serves
+   * another workspace, or none yet, answers `not_found`.
+   */
+  changeMember(
+    workspaceId: string,
+    actorId: string,
+    targetId: string,
+    change: MemberChange,
+  ): Promise<MemberChangeResult> {
+    if (this.shard.workspace() !== workspaceId) {
+      return Promise.resolve({ ok: false, code: "not_found" });
+    }
+    return this.membership.change(workspaceId, actorId, targetId, change);
+  }
+
+  /**
+   * A leave sent again by someone D1 no longer has (RPC from the API Worker, which checked that): finishes it when
+   * this shard still has their copy or a device, and answers `not_found` otherwise, without reading D1.
+   */
+  finishLeave(workspaceId: string, userId: string): Promise<MemberChangeResult> {
+    if (this.shard.workspace() !== workspaceId) {
+      return Promise.resolve({ ok: false, code: "not_found" });
+    }
+    return this.membership.finishLeave(workspaceId, userId);
+  }
+
+  /**
+   * Makes this shard's member list agree with D1 and closes sockets D1 no longer backs (src/members.ts). Every sync
+   * upgrade starts one; exposed so a repair can be asked for directly.
+   */
+  async reconcileMembers(): Promise<void> {
+    const workspace = this.shard.workspace();
+    if (workspace !== undefined) await this.membership.reconcile(workspace);
+  }
+
+  /**
    * A probe's verdicts for its region (RPC from `ProbeDO`), each run as `monitor.report` by the monitors' system
    * actor and de-duplicated by its report id. Returns, per report, whether the probe may stop sending it: true
    * when it committed or can never apply (a paused or deleted monitor, a region it no longer uses, a result from
@@ -254,9 +334,12 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
-   * The shard's one alarm (RFC 0005, RFC 0007): monitor upkeep (`Monitoring.tick`), then draining the outbox to the
-   * Queue, so events the tick wrote go out in the same run. A fallback a tick from now is set first, so a failure
-   * never ends the chain; then the alarm moves to the earliest either needs, or goes when neither needs it.
+   * The shard's one alarm (RFC 0005, RFC 0007, RFC 0006 "Who is paged"): monitor upkeep (`Monitoring.tick`), draining
+   * the outbox to the Queue, then a due member repair (`Membership.repairDue`: a member change D1 has and the shard
+   * missed), and the outbox again when the repair wrote events. The drain goes before the repair because the repair
+   * waits on D1 (and on any member change ahead of it in the member lock): a page never waits on D1. A fallback a
+   * tick from now is set first, so a failure never ends the chain; then the alarm moves to the earliest any of them
+   * needs, or goes when none needs it.
    */
   override async alarm(): Promise<void> {
     const now = Date.now();
@@ -267,22 +350,67 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("monitor tick failed", { error });
     }
-    if (!this.drainPaused) {
-      try {
-        await this.drain.drain(Date.now());
-      } catch (error) {
-        this.log("outbox drain failed", { error });
-        try {
-          this.drain.failed(Date.now(), error);
-        } catch (backoff) {
-          this.log("backing off the outbox drain failed", { error: backoff });
-        }
-      }
+    await this.drainOutbox();
+    const before = this.backlog();
+    let repair: number | null = now + MONITOR_TICK_MS;
+    try {
+      // D1 calls have no deadline of their own: a repair that hangs must not hold the alarm (and with it the next
+      // drain). Past `REPAIR_BUDGET_MS` it carries on in the background and the alarm comes back for it.
+      const due = this.membership.repairDue(this.shard.workspace(), Date.now());
+      due.catch((error: unknown) => this.log("member repair failed", { error }));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<"late">((resolve) => {
+        timer = setTimeout(() => resolve("late"), this.repairBudgetMs);
+      });
+      const outcome = await Promise.race([due, late]).finally(() => clearTimeout(timer));
+      repair = outcome === "late" ? Date.now() + MEMBER_REPAIR_RETRY_MS : outcome;
+    } catch (error) {
+      this.log("member repair failed", { error });
     }
-    // Read and set in one turn: a mutation committing meanwhile arms the drain after this, never before.
-    const next = earliest(monitors, this.drainPaused ? null : this.drain.nextWake(Date.now()));
+    // Again only when the repair (or a mutation meanwhile) wrote events, or the backlog could not be read.
+    const after = this.backlog();
+    if (before === null || after === null || after > before) await this.drainOutbox();
+    // Read and set in one turn: a mutation committing meanwhile arms the drain after this, never before. The repair
+    // time is read again here too: a member change that failed while a drain ran armed one `repair` may predate.
+    // One already due is `repairDue`'s to answer for, so a repair that failed to record its outcome never spins.
+    let armed: number | null = now + MONITOR_TICK_MS;
+    try {
+      const at = this.membership.repairAt();
+      armed = at !== null && at > now ? at : null;
+    } catch (error) {
+      this.log("reading the member repair failed", { error });
+    }
+    const next = earliest(
+      earliest(monitors, earliest(repair, armed)),
+      this.drainPaused ? null : this.drain.nextWake(Date.now()),
+    );
     if (next === null) await this.ctx.storage.deleteAlarm();
     else await this.ctx.storage.setAlarm(next);
+  }
+
+  /** The outbox's row count, or null when storage failed reading it (logged). */
+  private backlog(): number | null {
+    try {
+      return this.drain.backlog();
+    } catch (error) {
+      this.log("reading the outbox backlog failed", { error });
+      return null;
+    }
+  }
+
+  /** One outbox drain run, unless paused; a failed send backs off (`Drain.failed`). Never throws. */
+  private async drainOutbox(): Promise<void> {
+    if (this.drainPaused) return;
+    try {
+      await this.drain.drain(Date.now());
+    } catch (error) {
+      this.log("outbox drain failed", { error });
+      try {
+        this.drain.failed(Date.now(), error);
+      } catch (backoff) {
+        this.log("backing off the outbox drain failed", { error: backoff });
+      }
+    }
   }
 
   /**
@@ -300,11 +428,16 @@ export class WorkspaceDO extends DurableObject<Env> {
       this.log("arming the outbox drain failed", { error: String(error) });
       return;
     }
+    this.wake(at, "outbox drain");
+  }
+
+  /** Brings the alarm forward to `at` unless it is already set sooner. Fire and forget; a failure is logged. */
+  private wake(at: number, what: string): void {
     const { storage } = this.ctx;
     storage
       .getAlarm()
       .then((current) => (current === null || current > at ? storage.setAlarm(at) : undefined))
-      .catch((error: unknown) => this.log("arming the outbox drain failed", { error }));
+      .catch((error: unknown) => this.log(`arming the ${what} failed`, { error }));
   }
 
   /** Accepts a sync socket the Worker forwarded (`GET /sync/:workspaceId`). */
@@ -326,11 +459,21 @@ export class WorkspaceDO extends DurableObject<Env> {
       return Response.json({ error: "internal" }, { status: 500 });
     }
     const name = readMemberName(request.headers);
+    // A member just removed here whose upgrade the Worker let through before the removal: refused, as the Worker
+    // would now, rather than have `member.sync` restore their copy. A member D1 has again (re-added) is not.
+    if (name !== undefined && (await this.membership.refuses(workspace, actor.id, Date.now()))) {
+      return Response.json({ error: "not_a_member" }, { status: 403 });
+    }
     if (name !== undefined) this.syncMember(actor, name);
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server);
     const state: SocketState = { workspace, actor, clientId: null, subs: [] };
     server.serializeAttachment(state);
+    // The Worker read the member's role before this request arrived, and a member change may have landed in
+    // between (or D1 was edited outside Brigade): check D1 again without holding up the socket. A socket D1 no
+    // longer backs is closed, and the member list's copy follows D1 (src/members.ts); if that fails, the repair
+    // alarm does it. Only a signed-in member's upgrade (the dev actor has no name and no D1 row).
+    if (name !== undefined) void this.membership.upgraded(workspace);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -359,6 +502,23 @@ export class WorkspaceDO extends DurableObject<Env> {
       else this.log("member sync refused", { code: result.error.code });
     } catch (error) {
       this.log("member sync failed", { error });
+    }
+  }
+
+  /** Closes every socket whose actor `judge` gives a verdict for: removed members' with 1008, others' with 1012. */
+  private closeSockets(judge: (actor: Actor) => SocketVerdict | undefined): void {
+    for (const ws of this.ctx.getWebSockets()) {
+      let verdict: SocketVerdict | undefined;
+      try {
+        const state = ws.deserializeAttachment() as SocketState | null;
+        if (!state || state.closed) continue;
+        verdict = judge(state.actor);
+      } catch (error) {
+        this.log("reading a socket's actor failed", { error });
+        verdict = "removed";
+      }
+      if (verdict === "removed") close(ws, CLOSE_POLICY_VIOLATION, "not a member");
+      else if (verdict === "role_changed") close(ws, CLOSE_SERVICE_RESTART, "role changed");
     }
   }
 

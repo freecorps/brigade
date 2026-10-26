@@ -63,9 +63,8 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   D1's membership, so a shard can check an assignee without leaving its synchronous mutation and the dashboard can
   show names. The Worker already reads the member in D1 when it authenticates a sync upgrade; it passes their
   name along, and the shard runs the server-only `member.sync` (RFC 0004 "Server-side writes") when its copy is
-  missing or stale. So a member appears once they have opened a socket, and a role change shows on their next
-  one. When invitations and member management land, their `member.*` mutations write this table as well, and
-  removing a member must delete their `members` row in the same transaction (or they stay assignable).
+  missing or stale. So a member appears once they have opened a socket. Member management (below) writes it too,
+  and every sync upgrade reconciles it with D1.
 - **Member names** (`memberName`): the title rules of RFC 0004, except that ZWNJ and ZWJ may stand between two
   letters (Persian, Arabic and Indic names need them). The rule does not check the script, so a joiner between two
   Latin letters passes and looks like the plain name; accepted on purpose, since names are not identifiers (roles
@@ -74,6 +73,72 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   (sign-up, `update-user`: `INVALID_NAME`). A name already in D1 that predates the rule is trimmed and cut to the
   cap at a grapheme by the Worker; if that still fails, the shard stores `name: null` and the dashboard shows the
   member as unnamed, so they stay listed and assignable instead of being refused on every socket.
+
+## Members
+
+Changing a member's role, removing a member and leaving (`PATCH`/`DELETE /workspaces/:id/members/:userId`, the
+dashboard's Members section). Better Auth's own organization routes for these stay refused (RFC 0002 "Auth"): they
+would change D1 without the shard's copy or an event.
+
+- **Rules** (`checkMemberChange`, `packages/schema`, used by the API and the dashboard): owners and admins
+  (`members:manage`) change roles and remove members. An admin never touches an owner and never makes anyone an
+  owner. Anyone may leave; responders and viewers change no role, their own included. Nobody demotes or removes the
+  last owner, themselves included. **An owner may step down (or leave) while another owner remains**: requiring a
+  hand-over first would add a step without protecting anything the last-owner rule does not. Setting the role a
+  member already has is no change, checked only after the rules (a caller who may not make a change learns nothing
+  from it). The dashboard asks before anyone steps their own role down, like leaving: only someone else can give it
+  back. Every role sees the list, with names, emails and roles (`workspace:read`); the
+  dashboard reads it from Better Auth's `get-full-organization` (D1), which returns at most 100 members, so a larger
+  workspace needs a paged list.
+- **Order: D1 first, then the shard.** D1 is the authority, so an event never announces a change D1 refused. The
+  Worker checks the session and that the caller is a member, then calls the workspace shard
+  (`WorkspaceDO.changeMember`), which does the rest under a per-shard member lock (so two changes, or a change and a
+  reconcile, never interleave between reading and writing D1): it reads the workspace's members in D1, checks the
+  rules, writes D1 (one conditional statement, or a batch that also moves the member's sessions with this workspace
+  active to their oldest remaining one; the SQL re-checks that the last owner is kept, in case D1 was edited
+  outside Brigade meanwhile), then runs a server-only mutation in its own store: `member.changeRole`
+  (`member.role_changed`: `userId`, `from`, `to`) or `member.remove` (`member.removed`: `userId`, `role`, `reason`
+  `removed` or `left`), which deletes the member's copy and every device of theirs in the same transaction
+  (`device.unregistered`, `reason: member_removed`). It emits even for a member the shard never knew (who never
+  opened Brigade). Then it closes the member's sockets (below).
+- **Failure.** D1 failing changes nothing (`503 unavailable`). The shard failing after D1 committed answers
+  `503 not_applied`, logs `member change not applied to the shard` and **arms the shard's alarm to reconcile** within
+  10 s (`member_repair`, tried again every 30 s until it succeeds; it shares the one alarm with the outbox drain and
+  monitor upkeep, which takes the earliest any of them needs), so the repair needs no socket. The shard also records
+  the member whose change it missed, so a workspace too large for one `member.reconcile` still catches up on them
+  one by one. Sending the request again finishes it sooner: a caller who may make the change has the shard catch up
+  on that one member (`member.remove` with `reconciled`, or `member.changeRole`, as `sys_members`, so the events
+  never name the caller), and a leaver D1 already dropped may repeat their own `DELETE`
+  (the Worker lets it through for one's own id in an existing workspace; the shard checks its own copy and devices
+  first, without the member lock or a D1 read, and runs `member.remove` with `left` only while it still has one;
+  its `role` is null when only devices were left). Any other answer to someone D1 does not have is the same
+  `403 not_a_member` with the same body, whether or not the workspace exists (Q16). The leave retry takes longer for
+  a workspace that exists (it asks the shard), so the route hides which workspaces exist only because their ids are
+  ULIDs nobody can guess: it takes `ws_<ULID>` ids alone (`ORGANIZATION_ID`), never a dev shard's short name. A
+  `DELETE` by a member for someone with nothing left in D1 or the shard is `404`. The dashboard shows `not_applied`
+  as a note, not an error: the change is saved and paging catches up within a minute, with nothing to retry; on
+  one's own leave it is done, and the dashboard moves on. A `not_a_member` answer to one's own leave moves on only
+  once D1 confirms they are gone (a member whose role is not a Brigade role gets it too, and stays). A narrow race is accepted: a leaver re-added in D1 between the shard's D1 read and its
+  `member.remove` loses the devices they had (their new membership stays; they register the phone again).
+  Besides, **every sync upgrade into the workspace reconciles** the shard with D1 (`member.reconcile`, run by
+  `sys_members` after the socket is accepted, never holding it up): a copy D1 no longer has is deleted with its devices
+  (`member.removed`, `reconciled`), a copy whose role differs takes D1's (`member.role_changed`), and a device whose
+  member D1 no longer has is dropped. Members D1 has and the shard does not are left to `member.sync`. An empty
+  read changes nothing (a workspace always has an owner). If that reconcile fails (D1 or the shard down), the
+  upgrade arms the repair alarm. A removal whose shard step failed for a member the shard never knew emits no
+  event: nothing in the shard is wrong (accepted).
+- **Stale upgrades.** A removal leaves a tombstone in the shard for 60 s (`member_repair`, `gone:<userId>`): a sync
+  upgrade the Worker authenticated just before the removal and that reaches the shard after it is refused
+  (`403 not_a_member`) rather than letting `member.sync` restore the removed member's copy. Before refusing, the
+  shard reads the member's row in D1 (under its member lock): if D1 has them again (re-added), the tombstone goes and
+  the upgrade goes on, so a re-added member's own first upgrade is not refused; if that read fails, the refusal
+  stands. A reconcile that finds them in D1 again drops it too. One arriving later still restores the copy until its own reconcile removes
+  it again, a second `member.removed` (`reconciled`) for the same member (accepted).
+- **Open sockets.** After a change the shard closes the target's sockets: `1008` when removed (the client reconnects
+  and the upgrade answers `403 not_a_member`), `1012` on a role change (it reconnects with the new role). The
+  reconcile after every upgrade also closes any socket whose actor D1 no longer backs (gone, or another role),
+  which covers an upgrade the Worker authenticated just before a change landed. What is left is RFC 0004
+  "Session revocation".
 
 ## Alert → incident flow
 

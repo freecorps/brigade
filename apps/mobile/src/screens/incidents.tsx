@@ -33,7 +33,7 @@ import {
 } from "@freecorps/brigade-sync/react";
 import { fontSize, radius, spacing } from "@freecorps/brigade-ui";
 import { Link } from "expo-router";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { AccessibilityInfo, Pressable, ScrollView, TextInput, View } from "react-native";
 import { Account, PagingNotice } from "@/components/account";
 import {
@@ -53,6 +53,8 @@ import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
 import { useMember } from "@/components/session";
 import { titleToRestore } from "@/lib/incidents";
+import { restoredTarget } from "@/lib/pending";
+import { currentSync } from "@/lib/sync-client";
 
 /**
  * The signed-in member's workspace: its active incidents, live from its shard, with declare and per-row status and
@@ -118,6 +120,26 @@ function IncidentList({ onReload }: { onReload: () => void }) {
       setTitle((field) => titleToRestore(refusal, field) ?? field);
     });
   };
+
+  // Declares kept from before a restart (src/lib/pending.ts) are tracked like new ones: a refusal says so here.
+  const trackRef = useRef(track);
+  useLayoutEffect(() => {
+    trackRef.current = track;
+  });
+  useEffect(() => {
+    const restored = currentSync()?.restored;
+    if (!restored) return;
+    for (const change of restored.list) {
+      const target = restoredTarget(change);
+      if (target?.notice.kind !== "declare") continue;
+      trackRef.current(restored.claim(change), {
+        kind: "declare",
+        incidentId: target.incidentId,
+        number: null,
+        title: target.notice.title ?? "",
+      });
+    }
+  }, []);
 
   const [severity, setSeverityChoice] = useState<Severity>("sev3");
   const [invalid, setInvalid] = useState<"empty" | "invalid" | null>(null);

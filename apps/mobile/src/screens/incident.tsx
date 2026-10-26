@@ -51,6 +51,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ComponentRef,
@@ -87,6 +88,8 @@ import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
+import { restoredTarget } from "@/lib/pending";
+import { currentSync } from "@/lib/sync-client";
 
 const MAX_NOTICES = 5;
 /** Lines of an update shown before Show more. */
@@ -302,6 +305,22 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
     [],
   );
   const base = { incidentId: row.id, number: row.number, title: row.title };
+  // Changes to it kept from before a restart (src/lib/pending.ts) show as not sent yet until the shard answers, and
+  // a refusal (or an expiry) leaves its notice here, as a new change's would.
+  const latestBase = useRef(base);
+  useLayoutEffect(() => {
+    latestBase.current = base;
+  });
+  useEffect(() => {
+    const restored = currentSync()?.restored;
+    if (!restored) return;
+    for (const change of restored.list) {
+      const target = restoredTarget(change);
+      if (!target || target.incidentId !== row.id || target.notice.kind === "declare") continue;
+      const { kind, to, role } = target.notice;
+      void track(restored.claim(change), { ...latestBase.current, kind, to, role }, target.key);
+    }
+  }, [row.id, track]);
   const dismiss = (key: string) =>
     setNotices((current) => current.filter((notice) => notice.key !== key));
   const noticesFor = (kinds: Refusal["kind"][]) =>

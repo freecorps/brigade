@@ -1,23 +1,34 @@
 // Brigade Sync clients (RFC 0004): one per signed-in member and workspace, made by the session (src/components/
 // session.tsx) and closed when they sign out or the workspace changes, so no socket or row outlives its session.
+// Changes the shard has not confirmed are kept in the member's queue (src/lib/pending.ts) and survive a restart.
 import type { Actor } from "@freecorps/brigade-schema";
 import { createSyncClient, type SyncClient, type SyncSocket } from "@freecorps/brigade-sync";
 import { getRandomBytes } from "expo-crypto";
+import { restoredChanges, type MemberQueue, type RestoredChanges } from "@/lib/pending";
 import type { Server } from "@/lib/sync";
 
-export type WorkspaceSync = { client: SyncClient; shard: string };
+export type WorkspaceSync = {
+  client: SyncClient;
+  shard: string;
+  /** The member's kept queue; none for a client that only finishes a sign-out. */
+  queue?: MemberQueue;
+  /** The changes the queue gave back at launch, for the screens that made them. */
+  restored: RestoredChanges;
+};
 
 export function createWorkspaceSync({
   server,
   workspaceId,
   actor,
   cookie,
+  queue,
 }: {
   server: Server;
   workspaceId: string;
   actor: () => Actor;
   /** The session's `Cookie` header, read on every connect so a refreshed session is the one sent. */
   cookie: () => string;
+  queue?: MemberQueue;
 }): WorkspaceSync {
   const client = createSyncClient({
     url: server.sync,
@@ -28,11 +39,15 @@ export function createWorkspaceSync({
     transport: (url) => new NativeWebSocket(url, undefined, { headers: { Cookie: cookie() } }),
     // Hermes has no crypto.getRandomValues.
     randomBytes: getRandomBytes,
-    // No `clientId`: a new one each launch. The shard de-duplicates re-sent mutations by (clientId, mutationId),
-    // but pending mutations live in memory and die with the process, so a per-install id would buy nothing yet.
-    // Persist both together when offline changes need to survive a restart.
+    // The id the queue's changes were sent with: the shard de-duplicates re-sent mutations by (clientId,
+    // mutationId), so one it ran before the app was killed is answered, not run again. Without a queue, a new one.
+    clientId: queue?.clientId,
+    pendingStorage: queue?.storage,
   });
-  return { client, shard: workspaceId };
+  const restored = restoredChanges(
+    queue ? client.restore(workspaceId, queue.saved[workspaceId] ?? []) : [],
+  );
+  return { client, shard: workspaceId, queue, restored };
 }
 
 /** React Native's WebSocket, whose constructor takes headers (the DOM's, which TypeScript knows, does not). */

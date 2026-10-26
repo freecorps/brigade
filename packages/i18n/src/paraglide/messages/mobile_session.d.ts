@@ -33,9 +33,9 @@ export type Mobile_SessionInputs = {
 * | "sign_out_stuck_body" | "Brigade couldn't reach the server, nor keep your session to finish signing you out later, so it can't free this phone on its own. To stop the pages, sign in ..." |
 * | "try_again" | "Try again" |
 * | "offline" | "Offline" |
-* | "incident_stale_hint" | "Showing this incident as last received. Changes you make are sent once the connection is back, as long as Brigade stays open." |
+* | "incident_stale_hint" | "Showing this incident as last received. Changes you make are sent once the connection is back, even if Brigade is closed meanwhile." |
 * | "update_sending" | "Sending…" |
-* | "update_waiting" | "Not sent yet. Keep Brigade open: it sends once Brigade is reachable again." |
+* | "update_waiting" | "Not sent yet. Brigade sends it once it's reachable again, even after the app is closed." |
 * | "show_password" | "Show password" |
 * | "hide_password" | "Hide password" |
 * | * | "Brigade" |

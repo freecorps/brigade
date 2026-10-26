@@ -208,9 +208,9 @@
         "part=sign_out_stuck_body": "O Brigade não conseguiu falar com o servidor nem guardar sua sessão para concluir a saída depois, então não consegue liberar este telefone sozinho. Para parar os chamados, entre aqui de novo com conexão e saia.",
         "part=try_again": "Tentar de novo",
         "part=offline": "Sem conexão",
-        "part=incident_stale_hint": "Mostrando este incidente como recebido por último. Suas alterações são enviadas quando a conexão voltar, desde que o Brigade continue aberto.",
+        "part=incident_stale_hint": "Mostrando este incidente como recebido por último. Suas alterações são enviadas quando a conexão voltar, mesmo que o Brigade seja fechado até lá.",
         "part=update_sending": "Enviando…",
-        "part=update_waiting": "Ainda não enviada. Mantenha o Brigade aberto: ela será enviada quando o Brigade voltar a responder.",
+        "part=update_waiting": "Ainda não enviada. O Brigade a envia quando voltar a responder, mesmo depois de o app ser fechado.",
         "part=show_password": "Mostrar senha",
         "part=hide_password": "Ocultar senha",
         "part=*": "Brigade"

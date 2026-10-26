@@ -112,9 +112,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     stays, an edit that changes nothing sends nothing, and the form says when saving starts the checks over) and
     deleting it from the edit form, confirmed with what happens to its firing alert and its incidents and, for a
     heartbeat, its URL. TCP checks with `connect()`: up when the connection opens within the timeout, closed on
-    every path, in the probe's pool of six; the same host rules as HTTP and any port but 25; host and port in the
-    dashboard's form and rows (RFC 0007 "Check types").
-  - Left: regenerating a heartbeat URL (no mutation for it yet); whether "No data" pages (Q17); member names for "Paused by" (today "you" or "a teammate"; the shard's member list now has them); regex,
+    every path, in the probe's pool of six; the same host rules as HTTP, no Cloudflare address, and any port but 25;
+    host and port in the dashboard's form and rows (RFC 0007 "Check types"). At most 100 monitors per workspace
+    (`MAX_MONITORS_PER_WORKSPACE`), refused as `limit_reached` and said in the form.
+  - Left: a per-plan or configurable monitor cap in place of the one 100 for every workspace; regenerating a
+    heartbeat URL (no mutation for it yet); whether "No data" pages (Q17); member names for "Paused by" (today "you" or "a teammate"; the shard's member list now has them); regex,
     headers and TLS expiry; configurable quorum and severity; alerting on a stalled probe (RFC 0007 "Watching the
     watcher"; today it is logged and re-pushed); `AlertGroupDO` and alert routes, moving monitor alerts out of the
     workspace shard;

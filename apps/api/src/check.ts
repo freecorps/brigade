@@ -54,9 +54,10 @@ export function runCheck(
 /**
  * A TCP check: up when the connection opens within the timeout, and closed at once either way; nothing is sent
  * or read. The socket is closed on every path (opened, refused, timed out), and the timeout is the check's own
- * timer, so a connection that never answers cannot hold the probe past it. Every failed connection is `network`:
- * the runtime reports a refused port, a name that does not resolve and an address Cloudflare refuses (its own IP
- * ranges) with the same error ("proxy request failed"). Never throws.
+ * timer, so a connection that never answers cannot hold the probe past it. A connection that fails is `network`
+ * (the runtime gives one error, "proxy request failed", for a refused port, a name that does not resolve and an
+ * address Cloudflare refuses); one that gets no answer is `timeout`. So a result tells a closed port from a
+ * filtered one, which operators need; the workspace's monitor cap bounds what that reveals (RFC 0007). Never throws.
  */
 export async function tcpCheck(connector: Connector, config: TcpCheckConfig): Promise<CheckResult> {
   if (tcpTargetProblems(config.host, config.port).length > 0) {

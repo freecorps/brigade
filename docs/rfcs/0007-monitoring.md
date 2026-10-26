@@ -55,21 +55,30 @@
   - **Up** means the connection opened (`socket.opened`) within the timeout. Nothing is sent or read, and the socket
     is closed straight after, on every path: opened, refused, failed or timed out. The timeout is the check's own
     timer racing `opened`, so a connection that never answers cannot hold the probe past it; a late rejection is
-    handled, never unhandled. A failure is `timeout` or `network`; the runtime gives one error ("proxy request
-    failed") for a refused port, a name that does not resolve and an address Cloudflare refuses, so they are not
-    told apart. Latency is the time to open. Results then vote exactly like HTTP ones (two alike checks per
+    handled, never unhandled. A failure is `network` or `timeout`. `network` is a connection that failed: the
+    runtime gives one error ("proxy request failed") for a refused port, a name that does not resolve and an address
+    Cloudflare refuses, so those three are not told apart. `timeout` is a connection that got no answer. So the
+    two do tell a closed port (refused at once) from a filtered one (dropped), and both are kept: that is what an
+    operator needs to fix it. Latency is the time to open. Results then vote exactly like HTTP ones (two alike checks per
     region, a majority of fresh regions).
-  - **Targets:** the same host rules as HTTP (`hostProblem`, shared by `targetProblem` and `tcpTargetProblem`; the
-    host is normalised by the same URL parser, so `127.1` or `2130706433` is loopback here too), checked on save
-    and again by the probe before every connection. Any port from 1 to 65535 except 25, which Cloudflare refuses
-    for every Worker (`TCP_BLOCKED_PORTS`), so a monitor on it could never pass.
+  - **Targets:** the same host rules as HTTP (`hostProblem`, shared by `targetProblem` and `tcpTargetProblems`; the
+    host is normalised by the same URL parser, so `127.1` or `2130706433` is loopback here too, and an
+    internationalised name is stored in punycode), checked on save and again by the probe before every
+    connection. Any port from 1 to 65535 except 25, which Cloudflare refuses for every Worker
+    (`TCP_BLOCKED_PORTS`), so a monitor on it could never pass. Also refused: an address in Cloudflare's published
+    ranges (<https://www.cloudflare.com/ips/>, copied into `isCloudflareAddress`), since `connect()` to them is
+    blocked. A host name proxied by Cloudflare (orange cloud) resolves into those ranges and can never pass
+    either, but is not caught on save (Workers cannot resolve names); the form's hint says so.
   - **Why any port, unlike HTTP:** whether something listens on a port is the whole answer of a TCP check, so the
     HTTP allowlist's reason (a check's error must not reveal an open database port) cannot apply without making
     the check useless. What bounds the scanning a monitor could do instead: public hosts only, one host and port per
-    monitor, at most one connection per region every 30 s, only owners and admins create monitors, and the error
-    does not tell refused from unreachable. Cloudflare's own rules still apply (no Cloudflare IP ranges, no private
-    networks, no port 25).
-  - **Limits:** `connect()` counts toward the six connections a Worker may have opening at once (the pool above);
+    monitor, at most one connection per region every 30 s, only owners and admins create monitors, and at most
+    `MAX_MONITORS_PER_WORKSPACE` (100) monitors per workspace. The cap is what answers scanning, not the error:
+    `network` against `timeout` does tell closed from filtered. Cloudflare's own rules still apply (no Cloudflare
+    IP ranges, no private networks, no port 25).
+  - **Limits:** a workspace has at most 100 monitors of every kind together (`MAX_MONITORS_PER_WORKSPACE`); every
+    create mutation refuses one more with `limit_reached`, and the form says so before sending. One cap for every
+    workspace until plans exist; a per-plan or configurable cap comes later (roadmap). `connect()` counts toward the six connections a Worker may have opening at once (the pool above);
     an open socket keeps a Durable Object alive for up to 15 minutes, which a check never needs since it closes at
     once. Locally (workerd under `vp dev` and the tests) `connect()` reaches loopback, so
     `apps/api/test/monitors.test.ts` checks a real listener and a closed port as well as stubbed sockets.
@@ -174,6 +183,9 @@ verdict or failure reason changes.
 
 ## Notes
 
-- Probes originate from Cloudflare IPs. Targets behind strict firewalls must allow them (or use heartbeats).
+- HTTP probes originate from Cloudflare IPs (<https://www.cloudflare.com/ips/>); TCP checks come from a separate
+  prefix that is not in that list, and Cloudflare does not publish it as an allowlist. Targets behind strict
+  firewalls should use heartbeats. TCP checks cannot reach Cloudflare's own ranges, so hosts proxied by Cloudflare
+  cannot be checked over TCP.
 - Targets hosted on the same Cloudflare account are reached through Cloudflare's network; this checks the public path
   through Cloudflare, not the origin directly. Add a separate check against the origin when needed.

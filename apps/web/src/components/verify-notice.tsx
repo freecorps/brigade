@@ -1,34 +1,27 @@
 import { m } from "@freecorps/brigade-i18n";
 import { MailCheckIcon, SendIcon } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { usePreferences } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
 import { resendVerification, type ResendError } from "@/lib/invitations";
 
 const text = (part: string, email = "") => m.verify_notice({ part, email });
 
+type Resend = (
+  email: string,
+  next?: string,
+) => Promise<{ ok: true } | { ok: false; error: ResendError }>;
+
 /**
- * Asks someone who has not verified their address to open the link Brigade sent, with a way to get another one
- * (RFC 0002 "Auth": until then they get no email, and cannot invite or accept invitations). `next`: the page the
- * new link comes back to (an invitation). Nothing when the address is verified.
+ * Asking Brigade for another verification link: `send` asks (once at a time), `outcome` is what to tell the person
+ * after, `sending` while it runs. Shared by the notice and the Invite form.
  */
-export function VerifyNotice({
-  email,
-  verified,
-  next,
-  resend = resendVerification,
-}: {
-  email: string;
-  verified: boolean;
-  next?: string;
-  resend?: (
-    email: string,
-    next?: string,
-  ) => Promise<{ ok: true } | { ok: false; error: ResendError }>;
-}) {
-  usePreferences();
+export function useResendVerification(
+  email: string,
+  next?: string,
+  resend: Resend = resendVerification,
+) {
   const [state, setState] = useState<"idle" | "sending" | "sent" | ResendError>("idle");
-  if (verified) return null;
   const send = async () => {
     if (state === "sending") return;
     setState("sending");
@@ -43,11 +36,39 @@ export function VerifyNotice({
         : state === "network"
           ? text("failed")
           : null;
+  return { send, outcome, sending: state === "sending" };
+}
+
+/**
+ * Asks someone who has not verified their address to open the link Brigade sent, with a way to get another one
+ * (RFC 0002 "Auth": until then they get no email, and cannot invite or accept invitations). `next`: the page the
+ * new link comes back to (an invitation). `title` and `body` replace the general wording where the page has its own
+ * (the invitation's). Nothing when the address is verified.
+ */
+export function VerifyNotice({
+  email,
+  verified,
+  next,
+  title,
+  body,
+  resend = resendVerification,
+}: {
+  email: string;
+  verified: boolean;
+  next?: string;
+  title?: string;
+  body?: string;
+  resend?: Resend;
+}) {
+  usePreferences();
+  const titleId = useId();
+  const { send, outcome, sending } = useResendVerification(email, next, resend);
+  if (verified) return null;
   return (
     // Laid out by its own width (a container query), not the page's: it sits in the wide overview and in the narrow
     // invitation page alike.
     <section
-      aria-labelledby="verify-title"
+      aria-labelledby={titleId}
       className="@container rounded-md border border-amber-600/40 bg-card p-4"
     >
       <div className="flex flex-col gap-3 @lg:flex-row @lg:items-start @lg:gap-4">
@@ -56,11 +77,11 @@ export function VerifyNotice({
           className="mt-0.5 size-4 shrink-0 text-amber-700 dark:text-amber-400"
         />
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <h2 id="verify-title" className="font-medium">
-            {text("title")}
+          <h2 id={titleId} className="font-medium">
+            {title ?? text("title")}
           </h2>
           <p className="max-w-prose text-sm text-pretty text-muted-foreground [overflow-wrap:anywhere]">
-            {text("body", email)}
+            {body ?? text("body", email)}
           </p>
           {outcome ? (
             <p role="status" className="text-sm">
@@ -70,13 +91,13 @@ export function VerifyNotice({
         </div>
         <Button
           variant="outline"
-          disabled={state === "sending"}
+          disabled={sending}
           focusableWhenDisabled
           onClick={() => void send()}
           className="self-start"
         >
           <SendIcon aria-hidden />
-          {state === "sending" ? text("sending") : text("resend")}
+          {sending ? text("sending") : text("resend")}
         </Button>
       </div>
     </section>

@@ -19,7 +19,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "sending" | "Sending…" |
 * | "cancel" | "Cancel" |
 * | "sent" | "Invitation sent to {email}." |
-* | "unverified" | "Confirm your own email before you invite people." |
+* | "unverified" | "Confirm your own email before you invite people: open the link we sent to {email}." |
 * | "pending_title" | "Pending invitations" |
 * | "expires" | "Expires {date}" |
 * | "expired" | "Expired: resend it to give it 7 more days" |
@@ -30,6 +30,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "revoke_prompt" | "Revoke the invitation to {email}? Its link stops working." |
 * | "revoked" | "Invitation to {email} revoked." |
 * | "load_failed" | "Couldn't load the pending invitations." |
+* | "revoke_confirm" | "Revoke invitation" |
 * | * | "Invite" |
 *
 * @param {Invite_PartInputs} inputs
@@ -48,9 +49,9 @@ export const invite_part = /** @type {((inputs: Invite_PartInputs, options?: { l
 		if (i?.part === "sending") return /** @type {LocalizedString} */ (`Enviando…`);
 		if (i?.part === "cancel") return /** @type {LocalizedString} */ (`Cancelar`);
 		if (i?.part === "sent") return /** @type {LocalizedString} */ (`Convite enviado para ${i?.email}.`);
-		if (i?.part === "unverified") return /** @type {LocalizedString} */ (`Confirme seu próprio email antes de convidar pessoas.`);
+		if (i?.part === "unverified") return /** @type {LocalizedString} */ (`Confirme seu próprio email antes de convidar pessoas: abra o link que enviamos para ${i?.email}.`);
 		if (i?.part === "pending_title") return /** @type {LocalizedString} */ (`Convites pendentes`);
-		if (i?.part === "expires") return /** @type {LocalizedString} */ (`Expira ${i?.date}`);
+		if (i?.part === "expires") return /** @type {LocalizedString} */ (`Expira em ${i?.date}`);
 		if (i?.part === "expired") return /** @type {LocalizedString} */ (`Expirado: reenvie para mais 7 dias`);
 		if (i?.part === "invited_by") return /** @type {LocalizedString} */ (`Convidado por ${i?.name}`);
 		if (i?.part === "resend") return /** @type {LocalizedString} */ (`Reenviar`);
@@ -59,6 +60,7 @@ export const invite_part = /** @type {((inputs: Invite_PartInputs, options?: { l
 		if (i?.part === "revoke_prompt") return /** @type {LocalizedString} */ (`Revogar o convite para ${i?.email}? O link deixa de funcionar.`);
 		if (i?.part === "revoked") return /** @type {LocalizedString} */ (`Convite para ${i?.email} revogado.`);
 		if (i?.part === "load_failed") return /** @type {LocalizedString} */ (`Não foi possível carregar os convites pendentes.`);
+		if (i?.part === "revoke_confirm") return /** @type {LocalizedString} */ (`Revogar convite`);
 		return /** @type {LocalizedString} */ (`Convidar`)
 	}
 	{
@@ -71,7 +73,7 @@ export const invite_part = /** @type {((inputs: Invite_PartInputs, options?: { l
 		if (i?.part === "sending") return /** @type {LocalizedString} */ (`Sending…`);
 		if (i?.part === "cancel") return /** @type {LocalizedString} */ (`Cancel`);
 		if (i?.part === "sent") return /** @type {LocalizedString} */ (`Invitation sent to ${i?.email}.`);
-		if (i?.part === "unverified") return /** @type {LocalizedString} */ (`Confirm your own email before you invite people.`);
+		if (i?.part === "unverified") return /** @type {LocalizedString} */ (`Confirm your own email before you invite people: open the link we sent to ${i?.email}.`);
 		if (i?.part === "pending_title") return /** @type {LocalizedString} */ (`Pending invitations`);
 		if (i?.part === "expires") return /** @type {LocalizedString} */ (`Expires ${i?.date}`);
 		if (i?.part === "expired") return /** @type {LocalizedString} */ (`Expired: resend it to give it 7 more days`);
@@ -82,6 +84,7 @@ export const invite_part = /** @type {((inputs: Invite_PartInputs, options?: { l
 		if (i?.part === "revoke_prompt") return /** @type {LocalizedString} */ (`Revoke the invitation to ${i?.email}? Its link stops working.`);
 		if (i?.part === "revoked") return /** @type {LocalizedString} */ (`Invitation to ${i?.email} revoked.`);
 		if (i?.part === "load_failed") return /** @type {LocalizedString} */ (`Couldn't load the pending invitations.`);
+		if (i?.part === "revoke_confirm") return /** @type {LocalizedString} */ (`Revoke invitation`);
 		return /** @type {LocalizedString} */ (`Invite`)
 	}
 });

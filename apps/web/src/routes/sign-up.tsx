@@ -89,6 +89,8 @@ function SignUp() {
         password: values.password,
         // The language the dashboard is in: emails to them are written in it.
         locale,
+        // Invited: the verification link brings them back to the invitation (the API keeps only that path).
+        ...(invitation ? { callbackURL: `/invitations/${invitation}` } : {}),
       });
       if (error) {
         setFailure(authErrorMessage(error, "sign-up"));

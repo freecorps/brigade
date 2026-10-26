@@ -2,8 +2,8 @@ import { m } from "@freecorps/brigade-i18n";
 import type { MemberChange, Role } from "@freecorps/brigade-schema";
 import { cn } from "cn";
 import { LogOutIcon, RotateCwIcon, UserMinusIcon, UserPlusIcon } from "lucide-react";
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { InvitationsPanel } from "@/components/invitations-panel";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { InvitationsPanel, type InvitationParts } from "@/components/invitations-panel";
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
@@ -35,25 +35,9 @@ export function MembersCard() {
   const [inviting, setInviting] = useState(false);
   const members = listedMembers(organization.data?.members);
   const manage = role === "owner" || role === "admin";
-  return (
+  const list = (invite?: Invite) => (
     <MembersList
-      invite={
-        manage
-          ? {
-              open: () => setInviting(true),
-              opened: inviting,
-              panel: (
-                <InvitationsPanel
-                  workspaceId={workspaceId}
-                  role={role}
-                  verified={session.data?.user.emailVerified === true}
-                  open={inviting}
-                  setOpen={setInviting}
-                />
-              ),
-            }
-          : undefined
-      }
+      invite={invite}
       members={members}
       loading={organization.isPending && !organization.data}
       reload={organization.error && !organization.data ? () => organization.refetch() : undefined}
@@ -69,7 +53,26 @@ export function MembersCard() {
       left={() => window.location.assign("/")}
     />
   );
+  if (!manage) return list();
+  return (
+    <InvitationsPanel
+      workspaceId={workspaceId}
+      role={role}
+      verified={session.data?.user.emailVerified === true}
+      ownEmail={session.data?.user.email ?? ""}
+      open={inviting}
+      setOpen={setInviting}
+    >
+      {(parts) => list({ ...parts, open: () => setInviting(true), opened: inviting })}
+    </InvitationsPanel>
+  );
 }
+
+/**
+ * Owners and admins: the Invite button (`open`, hidden while `opened`), the invitations' form (under the card's
+ * heading) and their pending list (after the members, so a long one never pushes the members down).
+ */
+type Invite = { open: () => void; opened: boolean } & InvitationParts;
 
 /**
  * Answers worth sending again as they were: the change may not have landed. Not `not_applied`: D1 has the change
@@ -100,11 +103,7 @@ export function MembersList({
   left,
   invite,
 }: {
-  /**
-   * Owners and admins: the Invite button (`open`, hidden while `opened`) and the invitations panel (the form and the
-   * pending invitations), shown under the card's heading.
-   */
-  invite?: { open: () => void; opened: boolean; panel: ReactNode };
+  invite?: Invite;
   members: ListedMember[];
   loading: boolean;
   /** Set when the list failed to load (nothing to show): says so, with Try again, instead of an empty workspace. */
@@ -130,11 +129,20 @@ export function MembersList({
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
   const cardRef = useRef<HTMLElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const inviteRef = useRef<HTMLButtonElement>(null);
+  const wasInviting = useRef(false);
+  const inviting = invite?.opened === true;
   const owners = members.filter((member) => member.role === "owner").length;
   const manage = role === "owner" || role === "admin";
   const sorted = sortMembers(members);
   // The signed-in member's own row (and its Leave) is always listed, wherever their role sorts them.
   const visible = visibleMembers(sorted, expanded, touched ? [userId, touched] : [userId]);
+
+  // The form closed (sent or cancelled): its button is back, and focus with it, rather than lost to the page.
+  useEffect(() => {
+    if (wasInviting.current && !inviting) inviteRef.current?.focus();
+    wasInviting.current = inviting;
+  }, [inviting]);
 
   // Runs after the list re-renders (a removed row gone, a changed row re-sorted), so focus lands on what is there.
   useEffect(() => {
@@ -217,7 +225,12 @@ export function MembersList({
             {m.members_part({ part: "title", name: "" })}
           </CardTitle>
           {invite && !invite.opened ? (
-            <Button variant="outline" onClick={invite.open} className="-my-1.5 shrink-0">
+            <Button
+              ref={inviteRef}
+              variant="outline"
+              onClick={invite.open}
+              className="-my-1.5 shrink-0"
+            >
               <UserPlusIcon aria-hidden />
               {m.invite_part({ part: "open", email: "", date: "", name: "" })}
             </Button>
@@ -235,7 +248,7 @@ export function MembersList({
         </p>
       </div>
       <CardContent className="flex flex-col gap-4">
-        {invite?.panel}
+        {invite?.form}
         {sorted.length > 0 ? (
           <div className="-mx-4 border-t sm:-mx-6">
             <ul aria-labelledby="members-title" className="divide-y">
@@ -299,11 +312,13 @@ export function MembersList({
               {m.members_part({ part: "retry", name: "" })}
             </Button>
           </div>
-        ) : !loading && members.length <= 1 ? (
+        ) : !loading && members.length <= 1 && !invite?.count ? (
+          // Invitations out already answer "invite your team": the list below says who is coming.
           <p className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
             {m.members_part({ part: invite ? "empty_invite" : "empty", name: "" })}
           </p>
         ) : null}
+        {invite?.pending}
       </CardContent>
     </Card>
   );

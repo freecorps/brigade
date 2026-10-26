@@ -18,6 +18,10 @@ export type Verify_PageInputs = {
 * | "failed_body" | "Couldn't reach Brigade. Check your connection and try again." |
 * | "retry" | "Try again" |
 * | "continue" | "Continue" |
+* | "done_body_invitation" | "Your email is confirmed. You can accept the invitation now." |
+* | "expired_body_signed_in" | "Links work for 24 hours. Ask for a new one from the dashboard." |
+* | "invalid_body_signed_in" | "It may have been cut off when you opened it. Ask for a new one from the dashboard." |
+* | "open" | "Open the dashboard" |
 * | * | "Confirm email" |
 *
 * @param {Verify_PageInputs} inputs

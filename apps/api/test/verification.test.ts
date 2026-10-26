@@ -197,6 +197,23 @@ describe("asking again", () => {
     expect(safeNext(invitation)).toBe(invitation);
   });
 
+  test("signing up from an invitation sends a link that comes back to it", async () => {
+    const sent = outbox();
+    const invitation = "/invitations/inv_01JB0000000000000000000000";
+    const email = `pia-v${++people}@example.com`;
+    const response = await api("/auth/sign-up/email", {
+      method: "POST",
+      body: JSON.stringify({ name: "Pia", email, password: PASSWORD, callbackURL: invitation }),
+    });
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => expect(sent().some((one) => one.to.email === email)).toBe(true));
+    const link = new URL(
+      /https?:\/\/\S+/.exec(sent().find((one) => one.to.email === email)!.text)![0],
+    );
+    expect(link.pathname).toBe("/verify-email");
+    expect(link.searchParams.get("next")).toBe(invitation);
+  });
+
   test("an address already verified is not sent another", async () => {
     const eva = await signUp("Eva");
     await env.DB.prepare(`update "user" set "emailVerified" = 1 where id = ?`).bind(eva.id).run();

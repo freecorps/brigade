@@ -1,13 +1,18 @@
 // @vitest-environment happy-dom
 // Invitations and email verification in the dashboard: how the API's answers read, the Members card's Invite form
-// (only the roles the inviter may give, refused while their own address is unverified), the pending list with
-// Resend and Revoke, and the empty workspace pointing to Invite.
+// (only the roles the inviter may give; while their own address is unverified, the way to verify it instead), the
+// pending list with Resend and Revoke (collapsed after five, below the members), where focus goes, and the empty
+// workspace pointing to Invite.
 import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
 import type { Role } from "@freecorps/brigade-schema";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, test } from "vite-plus/test";
-import { InvitationsPanel, type InvitationsApi } from "../src/components/invitations-panel";
+import {
+  InvitationsPanel,
+  PENDING_SHOWN,
+  type InvitationsApi,
+} from "../src/components/invitations-panel";
 import { MembersList } from "../src/components/members-card";
 import { PreferencesProvider } from "../src/components/preferences";
 import { MemberProvider } from "../src/components/session";
@@ -158,7 +163,7 @@ function fakeApi(list: PendingInvitation[] = []) {
 
 async function renderPanel(
   role: Role,
-  options: { verified?: boolean; list?: PendingInvitation[] } = {},
+  options: { verified?: boolean; list?: PendingInvitation[]; open?: boolean } = {},
 ) {
   const { api, calls } = fakeApi(options.list);
   const container = document.createElement("div");
@@ -171,7 +176,8 @@ async function renderPanel(
           workspaceId="ws_1"
           role={role}
           verified={options.verified ?? true}
-          open
+          ownEmail="ana@example.com"
+          open={options.open ?? true}
           setOpen={() => {}}
           api={api}
         />
@@ -220,10 +226,15 @@ describe("the Invite form", () => {
     expect(container.textContent).toContain("Invitation sent to gil@example.com.");
   });
 
-  test("an unverified inviter is told to confirm their own email first, and cannot send", async () => {
+  test("an unverified inviter gets the way to confirm their own email, not a form they cannot send", async () => {
     const { container } = await renderPanel("owner", { verified: false });
-    expect(container.textContent).toContain("Confirm your own email before you invite people.");
-    expect(byText(container, "Send invitation")?.getAttribute("aria-disabled")).toBe("true");
+    expect(container.textContent).toContain(
+      "Confirm your own email before you invite people: open the link we sent to ana@example.com.",
+    );
+    expect(container.querySelector("input[type=email]")).toBeNull();
+    expect(byText(container, "Send invitation")).toBeUndefined();
+    const again = byText(container, "Send the link again");
+    expect(document.activeElement).toBe(again);
   });
 
   test("pending invitations: an admin cannot touch an owner's; a refused resend says why", async () => {
@@ -232,15 +243,102 @@ describe("the Invite form", () => {
     expect(byText(admin.container, "Revoke")).toBeUndefined();
     act(() => root?.unmount());
     const owner = await renderPanel("owner", { list: [pendingOne] });
-    expect(owner.container.textContent).toContain("Expires in 3 days. Invited by Aleksandra");
+    // The day it runs out, not a count that reads one short right after sending.
+    const day = new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(
+      pendingOne.expiresAt,
+    );
+    expect(owner.container.textContent).toContain(`Expires ${day}. Invited by Aleksandra`);
     await click(byText(owner.container, "Resend"));
     expect(owner.calls).toEqual([`resend ${ID}`]);
     expect(owner.container.textContent).toContain("went out a few minutes ago");
     await click(byText(owner.container, "Revoke"));
     expect(owner.container.textContent).toContain(`Revoke the invitation to ${pendingOne.email}?`);
     const confirm = [...owner.container.querySelectorAll("[role=group] button")][0];
+    expect(confirm?.textContent).toBe("Revoke invitation");
     await click(confirm);
     expect(owner.calls).toContain(`revoke ${ID}`);
+  });
+});
+
+describe("focus in the pending list", () => {
+  const other: PendingInvitation = {
+    ...pendingOne,
+    id: "inv_01JB0000000000000000000001",
+    email: "gil@example.com",
+  };
+  const key = async (target: Element, name: string) => {
+    await act(async () => {
+      target.dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true }));
+    });
+  };
+
+  test("the prompt takes focus; Escape and Cancel close it and give focus back to Revoke", async () => {
+    const { container } = await renderPanel("owner", { list: [pendingOne], open: false });
+    const toggle = byText(container, "Revoke")!;
+    await click(toggle);
+    const confirm = byText(container, "Revoke invitation")!;
+    expect(document.activeElement).toBe(confirm);
+    await key(confirm, "Escape");
+    expect(container.querySelector("[role=group]")).toBeNull();
+    expect(document.activeElement).toBe(toggle);
+    await click(toggle);
+    await click(byText(container.querySelector("[role=group]")!, "Cancel"));
+    expect(container.querySelector("[role=group]")).toBeNull();
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  test("after a revoke, focus moves to the next invitation, or to the outcome when none is left", async () => {
+    const list = [pendingOne, other];
+    const { api } = fakeApi();
+    api.list = async () => ({ ok: true, value: [...list] });
+    api.revoke = async (_ws, id) => {
+      list.splice(
+        list.findIndex((one) => one.id === id),
+        1,
+      );
+      return { ok: true, value: true };
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () =>
+      root!.render(
+        <PreferencesProvider initialLocale="en">
+          <InvitationsPanel
+            workspaceId="ws_1"
+            role="owner"
+            verified
+            ownEmail="ana@example.com"
+            open={false}
+            setOpen={() => {}}
+            api={api}
+          />
+        </PreferencesProvider>,
+      ),
+    );
+    await click(byText(container, "Revoke"));
+    await click(byText(container, "Revoke invitation"));
+    const next = container.querySelector(`[data-invitation="${other.id}"] button`);
+    expect(document.activeElement).toBe(next);
+    await click(byText(container, "Revoke"));
+    await click(byText(container, "Revoke invitation"));
+    expect(document.activeElement?.textContent).toBe(`Invitation to ${other.email} revoked.`);
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  test(`after ${PENDING_SHOWN}, the rest wait behind Show all`, async () => {
+    const many = Array.from({ length: PENDING_SHOWN + 2 }, (_, i) => ({
+      ...pendingOne,
+      id: `inv_01JB00000000000000000000${String(i).padStart(2, "0")}`,
+      email: `person-${i}@example.com`,
+    }));
+    const { container } = await renderPanel("owner", { list: many, open: false });
+    expect(container.querySelectorAll("[data-invitation]")).toHaveLength(PENDING_SHOWN);
+    await click(byText(container, `Show all ${many.length} invitations`));
+    expect(container.querySelectorAll("[data-invitation]")).toHaveLength(many.length);
+    expect(document.activeElement).toBe(
+      container.querySelector(`[data-invitation="${many[PENDING_SHOWN]!.id}"] button`),
+    );
   });
 });
 
@@ -250,23 +348,35 @@ describe("the Members card and the verification notice", () => {
     document.body.append(container);
     root = createRoot(container);
     let opened = 0;
-    act(() =>
-      root!.render(
-        <PreferencesProvider initialLocale="pt-BR">
-          <MemberProvider workspaceId="ws_1" userId="usr_ana" role={role}>
-            <MembersList
-              members={[{ userId: "usr_ana", name: "Ana", email: "ana@example.com", role }]}
-              loading={false}
-              change={async () => ({ ok: true })}
-              refresh={async () => true}
-              left={() => {}}
-              invite={invite ? { open: () => opened++, opened: false, panel: null } : undefined}
-            />
-          </MemberProvider>
-        </PreferencesProvider>,
-      ),
-    );
-    return { container, opened: () => opened };
+    const render = (state: { opened?: boolean; count?: number; pending?: string } = {}) =>
+      act(() =>
+        root!.render(
+          <PreferencesProvider initialLocale="pt-BR">
+            <MemberProvider workspaceId="ws_1" userId="usr_ana" role={role}>
+              <MembersList
+                members={[{ userId: "usr_ana", name: "Ana", email: "ana@example.com", role }]}
+                loading={false}
+                change={async () => ({ ok: true })}
+                refresh={async () => true}
+                left={() => {}}
+                invite={
+                  invite
+                    ? {
+                        open: () => opened++,
+                        opened: state.opened ?? false,
+                        form: state.opened ? <p>form</p> : null,
+                        pending: state.pending ? <p data-pending>{state.pending}</p> : null,
+                        count: state.count ?? 0,
+                      }
+                    : undefined
+                }
+              />
+            </MemberProvider>
+          </PreferencesProvider>,
+        ),
+      );
+    render();
+    return { container, opened: () => opened, render };
   };
 
   test("alone in the workspace, an owner is pointed to Invite; a viewer is not", async () => {
@@ -284,6 +394,28 @@ describe("the Members card and the verification notice", () => {
     const viewer = renderCard("viewer", false);
     expect(viewer.container.textContent).toContain("Ainda não há mais ninguém");
     expect(viewer.container.textContent).not.toContain("Convidar");
+  });
+
+  test("pending invitations come after the members and replace the empty message", async () => {
+    await setI18nLocale("pt-BR");
+    const owner = renderCard("owner", true);
+    owner.render({ count: 2, pending: "Convites pendentes" });
+    expect(owner.container.textContent).not.toContain("Convide sua equipe");
+    const list = owner.container.querySelector("ul")!;
+    const pending = owner.container.querySelector("[data-pending]")!;
+    expect(list.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test("closing the form (sent or cancelled) gives focus back to Invite", async () => {
+    await setI18nLocale("pt-BR");
+    const owner = renderCard("owner", true);
+    owner.render({ opened: true });
+    expect(owner.container.textContent).toContain("form");
+    owner.render({ opened: false });
+    const button = [...owner.container.querySelectorAll("button")].find(
+      (b) => b.textContent === "Convidar",
+    );
+    expect(document.activeElement).toBe(button);
   });
 
   test("the notice shows only for an unverified address, and asks again", async () => {

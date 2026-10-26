@@ -19,7 +19,7 @@ export type Invite_PartInputs = {
 * | "sending" | "Sending…" |
 * | "cancel" | "Cancel" |
 * | "sent" | "Invitation sent to {email}." |
-* | "unverified" | "Confirm your own email before you invite people." |
+* | "unverified" | "Confirm your own email before you invite people: open the link we sent to {email}." |
 * | "pending_title" | "Pending invitations" |
 * | "expires" | "Expires {date}" |
 * | "expired" | "Expired: resend it to give it 7 more days" |
@@ -30,6 +30,7 @@ export type Invite_PartInputs = {
 * | "revoke_prompt" | "Revoke the invitation to {email}? Its link stops working." |
 * | "revoked" | "Invitation to {email} revoked." |
 * | "load_failed" | "Couldn't load the pending invitations." |
+* | "revoke_confirm" | "Revoke invitation" |
 * | * | "Invite" |
 *
 * @param {Invite_PartInputs} inputs

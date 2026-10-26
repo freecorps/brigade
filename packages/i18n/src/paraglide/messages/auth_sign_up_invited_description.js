@@ -10,7 +10,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 /**
 * | output |
 * | --- |
-* | "Use the email address the invitation was sent to. You'll join the workspace once you confirm it." |
+* | "Use the address the invitation was sent to. After you confirm it, you can accept the invitation." |
 *
 * @param {Auth_Sign_Up_Invited_DescriptionInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options
@@ -19,6 +19,6 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 export const auth_sign_up_invited_description = /** @type {((inputs?: Auth_Sign_Up_Invited_DescriptionInputs, options?: { locale?: "en" | "pt-BR" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Auth_Sign_Up_Invited_DescriptionInputs, { locale?: "en" | "pt-BR" }, {}>} */ ((inputs = {}, options = {}) => {
 	void inputs;
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
-	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("Use o endereço de email para o qual o convite foi enviado. Você entra no espaço de trabalho assim que confirmá-lo.")
-	return /** @type {LocalizedString} */ ("Use the email address the invitation was sent to. You'll join the workspace once you confirm it.")
+	if (locale === "pt-BR") return /** @type {LocalizedString} */ ("Use o endereço para o qual o convite foi enviado. Depois de confirmá-lo, você pode aceitar o convite.")
+	return /** @type {LocalizedString} */ ("Use the address the invitation was sent to. After you confirm it, you can accept the invitation.")
 });

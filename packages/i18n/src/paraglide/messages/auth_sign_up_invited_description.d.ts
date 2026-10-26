@@ -5,7 +5,7 @@ export type Auth_Sign_Up_Invited_DescriptionInputs = {};
 /**
 * | output |
 * | --- |
-* | "Use the email address the invitation was sent to. You'll join the workspace once you confirm it." |
+* | "Use the address the invitation was sent to. After you confirm it, you can accept the invitation." |
 *
 * @param {Auth_Sign_Up_Invited_DescriptionInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

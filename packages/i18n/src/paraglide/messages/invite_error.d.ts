@@ -13,6 +13,9 @@ export type Invite_ErrorInputs = {
 * | "already_invited" | "{email} already has a pending invitation. Resend it from the list." |
 * | "limit_reached" | "This workspace has too many pending invitations. Revoke some first." |
 * | "rate_limited" | "This workspace sent too many invitations today. Try again tomorrow." |
+* | "address_limited" | "{email} got several invitations today. Try again tomorrow." |
+* | "inviter_limited" | "You sent too many invitations today. Try again tomorrow." |
+* | "send_limit" | "Brigade won't send this invitation again. Revoke it, then invite {email} again if they still need it." |
 * | "too_soon" | "This invitation went out a few minutes ago. Wait a little before sending it again." |
 * | "not_found" | "This invitation is no longer pending." |
 * | "unverified" | "Confirm your own email before you invite people." |

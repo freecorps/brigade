@@ -15,6 +15,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "already_invited" | "{email} already has a pending invitation. Resend it from the list." |
 * | "limit_reached" | "This workspace has too many pending invitations. Revoke some first." |
 * | "rate_limited" | "This workspace sent too many invitations today. Try again tomorrow." |
+* | "address_limited" | "{email} got several invitations today. Try again tomorrow." |
+* | "inviter_limited" | "You sent too many invitations today. Try again tomorrow." |
+* | "send_limit" | "Brigade won't send this invitation again. Revoke it, then invite {email} again if they still need it." |
 * | "too_soon" | "This invitation went out a few minutes ago. Wait a little before sending it again." |
 * | "not_found" | "This invitation is no longer pending." |
 * | "unverified" | "Confirm your own email before you invite people." |
@@ -36,6 +39,9 @@ export const invite_error = /** @type {((inputs: Invite_ErrorInputs, options?: {
 		if (i?.reason === "already_invited") return /** @type {LocalizedString} */ (`${i?.email} já tem um convite pendente. Reenvie-o pela lista.`);
 		if (i?.reason === "limit_reached") return /** @type {LocalizedString} */ (`Este espaço de trabalho tem convites pendentes demais. Revogue alguns antes.`);
 		if (i?.reason === "rate_limited") return /** @type {LocalizedString} */ (`Este espaço de trabalho enviou convites demais hoje. Tente de novo amanhã.`);
+		if (i?.reason === "address_limited") return /** @type {LocalizedString} */ (`${i?.email} recebeu vários convites hoje. Tente de novo amanhã.`);
+		if (i?.reason === "inviter_limited") return /** @type {LocalizedString} */ (`Você enviou convites demais hoje. Tente de novo amanhã.`);
+		if (i?.reason === "send_limit") return /** @type {LocalizedString} */ (`O Brigade não vai enviar este convite de novo. Revogue-o e convide ${i?.email} de novo, se a pessoa ainda precisar.`);
 		if (i?.reason === "too_soon") return /** @type {LocalizedString} */ (`Este convite saiu há poucos minutos. Espere um pouco antes de reenviá-lo.`);
 		if (i?.reason === "not_found") return /** @type {LocalizedString} */ (`Este convite não está mais pendente.`);
 		if (i?.reason === "unverified") return /** @type {LocalizedString} */ (`Confirme seu próprio email antes de convidar pessoas.`);
@@ -51,6 +57,9 @@ export const invite_error = /** @type {((inputs: Invite_ErrorInputs, options?: {
 		if (i?.reason === "already_invited") return /** @type {LocalizedString} */ (`${i?.email} already has a pending invitation. Resend it from the list.`);
 		if (i?.reason === "limit_reached") return /** @type {LocalizedString} */ (`This workspace has too many pending invitations. Revoke some first.`);
 		if (i?.reason === "rate_limited") return /** @type {LocalizedString} */ (`This workspace sent too many invitations today. Try again tomorrow.`);
+		if (i?.reason === "address_limited") return /** @type {LocalizedString} */ (`${i?.email} got several invitations today. Try again tomorrow.`);
+		if (i?.reason === "inviter_limited") return /** @type {LocalizedString} */ (`You sent too many invitations today. Try again tomorrow.`);
+		if (i?.reason === "send_limit") return /** @type {LocalizedString} */ (`Brigade won't send this invitation again. Revoke it, then invite ${i?.email} again if they still need it.`);
 		if (i?.reason === "too_soon") return /** @type {LocalizedString} */ (`This invitation went out a few minutes ago. Wait a little before sending it again.`);
 		if (i?.reason === "not_found") return /** @type {LocalizedString} */ (`This invitation is no longer pending.`);
 		if (i?.reason === "unverified") return /** @type {LocalizedString} */ (`Confirm your own email before you invite people.`);

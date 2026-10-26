@@ -37,6 +37,11 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "not_found_body" | "Check that you opened the whole link from the email." |
 * | "member_title" | "You're already in {workspace}" |
 * | "open" | "Open the dashboard" |
+* | "decline_prompt" | "Decline the invitation to {workspace}? To join later, you'd need a new invitation." |
+* | "decline_confirm" | "Decline invitation" |
+* | "cancel" | "Cancel" |
+* | "expired_body_named" | "Ask {inviter} to send it again." |
+* | "unverified_notice_title" | "Confirm your email to accept" |
 * | * | "Invitation" |
 *
 * @param {Accept_PageInputs} inputs
@@ -73,6 +78,11 @@ export const accept_page = /** @type {((inputs: Accept_PageInputs, options?: { l
 		if (i?.part === "not_found_body") return /** @type {LocalizedString} */ (`Confira se você abriu o link inteiro do email.`);
 		if (i?.part === "member_title") return /** @type {LocalizedString} */ (`Você já está em ${i?.workspace}`);
 		if (i?.part === "open") return /** @type {LocalizedString} */ (`Abrir o painel`);
+		if (i?.part === "decline_prompt") return /** @type {LocalizedString} */ (`Recusar o convite para ${i?.workspace}? Para entrar depois, você vai precisar de um novo convite.`);
+		if (i?.part === "decline_confirm") return /** @type {LocalizedString} */ (`Recusar convite`);
+		if (i?.part === "cancel") return /** @type {LocalizedString} */ (`Cancelar`);
+		if (i?.part === "expired_body_named") return /** @type {LocalizedString} */ (`Peça a ${i?.inviter} para enviá-lo de novo.`);
+		if (i?.part === "unverified_notice_title") return /** @type {LocalizedString} */ (`Confirme seu email para aceitar`);
 		return /** @type {LocalizedString} */ (`Convite`)
 	}
 	{
@@ -103,6 +113,11 @@ export const accept_page = /** @type {((inputs: Accept_PageInputs, options?: { l
 		if (i?.part === "not_found_body") return /** @type {LocalizedString} */ (`Check that you opened the whole link from the email.`);
 		if (i?.part === "member_title") return /** @type {LocalizedString} */ (`You're already in ${i?.workspace}`);
 		if (i?.part === "open") return /** @type {LocalizedString} */ (`Open the dashboard`);
+		if (i?.part === "decline_prompt") return /** @type {LocalizedString} */ (`Decline the invitation to ${i?.workspace}? To join later, you'd need a new invitation.`);
+		if (i?.part === "decline_confirm") return /** @type {LocalizedString} */ (`Decline invitation`);
+		if (i?.part === "cancel") return /** @type {LocalizedString} */ (`Cancel`);
+		if (i?.part === "expired_body_named") return /** @type {LocalizedString} */ (`Ask ${i?.inviter} to send it again.`);
+		if (i?.part === "unverified_notice_title") return /** @type {LocalizedString} */ (`Confirm your email to accept`);
 		return /** @type {LocalizedString} */ (`Invitation`)
 	}
 });

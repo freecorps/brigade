@@ -810,6 +810,20 @@
       }
     }
   ],
+  "invite_show_all": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Show all {countFormatted} invitation",
+        "countPlural=*": "Show all {countFormatted} invitations"
+      }
+    }
+  ],
   "oncall_title": "On call",
   "oncall_schedules_count": [
     {
@@ -1463,6 +1477,10 @@
         "part=failed_body": "Couldn't reach Brigade. Check your connection and try again.",
         "part=retry": "Try again",
         "part=continue": "Continue",
+        "part=done_body_invitation": "Your email is confirmed. You can accept the invitation now.",
+        "part=expired_body_signed_in": "Links work for 24 hours. Ask for a new one from the dashboard.",
+        "part=invalid_body_signed_in": "It may have been cut off when you opened it. Ask for a new one from the dashboard.",
+        "part=open": "Open the dashboard",
         "part=*": "Confirm email"
       }
     }
@@ -1481,7 +1499,7 @@
         "part=sending": "Sending…",
         "part=cancel": "Cancel",
         "part=sent": "Invitation sent to {email}.",
-        "part=unverified": "Confirm your own email before you invite people.",
+        "part=unverified": "Confirm your own email before you invite people: open the link we sent to {email}.",
         "part=pending_title": "Pending invitations",
         "part=expires": "Expires {date}",
         "part=expired": "Expired: resend it to give it 7 more days",
@@ -1492,6 +1510,7 @@
         "part=revoke_prompt": "Revoke the invitation to {email}? Its link stops working.",
         "part=revoked": "Invitation to {email} revoked.",
         "part=load_failed": "Couldn't load the pending invitations.",
+        "part=revoke_confirm": "Revoke invitation",
         "part=*": "Invite"
       }
     }
@@ -1506,6 +1525,9 @@
         "reason=already_invited": "{email} already has a pending invitation. Resend it from the list.",
         "reason=limit_reached": "This workspace has too many pending invitations. Revoke some first.",
         "reason=rate_limited": "This workspace sent too many invitations today. Try again tomorrow.",
+        "reason=address_limited": "{email} got several invitations today. Try again tomorrow.",
+        "reason=inviter_limited": "You sent too many invitations today. Try again tomorrow.",
+        "reason=send_limit": "Brigade won't send this invitation again. Revoke it, then invite {email} again if they still need it.",
         "reason=too_soon": "This invitation went out a few minutes ago. Wait a little before sending it again.",
         "reason=not_found": "This invitation is no longer pending.",
         "reason=unverified": "Confirm your own email before you invite people.",
@@ -1555,6 +1577,11 @@
         "part=not_found_body": "Check that you opened the whole link from the email.",
         "part=member_title": "You're already in {workspace}",
         "part=open": "Open the dashboard",
+        "part=decline_prompt": "Decline the invitation to {workspace}? To join later, you'd need a new invitation.",
+        "part=decline_confirm": "Decline invitation",
+        "part=cancel": "Cancel",
+        "part=expired_body_named": "Ask {inviter} to send it again.",
+        "part=unverified_notice_title": "Confirm your email to accept",
         "part=*": "Invitation"
       }
     }
@@ -1576,5 +1603,5 @@
     }
   ],
   "auth_error_email_not_verified": "Confirm your email first: open the link Brigade sent you, then sign in.",
-  "auth_sign_up_invited_description": "Use the email address the invitation was sent to. You'll join the workspace once you confirm it."
+  "auth_sign_up_invited_description": "Use the address the invitation was sent to. After you confirm it, you can accept the invitation."
 }

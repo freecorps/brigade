@@ -1,7 +1,7 @@
 import { m } from "@freecorps/brigade-i18n";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { CheckIcon, LoaderCircleIcon, LogOutIcon, RotateCwIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { AuthPage } from "@/components/auth-page";
 import { invitationErrorText } from "@/components/invitations-panel";
 import { usePreferences } from "@/components/preferences";
@@ -31,6 +31,15 @@ const text = (part: string, words: Words = {}) =>
     email: words.email ?? "",
   });
 
+/** The way out of a page with nothing left to do here. */
+function DashboardLink() {
+  return (
+    <Link to="/" className={buttonVariants({ variant: "outline", className: "self-start" })}>
+      {text("open")}
+    </Link>
+  );
+}
+
 const ACCEPT_ERRORS: readonly InvitationError[] = [
   "workspace_full",
   "workspace_limit",
@@ -46,7 +55,11 @@ function InvitationRoute() {
   const { id } = Route.useParams();
   const session = authClient.useSession();
   if (!isInvitationId(id)) {
-    return <AuthPage title={text("not_found_title")} description={text("not_found_body")} />;
+    return (
+      <AuthPage title={text("not_found_title")} description={text("not_found_body")}>
+        {session.data ? <DashboardLink /> : null}
+      </AuthPage>
+    );
   }
   if (session.isPending) return <Loading />;
   if (!session.data) {
@@ -94,6 +107,9 @@ function Invitation({ id, email, verified }: { id: string; email: string; verifi
   const [failure, setFailure] = useState<string | null>(null);
   const [declined, setDeclined] = useState(false);
   const [member, setMember] = useState(false);
+  const [askingDecline, setAskingDecline] = useState(false);
+  const declineRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
 
   const load = useCallback(async () => {
     setPreview(null);
@@ -105,10 +121,18 @@ function Invitation({ id, email, verified }: { id: string; email: string; verifi
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (askingDecline) confirmRef.current?.focus();
+  }, [askingDecline]);
+
   if (preview === null) return <Loading />;
   if (typeof preview === "string") {
     if (preview === "not_found") {
-      return <AuthPage title={text("not_found_title")} description={text("not_found_body")} />;
+      return (
+        <AuthPage title={text("not_found_title")} description={text("not_found_body")}>
+          <DashboardLink />
+        </AuthPage>
+      );
     }
     return (
       <AuthPage title={text("page_title")}>
@@ -137,29 +161,58 @@ function Invitation({ id, email, verified }: { id: string; email: string; verifi
       {text("open")}
     </Button>
   );
+  // After Accept or Decline the page is replaced: focus goes to the new heading, not to the page.
   if (member) {
-    return <AuthPage title={text("member_title", words)}>{open}</AuthPage>;
+    return (
+      <AuthPage title={text("member_title", words)} focusTitle>
+        {open}
+      </AuthPage>
+    );
   }
   if (declined) {
-    return <AuthPage title={text("declined_title")} description={text("declined_body", words)} />;
+    return (
+      <AuthPage
+        title={text("declined_title")}
+        description={text("declined_body", words)}
+        focusTitle
+      >
+        <DashboardLink />
+      </AuthPage>
+    );
   }
-  if (preview.status === "expired") {
-    return <AuthPage title={text("expired_title")} description={text("expired_body")} />;
-  }
-  if (preview.status !== "pending") {
-    return <AuthPage title={text("gone_title")} description={text("gone_body")} />;
-  }
+  // Not theirs: nothing about it but that (the API sends no inviter or role either).
   if (!preview.forYou) {
     return (
       <AuthPage title={text("wrong_email_title")} description={text("wrong_email_body", words)}>
-        <Button
-          variant="outline"
-          className="self-start"
-          onClick={() => void authClient.signOut().then(() => window.location.reload())}
-        >
-          <LogOutIcon aria-hidden />
-          {text("sign_out")}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            onClick={() => void authClient.signOut().then(() => window.location.reload())}
+          >
+            <LogOutIcon aria-hidden />
+            {text("sign_out")}
+          </Button>
+          <Link to="/" className={buttonVariants({ variant: "ghost" })}>
+            {text("open")}
+          </Link>
+        </div>
+      </AuthPage>
+    );
+  }
+  if (preview.status === "expired") {
+    return (
+      <AuthPage
+        title={text("expired_title")}
+        description={text(preview.invitedBy ? "expired_body_named" : "expired_body", words)}
+      >
+        <DashboardLink />
+      </AuthPage>
+    );
+  }
+  if (preview.status !== "pending") {
+    return (
+      <AuthPage title={text("gone_title")} description={text("gone_body")}>
+        <DashboardLink />
       </AuthPage>
     );
   }
@@ -167,21 +220,36 @@ function Invitation({ id, email, verified }: { id: string; email: string; verifi
   const body = text(preview.invitedBy ? "body" : "body_anonymous", words);
   if (!verified) {
     return (
-      <AuthPage title={text("unverified_title")} description={body}>
-        <VerifyNotice email={email} verified={false} next={`/invitations/${id}`} />
+      <AuthPage title={title} description={body}>
+        <VerifyNotice
+          email={email}
+          verified={false}
+          next={`/invitations/${id}`}
+          title={text("unverified_notice_title")}
+          body={text("unverified_body", words)}
+        />
       </AuthPage>
     );
   }
+
+  const closeDecline = () => {
+    setAskingDecline(false);
+    declineRef.current?.focus();
+  };
 
   const run = async (action: "accept" | "decline") => {
     if (busy) return;
     setBusy(action);
     setFailure(null);
+    setAskingDecline(false);
     const result = await answerInvitation(id, action);
     if (action === "decline") {
       setBusy(null);
       if (result.ok) setDeclined(true);
-      else setFailure(invitationErrorText(result.error));
+      else {
+        setFailure(invitationErrorText(result.error));
+        declineRef.current?.focus();
+      }
       return;
     }
     // `not_applied`: D1 has the membership already, the shard catches up on its own.
@@ -221,14 +289,45 @@ function Invitation({ id, email, verified }: { id: string; email: string; verifi
           {busy === "accept" ? text("accepting") : text("accept")}
         </Button>
         <Button
+          ref={declineRef}
           variant="ghost"
+          aria-expanded={askingDecline}
           disabled={busy !== null}
           focusableWhenDisabled
-          onClick={() => void run("decline")}
+          onClick={() => {
+            if (busy !== null) return;
+            if (askingDecline) closeDecline();
+            else setAskingDecline(true);
+          }}
         >
           {busy === "decline" ? text("declining") : text("decline")}
         </Button>
       </div>
+      {askingDecline ? (
+        <div
+          role="group"
+          aria-labelledby="decline-prompt"
+          onKeyDown={(event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              closeDecline();
+            }
+          }}
+          className="flex flex-col gap-3 rounded-md bg-muted px-3 py-3 text-sm"
+        >
+          <p id="decline-prompt" className="text-pretty [overflow-wrap:anywhere]">
+            {text("decline_prompt", words)}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button ref={confirmRef} variant="destructive" onClick={() => void run("decline")}>
+              {text("decline_confirm")}
+            </Button>
+            <Button variant="ghost" onClick={closeDecline}>
+              {text("cancel")}
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </AuthPage>
   );
 }

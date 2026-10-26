@@ -38,6 +38,11 @@ export type Accept_PageInputs = {
 * | "not_found_body" | "Check that you opened the whole link from the email." |
 * | "member_title" | "You're already in {workspace}" |
 * | "open" | "Open the dashboard" |
+* | "decline_prompt" | "Decline the invitation to {workspace}? To join later, you'd need a new invitation." |
+* | "decline_confirm" | "Decline invitation" |
+* | "cancel" | "Cancel" |
+* | "expired_body_named" | "Ask {inviter} to send it again." |
+* | "unverified_notice_title" | "Confirm your email to accept" |
 * | * | "Invitation" |
 *
 * @param {Accept_PageInputs} inputs

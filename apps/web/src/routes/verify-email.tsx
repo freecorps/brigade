@@ -1,5 +1,5 @@
 import { m } from "@freecorps/brigade-i18n";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { LoaderCircleIcon, RotateCwIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AuthPage } from "@/components/auth-page";
@@ -12,7 +12,8 @@ import { usePageTitle } from "@/lib/page-title";
 
 /**
  * Where the verification email's link lands: `?token=…` (Better Auth's signed token) and, when the user was
- * answering an invitation, `?next=/invitations/inv_…` to go back to it. Nothing else is followed.
+ * answering an invitation, `?next=/invitations/inv_…` to go back to it. Nothing else is followed. The token is taken
+ * out of the address bar as soon as it is read, so it stays in neither the history nor a copied link.
  */
 export const Route = createFileRoute("/verify-email")({
   component: VerifyEmail,
@@ -33,8 +34,12 @@ const text = (part: string) => m.verify_page({ part });
 function VerifyEmail() {
   usePreferences();
   usePageTitle(text("page_title"));
-  const { token, next } = Route.useSearch();
+  const search = Route.useSearch();
+  const navigate = useNavigate();
   const session = authClient.useSession();
+  // Read once: the address bar loses it right after.
+  const [token] = useState(search.token);
+  const next = search.next;
   const [outcome, setOutcome] = useState<VerifyOutcome | "checking">(
     token ? "checking" : "invalid",
   );
@@ -53,8 +58,11 @@ function VerifyEmail() {
     // Once per page, even when React runs effects twice in development.
     if (started.current) return;
     started.current = true;
+    if (search.token) {
+      void navigate({ to: "/verify-email", search: next ? { next } : {}, replace: true });
+    }
     void run();
-  }, [run]);
+  }, [run, navigate, search.token, next]);
 
   if (outcome === "checking") {
     return (
@@ -85,7 +93,10 @@ function VerifyEmail() {
   );
   if (outcome === "verified") {
     return (
-      <AuthPage title={text("done_title")} description={text("done_body")}>
+      <AuthPage
+        title={text("done_title")}
+        description={text(invitation ? "done_body_invitation" : "done_body")}
+      >
         {continueTo}
       </AuthPage>
     );
@@ -102,15 +113,26 @@ function VerifyEmail() {
     );
   }
   // Expired or broken: a new link comes from the dashboard's notice (signed in) or after signing in.
+  const signedIn = session.data ? "_signed_in" : "";
   return (
     <AuthPage
       title={text(outcome === "expired" ? "expired_title" : "invalid_title")}
-      description={text(outcome === "expired" ? "expired_body" : "invalid_body")}
+      description={text(`${outcome === "expired" ? "expired_body" : "invalid_body"}${signedIn}`)}
     >
       {session.data ? (
-        continueTo
+        invitation ? (
+          continueTo
+        ) : (
+          <Link to="/" className={buttonVariants({ className: "self-start" })}>
+            {text("open")}
+          </Link>
+        )
       ) : (
-        <Link to="/sign-in" className={buttonVariants({ className: "self-start" })}>
+        <Link
+          to="/sign-in"
+          search={invitation ? { invitation } : {}}
+          className={buttonVariants({ className: "self-start" })}
+        >
           {m.accept_page({ part: "sign_in", workspace: "", inviter: "", role: "", email: "" })}
         </Link>
       )}

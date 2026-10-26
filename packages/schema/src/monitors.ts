@@ -247,7 +247,7 @@ export function targetProblem(input: string): string | null {
 /**
  * Why a check may not target `hostname` (as the URL parser gives it: IPv4 in dotted decimal, IPv6 in brackets),
  * or null if it may: no private, loopback, link-local, shared, reserved or multicast address, and no local-only
- * name. The one host rule for every kind of check, HTTP (`targetProblem`) and TCP (`tcpTargetProblem`).
+ * name. The one host rule for every kind of check, HTTP (`targetProblem`) and TCP (`tcpTargetProblems`).
  */
 function hostProblem(hostname: string): string | null {
   const host = hostname.toLowerCase().replace(/\.$/, "");
@@ -289,24 +289,25 @@ export function normalizeTcpHost(host: string): string | undefined {
 }
 
 /**
- * Why a TCP check may not connect to `host` and `port`, or null if it may: the host rules of HTTP checks
+ * Why a TCP check may not connect to `host` and `port`, one issue per field (none if it may): the host rules of HTTP checks
  * (`hostProblem`) and a port from 1 to 65535 other than `TCP_BLOCKED_PORTS`. Unlike an HTTP check, any other port
  * is allowed, since whether something listens there is the whole answer (RFC 0007 "Check types"). Checked when a
  * monitor is saved and again by the probe before every connection.
  */
-export function tcpTargetProblem(host: string, port: number): Issue | null {
+export function tcpTargetProblems(host: string, port: number): Issue[] {
+  const issues: Issue[] = [];
   const hostname = normalizeTcpHost(host);
-  if (hostname === undefined)
-    return { path: "host", message: "Expected a host name or an IP address" };
-  const problem = hostProblem(hostname.includes(":") ? `[${hostname}]` : hostname);
-  if (problem !== null) return { path: "host", message: problem };
+  const problem =
+    hostname === undefined
+      ? "Expected a host name or an IP address"
+      : hostProblem(hostname.includes(":") ? `[${hostname}]` : hostname);
+  if (problem !== null) issues.push({ path: "host", message: problem });
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    return { path: "port", message: "Expected a port from 1 to 65535" };
+    issues.push({ path: "port", message: "Expected a port from 1 to 65535" });
+  } else if (TCP_BLOCKED_PORTS.includes(port)) {
+    issues.push({ path: "port", message: "Cloudflare blocks connections to this port" });
   }
-  if (TCP_BLOCKED_PORTS.includes(port)) {
-    return { path: "port", message: "Cloudflare blocks connections to this port" };
-  }
-  return null;
+  return issues;
 }
 
 /** A URL a check may target, normalised (`new URL(…).href`). */
@@ -420,11 +421,9 @@ type TcpFields = {
   regions: ProbeRegion[];
 };
 
-/** The target rules (`tcpTargetProblem`) and the timeout; the regions come back in `PROBE_REGIONS` order. */
+/** The target rules (`tcpTargetProblems`) and the timeout; the regions come back in `PROBE_REGIONS` order. */
 function checkTcp(args: TcpFields): { issues: Issue[]; regions: ProbeRegion[] } {
-  const issues: Issue[] = [];
-  const problem = tcpTargetProblem(args.host, args.port);
-  if (problem !== null) issues.push(problem);
+  const issues = tcpTargetProblems(args.host, args.port);
   if (args.timeoutSeconds > args.intervalSeconds) {
     issues.push({ path: "timeoutSeconds", message: "Expected at most the interval" });
   }

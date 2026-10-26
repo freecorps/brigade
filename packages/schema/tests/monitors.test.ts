@@ -23,7 +23,7 @@ import {
   staleAfterMs,
   normalizeTcpHost,
   targetProblem,
-  tcpTargetProblem,
+  tcpTargetProblems,
   v,
   type BrigadeTables,
   type MemoryStore,
@@ -232,7 +232,7 @@ describe("TCP targets (SSRF)", () => {
       ["2606:4700::1111", 443],
       ["[2001:30::1]", 8080],
     ] as const) {
-      expect(tcpTargetProblem(host, port), `${host}:${port}`).toBeNull();
+      expect(tcpTargetProblems(host, port), `${host}:${port}`).toEqual([]);
     }
     expect(normalizeTcpHost("DB.Example.COM.")).toBe("db.example.com");
     expect(normalizeTcpHost("[2606:4700:0:0::1111]")).toBe("2606:4700::1111");
@@ -265,7 +265,7 @@ describe("TCP targets (SSRF)", () => {
       ["example.com", 65536, "port"],
       ["example.com", 22.5, "port"],
     ] as const) {
-      expect(tcpTargetProblem(host, port), `${host}:${port}`).toMatchObject({ path });
+      expect(tcpTargetProblems(host, port), `${host}:${port}`).toMatchObject([{ path }]);
     }
   });
 

@@ -1,9 +1,9 @@
 // One HTTP or TCP check (RFC 0007 "Check types"). HTTP: status, latency and an optional keyword, with the target
 // rules of `targetProblem` applied again right before the request, no redirects followed and a bounded body read.
-// TCP: whether a connection opens within the timeout, with `tcpTargetProblem` applied again first.
+// TCP: whether a connection opens within the timeout, with `tcpTargetProblems` applied again first.
 
 import { connect } from "cloudflare:sockets";
-import { targetProblem, tcpTargetProblem, type HttpMethod } from "@freecorps/brigade-schema";
+import { targetProblem, tcpTargetProblems, type HttpMethod } from "@freecorps/brigade-schema";
 
 /** What a probe needs to run one monitor's check; pushed by the workspace shard. */
 export type CheckConfig = HttpCheckConfig | TcpCheckConfig;
@@ -59,7 +59,7 @@ export function runCheck(
  * ranges) with the same error ("proxy request failed"). Never throws.
  */
 export async function tcpCheck(connector: Connector, config: TcpCheckConfig): Promise<CheckResult> {
-  if (tcpTargetProblem(config.host, config.port) !== null) {
+  if (tcpTargetProblems(config.host, config.port).length > 0) {
     return { ok: false, latencyMs: null, httpStatus: null, error: "blocked" };
   }
   const start = Date.now();

@@ -56,7 +56,7 @@ import {
   monitorRefusal,
   newHeartbeat,
   sourceChips,
-  tcpTarget,
+  tcpHostLabel,
   type CheckedDraft,
   type CheckedEdit,
   type MonitorAction,
@@ -454,10 +454,12 @@ function MonitorItem({
             </p>
           </details>
         ) : row.kind === "tcp" ? (
-          <p className="flex min-w-0 items-baseline gap-1 text-sm text-muted-foreground">
-            <span className="shrink-0 font-medium">TCP</span>
-            <span className="min-w-0 font-mono text-xs [overflow-wrap:anywhere] select-text">
-              {tcpTarget(row)}
+          // Inline, so a long host wraps back to the start of the line; the port never splits.
+          <p className="text-sm text-muted-foreground">
+            <span className="font-medium">TCP</span>{" "}
+            <span className="font-mono text-xs [overflow-wrap:anywhere] select-text">
+              {tcpHostLabel(row)}
+              <span className="whitespace-nowrap">:{row.port}</span>
             </span>
           </p>
         ) : (

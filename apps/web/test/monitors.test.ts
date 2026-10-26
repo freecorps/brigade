@@ -23,7 +23,7 @@ import {
   monitorRefusal,
   newHeartbeat,
   sourceChips,
-  tcpTarget,
+  tcpHostLabel,
 } from "../src/lib/monitors";
 
 const id = () => newId("mon", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n)));
@@ -192,7 +192,7 @@ test("a TCP draft becomes createTcp's args; a private host, port 25 and a host w
     const checked = checkDraft({ ...tcp, ...draft }, id());
     return checked.ok ? [] : [...checked.fields].sort();
   };
-  // The SSRF rules of HTTP checks, through the schema's own `tcpTargetProblem`.
+  // The SSRF rules of HTTP checks, through the schema's own `tcpTargetProblems`.
   expect(fields({ host: "10.0.0.5", port: "5432" })).toEqual(["host"]);
   expect(fields({ host: "169.254.169.254", port: "80" })).toEqual(["host"]);
   expect(fields({ host: "localhost", port: "22" })).toEqual(["host"]);
@@ -201,6 +201,8 @@ test("a TCP draft becomes createTcp's args; a private host, port 25 and a host w
   expect(fields({ host: "example.com", port: "25" })).toEqual(["port"]);
   expect(fields({ host: "example.com", port: "70000" })).toEqual(["port"]);
   expect(fields({ host: "", port: "" })).toEqual(["host", "port"]);
+  // Both at once: a private host and port 25 are each named.
+  expect(fields({ host: "10.0.0.5", port: "25" })).toEqual(["host", "port"]);
   // The timeout rule holds for TCP too, named alongside another refused field.
   expect(
     fields({ host: "10.0.0.5", port: "22", intervalSeconds: "30", timeoutSeconds: "31" }),
@@ -211,9 +213,9 @@ test("a TCP draft becomes createTcp's args; a private host, port 25 and a host w
   );
 });
 
-test("a TCP target reads host:port, an IPv6 address in brackets", () => {
-  expect(tcpTarget({ host: "db.example.com", port: 5432 })).toBe("db.example.com:5432");
-  expect(tcpTarget({ host: "2001:db8::10", port: 22 })).toBe("[2001:db8::10]:22");
+test("a TCP host reads as itself before its port, an IPv6 address in brackets", () => {
+  expect(tcpHostLabel({ host: "db.example.com" })).toBe("db.example.com");
+  expect(tcpHostLabel({ host: "2001:db8::10" })).toBe("[2001:db8::10]");
 });
 
 test("a heartbeat URL carries the workspace, the monitor and a secret whose hash is sent", async () => {

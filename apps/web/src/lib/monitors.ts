@@ -12,7 +12,7 @@ import {
   monitorSources,
   newHeartbeatSecret,
   PROBE_REGIONS,
-  tcpTargetProblem,
+  tcpTargetProblems,
   type ArgsOf,
   type CheckSource,
   type HttpMethod,
@@ -74,10 +74,10 @@ export function checkErrorReason(
   return check.error ?? "unknown";
 }
 
-/** What a TCP monitor connects to: `db.example.com:5432`, an IPv6 address in brackets (`[2001:db8::1]:22`). */
-export function tcpTarget(row: Pick<MonitorRow, "host" | "port">): string {
+/** A TCP monitor's host as it reads before `:port`: an IPv6 address in brackets (`[2001:db8::1]`). */
+export function tcpHostLabel(row: Pick<MonitorRow, "host">): string {
   const host = row.host ?? "";
-  return `${host.includes(":") ? `[${host}]` : host}:${row.port ?? ""}`;
+  return host.includes(":") ? `[${host}]` : host;
 }
 
 /** `142 ms`, `1,284 ms`. */
@@ -136,7 +136,7 @@ export type CheckedDraft =
 /**
  * The mutation's args for `draft` with a new monitor id, or the fields to fix: the validator the shard runs, plus
  * the rules it checks across fields (a timeout longer than the interval; for TCP, the target rules of
- * `tcpTargetProblem`, which judge the host and the port together). A keyword is dropped for HEAD, whose response
+ * `tcpTargetProblems`, which judge the host and the port together). A keyword is dropped for HEAD, whose response
  * has no body; the form hides the field then.
  */
 export function checkDraft(draft: MonitorDraft, id: string): CheckedDraft {
@@ -168,10 +168,9 @@ export function checkDraft(draft: MonitorDraft, id: string): CheckedDraft {
       regions: draft.regions,
     });
     // Also when another field is refused, so every field to fix is named at once.
-    const target = tcpTargetProblem(host, port);
-    if (!result.ok || target || issues.length) {
-      return refused([...(result.ok ? [] : result.issues), ...(target ? [target] : []), ...issues]);
-    }
+    issues.push(...tcpTargetProblems(host, port));
+    if (!result.ok || issues.length)
+      return refused([...(result.ok ? [] : result.issues), ...issues]);
     return { ok: true, kind: "tcp", args: result.value };
   }
   const result = createHttpMonitor.args({

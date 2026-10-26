@@ -696,7 +696,7 @@
       "selectors": ["part"],
       "match": {
         "part=title": "Members",
-        "part=description": "Owners and admins change roles and remove members. Removing someone stops their pages at once.",
+        "part=description": "Owners and admins change roles and remove members. Someone removed stops being paged right away.",
         "part=read_only": "Only owners and admins change roles or remove members.",
         "part=you": "You",
         "part=unnamed": "Unnamed member",
@@ -708,6 +708,9 @@
         "part=cancel": "Cancel",
         "part=saving": "Saving…",
         "part=empty": "Nobody else is in this workspace yet.",
+        "part=demote": "Change role",
+        "part=retry": "Try again",
+        "part=only_owner": "You're the only owner. Make someone else an owner before you can leave or change your role.",
         "part=*": "Members"
       }
     }
@@ -721,10 +724,34 @@
         "reason=last_owner": "A workspace needs at least one owner. Make someone else an owner first.",
         "reason=not_found": "This person is no longer a member.",
         "reason=conflict": "Someone else changed this member meanwhile. Check the list and try again.",
-        "reason=not_applied": "Saved, but paging hasn't caught up yet. Try again to finish it.",
+        "reason=not_applied": "Saved. Paging catches up within a minute.",
         "reason=unavailable": "Brigade couldn't reach its database. Nothing changed; try again.",
-        "reason=network": "No connection. Nothing changed; try again.",
+        "reason=network": "Couldn't confirm the change; check the list.",
         "reason=*": "Something went wrong. Try again."
+      }
+    }
+  ],
+  "member_demote_prompt": [
+    {
+      "declarations": ["input kind", "input role"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=owner": "Change your role to {role}? You can no longer manage owners; only an owner can give it back.",
+        "kind=*": "Change your role to {role}? You can no longer manage members; only an owner or admin can give it back."
+      }
+    }
+  ],
+  "members_show_all": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Show all {countFormatted} member",
+        "countPlural=*": "Show all {countFormatted} members"
       }
     }
   ]

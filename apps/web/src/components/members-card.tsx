@@ -1,7 +1,7 @@
 import { m } from "@freecorps/brigade-i18n";
 import type { MemberChange, Role } from "@freecorps/brigade-schema";
 import { cn } from "cn";
-import { LogOutIcon, UserMinusIcon } from "lucide-react";
+import { LogOutIcon, RotateCwIcon, UserMinusIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
@@ -15,7 +15,9 @@ import {
   listedMembers,
   memberChangeReason,
   memberChoices,
+  selfDemotion,
   sortMembers,
+  visibleMembers,
   type ListedMember,
   type MemberChangeError,
 } from "@/lib/members";
@@ -44,6 +46,21 @@ export function MembersCard() {
   );
 }
 
+/** Answers worth sending again as they were: the change may not have landed, or paging may still catch up. */
+const RETRYABLE: readonly MemberChangeError[] = [
+  "not_applied",
+  "unavailable",
+  "network",
+  "internal",
+];
+
+/** A change waiting for its confirm: removing or leaving, or stepping one's own role down. */
+type Pending = { userId: string; change: MemberChange };
+/** A failed change, shown in its member's row; `retry` sends the same request again. */
+type Failure = { userId: string; message: string; retry: MemberChange | null };
+/** Where focus goes once a change settles: a member's control (found by `data-member`) or the card's title. */
+type FocusTarget = { userId: string; control: "role" | "remove" | "first" } | "title";
+
 /** The card itself, with its data and actions passed in (its tests render it without Better Auth). */
 export function MembersList({
   members,
@@ -66,35 +83,85 @@ export function MembersList({
   usePreferences();
   const { userId, role } = useMember();
   const [busy, setBusy] = useState<string | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
+  const [failed, setFailed] = useState<Failure | null>(null);
+  const [confirming, setConfirming] = useState<Pending | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  // The last member acted on stays listed while collapsed, even when a new role sorts them further down.
+  const [touched, setTouched] = useState<string | null>(null);
+  const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null);
+  const cardRef = useRef<HTMLElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const owners = members.filter((member) => member.role === "owner").length;
   const manage = role === "owner" || role === "admin";
   const sorted = sortMembers(members);
+  const visible = visibleMembers(sorted, expanded, touched ? [touched] : []);
+
+  // Runs after the list re-renders (a removed row gone, a changed row re-sorted), so focus lands on what is there.
+  useEffect(() => {
+    if (focusTarget === null) return;
+    setFocusTarget(null);
+    if (focusTarget === "title") {
+      titleRef.current?.focus();
+      return;
+    }
+    const row = cardRef.current?.querySelector(`[data-member="${focusTarget.userId}"]`);
+    const control =
+      row?.querySelector<HTMLElement>(`[data-control="${focusTarget.control}"]`) ??
+      row?.querySelector<HTMLElement>("select, button");
+    if (control) control.focus();
+    else titleRef.current?.focus();
+  }, [focusTarget, members]);
 
   const run = async (target: ListedMember, request: MemberChange) => {
+    // The control that started a change stays focusable (`aria-disabled`), so every handler goes through here.
+    if (busy !== null) return;
     setFailed(null);
+    setConfirming(null);
     setBusy(target.userId);
+    setTouched(target.userId);
     const result = await change(target.userId, request);
-    if (result.ok && request.kind === "remove" && target.userId === userId) {
+    const self = target.userId === userId;
+    // `not_found` on one's own leave: an earlier attempt already went through.
+    if (request.kind === "remove" && self && (result.ok || result.error === "not_found")) {
       left();
       return;
     }
-    if (!result.ok) setFailed(memberChangeReason(result.error));
+    if (!result.ok) {
+      setFailed({
+        userId: target.userId,
+        message: memberChangeReason(result.error),
+        retry: RETRYABLE.includes(result.error) ? request : null,
+      });
+    }
     try {
       await refresh();
     } catch {
       // The list catches up on the next load; the outcome above is what the member needs to see.
     }
     setBusy(null);
+    if (result.ok && request.kind === "remove") {
+      // The row is gone: the next one (or the one before, at the end) takes focus, else the title.
+      const index = visible.findIndex((member) => member.userId === target.userId);
+      const next = visible[index + 1] ?? visible[index - 1];
+      setFocusTarget(next ? { userId: next.userId, control: "first" } : "title");
+    } else {
+      setFocusTarget({
+        userId: target.userId,
+        control: request.kind === "role" ? "role" : "remove",
+      });
+    }
   };
 
   return (
     <Card
+      ref={cardRef}
       aria-labelledby="members-title"
       className={cn(sorted.length > 0 && "overflow-hidden pb-0 sm:pb-0")}
     >
       <div className="flex flex-col gap-1 px-4 sm:px-6">
-        <CardTitle id="members-title">{m.members_part({ part: "title", name: "" })}</CardTitle>
+        <CardTitle id="members-title" ref={titleRef} tabIndex={-1} className="outline-none">
+          {m.members_part({ part: "title", name: "" })}
+        </CardTitle>
         <CardDescription className="flex flex-wrap gap-x-2">
           {loading ? (
             <span aria-hidden className="my-0.5 block h-4 w-24 rounded-sm bg-muted" />
@@ -107,25 +174,47 @@ export function MembersList({
         </p>
       </div>
       <CardContent className="flex flex-col gap-4">
-        {failed ? <FormError>{failed}</FormError> : null}
         {sorted.length > 0 ? (
-          <ul aria-labelledby="members-title" className="-mx-4 divide-y border-t sm:-mx-6">
-            {sorted.map((member) => (
-              <MemberItem
-                key={member.userId}
-                member={member}
-                self={member.userId === userId}
-                choices={memberChoices(
-                  { id: userId, role },
-                  { id: member.userId, role: member.role },
-                  owners,
-                )}
-                busy={busy === member.userId}
-                disabled={busy !== null}
-                onChange={(request) => void run(member, request)}
-              />
-            ))}
-          </ul>
+          <div className="-mx-4 border-t sm:-mx-6">
+            <ul aria-labelledby="members-title" className="divide-y">
+              {visible.map((member) => (
+                <MemberItem
+                  key={member.userId}
+                  member={member}
+                  self={member.userId === userId}
+                  onlyOwner={member.userId === userId && member.role === "owner" && owners <= 1}
+                  choices={memberChoices(
+                    { id: userId, role },
+                    { id: member.userId, role: member.role },
+                    owners,
+                  )}
+                  busy={busy === member.userId}
+                  locked={busy !== null}
+                  failure={failed?.userId === member.userId ? failed : null}
+                  confirming={confirming?.userId === member.userId ? confirming.change : null}
+                  onConfirm={(pending) =>
+                    setConfirming(pending ? { userId: member.userId, change: pending } : null)
+                  }
+                  onChange={(request) => void run(member, request)}
+                />
+              ))}
+            </ul>
+            {visible.length < sorted.length ? (
+              <div className="border-t">
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    const first = sorted.find((member) => !visible.includes(member));
+                    setExpanded(true);
+                    if (first) setFocusTarget({ userId: first.userId, control: "first" });
+                  }}
+                  className="w-full justify-start rounded-none px-4 tabular-nums sm:px-6"
+                >
+                  {m.members_show_all({ count: sorted.length })}
+                </Button>
+              </div>
+            ) : null}
+          </div>
         ) : loading ? (
           <ul aria-hidden className="-mx-4 divide-y border-t sm:-mx-6">
             {[0, 1, 2].map((index) => (
@@ -149,48 +238,72 @@ export function MembersList({
   );
 }
 
+// 16px and 44px tall on phones (no zoom on focus, a full touch target); the desktop density from `sm` up.
 const SELECT =
-  "h-9 w-full min-w-0 rounded-md border border-input bg-card px-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring disabled:opacity-60 sm:w-40";
+  "h-11 min-w-32 flex-1 rounded-md border border-input bg-card px-2 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-disabled:opacity-60 sm:h-9 sm:w-40 sm:flex-none sm:text-sm";
 
 /**
  * One member: name (with "You" on one's own row) and email, then their role (a picker when it can change) and
- * Remove, or Leave on one's own row, each asking first, inline under the row.
+ * Remove, or Leave on one's own row. Removing, leaving and stepping one's own role down ask first, inline under
+ * the row; a failed change is shown there too.
  */
 function MemberItem({
   member,
   self,
+  onlyOwner,
   choices,
   busy,
-  disabled,
+  locked,
+  failure,
+  confirming,
+  onConfirm,
   onChange,
 }: {
   member: ListedMember;
   self: boolean;
+  /** The signed-in member is the workspace's only owner: say why they cannot leave or step down. */
+  onlyOwner: boolean;
   choices: { roles: Role[]; remove: boolean; leave: boolean };
   busy: boolean;
-  disabled: boolean;
+  /** A change is running somewhere in the list: controls stay focusable but do nothing. */
+  locked: boolean;
+  failure: Failure | null;
+  confirming: MemberChange | null;
+  onConfirm: (pending: MemberChange | null) => void;
   onChange: (change: MemberChange) => void;
 }) {
   const nameId = useId();
   const roleId = useId();
   const promptId = useId();
-  const [confirming, setConfirming] = useState(false);
   const askRef = useRef<HTMLButtonElement>(null);
+  const selectRef = useRef<HTMLSelectElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const open = confirming !== null;
   useEffect(() => {
-    if (confirming) confirmRef.current?.focus();
-  }, [confirming]);
+    if (open) confirmRef.current?.focus();
+  }, [open]);
   const cancel = () => {
-    setConfirming(false);
-    askRef.current?.focus();
+    const from = confirming?.kind === "role" ? selectRef.current : askRef.current;
+    onConfirm(null);
+    from?.focus();
+  };
+  const confirm = (change: MemberChange) => {
+    // The prompt goes away with its button: focus moves to the control that asked, before the change runs.
+    (change.kind === "role" ? selectRef.current : askRef.current)?.focus();
+    onChange(change);
   };
   const name = member.name || m.members_part({ part: "unnamed", name: "" });
   const removable = choices.remove || choices.leave;
+  const pickRole = (next: Role) => {
+    if (locked || !member.role || next === member.role) return;
+    if (self && selfDemotion(member.role, next)) onConfirm({ kind: "role", role: next });
+    else onChange({ kind: "role", role: next });
+  };
   return (
     <li data-member={member.userId} className="flex flex-col gap-2 px-4 py-3 sm:px-6">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex min-w-0 flex-1 basis-56 flex-col gap-0.5">
-          <p className="flex min-w-0 items-start gap-2">
+          <p className="flex min-w-0 items-baseline gap-2">
             <span
               id={nameId}
               className={cn(
@@ -201,25 +314,27 @@ function MemberItem({
               {name}
             </span>
             {self ? (
-              <Badge variant="outline" className="shrink-0">
+              <span className="shrink-0 text-sm text-muted-foreground">
                 {m.members_part({ part: "you", name: "" })}
-              </Badge>
+              </span>
             ) : null}
           </p>
           <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">{member.email}</p>
         </div>
-        <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
           {choices.roles.length > 0 && member.role ? (
             <>
               <label htmlFor={roleId} className="sr-only">
                 {m.members_part({ part: "role_label", name: "" })}
               </label>
               <select
+                ref={selectRef}
                 id={roleId}
+                data-control="role"
                 value={member.role}
-                disabled={disabled}
+                aria-disabled={locked || undefined}
                 aria-describedby={nameId}
-                onChange={(event) => onChange({ kind: "role", role: event.target.value as Role })}
+                onChange={(event) => pickRole(event.target.value as Role)}
                 className={SELECT}
               >
                 {choices.roles.map((option) => (
@@ -230,18 +345,24 @@ function MemberItem({
               </select>
             </>
           ) : (
-            <Badge variant="outline" className="shrink-0">
-              {m.member_role({ role: member.role ?? "*" })}
-            </Badge>
+            <div className="flex sm:w-40">
+              <Badge variant="outline" className="shrink-0">
+                {m.member_role({ role: member.role ?? "*" })}
+              </Badge>
+            </div>
           )}
           {removable ? (
             <Button
               ref={askRef}
+              data-control="remove"
               variant="ghost"
-              disabled={disabled}
+              disabled={locked}
+              focusableWhenDisabled
               aria-describedby={nameId}
-              aria-expanded={confirming}
-              onClick={() => setConfirming(true)}
+              aria-expanded={confirming?.kind === "remove"}
+              onClick={() => {
+                if (!locked) onConfirm({ kind: "remove" });
+              }}
               className="ml-auto shrink-0 text-destructive hover:text-destructive sm:ml-0"
             >
               {choices.leave ? <LogOutIcon aria-hidden /> : <UserMinusIcon aria-hidden />}
@@ -250,12 +371,37 @@ function MemberItem({
           ) : null}
         </div>
       </div>
+      {onlyOwner ? (
+        <p className="max-w-prose text-sm text-muted-foreground">
+          {m.members_part({ part: "only_owner", name: "" })}
+        </p>
+      ) : null}
       {busy ? (
         <p role="status" className="text-sm text-muted-foreground">
           {m.members_part({ part: "saving", name: "" })}
         </p>
       ) : null}
-      {confirming && removable ? (
+      {failure ? (
+        <div className="flex flex-col gap-2">
+          <FormError>{failure.message}</FormError>
+          {failure.retry ? (
+            <Button
+              variant="outline"
+              disabled={locked}
+              focusableWhenDisabled
+              aria-describedby={nameId}
+              onClick={() => {
+                if (!locked && failure.retry) onChange(failure.retry);
+              }}
+              className="self-start"
+            >
+              <RotateCwIcon aria-hidden />
+              {m.members_part({ part: "retry", name: "" })}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {confirming ? (
         <div
           role="group"
           aria-labelledby={promptId}
@@ -268,20 +414,29 @@ function MemberItem({
           className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md bg-muted px-3 py-2 text-sm"
         >
           <p id={promptId} className="min-w-0 flex-1 basis-48 [overflow-wrap:anywhere]">
-            {m.members_part({ part: self ? "leave_prompt" : "remove_prompt", name })}
+            {confirming.kind === "role"
+              ? m.member_demote_prompt({
+                  kind: selfDemotion(member.role ?? "viewer", confirming.role) ?? "manage",
+                  role: m.member_role({ role: confirming.role }),
+                })
+              : m.members_part({ part: self ? "leave_prompt" : "remove_prompt", name })}
           </p>
           <div className="flex flex-wrap gap-2">
             <Button
               ref={confirmRef}
               variant="destructive"
               aria-describedby={nameId}
-              onClick={() => {
-                setConfirming(false);
-                onChange({ kind: "remove" });
-              }}
+              onClick={() => confirm(confirming)}
             >
-              {self ? <LogOutIcon aria-hidden /> : <UserMinusIcon aria-hidden />}
-              {m.members_part({ part: self ? "leave" : "remove", name: "" })}
+              {confirming.kind === "role" ? null : self ? (
+                <LogOutIcon aria-hidden />
+              ) : (
+                <UserMinusIcon aria-hidden />
+              )}
+              {m.members_part({
+                part: confirming.kind === "role" ? "demote" : self ? "leave" : "remove",
+                name: "",
+              })}
             </Button>
             <Button variant="ghost" onClick={cancel}>
               {m.members_part({ part: "cancel", name: "" })}

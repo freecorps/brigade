@@ -10,7 +10,14 @@ import { afterEach, describe, expect, test } from "vite-plus/test";
 import { MembersList } from "../src/components/members-card";
 import { PreferencesProvider } from "../src/components/preferences";
 import { MemberProvider } from "../src/components/session";
-import { changeMember, memberChoices, type ListedMember } from "../src/lib/members";
+import {
+  changeMember,
+  memberChoices,
+  selfDemotion,
+  sortMembers,
+  type ListedMember,
+  type MemberChangeError,
+} from "../src/lib/members";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -72,6 +79,25 @@ describe("memberChoices", () => {
   });
 });
 
+describe("sortMembers and selfDemotion", () => {
+  test("unnamed members come last within their role", () => {
+    const sorted = sortMembers([
+      { userId: "usr_x", name: "", email: "a@example.com", role: "viewer" },
+      { userId: "usr_y", name: "Zé", email: "z@example.com", role: "viewer" },
+      { userId: "usr_z", name: "", email: "b@example.com", role: "owner" },
+    ]);
+    expect(sorted.map((member) => member.userId)).toEqual(["usr_z", "usr_y", "usr_x"]);
+  });
+
+  test("only a step down is a demotion, and it says what is lost", () => {
+    expect(selfDemotion("owner", "admin")).toBe("owner");
+    expect(selfDemotion("owner", "viewer")).toBe("manage");
+    expect(selfDemotion("admin", "responder")).toBe("manage");
+    expect(selfDemotion("admin", "owner")).toBeNull();
+    expect(selfDemotion("admin", "admin")).toBeNull();
+  });
+});
+
 describe("changeMember", () => {
   test("sends PATCH with the role or DELETE, and reads the API's error codes", async () => {
     const calls: { url: string; method?: string; body?: unknown }[] = [];
@@ -130,8 +156,9 @@ describe("changeMember", () => {
 function render(
   as: { userId: string; role: Role },
   options: {
-    result?: { ok: true } | { ok: false; error: "last_owner" };
+    result?: { ok: true } | { ok: false; error: MemberChangeError };
     locale?: "en" | "pt-BR";
+    members?: ListedMember[];
   } = {},
 ) {
   const changes: [string, MemberChange][] = [];
@@ -145,7 +172,7 @@ function render(
       <PreferencesProvider initialLocale={options.locale ?? "en"}>
         <MemberProvider workspaceId="ws_1" userId={as.userId} role={as.role}>
           <MembersList
-            members={team}
+            members={options.members ?? team}
             loading={false}
             change={async (userId, change) => {
               changes.push([userId, change]);
@@ -238,6 +265,105 @@ describe("MembersList", () => {
     expect(refused.container.querySelector('[role="alert"]')?.textContent).toContain(
       "A workspace needs at least one owner.",
     );
+  });
+
+  test("stepping one's own role down asks first and says it cannot be undone alone", async () => {
+    const { changes, row, button } = render({ userId: "usr_bia", role: "admin" });
+    const select = row("usr_bia").querySelector("select")!;
+    await act(async () => {
+      select.value = "viewer";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(changes).toEqual([]);
+    expect(row("usr_bia").textContent).toContain(
+      "Change your role to Viewer? You can no longer manage members; only an owner or admin can give it back.",
+    );
+    act(() => button(row("usr_bia"), "Cancel").click());
+    expect(changes).toEqual([]);
+    expect(document.activeElement).toBe(select);
+    await act(async () => {
+      select.value = "viewer";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => button(row("usr_bia"), "Change role").click());
+    expect(changes).toEqual([["usr_bia", { kind: "role", role: "viewer" }]]);
+  });
+
+  test("changing someone else's role, or raising one's own, does not ask", async () => {
+    const { changes, row } = render({ userId: "usr_ana", role: "owner" });
+    const select = row("usr_caio").querySelector("select")!;
+    await act(async () => {
+      select.value = "viewer";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(changes).toEqual([["usr_caio", { kind: "role", role: "viewer" }]]);
+  });
+
+  test("a failure shows in the member's own row, and Try again sends the same request", async () => {
+    const { changes, row, button, container } = render(
+      { userId: "usr_ana", role: "owner" },
+      { result: { ok: false, error: "not_applied" } },
+    );
+    const select = row("usr_caio").querySelector("select")!;
+    await act(async () => {
+      select.value = "viewer";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(row("usr_caio").querySelector('[role="alert"]')?.textContent).toContain(
+      "Saved. Paging catches up within a minute.",
+    );
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
+    // The control that started the change keeps focus.
+    expect(document.activeElement).toBe(select);
+    await act(async () => button(row("usr_caio"), "Try again").click());
+    expect(changes).toEqual([
+      ["usr_caio", { kind: "role", role: "viewer" }],
+      ["usr_caio", { kind: "role", role: "viewer" }],
+    ]);
+  });
+
+  test("after a removal, focus moves to the next member's first control", async () => {
+    const { row, button } = render({ userId: "usr_ana", role: "owner" });
+    act(() => button(row("usr_bia"), "Remove").click());
+    const confirm = [...row("usr_bia").querySelectorAll("button")].find(
+      (b) => b.textContent === "Remove" && b.getAttribute("aria-expanded") === null,
+    )!;
+    await act(async () => confirm.click());
+    expect(document.activeElement).toBe(row("usr_caio").querySelector("select"));
+  });
+
+  test("only one confirm is open at a time", () => {
+    const { row, button, container } = render({ userId: "usr_ana", role: "owner" });
+    act(() => button(row("usr_caio"), "Remove").click());
+    act(() => button(row("usr_bia"), "Remove").click());
+    expect(container.querySelectorAll('[role="group"]')).toHaveLength(1);
+    expect(row("usr_bia").querySelector('[role="group"]')).not.toBeNull();
+  });
+
+  test("the only owner is told why they cannot leave or step down", () => {
+    const { row } = render({ userId: "usr_ana", role: "owner" });
+    expect(row("usr_ana").textContent).toContain(
+      "You're the only owner. Make someone else an owner before you can leave or change your role.",
+    );
+    expect(row("usr_bia").textContent).not.toContain("only owner");
+  });
+
+  test("a long list shows owners and admins first and ten rows, until Show all", () => {
+    const many: ListedMember[] = [
+      ...team,
+      ...Array.from({ length: 26 }, (_, index) => ({
+        userId: `usr_m${index}`,
+        name: `Member ${String(index).padStart(2, "0")}`,
+        email: `m${index}@example.com`,
+        role: "responder" as const,
+      })),
+    ];
+    const { container, button } = render({ userId: "usr_ana", role: "owner" }, { members: many });
+    expect(container.querySelectorAll("[data-member]")).toHaveLength(10);
+    expect(container.querySelector("[data-member]")?.getAttribute("data-member")).toBe("usr_ana");
+    act(() => button(container, "Show all 30 members").click());
+    expect(container.querySelectorAll("[data-member]")).toHaveLength(30);
+    expect(container.textContent).not.toContain("Show all");
   });
 
   test("reads in Portuguese", () => {

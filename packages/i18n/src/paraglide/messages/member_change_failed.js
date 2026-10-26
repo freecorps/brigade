@@ -14,9 +14,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "last_owner" | "A workspace needs at least one owner. Make someone else an owner first." |
 * | "not_found" | "This person is no longer a member." |
 * | "conflict" | "Someone else changed this member meanwhile. Check the list and try again." |
-* | "not_applied" | "Saved, but paging hasn't caught up yet. Try again to finish it." |
+* | "not_applied" | "Saved. Paging catches up within a minute." |
 * | "unavailable" | "Brigade couldn't reach its database. Nothing changed; try again." |
-* | "network" | "No connection. Nothing changed; try again." |
+* | "network" | "Couldn't confirm the change; check the list." |
 * | * | "Something went wrong. Try again." |
 *
 * @param {Member_Change_FailedInputs} inputs
@@ -30,9 +30,9 @@ export const member_change_failed = /** @type {((inputs: Member_Change_FailedInp
 		if (i?.reason === "last_owner") return /** @type {LocalizedString} */ (`Um espaço de trabalho precisa de pelo menos um proprietário. Torne outra pessoa proprietária primeiro.`);
 		if (i?.reason === "not_found") return /** @type {LocalizedString} */ (`Essa pessoa não é mais membro.`);
 		if (i?.reason === "conflict") return /** @type {LocalizedString} */ (`Outra pessoa mudou este membro enquanto isso. Confira a lista e tente de novo.`);
-		if (i?.reason === "not_applied") return /** @type {LocalizedString} */ (`Salvo, mas os chamados ainda não foram atualizados. Tente de novo para concluir.`);
+		if (i?.reason === "not_applied") return /** @type {LocalizedString} */ (`Salvo. Os chamados se atualizam em até um minuto.`);
 		if (i?.reason === "unavailable") return /** @type {LocalizedString} */ (`O Brigade não conseguiu acessar o banco de dados. Nada mudou; tente de novo.`);
-		if (i?.reason === "network") return /** @type {LocalizedString} */ (`Sem conexão. Nada mudou; tente de novo.`);
+		if (i?.reason === "network") return /** @type {LocalizedString} */ (`Não foi possível confirmar a mudança; confira a lista.`);
 		return /** @type {LocalizedString} */ (`Algo deu errado. Tente de novo.`)
 	}
 	{
@@ -40,9 +40,9 @@ export const member_change_failed = /** @type {((inputs: Member_Change_FailedInp
 		if (i?.reason === "last_owner") return /** @type {LocalizedString} */ (`A workspace needs at least one owner. Make someone else an owner first.`);
 		if (i?.reason === "not_found") return /** @type {LocalizedString} */ (`This person is no longer a member.`);
 		if (i?.reason === "conflict") return /** @type {LocalizedString} */ (`Someone else changed this member meanwhile. Check the list and try again.`);
-		if (i?.reason === "not_applied") return /** @type {LocalizedString} */ (`Saved, but paging hasn't caught up yet. Try again to finish it.`);
+		if (i?.reason === "not_applied") return /** @type {LocalizedString} */ (`Saved. Paging catches up within a minute.`);
 		if (i?.reason === "unavailable") return /** @type {LocalizedString} */ (`Brigade couldn't reach its database. Nothing changed; try again.`);
-		if (i?.reason === "network") return /** @type {LocalizedString} */ (`No connection. Nothing changed; try again.`);
+		if (i?.reason === "network") return /** @type {LocalizedString} */ (`Couldn't confirm the change; check the list.`);
 		return /** @type {LocalizedString} */ (`Something went wrong. Try again.`)
 	}
 });

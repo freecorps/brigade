@@ -9,7 +9,7 @@ export type Members_PartInputs = {
 * | part | output |
 * | --- | --- |
 * | "title" | "Members" |
-* | "description" | "Owners and admins change roles and remove members. Removing someone stops their pages at once." |
+* | "description" | "Owners and admins change roles and remove members. Someone removed stops being paged right away." |
 * | "read_only" | "Only owners and admins change roles or remove members." |
 * | "you" | "You" |
 * | "unnamed" | "Unnamed member" |
@@ -21,6 +21,9 @@ export type Members_PartInputs = {
 * | "cancel" | "Cancel" |
 * | "saving" | "Saving…" |
 * | "empty" | "Nobody else is in this workspace yet." |
+* | "demote" | "Change role" |
+* | "retry" | "Try again" |
+* | "only_owner" | "You're the only owner. Make someone else an owner before you can leave or change your role." |
 * | * | "Members" |
 *
 * @param {Members_PartInputs} inputs

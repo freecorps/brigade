@@ -92,12 +92,44 @@ export function memberChoices(
   return { roles: roles.length > 1 ? roles : [], remove: allowed && !self, leave: allowed && self };
 }
 
-/** Owners first, then admins, responders and viewers; by name within a role, then email. */
+const rank = (role: Role | null) => (role === null ? ROLES.length : ROLES.indexOf(role));
+
+/** Owners first, then admins, responders and viewers; by name within a role (unnamed last), then email. */
 export function sortMembers(members: readonly ListedMember[]): ListedMember[] {
-  const rank = (role: Role | null) => (role === null ? ROLES.length : ROLES.indexOf(role));
   return [...members].sort(
     (a, b) =>
-      rank(a.role) - rank(b.role) || a.name.localeCompare(b.name) || a.email.localeCompare(b.email),
+      rank(a.role) - rank(b.role) ||
+      Number(!a.name) - Number(!b.name) ||
+      a.name.localeCompare(b.name) ||
+      a.email.localeCompare(b.email),
+  );
+}
+
+/**
+ * Whether moving one's own role from `from` to `to` gives up something only someone else can give back: any step
+ * down. Asked first, like leaving (the card's confirm); null when it is not a step down, else what is lost:
+ * `owner` (owner to admin: owners), `manage` (to responder or viewer: managing members).
+ */
+export function selfDemotion(from: Role, to: Role): "owner" | "manage" | null {
+  if (rank(to) <= rank(from)) return null;
+  return to === "admin" ? "owner" : "manage";
+}
+
+/** Members a collapsed list shows: the first ones (owners and admins come first), and only when it saves rows. */
+export const COLLAPSED_MEMBERS = 10;
+
+/**
+ * The rows a list shows: all of them when `expanded` or when hiding would save fewer than three; otherwise the
+ * first `COLLAPSED_MEMBERS` of `sorted`, plus any of `keep` (a member just acted on, so a re-sort never hides them).
+ */
+export function visibleMembers(
+  sorted: readonly ListedMember[],
+  expanded: boolean,
+  keep: readonly string[] = [],
+): ListedMember[] {
+  if (expanded || sorted.length < COLLAPSED_MEMBERS + 3) return [...sorted];
+  return sorted.filter(
+    (member, index) => index < COLLAPSED_MEMBERS || keep.includes(member.userId),
   );
 }
 

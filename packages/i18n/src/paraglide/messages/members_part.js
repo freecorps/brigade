@@ -11,7 +11,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | part | output |
 * | --- | --- |
 * | "title" | "Members" |
-* | "description" | "Owners and admins change roles and remove members. Removing someone stops their pages at once." |
+* | "description" | "Owners and admins change roles and remove members. Someone removed stops being paged right away." |
 * | "read_only" | "Only owners and admins change roles or remove members." |
 * | "you" | "You" |
 * | "unnamed" | "Unnamed member" |
@@ -23,6 +23,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "cancel" | "Cancel" |
 * | "saving" | "Saving…" |
 * | "empty" | "Nobody else is in this workspace yet." |
+* | "demote" | "Change role" |
+* | "retry" | "Try again" |
+* | "only_owner" | "You're the only owner. Make someone else an owner before you can leave or change your role." |
 * | * | "Members" |
 *
 * @param {Members_PartInputs} inputs
@@ -45,11 +48,14 @@ export const members_part = /** @type {((inputs: Members_PartInputs, options?: {
 		if (i?.part === "cancel") return /** @type {LocalizedString} */ (`Cancelar`);
 		if (i?.part === "saving") return /** @type {LocalizedString} */ (`Salvando…`);
 		if (i?.part === "empty") return /** @type {LocalizedString} */ (`Ainda não há mais ninguém neste espaço de trabalho.`);
+		if (i?.part === "demote") return /** @type {LocalizedString} */ (`Mudar papel`);
+		if (i?.part === "retry") return /** @type {LocalizedString} */ (`Tentar de novo`);
+		if (i?.part === "only_owner") return /** @type {LocalizedString} */ (`Você é o único proprietário. Torne outra pessoa proprietária antes de sair ou mudar seu papel.`);
 		return /** @type {LocalizedString} */ (`Membros`)
 	}
 	{
 		if (i?.part === "title") return /** @type {LocalizedString} */ (`Members`);
-		if (i?.part === "description") return /** @type {LocalizedString} */ (`Owners and admins change roles and remove members. Removing someone stops their pages at once.`);
+		if (i?.part === "description") return /** @type {LocalizedString} */ (`Owners and admins change roles and remove members. Someone removed stops being paged right away.`);
 		if (i?.part === "read_only") return /** @type {LocalizedString} */ (`Only owners and admins change roles or remove members.`);
 		if (i?.part === "you") return /** @type {LocalizedString} */ (`You`);
 		if (i?.part === "unnamed") return /** @type {LocalizedString} */ (`Unnamed member`);
@@ -61,6 +67,9 @@ export const members_part = /** @type {((inputs: Members_PartInputs, options?: {
 		if (i?.part === "cancel") return /** @type {LocalizedString} */ (`Cancel`);
 		if (i?.part === "saving") return /** @type {LocalizedString} */ (`Saving…`);
 		if (i?.part === "empty") return /** @type {LocalizedString} */ (`Nobody else is in this workspace yet.`);
+		if (i?.part === "demote") return /** @type {LocalizedString} */ (`Change role`);
+		if (i?.part === "retry") return /** @type {LocalizedString} */ (`Try again`);
+		if (i?.part === "only_owner") return /** @type {LocalizedString} */ (`You're the only owner. Make someone else an owner before you can leave or change your role.`);
 		return /** @type {LocalizedString} */ (`Members`)
 	}
 });

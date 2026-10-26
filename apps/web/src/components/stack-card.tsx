@@ -26,13 +26,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { usePreferences } from "@/components/preferences";
-import { useStackStatus } from "@/components/stack-status";
+import { useMember } from "@/components/session";
+import { StackStatusProvider, useStackStatus } from "@/components/stack-status";
 import { formatBytes, formatClock } from "@/lib/format";
 import {
   CHECK_TIMEOUT_MS,
-  DEMO_WORKSPACE,
   healthFault,
   verdict,
+  workspacePath,
   type CheckFailure,
   type CheckResult,
   type StackVerdict,
@@ -52,7 +53,17 @@ const DEV_COMMAND = "vp run dev";
 /** What /health failing means for the card: nothing there, an error answer, or no answer in time. */
 const API_FAULTS = { down: "api-down", erroring: "api-error", stuck: "api-stuck" } as const;
 
+/** The check reads the member's own workspace (the API answers members only), so it needs `RequireWorkspace`. */
 export function StackCard() {
+  const { workspaceId } = useMember();
+  return (
+    <StackStatusProvider workspaceId={workspaceId}>
+      <StackCardBody workspaceId={workspaceId} />
+    </StackStatusProvider>
+  );
+}
+
+function StackCardBody({ workspaceId }: { workspaceId: string }) {
   const { locale } = usePreferences();
   const { report, checking, recheck } = useStackStatus();
   const fault = report ? healthFault(report.health) : undefined;
@@ -142,7 +153,7 @@ export function StackCard() {
           </CheckRow>
           <CheckRow
             label={m.stack_do_label()}
-            route={`GET /api/workspaces/${DEMO_WORKSPACE}`}
+            route={`GET ${workspacePath(workspaceId)}`}
             // With the API Worker down this check says nothing new: one fault, one red signal.
             result={apiFailed ? "skipped" : report?.workspace}
             okLabel={m.stack_answered()}

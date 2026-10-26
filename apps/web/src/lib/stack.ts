@@ -1,8 +1,7 @@
 // The "Local stack" check: two calls through the web Worker (/api/*) to the API Worker, one of which
-// round-trips through a WorkspaceDO's SQLite. Pure functions here; the React hook lives in
-// src/components/stack-status.tsx.
+// round-trips through the signed-in member's WorkspaceDO SQLite (members only, apps/api src/index.ts
+// `workspaceInfo`). Pure functions here; the React provider lives in src/components/stack-status.tsx.
 
-export const DEMO_WORKSPACE = "demo";
 export const CHECK_TIMEOUT_MS = 8000;
 
 export type CheckFailure =
@@ -105,13 +104,19 @@ export async function check<T>(
     : { ok: true, data, ms: elapsed() };
 }
 
+/** The workspace call's path, for the member's workspace. */
+export function workspacePath(workspaceId: string): string {
+  return `/api/workspaces/${encodeURIComponent(workspaceId)}`;
+}
+
 export async function checkStack(
+  workspaceId: string,
   fetcher: typeof fetch = fetch,
   signal?: AbortSignal,
 ): Promise<StackReport> {
   const [health, workspace] = await Promise.all([
     check(fetcher, "/api/health", parseHealth, { signal }),
-    check(fetcher, `/api/workspaces/${DEMO_WORKSPACE}`, parseWorkspace, { signal }),
+    check(fetcher, workspacePath(workspaceId), parseWorkspace, { signal }),
   ]);
   return { health, workspace, checkedAt: new Date() };
 }

@@ -19,9 +19,9 @@ named mutation from `@freecorps/brigade-schema`, run in the shard.
 | `POST /workspaces`                       | `201 {"id","name"}`: a workspace owned by the signed-in user, active in the session                                                                                                                                                                                                                                                                                         |
 |                                          | `401` without a session, `400` for a bad name or a body over 4 KiB, `403` from                                                                                                                                                                                                                                                                                              |
 |                                          | another site, `405`; `500` if the shard could not be provisioned (nothing is kept)                                                                                                                                                                                                                                                                                          |
-| `GET /workspaces/:id`                    | `200` with the `WorkspaceDO` info read from its SQLite storage                                                                                                                                                                                                                                                                                                              |
-|                                          | `400` if `:id` is not a workspace id (see `WORKSPACE_ID` in `src/workspace.ts`)                                                                                                                                                                                                                                                                                             |
-|                                          | `503` if the object is overloaded or the error is retryable, `500` otherwise                                                                                                                                                                                                                                                                                                |
+| `GET /workspaces/:id`                    | `200` with the `WorkspaceDO` info read from its SQLite storage (the dashboard's stack check), for a member                                                                                                                                                                                                                                                                  |
+|                                          | `401` without a session, `403 not_a_member` otherwise (the shard is not woken), `400` for a bad id, `405`                                                                                                                                                                                                                                                                   |
+|                                          | `503` if D1 or the object is overloaded or the error is retryable, `500` otherwise                                                                                                                                                                                                                                                                                          |
 | `PATCH /workspaces/:id/members/:userId`  | `200 { "ok": true }`: role changed in D1 and the shard's member list (RFC 0003 "Members"); errors as `DELETE`, plus `400` for a bad `role`                                                                                                                                                                                                                                  |
 | `DELETE /workspaces/:id/members/:userId` | `200 { "ok": true }`: removed (own id: left), with their devices; `400` for a bad id, `401`, `403` (other site, not a member, the rules), `404`, `409 last_owner` or `conflict` (D1 changed meanwhile: reload and retry), `503 unavailable` (D1 failed, nothing changed) or `not_applied` (D1 changed, the shard not yet: its alarm repairs it, sending it again is sooner) |
 | `GET /sync/:id`                          | `101`: a Brigade Sync WebSocket to the workspace's shard, as the signed-in member                                                                                                                                                                                                                                                                                           |
@@ -61,8 +61,8 @@ member's role in D1, and forwards a request it builds itself carrying the actor 
 (`Brigade-Workspace`). The shard trusts those headers: it is only reachable through this Worker. RBAC runs in the
 shard on every mutation and query (`runMutation`, `runQuery`).
 
-`/workspaces/:id` is still an unauthenticated dev placeholder (the dashboard's stack check), so `workers_dev` and
-`preview_urls` stay off. **Dev actor:** where `SYNC_DEV_ACTOR` is `"1"` and the request is for `localhost`,
+This Worker never has a public URL (`workers_dev` and `preview_urls` are off in every environment): requests reach it
+through the web Worker's `API` binding. **Dev actor:** where `SYNC_DEV_ACTOR` is `"1"` and the request is for `localhost`,
 `127.0.0.1`, `[::1]` or a private LAN address (a phone on the same Wi-Fi), an upgrade without a session acts as
 `{ kind: "user", id: "usr_dev", role: "responder" }` (`src/dev-actor.ts`). Only `vp dev` and the tests set it (in
 `vite.config.ts` here and in apps/web), never a build or an environment in `wrangler.jsonc`; no app relies on it
@@ -328,6 +328,43 @@ Durable Object and `send_email` bindings are not inherited by environments, so e
 Local secrets go in `apps/api/.dev.vars` (`.dev.vars.<env>` per environment), which is gitignored. Their names
 come from `secrets.required` in `wrangler.jsonc`, so `wrangler types` no longer reads `.dev.vars` and the committed
 types stay the same with or without one.
+
+## Deploying dev
+
+The `dev` environment (`brigade-api-dev`, `brigade-web-dev`, `brigade-relay-dev`) is for testing on a real phone.
+The dashboard Worker has a public URL, `https://brigade-web-dev.<subdomain>.workers.dev`, and so does the relay
+(`brigade-relay-dev`, bearer token on every send); the API Worker has none. `<subdomain>` is the account's
+workers.dev subdomain, which names the account, so it is never committed (code, docs, fixtures, `eas.json`).
+The API needs nothing for that origin: Better Auth takes its base URL from the request (the web Worker forwards the
+browser's URL), trusts its own origin and the app's `brigade://`, and sets `Secure` cookies over HTTPS. No
+`BETTER_AUTH_URL` or cookie domain is set.
+
+In order, from `apps/api` unless noted:
+
+1. **Migrations.** `wrangler d1 migrations apply DB --remote --env dev` (every file in `migrations/` not yet
+   applied to `brigade-db-dev`).
+2. **API secrets**, each with `wrangler secret put <NAME> --env dev`:
+
+   | Secret               | Needed for                                                                                                                   |
+   | -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+   | `BETTER_AUTH_SECRET` | Required: sessions (`openssl rand -base64 32`)                                                                               |
+   | `RELAY_URL`          | Push: `brigade-relay-dev`'s URL; without it every page is recorded as failed                                                 |
+   | `RELAY_SEND_TOKEN`   | Push: the relay's send token (apps/relay)                                                                                    |
+   | `DASHBOARD_URL`      | Links in emails and Slack: `https://brigade-web-dev.<subdomain>.workers.dev`                                                 |
+   | `EMAIL_FROM`         | Optional: the email sender ("Email" above); without it no email goes out, so addresses cannot be verified or passwords reset |
+   | `SLACK_TOKEN_KEY`    | Optional until Slack: seals bot tokens ("Slack" below)                                                                       |
+   | `DEAD_MAN_URL`       | Optional: the external dead-man check's ping URL ("Dead-man switch" above)                                                   |
+
+3. **API.** `vp run build:dev`, then `wrangler deploy` (the built config already names `brigade-api-dev`).
+4. **Web**, from `apps/web`: `vp run build:dev`, then `wrangler deploy`. It needs no secrets; its `dev` environment
+   turns on `workers_dev`.
+5. **Slack**, later: integrations/slack/README.md, then add the `SLACK` binding to apps/web's `dev` environment and
+   deploy the web Worker again.
+
+A mobile build points at the dashboard's origin with `EXPO_PUBLIC_BRIGADE_URL`
+(`https://brigade-web-dev.<subdomain>.workers.dev`, no path), read at build time (apps/mobile/README.md). Set it in
+a gitignored `apps/mobile/.env.local` for a local build, or as an EAS environment variable for an EAS build; never in
+`eas.json` or anything committed. The app signs in against `/api/auth` and syncs over `wss://` on that origin.
 
 ## Slack
 

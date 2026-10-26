@@ -149,22 +149,12 @@ export default {
     if (pathname === "/account/takeover") return takeoverNotice(request, env, auth);
 
     const workspace = WORKSPACE_PATH.exec(pathname)?.[1];
-    if (pathname !== "/health" && workspace === undefined) return json({ error: "not_found" }, 404);
+    if (workspace !== undefined) return workspaceInfo(request, env, auth, workspace);
+    if (pathname !== "/health") return json({ error: "not_found" }, 404);
     if (!READ_METHODS.includes(request.method)) {
       return json({ error: "method_not_allowed" }, 405, { Allow: READ_METHODS.join(", ") });
     }
-
-    if (workspace === undefined) return json({ ok: true });
-    // Checked before any decoding: the charset has no `%`, so encoded or malformed input is rejected.
-    if (!WORKSPACE_ID.test(workspace)) return json({ error: "invalid_workspace_id" }, 400);
-    // Dev-only placeholder with no auth: it must sit behind auth (or be removed) before any route
-    // or workers_dev is enabled.
-    try {
-      const info = await env.WORKSPACE.getByName(workspace).info();
-      return json({ workspace, ...info });
-    } catch (error) {
-      return failed("WorkspaceDO.info failed", workspace, error);
-    }
+    return json({ ok: true });
   },
 
   /**
@@ -185,6 +175,42 @@ export default {
     await env.WATCHDOG.getByName(WATCHDOG_NAME).beat();
   },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * `GET /workspaces/:id`: the shard's SQLite table count and size, for the dashboard's stack check (apps/web
+ * src/lib/stack.ts). Members only: 401 without a session, 403 `not_a_member` for anyone else, checked in D1 first so
+ * an outsider or a made-up id never wakes (or creates) a shard. Read-only, so no origin check.
+ */
+export async function workspaceInfo(
+  request: Request,
+  env: Env,
+  lazyAuth: () => Auth,
+  workspaceId: string,
+): Promise<Response> {
+  if (!READ_METHODS.includes(request.method)) {
+    return json({ error: "method_not_allowed" }, 405, { Allow: READ_METHODS.join(", ") });
+  }
+  // Checked before any decoding: the charset has no `%`, so encoded or malformed input is rejected.
+  if (!ORGANIZATION_ID.test(workspaceId)) return json({ error: "invalid_workspace_id" }, 400);
+  try {
+    const session = await lazyAuth().api.getSession({ headers: request.headers });
+    if (!session) return json({ error: "unauthenticated" }, 401);
+    if ((await memberRole(env.DB, workspaceId, session.user.id)) === undefined) {
+      return json({ error: "not_a_member" }, 403);
+    }
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "session or member lookup failed", error: String(error) }),
+    );
+    return json({ error: "unavailable" }, 503);
+  }
+  try {
+    const info = await env.WORKSPACE.getByName(workspaceId).info();
+    return json({ workspace: workspaceId, ...info }, 200, { "Cache-Control": "private, no-store" });
+  } catch (error) {
+    return failed("WorkspaceDO.info failed", workspaceId, error);
+  }
+}
 
 /**
  * `GET /health/paging`: whether the paging pipeline proved itself lately (src/watchdog.ts), for the dashboard. Never a

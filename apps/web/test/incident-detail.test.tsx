@@ -20,7 +20,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { FakeNetwork, FakeServer, FakeTimers } from "../../../packages/sync/tests/fake-server.ts";
 import { PreferencesProvider } from "../src/components/preferences";
-import { StackStatusProvider } from "../src/components/stack-status";
 import { routeTree } from "../src/routeTree.gen";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -126,9 +125,7 @@ async function mount(path: string, locale: "en" | "pt-BR" = "en") {
     root.render(
       <PreferencesProvider initialLocale={locale}>
         <SyncProvider client={syncClient} shard={SHARD}>
-          <StackStatusProvider>
-            <RouterProvider router={router} />
-          </StackStatusProvider>
+          <RouterProvider router={router} />
         </SyncProvider>
       </PreferencesProvider>,
     );

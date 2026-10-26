@@ -53,8 +53,11 @@ caches it.
 | any other path   | `index.html` (`not_found_handling: "single-page-application"`)                    |
 
 Method, headers and body are forwarded unchanged, so WebSocket upgrades pass through too. If the API Worker
-binding throws, the Worker answers `502 {"error":"api_unreachable"}`. Auth exists, but the API still has an open
-dev route (`/workspaces/:id`), so `workers_dev` and `preview_urls` stay off and a deployed Worker has no public URL.
+binding throws, the Worker answers `502 {"error":"api_unreachable"}`. Only the `dev` environment turns on
+`workers_dev` (`https://brigade-web-dev.<subdomain>.workers.dev`, for testing on a phone); production and staging
+have no public URL yet, and `preview_urls` is off everywhere. The API Worker never has one: every request reaches it
+through this Worker. The stack check's workspace call (`/api/workspaces/:id`) needs a session and membership, so it
+reads the signed-in member's workspace.
 
 ## Environments
 

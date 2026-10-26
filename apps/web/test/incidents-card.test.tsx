@@ -17,7 +17,6 @@ import {
   type ShardServer,
 } from "../../../packages/sync/tests/fake-server.ts";
 import { ANNOUNCE_MS, IncidentsCard } from "../src/components/incidents-card";
-import { StackStatusProvider } from "../src/components/stack-status";
 import { routeTree } from "../src/routeTree.gen";
 import { PreferencesProvider, usePreferences } from "../src/components/preferences";
 
@@ -129,13 +128,7 @@ function mount({ clientAhead = 0, offline = false, maxPending = 500, app = false
       <PreferencesProvider initialLocale="en">
         <LocaleProbe />
         <SyncProvider client={syncClient} shard={SHARD}>
-          {app ? (
-            <StackStatusProvider>
-              <RouterProvider router={router!} />
-            </StackStatusProvider>
-          ) : (
-            <IncidentsCard />
-          )}
+          {app ? <RouterProvider router={router!} /> : <IncidentsCard />}
         </SyncProvider>
       </PreferencesProvider>,
     );

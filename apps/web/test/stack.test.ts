@@ -72,8 +72,11 @@ describe("stack check", () => {
         path === "/api/health" ? json({ ok: true }) : json({ error: "internal" }, 500),
       );
     };
-    const report = await checkStack(fetcher);
-    expect(calls.toSorted()).toEqual(["/api/health", "/api/workspaces/demo"]);
+    const report = await checkStack("ws_01J00000000000000000000000", fetcher);
+    expect(calls.toSorted()).toEqual([
+      "/api/health",
+      "/api/workspaces/ws_01J00000000000000000000000",
+    ]);
     expect(verdict(report)).toBe("do-down");
     expect(verdict({ ...report, health: { ok: false, ms: 1, reason: "network" } })).toBe(
       "api-down",
@@ -91,7 +94,7 @@ describe("stack check", () => {
       });
     };
     const controller = new AbortController();
-    const pending = checkStack(hang, controller.signal);
+    const pending = checkStack("ws_01J00000000000000000000000", hang, controller.signal);
     controller.abort();
     const report = await pending;
     expect(seen).toHaveLength(2);

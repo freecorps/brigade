@@ -435,8 +435,8 @@ function ScheduleItem({
           <p className={LABEL}>{m.oncall_heading({ heading: "now" })}</p>
           {current && current.userId !== null ? (
             <>
-              <p className="flex min-w-0 items-center gap-2 text-lg font-semibold">
-                <UserRoundIcon aria-hidden className="size-5 shrink-0 text-muted-foreground" />
+              <p className="flex min-w-0 items-start gap-2 text-lg font-semibold">
+                <UserRoundIcon aria-hidden className="mt-1 size-5 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 [overflow-wrap:anywhere]">{name(current.userId)}</span>
                 {current.source?.kind === "override" ? (
                   <Badge variant="outline">{m.oncall_override_badge()}</Badge>

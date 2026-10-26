@@ -404,10 +404,9 @@ export function text(
 /** An IANA zone as people read it: "America/Sao Paulo". */
 export const zoneLabel = (zone: string) => zone.replaceAll("_", " ");
 
-/** A zone's offset from UTC at `instant`: "UTC", "UTC+05:45", "UTC-03:00". */
+/** A zone's offset from UTC at `instant`: "UTC+00:00", "UTC+05:45", "UTC-03:00". */
 export function offsetLabel(timeZone: string, instant: number): string {
   const minutes = Math.round(zoneOffset(instant, timeZone) / MINUTE);
-  if (minutes === 0) return "UTC";
   const abs = Math.abs(minutes);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `UTC${minutes < 0 ? "-" : "+"}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;

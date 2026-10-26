@@ -168,7 +168,8 @@ test("times say their zone, and the viewer's own time when their clock reads dif
   );
   expect(offsetLabel("Asia/Kathmandu", at)).toBe("UTC+05:45");
   expect(offsetLabel("America/Sao_Paulo", at)).toBe("UTC-03:00");
-  expect(offsetLabel("UTC", at)).toBe("UTC");
+  // London in winter reads as an offset, not as if it were the UTC zone.
+  expect(offsetLabel("Europe/London", at)).toBe("UTC+00:00");
 });
 
 test("the time zone picker matches a city anywhere, or an offset, and lists the viewer's and used zones first", () => {

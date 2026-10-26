@@ -141,7 +141,7 @@ server → client
 
 - `protocol` is `PROTOCOL_VERSION` (1). `token` is reserved and unused: the Worker authenticates the upgrade
   ("Socket topology"). The shard handles a socket's frames one at a time, in arrival order. `hello` comes first:
-  any frame before it (a `mutate` included) gets a `protocol` error, and a compliant client never sends one.
+  any frame before it except `ping` (a `mutate` included) gets a `protocol` error, and a compliant client never sends one.
 - **Versions** are per shard: monotonic safe integers, one per change (mutation). A subscription's `version` is the
   last one the client received for it.
 - **Epoch.** Versions only compare within one epoch: an opaque id (a token) the shard creates when its storage is
@@ -342,7 +342,7 @@ server → client
 - **Close policy:**
   - Socket-level protocol error: `error { code: "protocol" }` without ids, then a close with code 1002. That covers
     a frame that cannot be parsed and has no readable id (not JSON, binary, unknown type, over 64 KiB without a
-    readable id), a second `hello`, another protocol version and any frame before `hello`, a `mutate` included
+    readable id), a second `hello`, another protocol version and any frame before `hello` except `ping`, a `mutate` included
     (see "Protocol"): after the close the client reconnects and replays the mutation behind a `hello`.
   - After `hello`, a frame the parser refuses but whose id is readable is refused alone and the socket stays open:
     a `subscribe` gets `error { subId, code: "invalid_args" }` (its one answer) and, like any `subscribe`,

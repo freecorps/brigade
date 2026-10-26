@@ -101,13 +101,26 @@ socket. So someone who never opened Brigade is not paged (they have no device ei
   member until it unregisters: `device.register` refuses another member's device id (`forbidden`). Signing out
   unregisters it, so the next member's sign-in registers it for them.
   - **Signed out offline** (`device.unregister` did not answer within 5 s): the app signs out on the phone only and
-    keeps the member's session, unrevoked, in secure storage with their user and workspace ids
-    (`brigade_signed_out`, apps/mobile/src/lib/sign-out.ts), and tells them the phone may still get their pages
-    until it is back online. At launch, whenever the phone reconnects, and before any member's `device.register`,
-    the app finishes it: `/get-session` with that cookie, `device.unregister` over a socket of its own as that
-    member, then `/sign-out`, and only then forgets it. The session is not revoked first because only it can say
+    keeps the member's session, unrevoked, in secure storage with their user and workspace ids, the auth server it
+    belongs to and when it was kept (`brigade_signed_out`, a list with one record per session,
+    apps/mobile/src/lib/sign-out.ts), and tells them the phone may still get their pages until it is back online.
+    A sign-out whose `/sign-out` went unanswered is kept the same way, already off the shard. Every record is
+    changed in turn and by its own session, so a second member's sign-out kept before the first is finished never
+    replaces or clears it. At launch, whenever the phone reconnects or the app comes to the foreground, before any
+    member's `device.register`, and while one is left on a backoff (30 s, 2 min, then every 10 min,
+    apps/mobile/src/lib/paging.ts), the app finishes each: `/get-session?disableRefresh=true` with that cookie (so
+    checking does not keep the session alive), `device.unregister` over a socket of its own as that member, then
+    `/sign-out`, and only then forgets it. A record is finished only against the server it was kept for (a
+    development build's server moves with the Metro host), and dropped once older than the session lifetime
+    (`SESSION_LIFETIME_S`, Better Auth's `expiresIn`). The session is not revoked first because only it can say
     whose device this is. Until it finishes, a next member who signs in sees "taken" (the phone still pages the
-    other one) instead of a claim that it pages them; once finished, the phone registers for them.
+    other one), with Try again, instead of a claim that it pages them; once finished, the phone registers for
+    them. If the session could not be read or stored either, nothing can finish it: the app says the phone may
+    keep paging them and that signing in and out again with a connection stops it.
+  - **Reinstalled with a record kept**: iOS Keychain items survive an uninstall, so the reinstalled app (a new
+    device key, so a new device id) finishes the record with `not_found` from `device.unregister`, treats that as
+    done and revokes the session, and the old device row goes only when that member registers the same APNs token
+    again or a page finds the token gone (`token_invalid`).
   - **The kept session is gone** (it expired, or was revoked from elsewhere, before the phone came back): nothing
     can take the device off as that member, so the leftover is dropped and the device stays theirs on that shard.
     Taking over a device id on proof of the device key (a signature over a server nonce) would close this, but the

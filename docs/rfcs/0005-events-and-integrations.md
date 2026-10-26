@@ -76,7 +76,7 @@ name of the schedule nobody was on call for, else null; `page`: the escalation r
 outside a run), with actor
 `sys_notifier` for what the notifier records. `notification.failed` rides with a `page_failed` timeline entry. The
 email notifier's own failures are `notification.failed` with `channel: "email"` (`incidentId`, `eventId`: the push
-failure the email was about, `userId`, `reason`: `undelivered`, `about`: `unpaged` or `nobody_paged`), with an
+failure the email was about, `userId`, `reason`: `undelivered`, or `capped` when a cap dropped it, `about`: `unpaged` or `nobody_paged`), with an
 `email_failed` entry ("Couldn't email Ana that nobody could be paged"). Changing who is emailed emits
 `workspace.email_changed` (`unpaged`, `nobodyPaged`).
 

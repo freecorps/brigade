@@ -238,4 +238,25 @@ describe("the language emails are written in", () => {
     const refused = makeAuthClient(async () => Response.json({ code: "x" }, { status: 401 }));
     expect(await saveLocale("en", refused)).toBe(false);
   });
+
+  test("quick switches are stored in the order picked: the last pick wins, one overtaken is skipped", async () => {
+    const stored: unknown[] = [];
+    let release!: () => void;
+    const slow = new Promise<void>((resolve) => (release = resolve));
+    const client = makeAuthClient(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(String(input), init);
+      const { locale } = (await request.json()) as { locale: string };
+      if (stored.length === 0) await slow;
+      stored.push(locale);
+      return Response.json({ status: true });
+    });
+    const first = saveLocale("pt-BR", client);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = saveLocale("en", client);
+    const third = saveLocale("pt-BR", client);
+    release();
+    await Promise.all([first, second, third]);
+    // The first was already sent; "en" was overtaken by the third pick before its turn.
+    expect(stored).toEqual(["pt-BR", "pt-BR"]);
+  });
 });

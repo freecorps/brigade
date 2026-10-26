@@ -39,19 +39,29 @@ export const authClient = makeAuthClient();
 
 /**
  * Stores the language picked in the dashboard on the signed-in user, so emails come in it too (RFC 0008). Best
- * effort: the switch itself never waits on it, and a failure leaves the one stored before.
+ * effort: the switch itself never waits on it, and a failure leaves the one stored before. Saves run one at a time,
+ * and one overtaken by a newer pick before its turn is skipped, so the last language picked is the one stored.
  */
-export async function saveLocale(
+export function saveLocale(
   locale: Locale,
   client: Pick<typeof authClient, "updateUser"> = authClient,
 ): Promise<boolean> {
-  try {
-    const { error } = await client.updateUser({ locale });
-    return !error;
-  } catch {
-    return false;
-  }
+  wantedLocale = locale;
+  const save = savingLocale.then(async () => {
+    if (wantedLocale !== locale) return true;
+    try {
+      const { error } = await client.updateUser({ locale });
+      return !error;
+    } catch {
+      return false;
+    }
+  });
+  savingLocale = save;
+  return save;
 }
+
+let savingLocale: Promise<unknown> = Promise.resolve();
+let wantedLocale: Locale | null = null;
 
 /**
  * Opens a workspace `POST /workspaces` just created. `set-active` (not a plain session refetch) is what tells the

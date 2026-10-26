@@ -1022,6 +1022,41 @@
       }
     }
   ],
+  "oncall_mine": [
+    {
+      "declarations": ["input part", "input name", "input time"],
+      "selectors": ["part"],
+      "match": {
+        "part=on_call": "Você está de plantão",
+        "part=off_call": "Você não está de plantão",
+        "part=status_until": "De plantão até {time}",
+        "part=status_next": "Fora do plantão · próximo turno {time}",
+        "part=status_none": "Sem plantão nas próximas 4 semanas",
+        "part=open_hint": "Abre seus turnos e quem está de plantão",
+        "part=you_name": "{name} (você)",
+        "part=schedules": "Escalas",
+        "part=next": "Seus próximos turnos",
+        "part=next_none": "Nenhum turno nas próximas 4 semanas",
+        "part=overrides": "Suas substituições",
+        "part=remove_mine": "Remover sua substituição em {name}?",
+        "part=*": "Escalas e rodízios são editados no painel."
+      }
+    }
+  ],
+  "oncall_cover": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Pela próxima hora",
+        "countPlural=*": "Pelas próximas {countFormatted} horas"
+      }
+    }
+  ],
   "escalation_level_round": [
     {
       "declarations": ["input level", "input round"],

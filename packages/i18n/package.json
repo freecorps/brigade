@@ -31,6 +31,10 @@
       "@freecorps/source": "./src/incident.ts",
       "default": "./dist/incident.mjs"
     },
+    "./oncall": {
+      "@freecorps/source": "./src/oncall.ts",
+      "default": "./dist/oncall.mjs"
+    },
     "./labels": {
       "@freecorps/source": "./src/labels.ts",
       "default": "./dist/labels.mjs"
@@ -47,6 +51,7 @@
       "./auth": "./dist/auth.mjs",
       "./incident": "./dist/incident.mjs",
       "./labels": "./dist/labels.mjs",
+      "./oncall": "./dist/oncall.mjs",
       "./messages": "./dist/messages.mjs",
       "./package.json": "./package.json"
     },

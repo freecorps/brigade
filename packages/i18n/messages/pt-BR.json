@@ -202,6 +202,7 @@
         "part=pages_notice_title": "Este telefone não está chamando você",
         "part=open_settings": "Abrir Ajustes",
         "part=sign_out_body_unpaged": "Você vai precisar entrar de novo para ver os incidentes aqui.",
+        "part=sign_out_unsent": "As alterações que você fez e ainda não foram enviadas serão perdidas.",
         "part=sign_out_kept_title": "Este telefone ainda pode receber seus chamados",
         "part=sign_out_kept_body": "O Brigade não conseguiu falar com o servidor, então este telefone continua recebendo seus chamados até voltar a ficar online. Aí o Brigade conclui sua saída sozinho.",
         "part=sign_out_stuck_title": "Este telefone pode continuar recebendo seus chamados",

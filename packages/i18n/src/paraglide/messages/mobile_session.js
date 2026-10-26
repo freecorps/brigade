@@ -30,6 +30,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "pages_notice_title" | "This phone isn't paging you" |
 * | "open_settings" | "Open Settings" |
 * | "sign_out_body_unpaged" | "You'll need to sign in again to see incidents here." |
+* | "sign_out_unsent" | "Changes you made that aren't sent yet are lost." |
 * | "sign_out_kept_title" | "This phone may still get pages for you" |
 * | "sign_out_kept_body" | "Brigade couldn't reach the server, so this phone keeps getting your pages until it's back online. Brigade finishes signing you out then, on its own." |
 * | "sign_out_stuck_title" | "This phone may keep getting your pages" |
@@ -70,6 +71,7 @@ export const mobile_session = /** @type {((inputs: Mobile_SessionInputs, options
 		if (i?.part === "pages_notice_title") return /** @type {LocalizedString} */ (`Este telefone não está chamando você`);
 		if (i?.part === "open_settings") return /** @type {LocalizedString} */ (`Abrir Ajustes`);
 		if (i?.part === "sign_out_body_unpaged") return /** @type {LocalizedString} */ (`Você vai precisar entrar de novo para ver os incidentes aqui.`);
+		if (i?.part === "sign_out_unsent") return /** @type {LocalizedString} */ (`As alterações que você fez e ainda não foram enviadas serão perdidas.`);
 		if (i?.part === "sign_out_kept_title") return /** @type {LocalizedString} */ (`Este telefone ainda pode receber seus chamados`);
 		if (i?.part === "sign_out_kept_body") return /** @type {LocalizedString} */ (`O Brigade não conseguiu falar com o servidor, então este telefone continua recebendo seus chamados até voltar a ficar online. Aí o Brigade conclui sua saída sozinho.`);
 		if (i?.part === "sign_out_stuck_title") return /** @type {LocalizedString} */ (`Este telefone pode continuar recebendo seus chamados`);
@@ -104,6 +106,7 @@ export const mobile_session = /** @type {((inputs: Mobile_SessionInputs, options
 		if (i?.part === "pages_notice_title") return /** @type {LocalizedString} */ (`This phone isn't paging you`);
 		if (i?.part === "open_settings") return /** @type {LocalizedString} */ (`Open Settings`);
 		if (i?.part === "sign_out_body_unpaged") return /** @type {LocalizedString} */ (`You'll need to sign in again to see incidents here.`);
+		if (i?.part === "sign_out_unsent") return /** @type {LocalizedString} */ (`Changes you made that aren't sent yet are lost.`);
 		if (i?.part === "sign_out_kept_title") return /** @type {LocalizedString} */ (`This phone may still get pages for you`);
 		if (i?.part === "sign_out_kept_body") return /** @type {LocalizedString} */ (`Brigade couldn't reach the server, so this phone keeps getting your pages until it's back online. Brigade finishes signing you out then, on its own.`);
 		if (i?.part === "sign_out_stuck_title") return /** @type {LocalizedString} */ (`This phone may keep getting your pages`);

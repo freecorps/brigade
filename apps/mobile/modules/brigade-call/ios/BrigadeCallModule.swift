@@ -53,6 +53,15 @@ public class BrigadeCallModule: Module {
 
     Function("openFullScreenIntentSettings") {}
 
+    /// Leaves a folder of the app's, and what is in it, out of iCloud and computer backups: the queue of changes not
+    /// sent yet (src/lib/pending-files.ts) holds what members wrote about incidents. Takes a `file://` URL.
+    Function("excludeFromBackup") { (uri: String) throws in
+      guard var url = URL(string: uri), url.isFileURL else { return }
+      var values = URLResourceValues()
+      values.isExcludedFromBackup = true
+      try url.setResourceValues(values)
+    }
+
     /// The PushKit token the relay sends calls to (hex), or null until PushKit has one.
     AsyncFunction("getVoipToken") { () -> String? in
       return CallCenter.shared.voipToken

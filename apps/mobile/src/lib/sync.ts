@@ -81,6 +81,20 @@ export function memberActor(userId: string, role: unknown): Actor {
   return { kind: "user", id: userId, role: isRole(role) ? role : "viewer" };
 }
 
+/**
+ * The member's role once it is known: the live one, else the one remembered (`KnownWorkspace`); undefined while
+ * either is still loading, or offline with nothing remembered. Changes kept from before a restart are applied as
+ * this role, so they wait for it: as the `viewer` a missing role reads as, they would drop out of the view.
+ */
+export function settledRole(
+  userId: string,
+  liveRole: unknown,
+  known: { role: Role } | null | undefined,
+): Role | undefined {
+  if (liveRole !== undefined) return memberActor(userId, liveRole).role;
+  return known?.role;
+}
+
 /** The member's workspace as last read, so the app opens signed in without the network (secure storage). */
 export type KnownWorkspace = { userId: string; workspaceId: string; name: string; role: Role };
 

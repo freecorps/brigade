@@ -27,6 +27,7 @@ export type Mobile_SessionInputs = {
 * | "pages_notice_title" | "This phone isn't paging you" |
 * | "open_settings" | "Open Settings" |
 * | "sign_out_body_unpaged" | "You'll need to sign in again to see incidents here." |
+* | "sign_out_unsent" | "Changes you made that aren't sent yet are lost." |
 * | "sign_out_kept_title" | "This phone may still get pages for you" |
 * | "sign_out_kept_body" | "Brigade couldn't reach the server, so this phone keeps getting your pages until it's back online. Brigade finishes signing you out then, on its own." |
 * | "sign_out_stuck_title" | "This phone may keep getting your pages" |

@@ -21,7 +21,7 @@ import { dropQueues, openQueue } from "@/lib/pending";
 import { pendingFiles } from "@/lib/pending-files";
 import { finishDeps, keptSignOuts, phoneDeps, SESSION_LIFETIME_MS } from "@/lib/phone";
 import { finishSignOut, signOutPhone, type FinishResult } from "@/lib/sign-out";
-import { knownWorkspace, memberActor, WORKSPACE_KEY, type Server } from "@/lib/sync";
+import { knownWorkspace, memberActor, settledRole, WORKSPACE_KEY, type Server } from "@/lib/sync";
 import { createWorkspaceSync, setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
 
 /** The signed-in member in their active workspace: what every signed-in screen reads. */
@@ -41,6 +41,8 @@ export type Member = {
    * their session be kept to tell it later.
    */
   signOut: () => Promise<"released" | "kept" | "stuck">;
+  /** Whether changes not sent yet are kept on the phone: signing out deletes them. */
+  unsent: () => boolean;
 };
 
 /** What the app shows before a member is ready: the sign-in screen draws all of these. */
@@ -313,6 +315,18 @@ function ActiveWorkspace({
     };
   }, [userId, workspaceId]);
 
+  // Changes kept from before a restart are applied as the member's role, so they go back only once it is known:
+  // run as the `viewer` a role still loading reads as, they would drop out of the view until the shard answered
+  // (src/lib/pending.ts). The screens that track them wait for it too.
+  const roleNow = settledRole(userId, liveRole, known);
+  const [restored, setRestored] = useState<WorkspaceSync | null>(null);
+  useEffect(() => {
+    if (!sync || roleNow === undefined) return;
+    role.current = roleNow;
+    sync.restore();
+    setRestored(sync);
+  }, [sync, roleNow]);
+
   // Someone who signed out offline first: their device has to come off the shard before this one can take it.
   const register = useMemo(
     () =>
@@ -349,7 +363,7 @@ function ActiveWorkspace({
     return result;
   }, [sync, userId, workspaceId, stopPaging]);
 
-  const ready = Boolean(sync && workspaceName !== undefined && (liveRole ?? known?.role));
+  const ready = Boolean(sync && restored === sync && workspaceName !== undefined);
   const value = useMemo<SessionView>(() => {
     if (ready) {
       return {
@@ -364,6 +378,7 @@ function ActiveWorkspace({
           paging,
           retryPaging,
           signOut: leave,
+          unsent: () => sync?.queue?.unsent() ?? false,
         },
       };
     }

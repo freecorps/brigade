@@ -97,7 +97,11 @@ function IncidentList({ onReload }: { onReload: () => void }) {
   // In-flight changes per incident, so the row can say "Saving…" until the shard answers.
   const [busy, setBusy] = useState<ReadonlyMap<string, number>>(new Map());
   const nextKey = useRef(0);
-  const track = (outcome: Promise<MutationOutcome>, target: NoticeTarget) => {
+  /** `target` may be read when the outcome is in, for a change made before the list had its rows. */
+  const track = (
+    outcome: Promise<MutationOutcome>,
+    target: NoticeTarget & { read?: () => NoticeTarget },
+  ) => {
     const bump = (by: number) =>
       setBusy((current) => {
         const next = new Map(current);
@@ -109,7 +113,7 @@ function IncidentList({ onReload }: { onReload: () => void }) {
     bump(1);
     void outcome.then((result) => {
       bump(-1);
-      const refusal = noticeFor(result, target, `r${nextKey.current++}`);
+      const refusal = noticeFor(result, target.read?.() ?? target, `r${nextKey.current++}`);
       if (!refusal) return;
       setRefusals((current) => [...current, refusal].slice(-5));
       // VoiceOver has no live regions (accessibilityLiveRegion is Android's), so say it once.
@@ -121,7 +125,8 @@ function IncidentList({ onReload }: { onReload: () => void }) {
     });
   };
 
-  // Declares kept from before a restart (src/lib/pending.ts) are tracked like new ones: a refusal says so here.
+  // Changes kept from before a restart (src/lib/pending.ts) are tracked like new ones. A declare's refusal says so
+  // here; another's, on its incident's screen, or here on its row when that screen is not open.
   const trackRef = useRef(track);
   useLayoutEffect(() => {
     trackRef.current = track;
@@ -131,13 +136,34 @@ function IncidentList({ onReload }: { onReload: () => void }) {
     if (!restored) return;
     for (const change of restored.list) {
       const target = restoredTarget(change);
-      if (target?.notice.kind !== "declare") continue;
-      trackRef.current(restored.claim(change), {
-        kind: "declare",
-        incidentId: target.incidentId,
-        number: null,
-        title: target.notice.title ?? "",
-      });
+      if (!target) continue;
+      const { incidentId } = target;
+      if (target.notice.kind === "declare") {
+        trackRef.current(restored.claim(change), {
+          kind: "declare",
+          incidentId,
+          number: null,
+          title: target.notice.title ?? "",
+        });
+        continue;
+      }
+      const { kind, to, role } = target.notice;
+      const row = () => latest.current.find((incident) => incident.id === incidentId);
+      const notice = (): NoticeTarget => {
+        const found = row();
+        return {
+          kind,
+          to,
+          role,
+          incidentId,
+          number: found?.number ?? null,
+          title: found?.title ?? "",
+        };
+      };
+      trackRef.current(
+        restored.claimLeft(change, () => row() !== undefined),
+        { ...notice(), read: notice },
+      );
     }
   }, []);
 

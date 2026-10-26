@@ -4,7 +4,12 @@
 import type { Actor } from "@freecorps/brigade-schema";
 import { createSyncClient, type SyncClient, type SyncSocket } from "@freecorps/brigade-sync";
 import { getRandomBytes } from "expo-crypto";
-import { restoredChanges, type MemberQueue, type RestoredChanges } from "@/lib/pending";
+import {
+  restoreQueue,
+  restoredChanges,
+  type MemberQueue,
+  type RestoredChanges,
+} from "@/lib/pending";
 import type { Server } from "@/lib/sync";
 
 export type WorkspaceSync = {
@@ -12,8 +17,13 @@ export type WorkspaceSync = {
   shard: string;
   /** The member's kept queue; none for a client that only finishes a sign-out. */
   queue?: MemberQueue;
-  /** The changes the queue gave back at launch, for the screens that made them. */
+  /** The changes the queue gave back at launch, for the screens that made them; none until `restore`. */
   restored: RestoredChanges;
+  /**
+   * Puts the queue's changes back, applied as the actor's role is then: call it once the member's role is known
+   * (a role still loading reads as viewer, and the changes would drop out of the view). Once; later calls do nothing.
+   */
+  restore: () => void;
 };
 
 export function createWorkspaceSync({
@@ -44,10 +54,19 @@ export function createWorkspaceSync({
     clientId: queue?.clientId,
     pendingStorage: queue?.storage,
   });
-  const restored = restoredChanges(
-    queue ? client.restore(workspaceId, queue.saved[workspaceId] ?? []) : [],
-  );
-  return { client, shard: workspaceId, queue, restored };
+  let restored = false;
+  const sync: WorkspaceSync = {
+    client,
+    shard: workspaceId,
+    queue,
+    restored: restoredChanges([]),
+    restore: () => {
+      if (restored || !queue) return;
+      restored = true;
+      sync.restored = restoreQueue(client, workspaceId, queue);
+    },
+  };
+  return sync;
 }
 
 /** React Native's WebSocket, whose constructor takes headers (the DOM's, which TypeScript knows, does not). */

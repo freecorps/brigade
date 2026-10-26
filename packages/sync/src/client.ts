@@ -490,7 +490,8 @@ export class SyncClient<
    * again (as the current actor, at its creation time) and re-sent on connect with its own id, so the shard answers
    * one it already ran from its stored result instead of running it twice. That needs the `clientId` it was sent
    * with. Call it before any `mutate` on the shard: they queue after it. Never throws. One past the retention window
-   * fails with `expired`, like any other; entries that are not mutations, or already pending, are skipped.
+   * fails with `expired`, like any other, and so does one created later than the client's clock says it is now;
+   * entries that are not mutations, or already pending, are skipped.
    */
   restore(shardId: string, saved: readonly unknown[]): RestoredMutation[] {
     if (this.closed) return [];
@@ -518,6 +519,10 @@ export class SyncClient<
           outcome = Promise.resolve(
             failure("too_many_pending", "Too many changes are waiting to be sent"),
           );
+        } else if (createdAt > this.now()) {
+          // Made "later than now": a clock that was wrong then, or is now. Its retention window cannot be told,
+          // and its id's time may be one the shard refuses, so it is not re-sent.
+          outcome = Promise.resolve(failure("expired", "The change waited too long to be sent"));
         } else {
           const actor = this.options.actor;
           const ctx: MutationContext = {

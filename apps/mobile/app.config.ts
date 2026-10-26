@@ -4,6 +4,7 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 import { themes } from "../../packages/ui/src/tokens.ts";
 import { withIncomingCall } from "./plugins/incoming-call.ts";
 import { withNotificationService } from "./plugins/notification-service.ts";
+import { withPendingBackup } from "./plugins/pending-backup.ts";
 import { withSplashGround } from "./plugins/splash-ground.ts";
 
 // One id on both stores, registered under the Freecorps Apple team. Same `app.freecorps.*` prefix as
@@ -17,10 +18,13 @@ const APS_ENVIRONMENT = process.env.EAS_BUILD === "true" ? "production" : "devel
 export default ({ config }: ConfigContext): ExpoConfig =>
   // iOS: the Notification Service Extension that decrypts pushes (spike S1), and the launch screen pointed at
   // the splash ground, which expo-splash-screen skips without an image. Both: pages that ring as calls (S6).
-  withIncomingCall(
-    withNotificationService(
-      withSplashGround(appConfig(config), { fallback: themes.light.background }),
-      { apsEnvironment: APS_ENVIRONMENT },
+  // Android: the queue of unsent changes kept out of backups (RFC 0004 "Clients").
+  withPendingBackup(
+    withIncomingCall(
+      withNotificationService(
+        withSplashGround(appConfig(config), { fallback: themes.light.background }),
+        { apsEnvironment: APS_ENVIRONMENT },
+      ),
     ),
   );
 

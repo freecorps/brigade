@@ -7,6 +7,7 @@ import {
   defineRegistry,
   evaluateQuery,
   freshFloor,
+  MAX_MONITORS_PER_WORKSPACE,
   MONITOR_ACTOR,
   monitorAlerting,
   monitorSources,
@@ -228,14 +229,31 @@ describe("TCP targets (SSRF)", () => {
       ["example.com", 6379],
       ["example.com", 1],
       ["example.com", 65535],
-      ["1.1.1.1", 53],
-      ["2606:4700::1111", 443],
+      ["9.9.9.9", 53],
+      ["2620:fe::fe", 443],
       ["[2001:30::1]", 8080],
+      // Next to Cloudflare's ranges, not in them.
+      ["104.15.255.255", 22],
+      ["2a06:98c8::1", 22],
+      ["bücher.example", 22],
     ] as const) {
       expect(tcpTargetProblems(host, port), `${host}:${port}`).toEqual([]);
     }
     expect(normalizeTcpHost("DB.Example.COM.")).toBe("db.example.com");
-    expect(normalizeTcpHost("[2606:4700:0:0::1111]")).toBe("2606:4700::1111");
+    expect(normalizeTcpHost("[2620:FE:0:0::FE]")).toBe("2620:fe::fe");
+    expect(normalizeTcpHost("Bücher.Example")).toBe("xn--bcher-kva.example");
+  });
+
+  test("refuses Cloudflare's own addresses, which a Worker's connect() never reaches", () => {
+    for (const host of [
+      "104.16.0.1",
+      "172.71.255.255",
+      "2606:4700::1111",
+      "[2400:cb00::1]",
+      "2a06:98c7:ffff::1",
+    ]) {
+      expect(tcpTargetProblems(host, 443), host).toMatchObject([{ path: "host" }]);
+    }
   });
 
   test("refuses what HTTP checks refuse, port 25, ports out of range, and anything but a bare host", () => {
@@ -259,6 +277,8 @@ describe("TCP targets (SSRF)", () => {
       ["user@example.com", 22, "host"],
       ["example.com/path", 22, "host"],
       ["exa mple.com", 22, "host"],
+      ["exa%6dple.com", 22, "host"],
+      ["db_1.example.com", 22, "host"],
       ["", 22, "host"],
       ["example.com", 25, "port"],
       ["example.com", 0, "port"],
@@ -542,6 +562,44 @@ describe("managing monitors", () => {
     ]);
     expect(db.scan("incidents")).toHaveLength(1);
     expect(db.get("monitors", args.id)?.status).toBe("down");
+  });
+
+  test(`a workspace has at most ${MAX_MONITORS_PER_WORKSPACE} monitors, of every kind together`, () => {
+    const create = {
+      "monitor.createHttp": () => httpArgs(),
+      "monitor.createTcp": () => tcpArgs(),
+      "monitor.createHeartbeat": () => ({
+        id: newId("mon", T, random),
+        name: "Nightly backup",
+        intervalSeconds: 3600,
+        graceSeconds: 300,
+        tokenHash: HASH,
+      }),
+    };
+    const names = Object.keys(create) as (keyof typeof create)[];
+    for (const last of names) {
+      const db = store();
+      for (let i = 0; i < MAX_MONITORS_PER_WORKSPACE - 1; i++) {
+        const name = names[i % names.length]!;
+        expect(runMutation(mutations, name, create[name](), db, as("admin")).ok).toBe(true);
+      }
+      // The last one fits, of any kind; one more is refused, of every kind.
+      expect(runMutation(mutations, last, create[last](), db, as("admin")).ok, last).toBe(true);
+      for (const name of names) {
+        const args = create[name]();
+        expect(runMutation(mutations, name, args, db, as("admin")), name).toMatchObject({
+          ok: false,
+          error: { code: "limit_reached" },
+        });
+        expect(db.get("monitors", args.id)).toBeUndefined();
+      }
+      // Deleting one makes room again.
+      const [first] = db.scan("monitors");
+      expect(runMutation(mutations, "monitor.delete", { id: first!.id }, db, as("admin")).ok).toBe(
+        true,
+      );
+      expect(runMutation(mutations, last, create[last](), db, as("admin")).ok).toBe(true);
+    }
   });
 
   test("a heartbeat keeps its token hash server-side only", () => {

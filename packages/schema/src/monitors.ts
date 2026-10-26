@@ -34,6 +34,12 @@ export type ProbeRegion = (typeof PROBE_REGIONS)[number];
 export type CheckSource = ProbeRegion | "heartbeat";
 
 export const MONITOR_KINDS = ["http", "tcp", "heartbeat"] as const;
+/**
+ * Monitors one workspace may have, of every kind together: with the per-monitor limits (one host and port, one
+ * check per region every 30 s), what bounds how many targets a workspace can probe (RFC 0007 "Limits"). One cap
+ * for every workspace until plans exist.
+ */
+export const MAX_MONITORS_PER_WORKSPACE = 100;
 export type MonitorKind = (typeof MONITOR_KINDS)[number];
 /**
  * `pending` until a quorum of sources agrees, after creation, a resume or a change of target. `unknown` ("no
@@ -162,8 +168,12 @@ const ipv4 = (address: string): number =>
   address.split(".").reduce((value, part) => value * 256 + Number(part), 0);
 
 function blockedIpv4(address: string): boolean {
+  return inIpv4Ranges(address, BLOCKED_IPV4);
+}
+
+function inIpv4Ranges(address: string, ranges: readonly [string, number][]): boolean {
   const value = ipv4(address);
-  return BLOCKED_IPV4.some(([base, bits]) => {
+  return ranges.some(([base, bits]) => {
     const size = 2 ** (32 - bits);
     return Math.floor(value / size) === Math.floor(ipv4(base) / size);
   });
@@ -270,13 +280,62 @@ function hostProblem(hostname: string): string | null {
 export const TCP_BLOCKED_PORTS: readonly number[] = [25];
 
 /**
- * `host` as a TCP check connects to it: lower case, an IPv4 address in dotted decimal (any spelling the URL parser
- * takes), an IPv6 address without brackets. Undefined if it is not a bare host name or address (a scheme, a port,
- * a path, credentials or spaces are no host).
+ * Cloudflare's published IP ranges, https://www.cloudflare.com/ips/ (the lists at /ips-v4/ and /ips-v6/, as of
+ * October 2026). A Worker's `connect()` is refused for every address in them
+ * (https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/), so a TCP check of one of them, or of a
+ * host proxied by Cloudflare, could only ever be down. Only literal addresses in these lists are refused on save:
+ * a proxied name is not caught (Workers cannot resolve names), and the form's hint says so. HTTP checks may
+ * target them.
+ */
+const CLOUDFLARE_IPV4: readonly [string, number][] = [
+  ["173.245.48.0", 20],
+  ["103.21.244.0", 22],
+  ["103.22.200.0", 22],
+  ["103.31.4.0", 22],
+  ["141.101.64.0", 18],
+  ["108.162.192.0", 18],
+  ["190.93.240.0", 20],
+  ["188.114.96.0", 20],
+  ["197.234.240.0", 22],
+  ["198.41.128.0", 17],
+  ["162.158.0.0", 15],
+  ["104.16.0.0", 13],
+  ["104.24.0.0", 14],
+  ["172.64.0.0", 13],
+  ["131.0.72.0", 22],
+];
+/** The IPv6 half of the list above: the first two groups of each prefix and its length (at most 32). */
+const CLOUDFLARE_IPV6: readonly [number, number, number][] = [
+  [0x2400, 0xcb00, 32],
+  [0x2606, 0x4700, 32],
+  [0x2803, 0xf800, 32],
+  [0x2405, 0xb500, 32],
+  [0x2405, 0x8100, 32],
+  [0x2a06, 0x98c0, 29],
+  [0x2c0f, 0xf248, 32],
+];
+
+/** Whether `host` (as `normalizeTcpHost` gives it) is an address in Cloudflare's published ranges. */
+export function isCloudflareAddress(host: string): boolean {
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return inIpv4Ranges(host, CLOUDFLARE_IPV4);
+  if (!host.includes(":")) return false;
+  const [first = 0, second = 0] = expandIpv6(host);
+  const top = first * 0x10000 + second;
+  return CLOUDFLARE_IPV6.some(([a, b, bits]) => {
+    const size = 2 ** (32 - bits);
+    return Math.floor(top / size) === Math.floor((a * 0x10000 + b) / size);
+  });
+}
+
+/**
+ * `host` as a TCP check connects to it: lower case, an internationalised name in punycode (`bücher.example` is
+ * `xn--bcher-kva.example`, as the URL parser turns it for an HTTP check), an IPv4 address in dotted decimal (any
+ * spelling the URL parser takes), an IPv6 address without brackets. Undefined if it is not a bare host name or
+ * address (a scheme, a port, a path, credentials, a percent escape or spaces are no host).
  */
 export function normalizeTcpHost(host: string): string | undefined {
   const ipv6 = /^\[?([0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*)\]?$/.exec(host)?.[1];
-  if (ipv6 === undefined && !/^[A-Za-z0-9.-]+$/.test(host)) return undefined;
+  if (ipv6 === undefined && /[\s/\\?#@:%[\]]/.test(host)) return undefined;
   let url: ParsedUrl;
   try {
     url = new URL_PARSER(`http://${ipv6 === undefined ? host : `[${ipv6}]`}`);
@@ -284,13 +343,14 @@ export function normalizeTcpHost(host: string): string | undefined {
     return undefined;
   }
   const hostname = url.hostname.replace(/\.$/, "");
-  if (hostname === "") return undefined;
-  return hostname.startsWith("[") ? hostname.slice(1, -1) : hostname.toLowerCase();
+  if (hostname.startsWith("[")) return hostname.slice(1, -1);
+  return /^[a-z0-9.-]+$/.test(hostname) ? hostname : undefined;
 }
 
 /**
  * Why a TCP check may not connect to `host` and `port`, one issue per field (none if it may): the host rules of HTTP checks
- * (`hostProblem`) and a port from 1 to 65535 other than `TCP_BLOCKED_PORTS`. Unlike an HTTP check, any other port
+ * (`hostProblem`), no address of Cloudflare's own (`isCloudflareAddress`), and a port from 1 to 65535 other than
+ * `TCP_BLOCKED_PORTS`. Unlike an HTTP check, any other port
  * is allowed, since whether something listens there is the whole answer (RFC 0007 "Check types"). Checked when a
  * monitor is saved and again by the probe before every connection.
  */
@@ -302,6 +362,9 @@ export function tcpTargetProblems(host: string, port: number): Issue[] {
       ? "Expected a host name or an IP address"
       : hostProblem(hostname.includes(":") ? `[${hostname}]` : hostname);
   if (problem !== null) issues.push({ path: "host", message: problem });
+  else if (hostname !== undefined && isCloudflareAddress(hostname)) {
+    issues.push({ path: "host", message: "Cloudflare refuses TCP connections to its own addresses" });
+  }
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     issues.push({ path: "port", message: "Expected a port from 1 to 65535" });
   } else if (TCP_BLOCKED_PORTS.includes(port)) {
@@ -320,7 +383,6 @@ const monitorUrl: Validator<string> = (input, path = "") => {
     : { ok: true, value: new URL_PARSER(text.value).href };
 };
 
-/** A SHA-256 digest in lower-case hex: the heartbeat token's hash, never the token. */
 /** A host a TCP check may connect to, normalised (`normalizeTcpHost`); the port is checked with it. */
 const tcpHost: Validator<string> = (input, path = "") => {
   const text = v.string({ min: 1, max: MONITOR_HOST_MAX })(input, path);
@@ -331,6 +393,7 @@ const tcpHost: Validator<string> = (input, path = "") => {
     : { ok: true, value: host };
 };
 
+/** A SHA-256 digest in lower-case hex: the heartbeat token's hash, never the token. */
 const sha256Hex: Validator<string> = (input, path = "") =>
   typeof input === "string" && /^[0-9a-f]{64}$/.test(input)
     ? { ok: true, value: input }
@@ -439,6 +502,12 @@ function checkNewId(id: string, ctx: MutationContext): MutationResult | undefine
   return undefined;
 }
 
+/** `limit_reached` when the workspace has `MAX_MONITORS_PER_WORKSPACE` monitors already. */
+function checkCap(store: MutationStore): MutationResult | undefined {
+  if (store.scan("monitors").length < MAX_MONITORS_PER_WORKSPACE) return undefined;
+  return fail("limit_reached", `At most ${MAX_MONITORS_PER_WORKSPACE} monitors per workspace`);
+}
+
 function created(row: MonitorRow): MonitorCreated {
   return {
     type: "monitor.created",
@@ -473,6 +542,8 @@ export const createHttpMonitor = defineMutation({
     if (issues.length)
       return fail("invalid_args", "Invalid arguments for monitor.createHttp", issues);
     if (store.get("monitors", args.id)) return fail("conflict", "Monitor already exists");
+    const full = checkCap(store);
+    if (full) return full;
     const row: MonitorRow = {
       id: args.id,
       name: args.name,
@@ -506,6 +577,8 @@ export const createTcpMonitor = defineMutation({
     if (issues.length)
       return fail("invalid_args", "Invalid arguments for monitor.createTcp", issues);
     if (store.get("monitors", args.id)) return fail("conflict", "Monitor already exists");
+    const full = checkCap(store);
+    if (full) return full;
     const row: MonitorRow = {
       id: args.id,
       name: args.name,
@@ -539,6 +612,8 @@ export const createHeartbeatMonitor = defineMutation({
     const clock = checkNewId(args.id, ctx);
     if (clock) return clock;
     if (store.get("monitors", args.id)) return fail("conflict", "Monitor already exists");
+    const full = checkCap(store);
+    if (full) return full;
     const row: MonitorRow = {
       id: args.id,
       name: args.name,

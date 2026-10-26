@@ -35,6 +35,8 @@ describe("workspace.create", () => {
       "monitor.evaluate",
       "device.expire",
       "notification.fail",
+      "escalation.start",
+      "escalation.advance",
     ]);
     const result = runMutation(
       mutations,

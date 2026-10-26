@@ -13,6 +13,7 @@ import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
 import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
 import type { IncidentRow } from "./tables.ts";
+import type { MutationContext } from "./mutation.ts";
 import { appendTimeline } from "./timeline.ts";
 import { v } from "./validate.ts";
 
@@ -57,6 +58,27 @@ export type IncidentEvent =
 /** `INC-142`; null while the server has not numbered the incident yet. */
 export function formatIncidentNumber(number: number | null): string | null {
   return number === null ? null : `INC-${number}`;
+}
+
+/**
+ * Stops the incident's escalation run, if one is under way (RFC 0003 "Escalation run"): `acknowledged` by
+ * `incident.ack`, `resolved` when the incident leaves the active statuses. In the same transaction as the change, so
+ * no level fires after it, whichever route ran the mutation. The timer is server-only; clients only see the run stop.
+ */
+function stopEscalation(
+  store: MutationStore,
+  incident: IncidentRow,
+  status: "acknowledged" | "resolved",
+  ctx: MutationContext,
+): void {
+  const run = incident.escalation;
+  if (!run || run.status !== "running") return;
+  store.update("incidents", incident.id, {
+    escalation: { ...run, status, nextAt: null, endedAt: ctx.now },
+  });
+  if (ctx.server && store.get("escalation_timers", incident.id)) {
+    store.delete("escalation_timers", incident.id);
+  }
 }
 
 /** Server only: the next per-workspace incident number, written in the same transaction as the incident. */
@@ -133,6 +155,7 @@ export const setIncidentStatus = defineMutation({
       updatedAt: ctx.now,
       ...(reopened && { acknowledgedAt: null, acknowledgedBy: null }),
     });
+    if (!isActive(args.status)) stopEscalation(store, incident, "resolved", ctx);
     appendTimeline(
       store,
       incident,
@@ -177,8 +200,9 @@ export const setIncidentSeverity = defineMutation({
 /**
  * Acknowledges the incident's page, from the app, a notification or the call screen (RFC 0010). The first ack
  * wins; a second one is a `conflict` (no change), so a responder who acks twice, or two who ack at once, see
- * that someone already did. Pages belong to active incidents only. Until escalation runs exist (IncidentDO) the
- * ack lives on the incident; it moves to the run then (RFC 0003).
+ * that someone already did. Pages belong to active incidents only. It stops the escalation run under way (RFC 0003
+ * "Escalation run"), whichever route sent it: the app, a notification's action or an HTTP endpoint. Until IncidentDO
+ * exists the ack and the run live on the incident.
  */
 export const acknowledgeIncident = defineMutation({
   name: "incident.ack",
@@ -197,6 +221,7 @@ export const acknowledgeIncident = defineMutation({
       acknowledgedBy: ctx.actor.id,
       updatedAt: ctx.now,
     });
+    stopEscalation(store, incident, "acknowledged", ctx);
     appendTimeline(store, incident, { kind: "acknowledged" }, ctx);
     const event: IncidentAcknowledged = {
       type: "incident.acknowledged",

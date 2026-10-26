@@ -26,6 +26,8 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "schedule:read": true,
     "schedule:manage": true,
     "schedule:override": true,
+    "escalation:read": true,
+    "escalation:manage": true,
   },
   admin: {
     "incident:read": true,
@@ -41,6 +43,8 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "schedule:read": true,
     "schedule:manage": true,
     "schedule:override": true,
+    "escalation:read": true,
+    "escalation:manage": true,
   },
   responder: {
     "incident:read": true,
@@ -56,6 +60,8 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "schedule:read": true,
     "schedule:manage": false,
     "schedule:override": true,
+    "escalation:read": true,
+    "escalation:manage": false,
   },
   viewer: {
     "incident:read": true,
@@ -71,6 +77,8 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "schedule:read": true,
     "schedule:manage": false,
     "schedule:override": false,
+    "escalation:read": true,
+    "escalation:manage": false,
   },
 };
 
@@ -89,6 +97,8 @@ test("every permission comes from the statement", () => {
     "schedule:read",
     "schedule:manage",
     "schedule:override",
+    "escalation:read",
+    "escalation:manage",
   ]);
 });
 

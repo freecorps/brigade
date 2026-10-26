@@ -2,6 +2,7 @@ import type { Role } from "./access.ts";
 import type { DevicePlatform, PushEnvironment } from "./devices.ts";
 import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
 import type { PageFailure } from "./notifications.ts";
+import type { EscalationTargetKind } from "./policies.ts";
 import type { RotationUnit } from "./schedules.ts";
 import type {
   AlertStatus,
@@ -31,8 +32,85 @@ export type IncidentRow = {
   roles?: { [R in IncidentRole]?: string };
   /** How many timeline entries the incident has: the last entry's `seq`. Absent on rows from before timelines. */
   timelineSeq?: number;
+  /** The last escalation run of the incident's pages (RFC 0003 "Escalation run"); absent when none ran. */
+  escalation?: Escalation | null;
   updatedAt: number;
 };
+
+/** Why a level's target could not be paged when it fired (RFC 0006 "Who is paged"). */
+export type EscalationMiss = {
+  /** The member it resolved to; null for a schedule with nobody on call, or deleted. */
+  userId: string | null;
+  reason: Extract<
+    PageFailure,
+    "no_devices" | "nobody_on_call" | "schedule_missing" | "not_a_member"
+  >;
+  scheduleId: string | null;
+  /** The schedule's name when the level fired; null for a member, or a deleted schedule. */
+  schedule: string | null;
+};
+
+/** One level an escalation run paged. */
+export type EscalationPage = {
+  /** 1-based; null: no level could be reached, so everyone who can respond was paged (the interim rule). */
+  level: number | null;
+  /** 0 the first time through the levels, then 1 to the policy's `repeat`. */
+  round: number;
+  at: number;
+  /** Who the level resolved to and could reach (schedules to whoever was on call then). */
+  userIds: string[];
+  /** Targets of this level, and of the unreachable levels skipped to get here, that could not be paged. */
+  missed: EscalationMiss[];
+};
+
+export type EscalationStatus = "running" | "acknowledged" | "resolved" | "exhausted";
+
+/**
+ * An escalation run (RFC 0003 "Escalation run"): the policy as it was when the run started, where it is, and every
+ * level it paged. Written by `escalation.start` and `escalation.advance`; `incident.ack` and resolving stop it.
+ */
+export type Escalation = {
+  policyId: string;
+  policyName: string;
+  levels: EscalationLevel[];
+  repeat: number;
+  /** The event whose page started the run: a redelivery of it pages the same level again, never a new run. */
+  eventId: string;
+  status: EscalationStatus;
+  startedAt: number;
+  /** When it stopped (acknowledged, resolved, exhausted); null while running. */
+  endedAt: number | null;
+  /** When the next level fires; null once it stopped. */
+  nextAt: number | null;
+  pages: EscalationPage[];
+};
+
+/** Who a level pages: a schedule (whoever is on call when it fires) or a member. */
+export type EscalationTarget = { kind: EscalationTargetKind; id: string };
+
+export type EscalationLevel = {
+  id: string; // lvl_<ULID>, made by the client
+  targets: EscalationTarget[];
+  /** Minutes before the next level fires when nobody acknowledges. */
+  timeoutMinutes: number;
+};
+
+/** An escalation policy (RFC 0003 "Escalation policies"). */
+export type EscalationPolicyRow = {
+  id: string; // esc_<ULID>, made by the client
+  name: string;
+  levels: EscalationLevel[];
+  /** How many more times the levels run when nobody acknowledges. */
+  repeat: number;
+  /** Pages use the default policy; at most one is. */
+  isDefault: boolean;
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+};
+
+/** Server-only: when a running escalation's next level fires, so the shard's alarm reads only running ones. */
+export type EscalationTimerRow = { id: string; at: number };
 
 /** What a timeline entry records, by `kind` (RFC 0003 "TimelineEntry"). */
 export type TimelineEntry =
@@ -51,8 +129,24 @@ export type TimelineEntry =
       monitor: string;
       reason: "recovered" | "paused" | "deleted";
     }
-  /** A page reached nobody, or not `userId` on any of their devices (`notification.fail`, RFC 0005). */
-  | { kind: "page_failed"; userId: string | null; reason: PageFailure };
+  /**
+   * A page reached nobody, or not `userId` on any of their devices (`notification.fail`, RFC 0005); `schedule` names
+   * an escalation level's schedule that had nobody on call (absent on other entries).
+   */
+  | { kind: "page_failed"; userId: string | null; reason: PageFailure; schedule?: string | null }
+  /**
+   * An escalation level was paged (RFC 0006 "Who is paged"): `level` 1-based, or null for everyone who can respond;
+   * `reason` says why this level: the run `started`, the last one timed out, or the ones before were `unreachable`.
+   */
+  | {
+      kind: "escalated";
+      level: number | null;
+      round: number;
+      userIds: string[];
+      reason: "started" | "timeout" | "unreachable";
+    }
+  /** Every level and repeat was paged and nobody acknowledged. */
+  | { kind: "escalation_exhausted"; levels: number; rounds: number };
 
 /**
  * One entry of an incident's timeline: append-only, written by the mutation that made the change, in its
@@ -243,6 +337,8 @@ export type BrigadeTables = {
   devices: DeviceRow;
   schedules: ScheduleRow;
   overrides: OverrideRow;
+  escalation_policies: EscalationPolicyRow;
+  escalation_timers: EscalationTimerRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -260,6 +356,8 @@ export const TABLES = {
   devices: { serverOnly: true },
   schedules: { serverOnly: false },
   overrides: { serverOnly: false },
+  escalation_policies: { serverOnly: false },
+  escalation_timers: { serverOnly: true },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

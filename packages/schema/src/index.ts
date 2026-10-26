@@ -14,6 +14,8 @@ export * from "./members.ts";
 export * from "./monitors.ts";
 export * from "./zoned.ts";
 export * from "./schedules.ts";
+export * from "./policies.ts";
+export * from "./escalation.ts";
 export * from "./devices.ts";
 export * from "./notifications.ts";
 export * from "./registry.ts";

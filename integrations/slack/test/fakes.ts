@@ -5,10 +5,11 @@ import type {
   SlackActRequest,
   SlackActResult,
   SlackBridgeApi,
-  SlackContext,
   SlackInstall,
   SlackInstallResult,
+  SlackRequester,
 } from "../src/bridge.ts";
+import type { SlackLocale } from "@freecorps/brigade-schema";
 import type { Deps } from "../src/deps.ts";
 import { signSlackRequest } from "../src/verify.ts";
 
@@ -33,6 +34,7 @@ export function fakeSlack(
   const calls: SlackCall[] = [];
   const user = options.user ?? {
     id: USER,
+    team_id: TEAM,
     deleted: false,
     is_bot: false,
     is_email_confirmed: true,
@@ -63,30 +65,39 @@ export function fakeSlack(
   return { calls, fetch, replies, to };
 }
 
-/** A fake API bridge: connected to `TEAM`, answering `act` with `result` and recording what it was asked. */
+/** A refusal as the bridge words it for the workspace Acme, in English unless `locale` says otherwise. */
+export const refusal = (
+  code: Extract<SlackActResult, { ok: false }>["code"],
+  more: Partial<Extract<SlackActResult, { ok: false }>> = {},
+): SlackActResult => ({ ok: false, code, workspaceName: "Acme", locale: "en", ...more });
+
+/**
+ * A fake API bridge: answering `act` with `result` and `locale` with `locale`, recording what it was asked. It holds
+ * the token, as the real one does: this Worker is never given one.
+ */
 export function fakeBridge(
   options: {
-    context?: SlackContext | null;
     result?: SlackActResult | ((request: SlackActRequest) => SlackActResult);
+    locale?: SlackLocale;
     install?: SlackInstallResult;
   } = {},
 ) {
   const acts: SlackActRequest[] = [];
+  const locales: SlackRequester[] = [];
   const installs: { state: string; install: SlackInstall }[] = [];
   const bridge: SlackBridgeApi = {
-    context: async (teamId) =>
-      teamId !== TEAM
-        ? null
-        : options.context === undefined
-          ? { workspaceId: WORKSPACE, workspaceName: "Acme", token: BOT_TOKEN, locale: "en" }
-          : options.context,
+    locale: async (requester) => {
+      locales.push(requester);
+      return options.locale ?? "en";
+    },
     act: async (request) => {
       acts.push(request);
       const result = options.result ?? {
         ok: true,
         did: request.action.kind === "declare" ? "declared" : "acknowledged",
         incident: { id: "inc_test", number: 7, title: "Checkout down" },
-        locale: null,
+        workspaceName: "Acme",
+        locale: "en",
       };
       return typeof result === "function" ? result(request) : result;
     },
@@ -95,7 +106,7 @@ export function fakeBridge(
       return options.install ?? { ok: true };
     },
   };
-  return { bridge, acts, installs };
+  return { bridge, acts, locales, installs };
 }
 
 /** Deps with the fakes, a fixed clock, and the `waitUntil` work collected so a test can await it. */

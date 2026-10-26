@@ -1,21 +1,20 @@
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { describe, expect, test } from "vite-plus/test";
 import { handle } from "../src/app.ts";
-import { clearPeople } from "../src/people.ts";
 import {
   click,
   deps,
   fakeBridge,
   fakeSlack,
   NOW,
+  refusal,
   RESPONSE_URL,
   slashCommand,
   TEAM,
+  USER,
 } from "./fakes.ts";
 
-afterEach(() => clearPeople());
-
 describe("POST /slack/commands", () => {
-  test("answers at once with an empty 200 and declares through the bridge as the mapped email", async () => {
+  test("answers at once with an empty 200 and declares through the bridge as the Slack user", async () => {
     const slack = fakeSlack();
     const { bridge, acts } = fakeBridge();
     const run = deps(slack, bridge);
@@ -28,12 +27,14 @@ describe("POST /slack/commands", () => {
     expect(acts).toEqual([
       {
         teamId: TEAM,
-        email: "ana@example.com",
+        slackUserId: USER,
         action: { kind: "declare", title: "Checkout down", severity: "sev1" },
         key: expect.stringMatching(/^[0-9a-f]{64}$/),
       },
     ]);
-    expect(slack.to("users.info")[0]?.auth).toBe("Bearer xoxb-test-token-not-real");
+    // The bridge asks Slack who the user is, with the token it keeps: this Worker calls no Web API and sends no token.
+    expect(slack.calls.map((call) => call.url)).toEqual([RESPONSE_URL]);
+    expect(slack.calls.every((call) => call.auth === null)).toBe(true);
     expect(slack.replies()).toEqual([
       {
         response_type: "ephemeral",
@@ -76,45 +77,37 @@ describe("POST /slack/commands", () => {
 
   test("an unmapped user is told so, and nothing else happens", async () => {
     const slack = fakeSlack();
-    const { bridge } = fakeBridge({ result: { ok: false, code: "unmapped", locale: null } });
+    const { bridge } = fakeBridge({ result: refusal("unmapped") });
     const run = deps(slack, bridge);
     await handle(await slashCommand("declare Checkout down"), run.deps);
     await run.settled();
     expect(slack.replies()[0]?.text).toBe(
-      "Your Slack email isn't the email of a member of Acme in Brigade, so Brigade can't act for you. Use the same email in both, or ask an owner to add you.",
+      "Your Slack email isn't the confirmed email of a member of Acme in Brigade, so Brigade can't act for you. Use the same email in both and confirm it in Brigade, or ask an owner to add you.",
     );
   });
 
-  test("an email Slack has not confirmed maps to nobody: the bridge is never asked", async () => {
-    const slack = fakeSlack({
-      user: { id: "U0USER0001", is_email_confirmed: false, profile: { email: "ana@example.com" } },
-    });
-    const { bridge, acts } = fakeBridge();
+  test("a user Slack does not vouch for (unconfirmed email, a guest from another team) is told so", async () => {
+    const slack = fakeSlack();
+    const { bridge } = fakeBridge({ result: refusal("unconfirmed") });
     const run = deps(slack, bridge);
     await handle(await slashCommand("ack"), run.deps);
     await run.settled();
-    expect(acts).toHaveLength(0);
     expect(slack.replies()[0]?.text).toContain("hasn't confirmed your email");
   });
 
-  test("bots and deactivated users map to nobody too", async () => {
-    for (const user of [
-      { is_bot: true, is_email_confirmed: true, profile: { email: "bot@example.com" } },
-      { deleted: true, is_email_confirmed: true, profile: { email: "gone@example.com" } },
-    ]) {
-      clearPeople();
-      const slack = fakeSlack({ user });
-      const { bridge, acts } = fakeBridge();
-      const run = deps(slack, bridge);
-      await handle(await slashCommand("ack"), run.deps);
-      await run.settled();
-      expect(acts).toHaveLength(0);
-    }
+  test("a connection whose token no longer opens says to reconnect, not that Slack is not connected", async () => {
+    const slack = fakeSlack();
+    const { bridge } = fakeBridge({ result: refusal("unreadable", { workspaceName: "" }) });
+    const run = deps(slack, bridge);
+    await handle(await slashCommand("ack"), run.deps);
+    await run.settled();
+    expect(slack.replies()[0]?.text).toContain("needs to connect Slack again");
+    expect(slack.replies()[0]?.text).not.toContain("isn't connected");
   });
 
   test("a viewer is refused by the shard and told why", async () => {
     const slack = fakeSlack();
-    const { bridge } = fakeBridge({ result: { ok: false, code: "forbidden", locale: null } });
+    const { bridge } = fakeBridge({ result: refusal("forbidden") });
     const run = deps(slack, bridge);
     await handle(await slashCommand("declare Checkout down"), run.deps);
     await run.settled();
@@ -123,31 +116,21 @@ describe("POST /slack/commands", () => {
     );
   });
 
-  test("answers in the member's language first, then Slack's, then the connection's", async () => {
+  test("answers in the language the bridge chose", async () => {
     const slack = fakeSlack();
     const { bridge } = fakeBridge({
-      result: {
-        ok: false,
-        code: "already",
+      result: refusal("already", {
         locale: "pt-BR",
         incident: { id: "inc_x", number: 3, title: "x" },
-      },
+      }),
     });
     const run = deps(slack, bridge);
     await handle(await slashCommand("ack 3"), run.deps);
     await run.settled();
     expect(slack.replies()[0]?.text).toBe("INC-3 já foi confirmado.");
 
-    clearPeople();
-    const ptSlack = fakeSlack({
-      user: {
-        id: "U0USER0001",
-        is_email_confirmed: true,
-        locale: "pt-BR",
-        profile: { email: "a@example.com" },
-      },
-    });
-    const none = fakeBridge({ result: { ok: false, code: "none", locale: null } });
+    const ptSlack = fakeSlack();
+    const none = fakeBridge({ result: refusal("none", { locale: "pt-BR" }) });
     const ptRun = deps(ptSlack, none.bridge);
     await handle(await slashCommand("ack"), ptRun.deps);
     await ptRun.settled();
@@ -157,7 +140,7 @@ describe("POST /slack/commands", () => {
   test("ack with several waiting lists them", async () => {
     const slack = fakeSlack();
     const { bridge, acts } = fakeBridge({
-      result: { ok: false, code: "ambiguous", locale: null, choices: [4, 9] },
+      result: refusal("ambiguous", { choices: [4, 9] }),
     });
     const run = deps(slack, bridge);
     await handle(await slashCommand("ack"), run.deps);
@@ -175,7 +158,8 @@ describe("POST /slack/commands", () => {
         ok: true,
         did: "declared",
         incident: { id: "inc_x", number: 8, title: "<!channel> & <https://evil.test|click>" },
-        locale: null,
+        workspaceName: "Acme",
+        locale: "en",
       },
     });
     const run = deps(slack, bridge);
@@ -186,26 +170,35 @@ describe("POST /slack/commands", () => {
     );
   });
 
-  test("help and unknown subcommands get the usage", async () => {
+  test("help and unknown subcommands get the usage, in the language the bridge finds for the user", async () => {
     const slack = fakeSlack();
-    const { bridge, acts } = fakeBridge();
+    const { bridge, acts, locales } = fakeBridge();
     const run = deps(slack, bridge);
     await handle(await slashCommand(""), run.deps);
     await handle(await slashCommand("resolve 4"), run.deps);
     await run.settled();
     expect(acts).toHaveLength(0);
+    expect(locales).toEqual([
+      { teamId: TEAM, slackUserId: USER },
+      { teamId: TEAM, slackUserId: USER },
+    ]);
     const [help, unknown] = slack.replies();
     expect(help?.text).toMatch(/^Declare an incident: \/inc declare/);
     expect(unknown?.text).toMatch(/^Unknown command\. Declare an incident/);
+
+    const pt = fakeSlack();
+    const ptRun = deps(pt, fakeBridge({ locale: "pt-BR" }).bridge);
+    await handle(await slashCommand(""), ptRun.deps);
+    await ptRun.settled();
+    expect(pt.replies()[0]?.text).toMatch(/^Declarar um incidente: \/inc declare/);
   });
 
   test("a team not connected to Brigade is told so", async () => {
     const slack = fakeSlack();
-    const { bridge, acts } = fakeBridge({ context: null });
+    const { bridge } = fakeBridge({ result: refusal("not_connected", { workspaceName: "" }) });
     const run = deps(slack, bridge);
     await handle(await slashCommand("declare Checkout down"), run.deps);
     await run.settled();
-    expect(acts).toHaveLength(0);
     expect(slack.replies()[0]?.text).toContain("isn't connected to Brigade");
   });
 
@@ -223,16 +216,6 @@ describe("POST /slack/commands", () => {
     expect(slack.calls).toHaveLength(0);
   });
 
-  test("Slack's users are looked up once per few minutes, not on every command", async () => {
-    const slack = fakeSlack();
-    const { bridge } = fakeBridge();
-    const run = deps(slack, bridge);
-    await handle(await slashCommand("declare One"), run.deps);
-    await handle(await slashCommand("declare Two", { trigger_id: "t2" }), run.deps);
-    await run.settled();
-    expect(slack.to("users.info")).toHaveLength(1);
-  });
-
   test("answers Slack's certificate check", async () => {
     const slack = fakeSlack();
     const { bridge } = fakeBridge();
@@ -243,7 +226,7 @@ describe("POST /slack/commands", () => {
 });
 
 describe("POST /slack/interactions", () => {
-  test("the Acknowledge button acknowledges that incident as the mapped member", async () => {
+  test("the Acknowledge button acknowledges that incident as the Slack user", async () => {
     const slack = fakeSlack();
     const { bridge, acts } = fakeBridge();
     const run = deps(slack, bridge);
@@ -254,7 +237,7 @@ describe("POST /slack/interactions", () => {
     expect(acts).toEqual([
       {
         teamId: TEAM,
-        email: "ana@example.com",
+        slackUserId: USER,
         action: { kind: "ack", incidentId: id },
         key: expect.stringMatching(/^[0-9a-f]{64}$/),
       },

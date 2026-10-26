@@ -101,12 +101,14 @@ export async function completeOAuth(request: Request, deps: Deps): Promise<Respo
   try {
     const result = await deps.bridge.completeInstall(state, install);
     outcome = result.ok ? "connected" : result.code;
+    // Slack issued a token Brigade will not keep: give it back, unless the API could not rule out that a workspace
+    // holds this very token (Slack can hand a reinstall the token the team already has).
+    if (!result.ok && result.revoke) await revoke(token, deps);
   } catch (error) {
+    // The API did not answer: it may have kept the token, or another workspace may hold it, so it stays.
     log("slack install: the API failed", { error: String(error) });
     outcome = "failed";
   }
-  // Slack issued a token Brigade will not keep: give it back.
-  if (outcome !== "connected") await revoke(token, deps);
   return back(origin, outcome);
 }
 

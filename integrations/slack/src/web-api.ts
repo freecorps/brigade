@@ -8,7 +8,7 @@ export type Fetch = (request: Request) => Promise<Response>;
 
 /** Where the Web API lives; tests answer it with a fake `fetch`. */
 export const SLACK_API = "https://slack.com/api/";
-/** How long one call gets. */
+/** How long one call gets, unless the caller says less (the queue consumer does: pages wait behind it). */
 export const SLACK_TIMEOUT_MS = 10_000;
 
 export type SlackCall =
@@ -39,7 +39,7 @@ const TRANSIENT = new Set([
 export async function callSlack(
   method: string,
   body: Record<string, unknown>,
-  options: { token?: string; form?: boolean; fetch: Fetch },
+  options: { token?: string; form?: boolean; fetch: Fetch; timeoutMs?: number },
 ): Promise<SlackCall> {
   const headers: Record<string, string> = options.form
     ? { "Content-Type": "application/x-www-form-urlencoded" }
@@ -60,7 +60,7 @@ export async function callSlack(
         method: "POST",
         headers,
         body: payload,
-        signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
+        signal: AbortSignal.timeout(options.timeoutMs ?? SLACK_TIMEOUT_MS),
       }),
     );
   } catch {

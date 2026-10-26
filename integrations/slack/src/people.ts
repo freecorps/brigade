@@ -1,6 +1,8 @@
 // Who a Slack user is (RFC 0011 "Who a Slack user is"): their email as Slack confirmed it and their language, from
-// `users.info`, kept per isolate for a few minutes so a burst of commands is not a burst of Web API calls. Which
-// member that email is, and their role, is the API's to answer on every request (never cached).
+// `users.info`, kept per isolate for a few minutes so a burst of commands is not a burst of Web API calls. The API's
+// `SlackBridge` calls this (the bot token never leaves the API); which member that email is, and their role, it
+// answers on every request (never cached). Only the connected team's own users count: a Slack Connect guest's email
+// is vouched for by another team, whose admins Brigade never trusted.
 
 import { locales } from "@freecorps/brigade-i18n";
 import type { SlackLocale } from "@freecorps/brigade-schema";
@@ -12,7 +14,7 @@ export const PERSON_CACHE_MAX = 2000;
 export type SlackPersonInfo =
   /** `email` lowercased; `locale` when Slack's maps to one Brigade speaks. */
   | { ok: true; email: string; locale: SlackLocale | null }
-  /** Deleted, a bot, no email, or Slack has not confirmed it: they map to nobody. */
+  /** Deleted, a bot, another team's user, no email, or Slack has not confirmed it: they map to nobody. */
   | { ok: false; reason: "unconfirmed"; locale: SlackLocale | null }
   /** Slack could not be asked (not cached). */
   | { ok: false; reason: "failed"; locale: null };
@@ -54,6 +56,8 @@ export async function lookUpPerson(
   const locale = slackLocale(user?.locale);
   const info: SlackPersonInfo =
     user &&
+    user.team_id === teamId &&
+    user.is_stranger !== true &&
     user.deleted !== true &&
     user.is_bot !== true &&
     user.is_email_confirmed === true &&

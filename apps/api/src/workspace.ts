@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { SlackActResult } from "@freecorps/brigade-slack/bridge";
+import type { SlackActOutcome } from "@freecorps/brigade-slack/bridge";
 import type { SlackPostOutcome } from "@freecorps/brigade-slack/notifier";
 import {
   ACCOUNT_ACTOR,
@@ -688,7 +688,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     return this.slack.team();
   }
 
-  /** The sealed token and names for `teamId` (RPC from `SlackBridge.context`); null when not connected to it. */
+  /** The sealed token and names for `teamId` (RPC from `SlackBridge`); null when not connected to it. */
   slackContext(teamId: string): ReturnType<SlackDesk["context"]> {
     return this.slack.context(teamId);
   }
@@ -703,11 +703,10 @@ export class WorkspaceDO extends DurableObject<Env> {
     actor: Actor,
     action: SlackShardAction,
     key: string,
-  ): Promise<SlackActResult> {
-    if (this.shard.workspace() !== workspaceId)
-      return { ok: false, code: "not_connected", locale: null };
+  ): Promise<SlackActOutcome> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_connected" };
     if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
-      return { ok: false, code: "unmapped", locale: null };
+      return { ok: false, code: "unmapped" };
     }
     return this.slack.act(teamId, actor, action, key, Date.now());
   }

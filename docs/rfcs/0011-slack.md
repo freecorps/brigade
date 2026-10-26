@@ -9,10 +9,11 @@ message per incident in a channel that follows the incident. What is left is at 
 ## Shape
 
 ```
-Slack ──HTTPS──▶ web Worker (/slack/* forwarded, service binding SLACK)
+Slack ──HTTPS──▶ web Worker (/slack/* forwarded, optional service binding SLACK)
                    └─▶ slack Worker (integrations/slack): verifies, parses, answers in 3 s
                           └─(service binding API, entrypoint SlackBridge)─▶ api Worker
-                                 ├─ D1: which Brigade workspace a Slack team is, who a Slack user is
+                                 ├─ D1: which Brigade workspace a Slack team is, which member an email is
+                                 ├─ Slack users.info with the bot token: who a Slack user is
                                  └─ WorkspaceDO: runs incident.declare / incident.ack as the member
 
 WorkspaceDO outbox ─▶ brigade-events ─▶ api Worker queue consumer
@@ -35,6 +36,11 @@ WorkspaceDO outbox ─▶ brigade-events ─▶ api Worker queue consumer
 - **The API stays the only writer.** The slack Worker never touches D1 or a shard: every read and write goes through
   `SlackBridge`, and every write is a named mutation run in the workspace shard with RBAC and its outbox event
   (RFC 0004, RFC 0005), as the member the Slack user maps to.
+- **The token stays in the API.** `SlackBridge.act` takes the Slack team and user ids as Slack's signed request
+  named them; the API opens the token, asks Slack who the user is and runs the action. The slack Worker answers
+  through the request's `response_url` (short-lived, needs no token) and never holds a token, so a bug or a
+  compromised dependency there cannot read or use one. Its OAuth callback sees the token `oauth.v2.access` returns
+  once, on its way to the API.
 
 ## Requests from Slack
 
@@ -80,7 +86,11 @@ mutation either committed or not, and the channel message shows which).
 4. The API takes the state from the shard (deleted on first use, so a state works once), checks the member is still
    an owner or admin in D1, claims the team in D1 (`slack_team`: team id → workspace id; a team already connected to
    another Brigade workspace is refused, `team_taken`, unless that workspace's shard no longer has it), encrypts the
-   token and runs `slack.connect` as the member. A refusal after Slack issued the token revokes it (`auth.revoke`).
+   token and runs `slack.connect` as the member. The claim is a compare-and-set on the row as it was read, so of two
+   installs racing for one team only one routes it. A refusal after Slack issued the token revokes it
+   (`auth.revoke`), unless a workspace may hold that very token: Slack can answer a reinstall with the bot token the
+   team already has, and revoking it would cut the holder off. The API says to revoke only when no workspace holds
+   the team, or the token it holds opens and differs; when it cannot tell (or does not answer), the token is kept.
 5. The browser lands on the dashboard with `?slack=connected` (or the refusal's code), shown on the card.
 
 Bot scopes: `commands`, `chat:write`, `chat:write.public` (post in public channels without being invited),
@@ -89,7 +99,7 @@ Bot scopes: `commands`, `chat:write`, `chat:write.public` (post in public channe
 **Disconnecting** is `slack.disconnect` from the card (owners and admins): it deletes the token and the
 connection; the D1 row is left and treated as stale (a lookup that finds the shard on another team, or none,
 ignores it and the next install overwrites it). The token is not revoked in Slack: Brigade no longer has it, and
-removing the app in Slack's own settings revokes it there (open question Q21).
+removing the app in Slack's own settings revokes it there (open question Q22).
 
 ## Where the token lives
 
@@ -101,25 +111,35 @@ Brigade workspace before it can reach a shard; the shard stays the authority.
 The token is encrypted at rest with AES-256-GCM under `SLACK_TOKEN_KEY` (a secret on the **API** Worker, 32 random
 bytes, base64url), with a random 96-bit IV per write and the workspace and team ids as additional data, so a
 ciphertext moved to another workspace's row does not decrypt. Stored as `v1.<iv>.<ciphertext>` so a key rotation
-can add `v2`. The slack Worker never holds the key: the bridge decrypts for the one request that needs the token
-(`users.info`) and the queue consumer for a message. Without `SLACK_TOKEN_KEY` the API refuses to install
-(`not_configured`) and sends no Slack messages.
+can add `v2`. Neither the key nor the opened token leaves the API: the bridge opens it for `users.info` and the queue
+consumer for a message. Without `SLACK_TOKEN_KEY` the API refuses to install (`not_configured`) and sends no Slack
+messages. A token that no longer opens (the key changed) is answered as `unreadable`, logged, and tells the Slack
+user an owner or admin must reconnect, rather than that Slack is not connected.
 
 ## Who a Slack user is
 
-- The slack Worker reads the user with `users.info` (`include_locale`) and keeps, per isolate, the email, whether
-  Slack confirmed it (`is_email_confirmed`) and the user's locale for 5 minutes (at most 2000 users), so a burst of
-  commands is not a burst of Tier 4 calls. A deleted user, a bot, an unconfirmed email or no email maps to nobody.
+- The API's bridge reads the user with `users.info` (`include_locale`) and keeps, per isolate, the email, whether
+  Slack vouches for it and the user's locale for 5 minutes (at most 2000 users), so a burst of commands is not a
+  burst of Tier 4 calls. The cost of that cache: for up to 5 minutes after a change in Slack (an email changed, a
+  user deactivated or moved to another team), a command from that user still maps by the old answer. The role is
+  not cached, so a member removed or demoted in Brigade is refused at once.
+- Slack vouches for an email only for the connected team's own users: `team_id` must be the team's, `is_stranger`
+  (a Slack Connect guest) is refused, and so are deleted users, bots, no email, and an email Slack has not confirmed
+  (`is_email_confirmed`). They map to nobody and are told Slack has not confirmed who they are.
 - The API finds the Brigade member with that email (case-insensitive) in D1, in the workspace the team is
-  connected to, and reads their role there, on every request (never cached: a role change applies at once). A
-  member removed within the last minute is refused by the shard's tombstone, as for a sync upgrade (RFC 0003).
-- **Unmapped users cannot act.** They get an ephemeral reply saying their Slack email is not a member's of the
-  workspace, and nothing runs. The mutation runs as the member (`{ kind: "user", id, role }`, client id `slack`),
-  so RBAC is the dashboard's: a viewer cannot declare or acknowledge (`forbidden`), and the timeline and events
-  name the member, not Slack.
-- Brigade does not verify email addresses yet (RFC 0002 "Auth"), so a member who signed up with someone else's
-  address would be acted as by that address's Slack user. Slack's side is confirmed; Brigade's is not. Like
-  `EMAIL_FROM`, no deployed environment should get a Slack app before email verification lands (Q21).
+  connected to, **only if that address is verified** (`emailVerified`, RFC 0002 "Auth"): anyone can sign up with
+  someone else's address, and only verification proves it is theirs. Their role is read there on every request
+  (never cached: a role change applies at once). A member removed within the last minute is refused by the shard's
+  tombstone, as for a sync upgrade (RFC 0003).
+- **Unmapped users cannot act.** They get an ephemeral reply saying their Slack email is not a member's confirmed
+  email in the workspace, and nothing runs. The mutation runs as the member (`{ kind: "user", id, role }`, client
+  id `slack`), so RBAC is the dashboard's: a viewer cannot declare or acknowledge (`forbidden`), and the timeline and
+  events name the member, not Slack.
+- **Connecting a team trusts that team's admins with identity.** Whoever administers the Slack team can set a
+  user's email there; Slack confirms addresses, but a Slack admin can create or change accounts. So a Slack team's
+  admins can act in the connected Brigade workspace as any member whose verified email they give one of their users.
+  Only an owner or admin of the Brigade workspace can connect a team, and they should connect only a team whose
+  admins they would trust with the members' accounts.
 
 ## Commands
 
@@ -165,14 +185,17 @@ private ones need the bot invited.
   could not be recorded (the shard unreachable right after Slack answered) is posted again on the retry: at least
   once, like every delivery here. The ledger lives 15 days, like the page ledger.
 - **Failures.** A 429 waits for Slack's `Retry-After` (at least our own backoff); a 5xx, a network failure or a
-  timeout (10 s) retries at 5, 10, 20, 40 s; after 5 attempts, or at once for what retrying cannot fix
+  timeout (2.5 s per call in the consumer) retries at 5, 10, 20, 40 s; after 5 attempts, or at once for what retrying cannot fix
   (`channel_not_found`, `not_in_channel`, `is_archived`, `invalid_auth`, `token_revoked`, `account_inactive`,
   `missing_scope`, `invalid_blocks`), the shard runs `notification.failSlack`: a `slack_failed` timeline entry
   ("Couldn't post to Slack: …") and `notification.failed` with `channel: "slack"`, which no notifier acts on. An
   update whose message is gone (`message_not_found`) posts a new one.
 - **Push first.** The consumer runs the Slack notifier next to push for the same event, never before it, and a
   Slack failure, a slow Slack or a missing configuration never delays or retries a page that went out: the page
-  ledger makes the redelivery a no-op for push (tested).
+  ledger makes the redelivery a no-op for push (tested). A batch settles only when its slowest message does, and
+  the next batch's pages wait for that, so the consumer gives Slack at most 3 s per event: past it the message is
+  retried for Slack's sake (the claim makes the retry wait for it, then re-plan) and the batch moves on. Slack's
+  retries stop with the Queue's (`max_retries`): the last delivery is acked rather than dead-lettered.
 
 Rate limits: `chat.postMessage` allows about one message per second per channel, `chat.update` is Tier 3 (50+ a
 minute) and `users.info` Tier 4. One message per incident and one update per change stays far inside them; the
@@ -194,9 +217,11 @@ Every Slack-visible string is in `packages/i18n` (`slack_text`, en and pt-BR), t
 | api Worker   | `SLACK_TOKEN_KEY`      | AES-256-GCM key for bot tokens (32 bytes, base64url)                 |
 | api Worker   | `DASHBOARD_URL`        | Already there (email links); the message's "Open in Brigade"         |
 
-Only `-dev` names are configured (`brigade-slack-dev`, its bindings to `brigade-api-dev`, and `brigade-web-dev`'s
-`SLACK` binding); staging and production follow with their deploys (owner's call). `integrations/slack/README.md`
-lists the steps.
+Only `-dev` names are configured (`brigade-slack-dev` and its binding to `brigade-api-dev`); staging and production
+follow with their deploys (owner's call). The dashboard's `SLACK` binding is optional and not committed: a service
+binding to a Worker that does not exist yet fails the dashboard's deploy, so it is added to `apps/web/wrangler.jsonc`
+with the Slack Worker's first deploy, and without it `/slack/*` answers 404. `integrations/slack/README.md` lists
+the steps.
 
 ## Not in this slice
 
@@ -206,4 +231,4 @@ lists the steps.
 - App Home, link unfurls, Events API (`app_uninstalled`, `tokens_revoked`: today a revoked token shows as
   `slack_failed` entries until someone reconnects).
 - Distribution beyond one app per instance (Slack Marketplace, Enterprise Grid org installs).
-- A channel picker (the card takes a channel id), and revoking the token on disconnect (Q21).
+- A channel picker (the card takes a channel id), and revoking the token on disconnect (Q22).

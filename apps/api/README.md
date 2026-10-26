@@ -333,17 +333,19 @@ types stay the same with or without one.
 
 RFC 0011. The Slack Worker (`integrations/slack`) binds to this Worker's `SlackBridge` entrypoint
 (`src/slack-bridge.ts`, exported from `src/index.ts`): it reads D1 (`slack_team`, which workspace a Slack team is;
-members by email and their roles) and runs everything else in the workspace's shard (`src/slack.ts`): one-time
+members by verified email and their roles), asks Slack who a user is (`users.info`, with the bot token it opens; the
+Slack Worker never gets a token) and runs everything else in the workspace's shard (`src/slack.ts`): one-time
 install states, `incident.declare` and `incident.ack` as the member a Slack user maps to (client id `slack`, the same
 RBAC and events as the dashboard), and `slack.connect`. `POST /workspaces/:id/slack/install` starts an install for an
 owner or admin. The `queue` handler posts and updates each incident's channel message next to push
 (`src/notify-slack.ts`, with the renderer and Web API client from `@freecorps/brigade-slack/notifier`), idempotent per
 event through the shard's Slack ledger, retried with backoff or Slack's `Retry-After`, and recorded as a `slack_failed`
-timeline entry when it gives up. A page never waits on it.
+timeline entry when it gives up. A page never waits on it: Slack gets at most `SLACK_BUDGET_MS` (3 s) per event in
+a batch, past which the message is retried for Slack's sake.
 
 Bot tokens are sealed with AES-256-GCM under `SLACK_TOKEN_KEY` (optional secret, 32 bytes base64url;
 `src/slack-token.ts`) before the shard stores them; without the key Slack is off. Setup: integrations/slack/README.md.
-`migrations/0004_slack_team.sql` is not applied to any deployed database yet.
+`migrations/0006_slack_team.sql` is not applied to any deployed database yet.
 
 ## Generated types
 

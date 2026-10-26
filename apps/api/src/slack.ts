@@ -3,7 +3,7 @@
 // incident's channel message idempotent per event. The Slack Worker reaches this through the API's `SlackBridge`
 // (src/slack-bridge.ts); the queue consumer through `planSlack` / `recordSlack` (src/notify-slack.ts).
 
-import type { SlackActResult, SlackIncident } from "@freecorps/brigade-slack/bridge";
+import type { SlackActOutcome, SlackIncident } from "@freecorps/brigade-slack/bridge";
 import type {
   SlackIncidentView,
   SlackPerson,
@@ -198,7 +198,7 @@ export class SlackDesk {
   /**
    * Runs a Slack user's action as `actor`, the member their email maps to (RFC 0011 "Commands"): the same named
    * mutations, RBAC and outbox events as the dashboard, under client id `slack`, de-duplicated by `key` so a replayed
-   * request gets the first answer. `locale` is left for the bridge to fill.
+   * request gets the first answer. The bridge adds the reply's language and the workspace's name.
    */
   act(
     teamId: string,
@@ -206,7 +206,7 @@ export class SlackDesk {
     action: SlackShardAction,
     key: string,
     now: number,
-  ): SlackActResult {
+  ): SlackActOutcome {
     if (this.team() !== teamId) return refused("not_connected");
     if (action.kind === "declare") return this.declare(actor, action, key, now);
     return this.acknowledge(actor, action, key, now);
@@ -217,7 +217,7 @@ export class SlackDesk {
     action: Extract<SlackShardAction, { kind: "declare" }>,
     key: string,
     now: number,
-  ): SlackActResult {
+  ): SlackActOutcome {
     if (!can(actor.role, "incident:declare")) return refused("forbidden");
     const { shard } = this.options;
     const [done] = this.sql
@@ -255,7 +255,7 @@ export class SlackDesk {
     action: Extract<SlackShardAction, { kind: "ack" }>,
     key: string,
     now: number,
-  ): SlackActResult {
+  ): SlackActOutcome {
     if (!can(actor.role, "incident:ack")) return refused("forbidden");
     const { shard } = this.options;
     const incidents = shard.store.scan("incidents");
@@ -292,7 +292,7 @@ export class SlackDesk {
         });
     if (!result.ok) return { ...refusedBy(result.error.code), incident: summary(incident) };
     if (!stored) this.options.committed(result.version, changes);
-    return { ok: true, did: "acknowledged", incident: summary(incident), locale: null };
+    return { ok: true, did: "acknowledged", incident: summary(incident) };
   }
 
   /**
@@ -470,18 +470,18 @@ function summary(incident: IncidentRow): SlackIncident {
   return { id: incident.id, number: incident.number, title: incident.title };
 }
 
-function declared(incident: IncidentRow): SlackActResult {
-  return { ok: true, did: "declared", incident: summary(incident), locale: null };
+function declared(incident: IncidentRow): SlackActOutcome {
+  return { ok: true, did: "declared", incident: summary(incident) };
 }
 
 function refused(
-  code: Extract<SlackActResult, { ok: false }>["code"],
-): SlackActResult & { ok: false } {
-  return { ok: false, code, locale: null };
+  code: Extract<SlackActOutcome, { ok: false }>["code"],
+): SlackActOutcome & { ok: false } {
+  return { ok: false, code };
 }
 
 /** A mutation's refusal as Slack words it. */
-function refusedBy(code: MutationErrorCode): SlackActResult & { ok: false } {
+function refusedBy(code: MutationErrorCode): SlackActOutcome & { ok: false } {
   switch (code) {
     case "forbidden":
       return refused("forbidden");

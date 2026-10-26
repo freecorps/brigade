@@ -28,9 +28,10 @@ export type Slack_TextInputs = {
 * | "reply_ambiguous" | "More than one incident is waiting to be acknowledged: {list}. Say which one, for example /inc ack {incident}." |
 * | "reply_none" | "No active incident is waiting to be acknowledged." |
 * | "reply_forbidden" | "Your role in {workspace} can't do that. Ask an owner or admin." |
-* | "reply_unmapped" | "Your Slack email isn't the email of a member of {workspace} in Brigade, so Brigade can't act for you. Use the same email in both, or ask an owner to add you." |
-* | "reply_unconfirmed" | "Slack hasn't confirmed your email address, so Brigade can't tell who you are." |
+* | "reply_unmapped" | "Your Slack email isn't the confirmed email of a member of {workspace} in Brigade, so Brigade can't act for you. Use the same email in both and confirm it in ..." |
+* | "reply_unconfirmed" | "Brigade can't tell who you are: Slack hasn't confirmed your email, or you're a guest from another Slack workspace." |
 * | "reply_not_connected" | "This Slack workspace isn't connected to Brigade. An owner or admin can connect it from the Brigade dashboard." |
+* | "reply_reconnect" | "Brigade can't use this Slack workspace's connection any more. An owner or admin needs to connect Slack again from the Brigade dashboard." |
 * | "reply_invalid_title" | "An incident needs a title of 1 to 200 characters, with no invisible characters." |
 * | "reply_failed" | "Brigade couldn't do that right now. Try again in a moment." |
 * | "reply_unknown" | "Unknown command." |

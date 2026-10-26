@@ -20,6 +20,10 @@
       "@freecorps/source": "./src/notifier.ts",
       "default": "./src/notifier.ts"
     },
+    "./people": {
+      "@freecorps/source": "./src/people.ts",
+      "default": "./src/people.ts"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {

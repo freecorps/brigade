@@ -226,14 +226,15 @@ Validate the risky assumptions before writing product code. Each spike produces 
     request verified (signing secret, 5-minute window, raw-body HMAC, constant-time check) and answered within 3 s
     with the work in `waitUntil`; OAuth v2 install per Slack workspace by owners and admins (one-time state bound to
     the browser by a cookie), the bot token sealed (AES-256-GCM, `SLACK_TOKEN_KEY`) in the workspace shard and the
-    team routed in D1 (`slack_team`); Slack users mapped to members by Slack-confirmed email, unmapped users refused;
+    team routed in D1 (`slack_team`); Slack users mapped to members by Slack-confirmed email (the team's own users,
+    a verified Brigade address), unmapped users refused; the bot token kept in the API;
     `/inc declare <title> [sev1-4]` and `/inc ack [INC-n]` and an Acknowledge button, run as the member through the
     shard (`incident.declare`, `incident.ack`: same RBAC, events and escalation stop as the dashboard); one message per
     incident in a configured channel, posted on declare and updated on ack, status and severity by the queue consumer,
     idempotent per event, retried (Slack's `Retry-After` on 429), and a `slack_failed` timeline entry when it gives up;
     the dashboard's Slack card (Add to Slack, channel id, language, Disconnect). en and pt-BR.
-  - Left: creating the Slack app and the secrets, applying migration 0004 and deploying (owner's call,
-    integrations/slack/README.md), blocked on email verification (Q21); a channel per incident; mirroring the
+  - Left: creating the Slack app and the secrets, applying migration 0006 and deploying (owner's call,
+    integrations/slack/README.md, Q22); a channel per incident; mirroring the
     timeline both ways; `/inc` subcommands beyond declare and ack (update, severity, resolve), Escalate and modals;
     App Home; the Events API (`app_uninstalled`, `tokens_revoked`); revoking the token on Disconnect; a channel
     picker; Enterprise Grid and distribution beyond one app per instance; staging and production names.

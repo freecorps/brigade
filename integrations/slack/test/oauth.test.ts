@@ -103,15 +103,37 @@ describe("GET /slack/oauth/callback", () => {
     expect(slack.calls).toHaveLength(0);
   });
 
-  test("a refusal from the API (state used, team taken) gives the token back to Slack", async () => {
+  test("a refusal from the API (state used, team taken) gives the token back to Slack when the API allows it", async () => {
     for (const code of ["invalid_state", "team_taken", "forbidden"] as const) {
       const slack = fakeSlack({ methods: { "oauth.v2.access": granted() } });
-      const { bridge } = fakeBridge({ install: { ok: false, code } });
+      const { bridge } = fakeBridge({ install: { ok: false, code, revoke: true } });
       const { deps: d } = deps(slack, bridge);
       const response = await handle(callback(`code=test-code&state=${STATE}`), d);
       expect(location(response).searchParams.get("slack")).toBe(code);
       expect(slack.to("auth.revoke")[0]?.auth).toBe(`Bearer ${BOT_TOKEN}`);
     }
+  });
+
+  test("a token a workspace still holds is never revoked: the holder would lose Slack", async () => {
+    // Slack can answer a reinstall with the bot token the team already has; the API checked and said keep it.
+    for (const code of ["invalid_state", "team_taken"] as const) {
+      const slack = fakeSlack({ methods: { "oauth.v2.access": granted() } });
+      const { bridge } = fakeBridge({ install: { ok: false, code, revoke: false } });
+      const { deps: d } = deps(slack, bridge);
+      const response = await handle(callback(`code=test-code&state=${STATE}`), d);
+      expect(location(response).searchParams.get("slack")).toBe(code);
+      expect(slack.to("auth.revoke")).toHaveLength(0);
+    }
+  });
+
+  test("when the API fails the token is kept too: it may be held", async () => {
+    const slack = fakeSlack({ methods: { "oauth.v2.access": granted() } });
+    const { bridge } = fakeBridge();
+    bridge.completeInstall = () => Promise.reject(new Error("binding down"));
+    const { deps: d } = deps(slack, bridge);
+    const response = await handle(callback(`code=test-code&state=${STATE}`), d);
+    expect(location(response).searchParams.get("slack")).toBe("failed");
+    expect(slack.to("auth.revoke")).toHaveLength(0);
   });
 
   test("an Enterprise Grid org install, or a user token, is refused and revoked", async () => {

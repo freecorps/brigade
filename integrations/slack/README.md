@@ -36,13 +36,21 @@ Slack reaches these on the dashboard's origin: `brigade-web` forwards `/slack/*`
    ```
    Without it Slack is off: no install starts and no message is sent. Losing or changing it means every workspace
    reconnects Slack (no `v2` rotation exists yet).
-4. **D1**: apply `apps/api/migrations/0004_slack_team.sql` (`wrangler d1 migrations apply DB --remote --env dev`).
+4. **D1**: apply `apps/api/migrations/0006_slack_team.sql` (`wrangler d1 migrations apply DB --remote --env dev`).
 5. **Deploy in order**: the API (it exports `SlackBridge`), then this Worker (`CLOUDFLARE_ENV=dev vp build` here, then
-   `wrangler deploy`), then the dashboard (its `SLACK` binding).
-6. In the dashboard, an owner or admin presses **Add to Slack** on the Slack card, then sets the channel id.
+   `wrangler deploy`), then the dashboard.
+6. **The dashboard's `SLACK` binding**, once this Worker exists: add
+   `{ "binding": "SLACK", "service": "brigade-slack-dev" }` to `env.dev.services` in `apps/web/wrangler.jsonc`, run
+   `vp run cf-typegen` in `apps/web` and deploy the dashboard. It is not committed because a service binding to a
+   Worker that does not exist fails the dashboard's deploy; without it `/slack/*` answers 404.
+7. In the dashboard, an owner or admin presses **Add to Slack** on the Slack card, then sets the channel id.
 
-Until Brigade verifies email addresses, a Slack user maps to whichever member signed up with their email (RFC 0011
-"Who a Slack user is", open question Q21), so no deployed environment should get the app before email verification.
+A Slack user maps to the member whose verified Brigade email is the one Slack confirmed for them, and only for the
+connected team's own users (RFC 0011 "Who a Slack user is"). Connecting a team trusts its Slack admins with that
+mapping: connect only a Slack team whose admins you would trust with the members' accounts.
+
+The bot token never reaches this Worker: the API's `SlackBridge` opens it, asks Slack who a user is and runs the
+action; this Worker answers through each request's `response_url`.
 
 ## Locally
 

@@ -14,6 +14,12 @@ import type { BrigadeEvent } from "./outbox.ts";
 import { asksForSlack } from "./slack.ts";
 import { isTokenKey, openToken, tokenBinding } from "./slack-token.ts";
 
+/**
+ * How long one Slack Web API call gets in the consumer, well under the budget (src/notify.ts `SLACK_BUDGET_MS`) the
+ * consumer gives Slack as a whole, so a slow Slack ends as a retryable failure the ledger records.
+ */
+export const SLACK_CALL_TIMEOUT_MS = 2500;
+
 export type SlackNotifyEnv = {
   WORKSPACE: Env["WORKSPACE"];
   /** Without it, Slack is off: nothing is planned or sent. */
@@ -50,6 +56,7 @@ export async function notifySlack(
       ts: plan.ts,
       message: incidentMessage(plan.incident, plan.locale, env.DASHBOARD_URL),
       fetch: send,
+      timeoutMs: SLACK_CALL_TIMEOUT_MS,
     });
   } catch (error) {
     // The key was rotated without re-sealing, or the row is not this workspace's: retrying cannot open it.

@@ -12,7 +12,8 @@ import { generateRecipient, toBase64url } from "@freecorps/brigade-push";
 import { newId, SLACK_ROW_ID, type Actor } from "@freecorps/brigade-schema";
 import type { SlackActResult } from "@freecorps/brigade-slack/bridge";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
-import { consumeEvents, type Fetch } from "../src/notify.ts";
+import { clearPeople } from "@freecorps/brigade-slack/people";
+import { consumeEvents, QUEUE_MAX_RETRIES, SLACK_BUDGET_MS, type Fetch } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import { SLACK_MAX_ATTEMPTS } from "../src/slack.ts";
@@ -20,7 +21,8 @@ import {
   beginSlackInstall,
   completeSlackInstall,
   slackAct,
-  slackContext,
+  slackConnection,
+  slackReplyLocale,
   SLACK_STATE_COOKIE,
 } from "../src/slack-bridge.ts";
 import { workerAuth } from "../src/index.ts";
@@ -31,7 +33,10 @@ const PASSWORD = "correct horse battery staple";
 const BOT_TOKEN = "xoxb-test-token-not-real";
 const random = (n: number) => crypto.getRandomValues(new Uint8Array(n));
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  clearPeople();
+});
 
 let people = 0;
 let clients = 0;
@@ -69,8 +74,40 @@ async function signUp(name: string): Promise<Person> {
     .getSetCookie()
     .map((value) => value.split(";")[0])
     .join("; ");
+  // Verified, as members who use Slack must be (an unverified address maps to nobody).
+  await env.DB.prepare(`update "user" set "emailVerified" = 1 where id = ?`)
+    .bind(body.user.id)
+    .run();
   return { id: body.user.id, cookie, email };
 }
+
+/** Slack's users, by id, as `users.info` answers them: made up per test. */
+const slackUsers = new Map<string, Record<string, unknown>>();
+let slackPeople = 0;
+
+/** A new Slack user of `teamId` whose email Slack confirmed (unless `more` says otherwise). */
+function slackUser(teamId: string, email: string, more: Record<string, unknown> = {}): string {
+  const id = `U0SU${String(++slackPeople).padStart(6, "0")}`;
+  slackUsers.set(id, {
+    id,
+    team_id: teamId,
+    deleted: false,
+    is_bot: false,
+    is_email_confirmed: true,
+    profile: { email },
+    ...more,
+  });
+  return id;
+}
+
+/** A fake `users.info`, called by the bridge with the token it opened. */
+const usersInfo: Fetch = async (request) => {
+  expect(request.url).toBe("https://slack.com/api/users.info");
+  expect(request.headers.get("Authorization")).toBe(`Bearer ${BOT_TOKEN}`);
+  const { user } = (await request.json()) as { user: string };
+  const found = slackUsers.get(user);
+  return Response.json(found ? { ok: true, user: found } : { ok: false, error: "user_not_found" });
+};
 
 async function addMember(workspaceId: string, userId: string, role: string) {
   await env.DB.prepare(
@@ -222,11 +259,15 @@ describe("SlackBridge.completeInstall", () => {
     expect(JSON.stringify(await outbox(t))).not.toContain(BOT_TOKEN);
     expect((await outbox(t)).map((event) => event.type)).toContain("slack.connected");
     // And the bridge opens it for that team only.
-    expect(await slackContext(env, teamId)).toMatchObject({ workspaceId: t.id, token: BOT_TOKEN });
-    expect(await slackContext(env, newTeam())).toBeNull();
+    expect(await slackConnection(env, teamId)).toMatchObject({
+      ok: true,
+      workspaceId: t.id,
+      token: BOT_TOKEN,
+    });
+    expect(await slackConnection(env, newTeam())).toEqual({ ok: false, code: "not_connected" });
   });
 
-  test("a state works once; a made-up or another workspace's state never", async () => {
+  test("a state works once; a made-up or another workspace's state never, and the token it holds is kept", async () => {
     const t = await team();
     const { state } = (await (await begin(t, t.ana)).json()) as { state: string };
     const install = {
@@ -237,18 +278,31 @@ describe("SlackBridge.completeInstall", () => {
       scopes: [],
     };
     expect(await completeSlackInstall(env, state, install)).toEqual({ ok: true });
+    // The same token the workspace now holds (a double-submitted callback): refused, and not to be revoked.
     expect(await completeSlackInstall(env, state, install)).toEqual({
       ok: false,
       code: "invalid_state",
+      revoke: false,
     });
     const made = `${t.id}.${"a".repeat(43)}`;
     expect(await completeSlackInstall(env, made, install)).toEqual({
       ok: false,
       code: "invalid_state",
+      revoke: false,
     });
     expect(await completeSlackInstall(env, "garbage", install)).toEqual({
       ok: false,
       code: "invalid_state",
+      revoke: false,
+    });
+    // A token the workspace does not hold, or for a team nobody holds, Brigade gives back.
+    expect(
+      await completeSlackInstall(env, made, { ...install, token: "xoxb-another-test-token" }),
+    ).toEqual({ ok: false, code: "invalid_state", revoke: true });
+    expect(await completeSlackInstall(env, made, { ...install, teamId: newTeam() })).toEqual({
+      ok: false,
+      code: "invalid_state",
+      revoke: true,
     });
   });
 
@@ -265,7 +319,7 @@ describe("SlackBridge.completeInstall", () => {
       token: BOT_TOKEN,
       scopes: [],
     });
-    expect(result).toEqual({ ok: false, code: "forbidden" });
+    expect(result).toEqual({ ok: false, code: "forbidden", revoke: true });
   });
 
   test("a Slack team connected to another workspace is refused until that one disconnects", async () => {
@@ -280,25 +334,38 @@ describe("SlackBridge.completeInstall", () => {
       token: BOT_TOKEN,
       scopes: [],
     };
+    // Slack handed the reinstall the token the first workspace holds: revoking it would cut that one off.
     expect(await completeSlackInstall(env, state, install)).toEqual({
       ok: false,
       code: "team_taken",
+      revoke: false,
     });
+    const other = (await (await begin(second, second.ana)).json()) as { state: string };
+    expect(
+      await completeSlackInstall(env, other.state, {
+        ...install,
+        token: "xoxb-another-test-token",
+      }),
+    ).toEqual({ ok: false, code: "team_taken", revoke: true });
     await first.run("slack.disconnect", {}, owner(first));
     const again = (await (await begin(second, second.ana)).json()) as { state: string };
     expect(await completeSlackInstall(env, again.state, install)).toEqual({ ok: true });
-    expect(await slackContext(env, teamId)).toMatchObject({ workspaceId: second.id });
+    expect(await slackConnection(env, teamId)).toMatchObject({ ok: true, workspaceId: second.id });
   });
 });
 
 describe("SlackBridge.act", () => {
   const declare = (teamId: string, email: string, k = key(), title = "Checkout down") =>
-    slackAct(env, {
-      teamId,
-      email,
-      action: { kind: "declare", title, severity: "sev2" },
-      key: k,
-    });
+    slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, email),
+        action: { kind: "declare", title, severity: "sev2" },
+        key: k,
+      },
+      usersInfo,
+    );
 
   test("declares as the member the email maps to: their name on the incident, the event through the outbox", async () => {
     const t = await team();
@@ -332,12 +399,16 @@ describe("SlackBridge.act", () => {
     expect(await declare(teamId, t.duda.email)).toMatchObject({ ok: false, code: "forbidden" });
     expect(await incidents(t)).toHaveLength(0);
     await declare(teamId, t.caio.email);
-    const ack = await slackAct(env, {
-      teamId,
-      email: t.duda.email,
-      action: { kind: "ack" },
-      key: key(),
-    });
+    const ack = await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.duda.email),
+        action: { kind: "ack" },
+        key: key(),
+      },
+      usersInfo,
+    );
     expect(ack).toMatchObject({ ok: false, code: "forbidden" });
     expect((await incidents(t))[0]?.acknowledgedAt).toBeNull();
   });
@@ -368,41 +439,71 @@ describe("SlackBridge.act", () => {
     const t = await team();
     const teamId = await connect(t);
     const one = (await declare(teamId, t.ana.email)) as Extract<SlackActResult, { ok: true }>;
-    const byNumber = await slackAct(env, {
-      teamId,
-      email: t.caio.email,
-      action: { kind: "ack", number: one.incident.number! },
-      key: key(),
-    });
+    const byNumber = await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.caio.email),
+        action: { kind: "ack", number: one.incident.number! },
+        key: key(),
+      },
+      usersInfo,
+    );
     expect(byNumber).toMatchObject({ ok: true, did: "acknowledged" });
     const row = (await incidents(t))[0]!;
     expect(row.acknowledgedBy).toBe(t.caio.id);
     const acked = (await outbox(t)).filter((event) => event.type === "incident.acknowledged");
     expect(acked).toHaveLength(1);
     // Again, by anyone: already acknowledged.
-    const again = await slackAct(env, {
-      teamId,
-      email: t.bia.email,
-      action: { kind: "ack", incidentId: row.id },
-      key: key(),
-    });
+    const again = await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.bia.email),
+        action: { kind: "ack", incidentId: row.id },
+        key: key(),
+      },
+      usersInfo,
+    );
     expect(again).toMatchObject({ ok: false, code: "already" });
 
     expect(
-      await slackAct(env, { teamId, email: t.caio.email, action: { kind: "ack" }, key: key() }),
+      await slackAct(
+        env,
+        {
+          teamId,
+          slackUserId: slackUser(teamId, t.caio.email),
+          action: { kind: "ack" },
+          key: key(),
+        },
+        usersInfo,
+      ),
     ).toMatchObject({ ok: false, code: "none" });
     await declare(teamId, t.ana.email, key(), "Two");
     await declare(teamId, t.ana.email, key(), "Three");
     expect(
-      await slackAct(env, { teamId, email: t.caio.email, action: { kind: "ack" }, key: key() }),
+      await slackAct(
+        env,
+        {
+          teamId,
+          slackUserId: slackUser(teamId, t.caio.email),
+          action: { kind: "ack" },
+          key: key(),
+        },
+        usersInfo,
+      ),
     ).toMatchObject({ ok: false, code: "ambiguous", choices: [2, 3] });
     expect(
-      await slackAct(env, {
-        teamId,
-        email: t.caio.email,
-        action: { kind: "ack", number: 99 },
-        key: key(),
-      }),
+      await slackAct(
+        env,
+        {
+          teamId,
+          slackUserId: slackUser(teamId, t.caio.email),
+          action: { kind: "ack", number: 99 },
+          key: key(),
+        },
+        usersInfo,
+      ),
     ).toMatchObject({ ok: false, code: "not_found" });
   });
 
@@ -410,7 +511,112 @@ describe("SlackBridge.act", () => {
     const t = await team();
     const teamId = await connect(t);
     await env.DB.prepare(`update "user" set locale = 'pt-BR' where id = ?`).bind(t.caio.id).run();
-    expect(await declare(teamId, t.caio.email)).toMatchObject({ ok: true, locale: "pt-BR" });
+    expect(await declare(teamId, t.caio.email)).toMatchObject({
+      ok: true,
+      locale: "pt-BR",
+      workspaceName: "Acme",
+    });
+  });
+
+  test("a member whose Brigade address is not verified maps to nobody", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await env.DB.prepare(`update "user" set "emailVerified" = 0 where id = ?`)
+      .bind(t.caio.id)
+      .run();
+    expect(await declare(teamId, t.caio.email)).toMatchObject({ ok: false, code: "unmapped" });
+    expect(await incidents(t)).toHaveLength(0);
+  });
+
+  test("Slack users Slack does not vouch for run nothing: another team's guest, an unconfirmed email", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    for (const more of [
+      { team_id: newTeam() },
+      { is_stranger: true },
+      { is_email_confirmed: false },
+      { deleted: true },
+    ]) {
+      const result = await slackAct(
+        env,
+        {
+          teamId,
+          slackUserId: slackUser(teamId, t.caio.email, more),
+          action: { kind: "declare", title: "Checkout down", severity: "sev2" },
+          key: key(),
+        },
+        usersInfo,
+      );
+      expect(result, JSON.stringify(more)).toMatchObject({ ok: false, code: "unconfirmed" });
+    }
+    expect(await incidents(t)).toHaveLength(0);
+  });
+
+  test("the role is read on every request: an admin demoted to viewer is refused at once", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    expect(await declare(teamId, t.bia.email)).toMatchObject({ ok: true, did: "declared" });
+    await env.DB.prepare(`update member set role = 'viewer' where "userId" = ?`)
+      .bind(t.bia.id)
+      .run();
+    expect(await declare(teamId, t.bia.email)).toMatchObject({ ok: false, code: "forbidden" });
+    expect(await incidents(t)).toHaveLength(1);
+  });
+
+  test("a removed member acts as nobody, even with a role read before the removal", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    const removed = await api(`/workspaces/${t.id}/members/${t.caio.id}`, {
+      method: "DELETE",
+      headers: { Cookie: t.ana.cookie },
+    });
+    expect(removed.status).toBe(200);
+    expect(await declare(teamId, t.caio.email)).toMatchObject({ ok: false, code: "unmapped" });
+    // A bridge that read D1 just before the removal: the shard's tombstone refuses the stale role.
+    const stale = await t.stub.slackAct(
+      t.id,
+      teamId,
+      { kind: "user", id: t.caio.id, role: "responder" },
+      { kind: "declare", title: "Checkout down", severity: "sev2" },
+      key(),
+    );
+    expect(stale).toEqual({ ok: false, code: "unmapped" });
+    expect(await incidents(t)).toHaveLength(0);
+  });
+
+  test("a token the key no longer opens says to reconnect, distinctly from not connected", async () => {
+    const t = await team();
+    const teamId = newTeam();
+    const { state } = (await (await begin(t, t.ana)).json()) as { state: string };
+    // Sealed under another key, as after SLACK_TOKEN_KEY changed.
+    const before = {
+      DB: env.DB,
+      WORKSPACE: env.WORKSPACE,
+      SLACK_TOKEN_KEY: toBase64url(random(32)),
+    };
+    expect(
+      await completeSlackInstall(before, state, {
+        teamId,
+        teamName: "Acme Slack",
+        botUserId: "U0BOT00001",
+        token: BOT_TOKEN,
+        scopes: [],
+      }),
+    ).toEqual({ ok: true });
+    expect(await declare(teamId, t.caio.email)).toMatchObject({ ok: false, code: "unreadable" });
+    expect(await slackConnection(env, teamId)).toEqual({ ok: false, code: "unreadable" });
+  });
+
+  test("the usage is in the Slack user's language, else the connection's", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    const pt = slackUser(teamId, t.caio.email, { locale: "pt-BR" });
+    expect(await slackReplyLocale(env, { teamId, slackUserId: pt }, usersInfo)).toBe("pt-BR");
+    const plain = slackUser(teamId, t.caio.email);
+    expect(await slackReplyLocale(env, { teamId, slackUserId: plain }, usersInfo)).toBe("en");
+    expect(await slackReplyLocale(env, { teamId: newTeam(), slackUserId: plain }, usersInfo)).toBe(
+      "en",
+    );
   });
 });
 
@@ -492,12 +698,16 @@ async function phone(t: Team, pushToken: string) {
 
 describe("the incident message", () => {
   async function declared(t: Team, teamId: string) {
-    await slackAct(env, {
-      teamId,
-      email: t.ana.email,
-      action: { kind: "declare", title: "Checkout <!channel> down", severity: "sev1" },
-      key: key(),
-    });
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.ana.email),
+        action: { kind: "declare", title: "Checkout <!channel> down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
     return (await eventsOf(t, "incident.declared"))[0]!;
   }
 
@@ -522,12 +732,16 @@ describe("the incident message", () => {
     const slack = slackApi();
     await deliver([event], slack.send);
     const incident = (await incidents(t))[0]!;
-    await slackAct(env, {
-      teamId,
-      email: t.caio.email,
-      action: { kind: "ack", incidentId: incident.id },
-      key: key(),
-    });
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.caio.email),
+        action: { kind: "ack", incidentId: incident.id },
+        key: key(),
+      },
+      usersInfo,
+    );
     await t.run("incident.setStatus", { id: incident.id, status: "investigating" }, owner(t));
     const later = [
       ...(await eventsOf(t, "incident.acknowledged")),
@@ -633,12 +847,16 @@ describe("the incident message", () => {
     const teamId = await connect(t);
     // Ana's phone, so the declaration pages someone (Caio declares; Ana is paged).
     await phone(t, "a".repeat(64));
-    await slackAct(env, {
-      teamId,
-      email: t.caio.email,
-      action: { kind: "declare", title: "Checkout down", severity: "sev1" },
-      key: key(),
-    });
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.caio.email),
+        action: { kind: "declare", title: "Checkout down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
     const event = (await eventsOf(t, "incident.declared"))[0]!;
     const down = slackApi({ "chat.postMessage": () => new Response("", { status: 500 }) });
     const first = await deliver([event], down.send);
@@ -655,12 +873,16 @@ describe("the incident message", () => {
     const t2 = await team();
     const teamId2 = await connect(t2);
     await phone(t2, "b".repeat(64));
-    await slackAct(env, {
-      teamId: teamId2,
-      email: t2.caio.email,
-      action: { kind: "declare", title: "Search down", severity: "sev1" },
-      key: key(),
-    });
+    await slackAct(
+      env,
+      {
+        teamId: teamId2,
+        slackUserId: slackUser(teamId2, t2.caio.email),
+        action: { kind: "declare", title: "Search down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
     const event2 = (await eventsOf(t2, "incident.declared"))[0]!;
     const throwing = slackApi({
       "chat.postMessage": () => Promise.reject(new TypeError("network down")),
@@ -668,4 +890,45 @@ describe("the incident message", () => {
     await deliver([event2], throwing.send);
     expect(throwing.pushes).toEqual(["b".repeat(64)]);
   });
+
+  test("Slack's own retries stop where the Queue's do: the last delivery is acked, never dead-lettered", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    const event = await declared(t, teamId);
+    const down = slackApi({ "chat.postMessage": () => new Response("", { status: 503 }) });
+    expect((await deliver([event], down.send, QUEUE_MAX_RETRIES)).retryMessages).toHaveLength(1);
+    await t.withShard((_shard, state) =>
+      state.storage.sql.exec("update slack_events set retry_at = 0"),
+    );
+    const last = await deliver([event], down.send, QUEUE_MAX_RETRIES + 1);
+    expect(last.retryMessages).toEqual([]);
+    expect(last.explicitAcks).toEqual(["msg-0"]);
+  });
+
+  test("a Slack that hangs never holds the batch: it settles within Slack's budget, paged, and retried", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await phone(t, "c".repeat(64));
+    // Caio declares, so Ana's phone is paged.
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.caio.email),
+        action: { kind: "declare", title: "Checkout down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
+    const event = (await eventsOf(t, "incident.declared"))[0]!;
+    // Never answers and ignores its abort signal: only the consumer's own budget can end the wait.
+    const hanging = slackApi({ "chat.postMessage": () => new Promise<Response>(() => {}) });
+    const started = Date.now();
+    const result = await deliver([event], hanging.send);
+    const took = Date.now() - started;
+    expect(took).toBeGreaterThanOrEqual(SLACK_BUDGET_MS - 100);
+    expect(took).toBeLessThan(SLACK_BUDGET_MS + 2000);
+    expect(hanging.pushes).toEqual(["c".repeat(64)]);
+    expect(result.retryMessages).toEqual([{ msgId: "msg-0", delaySeconds: expect.any(Number) }]);
+  }, 15_000);
 });

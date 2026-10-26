@@ -130,7 +130,11 @@ export function incidentMessage(
   ];
   if (buttons.length > 0)
     blocks.push({ type: "actions", block_id: "brigade_incident", elements: buttons });
-  return { text: `${code} · ${number}: ${incident.title} (${status})`, blocks };
+  // The fallback text (notifications, screen readers) is mrkdwn too: an unescaped `<!here>` would ping the channel.
+  return {
+    text: `${code} · ${number}: ${escapeMrkdwn(incident.title)} (${escapeMrkdwn(status)})`,
+    blocks,
+  };
 }
 
 /** What posting or updating the message did, for the shard's Slack ledger (apps/api src/slack.ts). */
@@ -155,13 +159,15 @@ export async function deliverIncidentMessage(options: {
   ts: string | null;
   message: SlackMessage;
   fetch: Fetch;
+  /** Per Web API call; Slack's default when omitted. */
+  timeoutMs?: number;
 }): Promise<SlackPostOutcome> {
-  const { token, channel, ts, message, fetch } = options;
+  const { token, channel, ts, message, fetch, timeoutMs } = options;
   if (ts !== null) {
     const updated = await callSlack(
       "chat.update",
       { channel, ts, text: message.text, blocks: message.blocks },
-      { token, fetch },
+      { token, fetch, timeoutMs },
     );
     if (updated.ok) return { ok: true, channel, ts };
     if (updated.error !== "message_not_found") return failed(updated);
@@ -169,7 +175,7 @@ export async function deliverIncidentMessage(options: {
   const posted = await callSlack(
     "chat.postMessage",
     { channel, text: message.text, blocks: message.blocks, unfurl_links: false },
-    { token, fetch },
+    { token, fetch, timeoutMs },
   );
   if (!posted.ok) return failed(posted);
   const postedTs = posted.data.ts;

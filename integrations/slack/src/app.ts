@@ -2,15 +2,15 @@
 // - `POST /slack/commands`: `/inc`; `POST /slack/interactions`: the Acknowledge button. Both are verified first,
 //   answered with an empty 200 at once, and done in `waitUntil`, answering through the request's `response_url`.
 // - `GET /slack/install?state=…`: on to Slack's OAuth page; `GET /slack/oauth/callback`: back from it.
-// Every read and write of Brigade's data goes through the API's `SlackBridge` (src/bridge.ts).
+// Every read and write of Brigade's data, and every Web API call that needs the bot token, goes through the API's
+// `SlackBridge` (src/bridge.ts): this Worker never holds a token.
 
 import { slack_text } from "@freecorps/brigade-i18n/messages";
-import { formatIncidentNumber, isId, type SlackLocale } from "@freecorps/brigade-schema";
-import type { SlackActResult, SlackBridgeApi, SlackContext } from "./bridge.ts";
+import { formatIncidentNumber, isId } from "@freecorps/brigade-schema";
+import type { SlackActResult, SlackBridgeApi } from "./bridge.ts";
 import { parseCommand, type ParsedCommand } from "./command.ts";
 import { ACK_ACTION, escapeMrkdwn } from "./notifier.ts";
 import { completeOAuth, startOAuth } from "./oauth.ts";
-import { lookUpPerson } from "./people.ts";
 import { sha256Hex, verifySlackRequest } from "./verify.ts";
 import { log, type Deps } from "./deps.ts";
 
@@ -157,29 +157,16 @@ async function runCommand(
     );
   }
   // Help, or something this slice does not know: the usage, in the person's language when Slack says it.
-  const context = await deps.bridge.context(requester.teamId);
-  const locale = context ? await personLocale(deps, requester, context) : "en";
+  const locale = await deps.bridge.locale({
+    teamId: requester.teamId,
+    slackUserId: requester.userId,
+  });
   const say = (part: string) => slack_text({ ...NO_ARGS, part }, { locale });
   await reply(
     deps,
     requester.responseUrl,
     parsed.kind === "unknown" ? `${say("reply_unknown")} ${say("usage")}` : say("usage"),
   );
-}
-
-async function personLocale(
-  deps: Deps,
-  requester: Requester,
-  context: SlackContext,
-): Promise<SlackLocale> {
-  const person = await lookUpPerson(
-    requester.teamId,
-    requester.userId,
-    context.token,
-    deps.fetch,
-    deps.now(),
-  );
-  return person.locale ?? context.locale;
 }
 
 /** Runs one action as the member the Slack user maps to, and tells them how it went. */
@@ -189,51 +176,20 @@ async function act(
   action: Parameters<SlackBridgeApi["act"]>[0]["action"],
   key: string,
 ): Promise<void> {
-  const context = await deps.bridge.context(requester.teamId);
-  if (!context) {
-    return reply(
-      deps,
-      requester.responseUrl,
-      replyText({ ok: false, code: "not_connected", locale: null }, "", "en"),
-    );
-  }
-  const person = await lookUpPerson(
-    requester.teamId,
-    requester.userId,
-    context.token,
-    deps.fetch,
-    deps.now(),
-  );
-  const fallback = person.locale ?? context.locale;
-  if (!person.ok) {
-    const text =
-      person.reason === "unconfirmed"
-        ? slack_text({ ...NO_ARGS, part: "reply_unconfirmed" }, { locale: fallback })
-        : slack_text({ ...NO_ARGS, part: "reply_failed" }, { locale: fallback });
-    return reply(deps, requester.responseUrl, text);
-  }
   const result = await deps.bridge.act({
     teamId: requester.teamId,
-    email: person.email,
+    slackUserId: requester.userId,
     action,
     key,
   });
-  await reply(
-    deps,
-    requester.responseUrl,
-    replyText(result, context.workspaceName, result.locale ?? fallback),
-  );
+  await reply(deps, requester.responseUrl, replyText(result));
 }
 
 const NO_ARGS = { incident: "", title: "", name: "", workspace: "", list: "" };
 
-/** The ephemeral answer to an action, in `locale`. Titles and names are escaped: they are people's text. */
-export function replyText(
-  result: SlackActResult,
-  workspaceName: string,
-  locale: SlackLocale,
-): string {
-  const incident = result.incident;
+/** The ephemeral answer to an action, in the language the bridge chose. Titles and names are escaped: people's text. */
+export function replyText(result: SlackActResult): string {
+  const { incident, locale, workspaceName } = result;
   const args = {
     ...NO_ARGS,
     incident: (incident && formatIncidentNumber(incident.number)) ?? "",
@@ -262,6 +218,10 @@ export function replyText(
       return say("reply_unmapped");
     case "not_connected":
       return say("reply_not_connected");
+    case "unreadable":
+      return say("reply_reconnect");
+    case "unconfirmed":
+      return say("reply_unconfirmed");
     case "invalid_title":
       return say("reply_invalid_title");
     case "failed":

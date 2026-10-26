@@ -98,22 +98,6 @@ The first schedules slice made choices that are easy to change now and harder on
   themselves can fill it and block everyone else's until theirs end or an admin removes them. Should there be a
   per-member cap too (say 20), or is the admin's remove enough?
 
-## Q21 — Slack: who a Slack user is, and what Disconnect revokes (RFC 0011)
-
-- Slack users map to members by email: Slack's address is confirmed (`is_email_confirmed`), Brigade's is not until
-  email verification lands (RFC 0002 "Auth"). A member who signed up with someone else's address would be acted as by
-  that address's Slack user. Keep the Slack app off every deployed environment until verification exists (as for
-  `EMAIL_FROM`), or add an explicit link instead (the member signs in to Brigade from a Slack link once)?
-- Disconnect forgets the bot token but does not revoke it in Slack (the shard no longer has it); removing the app in
-  Slack's settings does. Should Disconnect call `auth.revoke` first (the API would keep the sealed token until it
-  has), and should the API listen to `app_uninstalled` / `tokens_revoked` (Events API) to disconnect on its own?
-- Channel messages are written in a language chosen on the card (default: the connecting member's), until workspaces
-  have a default locale (Q15). Is that enough, or should it follow Q15's workspace locale once it exists?
-- Who may connect Slack: owners and admins (`workspace:manage`). Should integrations get their own permission?
-- Getting the Slack app (Freecorps' hosted app, the dev app): who creates it in Slack, and under which Slack workspace?
-
----
-
 ## Q21 — Caps on email to people (RFC 0005 "Abuse", RFC 0003 "Invitations", RFC 0002 "Auth")
 
 Every email Brigade sends reaches an inbox someone else chose, so each kind is capped; the numbers are first guesses
@@ -147,6 +131,21 @@ to confirm in production:
   (alert webhooks, email ingest) needs the same: its secret revoked on a takeover.
 - None of these counts the sender's own quota (Cloudflare Email Sending's limits answer `E_RATE_LIMIT_EXCEEDED`,
   retried); a Brigade-wide daily ceiling may be needed before open sign-up on a shared instance.
+
+---
+
+## Q22 — Slack: what Disconnect revokes, and who runs the app (RFC 0011)
+
+Who a Slack user is no longer waits here: a Slack user maps to the member whose **verified** Brigade email equals
+the email Slack confirmed for one of the connected team's own users (RFC 0011 "Who a Slack user is").
+
+- Disconnect forgets the bot token but does not revoke it in Slack (the shard no longer has it); removing the app in
+  Slack's settings does. Should Disconnect call `auth.revoke` first (the API would keep the sealed token until it
+  has), and should the API listen to `app_uninstalled` / `tokens_revoked` (Events API) to disconnect on its own?
+- Channel messages are written in a language chosen on the card (default: the connecting member's), until workspaces
+  have a default locale (Q15). Is that enough, or should it follow Q15's workspace locale once it exists?
+- Who may connect Slack: owners and admins (`workspace:manage`). Should integrations get their own permission?
+- Getting the Slack app (Freecorps' hosted app, the dev app): who creates it in Slack, and under which Slack workspace?
 
 # Decided
 

@@ -22,7 +22,9 @@ const texts = (blocks: Record<string, unknown>[]) => JSON.stringify(blocks);
 describe("incidentMessage", () => {
   test("links the incident, escapes its title and names, and offers Acknowledge while it waits", () => {
     const message = incidentMessage(incident, "en", "https://brigade.test");
-    expect(message.text).toBe("SEV1 · INC-12: Checkout <!here> & payments down (Triage)");
+    // The fallback text is mrkdwn too: the title's `<!here>` must not ping the channel from a notification.
+    expect(message.text).toBe("SEV1 · INC-12: Checkout &lt;!here&gt; &amp; payments down (Triage)");
+    expect(message.text).not.toContain("<!");
     expect(message.blocks[0]).toEqual({
       type: "section",
       text: {

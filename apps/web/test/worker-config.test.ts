@@ -165,19 +165,16 @@ describe("apps/api wrangler.jsonc: the dev sync actor and auth", () => {
 });
 
 describe("wrangler.jsonc environments", () => {
-  // Service bindings are not inherited by environments, so each one must name its own API Worker (and, where it has
-  // a Slack app, its own Slack Worker: only dev so far, RFC 0011).
+  // Service bindings are not inherited by environments, so each one must name its own API Worker. No SLACK binding is
+  // committed: it names a Worker that must exist first, so it is added with the Slack Worker's first deploy (RFC 0011).
   test.each([
     ["top level (production)", rawConfig.services],
     ["dev", rawConfig.env?.dev?.services],
     ["staging", rawConfig.env?.staging?.services],
-  ])("%s binds API (and Slack) to its own Workers", (name, services) => {
+  ])("%s binds API to its own Worker", (name, services) => {
     const expected = {
       "top level (production)": [{ binding: "API", service: "brigade-api" }],
-      dev: [
-        { binding: "API", service: "brigade-api-dev" },
-        { binding: "SLACK", service: "brigade-slack-dev" },
-      ],
+      dev: [{ binding: "API", service: "brigade-api-dev" }],
       staging: [{ binding: "API", service: "brigade-api-staging" }],
     }[name];
     expect(services).toEqual(expected);

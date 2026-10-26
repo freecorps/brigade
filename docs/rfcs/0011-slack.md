@@ -56,8 +56,9 @@ Every request to `/slack/commands` and `/slack/interactions` is verified before 
 - Anything else is `401` with no body detail. Slack shows its own error; nothing ran.
 - **Replays.** A request replayed inside the 5 minutes passes the check, so every write it causes is idempotent: a
   command's mutation id comes from its `trigger_id` (a hash of it), a button's from its `action_ts` and user, and
-  the shard answers a mutation id it has seen with the stored result (RFC 0004). A replay outside the window is
-  refused.
+  the shard answers a mutation id it has seen with the stored result (RFC 0004). A declaration keeps its incident's
+  id under the command before its mutation runs, so a replay answers with that incident and never declares a second
+  one. A replay outside the window is refused.
 
 **3 seconds.** Slack shows an error when the answer takes longer. The slack Worker answers `200` with an empty body
 at once, after the signature check and parsing, and does the work in `ctx.waitUntil`: it looks up the workspace
@@ -183,7 +184,8 @@ private ones need the bot invited.
   does nothing. A plan claims the incident for 30 s, so two events of one incident in a batch never both post: the
   second is `held` and retried after the claim, and then updates the message the first posted. A post whose result
   could not be recorded (the shard unreachable right after Slack answered) is posted again on the retry: at least
-  once, like every delivery here. The ledger lives 15 days, like the page ledger.
+  once, like every delivery here. The ledger lives 15 days, like the page ledger; an incident's message is kept 15
+  days from its last use, and for as long as the incident is active.
 - **Failures.** A 429 waits for Slack's `Retry-After` (at least our own backoff); a 5xx, a network failure or a
   timeout (2.5 s per call in the consumer) retries at 5, 10, 20, 40 s; after 5 attempts, or at once for what retrying cannot fix
   (`channel_not_found`, `not_in_channel`, `is_archived`, `invalid_auth`, `token_revoked`, `account_inactive`,

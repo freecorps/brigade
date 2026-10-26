@@ -220,17 +220,30 @@ export class SlackDesk {
   ): SlackActOutcome {
     if (!can(actor.role, "incident:declare")) return refused("forbidden");
     const { shard } = this.options;
-    const [done] = this.sql
-      .exec<{ incident_id: string }>("select incident_id from slack_commands where key = ?", key)
-      .toArray();
-    if (done) {
-      const incident = shard.store.get("incidents", done.incident_id);
-      return incident ? declared(incident) : refused("not_found");
-    }
     const mutationId = `declare:${key}`;
     const stored = shard.storedResult(actor.id, SLACK_CLIENT_ID, mutationId, now);
-    if (stored && !stored.ok) return refusedBy(stored.error.code);
-    const id = newId("inc", now, this.options.randomBytes);
+    const [reserved] = this.sql
+      .exec<{ incident_id: string }>("select incident_id from slack_commands where key = ?", key)
+      .toArray();
+    // A replay never runs the mutation again: it answers with what the first request did.
+    if (reserved) {
+      const incident = shard.store.get("incidents", reserved.incident_id);
+      if (incident) return declared(incident);
+      if (stored) return stored.ok ? refused("not_found") : refusedBy(stored.error.code);
+    } else if (stored) {
+      // Ran, but which incident it declared is unknown: refuse rather than declare a second one.
+      return stored.ok ? refused("failed") : refusedBy(stored.error.code);
+    }
+    // The incident's id is kept before the mutation runs, so a retry declares that same incident or none.
+    const id = reserved?.incident_id ?? newId("inc", now, this.options.randomBytes);
+    if (!reserved) {
+      this.sql.exec(
+        "insert into slack_commands (key, incident_id, at) values (?, ?, ?)",
+        key,
+        id,
+        now,
+      );
+    }
     const { result, changes } = shard.mutate({
       clientId: SLACK_CLIENT_ID,
       mutationId,
@@ -240,12 +253,6 @@ export class SlackDesk {
       now,
     });
     if (!result.ok) return refusedBy(result.error.code);
-    this.sql.exec(
-      "insert into slack_commands (key, incident_id, at) values (?, ?, ?) on conflict do nothing",
-      key,
-      id,
-      now,
-    );
     this.options.committed(result.version, changes);
     return declared(shard.store.get("incidents", id)!);
   }
@@ -328,7 +335,7 @@ export class SlackDesk {
     }
     this.sql.exec(
       `insert into slack_messages (incident_id, channel, ts, claimed_until, at) values (?, null, null, ?, ?)
-       on conflict (incident_id) do update set claimed_until = excluded.claimed_until`,
+       on conflict (incident_id) do update set claimed_until = excluded.claimed_until, at = excluded.at`,
       incident.id,
       now + SLACK_CLAIM_MS,
       now,
@@ -457,7 +464,19 @@ export class SlackDesk {
     try {
       const before = now - LEDGER_RETENTION_MS;
       this.sql.exec("delete from slack_events where at < ?", before);
-      this.sql.exec("delete from slack_messages where at < ?", before);
+      // By last use, and never an active incident's: its next change still updates the message it has.
+      const stale = this.sql
+        .exec<{ incident_id: string }>(
+          "select incident_id from slack_messages where at < ?",
+          before,
+        )
+        .toArray();
+      const { store } = this.options.shard;
+      for (const { incident_id } of stale) {
+        const incident = store.get("incidents", incident_id);
+        if (incident && isActive(incident.status)) continue;
+        this.sql.exec("delete from slack_messages where incident_id = ?", incident_id);
+      }
       this.sql.exec("delete from slack_commands where at < ?", before);
       this.sql.exec("delete from slack_states where expires_at <= ?", now);
     } catch (error) {

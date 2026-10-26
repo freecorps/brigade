@@ -393,6 +393,38 @@ describe("SlackBridge.act", () => {
     expect(await incidents(t)).toHaveLength(1);
   });
 
+  test("a replay never runs the declaration again, even when the shard kept only its result", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    const k = key();
+    const first = (await declare(teamId, t.caio.email, k)) as Extract<SlackActResult, { ok: true }>;
+    // The mutation's stored success is all that is left of the first request.
+    await t.withShard((_shard, state) => state.storage.sql.exec("delete from slack_commands"));
+    const second = await declare(teamId, t.caio.email, k);
+    expect(second).toMatchObject({ ok: false });
+    expect(await incidents(t)).toEqual([expect.objectContaining({ id: first.incident.id })]);
+    expect((await outbox(t)).filter((event) => event.type === "incident.declared")).toHaveLength(1);
+  });
+
+  test("a request that stopped before its declaration ran declares the incident it reserved, once", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    const k = key();
+    const reserved = newId("inc", Date.now(), random);
+    await t.withShard((_shard, state) =>
+      state.storage.sql.exec(
+        "insert into slack_commands (key, incident_id, at) values (?, ?, ?)",
+        k,
+        reserved,
+        Date.now(),
+      ),
+    );
+    const first = await declare(teamId, t.caio.email, k);
+    expect(first).toMatchObject({ ok: true, did: "declared", incident: { id: reserved } });
+    expect(await declare(teamId, t.caio.email, k)).toEqual(first);
+    expect(await incidents(t)).toEqual([expect.objectContaining({ id: reserved })]);
+  });
+
   test("RBAC: a viewer can neither declare nor acknowledge", async () => {
     const t = await team();
     const teamId = await connect(t);
@@ -756,6 +788,35 @@ describe("the incident message", () => {
     expect(slack.calls.filter((call) => call.method === "chat.postMessage")).toHaveLength(1);
   });
 
+  test("an incident open past the ledger's retention keeps its message, and each use refreshes it", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    const event = await declared(t, teamId);
+    const slack = slackApi();
+    await deliver([event], slack.send);
+    const messageAt = () =>
+      t.withShard(
+        (_shard, state) =>
+          state.storage.sql.exec<{ at: number }>("select at from slack_messages").toArray()[0]?.at,
+      );
+    // Last used long before the retention window.
+    await t.withShard((_shard, state) =>
+      state.storage.sql.exec("update slack_messages set at = 1"),
+    );
+    const incident = (await incidents(t))[0]!;
+    await t.run("incident.setSeverity", { id: incident.id, severity: "sev2" }, owner(t));
+    await deliver(await eventsOf(t, "incident.severity_changed"), slack.send);
+    expect(slack.calls.filter((call) => call.method === "chat.update")).toHaveLength(1);
+    expect(await messageAt()).toBeGreaterThan(Date.now() - 60_000);
+    // Resolved and unused past retention: the next prune drops it.
+    await t.run("incident.setStatus", { id: incident.id, status: "resolved" }, owner(t));
+    await t.withShard((_shard, state) =>
+      state.storage.sql.exec("update slack_messages set at = 1"),
+    );
+    await deliver([event], slack.send);
+    expect(await messageAt()).toBeUndefined();
+  });
+
   test("two events of one incident in a batch post once; the second waits for it and updates", async () => {
     const t = await team();
     const teamId = await connect(t);
@@ -889,6 +950,42 @@ describe("the incident message", () => {
     });
     await deliver([event2], throwing.send);
     expect(throwing.pushes).toEqual(["b".repeat(64)]);
+  });
+
+  test("a page that needs a retry still waits for Slack's work, and keeps its own retry", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await phone(t, "d".repeat(64));
+    // Caio declares, so Ana's phone is paged.
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.caio.email),
+        action: { kind: "declare", title: "Checkout down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
+    const event = (await eventsOf(t, "incident.declared"))[0]!;
+    const slack = slackApi({
+      // Slower than push, so the page's answer comes first.
+      "chat.postMessage": async () => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return Response.json({ ok: true, ts: "1790000000.000009" });
+      },
+    });
+    const relayDown: Fetch = (request) =>
+      request.url.startsWith("https://relay.test/")
+        ? Promise.resolve(Response.json({ error: "apns_unreachable" }, { status: 502 }))
+        : slack.send(request);
+    const result = await deliver([event], relayDown);
+    expect(result.retryMessages).toEqual([{ msgId: "msg-0", delaySeconds: expect.any(Number) }]);
+    // Slack's post was recorded before the message was settled.
+    const message = await t.withShard((_shard, state) =>
+      state.storage.sql.exec<{ ts: string | null }>("select ts from slack_messages").toArray(),
+    );
+    expect(message).toEqual([{ ts: "1790000000.000009" }]);
   });
 
   test("Slack's own retries stop where the Queue's do: the last delivery is acked, never dead-lettered", async () => {

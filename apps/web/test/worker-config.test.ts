@@ -166,17 +166,22 @@ describe("apps/api wrangler.jsonc: the dev sync actor and auth", () => {
 
 describe("wrangler.jsonc environments", () => {
   // Service bindings are not inherited by environments, so each one must name its own API Worker. No SLACK binding is
-  // committed: it names a Worker that must exist first, so it is added with the Slack Worker's first deploy (RFC 0011).
+  // committed: it names a Worker that must exist first, so it is added with the Slack Worker's first deploy (RFC 0011),
+  // and then it must name that environment's Slack Worker.
   test.each([
-    ["top level (production)", rawConfig.services],
-    ["dev", rawConfig.env?.dev?.services],
-    ["staging", rawConfig.env?.staging?.services],
-  ])("%s binds API to its own Worker", (name, services) => {
-    const expected = {
-      "top level (production)": [{ binding: "API", service: "brigade-api" }],
-      dev: [{ binding: "API", service: "brigade-api-dev" }],
-      staging: [{ binding: "API", service: "brigade-api-staging" }],
-    }[name];
-    expect(services).toEqual(expected);
+    ["top level (production)", rawConfig.services, ""],
+    ["dev", rawConfig.env?.dev?.services, "-dev"],
+    ["staging", rawConfig.env?.staging?.services, "-staging"],
+  ])("%s binds API (and SLACK, once added) to its own Worker", (_name, services, suffix) => {
+    const bindings = (services ?? []) as { binding: string; service: string }[];
+    expect(bindings.filter((s) => s.binding === "API")).toEqual([
+      { binding: "API", service: `brigade-api${suffix}` },
+    ]);
+    for (const slack of bindings.filter((s) => s.binding === "SLACK")) {
+      // Production's Slack Worker is not named yet (RFC 0011): any `brigade-slack-*` will do there.
+      if (suffix) expect(slack.service).toBe(`brigade-slack${suffix}`);
+      else expect(slack.service).toMatch(/^brigade-slack(-[a-z0-9-]+)?$/);
+    }
+    expect(bindings.every((s) => s.binding === "API" || s.binding === "SLACK")).toBe(true);
   });
 });

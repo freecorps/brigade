@@ -140,6 +140,28 @@ describe("deliverIncidentMessage", () => {
     });
   });
 
+  test("429 without a usable Retry-After: no hint, so the caller's backoff applies", async () => {
+    const cases: Record<string, string>[] = [{}, { "Retry-After": "" }, { "Retry-After": "soon" }];
+    for (const headers of cases) {
+      const slack = fakeSlack({
+        methods: { "chat.postMessage": () => new Response("", { status: 429, headers }) },
+      });
+      const outcome = await deliverIncidentMessage({
+        token: BOT_TOKEN,
+        channel: "C0CHAN0001",
+        ts: null,
+        message,
+        fetch: slack.fetch,
+      });
+      expect(outcome).toEqual({
+        ok: false,
+        error: "ratelimited",
+        retryable: true,
+        reason: "rate_limited",
+      });
+    }
+  });
+
   test("5xx and network failures may pass; a missing channel or a revoked token will not", async () => {
     const cases: [() => Response | Promise<Response>, Record<string, unknown>][] = [
       [() => new Response("", { status: 503 }), { retryable: true, reason: "undelivered" }],

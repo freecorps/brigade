@@ -122,8 +122,10 @@ export async function consumeEvents(
             : (await notifyPush(event, message.attempts, env, send))
               ? retryDelay(message.attempts)
               : undefined;
-        // A page's own retry comes first (it is the sooner and the one that matters); Slack's otherwise.
-        const next = delaySeconds ?? (await slack);
+        // Slack's work always finishes (within its budget) before the message is settled. A page's own retry comes
+        // first: never put off behind Slack's backoff, and an early Slack retry only finds its event held again.
+        const slackSeconds = await slack;
+        const next = delaySeconds ?? slackSeconds;
         if (next !== undefined) message.retry({ delaySeconds: next });
         else message.ack();
       } catch (error) {

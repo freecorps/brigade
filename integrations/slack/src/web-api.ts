@@ -68,7 +68,9 @@ export async function callSlack(
   }
   if (response.status === 429) {
     await response.body?.cancel();
-    const seconds = Number(response.headers.get("Retry-After"));
+    // Absent or empty: no hint, so the caller's own backoff applies (`Number("")` would be 0).
+    const header = response.headers.get("Retry-After")?.trim();
+    const seconds = header ? Number(header) : NaN;
     return {
       ok: false,
       error: "ratelimited",

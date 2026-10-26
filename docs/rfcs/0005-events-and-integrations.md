@@ -248,7 +248,7 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   from one inviter and 5 per invitation ever, so many workspaces cannot add up to flood one inbox. The verification
   email goes only to one's own address and never carries the name typed at sign-up: at most 3 per user in 15
   minutes and 5 a day. The password reset email goes to an address that has an account (the same answer either
-  way) and carries no name: at most 3 per address an hour and 5 a day, counted for any address, and 3 per IP a
+  way) and carries no name: at most 3 per address and IP an hour and 10 per address a day, counted for any address, and 3 per IP a
   minute. An address someone else signed up with and never verified stays taken until its owner resets the
   password, which takes the account back (RFC 0002 "Auth"). Whether these caps are right in production is Q21's.
 - **Push first.** Email only acts on failures push already recorded, so it can never delay or stop a page. The

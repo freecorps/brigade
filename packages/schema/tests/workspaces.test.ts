@@ -51,6 +51,8 @@ describe("workspace.create", () => {
       "escalation.advance",
       "escalation.fallback",
       "escalation.repage",
+      "slack.connect",
+      "notification.failSlack",
     ]);
     const result = runMutation(
       mutations,

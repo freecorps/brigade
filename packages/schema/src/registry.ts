@@ -36,6 +36,7 @@ import {
   repageEscalation,
   startEscalation,
 } from "./escalation.ts";
+import { configureSlack, connectSlack, disconnectSlack, failSlack, slackConnection } from "./slack.ts";
 import { incidentTimeline } from "./timeline.ts";
 import { invitationMutations } from "./invitations.ts";
 import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";
@@ -55,6 +56,8 @@ export const mutations = defineRegistry([
   registerDevice,
   unregisterDevice,
   setEmailSettings,
+  configureSlack,
+  disconnectSlack,
 ]);
 
 export const queries = defineRegistry([
@@ -69,6 +72,7 @@ export const queries = defineRegistry([
   allPolicies,
   incidentDeliveries,
   allDevices,
+  slackConnection,
 ]);
 
 /**
@@ -88,6 +92,8 @@ export const serverMutations = defineRegistry([
   registerDevice,
   unregisterDevice,
   setEmailSettings,
+  configureSlack,
+  disconnectSlack,
   createWorkspace,
   syncMember,
   changeMemberRole,
@@ -108,4 +114,6 @@ export const serverMutations = defineRegistry([
   advanceEscalation,
   fallbackEscalation,
   repageEscalation,
+  connectSlack,
+  failSlack,
 ]);

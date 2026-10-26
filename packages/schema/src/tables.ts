@@ -5,6 +5,7 @@ import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
 import type { EmailAbout, EmailFailure, PageFailure } from "./notifications.ts";
 import type { EscalationTargetKind } from "./policies.ts";
 import type { RotationUnit } from "./schedules.ts";
+import type { SlackFailure, SlackLocale } from "./slack.ts";
 import type {
   AlertStatus,
   CheckSource,
@@ -192,7 +193,9 @@ export type TimelineEntry =
    * The email notifier could not email `userId` (`notification.failEmail`, RFC 0005 "Email"): `about` says which
    * email, the one telling a member their page did not reach them or the one telling an owner nobody was paged.
    */
-  | { kind: "email_failed"; userId: string; reason: EmailFailure; about: EmailAbout };
+  | { kind: "email_failed"; userId: string; reason: EmailFailure; about: EmailAbout }
+  /** The Slack notifier gave up on the incident's channel message (`notification.failSlack`, RFC 0011). */
+  | { kind: "slack_failed"; reason: SlackFailure };
 
 /**
  * One entry of an incident's timeline: append-only, written by the mutation that made the change, in its
@@ -423,6 +426,33 @@ export type OverrideRow = {
   createdBy: string;
 };
 
+/**
+ * The workspace's Slack connection as every member sees it (RFC 0011): one row (`SLACK_ROW_ID`), written by
+ * `slack.connect`, `slack.configure` and `slack.disconnect`. Never the token.
+ */
+export type SlackRow = {
+  id: string;
+  /** The Slack team (`T…`) and its name when it was connected. */
+  teamId: string;
+  teamName: string;
+  /** Where incidents are posted (`C…` or `G…`); null: nowhere yet. */
+  channelId: string | null;
+  /** The language channel messages are written in. */
+  locale: SlackLocale;
+  connectedAt: number;
+  connectedBy: string;
+  updatedAt: number;
+};
+
+/** The Slack bot token, sealed by the API (`v1.<iv>.<ciphertext>`); server-only, never synced or in an event. */
+export type SlackTokenRow = {
+  id: string;
+  teamId: string;
+  botUserId: string;
+  token: string;
+  scopes: string[];
+};
+
 /** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only. */
 export type CounterRow = { id: string; value: number };
 
@@ -442,6 +472,8 @@ export type BrigadeTables = {
   overrides: OverrideRow;
   escalation_policies: EscalationPolicyRow;
   escalation_timers: EscalationTimerRow;
+  slack: SlackRow;
+  slack_tokens: SlackTokenRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -463,6 +495,8 @@ export const TABLES = {
   overrides: { serverOnly: false },
   escalation_policies: { serverOnly: false },
   escalation_timers: { serverOnly: true },
+  slack: { serverOnly: false },
+  slack_tokens: { serverOnly: true },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

@@ -20,4 +20,5 @@ export * from "./escalation.ts";
 export * from "./devices.ts";
 export * from "./deliveries.ts";
 export * from "./notifications.ts";
+export * from "./slack.ts";
 export * from "./registry.ts";

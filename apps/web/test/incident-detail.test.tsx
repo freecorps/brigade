@@ -698,8 +698,8 @@ describe("who was paged, and why not", () => {
       (time) => time.getAttribute("datetime") === new Date(T0).toISOString(),
     );
     expect(planned).toBeTruthy();
-    expect(text).toContain("Apple said this phone's token is no longer valid");
-    expect(text).toContain("Apple said: BadDeviceToken");
+    expect(text).toContain("Apple or Google said this phone's token is no longer valid");
+    expect(text).toContain("Apple or Google said: BadDeviceToken");
     expect(text).toContain("Attempts: 3");
     expect(text).toContain("Everyone in this workspace sees each member's phones");
     const back = $$("a").find((a) => a.textContent?.startsWith("Back to INC-1"));
@@ -754,7 +754,7 @@ describe("who was paged, and why not", () => {
     expect(text).toContain(`The page reached ${LONG_NAME}'s phone`);
     expect(text).toContain("Call · iPhone · App Store build");
     expect(text).toContain("Brigade stopped calling it. Pages still reach it as notifications.");
-    expect(text).toContain("Apple said: BadDeviceToken");
+    expect(text).toContain("Apple or Google said: BadDeviceToken");
     expect(text).toContain(`${LONG_NAME}'s iPhones ring as a call for SEV1 pages only`);
     // A call has no "opened on the phone" stage.
     expect(text.match(/Opened on the phone/g)).toHaveLength(1);

@@ -59,7 +59,10 @@ const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
   android: {
     package: APP_ID,
     // The same chevrons inside the adaptive icon's safe zone, over the brand hue.
-    adaptiveIcon: { foregroundImage: "./assets/adaptive-icon.png", backgroundColor: themes.light.primary },
+    adaptiveIcon: {
+      foregroundImage: "./assets/adaptive-icon.png",
+      backgroundColor: themes.light.primary,
+    },
     predictiveBackGestureEnabled: false,
   },
   web: {

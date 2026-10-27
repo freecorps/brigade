@@ -14,6 +14,9 @@ import {
   runQuery,
   serverMutations,
   STATUS_PAGE_ID,
+  statusAudience,
+  statusFollowKey,
+  STATUS_FOLLOW_KEY,
   statusSnapshot,
   TABLES,
   type BrigadeTables,
@@ -711,6 +714,42 @@ describe("statusSnapshot", () => {
     expect(runQuery(queries, "statusComponents.all", {}, store, "viewer")).toMatchObject({
       ok: true,
       rows: [{ name: "API" }, { name: "Website" }],
+    });
+  });
+});
+
+describe("following components", () => {
+  test("a key is stable, typed and not the id; 50 components and their groups never collide", () => {
+    const id = "cmp_01JZ000000000000000000000A";
+    expect(statusFollowKey("c", id)).toBe(statusFollowKey("c", id));
+    expect(statusFollowKey("c", id)).toMatch(STATUS_FOLLOW_KEY);
+    expect(statusFollowKey("c", id)).not.toContain(id);
+    expect(statusFollowKey("g", "Core")).toMatch(/^g-/);
+    const keys = new Set<string>();
+    for (let index = 0; index < 50; index++) {
+      keys.add(
+        statusFollowKey("c", `cmp_01JZ0000000000000000000${index.toString().padStart(2, "0")}`),
+      );
+      keys.add(statusFollowKey("g", `Group ${index}`));
+    }
+    expect(keys.size).toBe(100);
+  });
+
+  test("the audience: each touched component and its group; none touched is everyone", () => {
+    const components = [
+      { id: "cmp_a", group: "Core" },
+      { id: "cmp_b", group: null },
+    ];
+    expect(statusAudience(components, [])).toBeNull();
+    // A component that is gone counts as none.
+    expect(statusAudience(components, ["cmp_gone"])).toBeNull();
+    expect(statusAudience(components, ["cmp_a"])).toEqual({
+      affected: [statusFollowKey("c", "cmp_a"), statusFollowKey("g", "Core")],
+      known: [
+        statusFollowKey("c", "cmp_a"),
+        statusFollowKey("g", "Core"),
+        statusFollowKey("c", "cmp_b"),
+      ],
     });
   });
 });

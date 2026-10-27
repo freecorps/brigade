@@ -2892,7 +2892,7 @@
   ],
   "status_subscribe": [
     {
-      "declarations": ["input part", "input email", "input page"],
+      "declarations": ["input part", "input email", "input page", "input list"],
       "selectors": ["part"],
       "match": {
         "part=form_title": "Receba atualizações por email",
@@ -2919,6 +2919,18 @@
         "part=unsubscribed_title": "Inscrição cancelada",
         "part=unsubscribed_body": "Você não vai receber mais emails de {page}.",
         "part=back": "Voltar para a página de status",
+        "part=follow_toggle": "Só alguns componentes (opcional)",
+        "part=follow_hint": "Marque o que interessa a você. Não marque nada para saber de tudo. Incidentes e manutenções que não citam nenhum componente chegam a todos os inscritos.",
+        "part=follow_group": "O grupo inteiro, inclusive componentes adicionados depois",
+        "part=follow_ungrouped": "Componentes",
+        "part=manage_all": "Você fica sabendo de todos os incidentes e manutenções.",
+        "part=manage_some": "Você fica sabendo de incidentes e manutenções em {list}, e de tudo que não cita nenhum componente.",
+        "part=manage_gone": "Os componentes que você acompanhava não estão mais na página, então você fica sabendo de tudo.",
+        "part=manage_choose": "O que você acompanha",
+        "part=manage_cant_choose": "Para mudar o que você acompanha, abra este link de novo quando a página de status voltar a este endereço.",
+        "part=follow_save": "Salvar",
+        "part=follow_all_button": "Acompanhar tudo",
+        "part=saved": "Salvo.",
         "part=*": "Atualizações por email"
       }
     }
@@ -2964,7 +2976,13 @@
   ],
   "status_subscribers": [
     {
-      "declarations": ["input part", "input confirmed", "input pending", "input email"],
+      "declarations": [
+        "input part",
+        "input confirmed",
+        "input pending",
+        "input email",
+        "input name"
+      ],
       "selectors": ["part"],
       "match": {
         "part=title": "Inscritos por email",
@@ -2980,6 +2998,10 @@
         "part=removed": "{email} foi removido.",
         "part=not_found": "Nenhum inscrito tem esse endereço.",
         "part=remove_failed": "Não foi possível remover. Tente de novo.",
+        "part=following_title": "O que acompanham",
+        "part=following_hint": "Inscritos confirmados pelo que escolheram. Quem acompanha tudo também fica sabendo de todos os componentes.",
+        "part=following_everything": "Tudo",
+        "part=following_group": "Todo o grupo {name}",
         "part=*": "Inscritos"
       }
     }

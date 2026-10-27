@@ -386,9 +386,16 @@ Validate the risky assumptions before writing product code. Each spike produces 
     cached page the same for everyone); Atom and JSON feeds (`/status/<slug>/feed.atom`, `feed.json`) from the same
     KV snapshot and caches, linked from the page; services linked to components (`statusComponent.linkServices`),
     ticking those components on an incident's first publish, as a suggestion only.
-  - Left: staging's and production's KV namespaces (`dev` binds `brigade-status-dev`), applying migrations 0008 and
-    0009 to staging's and production's databases (owner's call, apps/api README "Status page"); custom domains;
-    per-component subscriptions; the mobile app's publish and maintenance actions; Q23.
+  - Done (slice 4): per-component subscriptions ("Following components"): the subscribe form's components and groups
+    as plain checkboxes (nothing ticked is everything, as every earlier subscriber stays), followed by keys that are
+    not ids, stored with the subscriber in D1 (migration 0013); the manage link changes the choice or goes back to
+    everything (`statusSubscriber.follow`), unsubscribing still one click; incidents and maintenance go only to
+    those following one of their components or groups, or everything, and to everyone when they name none; a
+    subscriber whose components are all gone hears of everything; per-component counts on the dashboard and a
+    `follows` column in the CSV.
+  - Left: staging's and production's KV namespaces (`dev` binds `brigade-status-dev`), applying migrations 0008 to 0010 and
+    0013 to staging's and production's databases, and 0013 to `dev`'s (owner's call, apps/api README "Status page"); custom domains;
+    the mobile app's publish and maintenance actions; Q23.
 - [ ] Outbound webhooks; OpenAPI reference; `packages/sdk` published
   - Done: outbound webhooks (RFC 0005 "Outbound webhooks"): owners and admins register up to 20 endpoints per
     workspace on the dashboard's Webhooks card (URL, description, event filter from the public catalog, on and off),

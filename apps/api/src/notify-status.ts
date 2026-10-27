@@ -124,13 +124,32 @@ async function run(
   const notify = plan.notify!;
   let subscribers: Subscriber[];
   try {
+    // Only those it is for (`notify.audience`); the cursor still walks every confirmed subscriber in id order.
+    const { audience } = notify;
     const rows = await withTimeout(
-      env.DB?.prepare(
-        `select id, email, origin from status_subscriber
-         where workspace_id = ? and status = 'confirmed' and id > ? order by id limit ?`,
-      )
-        .bind(event.workspaceId, notify.cursor, notify.limit + 1)
-        .all<Subscriber>(),
+      !audience
+        ? env.DB?.prepare(
+            `select id, email, origin from status_subscriber
+             where workspace_id = ? and status = 'confirmed' and id > ? order by id limit ?`,
+          )
+            .bind(event.workspaceId, notify.cursor, notify.limit + 1)
+            .all<Subscriber>()
+        : env.DB?.prepare(
+            `select id, email, origin from status_subscriber
+             where workspace_id = ? and status = 'confirmed' and id > ?
+               and (follows is null
+                 or exists (select 1 from json_each(follows) where value in (select value from json_each(?)))
+                 or not exists (select 1 from json_each(follows) where value in (select value from json_each(?))))
+             order by id limit ?`,
+          )
+            .bind(
+              event.workspaceId,
+              notify.cursor,
+              JSON.stringify(audience.affected),
+              JSON.stringify(audience.known),
+              notify.limit + 1,
+            )
+            .all<Subscriber>(),
     );
     subscribers = rows?.results ?? [];
   } catch (error) {

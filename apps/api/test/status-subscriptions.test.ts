@@ -16,6 +16,7 @@ import { generateRecipient, toBase64url } from "@freecorps/brigade-push";
 import {
   newId,
   STATUS_SNAPSHOT_VERSION,
+  statusFollowKey,
   type Actor,
   type StatusSnapshot,
 } from "@freecorps/brigade-schema";
@@ -167,7 +168,9 @@ async function team(locale = "en") {
 
 type Team = Awaited<ReturnType<typeof team>>;
 
-const subscribeRequest = (address: string, form: Record<string, string>, ip = clientIp()) =>
+type Form = Record<string, string> | [string, string][];
+
+const subscribeRequest = (address: string, form: Form, ip = clientIp()) =>
   new Request(`${ORIGIN}/status/${address}/subscribe`, {
     method: "POST",
     headers: {
@@ -179,7 +182,7 @@ const subscribeRequest = (address: string, form: Record<string, string>, ip = cl
   }) as Parameters<typeof worker.fetch>[0];
 
 /** Subscribes through the Worker, and waits for the work it does after answering (`waitUntil`). */
-async function subscribe(address: string, form: Record<string, string>, ip = clientIp()) {
+async function subscribe(address: string, form: Form, ip = clientIp()) {
   const ctx = createExecutionContext();
   const response = await worker.fetch(subscribeRequest(address, form, ip), env, ctx);
   await waitOnExecutionContext(ctx);
@@ -230,8 +233,12 @@ async function deliver(events: BrigadeEvent[], mail: EmailSender) {
 }
 
 /** Subscribes `email` and follows the confirmation email's link. */
-async function confirmed(t: Team, email: string) {
-  expect((await subscribe(t.address, { email })).status).toBe(200);
+async function confirmed(t: Team, email: string, follows: string[] = []) {
+  const form: [string, string][] = [
+    ["email", email],
+    ...follows.map((key): [string, string] => ["follow", key]),
+  ];
+  expect((await subscribe(t.address, form)).status).toBe(200);
   const [requested] = (await t.events("status_subscriber.requested")).slice(-1);
   const { sent, sender } = recorder();
   await deliver([requested!], sender);
@@ -244,6 +251,7 @@ async function publish(
   t: Team,
   status = "investigating",
   incident = newId("inc", Date.now(), random),
+  componentIds: string[] = [],
 ) {
   if (status === "investigating") {
     await t.run(
@@ -260,7 +268,7 @@ async function publish(
         title: "Slow <API> responses",
         status,
         impact: "partial_outage",
-        componentIds: [],
+        componentIds,
         body: "We're looking into it.\nMore soon.",
       },
       t.responder,
@@ -520,12 +528,19 @@ describe("owners and admins", () => {
         ...init,
         headers: { Cookie: person.cookie },
       });
-    expect(await (await as(t.ana)).json()).toEqual({ confirmed: 1, pending: 1 });
+    expect(await (await as(t.ana)).json()).toEqual({
+      confirmed: 1,
+      pending: 1,
+      everything: 1,
+      follows: {},
+    });
     expect((await as(t.caio)).status).toBe(403);
     expect((await as(t.caio, "/export")).status).toBe(403);
     const csv = await (await as(t.ana, "/export")).text();
-    expect(csv.split("\r\n")[0]).toBe("email,status,subscribed_at,confirmed_at");
-    expect(csv).toContain(`"${email}",confirmed,`);
+    expect(csv.split("\r\n")[0]).toBe("email,status,subscribed_at,confirmed_at,follows");
+    expect(csv).toMatch(
+      new RegExp(`"${email.replace(/\./g, "\\.")}",confirmed,[^\r]+,"everything"\r\n`),
+    );
     expect(
       (
         await as(t.ana, "", {
@@ -1104,6 +1119,228 @@ describe("maintenance", () => {
       "Acme <Cloud> maintenance started: Database upgrade",
       "Acme <Cloud> scheduled maintenance: Database upgrade",
     ]);
+  });
+});
+
+describe("following components", () => {
+  /** A page with Core (API, Web), Money (Billing) and an ungrouped Docs, pushed so the form offers them. */
+  async function components(t: Team) {
+    const id = () => newId("cmp", Date.now(), random);
+    const made = { api: id(), web: id(), billing: id(), docs: id() };
+    for (const [name, componentId, group] of [
+      ["API", made.api, "Core"],
+      ["Web", made.web, "Core"],
+      ["Billing", made.billing, "Money"],
+      ["Docs", made.docs, null],
+    ] as const) {
+      expect(
+        await t.run("statusComponent.create", { id: componentId, name, group }, t.owner),
+      ).toMatchObject({ ok: true });
+    }
+    await t.push();
+    return made;
+  }
+
+  const recipients = async (t: Team, componentIds: string[]) => {
+    await publish(t, "investigating", undefined, componentIds);
+    const [published] = (await t.events("incident.update_published")).slice(-1);
+    const { sent, sender } = recorder();
+    await deliver([published!], sender);
+    return sent.map((one) => one.to.email).sort();
+  };
+
+  const follows = (workspaceId: string) =>
+    env.DB.prepare(
+      "select email, follows from status_subscriber where workspace_id = ? order by email",
+    )
+      .bind(workspaceId)
+      .all<{ email: string; follows: string | null }>()
+      .then((result) => Object.fromEntries(result.results.map((row) => [row.email, row.follows])));
+
+  test("the form offers each component and group as a checkbox, by a key that is not its id", async () => {
+    const t = await team();
+    const made = await components(t);
+    const html = await (await exports.default.fetch(`${ORIGIN}/status/${t.address}`)).text();
+    for (const id of Object.values(made)) {
+      expect(html).toContain(`value="${statusFollowKey("c", id)}"`);
+      expect(html).not.toContain(id);
+    }
+    expect(html).toContain(`value="${statusFollowKey("g", "Core")}"`);
+    expect(html).toContain("The whole group, including components added later");
+    expect(html).toMatch(/<details class="follow"><summary>/);
+  });
+
+  test("only incidents on a followed component or group, or on none, reach those who chose", async () => {
+    const t = await team();
+    const made = await components(t);
+    const [all, api, core, docs] = [visitor(), visitor(), visitor(), visitor()];
+    await confirmed(t, all);
+    await confirmed(t, api, [statusFollowKey("c", made.api)]);
+    await confirmed(t, core, [statusFollowKey("g", "Core")]);
+    await confirmed(t, docs, [statusFollowKey("c", made.docs), "c-0000000000000000", "nonsense"]);
+    // A forged or unknown key is never stored; nothing ticked is everything.
+    expect(await follows(t.id)).toEqual({
+      [all]: null,
+      [api]: JSON.stringify([statusFollowKey("c", made.api)]),
+      [core]: JSON.stringify([statusFollowKey("g", "Core")]),
+      [docs]: JSON.stringify([statusFollowKey("c", made.docs)]),
+    });
+    expect(await recipients(t, [made.web])).toEqual([all, core].sort());
+    expect(await recipients(t, [made.api, made.docs])).toEqual([all, api, core, docs].sort());
+    expect(await recipients(t, [made.billing])).toEqual([all]);
+    // Nothing named: everyone.
+    expect(await recipients(t, [])).toEqual([all, api, core, docs].sort());
+  });
+
+  test("a subscriber whose components are all deleted hears of everything again", async () => {
+    const t = await team();
+    const made = await components(t);
+    const [api, core] = [visitor(), visitor()];
+    await confirmed(t, api, [statusFollowKey("c", made.api)]);
+    await confirmed(t, core, [statusFollowKey("g", "Core")]);
+    expect(await recipients(t, [made.billing])).toEqual([]);
+    expect(await t.run("statusComponent.delete", { id: made.api }, t.owner)).toMatchObject({
+      ok: true,
+    });
+    // `core` still has Web in Core; `api` follows nothing on the page any more.
+    expect(await recipients(t, [made.billing])).toEqual([api]);
+    expect(await recipients(t, [made.web])).toEqual([api, core].sort());
+  });
+
+  test("maintenance follows the same rule", async () => {
+    const t = await team();
+    const made = await components(t);
+    const [all, docs] = [visitor(), visitor()];
+    await confirmed(t, all);
+    await confirmed(t, docs, [statusFollowKey("c", made.docs)]);
+    const now = Date.now();
+    expect(
+      await t.run(
+        "maintenance.schedule",
+        {
+          id: newId("mnt", now, random),
+          title: "Billing upgrade",
+          body: "Invoices wait a minute.",
+          componentIds: [made.billing],
+          startsAt: now + 3_600_000,
+          endsAt: now + 7_200_000,
+        },
+        t.responder,
+      ),
+    ).toMatchObject({ ok: true });
+    const [scheduled] = await t.events("maintenance.scheduled");
+    const { sent, sender } = recorder();
+    await deliver([scheduled!], sender);
+    expect(sent.map((one) => one.to.email)).toEqual([all]);
+  });
+
+  test("the manage link changes what a subscriber follows, or goes back to everything", async () => {
+    const t = await team();
+    const made = await components(t);
+    const email = visitor();
+    await confirmed(t, email);
+    await publish(t);
+    const [published] = await t.events("incident.update_published");
+    const { sent, sender } = recorder();
+    await deliver([published!], sender);
+    const manage = new URL(/https:\/\/brigade\.test\/\S+\/manage\?t=\S+/.exec(sent[0]!.text)![0]);
+    const path = `${ORIGIN}${manage.pathname}${manage.search}`;
+    const shown = await (await exports.default.fetch(path)).text();
+    expect(shown).toContain("You hear about every incident and maintenance.");
+    expect(shown).toContain(`value="${statusFollowKey("c", made.web)}"`);
+    expect(shown).not.toContain(" checked");
+    const post = (form: [string, string][]) =>
+      exports.default.fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams(form).toString(),
+      });
+    const saved = await post([
+      ["follow", statusFollowKey("c", made.web)],
+      ["follow", statusFollowKey("g", "Money")],
+      ["scope", "some"],
+    ]);
+    expect(saved.status).toBe(200);
+    const html = await saved.text();
+    expect(html).toContain("Saved.");
+    expect(html).toContain("You hear about incidents and maintenance on Web and Money");
+    expect(html).toContain(`value="${statusFollowKey("c", made.web)}" checked`);
+    expect(await follows(t.id)).toEqual({
+      [email]: JSON.stringify([statusFollowKey("c", made.web), statusFollowKey("g", "Money")]),
+    });
+    expect(await recipients(t, [made.docs])).toEqual([]);
+    expect(await recipients(t, [made.billing])).toEqual([email]);
+    // Follow everything again.
+    await post([
+      ["follow", statusFollowKey("c", made.web)],
+      ["scope", "all"],
+    ]);
+    expect(await follows(t.id)).toEqual({ [email]: null });
+    expect(await t.events("status_subscriber.followed")).toMatchObject([
+      { data: { follows: 2 } },
+      { data: { follows: 0 } },
+    ]);
+    // The address never reaches the shard's events.
+    expect(JSON.stringify(await t.events("status_subscriber.followed"))).not.toContain(email);
+  });
+
+  test("the public form never changes a confirmed subscriber's choice; a pending one's goes with its new link", async () => {
+    const t = await team();
+    const made = await components(t);
+    const [done, waiting] = [visitor(), visitor()];
+    await confirmed(t, done, [statusFollowKey("c", made.api)]);
+    await subscribe(t.address, { email: waiting });
+    const again = (email: string) =>
+      subscribe(t.address, [
+        ["email", email],
+        ["follow", statusFollowKey("c", made.docs)],
+      ]);
+    const first = await (await again(done)).text();
+    expect(await (await again(waiting)).text()).toBe(first.replace(done, waiting));
+    expect(await follows(t.id)).toEqual({
+      [done]: JSON.stringify([statusFollowKey("c", made.api)]),
+      [waiting]: JSON.stringify([statusFollowKey("c", made.docs)]),
+    });
+  });
+
+  test("owners and admins see who follows what; the CSV says it by name", async () => {
+    const t = await team();
+    const made = await components(t);
+    const [all, core] = [visitor(), visitor()];
+    await confirmed(t, all);
+    await confirmed(t, core, [statusFollowKey("g", "Core"), statusFollowKey("c", made.docs)]);
+    const as = (path = "") =>
+      api(`/workspaces/${t.id}/status-page/subscribers${path}`, {
+        headers: { Cookie: t.ana.cookie },
+      });
+    expect(await (await as()).json()).toEqual({
+      confirmed: 2,
+      pending: 0,
+      everything: 1,
+      follows: { [statusFollowKey("g", "Core")]: 1, [statusFollowKey("c", made.docs)]: 1 },
+    });
+    const csv = await (await as("/export")).text();
+    expect(csv).toContain(`,"everything"\r\n`);
+    expect(csv).toContain(`,"group: Core; Docs"\r\n`);
+  });
+
+  test("a full page's choice fits in the form", async () => {
+    const t = await team();
+    const keys: string[] = [];
+    for (let index = 0; index < 50; index++) {
+      const id = newId("cmp", Date.now(), random);
+      const group = `Região de disponibilidade ${index % 25} com um nome bem comprido`;
+      await t.run("statusComponent.create", { id, name: `Componente ${index}`, group }, t.owner);
+      keys.push(statusFollowKey("c", id), statusFollowKey("g", group));
+    }
+    await t.push();
+    const email = visitor();
+    const response = await subscribe(t.address, [
+      ["email", email],
+      ...keys.map((key): [string, string] => ["follow", key]),
+    ]);
+    expect(response.status).toBe(200);
+    expect(JSON.parse((await follows(t.id))[email]!)).toHaveLength(75);
   });
 });
 

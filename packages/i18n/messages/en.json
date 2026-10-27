@@ -2892,7 +2892,7 @@
   ],
   "status_subscribe": [
     {
-      "declarations": ["input part", "input email", "input page"],
+      "declarations": ["input part", "input email", "input page", "input list"],
       "selectors": ["part"],
       "match": {
         "part=form_title": "Get email updates",
@@ -2919,6 +2919,18 @@
         "part=unsubscribed_title": "You're unsubscribed",
         "part=unsubscribed_body": "You won't get any more emails from {page}.",
         "part=back": "Back to the status page",
+        "part=follow_toggle": "Only some components (optional)",
+        "part=follow_hint": "Tick what you care about. Tick nothing to hear about everything. Incidents and maintenance that name no component reach every subscriber.",
+        "part=follow_group": "The whole group, including components added later",
+        "part=follow_ungrouped": "Components",
+        "part=manage_all": "You hear about every incident and maintenance.",
+        "part=manage_some": "You hear about incidents and maintenance on {list}, and about anything that names no component.",
+        "part=manage_gone": "The components you followed are no longer on the page, so you hear about everything.",
+        "part=manage_choose": "What you follow",
+        "part=manage_cant_choose": "To change what you follow, open this link again once the status page is back at this address.",
+        "part=follow_save": "Save",
+        "part=follow_all_button": "Follow everything",
+        "part=saved": "Saved.",
         "part=*": "Email updates"
       }
     }
@@ -2964,7 +2976,13 @@
   ],
   "status_subscribers": [
     {
-      "declarations": ["input part", "input confirmed", "input pending", "input email"],
+      "declarations": [
+        "input part",
+        "input confirmed",
+        "input pending",
+        "input email",
+        "input name"
+      ],
       "selectors": ["part"],
       "match": {
         "part=title": "Email subscribers",
@@ -2980,6 +2998,10 @@
         "part=removed": "Removed {email}.",
         "part=not_found": "No subscriber has that address.",
         "part=remove_failed": "Couldn't remove. Try again.",
+        "part=following_title": "What they follow",
+        "part=following_hint": "Confirmed subscribers by what they chose. Those following everything hear about every component too.",
+        "part=following_everything": "Everything",
+        "part=following_group": "All of {name}",
         "part=*": "Subscribers"
       }
     }

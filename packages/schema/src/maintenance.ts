@@ -292,6 +292,11 @@ export type StatusSubscriberRemoved = DomainEvent<
   "status_subscriber.removed",
   { subscriberId: string; reason: (typeof SUBSCRIBER_REMOVALS)[number] }
 >;
+/** A subscriber changed what they follow from their manage link: `follows` keys, 0 for everything. */
+export type StatusSubscriberFollowed = DomainEvent<
+  "status_subscriber.followed",
+  { subscriberId: string; follows: number }
+>;
 /** More subscribers are left to email about `eventId` (a batch ran out of budget): the notifier picks it up again. */
 export type StatusEmailContinue = DomainEvent<"status_email.continue", { eventId: string }>;
 
@@ -349,6 +354,24 @@ export const removeStatusSubscription = defineMutation({
   },
 });
 
+/**
+ * A subscriber chose the components and groups they follow (`follows`: how many keys, 0 for everything), from the
+ * manage link; the keys themselves stay in D1 with the subscriber.
+ */
+export const followStatusComponents = defineMutation({
+  name: "statusSubscriber.follow",
+  args: v.object({ subscriberId, follows: v.integer({ min: 0, max: 200 }) }),
+  permission: "status:read",
+  apply(_store, args) {
+    const event: StatusSubscriberFollowed = {
+      type: "status_subscriber.followed",
+      subject: args.subscriberId,
+      data: args,
+    };
+    return ok(event);
+  },
+});
+
 /** Server only: brings an unfinished subscriber email back to the queue (src/status-email.ts in the API). */
 export const continueStatusEmail = defineMutation({
   name: "statusEmail.continue",
@@ -365,5 +388,6 @@ export const maintenanceServerMutations = [
   requestStatusSubscription,
   confirmStatusSubscription,
   removeStatusSubscription,
+  followStatusComponents,
   continueStatusEmail,
 ] as const;

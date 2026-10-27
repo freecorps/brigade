@@ -33,8 +33,22 @@ const say = (locale: Locale, part: string, args: { time?: string; list?: string 
 const sayWindow = (locale: Locale, part: string, args: { time?: string; until?: string } = {}) =>
   escape(status_maintenance({ part, time: args.time ?? "", until: args.until ?? "" }, { locale }));
 
-const saySubscribe = (locale: Locale, part: string, args: { email?: string; page?: string } = {}) =>
-  escape(status_subscribe({ part, email: args.email ?? "", page: args.page ?? "" }, { locale }));
+const saySubscribe = (
+  locale: Locale,
+  part: string,
+  args: { email?: string; page?: string; list?: string } = {},
+) =>
+  escape(
+    status_subscribe(
+      {
+        part,
+        email: args.email ?? "",
+        page: args.page ?? "",
+        list: args.list ?? "",
+      },
+      { locale },
+    ),
+  );
 
 const sayUptime = (
   locale: Locale,
@@ -217,6 +231,27 @@ button:active{transform:scale(.97)}
 a{color:inherit}
 @media (prefers-reduced-motion:reduce){button{transition:none}}
 .hint{margin:-.5rem 0 .75rem}
+.follow{flex-basis:100%;min-width:0}
+.follow summary{display:flex;align-items:center;gap:.5rem;min-height:3rem;cursor:pointer;font-weight:600;font-size:.9375rem;list-style:none;-webkit-user-select:none;user-select:none}
+.follow summary::-webkit-details-marker{display:none}
+.follow summary::before{content:"";flex:none;width:.5rem;height:.5rem;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);margin:0 .25rem 0 .125rem}
+.follow[open] summary::before{transform:rotate(45deg)}
+.follow fieldset{border:0;margin:.75rem 0 0;padding:0;min-width:0}
+.follow legend{padding:0;font-size:.8125rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;overflow-wrap:anywhere}
+.follow .list{margin-top:.5rem}
+.follow label{display:flex;align-items:flex-start;gap:.75rem;min-height:3rem;padding:.5rem 1rem;font-size:1rem;font-weight:400;overflow-wrap:anywhere;cursor:pointer}
+.follow label.all{font-weight:600}
+.follow .list label+label{border-top:1px solid var(--border)}
+.follow label span{padding-top:.25rem}
+.follow input[type=checkbox]{flex:none;width:1.25rem;height:1.25rem;margin:.4375rem 0 0;accent-color:var(--fg)}
+.follow .meta{margin-top:0}
+.choose{margin-top:1.5rem}
+.choose h2{margin:0 0 .25rem}
+.choose .follow summary{display:none}
+.choose .follow>.meta{margin-top:.75rem}
+.choose .buttons{display:flex;flex-wrap:wrap;gap:.75rem;margin-top:1rem}
+button.secondary{color:var(--fg);background:transparent;border:1px solid var(--border)}
+.notice{margin-top:1rem;font-weight:600}
 .feeds{display:flex;flex-wrap:wrap;gap:1rem}
 footer{margin-top:2.5rem;color:var(--muted);font-size:.875rem;display:flex;flex-wrap:wrap;justify-content:space-between;gap:.5rem}
 ${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.c-${s}{background:var(--c-${s}-bg);color:var(--c-${s}-fg)}`).join("")}
@@ -316,8 +351,55 @@ function maintenanceWindow(locale: Locale, window: SnapshotMaintenance, active: 
   return `<article class="incident"><header><h3>${escape(window.title)}</h3>${active ? componentChip(locale, "maintenance") : ""}</header><p class="window">${range}</p>${affects}<p class="body">${escape(window.body)}</p></article>`;
 }
 
-function subscribeForm(locale: Locale, slug: string): string {
-  return `<section class="subscribe" aria-labelledby="subscribe"><h2 id="subscribe">${saySubscribe(locale, "form_title")}</h2><p class="meta">${saySubscribe(locale, "form_hint")}</p><form method="post" action="/status/${escape(slug)}/subscribe"><label for="subscribe-email">${saySubscribe(locale, "email_label")}</label><input id="subscribe-email" name="email" type="email" required maxlength="254" autocomplete="email" autocapitalize="none" spellcheck="false" enterkeyhint="send"><span class="trap" aria-hidden="true"><label for="subscribe-website">${saySubscribe(locale, "honeypot")}</label><input id="subscribe-website" name="website" type="text" tabindex="-1" autocomplete="off"></span><button type="submit">${saySubscribe(locale, "submit")}</button></form></section>`;
+/** What the page's form offers to follow, from its snapshot: each group with its key and its components'. */
+export function followGroups(snapshot: Pick<StatusSnapshot, "groups">): FollowGroup[] {
+  return snapshot.groups.flatMap((group) => {
+    const components = group.components.flatMap((component) =>
+      component.key ? [{ name: component.name, key: component.key }] : [],
+    );
+    return components.length === 0 ? [] : [{ name: group.name, key: group.key, components }];
+  });
+}
+
+/** A group the subscribe form offers to follow: its components, and for a named group its own key too. */
+export type FollowGroup = {
+  name: string | null;
+  key?: string;
+  components: { name: string; key: string }[];
+};
+
+/**
+ * The components and groups to follow, as checkboxes named `follow` (plain HTML, no script): each named group has one
+ * for the whole group (including components added later) above its own. Folded behind `<details>` unless `open`.
+ */
+function followPicker(
+  locale: Locale,
+  groups: FollowGroup[],
+  checked: ReadonlySet<string>,
+  open: boolean,
+): string {
+  const box = (key: string, label: string, all = false) =>
+    `<label${all ? ' class="all"' : ""}><input type="checkbox" name="follow" value="${escape(key)}"${checked.has(key) ? " checked" : ""}><span>${label}</span></label>`;
+  const sets = groups
+    .map((group) => {
+      const legend =
+        group.name === null ? saySubscribe(locale, "follow_ungrouped") : escape(group.name);
+      const whole =
+        group.name !== null && group.key
+          ? box(group.key, saySubscribe(locale, "follow_group"), true)
+          : "";
+      const rows = group.components
+        .map((component) => box(component.key, escape(component.name)))
+        .join("");
+      return `<fieldset><legend>${legend}</legend><div class="list">${whole}${rows}</div></fieldset>`;
+    })
+    .join("");
+  return `<details class="follow"${open ? " open" : ""}><summary>${saySubscribe(locale, "follow_toggle")}</summary><p class="meta">${saySubscribe(locale, "follow_hint")}</p>${sets}</details>`;
+}
+
+function subscribeForm(locale: Locale, slug: string, groups: FollowGroup[]): string {
+  const picker = groups.length > 0 ? followPicker(locale, groups, new Set(), false) : "";
+  return `<section class="subscribe" aria-labelledby="subscribe"><h2 id="subscribe">${saySubscribe(locale, "form_title")}</h2><p class="meta">${saySubscribe(locale, "form_hint")}</p><form method="post" action="/status/${escape(slug)}/subscribe"><label for="subscribe-email">${saySubscribe(locale, "email_label")}</label><input id="subscribe-email" name="email" type="email" required maxlength="254" autocomplete="email" autocapitalize="none" spellcheck="false" enterkeyhint="send"><span class="trap" aria-hidden="true"><label for="subscribe-website">${saySubscribe(locale, "honeypot")}</label><input id="subscribe-website" name="website" type="text" tabindex="-1" autocomplete="off"></span>${picker}<button type="submit">${saySubscribe(locale, "submit")}</button></form></section>`;
 }
 
 /** The page's feeds (src/status-feed.ts), by address: the same snapshot as the page, nothing more. */
@@ -389,7 +471,10 @@ export function renderStatusPage(
     snapshot.status === "operational" && maintenance.length > 0
       ? `<p class="banner c-maintenance" role="status"><span class="dot"></span>${say(locale, "overall_maintenance")}</p>`
       : `<p class="banner c-${snapshot.status}" role="status"><span class="dot"></span>${say(locale, `overall_${snapshot.status}`)}</p>`;
-  const form = options.subscribe && options.slug ? subscribeForm(locale, options.slug) : "";
+  const form =
+    options.subscribe && options.slug
+      ? subscribeForm(locale, options.slug, followGroups(snapshot))
+      : "";
   const body = `<h1>${escape(snapshot.title)}</h1>
 ${banner}
 ${inProgress}
@@ -416,7 +501,19 @@ export type SubscriptionPage =
   | { kind: "confirm"; token: string }
   | { kind: "confirmed" }
   | { kind: "expired" }
-  | { kind: "manage"; token: string; email: string }
+  | {
+      kind: "manage";
+      token: string;
+      email: string;
+      /** What the page offers to follow now; empty when it is not public at this address. */
+      groups: FollowGroup[];
+      /** The keys followed, or null for everything. */
+      follows: string[] | null;
+      /** It followed only components no longer on the page, so it hears of everything. */
+      gone: boolean;
+      /** Just saved. */
+      saved: boolean;
+    }
   | { kind: "unsubscribed" }
   | { kind: "not_found" }
   | { kind: "unavailable" };
@@ -453,14 +550,50 @@ export function renderSubscriptionPage(
     view.kind === "confirm"
       ? `<form method="post" action="${base}/confirm?t=${escape(encodeURIComponent(view.token))}"><button type="submit">${saySubscribe(locale, "confirm_button")}</button></form>`
       : view.kind === "manage"
-        ? `<form method="post" action="${base}/unsubscribe?t=${escape(encodeURIComponent(view.token))}"><button type="submit">${saySubscribe(locale, "unsubscribe_button")}</button></form>`
+        ? `<form method="post" action="${base}/unsubscribe?t=${escape(encodeURIComponent(view.token))}"><button type="submit"${view.groups.length > 0 ? ' class="secondary"' : ""}>${saySubscribe(locale, "unsubscribe_button")}</button></form>`
         : "";
   const heading = saySubscribe(locale, title);
+  const choose = view.kind === "manage" ? manageChoice(locale, base, view) : "";
   return document(
     locale,
     named ? `${heading} · ${escape(name)}` : heading,
-    `${named ? `<p class="meta">${escape(name)}</p>` : ""}<h1>${heading}</h1><p>${saySubscribe(locale, text, args)}</p><div class="actions">${button}${named ? `<a href="${base}">${saySubscribe(locale, "back")}</a>` : ""}</div>`,
+    `${named ? `<p class="meta">${escape(name)}</p>` : ""}<h1>${heading}</h1><p>${saySubscribe(locale, text, args)}</p>${choose}<div class="actions">${button}${named ? `<a href="${base}">${saySubscribe(locale, "back")}</a>` : ""}</div>`,
   );
+}
+
+/**
+ * The manage page's part on following: what the subscriber follows now and, while the page offers components, the
+ * same checkboxes as the form (ticked as they are), "Save" and "Follow everything" (`scope=all`).
+ */
+function manageChoice(
+  locale: Locale,
+  base: string,
+  view: Extract<SubscriptionPage, { kind: "manage" }>,
+): string {
+  const names = new Map<string, string>();
+  for (const group of view.groups) {
+    if (group.name !== null && group.key) names.set(group.key, group.name);
+    for (const component of group.components) names.set(component.key, component.name);
+  }
+  const followed = (view.follows ?? []).flatMap((key) => names.get(key) ?? []);
+  const now = view.gone
+    ? saySubscribe(locale, "manage_gone")
+    : view.follows === null
+      ? saySubscribe(locale, "manage_all")
+      : followed.length > 0
+        ? saySubscribe(locale, "manage_some", {
+            list: new Intl.ListFormat(locale, { type: "conjunction" }).format(followed),
+          })
+        : "";
+  const saved = view.saved
+    ? `<p class="notice" role="status">${saySubscribe(locale, "saved")}</p>`
+    : "";
+  const summary = `${now ? `<p class="meta">${now}</p>` : ""}${saved}`;
+  if (view.groups.length === 0) {
+    return `<section class="choose">${summary}${view.follows === null ? "" : `<p class="meta">${saySubscribe(locale, "manage_cant_choose")}</p>`}</section>`;
+  }
+  const action = `${base}/manage?t=${escape(encodeURIComponent(view.token))}`;
+  return `<section class="choose" aria-labelledby="choose"><h2 id="choose">${saySubscribe(locale, "manage_choose")}</h2>${summary}<form method="post" action="${action}">${followPicker(locale, view.groups, new Set(view.follows ?? []), true)}<div class="buttons"><button type="submit" name="scope" value="some">${saySubscribe(locale, "follow_save")}</button><button type="submit" name="scope" value="all" class="secondary">${saySubscribe(locale, "follow_all_button")}</button></div></form></section>`;
 }
 
 /** No page at this address (or not public), or the snapshot could not be read. */

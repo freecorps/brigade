@@ -5,11 +5,24 @@
 // event that names the subscriber's id, never the address; the emails themselves go out from the queue
 // (src/notify-status.ts), never from these routes.
 
-import { can, isId, newId, STATUS_SLUG, type Actor, type Role } from "@freecorps/brigade-schema";
+import {
+  can,
+  isId,
+  newId,
+  STATUS_FOLLOW_KEY,
+  STATUS_SLUG,
+  type Actor,
+  type Role,
+} from "@freecorps/brigade-schema";
 import type { Auth } from "./auth.ts";
 import { memberRole } from "./actor.ts";
 import { readBounded } from "./body.ts";
-import { renderSubscriptionPage, type SubscriptionPage } from "./status-html.ts";
+import {
+  followGroups,
+  renderSubscriptionPage,
+  type FollowGroup,
+  type SubscriptionPage,
+} from "./status-html.ts";
 import { isSnapshot, statusPageHeaders } from "./status-route.ts";
 import { statusKey } from "./status-page.ts";
 import { ORGANIZATION_ID, type WorkspaceDO } from "./workspace.ts";
@@ -36,8 +49,10 @@ export const STATUS_PENDING_MAX = 200;
 export const STATUS_SWEEP_MAX = 500;
 /** The longest address accepted (RFC 5321's path limit). */
 export const STATUS_EMAIL_MAX = 254;
-/** The largest form body read. */
-const MAX_FORM_LENGTH = 2048;
+/** The largest form body read: an address and every component and group ticked. */
+const MAX_FORM_LENGTH = 4096;
+/** Keys one subscriber follows at most: every component and every group of a full page. */
+export const STATUS_FOLLOWS_MAX = 100;
 
 /**
  * An address as stored: trimmed and lower-cased, its domain in ASCII (an internationalized domain as punycode, so
@@ -223,7 +238,38 @@ export function subscriptionLink(base: string, slug: string, path: string, token
 export const SUBSCRIPTION_ACTIONS = ["subscribe", "confirm", "manage", "unsubscribe"] as const;
 export type SubscriptionAction = (typeof SUBSCRIPTION_ACTIONS)[number];
 
-type PageFacts = { title: string; locale: "en" | "pt-BR" };
+type PageFacts = { title: string; locale: "en" | "pt-BR"; groups: FollowGroup[] };
+
+/**
+ * What a form asked to follow (`follow`, repeated): the keys the page offers now, once each; null for everything
+ * (none ticked, or `scope=all`).
+ */
+export function chosenFollows(form: URLSearchParams, groups: FollowGroup[]): string[] | null {
+  if (form.get("scope") === "all") return null;
+  const offered = new Set(
+    groups.flatMap((group) => [
+      ...(group.key ? [group.key] : []),
+      ...group.components.map((component) => component.key),
+    ]),
+  );
+  const keys = [...new Set(form.getAll("follow"))].filter(
+    (key) => STATUS_FOLLOW_KEY.test(key) && offered.has(key),
+  );
+  return keys.length === 0 ? null : keys.slice(0, STATUS_FOLLOWS_MAX);
+}
+
+/** A row's `follows` as stored: a JSON array of keys, or null (everything; also anything unreadable). */
+export function readFollows(stored: string | null): string[] | null {
+  if (stored === null) return null;
+  try {
+    const keys: unknown = JSON.parse(stored);
+    return Array.isArray(keys) && keys.length > 0 && keys.every((key) => typeof key === "string")
+      ? keys
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * `/status/:slug/subscribe` (POST, the page's form), `/confirm` (GET shows a button, POST confirms), `/manage` (GET)
@@ -240,8 +286,7 @@ export async function serveSubscription(
   slug: string,
   action: SubscriptionAction,
 ): Promise<Response> {
-  const allowed =
-    action === "subscribe" ? ["POST"] : action === "manage" ? ["GET"] : ["GET", "POST"];
+  const allowed = action === "subscribe" ? ["POST"] : ["GET", "POST"];
   if (!allowed.includes(request.method)) {
     return new Response(null, { status: 405, headers: { Allow: allowed.join(", ") } });
   }
@@ -264,20 +309,88 @@ export async function serveSubscription(
         return page(200, { kind: "confirm", token: token! }, facts, slug);
       return await confirm(env, claims, facts, slug);
     }
+    if (action === "manage" && request.method === "POST") {
+      return await follow(request, env, claims, token!, facts, slug);
+    }
     if (action === "manage" || request.method === "GET") {
       const row = await env.DB.prepare(
-        "select email from status_subscriber where id = ? and workspace_id = ?",
+        "select email, follows from status_subscriber where id = ? and workspace_id = ?",
       )
         .bind(claims.subscriberId, claims.workspaceId)
-        .first<{ email: string }>();
+        .first<{ email: string; follows: string | null }>();
       if (!row) return page(200, { kind: "unsubscribed" }, facts, slug);
-      return page(200, { kind: "manage", token: token!, email: maskEmail(row.email) }, facts, slug);
+      return page(200, manageView(token!, row, facts), facts, slug);
     }
     return await unsubscribe(env, claims, facts, slug);
   } catch (error) {
     log("a status subscription link failed", { action, error: String(error) });
     return page(503, { kind: "unavailable" }, facts, slug);
   }
+}
+
+/**
+ * The manage page: the masked address, what it follows (`gone`: it followed only components no longer on the page,
+ * so it hears of everything) and, while the page is public at this address, the choice to change it.
+ */
+function manageView(
+  token: string,
+  row: { email: string; follows: string | null },
+  facts: PageFacts | undefined,
+  saved = false,
+): SubscriptionPage {
+  const follows = readFollows(row.follows);
+  const groups = facts?.groups ?? [];
+  const offered = new Set(
+    groups.flatMap((group) => [
+      ...(group.key ? [group.key] : []),
+      ...group.components.map((component) => component.key),
+    ]),
+  );
+  const gone = follows !== null && facts !== undefined && !follows.some((key) => offered.has(key));
+  return {
+    kind: "manage",
+    token,
+    email: maskEmail(row.email),
+    groups,
+    follows: gone ? null : follows,
+    gone,
+    saved,
+  };
+}
+
+/**
+ * The manage page's form: what the subscriber follows from now on (the keys the page offers now, or everything).
+ * The shard's event first, then D1, like confirming: saving again after a failure finishes it.
+ */
+async function follow(
+  request: Request,
+  env: Env,
+  claims: LinkClaims,
+  token: string,
+  facts: PageFacts | undefined,
+  slug: string,
+): Promise<Response> {
+  const text = await readBounded(request, MAX_FORM_LENGTH);
+  if (text === undefined) return page(400, { kind: "invalid" }, facts, slug);
+  const row = await env.DB.prepare(
+    "select email, follows from status_subscriber where id = ? and workspace_id = ?",
+  )
+    .bind(claims.subscriberId, claims.workspaceId)
+    .first<{ email: string; follows: string | null }>();
+  if (!row) return page(200, { kind: "unsubscribed" }, facts, slug);
+  // Choosing needs the page's components: without them (the page moved or is not public) nothing changes.
+  if (!facts) return page(200, manageView(token, row, facts), facts, slug);
+  const follows = chosenFollows(new URLSearchParams(text), facts.groups);
+  await shardChange(env, claims.workspaceId, {
+    action: "follow",
+    subscriberId: claims.subscriberId,
+    follows: follows?.length ?? 0,
+  });
+  const stored = follows === null ? null : JSON.stringify(follows);
+  await env.DB.prepare("update status_subscriber set follows = ? where id = ? and workspace_id = ?")
+    .bind(stored, claims.subscriberId, claims.workspaceId)
+    .run();
+  return page(200, manageView(token, { ...row, follows: stored }, facts, true), facts, slug);
 }
 
 /** The page's title and language from its snapshot (no shard, no D1); null when there is no public page. */
@@ -287,7 +400,7 @@ async function readPage(env: Env, slug: string): Promise<PageFacts | null | "una
     const stored = await env.STATUS.get(statusKey(slug), { type: "json", cacheTtl: 30 });
     if (stored === null) return null;
     if (!isSnapshot(stored)) return "unavailable";
-    return { title: stored.title, locale: stored.locale };
+    return { title: stored.title, locale: stored.locale, groups: followGroups(stored) };
   } catch (error) {
     log("reading a status page for a subscription failed", { error: String(error) });
     return "unavailable";
@@ -341,7 +454,8 @@ async function subscribe(
   const email = normalizeEmail(form.get("email"));
   if (!email) return page(400, { kind: "invalid" }, facts, slug);
   if (!(await allowed(env, request, slug))) return page(429, { kind: "limited" }, facts, slug);
-  if (!trap) ctx.waitUntil(requestSubscription(env, slug, email, own, Date.now()));
+  const follows = chosenFollows(form, facts.groups);
+  if (!trap) ctx.waitUntil(requestSubscription(env, slug, email, follows, own, Date.now()));
   return page(200, { kind: "check", email }, facts, slug);
 }
 
@@ -354,6 +468,7 @@ async function requestSubscription(
   env: Env,
   slug: string,
   email: string,
+  follows: string[] | null,
   origin: string,
   now: number,
 ): Promise<void> {
@@ -362,7 +477,7 @@ async function requestSubscription(
       .bind(slug)
       .first<{ workspace_id: string }>();
     if (!owner) return;
-    const asked = await recordSubscriber(env.DB, owner.workspace_id, email, origin, now);
+    const asked = await recordSubscriber(env.DB, owner.workspace_id, email, origin, now, follows);
     if (!asked) return;
     let result: { ok: true } | { ok: false; code: string };
     try {
@@ -389,7 +504,9 @@ export type SubscriberRequest = { id: string; send: number; created: boolean };
  * Records the address in D1 and says whether a confirmation should go out (and which one, `send`): a new inbox
  * (`canonicalEmail`), or a pending one under `STATUS_CONFIRM_SENDS` in its window. A confirmed inbox, one over its
  * sends, or a full page gets nothing: `STATUS_SUBSCRIBERS_MAX` confirmed or `STATUS_PENDING_MAX` pending. Two
- * requests at once for one inbox insert one row.
+ * requests at once for one inbox insert one row. `follows` (null: everything) is stored with a new row and replaces a
+ * pending one's along with the confirmation it is sent, since that is the request its link answers; a confirmed
+ * subscriber's is never changed from the public form, which anyone can fill in with their address.
  */
 export async function recordSubscriber(
   db: D1Database,
@@ -397,7 +514,9 @@ export async function recordSubscriber(
   email: string,
   origin: string,
   now: number,
+  follows: string[] | null = null,
 ): Promise<SubscriberRequest | null> {
+  const stored = follows === null ? null : JSON.stringify(follows);
   type Row = { id: string; status: string; confirm_sends: number; confirm_since: number };
   const canonical = canonicalEmail(email);
   const select = db
@@ -426,11 +545,11 @@ export async function recordSubscriber(
       .prepare(
         `insert into status_subscriber
            (id, workspace_id, email, canonical, status, created_at, confirmed_at, requested_at, confirm_sends,
-            confirm_since, origin)
-         values (?, ?, ?, ?, 'pending', ?, null, ?, 1, ?, ?)
+            confirm_since, origin, follows)
+         values (?, ?, ?, ?, 'pending', ?, null, ?, 1, ?, ?, ?)
          on conflict (workspace_id, canonical) do nothing`,
       )
-      .bind(id, workspaceId, email, canonical, now, now, now, origin)
+      .bind(id, workspaceId, email, canonical, now, now, now, origin, stored)
       .run();
     if (inserted.meta.changes === 1) return { id, send: 1, created: true };
     row = await select.first<Row>();
@@ -442,10 +561,10 @@ export async function recordSubscriber(
   if (send > STATUS_CONFIRM_SENDS) return null;
   const updated = await db
     .prepare(
-      `update status_subscriber set confirm_sends = ?, confirm_since = ?, requested_at = ?, origin = ?
+      `update status_subscriber set confirm_sends = ?, confirm_since = ?, requested_at = ?, origin = ?, follows = ?
        where id = ? and status = 'pending' and confirm_sends = ?`,
     )
-    .bind(send, fresh ? now : row.confirm_since, now, origin, row.id, row.confirm_sends)
+    .bind(send, fresh ? now : row.confirm_since, now, origin, stored, row.id, row.confirm_sends)
     .run();
   return updated.meta.changes === 1 ? { id: row.id, send, created: false } : null;
 }
@@ -675,20 +794,60 @@ export async function serveSubscribers(
         .bind(workspaceId)
         .all<{ status: string; n: number }>();
       const count = (status: string) => results.find((row) => row.status === status)?.n ?? 0;
-      return json({ confirmed: count("confirmed"), pending: count("pending") });
+      // Who follows what, confirmed only: every key with its count, and those following everything.
+      const [follows, everything] = await env.DB.batch<{ key?: string; n: number }>([
+        env.DB.prepare(
+          `select each.value as key, count(*) as n from status_subscriber, json_each(status_subscriber.follows) as each
+           where workspace_id = ? and status = 'confirmed' and follows is not null group by each.value`,
+        ).bind(workspaceId),
+        env.DB.prepare(
+          `select count(*) as n from status_subscriber
+           where workspace_id = ? and status = 'confirmed' and follows is null`,
+        ).bind(workspaceId),
+      ]);
+      return json({
+        confirmed: count("confirmed"),
+        pending: count("pending"),
+        everything: everything?.results[0]?.n ?? 0,
+        follows: Object.fromEntries(
+          (follows?.results ?? []).flatMap((row) =>
+            typeof row.key === "string" ? [[row.key, row.n]] : [],
+          ),
+        ),
+      });
     }
     if (exporting) {
       const { results } = await env.DB.prepare(
-        `select email, status, created_at, confirmed_at from status_subscriber
+        `select email, status, created_at, confirmed_at, follows from status_subscriber
          where workspace_id = ? order by created_at, id`,
       )
         .bind(workspaceId)
-        .all<{ email: string; status: string; created_at: number; confirmed_at: number | null }>();
+        .all<{
+          email: string;
+          status: string;
+          created_at: number;
+          confirmed_at: number | null;
+          follows: string | null;
+        }>();
+      // The names the keys stand for now, from the shard: a key whose component or group is gone is left out.
+      const names: Record<string, string> = results.some((row) => row.follows !== null)
+        ? await env.WORKSPACE.getByName(workspaceId).statusFollowNames(workspaceId)
+        : {};
       const iso = (at: number | null) => (at === null ? "" : new Date(at).toISOString());
+      const followed = (stored: string | null) => {
+        const named = (readFollows(stored) ?? []).flatMap((key) => names[key] ?? []);
+        return named.length === 0 ? "everything" : named.join("; ");
+      };
       const lines = [
-        "email,status,subscribed_at,confirmed_at",
+        "email,status,subscribed_at,confirmed_at,follows",
         ...results.map((row) =>
-          [csv(row.email), row.status, iso(row.created_at), iso(row.confirmed_at)].join(","),
+          [
+            csv(row.email),
+            row.status,
+            iso(row.created_at),
+            iso(row.confirmed_at),
+            csv(followed(row.follows)),
+          ].join(","),
         ),
       ];
       return new Response(`${lines.join("\r\n")}\r\n`, {

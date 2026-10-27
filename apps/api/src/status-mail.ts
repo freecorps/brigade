@@ -5,6 +5,7 @@
 // (`status_email.continue`), so a long list never rides the original message's Queue retries.
 
 import {
+  statusAudience,
   STATUS_PAGE_ID,
   type MaintenanceRow,
   type PublicStatus,
@@ -68,6 +69,8 @@ export type StatusEmailContent =
       components: string[];
     };
 
+export type StatusAudience = ReturnType<typeof statusAudience>;
+
 export type StatusEmailPage = { title: string; slug: string; locale: StatusLocale };
 
 export type StatusEmailPlan =
@@ -78,8 +81,17 @@ export type StatusEmailPlan =
       /** The ledger's key: the event the emails are about, or `confirm:<requested event>`. */
       key: string;
       page: StatusEmailPage;
-      /** A notification: who to email next (ids after `cursor`, at most `limit`) and what. */
-      notify?: { cursor: string; limit: number; content: StatusEmailContent };
+      /**
+       * A notification: who to email next (ids after `cursor`, at most `limit`), what, and to whom (`audience`, from
+       * `statusAudience`: null for every confirmed subscriber, else those following one of `affected`, everything,
+       * or nothing in `known` any more).
+       */
+      notify?: {
+        cursor: string;
+        limit: number;
+        content: StatusEmailContent;
+        audience: StatusAudience;
+      };
       /**
        * A confirmation: the subscriber to email, and whether an earlier delivery already counted it against the
        * inbox and domain caps (`COUNTED`), so a retry never counts it twice.
@@ -229,8 +241,8 @@ export class StatusMailer {
         confirm: { subscriberId, counted: row?.cursor === COUNTED },
       };
     }
-    const content = original ? this.content(original) : null;
-    if (!content) {
+    const found = original ? this.content(original) : null;
+    if (!found) {
       this.finish(key);
       return { send: false, reason: "nothing" };
     }
@@ -245,7 +257,16 @@ export class StatusMailer {
       send: true,
       key,
       page: facts,
-      notify: { cursor: row?.cursor ?? "", limit: Math.min(STATUS_EMAIL_BATCH, left), content },
+      notify: {
+        cursor: row?.cursor ?? "",
+        limit: Math.min(STATUS_EMAIL_BATCH, left),
+        content: found.content,
+        // Read now, like the content: a component taken out or deleted since no longer counts.
+        audience: statusAudience(
+          this.deps.shard.store.scan("status_components"),
+          found.componentIds,
+        ),
+      },
     };
   }
 
@@ -288,8 +309,13 @@ export class StatusMailer {
     return { retry: report.failed && !givenUp };
   }
 
-  /** What `event` tells subscribers, read now (so a corrected update goes out corrected); null when nothing. */
-  private content(event: BrigadeEvent): StatusEmailContent | null {
+  /**
+   * What `event` tells subscribers and the components it touches, read now (so a corrected update goes out
+   * corrected); null when nothing.
+   */
+  private content(
+    event: BrigadeEvent,
+  ): { content: StatusEmailContent; componentIds: readonly string[] } | null {
     const { store } = this.deps.shard;
     const names = (ids: readonly string[]) =>
       ids.flatMap((id) => store.get("status_components", id)?.name ?? []);
@@ -299,7 +325,7 @@ export class StatusMailer {
       const index = row ? row.updates.findIndex((update) => update.id === entryId) : -1;
       if (!row || index < 0) return null;
       const update = row.updates[index]!;
-      return {
+      const content: StatusEmailContent = {
         kind:
           index === 0
             ? "incident_created"
@@ -311,6 +337,7 @@ export class StatusMailer {
         body: update.body,
         components: names(row.componentIds),
       };
+      return { content, componentIds: row.componentIds };
     }
     const data = event.data as Partial<MaintenanceRow> | null;
     if (
@@ -328,14 +355,16 @@ export class StatusMailer {
       | "maintenance_cancelled";
     // A window called off since it was scheduled: its scheduled email is no longer true.
     if (kind === "maintenance_scheduled" && !row) return null;
-    return {
+    const componentIds = row?.componentIds ?? data.componentIds ?? [];
+    const content: StatusEmailContent = {
       kind,
       title: row?.title ?? data.title,
       body: row?.body ?? null,
       startsAt: row?.startsAt ?? data.startsAt,
       endsAt: row?.endsAt ?? data.endsAt,
-      components: names(row?.componentIds ?? data.componentIds ?? []),
+      components: names(componentIds),
     };
+    return { content, componentIds };
   }
 
   private row(key: string): Row | undefined {

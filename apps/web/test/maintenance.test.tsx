@@ -2,7 +2,12 @@
 // Status page slice 2 on the dashboard (RFC 0012): the maintenance card, linking a component to monitors for its
 // uptime bar, and the owners' subscribers section.
 import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
-import type { MaintenanceRow, StatusComponentRow, StatusPageRow } from "@freecorps/brigade-schema";
+import {
+  statusFollowKey,
+  type MaintenanceRow,
+  type StatusComponentRow,
+  type StatusPageRow,
+} from "@freecorps/brigade-schema";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
@@ -268,6 +273,48 @@ describe("status page card, slice 2", () => {
     expect(container.textContent).toContain("Removed lia@example.com.");
     expect(removed).toEqual(["gone@example.com", "lia@example.com"]);
     expect(loads).toBe(2);
+  });
+
+  test("owners see what confirmed subscribers follow, in the page's order", async () => {
+    const api = { ...component("cmp_api", "API"), group: "Core" };
+    const docs = { ...component("cmp_docs", "Documentação e guias de integração"), position: 5 };
+    const container = mount(
+      <StatusPagePanel
+        page={page}
+        components={[docs, api]}
+        loading={false}
+        failed={false}
+        manage
+        origin="https://brigade.test"
+        onSave={async () => ({ ok: true })}
+        onCreate={async () => true}
+        onUpdate={async () => true}
+        onDelete={async () => true}
+        onRetry={() => {}}
+        subscribers={{
+          load: async () => ({
+            confirmed: 12,
+            pending: 0,
+            everything: 9,
+            follows: {
+              [statusFollowKey("g", "Core")]: 2,
+              [statusFollowKey("c", "cmp_docs")]: 1,
+              [statusFollowKey("c", "cmp_gone")]: 4,
+            },
+          }),
+          remove: async () => "removed",
+          exportUrl: "/export",
+        }}
+      />,
+    );
+    await act(async () => {});
+    const rows = [...container.querySelectorAll("li")].map((row) => row.textContent);
+    expect(rows).toContain("Everything9");
+    expect(rows).toContain("All of Core2");
+    expect(rows).toContain("Documentação e guias de integração1");
+    // A component that is gone, and one nobody chose, are not listed.
+    expect(rows.join()).not.toContain("4");
+    expect(rows.filter((row) => row === "API0")).toHaveLength(0);
   });
 
   test("the subscribers API helpers", async () => {

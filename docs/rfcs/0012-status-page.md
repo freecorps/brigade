@@ -321,7 +321,8 @@ Visitors subscribe on the page to hear of incidents and maintenance by email, in
   addresses (RFC 0005 "Email"), and a refused or repeated subscribe never wakes it. One inbox is one subscriber per
   page, whichever spelling it came with. Every change still emits an event through the shard's outbox, with the
   subscriber's id and never the address: `status_subscriber.requested` (`subscriberId`, `send`), `.confirmed`,
-  `.removed` (`reason`: `unsubscribed`, `deleted` or `expired`), from server-only mutations.
+  `.removed` (`reason`: `unsubscribed`, `deleted` or `expired`), `.followed` (`follows`: how many keys, "Following
+  components"), from server-only mutations.
 - **The shard and D1 stay in step.** A request writes D1, then runs its mutation; a shard that refuses or cannot be
   reached gives the confirmation back in D1: its send counted back, and a row whose sends in its first window all
   went back deleted (an older one stays for the sweep and its `expired` event), so asking again sends it. Two
@@ -364,12 +365,14 @@ Visitors subscribe on the page to hear of incidents and maintenance by email, in
   another address or stopped being public: the page's title and language come from the address only while it still
   shows this workspace's page, and otherwise the page is plain English named by the address in the link.
 - **Leaving.** Every notification carries a manage link (`/manage?t=…`, signed, no expiry, dead once the row is
-  gone) showing the masked address and an Unsubscribe button, and RFC 8058's `List-Unsubscribe` (https only, which
+  gone) showing the masked address, what it follows (with the choice to change it, "Following components") and an
+  Unsubscribe button, and RFC 8058's `List-Unsubscribe` (https only, which
   Email Sending requires) with `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, so a mail client unsubscribes in
   one click with a `POST`. The email's footer links `/unsubscribe` too: a `GET` there shows the manage page and its
   button, so a scanner unsubscribes nobody. Unsubscribing deletes the row.
-- **Owners and admins** (`status:manage`, checked in D1): `GET /workspaces/:id/status-page/subscribers` (counts),
-  `…/export` (CSV of address, status and times; a value starting with a formula character is quoted), and `DELETE`
+- **Owners and admins** (`status:manage`, checked in D1): `GET /workspaces/:id/status-page/subscribers` (counts, and
+  what confirmed subscribers follow: "Following components"),
+  `…/export` (CSV of address, status, times and what each follows; a value starting with a formula character is quoted), and `DELETE`
   with `{ email }` (any spelling of the inbox). The dashboard's Status page card shows the counts, the export and removal by address; no other
   member ever sees an address, and none reaches the page or the snapshot.
 - **What is sent.** `incident.update_published` (the first update of an incident is "created", a `resolved` one
@@ -393,10 +396,47 @@ Visitors subscribe on the page to hear of incidents and maintenance by email, in
   the original message's Queue retries. A refusal a retry may fix stops the batch there and is retried (30 s doubling
   to 5 minutes, at most 5 failed batches, then given up and logged); one refused for good is skipped. A lost report
   can send a batch twice (at least once, like every delivery here).
+- **Only to those it is for**: see "Following components". The batches, budgets, caps and the cursor are unchanged:
+  the cursor walks confirmed subscribers in id order, and a batch reads only those the event is for.
 - **Cap per page**: 5000 emails a UTC day (`STATUS_EMAIL_DAILY_CAP`); past it the rest of the day's are dropped and
   logged.
 - **Links** use `DASHBOARD_URL` (the page is served on the dashboard's origin); without it nothing is sent, except by
   the dev log sender, which uses the origin the visitor subscribed through.
+
+## Following components
+
+A visitor may follow some components only. Nothing chosen is everything, which is what every subscriber from before
+had and keeps (migration 0013 adds a nullable column).
+
+- **Keys, not ids.** The snapshot gives each component a follow key (`c-` and 16 hex digits of a hash of its id) and
+  each named group one (`g-` and a hash of its name): `statusFollowKey` in packages/schema. They are optional fields,
+  so the snapshot's version is unchanged and an older snapshot shows the form without the choice. A key is public
+  (it is in the HTML) but it is not an id, so nothing the snapshot promises about ids changes. A renamed component
+  keeps its key; a renamed group gets a new one, so its followers no longer match it (as below).
+- **The form** (still no script): the checkboxes, named `follow`, are in the subscribe form behind a `<details>`
+  ("Only some components (optional)"), one fieldset per group with a box for the whole group (it covers components
+  added to it later) above its components. The API keeps only keys the page offers at that moment, at most 100 (every
+  component and group of a full page), and stores them as a JSON array in `status_subscriber.follows`; none is
+  `null`, everything. A pending subscriber asking again gets the new choice with the new confirmation, since that is
+  the request its link answers; a confirmed subscriber's choice is never changed from the public form (anyone can
+  type their address into it), and the answer is the same as ever, so the form still tells nobody who is subscribed.
+- **The manage link** shows what the subscriber follows and, while the page is public at the link's address, the same
+  checkboxes ticked as they are, "Save" and "Follow everything" (`POST /status/:slug/manage?t=…`). Saving runs the
+  server-only `statusSubscriber.follow` first (its `status_subscriber.followed` event carries the subscriber's id and
+  how many keys, never the keys or the address), then writes D1, like confirming; it is not deduplicated, since a
+  subscriber may change their mind, so a retry after a D1 failure can emit a second event. Unsubscribing is unchanged
+  and stays one click (RFC 8058): its own `POST /unsubscribe`.
+- **Who is emailed.** The shard's plan carries an audience (`statusAudience`): an incident or maintenance window that
+  names no component still on the page goes to every confirmed subscriber; one that does goes to those following
+  everything, one of its components or one of their groups, read when the batch is planned (like the content).
+- **A component that is gone.** Deleting a component leaves its key in preferences, where it never matches again. A
+  subscriber none of whose keys is on the page any more (each component deleted, each group renamed or emptied)
+  hears of everything again: the plan also carries every key the page has now, and the query treats "none of mine
+  is known" as everything. Chosen over "nothing" because a subscriber who asked for updates and silently gets none
+  is the worse failure; the manage page says so ("no longer on the page, so you hear about everything"). Tested.
+- **Owners and admins**: the counts add `everything` and each key with its confirmed count; the dashboard's
+  subscriber view lists them by name in the page's order (keys it does not know, of components gone, are left out).
+  The CSV's `follows` column is `everything` or the names (a group as `group: <name>`), read from the shard.
 
 ## Language
 
@@ -433,7 +473,7 @@ email notifier acts on `incident.update_published`, the maintenance events, `sta
 
 ## Not yet
 
-- Custom domains, embedding, pruning history past 90 days, showing who published (choice per page), subscribing to some components only, maintenance and subscriber
+- Custom domains, embedding, pruning history past 90 days, showing who published (choice per page), maintenance and subscriber
   events in the webhook catalog, the mobile app's publish and maintenance actions.
 - KV namespaces for staging and production: `STATUS` is bound for local runs and the tests and, in `dev`, to
   `brigade-status-dev` (apps/api README "Status page").

@@ -366,6 +366,10 @@ First slice of Phase 3, in `packages/schema` (`catalog.ts`), stored in `Workspac
   inherit old values, or a new type the incidents of a deleted one and its policy.
 - Incidents list their services in the order picked, so reordering them is a change too (timeline
   `services_changed` with nobody added or removed).
+- **Over HTTP** (RFC 0002 "Public HTTP API"): services, incident types and custom fields are listed, read, made and
+  changed (services also removed) through the same mutations, as the member or an API token with `catalog:read` or
+  `catalog:manage`; incidents are listed with filters by status, severity, type and service, and their type,
+  services and fields set, with `incident:read` and `incident:update`.
 - Not yet: a monitor naming the service it watches, status page components mapped to services (RFC 0012; a
   component has no service yet), dependencies and links.
 

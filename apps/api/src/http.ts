@@ -4,6 +4,7 @@
 import type { InvitationCode } from "./invitations.ts";
 import type { MemberChangeResult } from "./members.ts";
 import type { ReceiptResult } from "./receipts.ts";
+import type { RestCode } from "./rest.ts";
 import type { AckResult } from "./workspace.ts";
 
 /** A user id as Better Auth makes them here (`usr_<ULID>`), or older plain ids: no encoding, bounded. */
@@ -51,6 +52,24 @@ export const ACK_STATUS: Partial<Record<Extract<AckResult, { ok: false }>["code"
   invalid_args: 400,
   // An API token the shard no longer backs (RFC 0014).
   unauthenticated: 401,
+};
+
+/**
+ * The answer for each refusal of the incident and catalog routes (src/rest-routes.ts); anything else (`internal`,
+ * `unknown_mutation`) is a 500.
+ */
+export const REST_STATUS: Partial<Record<RestCode, number>> = {
+  invalid_args: 400,
+  // An API token the shard no longer backs (RFC 0014).
+  unauthenticated: 401,
+  forbidden: 403,
+  not_a_member: 403,
+  not_found: 404,
+  conflict: 409,
+  invalid_transition: 409,
+  limit_reached: 409,
+  // The `Idempotency-Key` was first sent with another request (src/rest.ts).
+  idempotency_key_reused: 422,
 };
 
 /** How each receipt result answers the phone: it only logs the status, and never retries a 4xx. */

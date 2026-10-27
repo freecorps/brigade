@@ -225,14 +225,24 @@ const roleFields = {
   }),
 };
 
-const optionArgs = v.object({
-  id: v.id("opt"),
-  label: v.string({ min: 1, max: CATALOG_NAME_MAX }),
-});
+const optionLabel = v.string({ min: 1, max: CATALOG_NAME_MAX });
+const optionArgs = v.object({ id: v.id("opt"), label: optionLabel });
 const fieldFields = {
   name: v.string({ min: 1, max: CATALOG_NAME_MAX }),
   description,
   options: v.array(optionArgs, { max: MAX_FIELD_OPTIONS }),
+};
+
+/**
+ * What the catalog's mutations take, field by field, for the public HTTP API's bodies (rest.ts), so a route accepts
+ * exactly what the mutation it runs does.
+ */
+export {
+  anyValue as fieldValueArgs,
+  fieldFields as customFieldArgs,
+  optionLabel as fieldOptionLabel,
+  serviceFields as serviceArgs,
+  typeFields as incidentTypeArgs,
 };
 
 const isSelect = (kind: FieldKind) => kind === "single_select" || kind === "multi_select";
@@ -993,7 +1003,10 @@ const incidentId = v.id("inc");
  * The values an incident keeps: only fields that still exist and values they still take (`liveValue`); the rest fade
  * on the next write.
  */
-function liveFields(store: MutationStore, incident: IncidentRow): Record<string, FieldValue> {
+export function liveFields(
+  store: Pick<MutationStore, "get">,
+  incident: IncidentRow,
+): Record<string, FieldValue> {
   const kept: Record<string, FieldValue> = {};
   for (const [id, value] of Object.entries(incident.fields ?? {})) {
     const field = store.get("custom_fields", id);

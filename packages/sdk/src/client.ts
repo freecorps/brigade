@@ -1,10 +1,28 @@
 // A typed client for Brigade's public HTTP API (RFC 0002 "Public HTTP API", docs/api/openapi.json): the routes an
-// integration may rely on, nothing else. Incidents, monitors and the rest are read and changed over Brigade Sync
-// (`@freecorps/brigade-sync`), not here. Request bodies are typed from the validators the API runs
-// (`@freecorps/brigade-schema`); refusal codes are listed per operation below, and tests/client.test.ts holds them,
-// the methods and the paths to the reference.
+// integration may rely on, nothing else. Incidents and the catalog (services, incident types, custom fields) are read
+// and changed here; monitors, schedules and the rest over Brigade Sync (`@freecorps/brigade-sync`). Request bodies are
+// typed from the validators the API runs (`@freecorps/brigade-schema`); refusal codes are listed per operation below,
+// and tests/client.test.ts holds them, the methods and the paths to the reference.
 
-import type { Infer, Role, workspaceName } from "@freecorps/brigade-schema";
+import type {
+  CustomFieldCreateRequest,
+  CustomFieldPatchRequest,
+  DeclareRequest,
+  IncidentPatch,
+  IncidentStatus,
+  IncidentTypeCreateRequest,
+  IncidentTypePatchRequest,
+  Infer,
+  PublicCustomField,
+  PublicIncident,
+  PublicIncidentType,
+  PublicService,
+  Role,
+  ServiceCreateRequest,
+  ServicePatchRequest,
+  Severity,
+  workspaceName,
+} from "@freecorps/brigade-schema";
 
 // ---- Answers -----------------------------------------------------------------------------------------------------
 
@@ -54,6 +72,36 @@ export type InvitationPreview = {
   forYou: boolean;
 };
 
+/** An incident; times are epoch milliseconds. */
+export type Incident = PublicIncident;
+export type Service = PublicService;
+export type IncidentType = PublicIncidentType;
+export type CustomField = PublicCustomField;
+
+/** Which incidents `listIncidents` answers; filters combine. */
+export type IncidentFilter = {
+  status?: readonly IncidentStatus[];
+  severity?: readonly Severity[];
+  typeId?: string;
+  serviceId?: string;
+  /** The `nextCursor` of the page before. */
+  cursor?: string;
+  /** 1 to 100; 50 by default. */
+  limit?: number;
+};
+
+export type IncidentPage = { incidents: Incident[]; nextCursor: string | null };
+
+/** What every write of the incident and catalog routes takes. */
+export type WriteOptions = {
+  /**
+   * 1 to 64 letters, digits, `_`, `:` or `-`; a random one by default. Send the same again with the same request to
+   * retry after a lost answer (within 7 days): the request runs once, a create answers the same entry and a refusal
+   * the same refusal. With another request it is refused (`idempotency_key_reused`): use a new key for each request.
+   */
+  idempotencyKey?: string;
+};
+
 // ---- Refusals ----------------------------------------------------------------------------------------------------
 
 const SIGNED_IN = ["unauthenticated", "forbidden_origin"] as const;
@@ -93,6 +141,22 @@ const INVITATION = [
   "unavailable",
   "not_applied",
 ] as const;
+
+/** The incident and catalog reads. */
+const REST_READ = [
+  ...SIGNED_IN,
+  "invalid_workspace_id",
+  "not_a_member",
+  "forbidden",
+  "not_found",
+  ...SHARD_FAILED,
+  ...BEARER,
+] as const;
+/**
+ * And their writes: a body or key the route refuses (`body.issues` says what), and an `idempotencyKey` already sent
+ * with another request (422).
+ */
+const REST_WRITE = [...REST_READ, "invalid_args", "idempotency_key_reused"] as const;
 
 /** The `error` codes each operation answers with, as the reference lists them. */
 export const OPERATION_ERRORS = {
@@ -151,6 +215,24 @@ export const OPERATION_ERRORS = {
     ...SHARD_FAILED,
     ...BEARER,
   ],
+  listIncidents: [...REST_READ, "invalid_args"],
+  declareIncident: REST_WRITE,
+  getIncident: REST_READ,
+  updateIncident: [...REST_WRITE, "invalid_transition"],
+  postIncidentUpdate: REST_WRITE,
+  listServices: REST_READ,
+  createService: [...REST_WRITE, "limit_reached"],
+  getService: REST_READ,
+  updateService: REST_WRITE,
+  deleteService: REST_WRITE,
+  listIncidentTypes: REST_READ,
+  createIncidentType: [...REST_WRITE, "limit_reached"],
+  getIncidentType: REST_READ,
+  updateIncidentType: REST_WRITE,
+  listCustomFields: REST_READ,
+  createCustomField: [...REST_WRITE, "limit_reached"],
+  getCustomField: REST_READ,
+  updateCustomField: REST_WRITE,
 } as const satisfies Record<string, readonly string[]>;
 
 export type Operation = keyof typeof OPERATION_ERRORS;
@@ -300,6 +382,12 @@ export function createClient(options: ClientOptions) {
     );
   }
 
+  /** The `Idempotency-Key` header of a write. */
+  const keyed = (options: WriteOptions) => ({
+    "Idempotency-Key": options.idempotencyKey ?? crypto.randomUUID(),
+  });
+  const ws = (workspaceId: string) => `/workspaces/${segment(workspaceId)}`;
+
   return {
     /** `GET /health`: whether the API answers. */
     getHealth: () => call<Ok, "getHealth">("getHealth", "GET", "/health"),
@@ -419,6 +507,214 @@ export function createClient(options: ClientOptions) {
         "POST",
         () => `/workspaces/${segment(workspaceId)}/incidents/${segment(incidentId)}/ack`,
         { headers: { "Idempotency-Key": options.idempotencyKey ?? crypto.randomUUID() } },
+      ),
+
+    /**
+     * `GET /workspaces/:id/incidents`: one page, newest first. Pass `nextCursor` back as `cursor` for the next one;
+     * it is null on the last. A request reads at most 1000 incidents, so a narrow filter may answer a short or empty
+     * page with a `nextCursor`: follow it until it is null.
+     */
+    listIncidents: (workspaceId: string, filter: IncidentFilter = {}) =>
+      call<IncidentPage, "listIncidents">("listIncidents", "GET", () => {
+        const query = new URLSearchParams();
+        if (filter.status?.length) query.set("status", filter.status.join(","));
+        if (filter.severity?.length) query.set("severity", filter.severity.join(","));
+        if (filter.typeId !== undefined) query.set("typeId", filter.typeId);
+        if (filter.serviceId !== undefined) query.set("serviceId", filter.serviceId);
+        if (filter.cursor !== undefined) query.set("cursor", filter.cursor);
+        if (filter.limit !== undefined) query.set("limit", String(filter.limit));
+        const search = query.toString();
+        return `${ws(workspaceId)}/incidents${search ? `?${search}` : ""}`;
+      }),
+
+    /**
+     * `POST /workspaces/:id/incidents`: declares an incident, paged by the escalation policy as a declare in the app
+     * is. The severity defaults to the type's, else `sev3`.
+     */
+    declareIncident: (workspaceId: string, body: DeclareRequest, options: WriteOptions = {}) =>
+      call<{ incident: Incident }, "declareIncident">(
+        "declareIncident",
+        "POST",
+        () => `${ws(workspaceId)}/incidents`,
+        { body, headers: keyed(options) },
+      ),
+
+    /** `GET /workspaces/:id/incidents/:incidentId`. */
+    getIncident: (workspaceId: string, incidentId: string) =>
+      call<{ incident: Incident }, "getIncident">(
+        "getIncident",
+        "GET",
+        () => `${ws(workspaceId)}/incidents/${segment(incidentId)}`,
+      ),
+
+    /**
+     * `PATCH /workspaces/:id/incidents/:incidentId`: type, services, custom fields (`null` clears one), severity,
+     * status, each changed in that order; the first refusal stops the rest (those before it stay made). The same key
+     * answers the same refusal again: once fixed, retry with a new key (the changes made come back as no change).
+     * With an API token, needs `incident:read` as well as `incident:update`, since it answers the incident.
+     */
+    updateIncident: (
+      workspaceId: string,
+      incidentId: string,
+      body: IncidentPatch,
+      options: WriteOptions = {},
+    ) =>
+      call<{ incident: Incident }, "updateIncident">(
+        "updateIncident",
+        "PATCH",
+        () => `${ws(workspaceId)}/incidents/${segment(incidentId)}`,
+        { body, headers: keyed(options) },
+      ),
+
+    /** `POST /workspaces/:id/incidents/:incidentId/updates`: a written update on the incident's timeline. */
+    postIncidentUpdate: (
+      workspaceId: string,
+      incidentId: string,
+      body: { body: string },
+      options: WriteOptions = {},
+    ) =>
+      call<Ok, "postIncidentUpdate">(
+        "postIncidentUpdate",
+        "POST",
+        () => `${ws(workspaceId)}/incidents/${segment(incidentId)}/updates`,
+        { body, headers: keyed(options) },
+      ),
+
+    /** `GET /workspaces/:id/services`: the most critical tier first, then by name. */
+    listServices: (workspaceId: string) =>
+      call<{ services: Service[] }, "listServices">(
+        "listServices",
+        "GET",
+        () => `${ws(workspaceId)}/services`,
+      ),
+
+    /** `POST /workspaces/:id/services`. */
+    createService: (workspaceId: string, body: ServiceCreateRequest, options: WriteOptions = {}) =>
+      call<{ service: Service }, "createService">(
+        "createService",
+        "POST",
+        () => `${ws(workspaceId)}/services`,
+        { body, headers: keyed(options) },
+      ),
+
+    /** `GET /workspaces/:id/services/:serviceId`. */
+    getService: (workspaceId: string, serviceId: string) =>
+      call<{ service: Service }, "getService">(
+        "getService",
+        "GET",
+        () => `${ws(workspaceId)}/services/${segment(serviceId)}`,
+      ),
+
+    /** `PATCH /workspaces/:id/services/:serviceId`: what is sent changes; the rest stays. */
+    updateService: (
+      workspaceId: string,
+      serviceId: string,
+      body: ServicePatchRequest,
+      options: WriteOptions = {},
+    ) =>
+      call<{ service: Service }, "updateService">(
+        "updateService",
+        "PATCH",
+        () => `${ws(workspaceId)}/services/${segment(serviceId)}`,
+        { body, headers: keyed(options) },
+      ),
+
+    /** `DELETE /workspaces/:id/services/:serviceId`: removes it from the catalog. */
+    deleteService: (workspaceId: string, serviceId: string, options: WriteOptions = {}) =>
+      call<Ok, "deleteService">(
+        "deleteService",
+        "DELETE",
+        () => `${ws(workspaceId)}/services/${segment(serviceId)}`,
+        { headers: keyed(options) },
+      ),
+
+    /** `GET /workspaces/:id/incident-types`: by name. */
+    listIncidentTypes: (workspaceId: string) =>
+      call<{ incidentTypes: IncidentType[] }, "listIncidentTypes">(
+        "listIncidentTypes",
+        "GET",
+        () => `${ws(workspaceId)}/incident-types`,
+      ),
+
+    /** `POST /workspaces/:id/incident-types`. */
+    createIncidentType: (
+      workspaceId: string,
+      body: IncidentTypeCreateRequest,
+      options: WriteOptions = {},
+    ) =>
+      call<{ incidentType: IncidentType }, "createIncidentType">(
+        "createIncidentType",
+        "POST",
+        () => `${ws(workspaceId)}/incident-types`,
+        { body, headers: keyed(options) },
+      ),
+
+    /** `GET /workspaces/:id/incident-types/:typeId`. */
+    getIncidentType: (workspaceId: string, typeId: string) =>
+      call<{ incidentType: IncidentType }, "getIncidentType">(
+        "getIncidentType",
+        "GET",
+        () => `${ws(workspaceId)}/incident-types/${segment(typeId)}`,
+      ),
+
+    /** `PATCH /workspaces/:id/incident-types/:typeId`: what is sent changes; the rest stays. */
+    updateIncidentType: (
+      workspaceId: string,
+      typeId: string,
+      body: IncidentTypePatchRequest,
+      options: WriteOptions = {},
+    ) =>
+      call<{ incidentType: IncidentType }, "updateIncidentType">(
+        "updateIncidentType",
+        "PATCH",
+        () => `${ws(workspaceId)}/incident-types/${segment(typeId)}`,
+        { body, headers: keyed(options) },
+      ),
+
+    /** `GET /workspaces/:id/custom-fields`: in the order they were made. */
+    listCustomFields: (workspaceId: string) =>
+      call<{ customFields: CustomField[] }, "listCustomFields">(
+        "listCustomFields",
+        "GET",
+        () => `${ws(workspaceId)}/custom-fields`,
+      ),
+
+    /** `POST /workspaces/:id/custom-fields`: options as labels; Brigade gives each its id. */
+    createCustomField: (
+      workspaceId: string,
+      body: CustomFieldCreateRequest,
+      options: WriteOptions = {},
+    ) =>
+      call<{ customField: CustomField }, "createCustomField">(
+        "createCustomField",
+        "POST",
+        () => `${ws(workspaceId)}/custom-fields`,
+        { body, headers: keyed(options) },
+      ),
+
+    /** `GET /workspaces/:id/custom-fields/:fieldId`. */
+    getCustomField: (workspaceId: string, fieldId: string) =>
+      call<{ customField: CustomField }, "getCustomField">(
+        "getCustomField",
+        "GET",
+        () => `${ws(workspaceId)}/custom-fields/${segment(fieldId)}`,
+      ),
+
+    /**
+     * `PATCH /workspaces/:id/custom-fields/:fieldId`: its name, description or options (the list sent replaces the
+     * old one: keep an option by sending its id). Its kind never changes.
+     */
+    updateCustomField: (
+      workspaceId: string,
+      fieldId: string,
+      body: CustomFieldPatchRequest,
+      options: WriteOptions = {},
+    ) =>
+      call<{ customField: CustomField }, "updateCustomField">(
+        "updateCustomField",
+        "PATCH",
+        () => `${ws(workspaceId)}/custom-fields/${segment(fieldId)}`,
+        { body, headers: keyed(options) },
       ),
   };
 }

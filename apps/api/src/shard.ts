@@ -85,6 +85,14 @@ const SCHEMA = `
     primary key (actor_id, client_id, mutation_id)
   ) without rowid;
   create index if not exists mutation_results_at on mutation_results (at);
+  create table if not exists request_keys (
+    actor_id text not null,
+    key text not null,
+    at integer not null,
+    request text not null,
+    primary key (actor_id, key)
+  ) without rowid;
+  create index if not exists request_keys_at on request_keys (at);
   ${OUTBOX_SCHEMA}
 `;
 
@@ -215,6 +223,51 @@ export class Shard {
       )
       .toArray();
     return row && (JSON.parse(row.result) as MutationResultMessage);
+  }
+
+  /**
+   * When the stored result was saved (the mutation's `now`), within retention like `storedResult`: a retried create
+   * remakes the id it made from it (src/rest.ts).
+   */
+  storedAt(actorId: string, clientId: string, mutationId: string, now: number): number | undefined {
+    const [row] = this.sql
+      .exec<{ at: number }>(
+        `select at from mutation_results
+         where actor_id = ? and client_id = ? and mutation_id = ? and at >= ?`,
+        actorId,
+        clientId,
+        mutationId,
+        now - RESULT_RETENTION_MS,
+      )
+      .toArray();
+    return row?.at;
+  }
+
+  /**
+   * Ties an HTTP request's `Idempotency-Key` to what the request is (`request`: a digest of its route, target and
+   * body, src/rest.ts), within the results' retention. True when the key is new or was first sent with this same
+   * request; false when the actor sent it with another one, which must then be refused rather than answered with the
+   * first request's results.
+   */
+  claimRequestKey(actorId: string, key: string, request: string, now: number): boolean {
+    const [row] = this.sql
+      .exec<{ request: string }>(
+        "select request from request_keys where actor_id = ? and key = ? and at >= ?",
+        actorId,
+        key,
+        now - RESULT_RETENTION_MS,
+      )
+      .toArray();
+    if (row) return row.request === request;
+    this.sql.exec(
+      `insert into request_keys (actor_id, key, at, request) values (?, ?, ?, ?)
+       on conflict (actor_id, key) do update set at = excluded.at, request = excluded.request`,
+      actorId,
+      key,
+      now,
+      request,
+    );
+    return true;
   }
 
   /**
@@ -385,6 +438,7 @@ export class Shard {
   private prune(now: number): void {
     try {
       this.sql.exec("delete from mutation_results where at < ?", now - RESULT_RETENTION_MS);
+      this.sql.exec("delete from request_keys where at < ?", now - RESULT_RETENTION_MS);
     } catch (error) {
       this.options.log("pruning mutation results failed", { error });
     }

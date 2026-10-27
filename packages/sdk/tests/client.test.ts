@@ -55,6 +55,9 @@ const WS = "ws_01M5W19VG0040G2081040G2081";
 const USER = "usr_01M5W19VG0081040G2081040G2";
 const INV = "inv_01M5W19VG0081040G2081040G2";
 const INC = "inc_01M5W19VG0081040G2081040G2";
+const SVC = "svc_01M5W19VG0081040G2081040G2";
+const TYP = "typ_01M5W19VG0081040G2081040G2";
+const FLD = "fld_01M5W19VG0081040G2081040G2";
 
 /** Each method, called with a value per path parameter. */
 const CALLS: Record<keyof BrigadeClient, (client: BrigadeClient) => Promise<unknown>> = {
@@ -73,6 +76,24 @@ const CALLS: Record<keyof BrigadeClient, (client: BrigadeClient) => Promise<unkn
   acceptInvitation: (c) => c.acceptInvitation(INV),
   declineInvitation: (c) => c.declineInvitation(INV),
   acknowledgeIncident: (c) => c.acknowledgeIncident(WS, INC, { idempotencyKey: "ack-1" }),
+  listIncidents: (c) => c.listIncidents(WS),
+  declareIncident: (c) => c.declareIncident(WS, { title: "Checkout is down", severity: "sev1" }),
+  getIncident: (c) => c.getIncident(WS, INC),
+  updateIncident: (c) => c.updateIncident(WS, INC, { status: "investigating" }),
+  postIncidentUpdate: (c) => c.postIncidentUpdate(WS, INC, { body: "Rolling back." }),
+  listServices: (c) => c.listServices(WS),
+  createService: (c) => c.createService(WS, { name: "Checkout", tier: "tier1" }),
+  getService: (c) => c.getService(WS, SVC),
+  updateService: (c) => c.updateService(WS, SVC, { tier: "tier2" }),
+  deleteService: (c) => c.deleteService(WS, SVC),
+  listIncidentTypes: (c) => c.listIncidentTypes(WS),
+  createIncidentType: (c) => c.createIncidentType(WS, { name: "Security" }),
+  getIncidentType: (c) => c.getIncidentType(WS, TYP),
+  updateIncidentType: (c) => c.updateIncidentType(WS, TYP, { defaultSeverity: "sev1" }),
+  listCustomFields: (c) => c.listCustomFields(WS),
+  createCustomField: (c) => c.createCustomField(WS, { name: "Region", kind: "text" }),
+  getCustomField: (c) => c.getCustomField(WS, FLD),
+  updateCustomField: (c) => c.updateCustomField(WS, FLD, { name: "Regions" }),
 };
 
 const VALUES: Record<string, string> = {
@@ -80,6 +101,9 @@ const VALUES: Record<string, string> = {
   userId: USER,
   invitationId: INV,
   incidentId: INC,
+  serviceId: SVC,
+  typeId: TYP,
+  fieldId: FLD,
   token: `${WS}.mon_x.secret`,
 };
 
@@ -181,6 +205,14 @@ describe("requests", () => {
     expect(keys[0]).toMatch(/^[\w:-]{1,64}$/);
     expect(keys[0]).not.toBe(keys[1]);
     expect(keys[2]).toBe("retry:1");
+  });
+
+  test("incident filters go in the query; an empty list is no filter", async () => {
+    const { client, requests } = recorder(() => Response.json({ incidents: [], nextCursor: null }));
+    await client.listIncidents(WS, { status: [], severity: ["sev1", "sev2"], limit: 10 });
+    expect(requests[0]!.url).toBe(
+      `https://brigade.example.com/api/workspaces/${WS}/incidents?severity=sev1%2Csev2&limit=10`,
+    );
   });
 
   test("path segments are encoded", async () => {

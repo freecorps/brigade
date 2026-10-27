@@ -52,6 +52,7 @@ import { requestDraftRoute } from "./postmortem.ts";
 
 import { readBounded, readBoundedBytes } from "./body.ts";
 import { webhookRequest } from "./webhook-routes.ts";
+import { restRoute } from "./rest-routes.ts";
 import { MAX_ALERT_BODY } from "./alert-intake.ts";
 import { apiTokenRoute, callerOf, unauthenticated } from "./api-tokens.ts";
 import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, RECEIPT_STATUS, USER_ID } from "./http.ts";
@@ -192,6 +193,9 @@ export default {
     if (invitee) return answerInvitation(request, env, auth, invitee[1]!, invitee[2]);
     const ack = ACK_PATH.exec(pathname);
     if (ack) return acknowledgeIncident(request, env, auth, ack[1]!, ack[2]!, waitUntil);
+    // Incidents and the catalog (src/rest-routes.ts).
+    const rest = restRoute(request, env, auth, pathname, waitUntil);
+    if (rest) return rest;
     const slackInstall = SLACK_INSTALL_PATH.exec(pathname)?.[1];
     if (slackInstall !== undefined) return beginSlackInstall(request, env, auth, slackInstall);
     const slackChannels = SLACK_CHANNELS_PATH.exec(pathname)?.[1];

@@ -398,8 +398,9 @@ KV namespace (`status:<slug>`), retrying with backoff. `GET /status/:slug` (`src
 by the web Worker) renders it as HTML (`src/status-html.ts`) from KV behind the edge cache; it needs no session and
 never reaches a shard.
 
-`STATUS` is bound only at the top level, without an `id`, for local runs and the tests. `dev` and `staging` have no
-binding yet: their pages answer 404 while the dashboard still sets them up. To turn it on for `dev` (owner's call):
+`STATUS` is bound at the top level without an `id`, for local runs and the tests, and in `dev` to `brigade-status-dev`.
+`staging` has no binding yet: its pages answer 404 while the dashboard still sets them up. To turn it on for an
+environment (owner's call for staging and production), as was done for `dev`:
 
 ```bash
 wrangler kv namespace create brigade-status-dev     # in apps/api; prints the namespace id
@@ -408,7 +409,7 @@ wrangler kv namespace create brigade-status-dev     # in apps/api; prints the na
 then add `"kv_namespaces": [{ "binding": "STATUS", "id": "<that id>" }]` to `env.dev` in `wrangler.jsonc` (the same
 with `brigade-status-staging` for `staging`, and give production's top-level entry its `id` with `brigade-status`
 before its first deploy, or wrangler provisions a namespace on its own), and apply `migrations/0008_status_slug.sql`
-to the environment's database. `migrations/0008_status_slug.sql` is not applied to any deployed database yet.
+to the environment's database. `migrations/0008_status_slug.sql` is applied to `brigade-db-dev` only.
 
 ## Generated types
 

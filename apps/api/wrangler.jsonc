@@ -76,8 +76,9 @@
   ],
   // The public status page's snapshots (RFC 0012, src/status-page.ts): each workspace shard pushes its page here on
   // every change, and `GET /status/:slug` reads it, so no visitor ever wakes a shard. Without an `id` this binding is
-  // for local runs and the tests only (Miniflare simulates it); KV is unbound in `dev` and `staging` until a namespace
-  // exists (apps/api/README.md "Status page"), and the page then answers 404 while the dashboard still sets it up.
+  // for local runs and the tests only (Miniflare simulates it); `dev` binds `brigade-status-dev`. KV is unbound in
+  // `staging` until a namespace exists (apps/api/README.md "Status page"), and the page then answers 404 while the
+  // dashboard still sets it up.
   "kv_namespaces": [{ "binding": "STATUS" }],
   // Set with `wrangler secret put` (deployed) or apps/api/.dev.vars (local, gitignored); never in this file.
   // RELAY_SEND_TOKEN (src/notify.ts) is optional: paging needs it and the relay, reached through the `RELAY` service
@@ -132,6 +133,8 @@
           "simple": { "limit": 120, "period": 60 },
         },
       ],
+      // `brigade-status-dev`, the dev status page snapshots (RFC 0012).
+      "kv_namespaces": [{ "binding": "STATUS", "id": "cc29234582db43538204e0ae375d8ec8" }],
       "secrets": { "required": ["BETTER_AUTH_SECRET"] },
       // The relay on this account (apps/relay). A Worker's fetch to another workers.dev Worker on the same account is
       // answered 404, so the API reaches it through this binding and RELAY_URL is not used. Only `dev` has one: a

@@ -51,11 +51,13 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   and one planned before the page goes out first and is replaced by it (the page is the newer word). A page is
   never held back, and a page the relay or APNs refused holds nothing back once its outcome is recorded. Held, not
   dropped: the phone is pending on that push in the shard's ledger (`page_held`), never counted as reached, and its
-  member is not recorded as missed meanwhile. When the page's receipt arrives (at once, from the receipt) or its
+  member is not recorded as missed meanwhile (not even when another of their phones refused the same push: what the
+  released push does says). When the page's receipt arrives (at once, from the receipt) or its
   hold ends (from the shard's alarm), whichever comes first, the latest push held for that phone and incident goes
   out on an event of its own, `notification.released` (`notification.release`, through the outbox), with the
   incident as it is then; older ones held for the same phone are passed over, and nothing goes for an incident
-  acknowledged or resolved by then. Each held push is released once per event and device. A hold that cannot be
+  acknowledged or resolved by then, or to a phone signed in to another member since. Each held push is released once
+  per event and device (the release and its rows leaving `held` commit together), the phones soonest due first. A hold that cannot be
   written fails open: the push goes at once. A held push does not make its escalation level escalate early: it is
   pending, not failed. Tests: `apps/api/test/notify.test.ts` ("lower-urgency pushes behind a page"). Still open: a lower-urgency push for
   **another** incident can still replace a stored page (holding it back would delay another incident); the app

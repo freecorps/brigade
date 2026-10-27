@@ -699,21 +699,43 @@ export class Pager {
    * with nothing in its way any more. Null with nothing held.
    */
   releaseAt(now: number): number | null {
-    const open = this.options.storage.sql
-      .exec<{ incident_id: string; device_id: string }>(
-        "select distinct incident_id, device_id from page_held where state = 'held' order by at limit ?",
-        RELEASE_BATCH,
-      )
-      .toArray();
     let at: number | null = null;
     const holds = new Map<string, Map<string, number>>();
-    for (const row of open) {
+    for (const row of this.heldPhones(now)) {
       let holding = holds.get(row.incident_id);
       if (!holding) holds.set(row.incident_id, (holding = this.holding(row.incident_id, now)));
       const until = holding.get(row.device_id) ?? now;
       at = at === null ? until : Math.min(at, until);
     }
     return at;
+  }
+
+  /**
+   * Up to `RELEASE_BATCH` phones with a push held back for an incident, the soonest due first: by when the pages in
+   * their way stop holding by time alone (0 with none left, so already due), then by their oldest held push. Phones
+   * still held back behind a page for a long while never keep due ones waiting. A page confirmed by its receipt ends
+   * its hold sooner than this order says (`holding` reads the receipts): with more phones held than a batch, such a
+   * phone may wait until its place comes, at most until the hold would have run out.
+   */
+  private heldPhones(now: number): { incident_id: string; device_id: string }[] {
+    return this.options.storage.sql
+      .exec<{ incident_id: string; device_id: string }>(
+        `select h.incident_id, h.device_id, coalesce((
+           select max(case when u.accepted_at is null then u.planned_at + ? else u.accepted_at + ? end)
+           from page_urgent u
+           where u.incident_id = h.incident_id and u.device_id = h.device_id
+             and (u.accepted_at >= ? or (u.accepted_at is null and u.planned_at >= ?))
+         ), 0) as until
+         from page_held h where h.state = 'held'
+         group by h.incident_id, h.device_id
+         order by until, min(h.at), h.incident_id, h.device_id limit ?`,
+        PAGE_IN_FLIGHT_MS,
+        PAGE_HOLD_MS,
+        now - PAGE_HOLD_MS,
+        now - PAGE_IN_FLIGHT_MS,
+        RELEASE_BATCH,
+      )
+      .toArray();
   }
 
   /**
@@ -728,24 +750,28 @@ export class Pager {
   releaseDue(now: number): number {
     const { sql } = this.options.storage;
     const { store } = this.options.shard;
-    const open = sql
-      .exec<{ event_id: string; device_id: string; incident_id: string; at: number }>(
-        "select event_id, device_id, incident_id, at from page_held where state = 'held' order by at, event_id limit ?",
-        RELEASE_BATCH,
-      )
-      .toArray();
+    type Held = { event_id: string; device_id: string; incident_id: string };
     const holds = new Map<string, Map<string, number>>();
-    // Per incident and phone, the latest push held for it.
-    const latest = new Map<string, (typeof open)[number]>();
-    const passed: (typeof open)[number][] = [];
-    for (const row of open) {
-      let holding = holds.get(row.incident_id);
-      if (!holding) holds.set(row.incident_id, (holding = this.holding(row.incident_id, now)));
-      if (holding.has(row.device_id)) continue;
-      const key = `${row.incident_id}:${row.device_id}`;
-      const before = latest.get(key);
-      if (before) passed.push(before);
-      latest.set(key, row);
+    // Per incident and phone, the latest push held for it; every one of the phone's held pushes is read, so an older
+    // one is never released on its own.
+    const latest: Held[] = [];
+    const passed: Held[] = [];
+    for (const phone of this.heldPhones(now)) {
+      let holding = holds.get(phone.incident_id);
+      if (!holding) holds.set(phone.incident_id, (holding = this.holding(phone.incident_id, now)));
+      if (holding.has(phone.device_id)) continue;
+      const rows = sql
+        .exec<Held>(
+          `select event_id, device_id, incident_id from page_held
+           where incident_id = ? and device_id = ? and state = 'held' order by at, event_id`,
+          phone.incident_id,
+          phone.device_id,
+        )
+        .toArray();
+      const last = rows.pop();
+      if (!last) continue;
+      passed.push(...rows);
+      latest.push(last);
     }
     const mark = (rows: readonly { event_id: string; device_id: string }[], state: HeldState) => {
       for (const row of rows) {
@@ -759,7 +785,7 @@ export class Pager {
     };
     mark(passed, "superseded");
     const groups = new Map<string, { incidentId: string; eventId: string; deviceIds: string[] }>();
-    for (const row of latest.values()) {
+    for (const row of latest) {
       const incident = store.get("incidents", row.incident_id);
       if (!incident || !isActive(incident.status) || incident.acknowledgedAt != null) {
         mark([row], "dropped");
@@ -779,6 +805,7 @@ export class Pager {
         const some = deviceIds.slice(i, i + MAX_RELEASED_DEVICES);
         const rows = some.map((device_id) => ({ event_id: eventId, device_id }));
         try {
+          // The mutation and the rows leaving `held` commit together, or neither does: a push is released once.
           const ok = this.run(
             NOTIFIER_ACTOR,
             "notifier",
@@ -786,11 +813,11 @@ export class Pager {
             "notification.release",
             { incidentId, eventId, deviceIds: some },
             now,
+            (ok) => mark(rows, ok ? "released" : "dropped"),
           );
-          mark(rows, ok ? "released" : "dropped");
           if (ok) sent++;
         } catch (error) {
-          // Left held: the alarm tries again (`releaseAt` says it is due).
+          // Left held, and nothing released: the alarm tries again (`releaseAt` says it is due).
           this.options.log("releasing held pushes failed", {
             event: eventId,
             incident: incidentId,
@@ -804,14 +831,29 @@ export class Pager {
 
   /**
    * The plan for a held-back push released (`notification.released`): the incident as it is now, to the devices it
-   * names that are still registered to members who can respond and have not had it. A page of the incident in the way
+   * names that are still registered to the members they were held for (a phone signed in to another account since
+   * gets nothing), who can still respond and have not had it. A page of the incident in the way
    * again holds it back again (the same row, `held` once more). No call, and nothing to escalate.
    */
   private released(event: BrigadeEvent, incident: IncidentRow, now: number): PagePlan {
     const { store } = this.options.shard;
     const data = event.data as Partial<NotificationReleased["data"]> | null;
     const eventId = data?.eventId;
-    const wanted = new Set(data?.deviceIds ?? []);
+    // Each device's member when its push was held back: the push was for them.
+    const owners = new Map(
+      eventId === undefined
+        ? []
+        : this.options.storage.sql
+            .exec<{ device_id: string; user_id: string }>(
+              "select device_id, user_id from page_held where event_id = ?",
+              eventId,
+            )
+            .toArray()
+            .filter((row) => (data?.deviceIds ?? []).includes(row.device_id))
+            .map((row) => [row.device_id, row.user_id] as const),
+    );
+    const owned = store.scan("devices").filter((d) => owners.get(d.id) === d.userId);
+    const wanted = new Set(owned.map((d) => d.id));
     const sent = new Set(
       this.options.storage.sql
         .exec<{ device_id: string }>(
@@ -821,17 +863,9 @@ export class Pager {
         .toArray()
         .map((row) => row.device_id),
     );
-    const all = this.devicesOf(
-      [
-        ...new Set(
-          store
-            .scan("devices")
-            .filter((d) => wanted.has(d.id))
-            .map((d) => d.userId),
-        ),
-      ],
-      null,
-    ).targets.filter((target) => wanted.has(target.deviceId) && !sent.has(target.deviceId));
+    const all = this.devicesOf([...new Set(owned.map((d) => d.userId))], null).targets.filter(
+      (target) => wanted.has(target.deviceId) && !sent.has(target.deviceId),
+    );
     const urgency: Urgency = PAGING_SEVERITIES.includes(incident.severity) ? "page" : "high";
     const holding = urgency === "page" ? new Map<string, number>() : this.holding(incident.id, now);
     const again = all.filter((target) => holding.has(target.deviceId));
@@ -1175,9 +1209,12 @@ export class Pager {
       }
     }
     if (!final) return;
+    // A member with a phone this push is held back from is pending, not missed: what happens to the push released to
+    // it says (its own `record`), so nobody is told they were not paged while it may still reach them.
+    const pending = this.heldFor(event);
     const failures = new Map<string, SendFailure[]>();
     for (const outcome of outcomes) {
-      if (outcome.ok) continue;
+      if (outcome.ok || pending.has(outcome.userId)) continue;
       failures.set(outcome.userId, [...(failures.get(outcome.userId) ?? []), outcome.reason]);
     }
     const missed: SkippedMember[] = [...failures].map(([userId, reasons]) => ({
@@ -1193,7 +1230,9 @@ export class Pager {
             : "undelivered",
     }));
     for (const one of skipped) {
-      if (one.userId === null || !failures.has(one.userId)) missed.push(one);
+      if (one.userId === null || (!failures.has(one.userId) && !pending.has(one.userId))) {
+        missed.push(one);
+      }
     }
     this.settle(event, event.subject!, missed, now);
     this.finish(event.id, now);
@@ -1241,6 +1280,27 @@ export class Pager {
         incident: incidentId,
         error: String(error),
       });
+    }
+  }
+
+  /** The members a push of `event` is held back from a phone of, or was released to one of since. Never throws. */
+  private heldFor(event: BrigadeEvent): Set<string> {
+    try {
+      return new Set(
+        this.options.storage.sql
+          .exec<{ user_id: string }>(
+            "select distinct user_id from page_held where event_id = ? and state in ('held', 'released')",
+            event.id,
+          )
+          .toArray()
+          .map((row) => row.user_id),
+      );
+    } catch (error) {
+      this.options.log("reading the pushes held back failed", {
+        event: event.id,
+        error: String(error),
+      });
+      return new Set();
     }
   }
 
@@ -1329,7 +1389,13 @@ export class Pager {
     ) {
       this.start(event, incident, now);
     }
-    if (open) this.fail(event, incident.id, null, "dead_lettered", now, undefined, event.actor.id);
+    // Who caused the lost page: for a page again (one the shard ran on its own included), who caused the page it was
+    // made for, so paging it again by hand still leaves them out.
+    const causedBy =
+      (event.type === PAGED_AGAIN
+        ? (event.data as Partial<IncidentPagedAgain["data"]> | null)?.causedBy
+        : undefined) ?? event.actor.id;
+    if (open) this.fail(event, incident.id, null, "dead_lettered", now, undefined, causedBy);
     // The lost page is still the run's last: nothing would page its members until the next level's timeout, or ever,
     // when the run ended on it (everyone who can respond). It is paged again, on an event of its own, once: that
     // event lost too is only recorded (`lastPage`).
@@ -1579,6 +1645,7 @@ export class Pager {
 
   /**
    * A server-only mutation as `actor`, de-duplicated by `mutationId`. Whether it committed (now, or the first time).
+   * `also` writes what goes with its answer in the same transaction: when it throws, the mutation rolls back too.
    */
   private run(
     actor: Actor,
@@ -1587,24 +1654,40 @@ export class Pager {
     name: string,
     args: unknown,
     now: number,
+    also?: (ok: boolean) => void,
   ): boolean {
     const { shard } = this.options;
-    const stored = shard.storedResult(actor.id, clientId, mutationId, now);
-    if (stored) return stored.ok;
-    const { result, changes } = shard.mutate({
-      clientId,
-      mutationId,
-      actor,
-      name,
-      args,
-      now,
-      internal: true,
-    });
-    if (result.ok) this.options.committed(result.version, changes);
-    else if (result.error.code !== "not_found") {
-      this.options.log(`${clientId} mutation refused`, { mutation: name, code: result.error.code });
-    }
-    return result.ok;
+    // A box, because TypeScript does not see assignments made inside the callback.
+    const done: { committed?: { version: number; changes: readonly RowChange[] } } = {};
+    const once = (): boolean => {
+      const stored = shard.storedResult(actor.id, clientId, mutationId, now);
+      if (stored) {
+        also?.(stored.ok);
+        return stored.ok;
+      }
+      const { result, changes } = shard.mutate({
+        clientId,
+        mutationId,
+        actor,
+        name,
+        args,
+        now,
+        internal: true,
+      });
+      if (result.ok) done.committed = { version: result.version, changes };
+      else if (result.error.code !== "not_found") {
+        this.options.log(`${clientId} mutation refused`, {
+          mutation: name,
+          code: result.error.code,
+        });
+      }
+      also?.(result.ok);
+      return result.ok;
+    };
+    const ok = also ? this.options.storage.transactionSync(once) : once();
+    // Only once it committed: a rollback must not reach the clients.
+    if (done.committed) this.options.committed(done.committed.version, done.committed.changes);
+    return ok;
   }
 
   private done(eventId: string): boolean {

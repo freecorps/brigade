@@ -44,6 +44,7 @@ import {
   asksForPage,
   MAX_PAGE_DEVICES,
   PAGE_HOLD_MS,
+  PAGE_IN_FLIGHT_MS,
   PAGE_REPLAY_DELAY_MS,
   pageTargets,
   ringsAsCall,
@@ -1328,6 +1329,36 @@ describe("paging a lost declaration again on its own", () => {
     ).toHaveLength(1);
   });
 
+  test("its own page lost too keeps who declared it: paged again by hand, they are still left out", async () => {
+    const duda = user("usr_duda", "admin");
+    const ws = await workspace([ana, bia, caio, duda]);
+    const anaPhone = await ws.device(ana);
+    const biaPhone = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    await deadLetter(event);
+    await replay(ws);
+    const auto = (await ws.events(incident)).find((e) => e.type === "incident.paged_again")!;
+    expect(auto).toMatchObject({ actor: { id: "sys_notifier" }, data: { causedBy: ana.id } });
+    await deadLetter(auto);
+    const lost = (await ws.timeline(incident))
+      .filter((row) => row.kind === "page_failed" && row.reason === "dead_lettered")
+      .at(-1)!;
+    expect(lost).toMatchObject({ causedBy: ana.id });
+    expect(
+      (await ws.events(incident)).filter((e) => e.type === "notification.failed").at(-1),
+    ).toMatchObject({ data: { eventId: auto.id, reason: "dead_lettered" } });
+
+    await ws.run(duda, "incident.pageAgain", { id: incident, entries: [lost.id] });
+    const byHand = (await ws.events(incident)).find(
+      (e) => e.type === "incident.paged_again" && e.actor.id === duda.id,
+    )!;
+    expect(byHand.data).toMatchObject({ everyone: true, causedBy: ana.id });
+    const fake = relay();
+    await deliver(byHand, fake.send);
+    expect(fake.requests.map((r) => r.body.deviceToken)).toEqual([biaPhone.pushToken]);
+    expect(fake.requests.map((r) => r.body.deviceToken)).not.toContain(anaPhone.pushToken);
+  });
+
   test("dropped once someone paged it again by hand", async () => {
     const ws = await workspace();
     await ws.device(bia);
@@ -1630,6 +1661,172 @@ describe("lower-urgency pushes behind a page", () => {
     expect(await releases(ws, incident)).toMatchObject([
       { data: { eventId: later.id, deviceIds: [phone.deviceId] } },
     ]);
+  });
+
+  test("a page the relay never answers stops holding a push back after the in-flight timeout", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    // Planned, and the relay never answered: no outcome is ever recorded.
+    expect(await ws.stub.planPage(event)).toMatchObject({ send: true, urgency: "page" });
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
+    const fake = relay();
+    const later = another(event);
+    await deliver(later, fake.send);
+    expect(fake.requests).toHaveLength(0);
+    const planned = await ws.withShard(
+      (_shard, sql) =>
+        sql.exec<{ planned_at: number }>("select planned_at from page_urgent").one().planned_at,
+    );
+    const set = await runInDurableObject(ws.stub, (_instance: WorkspaceDO, state) =>
+      state.storage.getAlarm(),
+    );
+    expect(set!).toBeLessThanOrEqual(planned + PAGE_IN_FLIGHT_MS);
+
+    await age(ws, PAGE_IN_FLIGHT_MS - 10_000);
+    await alarm(ws);
+    expect(await releases(ws, incident)).toEqual([]);
+    await age(ws, 10_000);
+    await alarm(ws);
+    const out = await releases(ws, incident);
+    expect(out).toMatchObject([{ data: { eventId: later.id, deviceIds: [phone.deviceId] } }]);
+    await deliver(out[0]!, fake.send);
+    expect(fake.requests.map((r) => r.body.urgency)).toEqual(["high"]);
+  });
+
+  test("a release whose rows cannot leave `held` rolls back with them: the push goes out once", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    const fake = relay();
+    await deliver(event, fake.send);
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
+    const later = another(event);
+    await deliver(later, fake.send);
+    await ws.withShard((_shard, sql) => {
+      sql.exec(
+        "create trigger no_release before update on page_held when new.state = 'released' begin select raise(abort, 'storage failed'); end",
+      );
+    });
+    await age(ws, PAGE_HOLD_MS + 1);
+    await alarm(ws);
+    // The mutation committed, then marking its rows failed: neither stays.
+    expect(await releases(ws, incident)).toEqual([]);
+    expect((await held(ws)).map((row) => row.state)).toEqual(["held"]);
+    expect(logged()).toContainEqual(
+      expect.objectContaining({ message: "releasing held pushes failed" }),
+    );
+
+    await ws.withShard((_shard, sql) => {
+      sql.exec("drop trigger no_release");
+    });
+    await alarm(ws);
+    await alarm(ws);
+    expect(await releases(ws, incident)).toMatchObject([
+      { data: { eventId: later.id, deviceIds: [phone.deviceId] } },
+    ]);
+    expect((await held(ws)).map((row) => row.state)).toEqual(["released"]);
+  });
+
+  test("a held push never goes to a phone signed in to another member since", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    const fake = relay();
+    await deliver(event, fake.send);
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
+    await deliver(another(event), fake.send);
+    // The phone is Ana's now: the push was held for Bia.
+    await ws.withShard((shard) => {
+      shard.store.update("devices", phone.deviceId, { userId: ana.id });
+    });
+    await age(ws, PAGE_HOLD_MS + 1);
+    await alarm(ws);
+    const out = await releases(ws, incident);
+    expect(out).toHaveLength(1);
+    await deliver(out[0]!, fake.send);
+    expect(fake.requests.map((r) => r.body.urgency)).toEqual(["page"]);
+  });
+
+  test("phones held back behind a page for a while never keep a due push waiting, past a batch", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    const fake = relay();
+    await deliver(event, fake.send);
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
+    const later = another(event);
+    await deliver(later, fake.send);
+    await age(ws, PAGE_HOLD_MS + 1);
+    // More phones than a release looks at, each held back longer ago and behind a page APNs took just now.
+    await ws.withShard((_shard, sql) => {
+      const now = Date.now();
+      for (let i = 0; i < 501; i++) {
+        const device = `dev_other${String(i).padStart(4, "0")}`;
+        const other = `inc_other${String(i).padStart(4, "0")}`;
+        sql.exec(
+          "insert into page_held (event_id, device_id, incident_id, user_id, at) values (?, ?, ?, ?, ?)",
+          `evt_other${i}`,
+          device,
+          other,
+          bia.id,
+          i,
+        );
+        sql.exec(
+          "insert into page_urgent (event_id, device_id, incident_id, planned_at, accepted_at) values (?, ?, ?, ?, ?)",
+          `evt_page${i}`,
+          device,
+          other,
+          now,
+          now,
+        );
+      }
+    });
+    await alarm(ws);
+    expect(await releases(ws, incident)).toMatchObject([
+      { data: { eventId: later.id, deviceIds: [phone.deviceId] } },
+    ]);
+  });
+
+  test("a member whose other phone a push is held back from is not recorded as missed until its release", async () => {
+    const ws = await workspace();
+    const waiting = await ws.device(bia);
+    const other = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    // APNs takes the page for one phone, refuses the other: only the first may still be waiting for it.
+    const fake = relay((body) =>
+      body.deviceToken === waiting.pushToken
+        ? Response.json({ status: 200 })
+        : Response.json({ error: "invalid_body" }, { status: 400 }),
+    );
+    await deliver(event, fake.send);
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
+    const failed = async () =>
+      (await ws.timeline(incident)).filter(
+        (row) => row.kind === "page_failed" && row.userId === bia.id,
+      );
+    expect(await failed()).toEqual([]);
+
+    // The later push goes to the other phone and fails there; the first phone's is held. Bia may still get it.
+    await deliver(another(event), fake.send);
+    expect(fake.requests.map((r) => r.body.deviceToken)).toEqual([
+      waiting.pushToken,
+      other.pushToken,
+      other.pushToken,
+    ]);
+    expect(await failed()).toEqual([]);
+    expect((await ws.events(incident)).filter((e) => e.type === "notification.failed")).toEqual([]);
+
+    // The release fails too: that is when she is recorded as not reached.
+    await age(ws, PAGE_HOLD_MS + 1);
+    await alarm(ws);
+    const out = await releases(ws, incident);
+    expect(out).toHaveLength(1);
+    await deliver(out[0]!, refusing().send);
+    expect(await failed()).toEqual([expect.objectContaining({ reason: "undelivered" })]);
+    expect(
+      (await ws.events(incident)).filter((e) => e.type === "notification.failed"),
+    ).toMatchObject([{ data: { eventId: out[0]!.id, userId: bia.id } }]);
   });
 
   test("a hold that cannot be written sends the push at once (fail open)", async () => {

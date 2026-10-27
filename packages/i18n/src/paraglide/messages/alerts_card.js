@@ -125,6 +125,45 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "route_disabled" | "Off since the account that created it was taken back. Save it to turn it on again." |
 * | "source_link" | "Open in the source" |
 * | "an_incident" | "an incident" |
+* | "mapping" | "Title and severity" |
+* | "mapping_title" | "Title and severity for {name}" |
+* | "mapping_hint" | "Applied to every alert this source sends from now on, before the routes see it. Alerts already in keep theirs." |
+* | "mapped" | "Title and severity mapped" |
+* | "template_label" | "Title template (optional)" |
+* | "template_hint" | "Empty: the alert's own title. A label the alert doesn't have is left blank." |
+* | "template_fields" | "Placeholders the alert fills in:" |
+* | "template_any_label" | "or any label:" |
+* | "template_insert" | "Add {name} to the title" |
+* | "template_unknown_field" | "Use only the placeholders listed below." |
+* | "template_unclosed" | "A placeholder is never closed." |
+* | "template_stray_brace" | "A closing brace closes nothing." |
+* | "template_too_many_fields" | "Use at most 10 placeholders." |
+* | "severity_source" | "Read the severity from" |
+* | "severity_source_provider" | "The sender's own severity or priority" |
+* | "severity_source_label" | "A label" |
+* | "severity_label_key" | "Label" |
+* | "severity_label_required" | "Name the label to read." |
+* | "rules_title" | "Map these values" |
+* | "rules_empty" | "No values mapped: the severity Brigade read stays, unless you pick one for anything else." |
+* | "rule_value" | "Value" |
+* | "rule_severity" | "Severity" |
+* | "add_rule" | "Add value" |
+* | "remove_rule" | "Remove {name}" |
+* | "rule_value_required" | "Enter the value, or remove the row." |
+* | "rule_duplicate" | "Each value once." |
+* | "rules_limit" | "At most {value} values." |
+* | "fallback_label" | "Anything else" |
+* | "fallback_keep" | "The severity Brigade read" |
+* | "preview_title" | "Preview with the latest alert" |
+* | "preview_empty" | "No alert from this source yet. The preview appears once one arrives." |
+* | "preview_sent" | "Sent" |
+* | "preview_becomes" | "Becomes" |
+* | "preview_sender_word" | "Sender's severity: {value}" |
+* | "preview_no_word" | "The sender gave no severity" |
+* | "preview_route" | "Route" |
+* | "preview_route_default" | "No route matches: it opens an incident at its own severity, paged through the default policy." |
+* | "mapping_reset" | "Use the sender's" |
+* | "mapping_save_failed" | "Couldn't save the title and severity. Try again." |
 * | * | "Alert sources" |
 *
 * @param {Alerts_CardInputs} inputs
@@ -249,6 +288,45 @@ export const alerts_card = /** @type {((inputs: Alerts_CardInputs, options?: { l
 		if (i?.part === "route_disabled") return /** @type {LocalizedString} */ (`Desligada desde que a conta que a criou foi recuperada. Salve para ligá-la de novo.`);
 		if (i?.part === "source_link") return /** @type {LocalizedString} */ (`Abrir na origem`);
 		if (i?.part === "an_incident") return /** @type {LocalizedString} */ (`um incidente`);
+		if (i?.part === "mapping") return /** @type {LocalizedString} */ (`Título e severidade`);
+		if (i?.part === "mapping_title") return /** @type {LocalizedString} */ (`Título e severidade de ${i?.name}`);
+		if (i?.part === "mapping_hint") return /** @type {LocalizedString} */ (`Vale para todo alerta que esta fonte enviar a partir de agora, antes das rotas. Os alertas já recebidos ficam como estão.`);
+		if (i?.part === "mapped") return /** @type {LocalizedString} */ (`Título e severidade mapeados`);
+		if (i?.part === "template_label") return /** @type {LocalizedString} */ (`Modelo de título (opcional)`);
+		if (i?.part === "template_hint") return /** @type {LocalizedString} */ (`Vazio: o título do próprio alerta. Um rótulo que o alerta não tem fica em branco.`);
+		if (i?.part === "template_fields") return /** @type {LocalizedString} */ (`Campos que o alerta preenche:`);
+		if (i?.part === "template_any_label") return /** @type {LocalizedString} */ (`ou qualquer rótulo:`);
+		if (i?.part === "template_insert") return /** @type {LocalizedString} */ (`Adicionar ${i?.name} ao título`);
+		if (i?.part === "template_unknown_field") return /** @type {LocalizedString} */ (`Use só os campos listados abaixo.`);
+		if (i?.part === "template_unclosed") return /** @type {LocalizedString} */ (`Um campo nunca é fechado.`);
+		if (i?.part === "template_stray_brace") return /** @type {LocalizedString} */ (`Uma chave de fechamento não fecha nada.`);
+		if (i?.part === "template_too_many_fields") return /** @type {LocalizedString} */ (`Use no máximo 10 campos.`);
+		if (i?.part === "severity_source") return /** @type {LocalizedString} */ (`Ler a severidade de`);
+		if (i?.part === "severity_source_provider") return /** @type {LocalizedString} */ (`A severidade ou prioridade do próprio remetente`);
+		if (i?.part === "severity_source_label") return /** @type {LocalizedString} */ (`Um rótulo`);
+		if (i?.part === "severity_label_key") return /** @type {LocalizedString} */ (`Rótulo`);
+		if (i?.part === "severity_label_required") return /** @type {LocalizedString} */ (`Diga qual rótulo ler.`);
+		if (i?.part === "rules_title") return /** @type {LocalizedString} */ (`Mapear estes valores`);
+		if (i?.part === "rules_empty") return /** @type {LocalizedString} */ (`Nenhum valor mapeado: fica a severidade que o Brigade leu, a não ser que você escolha uma para o resto.`);
+		if (i?.part === "rule_value") return /** @type {LocalizedString} */ (`Valor`);
+		if (i?.part === "rule_severity") return /** @type {LocalizedString} */ (`Severidade`);
+		if (i?.part === "add_rule") return /** @type {LocalizedString} */ (`Adicionar valor`);
+		if (i?.part === "remove_rule") return /** @type {LocalizedString} */ (`Remover ${i?.name}`);
+		if (i?.part === "rule_value_required") return /** @type {LocalizedString} */ (`Informe o valor ou remova a linha.`);
+		if (i?.part === "rule_duplicate") return /** @type {LocalizedString} */ (`Cada valor uma vez só.`);
+		if (i?.part === "rules_limit") return /** @type {LocalizedString} */ (`No máximo ${i?.value} valores.`);
+		if (i?.part === "fallback_label") return /** @type {LocalizedString} */ (`Qualquer outro`);
+		if (i?.part === "fallback_keep") return /** @type {LocalizedString} */ (`A severidade que o Brigade leu`);
+		if (i?.part === "preview_title") return /** @type {LocalizedString} */ (`Prévia com o último alerta`);
+		if (i?.part === "preview_empty") return /** @type {LocalizedString} */ (`Nenhum alerta desta fonte ainda. A prévia aparece quando chegar um.`);
+		if (i?.part === "preview_sent") return /** @type {LocalizedString} */ (`Enviado`);
+		if (i?.part === "preview_becomes") return /** @type {LocalizedString} */ (`Fica`);
+		if (i?.part === "preview_sender_word") return /** @type {LocalizedString} */ (`Severidade do remetente: ${i?.value}`);
+		if (i?.part === "preview_no_word") return /** @type {LocalizedString} */ (`O remetente não deu severidade`);
+		if (i?.part === "preview_route") return /** @type {LocalizedString} */ (`Rota`);
+		if (i?.part === "preview_route_default") return /** @type {LocalizedString} */ (`Nenhuma rota combina: abre um incidente com a própria severidade, chamando pela política padrão.`);
+		if (i?.part === "mapping_reset") return /** @type {LocalizedString} */ (`Usar o do remetente`);
+		if (i?.part === "mapping_save_failed") return /** @type {LocalizedString} */ (`Não foi possível salvar o título e a severidade. Tente de novo.`);
 		return /** @type {LocalizedString} */ (`Fontes de alertas`)
 	}
 	{
@@ -367,6 +445,45 @@ export const alerts_card = /** @type {((inputs: Alerts_CardInputs, options?: { l
 		if (i?.part === "route_disabled") return /** @type {LocalizedString} */ (`Off since the account that created it was taken back. Save it to turn it on again.`);
 		if (i?.part === "source_link") return /** @type {LocalizedString} */ (`Open in the source`);
 		if (i?.part === "an_incident") return /** @type {LocalizedString} */ (`an incident`);
+		if (i?.part === "mapping") return /** @type {LocalizedString} */ (`Title and severity`);
+		if (i?.part === "mapping_title") return /** @type {LocalizedString} */ (`Title and severity for ${i?.name}`);
+		if (i?.part === "mapping_hint") return /** @type {LocalizedString} */ (`Applied to every alert this source sends from now on, before the routes see it. Alerts already in keep theirs.`);
+		if (i?.part === "mapped") return /** @type {LocalizedString} */ (`Title and severity mapped`);
+		if (i?.part === "template_label") return /** @type {LocalizedString} */ (`Title template (optional)`);
+		if (i?.part === "template_hint") return /** @type {LocalizedString} */ (`Empty: the alert's own title. A label the alert doesn't have is left blank.`);
+		if (i?.part === "template_fields") return /** @type {LocalizedString} */ (`Placeholders the alert fills in:`);
+		if (i?.part === "template_any_label") return /** @type {LocalizedString} */ (`or any label:`);
+		if (i?.part === "template_insert") return /** @type {LocalizedString} */ (`Add ${i?.name} to the title`);
+		if (i?.part === "template_unknown_field") return /** @type {LocalizedString} */ (`Use only the placeholders listed below.`);
+		if (i?.part === "template_unclosed") return /** @type {LocalizedString} */ (`A placeholder is never closed.`);
+		if (i?.part === "template_stray_brace") return /** @type {LocalizedString} */ (`A closing brace closes nothing.`);
+		if (i?.part === "template_too_many_fields") return /** @type {LocalizedString} */ (`Use at most 10 placeholders.`);
+		if (i?.part === "severity_source") return /** @type {LocalizedString} */ (`Read the severity from`);
+		if (i?.part === "severity_source_provider") return /** @type {LocalizedString} */ (`The sender's own severity or priority`);
+		if (i?.part === "severity_source_label") return /** @type {LocalizedString} */ (`A label`);
+		if (i?.part === "severity_label_key") return /** @type {LocalizedString} */ (`Label`);
+		if (i?.part === "severity_label_required") return /** @type {LocalizedString} */ (`Name the label to read.`);
+		if (i?.part === "rules_title") return /** @type {LocalizedString} */ (`Map these values`);
+		if (i?.part === "rules_empty") return /** @type {LocalizedString} */ (`No values mapped: the severity Brigade read stays, unless you pick one for anything else.`);
+		if (i?.part === "rule_value") return /** @type {LocalizedString} */ (`Value`);
+		if (i?.part === "rule_severity") return /** @type {LocalizedString} */ (`Severity`);
+		if (i?.part === "add_rule") return /** @type {LocalizedString} */ (`Add value`);
+		if (i?.part === "remove_rule") return /** @type {LocalizedString} */ (`Remove ${i?.name}`);
+		if (i?.part === "rule_value_required") return /** @type {LocalizedString} */ (`Enter the value, or remove the row.`);
+		if (i?.part === "rule_duplicate") return /** @type {LocalizedString} */ (`Each value once.`);
+		if (i?.part === "rules_limit") return /** @type {LocalizedString} */ (`At most ${i?.value} values.`);
+		if (i?.part === "fallback_label") return /** @type {LocalizedString} */ (`Anything else`);
+		if (i?.part === "fallback_keep") return /** @type {LocalizedString} */ (`The severity Brigade read`);
+		if (i?.part === "preview_title") return /** @type {LocalizedString} */ (`Preview with the latest alert`);
+		if (i?.part === "preview_empty") return /** @type {LocalizedString} */ (`No alert from this source yet. The preview appears once one arrives.`);
+		if (i?.part === "preview_sent") return /** @type {LocalizedString} */ (`Sent`);
+		if (i?.part === "preview_becomes") return /** @type {LocalizedString} */ (`Becomes`);
+		if (i?.part === "preview_sender_word") return /** @type {LocalizedString} */ (`Sender's severity: ${i?.value}`);
+		if (i?.part === "preview_no_word") return /** @type {LocalizedString} */ (`The sender gave no severity`);
+		if (i?.part === "preview_route") return /** @type {LocalizedString} */ (`Route`);
+		if (i?.part === "preview_route_default") return /** @type {LocalizedString} */ (`No route matches: it opens an incident at its own severity, paged through the default policy.`);
+		if (i?.part === "mapping_reset") return /** @type {LocalizedString} */ (`Use the sender's`);
+		if (i?.part === "mapping_save_failed") return /** @type {LocalizedString} */ (`Couldn't save the title and severity. Try again.`);
 		return /** @type {LocalizedString} */ (`Alert sources`)
 	}
 });

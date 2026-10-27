@@ -1223,6 +1223,161 @@ describe("a policy per monitor", () => {
   });
 });
 
+// The policy order (RFC 0006 "Who is paged"): route, type, the incident's first service with a policy, monitor,
+// default. Paging path: whatever is gone along it falls through to the next, never to no page.
+describe("the policy order", () => {
+  const ESC3 = "esc_01JB0000000000000000000003";
+  const SVC = "svc_01JB0000000000000000000001";
+  const SVC2 = "svc_01JB0000000000000000000002";
+  const TYP = "typ_01JB0000000000000000000001";
+  const EVT2 = "evt_01JB0000000000000000000002";
+
+  /** `withMonitor(ESC2)` plus a third policy (`ESC3`, Caio only) and a service `SVC` naming `policyId`. */
+  function withService(policyId: string | null) {
+    const store = withMonitor(ESC2);
+    expect(
+      runMutation(
+        mutations,
+        "escalation.createPolicy",
+        policyArgs({
+          id: ESC3,
+          name: "Storefront",
+          levels: [level(LVL1, [{ kind: "member", id: "usr_caio" }])],
+          isDefault: false,
+        }),
+        store,
+        ctx("usr_ana", "owner"),
+      ),
+    ).toMatchObject({ ok: true });
+    expect(
+      runMutation(
+        mutations,
+        "service.create",
+        {
+          id: SVC,
+          name: "Storefront",
+          description: "",
+          tier: "tier1",
+          owners: [],
+          escalationPolicyId: policyId,
+        },
+        store,
+        ctx("usr_bia", "admin"),
+      ),
+    ).toMatchObject({ ok: true });
+    return store;
+  }
+  const setServices = (store: MutationStore, serviceIds: string[]) =>
+    expect(
+      runMutation(
+        mutations,
+        "incident.setServices",
+        { id: INC, serviceIds },
+        store,
+        ctx("usr_caio", "responder"),
+      ),
+    ).toMatchObject({ ok: true });
+
+  test("the incident's type beats its service", () => {
+    const store = withService(ESC3);
+    setServices(store, [SVC]);
+    for (const [name, args] of [
+      [
+        "incidentType.create",
+        {
+          id: TYP,
+          name: "Payments outage",
+          description: "",
+          defaultSeverity: "sev1",
+          escalationPolicyId: ESC,
+          requiredFields: [],
+        },
+      ],
+      ["incident.setType", { id: INC, typeId: TYP }],
+    ] as const) {
+      expect(
+        runMutation(mutations, name, args, store, ctx("usr_ana", "owner")),
+        name,
+      ).toMatchObject({ ok: true });
+    }
+    start(store, "sys_monitors");
+    expect(run(store)).toMatchObject({ policyId: ESC, monitor: null });
+    expect(run(store).service).toBeUndefined();
+  });
+
+  test("a service a member adds to a monitor's incident pages its policy on the next run", () => {
+    const store = withService(ESC3);
+    start(store, "sys_monitors");
+    expect(run(store)).toMatchObject({ policyId: ESC2, monitor: { id: MON } });
+    // Nobody acknowledged: the run ends, and a member names the service while the incident is still open.
+    advance(store, T + 5 * MINUTE);
+    expect(run(store).status).toBe("exhausted");
+    setServices(store, [SVC]);
+    expect(
+      runMutation(
+        serverMutations,
+        "escalation.start",
+        { incidentId: INC, eventId: EVT2, causedBy: "usr_caio" },
+        store,
+        system(T + 6 * MINUTE),
+      ),
+    ).toMatchObject({ ok: true, events: [{ data: { policyId: ESC3 } }] });
+    expect(run(store)).toMatchObject({
+      policyId: ESC3,
+      policyName: "Storefront",
+      service: { id: SVC, name: "Storefront" },
+      monitor: null,
+    });
+  });
+
+  test("a deleted service still listed is skipped for the next one with a policy", () => {
+    const store = withService(ESC3);
+    expect(
+      runMutation(
+        mutations,
+        "service.create",
+        {
+          id: SVC2,
+          name: "Search",
+          description: "",
+          tier: "tier2",
+          owners: [],
+          escalationPolicyId: ESC,
+        },
+        store,
+        ctx("usr_bia", "admin"),
+      ),
+    ).toMatchObject({ ok: true });
+    setServices(store, [SVC, SVC2]);
+    expect(
+      runMutation(mutations, "service.delete", { id: SVC }, store, ctx("usr_bia", "admin")),
+    ).toMatchObject({ ok: true });
+    expect(store.get("incidents", INC)!.serviceIds).toEqual([SVC, SVC2]);
+    start(store, "sys_monitors");
+    expect(run(store)).toMatchObject({ policyId: ESC, service: { id: SVC2, name: "Search" } });
+  });
+
+  test("a service naming a policy that no longer exists falls through to the monitor", () => {
+    const store = withMonitor(ESC2);
+    // Written straight to the store, past what deleting a policy clears.
+    store.insert("services", {
+      id: SVC,
+      name: "Storefront",
+      description: "",
+      tier: "tier1",
+      owners: [],
+      escalationPolicyId: ESC3,
+      createdAt: T,
+      createdBy: "usr_bia",
+      updatedAt: T,
+    });
+    store.update("incidents", INC, { serviceIds: [SVC] });
+    start(store, "sys_monitors");
+    expect(run(store)).toMatchObject({ policyId: ESC2, monitor: { id: MON } });
+    expect(run(store).service).toBeUndefined();
+  });
+});
+
 const unreached = (store: MutationStore, step = run(store).paged, now = T + MINUTE) =>
   runMutation(
     serverMutations,

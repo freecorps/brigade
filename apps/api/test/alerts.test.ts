@@ -10,6 +10,7 @@ import {
   newHeartbeatSecret,
   newId,
   type Actor,
+  type AlertMapping,
   type AlertSourceKind,
 } from "@freecorps/brigade-schema";
 import grafanaFiring from "../../../packages/schema/tests/fixtures/alerts/grafana-firing.json";
@@ -481,6 +482,58 @@ describe("alerts that page", () => {
         "default",
         "default",
       ]);
+    });
+  });
+
+  test("a source's mapping names and ranks its incidents; one stored broken still pages as sent", async () => {
+    const ws = await workspace();
+    const { token, id } = await source(ws, "grafana");
+    expect(
+      await ws.run("alertSource.setMapping", {
+        id,
+        mapping: {
+          titleTemplate: "{labels.zone} · {labels.alertname}",
+          severity: {
+            from: "label",
+            label: "zone",
+            rules: [{ value: "eu-1", severity: "critical" }],
+            fallback: "warning",
+          },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+    expect((await post(token, JSON.stringify(grafanaFiring))).status).toBe(202);
+    await ws.withShard((shard, sql) => {
+      expect(pages(sql)).toHaveLength(2);
+      const titles = shard.store
+        .scan("incidents")
+        .map((incident) => `${incident.severity} ${incident.title}`)
+        .sort();
+      expect(titles).toEqual(["sev1 eu-1 · High CPU usage", "sev3 us-1 · High memory usage"]);
+      // Written by hand, never through the mutation: a template and a map nobody could save.
+      shard.store.update("alert_sources", id, {
+        mapping: {
+          titleTemplate: "{labels.zone",
+          severity: { from: "label", label: null, rules: [], fallback: "loud" },
+        } as unknown as AlertMapping,
+      });
+    });
+    const resent = {
+      ...grafanaFiring,
+      alerts: [{ ...grafanaFiring.alerts[0], fingerprint: "another-alert" }],
+    };
+    expect((await post(token, JSON.stringify(resent))).status).toBe(202);
+    await ws.withShard((shard, sql) => {
+      expect(pages(sql)).toHaveLength(3);
+      expect(
+        shard.store
+          .scan("incidents")
+          .some(
+            (incident) =>
+              incident.title === "This alert was triggered for zone us-1" &&
+              incident.severity === "sev1",
+          ),
+      ).toBe(true);
     });
   });
 

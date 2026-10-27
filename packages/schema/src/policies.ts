@@ -88,11 +88,12 @@ export function defaultPolicy(store: MutationStore): EscalationPolicyRow | undef
 }
 
 /**
- * The policy a run on `incidentId` follows (RFC 0003 "Escalation policies", "Incident types", RFC 0006 "Who is
- * paged"): the policy of the alert route an alert source opened the incident through when it names one (`route` says
- * which, by its name then), else the policy of the incident's type, else the policy of the monitor that opened the
- * incident (`monitor` says which, by its name now), otherwise the default; undefined with none (the interim rule
- * pages). A route, type or monitor deleted since, or a policy gone, falls through to the next.
+ * The policy a run on `incidentId` follows (RFC 0003 "Escalation policies", "Incident types", "Service catalog", RFC
+ * 0006 "Who is paged"): the policy of the alert route an alert source opened the incident through when it names one
+ * (`route` says which, by its name then), else the policy of the incident's type, else the policy of the first of its
+ * services, in the order they were picked, that names one (`service`, by its name now), else the policy of the monitor
+ * that opened the incident (`monitor`, by its name now), otherwise the default; undefined with none (the interim rule
+ * pages). A route, type, service or monitor deleted since, or a policy gone, falls through to the next.
  */
 export function incidentPolicy(
   store: MutationStore,
@@ -102,6 +103,7 @@ export function incidentPolicy(
       policy: EscalationPolicyRow;
       monitor: { id: string; name: string } | null;
       route?: { id: string; name: string } | null;
+      service?: { id: string; name: string } | null;
     }
   | undefined {
   const opened = incidentRoute(store, incidentId);
@@ -109,12 +111,22 @@ export function incidentPolicy(
   if (opened && routed) {
     return { policy: routed, monitor: null, route: { id: opened.routeId, name: opened.routeName } };
   }
-  const typeId = store.get("incidents", incidentId)?.typeId;
+  const incident = store.get("incidents", incidentId);
+  const typeId = incident?.typeId;
   const type = typeId ? store.get("incident_types", typeId) : undefined;
   const typed = type?.escalationPolicyId
     ? store.get("escalation_policies", type.escalationPolicyId)
     : undefined;
   if (typed) return { policy: typed, monitor: null };
+  for (const serviceId of incident?.serviceIds ?? []) {
+    const service = store.get("services", serviceId);
+    const owned = service?.escalationPolicyId
+      ? store.get("escalation_policies", service.escalationPolicyId)
+      : undefined;
+    if (service && owned) {
+      return { policy: owned, monitor: null, service: { id: service.id, name: service.name } };
+    }
+  }
   const opener = openedBy(store, incidentId);
   const own = opener?.policyId ? store.get("escalation_policies", opener.policyId) : undefined;
   if (opener && own) return { policy: own, monitor: { id: opener.id, name: opener.name } };

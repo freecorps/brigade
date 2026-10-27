@@ -15,7 +15,7 @@ export type Escalation_TextInputs = {
 * | "title" | "Escalation" |
 * | "empty" | "No escalation policies yet. Without a default policy, pages go to the incident's commander, or to everyone who can respond." |
 * | "no_default" | "No default policy: pages go to the incident's commander, or to everyone who can respond." |
-* | "default_note" | "Every page goes through the default policy, unless the monitor that opened the incident names its own." |
+* | "default_note" | "Pages go through the default policy unless the incident's alert route, its type, a service it names or the monitor that opened it has a policy of its own, in..." |
 * | "default_badge" | "Default" |
 * | "level" | "Level {level}" |
 * | "level_empty" | "Nobody to page at this level: it is skipped until someone is added" |
@@ -49,6 +49,7 @@ export type Escalation_TextInputs = {
 * | "policy_default" | "Policy: {name}, the workspace default" |
 * | "policy_monitor" | "Policy: {name}, set on the monitor {who}" |
 * | "policy_route" | "Policy: {name}, set on the alert route {who}" |
+* | "policy_service" | "Policy: {name}, set on the service {who}" |
 * | "early" | "Paged now: nobody on level {level} could be reached" |
 * | * | "Escalation" |
 *

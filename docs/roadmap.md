@@ -148,7 +148,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     a notice in the Monitors card when a region's probe stalls (RFC 0007).
   - Left: whether "No data" pages (Q17); TLS expiry, which Workers cannot read (RFC 0007 "Check types": neither
     `fetch` nor the Sockets API exposes the peer certificate); paging, not only a notice, on a stalled probe (RFC 0007
-    "Watching the watcher"); `AlertGroupDO` and alert routes, moving monitor alerts out of the workspace shard;
+    "Watching the watcher"); monitor alerts through the alert routes (RFC 0007 "Monitor alerts through the routes";
+    `AlertGroupDO` waits for alert volume, same section);
     `apac-ne` and `apac-se` as further regions (S2); the workspace default locale for the incident title (Q15).
 - [x] Incidents: declare, severity, status, roles, timeline, updates
   - Timeline as its own synced table written by every incident mutation (and the monitor recovery note), written
@@ -336,8 +337,13 @@ Validate the risky assumptions before writing product code. Each spike produces 
     suppress; drop) with a default that always pages; the route's policy first in the policy order (RFC 0006);
     unreadable payloads paging through the default; caps per workspace; the dashboard's Alert sources card with
     setup per provider, a routes editor and the latest alerts.
-  - Left: monitor alerts through the routes and `AlertGroupDO` (RFC 0007); whether a service's policy pages; title
-    and severity mapping per source; Slack naming the alerts' actor; email ingest.
+  - Also done: a title template and a severity map per source (`alertSource.setMapping`, owners and admins), applied
+    before the routes and falling back to the sender's title and severity whenever they cannot be read, with a
+    preview on the source's latest alert in the card (RFC 0005 "Alert sources", "Mapping"); a service's escalation
+    policy pages, after the route's and the type's and before the monitor's (RFC 0006 "Who is paged"); decided that
+    the shard keeps grouping rather than an `AlertGroupDO` for now, and what would move it (RFC 0007).
+  - Left: monitor alerts through the routes (planned in RFC 0007 "Monitor alerts through the routes"); Slack naming
+    the alerts' actor; email ingest.
 - [x] Service catalog; custom fields; incident types; role definitions
   - Done: services per workspace (name, description, tier, owners: schedules or members, an optional escalation
     policy), listed on the dashboard with a page each (owners, who of them is on call, active incidents naming it);
@@ -353,8 +359,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     and service, through the same mutations, with a session or an API token (`catalog:read`, `catalog:manage`;
     `incident:read` for incidents).
   - Left for later items: a monitor naming the service it watches;
-    filtering incidents by field; deleting types and fields and editing role definitions over HTTP; alert routes
-    paging a service's policy; enforcing required fields
+    filtering incidents by field; deleting types and fields and editing role definitions over HTTP; enforcing required fields
     at a chosen status (opt-in); editing details from the app.
 - [ ] Follow-ups; postmortem draft with Workers AI; exports to R2
   - Done (RFC 0013): follow-ups on incidents (title, owner, due date, open or done, optional issue link), changed by

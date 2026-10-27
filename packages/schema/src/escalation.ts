@@ -1,5 +1,6 @@
 // Escalation runs (RFC 0003 "Escalation run", RFC 0006 "Who is paged"): the first page of an incident starts one
-// on the policy of its type, else of the monitor that opened it, else the workspace's default (`incidentPolicy`); a
+// on the policy of its alert route, else its type, else its first service with one, else the monitor that opened it,
+// else the workspace's default (`incidentPolicy`); a
 // type changed while the run is under way does not change its levels. The shard's alarm fires each next level when
 // nobody acknowledged in time; a level every push of which failed fires the next one of its round at once.
 // A level is resolved when it fires: schedules to whoever is on call at that instant. A level nobody on it can be
@@ -286,8 +287,9 @@ function setTimer(store: MutationStore, incidentId: string, at: number): void {
 }
 
 /**
- * Server only, as `ESCALATION_ACTOR`: starts a run for the page `eventId` asked for, on the policy of the incident's type,
- * else of the monitor that opened the incident, else the default (`incidentPolicy`), and pages its first reachable level (RFC 0006 "Who is
+ * Server only, as `ESCALATION_ACTOR`: starts a run for the page `eventId` asked for, on the policy of the alert route
+ * that opened the incident, else of its type, else of its first service that names one, else of the monitor that
+ * opened it, else the default (`incidentPolicy`), and pages its first reachable level (RFC 0006 "Who is
  * paged"). `causedBy` (who caused that event) counts as reached without a push. `not_found` with no policy (the
  * interim rule pages instead); `conflict` while a run is under way, or for an incident already acknowledged or no
  * longer active.
@@ -309,12 +311,13 @@ export const startEscalation = defineMutation({
     if (incident.escalation?.status === "running") return fail("conflict", "Already escalating");
     const chosen = incidentPolicy(store, incident.id);
     if (!chosen) return fail("not_found", "No escalation policy");
-    const { policy, monitor, route } = chosen;
+    const { policy, monitor, route, service } = chosen;
     const run: Escalation = {
       policyId: policy.id,
       policyName: policy.name,
       monitor,
       ...(route && { route }),
+      ...(service && { service }),
       levels: policy.levels,
       repeat: policy.repeat,
       eventId: args.eventId,

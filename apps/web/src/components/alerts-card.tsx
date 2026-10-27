@@ -4,13 +4,21 @@ import {
   ALERT_ROUTE_NAME_MAX,
   ALERT_SEVERITIES,
   ALERT_SOURCE_KINDS,
+  ALERT_LABEL_KEY_MAX,
   ALERT_SOURCE_NAME_MAX,
+  applyMapping,
+  pickRoute,
   can,
   formatIncidentNumber,
   MAX_ALERT_ROUTES,
   MAX_ALERT_SOURCES,
   MAX_INCIDENT_SERVICES,
+  MAX_SEVERITY_RULES,
+  parseTemplate,
   SEVERITIES,
+  SEVERITY_VALUE_MAX,
+  TITLE_TEMPLATE_MAX,
+  type AlertMapping,
   type AlertRouteRow,
   type AlertSeverity,
   type AlertSourceKind,
@@ -22,6 +30,8 @@ import {
   type RouteMatch,
   type Severity,
   type ServiceRow,
+  type SeverityField,
+  type SeverityMapping,
   type SourceAlertRow,
 } from "@freecorps/brigade-schema";
 import { useMutation, useQuery, useSyncClient } from "@freecorps/brigade-sync/react";
@@ -103,6 +113,7 @@ function AlertsLive({ onRetry }: { onRetry: () => void }) {
   const create = useMutation("alertSource.create");
   const rotate = useMutation("alertSource.rotate");
   const remove = useMutation("alertSource.delete");
+  const setMapping = useMutation("alertSource.setMapping");
   const createRoute = useMutation("alertRoute.create");
   const updateRoute = useMutation("alertRoute.update");
   const moveRoute = useMutation("alertRoute.move");
@@ -144,6 +155,7 @@ function AlertsLive({ onRetry }: { onRetry: () => void }) {
         return (await rotate({ id, tokenHash })).ok ? url : null;
       }}
       onDelete={async (id) => (await remove({ id })).ok}
+      onSetMapping={async (id, mapping) => (await setMapping({ id, mapping })).ok}
       onCreateRoute={async (draft) => (await createRoute({ id: client.newId("rte"), ...draft })).ok}
       onUpdateRoute={async (id, draft) => (await updateRoute({ id, ...draft })).ok}
       onMoveRoute={async (id, position) => (await moveRoute({ id, position })).ok}
@@ -171,6 +183,8 @@ type PanelProps = {
   onCreate: (source: NewSource) => Promise<string | null>;
   onRotate: (id: string) => Promise<string | null>;
   onDelete: (id: string) => Promise<boolean>;
+  /** A source's title and severity mapping; null: the sender's own again. */
+  onSetMapping: (id: string, mapping: AlertMapping | null) => Promise<boolean>;
   onCreateRoute: (draft: RouteDraft) => Promise<boolean>;
   onUpdateRoute: (id: string, draft: RouteDraft) => Promise<boolean>;
   onMoveRoute: (id: string, position: number) => Promise<boolean>;
@@ -274,14 +288,20 @@ function Sources(props: PanelProps & { onShown: (shown: ShownUrl) => void }) {
 
 function SourceRow({
   source,
+  recent,
+  routes,
+  policies,
+  types,
+  services,
   manage,
   locale,
   now,
   onRotate,
   onDelete,
+  onSetMapping,
   onShown,
 }: PanelProps & { source: AlertSourceRow; onShown: (shown: ShownUrl) => void }) {
-  const [mode, setMode] = useState<"view" | "rotate" | "delete">("view");
+  const [mode, setMode] = useState<"view" | "rotate" | "delete" | "map">("view");
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<AlertsPart | null>(null);
   const nameId = useId();
@@ -291,6 +311,7 @@ function SourceRow({
       : say("last_received", { value: formatAge(source.lastReceivedAt, now, locale) }),
     source.signed ? say("signed") : null,
     source.headerName ? say("header_checked", { name: source.headerName }) : null,
+    source.mapping ? say("mapped") : null,
   ].filter((part): part is string => part !== null);
   return (
     <li className="flex flex-col gap-3 px-3 py-2.5">
@@ -305,7 +326,10 @@ function SourceRow({
           <span className="text-xs text-muted-foreground">{meta.join(" · ")}</span>
         </div>
         {manage && mode === "view" ? (
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1">
+            <Button variant="ghost" aria-describedby={nameId} onClick={() => setMode("map")}>
+              {say("mapping")}
+            </Button>
             <Button
               variant="ghost"
               aria-describedby={nameId}
@@ -330,7 +354,23 @@ function SourceRow({
           </div>
         ) : null}
       </div>
-      {mode !== "view" ? (
+      {mode === "map" ? (
+        <MappingForm
+          source={source}
+          routes={routes}
+          catalog={{ policies, types, services }}
+          latest={recent.find(
+            (row) =>
+              row.sourceId === source.id && row.reason !== "malformed" && row.reason !== "capacity",
+          )}
+          onCancel={() => setMode("view")}
+          onSave={async (mapping) => {
+            const ok = await onSetMapping(source.id, mapping);
+            if (ok) setMode("view");
+            return ok;
+          }}
+        />
+      ) : mode !== "view" ? (
         <div className="flex flex-col gap-3 rounded-md bg-muted/50 p-3">
           <p className="text-sm [overflow-wrap:anywhere]">
             {mode === "rotate"
@@ -375,6 +415,391 @@ function SourceRow({
           {failed ? <FormError>{say(failed)}</FormError> : null}
         </div>
       ) : null}
+    </li>
+  );
+}
+
+type RuleDraft = { key: number; value: string; severity: AlertSeverity };
+
+/**
+ * A source's title template and severity map (RFC 0005 "Alert sources", "Mapping"), previewed on the latest alert it
+ * sent as it was sent (`received`), so what the form says is what the next alert gets.
+ */
+function MappingForm({
+  source,
+  latest,
+  routes,
+  catalog,
+  onSave,
+  onCancel,
+}: {
+  source: AlertSourceRow;
+  latest: SourceAlertRow | undefined;
+  /** In the order they are tried, as `alertRoutes.all` sorts them. */
+  routes: readonly AlertRouteRow[];
+  catalog: Catalog;
+  onSave: (mapping: AlertMapping | null) => Promise<boolean>;
+  onCancel: () => void;
+}) {
+  const current = source.mapping ?? null;
+  const [template, setTemplate] = useState(current?.titleTemplate ?? "");
+  const [from, setFrom] = useState<SeverityField>(current?.severity?.from ?? "provider");
+  const [label, setLabel] = useState(current?.severity?.label ?? "");
+  const [rules, setRules] = useState<RuleDraft[]>(() =>
+    (current?.severity?.rules ?? []).map((rule, key) => ({ key, ...rule })),
+  );
+  const nextKey = useRef(rules.length);
+  const [fallback, setFallback] = useState<AlertSeverity | "">(current?.severity?.fallback ?? "");
+  const [invalid, setInvalid] = useState<Record<string, AlertsPart>>({});
+  const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
+  const ids = { title: useId(), from: useId(), fallback: useId(), rules: useId() };
+  const templateRef = useRef<HTMLInputElement>(null);
+
+  const trimmed = template.trim();
+  const parsed = trimmed === "" ? null : parseTemplate(trimmed);
+  const filled = rules.filter((rule) => rule.value.trim() !== "");
+  const severity: SeverityMapping | null =
+    filled.length === 0 && fallback === ""
+      ? null
+      : {
+          from,
+          label: from === "label" ? label.trim().toLowerCase() || null : null,
+          rules: filled.map(({ value, severity: to }) => ({ value: value.trim(), severity: to })),
+          fallback: fallback === "" ? null : fallback,
+        };
+  // What the preview shows: the parts of the form that are valid now (a broken template previews the alert's own).
+  const draft: AlertMapping = { titleTemplate: parsed?.ok ? trimmed : null, severity };
+  const sent = latest
+    ? (latest.received ?? {
+        title: latest.title,
+        severity: latest.severity,
+        providerSeverity: null,
+      })
+    : undefined;
+  const preview = sent
+    ? applyMapping(draft, {
+        dedupKey: latest!.dedupKey,
+        title: sent.title,
+        severity: sent.severity,
+        status: "firing",
+        link: null,
+        labels: latest!.labels,
+        ...(sent.providerSeverity !== null && { providerSeverity: sent.providerSeverity }),
+      })
+    : undefined;
+  // Which route the mapped alert would take: a map that moves it onto a route that drops it silences the source.
+  const picked = preview ? pickRoute(routes, source.id, preview, false) : undefined;
+  const labelKeys = latest ? Object.keys(latest.labels).slice(0, 8) : [];
+
+  const insert = (field: string) => {
+    const input = templateRef.current;
+    const start = input?.selectionStart ?? template.length;
+    const end = input?.selectionEnd ?? template.length;
+    const next = `${template.slice(0, start)}${field}${template.slice(end)}`;
+    if (next.length > TITLE_TEMPLATE_MAX) return;
+    setTemplate(next);
+    requestAnimationFrame(() => {
+      input?.focus();
+      input?.setSelectionRange(start + field.length, start + field.length);
+    });
+  };
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const problems: Record<string, AlertsPart> = {};
+    if (parsed && !parsed.ok) problems.template = `template_${parsed.problem}`;
+    if (severity && from === "label" && label.trim() === "") {
+      problems.label = "severity_label_required";
+    }
+    const seen = new Set<string>();
+    for (const rule of rules) {
+      const value = rule.value.trim().toLowerCase();
+      if (value === "") problems[`rule-${rule.key}`] = "rule_value_required";
+      else if (seen.has(value)) problems[`rule-${rule.key}`] = "rule_duplicate";
+      seen.add(value);
+    }
+    setInvalid(problems);
+    if (Object.keys(problems).length > 0) return;
+    setState("busy");
+    const mapping = draft.titleTemplate === null && severity === null ? null : draft;
+    void onSave(mapping).then((ok) => setState(ok ? "idle" : "failed"));
+  };
+  const error = (key: string) => {
+    const part = invalid[key];
+    return part ? say(part) : undefined;
+  };
+  const severityName = (value: AlertSeverity) => severityText(value);
+  return (
+    <form
+      noValidate
+      onSubmit={submit}
+      aria-labelledby={ids.title}
+      className="flex min-w-0 flex-col gap-4 rounded-md bg-muted/50 p-3"
+    >
+      <div className="flex flex-col gap-1">
+        <p id={ids.title} className="text-sm font-medium [overflow-wrap:anywhere]">
+          {say("mapping_title", { name: source.name })}
+        </p>
+        <p className="max-w-prose text-sm text-muted-foreground">{say("mapping_hint")}</p>
+      </div>
+      <div className="flex min-w-0 flex-col gap-2">
+        <Field
+          ref={templateRef}
+          label={say("template_label")}
+          hint={say("template_hint")}
+          value={template}
+          maxLength={TITLE_TEMPLATE_MAX}
+          autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          error={error("template")}
+          onChange={(event) => setTemplate(event.target.value)}
+        />
+        <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+          <span>{say("template_fields")}</span>
+          {["{title}", "{severity}"].map((field) => (
+            <FieldChip key={field} field={field} onInsert={insert} />
+          ))}
+          {labelKeys.length > 0 ? (
+            labelKeys.map((key) => (
+              <FieldChip key={key} field={`{labels.${key}}`} onInsert={insert} />
+            ))
+          ) : (
+            <>
+              <span>{say("template_any_label")}</span>
+              <code className="rounded-sm bg-card px-1.5 py-0.5 font-mono text-xs">
+                {"{labels.<key>}"}
+              </code>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <label htmlFor={ids.from} className="text-sm font-medium">
+            {say("severity_source")}
+          </label>
+          <select
+            id={ids.from}
+            className={SELECT}
+            value={from}
+            onChange={(event) => setFrom(event.target.value as SeverityField)}
+          >
+            <option value="provider">{say("severity_source_provider")}</option>
+            <option value="label">{say("severity_source_label")}</option>
+          </select>
+        </div>
+        {from === "label" ? (
+          <Field
+            label={say("severity_label_key")}
+            value={label}
+            maxLength={ALERT_LABEL_KEY_MAX}
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            error={error("label")}
+            onChange={(event) => setLabel(event.target.value)}
+          />
+        ) : null}
+      </div>
+      <fieldset className="flex min-w-0 flex-col gap-2" aria-describedby={ids.rules}>
+        <legend className="mb-1.5 text-sm font-medium">{say("rules_title")}</legend>
+        {rules.length === 0 ? (
+          <p id={ids.rules} className="text-sm text-muted-foreground">
+            {say("rules_empty")}
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {rules.map((rule) => (
+              <RuleRow
+                key={rule.key}
+                rule={rule}
+                error={error(`rule-${rule.key}`)}
+                severityName={severityName}
+                onChange={(next) =>
+                  setRules((list) => list.map((one) => (one.key === rule.key ? next : one)))
+                }
+                onRemove={() => setRules((list) => list.filter((one) => one.key !== rule.key))}
+              />
+            ))}
+          </ul>
+        )}
+        {rules.length < MAX_SEVERITY_RULES ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="self-start"
+            onClick={() =>
+              setRules((list) => [
+                ...list,
+                { key: nextKey.current++, value: "", severity: "critical" },
+              ])
+            }
+          >
+            <PlusIcon aria-hidden />
+            {say("add_rule")}
+          </Button>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {say("rules_limit", { value: String(MAX_SEVERITY_RULES) })}
+          </p>
+        )}
+      </fieldset>
+      <div className="flex min-w-0 flex-col gap-1.5 sm:max-w-sm">
+        <label htmlFor={ids.fallback} className="text-sm font-medium">
+          {say("fallback_label")}
+        </label>
+        <select
+          id={ids.fallback}
+          className={SELECT}
+          value={fallback}
+          onChange={(event) => setFallback(event.target.value as AlertSeverity | "")}
+        >
+          <option value="">{say("fallback_keep")}</option>
+          {ALERT_SEVERITIES.map((value) => (
+            <option key={value} value={value}>
+              {severityName(value)}
+            </option>
+          ))}
+        </select>
+      </div>
+      <section className="flex min-w-0 flex-col gap-2 rounded-md border bg-card p-3 text-sm">
+        <p className="font-medium">{say("preview_title")}</p>
+        {sent && preview ? (
+          <dl className="grid min-w-0 gap-x-3 gap-y-1.5 sm:grid-cols-[auto_1fr]">
+            <dt className="text-muted-foreground">{say("preview_sent")}</dt>
+            <dd className="min-w-0 [overflow-wrap:anywhere]">
+              {sent.title}
+              <span className="text-muted-foreground"> · {severityName(sent.severity)}</span>
+              <span className="block text-xs text-muted-foreground">
+                {sent.providerSeverity !== null
+                  ? say("preview_sender_word", { value: sent.providerSeverity })
+                  : say("preview_no_word")}
+              </span>
+            </dd>
+            <dt className="text-muted-foreground">{say("preview_becomes")}</dt>
+            <dd className="min-w-0 font-medium [overflow-wrap:anywhere]">
+              {preview.title}
+              <span className="font-normal text-muted-foreground">
+                {" "}
+                · {severityName(preview.severity)}
+              </span>
+            </dd>
+            <dt className="text-muted-foreground">{say("preview_route")}</dt>
+            <dd
+              className={`min-w-0 [overflow-wrap:anywhere] ${picked?.action.kind === "drop" ? "text-destructive" : ""}`}
+            >
+              {picked?.route ? (
+                <>
+                  {picked.route.name}
+                  <span className="block text-xs text-muted-foreground">
+                    {actionText(picked.action, catalog)}
+                  </span>
+                </>
+              ) : (
+                say("preview_route_default")
+              )}
+            </dd>
+          </dl>
+        ) : (
+          <p className="text-muted-foreground">{say("preview_empty")}</p>
+        )}
+      </section>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="submit" disabled={state === "busy"}>
+          {say(state === "busy" ? "saving" : "save")}
+        </Button>
+        <Button type="button" variant="outline" onClick={onCancel}>
+          {say("cancel")}
+        </Button>
+        {current ? (
+          <Button
+            type="button"
+            variant="ghost"
+            className="sm:ml-auto"
+            disabled={state === "busy"}
+            onClick={() => {
+              setState("busy");
+              void onSave(null).then((ok) => setState(ok ? "idle" : "failed"));
+            }}
+          >
+            {say("mapping_reset")}
+          </Button>
+        ) : null}
+      </div>
+      {state === "failed" ? <FormError>{say("mapping_save_failed")}</FormError> : null}
+    </form>
+  );
+}
+
+/** A placeholder that, pressed, goes into the template where the cursor is. */
+function FieldChip({ field, onInsert }: { field: string; onInsert: (field: string) => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={say("template_insert", { name: field })}
+      className="max-w-full rounded-sm bg-card px-1.5 py-0.5 font-mono text-xs text-foreground [overflow-wrap:anywhere] outline-none hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring"
+      onClick={() => onInsert(field)}
+    >
+      {field}
+    </button>
+  );
+}
+
+function RuleRow({
+  rule,
+  error,
+  severityName,
+  onChange,
+  onRemove,
+}: {
+  rule: RuleDraft;
+  error: string | undefined;
+  severityName: (value: AlertSeverity) => string;
+  onChange: (rule: RuleDraft) => void;
+  onRemove: () => void;
+}) {
+  const severityId = useId();
+  return (
+    <li className="grid min-w-0 grid-cols-[1fr_auto] items-end gap-2 sm:grid-cols-[1fr_12rem_auto]">
+      <Field
+        className="col-span-2 sm:col-span-1"
+        label={say("rule_value")}
+        value={rule.value}
+        maxLength={SEVERITY_VALUE_MAX}
+        autoComplete="off"
+        autoCapitalize="none"
+        spellCheck={false}
+        error={error}
+        onChange={(event) => onChange({ ...rule, value: event.target.value })}
+      />
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <label htmlFor={severityId} className="text-sm font-medium">
+          {say("rule_severity")}
+        </label>
+        <select
+          id={severityId}
+          className={SELECT}
+          value={rule.severity}
+          onChange={(event) => onChange({ ...rule, severity: event.target.value as AlertSeverity })}
+        >
+          {ALERT_SEVERITIES.map((value) => (
+            <option key={value} value={value}>
+              {severityName(value)}
+            </option>
+          ))}
+        </select>
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="size-11"
+        aria-label={say("remove_rule", { name: rule.value.trim() || say("rule_value") })}
+        onClick={onRemove}
+      >
+        <XIcon aria-hidden />
+      </Button>
     </li>
   );
 }

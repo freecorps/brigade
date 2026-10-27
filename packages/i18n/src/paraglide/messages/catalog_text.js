@@ -15,7 +15,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "unowned" | "No owner" |
 * | "policy_named" | "Escalation: {name}" |
 * | "no_policy" | "No escalation policy" |
-* | "policy_note" | "Kept for alert routes: pages still go through the incident type's policy, the monitor's, or the default one." |
+* | "policy_note" | "Incidents that name this service page through this policy, unless their alert route or incident type has one. The order is: alert route, incident type, the i..." |
 * | "back" | "Overview" |
 * | "loading" | "Loading the service…" |
 * | "not_found_title" | "Service not found" |
@@ -99,7 +99,7 @@ export const catalog_text = /** @type {((inputs: Catalog_TextInputs, options?: {
 		if (i?.text === "unowned") return /** @type {LocalizedString} */ (`Sem responsável`);
 		if (i?.text === "policy_named") return /** @type {LocalizedString} */ (`Escalonamento: ${i?.name}`);
 		if (i?.text === "no_policy") return /** @type {LocalizedString} */ (`Sem política de escalonamento`);
-		if (i?.text === "policy_note") return /** @type {LocalizedString} */ (`Guardada para as rotas de alerta: os chamados ainda passam pela política do tipo de incidente, pela do monitor ou pela padrão.`);
+		if (i?.text === "policy_note") return /** @type {LocalizedString} */ (`Incidentes que citam este serviço chamam por esta política, a menos que a rota de alerta ou o tipo de incidente tenha uma. A ordem é: rota de alerta, tipo de incidente, primeiro serviço do incidente com política, monitor e, por fim, a padrão.`);
 		if (i?.text === "back") return /** @type {LocalizedString} */ (`Visão geral`);
 		if (i?.text === "loading") return /** @type {LocalizedString} */ (`Carregando o serviço…`);
 		if (i?.text === "not_found_title") return /** @type {LocalizedString} */ (`Serviço não encontrado`);
@@ -177,7 +177,7 @@ export const catalog_text = /** @type {((inputs: Catalog_TextInputs, options?: {
 		if (i?.text === "unowned") return /** @type {LocalizedString} */ (`No owner`);
 		if (i?.text === "policy_named") return /** @type {LocalizedString} */ (`Escalation: ${i?.name}`);
 		if (i?.text === "no_policy") return /** @type {LocalizedString} */ (`No escalation policy`);
-		if (i?.text === "policy_note") return /** @type {LocalizedString} */ (`Kept for alert routes: pages still go through the incident type's policy, the monitor's, or the default one.`);
+		if (i?.text === "policy_note") return /** @type {LocalizedString} */ (`Incidents that name this service page through this policy, unless their alert route or incident type has one. The order is: alert route, incident type, the incident's first service with a policy, monitor, then the default.`);
 		if (i?.text === "back") return /** @type {LocalizedString} */ (`Overview`);
 		if (i?.text === "loading") return /** @type {LocalizedString} */ (`Loading the service…`);
 		if (i?.text === "not_found_title") return /** @type {LocalizedString} */ (`Service not found`);

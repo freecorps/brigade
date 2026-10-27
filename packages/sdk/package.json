@@ -1,6 +1,6 @@
 {
   "name": "@freecorps/brigade-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "SDK for Freecorps Brigade: verify its signed webhooks, call its public HTTP API, and its payload types.",
   "keywords": [
     "brigade",

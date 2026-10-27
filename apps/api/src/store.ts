@@ -128,6 +128,26 @@ export class SqlStore implements Store<BrigadeTables> {
     return rows.sort(byId);
   }
 
+  /**
+   * At most `limit` rows of `[from, to)`, highest id first, read off the `(tbl, id)` primary key: a page read that
+   * parses only what it reads (src/rest.ts lists incidents with it). Ids are compared as SQLite does, which agrees
+   * with `range` on ASCII ids.
+   */
+  rangeDescending<T extends TableName>(
+    table: T,
+    from: string,
+    to: string,
+    limit: number,
+  ): BrigadeTables[T][] {
+    return this.exec<{ data: string }>(
+      "select data from store_rows where tbl = ? and id >= ? and id < ? order by id desc limit ?",
+      checked(table),
+      from,
+      to,
+      limit,
+    ).map((row) => JSON.parse(row.data) as BrigadeTables[T]);
+  }
+
   /** `transactionSync`; an error `fn` throws passes through as is, one from storage itself is a `StorageFailure`. */
   transaction<R>(fn: () => R): R {
     let thrown: { error: unknown } | undefined;

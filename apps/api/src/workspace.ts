@@ -91,6 +91,15 @@ import {
 import type { BuiltExport } from "./exports.ts";
 import { AI_MODEL, draftSource, type DraftRequestResult } from "./postmortem.ts";
 import type { RowChange } from "./store.ts";
+import {
+  keySeed,
+  readRest,
+  requestDigest,
+  writeRest,
+  type RestRead,
+  type RestResult,
+  type RestWrite,
+} from "./rest.ts";
 
 /** How much of an export the shard writes before it yields to other work (`buildExport`). */
 const EXPORT_YIELD_BYTES = 256 * 1024;
@@ -731,6 +740,57 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (!result.ok) return { ok: false, code: result.error.code };
     if (!stored) this.broadcast(result.version, changes, undefined);
     return { ok: true };
+  }
+
+  /**
+   * A read of the public HTTP API's incident and catalog routes (RPC from src/rest-routes.ts, which checked the
+   * session or the API token and read the member's role in D1): see `readRest`. An API token the shard no longer backs
+   * is refused like one the Worker refused; a member removed within the tombstone as their sync upgrade would be.
+   */
+  async restRead(workspaceId: string, actor: Actor, read: RestRead): Promise<RestResult> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    const acting = this.tokenActor(actor);
+    if (!acting) return TOKEN_REFUSED;
+    if (await this.membership.refuses(workspaceId, acting.by ?? acting.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    return readRest(this.shard, acting, read);
+  }
+
+  /**
+   * A write of the public HTTP API's incident and catalog routes (RPC from src/rest-routes.ts): the named mutations
+   * the dashboard sends over sync, run as the member or token as a client mutation (never `internal`), de-duplicated
+   * by the request's `Idempotency-Key`, their patches to every open socket (`writeRest`). Declaring pages as any
+   * declare does: `incident.declared` through the outbox.
+   */
+  async restWrite(
+    workspaceId: string,
+    actor: Actor,
+    write: RestWrite,
+    key: string,
+  ): Promise<RestResult> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    const acting = this.tokenActor(actor);
+    if (!acting) return TOKEN_REFUSED;
+    if (await this.membership.refuses(workspaceId, acting.by ?? acting.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    const [seed, request] = await Promise.all([
+      keySeed(write.kind, acting.id, key),
+      requestDigest(write),
+    ]);
+    return writeRest(
+      {
+        shard: this.shard,
+        actor: acting,
+        key,
+        seed,
+        request,
+        now: Date.now(),
+        committed: (version, changes) => this.broadcast(version, changes, undefined),
+      },
+      write,
+    );
   }
 
   /**

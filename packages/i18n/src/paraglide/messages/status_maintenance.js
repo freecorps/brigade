@@ -12,8 +12,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | --- | --- |
 * | "active_title" | "Maintenance in progress" |
 * | "upcoming_title" | "Scheduled maintenance" |
-* | "window_upcoming" | "{time} to {until} UTC" |
-* | "window_active" | "Until {until} UTC" |
+* | "window_upcoming" | "{time} to {until}" |
+* | "window_active" | "Until {until}" |
 * | * | "Maintenance" |
 *
 * @param {Status_MaintenanceInputs} inputs
@@ -25,15 +25,15 @@ export const status_maintenance = /** @type {((inputs: Status_MaintenanceInputs,
 	if (locale === "pt-BR") {
 		if (i?.part === "active_title") return /** @type {LocalizedString} */ (`Manutenção em andamento`);
 		if (i?.part === "upcoming_title") return /** @type {LocalizedString} */ (`Manutenção programada`);
-		if (i?.part === "window_upcoming") return /** @type {LocalizedString} */ (`De ${i?.time} a ${i?.until} UTC`);
-		if (i?.part === "window_active") return /** @type {LocalizedString} */ (`Até ${i?.until} UTC`);
+		if (i?.part === "window_upcoming") return /** @type {LocalizedString} */ (`De ${i?.time} a ${i?.until}`);
+		if (i?.part === "window_active") return /** @type {LocalizedString} */ (`Até ${i?.until}`);
 		return /** @type {LocalizedString} */ (`Manutenção`)
 	}
 	{
 		if (i?.part === "active_title") return /** @type {LocalizedString} */ (`Maintenance in progress`);
 		if (i?.part === "upcoming_title") return /** @type {LocalizedString} */ (`Scheduled maintenance`);
-		if (i?.part === "window_upcoming") return /** @type {LocalizedString} */ (`${i?.time} to ${i?.until} UTC`);
-		if (i?.part === "window_active") return /** @type {LocalizedString} */ (`Until ${i?.until} UTC`);
+		if (i?.part === "window_upcoming") return /** @type {LocalizedString} */ (`${i?.time} to ${i?.until}`);
+		if (i?.part === "window_active") return /** @type {LocalizedString} */ (`Until ${i?.until}`);
 		return /** @type {LocalizedString} */ (`Maintenance`)
 	}
 });

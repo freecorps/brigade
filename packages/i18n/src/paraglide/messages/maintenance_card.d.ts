@@ -19,7 +19,7 @@ export type Maintenance_CardInputs = {
 * | "components_label" | "Affected components" |
 * | "starts_label" | "Starts" |
 * | "ends_label" | "Ends" |
-* | "times_hint" | "In your time zone ({name}). The public page shows UTC." |
+* | "times_hint" | "In your time zone ({name}). Visitors see the public page in their own." |
 * | "save" | "Schedule" |
 * | "saving" | "Saving…" |
 * | "update" | "Save" |

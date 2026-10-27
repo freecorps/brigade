@@ -762,6 +762,16 @@ export type StatusComponentRow = {
    * empty: no bar.
    */
   monitorIds?: string[];
+  /**
+   * The services it stands for (RFC 0012 "Services"), at most `MAX_COMPONENT_SERVICES`; an incident naming one of them
+   * pre-selects the component when publishing. Absent or empty: none. May name deleted services, which readers skip.
+   */
+  serviceIds?: string[];
+  /**
+   * Where the page lists it (`statusComponent.reorder`), lowest first; absent on components from before reordering,
+   * which come first, oldest first.
+   */
+  position?: number;
   createdAt: number;
   updatedAt: number;
 };

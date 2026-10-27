@@ -6,6 +6,7 @@ import {
   COMPONENT_STATUSES,
   isStatusSlug,
   MAX_COMPONENT_MONITORS,
+  MAX_COMPONENT_SERVICES,
   MAX_COMPONENTS,
   STATUS_LOCALES,
   STATUS_PAGE_TITLE_MAX,
@@ -15,8 +16,15 @@ import {
   type StatusPageRow,
 } from "@freecorps/brigade-schema";
 import { useMutation, useQuery, useSyncClient } from "@freecorps/brigade-sync/react";
-import { DownloadIcon, ExternalLinkIcon, PlusIcon, RotateCwIcon } from "lucide-react";
-import { useEffect, useId, useState, type FormEvent } from "react";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  DownloadIcon,
+  ExternalLinkIcon,
+  PlusIcon,
+  RotateCwIcon,
+} from "lucide-react";
+import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { CONFIRM_DESTRUCTIVE } from "@/components/monitor-form";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
@@ -24,7 +32,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Field, FormError } from "@/components/ui/field";
 import {
+  componentBlocks,
   loadSubscriberCounts,
+  moveComponent,
+  moveGroup,
   normalizeSlug,
   removeSubscriber,
   subscribersExportUrl,
@@ -76,9 +87,12 @@ function StatusPageLive({ onRetry }: { onRetry: () => void }) {
   const update = useMutation("statusComponent.update");
   const remove = useMutation("statusComponent.delete");
   const link = useMutation("statusComponent.linkMonitors");
+  const reorder = useMutation("statusComponent.reorder");
+  const linkServices = useMutation("statusComponent.linkServices");
   const manage = can(role, "status:manage");
   // Monitors are only offered to link to those who manage the page (`monitor:read` covers every role).
   const monitors = useQuery("monitors.all", {});
+  const services = useQuery("services.all", {});
   return (
     <StatusPagePanel
       page={page.rows[0] ?? null}
@@ -89,6 +103,9 @@ function StatusPageLive({ onRetry }: { onRetry: () => void }) {
       origin={window.location.origin}
       monitors={monitors.rows.map((row) => ({ id: row.id, name: row.name }))}
       onLink={async (id, monitorIds) => (await link({ id, monitorIds })).ok}
+      services={services.rows.map((row) => ({ id: row.id, name: row.name }))}
+      onLinkServices={async (id, serviceIds) => (await linkServices({ id, serviceIds })).ok}
+      onReorder={async (ids) => (await reorder({ ids })).ok}
       subscribers={
         manage
           ? {
@@ -124,6 +141,11 @@ type PanelProps = {
   /** The workspace's monitors a component's uptime bar may come from. */
   monitors?: readonly { id: string; name: string }[];
   onLink?: (id: string, monitorIds: string[]) => Promise<boolean>;
+  /** The workspace's services a component may stand for (RFC 0012 "Services"). */
+  services?: readonly { id: string; name: string }[];
+  onLinkServices?: (id: string, serviceIds: string[]) => Promise<boolean>;
+  /** Every component's id in its new order (`statusComponent.reorder`). */
+  onReorder?: (ids: string[]) => Promise<boolean>;
   /** Owners and admins only: the page's email subscribers. */
   subscribers?: SubscribersApi;
 };
@@ -336,6 +358,59 @@ function Settings({ page, onSave }: Pick<PanelProps, "page" | "onSave">) {
   );
 }
 
+/** Focuses the move button `key` once the list has moved, or `other` when `key` is now disabled (top or bottom). */
+function refocus(key: string, other: string) {
+  requestAnimationFrame(() => {
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>("button[data-move]")];
+    const find = (wanted: string) => buttons.find((node) => node.dataset.move === wanted);
+    const target = find(key);
+    (target && !target.disabled ? target : find(other))?.focus();
+  });
+}
+
+/** Up and down for a component or a group: keyboard and screen reader first, no drag. Hidden when nothing can move. */
+function MoveButtons({
+  id,
+  name,
+  first,
+  last,
+  group,
+  onMove,
+}: {
+  id: string;
+  name: string;
+  first: boolean;
+  last: boolean;
+  group?: boolean;
+  onMove: (by: -1 | 1) => void;
+}) {
+  if (first && last) return null;
+  const parts = group
+    ? (["move_group_up", "move_group_down"] as const)
+    : (["move_up", "move_down"] as const);
+  return (
+    <div className="flex shrink-0 items-center">
+      {([-1, 1] as const).map((by) => (
+        <Button
+          key={by}
+          variant="ghost"
+          size="icon"
+          data-move={`${id}:${by}`}
+          disabled={by === -1 ? first : last}
+          aria-label={say(parts[by === -1 ? 0 : 1], { name })}
+          title={say(parts[by === -1 ? 0 : 1], { name })}
+          onClick={() => {
+            onMove(by);
+            refocus(`${id}:${by}`, `${id}:${-by}`);
+          }}
+        >
+          {by === -1 ? <ArrowUpIcon aria-hidden /> : <ArrowDownIcon aria-hidden />}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 function Components({
   components,
   manage,
@@ -344,7 +419,21 @@ function Components({
   onDelete,
   monitors = [],
   onLink,
+  services = [],
+  onLinkServices,
+  onReorder,
 }: PanelProps) {
+  const [moved, setMoved] = useState<{ name: string } | { failed: true } | null>(null);
+  const blocks = componentBlocks(components);
+  const firstGroup = blocks[0]?.group === null ? 1 : 0;
+  const canMove = manage && onReorder !== undefined;
+  const move = (ids: string[] | null, name: string) => {
+    if (!ids || !onReorder) return;
+    setMoved({ name });
+    void onReorder(ids).then((ok) => {
+      if (!ok) setMoved({ failed: true });
+    });
+  };
   return (
     <section
       aria-labelledby="status-components-title"
@@ -355,24 +444,69 @@ function Components({
           {say("components_title")}
         </h3>
         <p className="max-w-prose text-sm text-muted-foreground">{say("components_hint")}</p>
+        {canMove && components.length > 1 ? (
+          <p className="max-w-prose text-sm text-muted-foreground">{say("order_hint")}</p>
+        ) : null}
       </div>
       {components.length === 0 ? (
         <p className="text-sm text-muted-foreground">{say("components_empty")}</p>
       ) : (
-        <ul className="flex flex-col divide-y rounded-md border">
-          {components.map((component) => (
-            <ComponentRow
-              key={component.id}
-              component={component}
-              manage={manage}
-              onUpdate={onUpdate}
-              onDelete={onDelete}
-              monitors={monitors}
-              onLink={onLink}
-            />
+        <div className="flex flex-col gap-4">
+          {blocks.map((block, index) => (
+            <div key={block.group ?? ""} className="flex min-w-0 flex-col gap-1.5">
+              {block.group !== null ? (
+                <div className="flex min-h-11 items-center justify-between gap-3">
+                  <h4 className="min-w-0 text-xs font-semibold tracking-wide text-muted-foreground uppercase [overflow-wrap:anywhere]">
+                    {block.group}
+                  </h4>
+                  {canMove ? (
+                    <MoveButtons
+                      id={`group:${block.group}`}
+                      name={block.group}
+                      group
+                      first={index === firstGroup}
+                      last={index === blocks.length - 1}
+                      onMove={(by) => move(moveGroup(components, block.group!, by), block.group!)}
+                    />
+                  ) : null}
+                </div>
+              ) : null}
+              <ul className="flex flex-col divide-y rounded-md border">
+                {block.components.map((component, at) => (
+                  <ComponentRow
+                    key={component.id}
+                    component={component}
+                    manage={manage}
+                    onUpdate={onUpdate}
+                    onDelete={onDelete}
+                    monitors={monitors}
+                    onLink={onLink}
+                    services={services}
+                    onLinkServices={onLinkServices}
+                    mover={
+                      canMove ? (
+                        <MoveButtons
+                          id={component.id}
+                          name={component.name}
+                          first={at === 0}
+                          last={at === block.components.length - 1}
+                          onMove={(by) =>
+                            move(moveComponent(components, component.id, by), component.name)
+                          }
+                        />
+                      ) : null
+                    }
+                  />
+                ))}
+              </ul>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
+      <p role="status" className="text-sm text-muted-foreground empty:hidden">
+        {moved && "name" in moved ? say("moved", { name: moved.name }) : ""}
+      </p>
+      {moved && "failed" in moved ? <FormError>{say("reorder_failed")}</FormError> : null}
       {manage ? (
         <AddComponent full={components.length >= MAX_COMPONENTS} onCreate={onCreate} />
       ) : null}
@@ -387,11 +521,23 @@ function ComponentRow({
   onDelete,
   monitors = [],
   onLink,
-}: Pick<PanelProps, "manage" | "onUpdate" | "onDelete" | "monitors" | "onLink"> & {
+  services = [],
+  onLinkServices,
+  mover,
+}: Pick<
+  PanelProps,
+  "manage" | "onUpdate" | "onDelete" | "monitors" | "onLink" | "services" | "onLinkServices"
+> & {
   component: StatusComponentRow;
+  mover?: ReactNode;
 }) {
   const linked = component.monitorIds ?? [];
+  // A deleted service stays on the row until the next change; it is skipped wherever it is read.
+  const serving = (component.serviceIds ?? []).filter((id) =>
+    services.some((service) => service.id === id),
+  );
   const [chosen, setChosen] = useState<string[]>(linked);
+  const [chosenServices, setChosenServices] = useState<string[]>(serving);
   const [mode, setMode] = useState<"view" | "edit" | "confirm">("view");
   const [name, setName] = useState(component.name);
   const [group, setGroup] = useState(component.group ?? "");
@@ -410,9 +556,6 @@ function ComponentRow({
           <span id={nameId} className="text-sm font-medium [overflow-wrap:anywhere]">
             {component.name}
           </span>
-          <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-            {component.group ?? say("ungrouped")}
-          </span>
           {linked.length > 0 ? (
             <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
               {say("uptime_from", {
@@ -422,8 +565,17 @@ function ComponentRow({
               })}
             </span>
           ) : null}
+          {serving.length > 0 ? (
+            <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+              {say("services_from", {
+                name: serving
+                  .map((id) => services.find((service) => service.id === id)?.name ?? "…")
+                  .join(", "),
+              })}
+            </span>
+          ) : null}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <ComponentChip status={component.status} />
           {manage ? (
             <Button
@@ -435,6 +587,7 @@ function ComponentRow({
                 setGroup(component.group ?? "");
                 setStatus(component.status);
                 setChosen(linked);
+                setChosenServices(serving);
                 setFailed(null);
                 setNameInvalid(false);
                 setMode("edit");
@@ -443,6 +596,7 @@ function ComponentRow({
               <span id={editId}>{say("edit")}</span>
             </Button>
           ) : null}
+          {mover}
         </div>
       </li>
     );
@@ -493,7 +647,8 @@ function ComponentRow({
             next.group !== component.group ||
             next.status !== component.status;
           const monitorsChanged = chosen.join() !== linked.join();
-          if (!fieldsChanged && !monitorsChanged) {
+          const servicesChanged = chosenServices.join() !== serving.join();
+          if (!fieldsChanged && !monitorsChanged && !servicesChanged) {
             setMode("view");
             return;
           }
@@ -501,7 +656,10 @@ function ComponentRow({
           void (async () => {
             const ok =
               (!fieldsChanged || (await onUpdate(next))) &&
-              (!monitorsChanged || !onLink || (await onLink(component.id, chosen)));
+              (!monitorsChanged || !onLink || (await onLink(component.id, chosen))) &&
+              (!servicesChanged ||
+                !onLinkServices ||
+                (await onLinkServices(component.id, chosenServices)));
             setBusy(false);
             if (ok) setMode("view");
             else setFailed("save_failed");
@@ -574,6 +732,39 @@ function ComponentRow({
             })}
             {chosen.length >= MAX_COMPONENT_MONITORS ? (
               <p className="text-sm text-muted-foreground">{say("uptime_limit")}</p>
+            ) : null}
+          </fieldset>
+        ) : null}
+        {onLinkServices ? (
+          <fieldset className="flex min-w-0 flex-col gap-1 sm:col-span-3">
+            <legend className="mb-1 text-sm font-medium">{say("services_label")}</legend>
+            <p className="mb-1 text-sm text-muted-foreground">
+              {say(services.length === 0 ? "services_none" : "services_hint")}
+            </p>
+            {services.map((service) => {
+              const checked = chosenServices.includes(service.id);
+              const full = !checked && chosenServices.length >= MAX_COMPONENT_SERVICES;
+              return (
+                <label key={service.id} className="flex min-h-11 items-center gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-5 shrink-0 accent-primary"
+                    checked={checked}
+                    disabled={full}
+                    onChange={(event) =>
+                      setChosenServices((current) =>
+                        event.target.checked
+                          ? [...current, service.id]
+                          : current.filter((id) => id !== service.id),
+                      )
+                    }
+                  />
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{service.name}</span>
+                </label>
+              );
+            })}
+            {chosenServices.length >= MAX_COMPONENT_SERVICES ? (
+              <p className="text-sm text-muted-foreground">{say("services_limit")}</p>
             ) : null}
           </fieldset>
         ) : null}

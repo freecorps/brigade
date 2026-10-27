@@ -2081,14 +2081,16 @@
         "part=components_title": "Components",
         "part=components_empty": "No components listed yet.",
         "part=affects": "Affects {list}",
-        "part=updated": "Updated {time} UTC",
-        "part=update_at": "{time} UTC",
-        "part=resolved_at": "Resolved {time} UTC",
+        "part=updated": "Updated {time}",
+        "part=update_at": "{time}",
+        "part=resolved_at": "Resolved {time}",
         "part=not_found_title": "No status page here",
         "part=not_found_body": "This address has no status page, or it isn't public right now.",
         "part=unavailable_title": "Status page unavailable",
         "part=unavailable_body": "The status page can't be shown right now. Try again in a minute.",
         "part=powered": "Status page by Brigade",
+        "part=feed_atom": "Atom feed",
+        "part=feed_json": "JSON feed",
         "part=component_maintenance": "Under maintenance",
         "part=overall_maintenance": "Scheduled maintenance in progress",
         "part=*": "Status"
@@ -2179,6 +2181,19 @@
         "part=uptime_no_monitors": "No monitors yet. Add one under Monitors to show an uptime bar.",
         "part=uptime_from": "Uptime from {name}",
         "part=uptime_limit": "At most 5 monitors per component.",
+        "part=order_hint": "The public page lists them in this order, ungrouped ones first; a group comes where its first component is.",
+        "part=move_up": "Move {name} up",
+        "part=move_down": "Move {name} down",
+        "part=move_group_up": "Move the {name} group up",
+        "part=move_group_down": "Move the {name} group down",
+        "part=moved": "Moved {name}.",
+        "part=reorder_failed": "Couldn't change the order. Try again.",
+        "part=services_label": "Services",
+        "part=services_hint": "An incident naming one of these services starts with this component ticked when publishing to the page. Nothing is published on its own.",
+        "part=services_none": "No services yet. Add them under Services to link them here.",
+        "part=services_limit": "At most 10 services per component.",
+        "part=services_from": "Services: {name}",
+        "part=preselected": "Ticked from the incident's services. Check them before publishing.",
         "part=*": "Status page"
       }
     }
@@ -2869,8 +2884,8 @@
       "match": {
         "part=active_title": "Maintenance in progress",
         "part=upcoming_title": "Scheduled maintenance",
-        "part=window_upcoming": "{time} to {until} UTC",
-        "part=window_active": "Until {until} UTC",
+        "part=window_upcoming": "{time} to {until}",
+        "part=window_active": "Until {until}",
         "part=*": "Maintenance"
       }
     }
@@ -2983,7 +2998,7 @@
         "part=components_label": "Affected components",
         "part=starts_label": "Starts",
         "part=ends_label": "Ends",
-        "part=times_hint": "In your time zone ({name}). The public page shows UTC.",
+        "part=times_hint": "In your time zone ({name}). Visitors see the public page in their own.",
         "part=save": "Schedule",
         "part=saving": "Saving…",
         "part=update": "Save",

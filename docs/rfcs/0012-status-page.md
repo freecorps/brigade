@@ -5,9 +5,10 @@
 A public page per workspace where customers see which parts of the service work and what the team chose to tell
 them about incidents (RFC 0001 goal 9, RFC 0003 `StatusPage`). The first slice: the page, its components, publishing an
 incident update to it, and the public read path. The second: email subscriptions, uptime bars from monitors and
-scheduled maintenance (their sections below). What is left is at the end ("Not yet"). The code:
+scheduled maintenance (their sections below). The third: the components' order, services linked to components, local
+times on the page and its feeds. What is left is at the end ("Not yet"). The code:
 `packages/schema/src/status.ts`, `maintenance.ts` and `uptime.ts`, `apps/api/src/status-page.ts` (the shard's push),
-`status-route.ts` and `status-html.ts` (the routes and the page), `status-subscribers.ts` (subscribing),
+`status-route.ts`, `status-html.ts` and `status-feed.ts` (the routes, the page and its feeds), `status-subscribers.ts` (subscribing),
 `status-mail.ts` and `notify-status.ts` (the emails), and the dashboard's Status page and Scheduled maintenance cards
 and the incident page's Status page panel.
 
@@ -19,8 +20,8 @@ Dashboard ──sync: statusComponent.*, incident.publishUpdate─────�
 
 WorkspaceDO: commit marks the snapshot dirty ─▶ alarm ─▶ KV STATUS  "status:<slug>" = sanitized JSON
 
-Visitor ──GET /status/:slug──▶ web Worker (forwarded unchanged) ─▶ api Worker
-                                  ─▶ edge cache (Cache API) ─▶ KV get (cacheTtl 30 s) ─▶ HTML, no script
+Visitor ──GET /status/:slug[/feed.atom|/feed.json]──▶ web Worker (forwarded unchanged) ─▶ api Worker
+                                  ─▶ edge cache (Cache API) ─▶ KV get (cacheTtl 30 s) ─▶ HTML or feed
 ```
 
 - **The workspace shard is the authority** (RFC 0002): the page's settings, its components and what was published
@@ -39,7 +40,7 @@ Visitor ──GET /status/:slug──▶ web Worker (forwarded unchanged) ─▶
 - **Components** (`status_components`, at most 50): the parts of the service the public knows by name (API, Website,
   Checkout), each with an optional group (components of a group are listed together under its name; ungrouped ones
   first) and a status set by hand: `operational`, `degraded`, `partial_outage`, `major_outage`. Listed in the
-  order they were added; reordering is a later slice.
+  order owners and admins set ("Order"), new ones last.
 - **A component's status is derived**: the worse of its hand-set status and the impact of every published incident
   on it that is not resolved (`componentStatus`). So declaring an outage on the page needs no second step, and
   resolving the incident brings the component back by itself; a component can still be marked degraded by hand
@@ -86,6 +87,37 @@ name, an internal hostname, the wrong incident) must not stay up:
   `incident.published_update_removed`, `incident.unpublished`.
 - The dashboard's Status page panel lists the updates on the page, newest first, each with Edit and Remove, and Take
   off the page; removing asks first, and every correction says how long caches may still show the old version.
+
+## Order
+
+- **One order for the components** (`position` on each, `statusComponent.reorder` with every component's id in its
+  new order, `status:manage`, event `status_component.reordered` with `ids`). Groups have no order of their own: a
+  group is listed where its first component is, and the ungrouped components always come first, as before. Moving a
+  group moves its components together. One number per component, not a second table of groups, because a group is
+  only a name on its components (renaming it is editing them) and a list of 50 rows is cheap to rewrite whole.
+- **The whole list, checked**: an order that misses a component or names one that is gone (another member added or
+  deleted one meanwhile) is `invalid_args`, so a stale order never drops anything; the same order is a `conflict`.
+  Components from before reordering have no `position` and keep their old place (first, oldest first) until the first
+  reorder; a new component is placed after every other.
+- **On the dashboard** the Status page card lists the components in their groups as the page does, with Move up and
+  Move down buttons on each component (within its group) and each group (among the groups): plain buttons, so the
+  keyboard and screen readers work and nothing drags. Focus stays on the button that moved, an announcement says what
+  moved, and a refused order says so. The change reaches the page with the next push, like every other.
+
+## Services
+
+- **A component stands for services** (`serviceIds` on the component, at most 10, `statusComponent.linkServices`,
+  `status:manage`, event `status_component.services_linked` with `id` and `serviceIds`): the component side holds the
+  link, as RFC 0003's model has it ("components (mapped to Services)") and as components already hold their monitors.
+  Not the service side, because what the public sees is the page's call (`status:manage`), not the catalog's
+  (`catalog:manage`), and a component often stands for several services.
+- **Only a suggestion.** When nothing about an incident is on the page yet, the incident page's publish form starts
+  with the components its services stand for ticked, and says they came from the services. The person still writes
+  the update and presses Publish; a later publish starts from what the page says. Nothing is published, nor any
+  component's status changed, by an incident naming a service.
+- **Deleted services** stay on the component, skipped wherever it is read, like an incident's (RFC 0003 "Service
+  catalog"): a service's id is never taken again, so a deleted one cannot match a new service, and deleting a service
+  does not rewrite every component and push the page. Services never reach the snapshot.
 
 ## Who manages the page
 
@@ -177,22 +209,54 @@ serving it; only a page using what 2 added needs the newer reader.
 - `GET /status/:slug` on the dashboard's origin: the web Worker forwards `/status/*` to the API unchanged (it is in
   `run_worker_first`, so the SPA never answers it), and the API renders HTML from the snapshot. No session, no
   cookies read, only `GET` and `HEAD`.
-- **Server-rendered, no script.** A plain HTML document with inline CSS, the design tokens of `packages/ui` (light
+- **Server-rendered, one script.** A plain HTML document with inline CSS, the design tokens of `packages/ui` (light
   and dark by `prefers-color-scheme`), readable on a phone: the viewport set, safe-area padding, 16 px text, rows at
-  least 48 px tall, long names wrapping. Past incidents fold behind `<details>`. Times are in UTC and say so, since
-  the Worker does not know the visitor's time zone and no script asks (local times are slice 2).
+  least 48 px tall, long names wrapping. Past incidents fold behind `<details>`. Everything works without script; the
+  one script only shows times in the visitor's zone ("Local times").
 - **Read defensively.** A snapshot is rendered only if it is the version the Worker knows, its language and every
   status one it has words for, and every time a real date (`isSnapshot`); anything else, or a render that throws,
   is the 503 page (not cached), so a Worker older or newer than the shard never shows half a page.
 - **Headers**: `Cache-Control: public, max-age=30` (404s 60 s), a Content-Security-Policy that allows nothing but
-  inline style and a form posting to the page's own origin (`default-src 'none'`, `form-action 'self'`, no frames),
-  `nosniff`, `no-referrer`. Every piece of text is escaped.
+  inline style, the local times script by its hash and a form posting to the page's own origin (`default-src 'none'`,
+  `script-src 'sha256-…'`, `form-action 'self'`, no frames), `nosniff`, `no-referrer`. Every piece of text is
+  escaped.
 - **Caching and abuse.** The response is kept in the edge cache (the Cache API, keyed by slug alone, so headers and
   hosts never split it; a no-op on workers.dev) and the KV read uses `cacheTtl: 30`, so a busy page costs about one
   KV read per location every 30 s, and a flood of made-up addresses one cached 404 per address. Nothing on the read
   path touches D1 or a shard, so there is nothing per request to rate-limit; a rate limit and Cloudflare's own DDoS
   protection on the custom hostname are for the custom-domain slice. Subscribing is the one write a visitor makes, and
   it is rate-limited before it touches either ("Email subscriptions").
+
+## Local times
+
+- **Every time is UTC without script, the visitor's own with it.** Each time on the page is a `<time datetime>` whose
+  text is the time in UTC with the zone named ("Oct 27, 2026, 12:05 PM UTC", in the page's language); a script inline
+  at the end of the page rewrites each in the visitor's zone with the same format ("9:05 AM GMT-3") and keeps the UTC
+  text as its tooltip. Where script is off, blocked or fails, the page reads exactly as before.
+- **Why a script, on a page built to need none.** The Worker cannot know a visitor's zone (no header carries it, and
+  guessing from the address is wrong for travellers and VPNs), and rendering per visitor would split the one cached
+  document and wake KV per zone. Neither HTML nor CSS can format a time in the reader's zone. So a progressive
+  enhancement it is, kept as small as the job: one inline script of a few hundred bytes, no file to fetch, no
+  library, nothing read but the page and nothing sent anywhere, so the cached document stays the same for everyone.
+- **Allowed by its hash, nothing else.** The Content-Security-Policy lists the script's SHA-256 (`script-src
+  'sha256-…'`, `LOCAL_TIMES_SCRIPT_HASH`, tested against the script), not `'unsafe-inline'`: a script injected through
+  a published text, were escaping ever to fail, still would not run. The uptime bars' days stay UTC days, which is
+  how they are counted.
+
+## Feeds
+
+- **Atom and JSON Feed**: `GET /status/:slug/feed.atom` (RFC 4287) and `/feed.json` (JSON Feed 1.1), linked from the
+  page (`<link rel="alternate">` and in its footer). One entry per open incident, maintenance window under way or
+  upcoming, and incident of the history, in the page's order; each with its public title and, as plain text (never
+  HTML, so a reader renders nothing the page would not), where it stands, what it affects and every update with its
+  time in UTC.
+- **The same snapshot, nothing more.** Built from the KV snapshot by the same read path as the page (KV `cacheTtl`,
+  the edge cache, `isSnapshot`, the 404 and 503 pages), never from the shard: a feed holds nothing the page does not
+  show (tested). An entry's id is the page's address and when the incident was first published (or the window
+  starts), since the snapshot has no ids; an incident taken off and published again is a new entry.
+- **Headers**: the page's caching (`max-age=30`, the edge cache keyed by slug, format and origin),
+  `Access-Control-Allow-Origin: *` (it is public, and a widget on another site may read it), `nosniff`. Addresses in
+  a feed are absolute, from `DASHBOARD_URL` (the page's origin), else the request's.
 
 ## Uptime
 
@@ -230,7 +294,7 @@ serving it; only a page using what 2 added needs the newer reader.
   `maintenance.started` or `maintenance.ended` (only the latter when both passed while the shard was away). The
   change marks the snapshot dirty, so the push that follows shows it. Nobody needs to be signed in.
 - **On the page**: windows under way first (with the component chip "Under maintenance"), upcoming ones after the
-  components, at most 10, soonest first, in UTC. A component under maintenance shows it only while nothing worse (an
+  components, at most 10, soonest first, in UTC (the visitor's zone with script, "Local times"). A component under maintenance shows it only while nothing worse (an
   incident, its own status) does, and the banner says "Scheduled maintenance in progress" when everything else is
   operational. The page's overall status is unchanged: maintenance is not an outage.
 - **The dashboard's Scheduled maintenance card** lists open and recent windows with their times in the viewer's time
@@ -349,7 +413,8 @@ cache purged by hand (custom domains, a later slice, can purge by URL).
 ## Events
 
 `status_page.configured` (`slug`, `title`, `locale`, `enabled`, `previousSlug`), `status_component.created` and
-`.updated` (`id`, `name`, `group`, `status`), `status_component.deleted` (`id`, `incidents`: how many published
+`.updated` (`id`, `name`, `group`, `status`), `status_component.reordered` (`ids`),
+`status_component.services_linked` (`id`, `serviceIds`), `status_component.deleted` (`id`, `incidents`: how many published
 incidents named it), `incident.update_published` (`entryId`, `title`, `status`, `impact`, `componentIds`,
 `body`), `incident.published_update_edited` (`entryId`, `updateId`, `body`), `incident.published_update_removed`
 (`entryId`, `updateId`) and `incident.unpublished` (`entryId`, `title`); `status_component.monitors_linked` (`id`,
@@ -359,8 +424,7 @@ email notifier acts on `incident.update_published`, the maintenance events, `sta
 
 ## Not yet
 
-- Custom domains, reordering components, local times on the page, a JSON or RSS feed, embedding, pruning history past
-  90 days, showing who published (choice per page), subscribing to some components only, maintenance and subscriber
+- Custom domains, embedding, pruning history past 90 days, showing who published (choice per page), subscribing to some components only, maintenance and subscriber
   events in the webhook catalog, the mobile app's publish and maintenance actions.
 - KV namespaces for staging and production: `STATUS` is bound for local runs and the tests and, in `dev`, to
   `brigade-status-dev` (apps/api README "Status page").

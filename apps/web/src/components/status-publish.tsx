@@ -1,5 +1,6 @@
 import {
   can,
+  componentsForServices,
   COMPONENT_STATUSES,
   PUBLIC_STATUSES,
   PUBLIC_TITLE_MAX,
@@ -57,19 +58,35 @@ export type Correction =
  * corrections to what was published. Only what is written here reaches the public; the incident's title and timeline
  * never do.
  */
-export function StatusPublishCard({ incidentId }: { incidentId: string }) {
+export function StatusPublishCard({
+  incidentId,
+  serviceIds = [],
+}: {
+  incidentId: string;
+  /** The incident's services: their components start ticked on a first publish (RFC 0012 "Services"). */
+  serviceIds?: readonly string[];
+}) {
   // A new attempt remounts the queries, as the dashboard's Status page card does.
   const [attempt, setAttempt] = useState(0);
   return (
     <StatusPublishLive
       key={attempt}
       incidentId={incidentId}
+      serviceIds={serviceIds}
       onRetry={() => setAttempt((count) => count + 1)}
     />
   );
 }
 
-function StatusPublishLive({ incidentId, onRetry }: { incidentId: string; onRetry: () => void }) {
+function StatusPublishLive({
+  incidentId,
+  serviceIds,
+  onRetry,
+}: {
+  incidentId: string;
+  serviceIds: readonly string[];
+  onRetry: () => void;
+}) {
   const { role } = useMember();
   const page = useQuery("statusPage.config", {});
   const components = useQuery("statusComponents.all", {});
@@ -102,6 +119,7 @@ function StatusPublishLive({ incidentId, onRetry }: { incidentId: string; onRetr
   return (
     <StatusPublishPanel
       incidentId={incidentId}
+      serviceIds={serviceIds}
       configured={page.rows.length > 0}
       components={components.rows}
       published={published.rows[0] ?? null}
@@ -123,6 +141,8 @@ function StatusPublishLive({ incidentId, onRetry }: { incidentId: string; onRetr
 
 type PanelProps = {
   incidentId: string;
+  /** The incident's services, for the components a first publish starts with. */
+  serviceIds?: readonly string[];
   configured: boolean;
   components: readonly StatusComponentRow[];
   published: StatusIncidentRow | null;
@@ -393,6 +413,7 @@ function PublishedUpdates({
 
 function PublishForm({
   incidentId,
+  serviceIds = [],
   components,
   published,
   onPublish,
@@ -403,7 +424,12 @@ function PublishForm({
   const [title, setTitle] = useState(published?.title ?? "");
   const [status, setStatus] = useState<PublicStatus>(published?.status ?? "investigating");
   const [impact, setImpact] = useState<ComponentStatus>(published?.impact ?? "degraded");
-  const [chosen, setChosen] = useState<string[]>(published?.componentIds ?? []);
+  // A first publish starts with the components the incident's services stand for: a suggestion, ticked and shown as
+  // such, never published without the person pressing Publish. Later ones start from what the page says.
+  const [suggested] = useState(() =>
+    published ? [] : componentsForServices(components, serviceIds),
+  );
+  const [chosen, setChosen] = useState<string[]>(published?.componentIds ?? suggested);
   const [body, setBody] = useState("");
   const [invalid, setInvalid] = useState<{ title?: boolean; body?: boolean }>({});
   const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
@@ -492,6 +518,9 @@ function PublishForm({
       {components.length > 0 ? (
         <fieldset className="flex min-w-0 flex-col gap-2">
           <legend className="mb-1.5 text-sm font-medium">{say("public_components")}</legend>
+          {suggested.length > 0 ? (
+            <p className="mb-1 text-sm text-muted-foreground">{say("preselected")}</p>
+          ) : null}
           {components.map((row) => (
             <label key={row.id} className="flex min-h-11 items-center gap-3 text-sm">
               <input

@@ -1,5 +1,5 @@
-// The status page's HTTP routes (RFC 0012): `GET /status/:slug`, the public page, read from KV and never from the
-// shard; and `PUT /workspaces/:id/status-page`, which sets the page up as a member (src/status-page.ts).
+// The status page's HTTP routes (RFC 0012): `GET /status/:slug`, the public page, and its feeds, read from KV and never
+// from the shard; and `PUT /workspaces/:id/status-page`, which sets the page up as a member (src/status-page.ts).
 
 import {
   COMPONENT_STATUSES,
@@ -13,7 +13,9 @@ import type { Auth } from "./auth.ts";
 import { memberRole } from "./actor.ts";
 import { readBounded } from "./body.ts";
 import { emailSender } from "./email.ts";
-import { renderStatusMessage, renderStatusPage } from "./status-html.ts";
+import { dashboardLink } from "./email-templates.ts";
+import { feedUrls, renderAtomFeed, renderJsonFeed, type FeedFormat } from "./status-feed.ts";
+import { LOCAL_TIMES_SCRIPT_HASH, renderStatusMessage, renderStatusPage } from "./status-html.ts";
 import { statusKey, type StatusConfigureCode, type StatusConfigureResult } from "./status-page.ts";
 import { ORGANIZATION_ID } from "./workspace.ts";
 
@@ -25,13 +27,13 @@ export const STATUS_MISSING_MAX_AGE_S = 60;
 const MAX_BODY_LENGTH = 4096;
 
 /**
- * No script, nothing loaded from elsewhere, not framed: the page is text and inline style. Its only form (subscribing
- * by email) posts to its own origin.
+ * Nothing loaded from elsewhere, not framed: the page is text and inline style, and its one script (local times,
+ * RFC 0012 "Local times") runs only because its hash is listed; no other script would. Its only form (subscribing by
+ * email) posts to its own origin.
  */
 const STATUS_HEADERS = {
   "Content-Type": "text/html; charset=utf-8",
-  "Content-Security-Policy":
-    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  "Content-Security-Policy": `default-src 'none'; script-src '${LOCAL_TIMES_SCRIPT_HASH}'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`,
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "no-referrer",
 };
@@ -48,11 +50,71 @@ export function statusPageHeaders(cache: "no-store" | number): Headers {
  * cache (the Cache API, where the Worker runs on a zone; a no-op on workers.dev), so a busy page costs about one KV read
  * per location every 30 s and never wakes the shard. An address with no page, or one that is not public, is a 404.
  */
-export async function serveStatusPage(
+export function serveStatusPage(
   request: Request,
   env: Env,
   ctx: ExecutionContext,
   slug: string,
+): Promise<Response> {
+  // A key of our own, not the request: the same page whatever host or headers it came with.
+  return serveFromSnapshot(
+    request,
+    env,
+    ctx,
+    slug,
+    `https://status.cache.invalid/${slug}`,
+    (stored) => {
+      // The subscribe form only where email can be sent: a page whose emails never go out promises nothing.
+      const subscribe = emailSender(env) !== undefined;
+      return page(renderStatusPage(stored, { slug, subscribe }), 200, STATUS_MAX_AGE_S);
+    },
+  );
+}
+
+const FEED_TYPES: Record<FeedFormat, string> = {
+  atom: "application/atom+xml; charset=utf-8",
+  json: "application/feed+json; charset=utf-8",
+};
+
+/**
+ * `GET /status/:slug/feed.atom` and `/feed.json` (RFC 0012 "Feeds"): the page's incidents and maintenance for feed
+ * readers, from the same snapshot, KV read and caches as the page; no session, never the shard. Entries carry absolute
+ * addresses, from `DASHBOARD_URL` (the page's origin), else the request's, which is then part of the cache key.
+ */
+export function serveStatusFeed(
+  request: Request,
+  env: Env & { DASHBOARD_URL?: string },
+  ctx: ExecutionContext,
+  slug: string,
+  format: FeedFormat,
+): Promise<Response> {
+  const origin = new URL(
+    dashboardLink("/", {}, env.DASHBOARD_URL, new URL(request.url).origin) ?? request.url,
+  ).origin;
+  const key = `https://status.cache.invalid/${slug}/feed.${format}?origin=${encodeURIComponent(origin)}`;
+  return serveFromSnapshot(request, env, ctx, slug, key, (stored) => {
+    const urls = feedUrls(origin, slug);
+    const body = format === "atom" ? renderAtomFeed(stored, urls) : renderJsonFeed(stored, urls);
+    const headers = statusPageHeaders(STATUS_MAX_AGE_S);
+    headers.set("Content-Type", FEED_TYPES[format]);
+    // Public by design, as the page: any site or reader may fetch it.
+    headers.set("Access-Control-Allow-Origin", "*");
+    return new Response(body, { status: 200, headers });
+  });
+}
+
+/**
+ * What the page and its feeds share: `GET` and `HEAD` only, the edge cache under `cacheKey`, then the snapshot from KV,
+ * checked (`isSnapshot`) before `render` sees it. No page is a 404, an unreadable snapshot or a throwing render the
+ * 503 page (never cached).
+ */
+async function serveFromSnapshot(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  slug: string,
+  cacheKey: string,
+  render: (snapshot: StatusSnapshot) => Response,
 ): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") {
     return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
@@ -60,8 +122,7 @@ export async function serveStatusPage(
   const head = (response: Response) =>
     request.method === "HEAD" ? new Response(null, response) : response;
   if (!STATUS_SLUG.test(slug)) return head(notFound());
-  // A key of our own, not the request: the same page whatever host or headers it came with.
-  const key = new Request(`https://status.cache.invalid/${slug}`);
+  const key = new Request(cacheKey);
   const cache = typeof caches === "undefined" ? undefined : caches.default;
   const hit = await cache?.match(key);
   if (hit) return head(hit);
@@ -84,9 +145,7 @@ export async function serveStatusPage(
     response = unavailable();
   } else {
     try {
-      // The subscribe form only where email can be sent: a page whose emails never go out promises nothing.
-      const subscribe = emailSender(env) !== undefined;
-      response = page(renderStatusPage(stored, { slug, subscribe }), 200, STATUS_MAX_AGE_S);
+      response = render(stored);
     } catch (error) {
       console.error(
         JSON.stringify({ message: "rendering a status page failed", slug, error: String(error) }),
@@ -94,7 +153,7 @@ export async function serveStatusPage(
       response = unavailable();
     }
   }
-  // The full page in the cache whatever the method, so a GET after a HEAD gets a body.
+  // The full response in the cache whatever the method, so a GET after a HEAD gets a body.
   if (cache && response.status !== 503) {
     ctx.waitUntil(cache.put(key, response.clone()).catch(() => undefined));
   }

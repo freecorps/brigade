@@ -11,8 +11,8 @@ export type Status_MaintenanceInputs = {
 * | --- | --- |
 * | "active_title" | "Maintenance in progress" |
 * | "upcoming_title" | "Scheduled maintenance" |
-* | "window_upcoming" | "{time} to {until} UTC" |
-* | "window_active" | "Until {until} UTC" |
+* | "window_upcoming" | "{time} to {until}" |
+* | "window_active" | "Until {until}" |
 * | * | "Maintenance" |
 *
 * @param {Status_MaintenanceInputs} inputs

@@ -19,7 +19,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "components_label" | "Affected components" |
 * | "starts_label" | "Starts" |
 * | "ends_label" | "Ends" |
-* | "times_hint" | "In your time zone ({name}). The public page shows UTC." |
+* | "times_hint" | "In your time zone ({name}). Visitors see the public page in their own." |
 * | "save" | "Schedule" |
 * | "saving" | "Saving…" |
 * | "update" | "Save" |
@@ -62,7 +62,7 @@ export const maintenance_card = /** @type {((inputs: Maintenance_CardInputs, opt
 		if (i?.part === "components_label") return /** @type {LocalizedString} */ (`Componentes afetados`);
 		if (i?.part === "starts_label") return /** @type {LocalizedString} */ (`Início`);
 		if (i?.part === "ends_label") return /** @type {LocalizedString} */ (`Fim`);
-		if (i?.part === "times_hint") return /** @type {LocalizedString} */ (`No seu fuso horário (${i?.name}). A página pública mostra UTC.`);
+		if (i?.part === "times_hint") return /** @type {LocalizedString} */ (`No seu fuso horário (${i?.name}). Cada visitante vê a página pública no próprio fuso.`);
 		if (i?.part === "save") return /** @type {LocalizedString} */ (`Programar`);
 		if (i?.part === "saving") return /** @type {LocalizedString} */ (`Salvando…`);
 		if (i?.part === "update") return /** @type {LocalizedString} */ (`Salvar`);
@@ -99,7 +99,7 @@ export const maintenance_card = /** @type {((inputs: Maintenance_CardInputs, opt
 		if (i?.part === "components_label") return /** @type {LocalizedString} */ (`Affected components`);
 		if (i?.part === "starts_label") return /** @type {LocalizedString} */ (`Starts`);
 		if (i?.part === "ends_label") return /** @type {LocalizedString} */ (`Ends`);
-		if (i?.part === "times_hint") return /** @type {LocalizedString} */ (`In your time zone (${i?.name}). The public page shows UTC.`);
+		if (i?.part === "times_hint") return /** @type {LocalizedString} */ (`In your time zone (${i?.name}). Visitors see the public page in their own.`);
 		if (i?.part === "save") return /** @type {LocalizedString} */ (`Schedule`);
 		if (i?.part === "saving") return /** @type {LocalizedString} */ (`Saving…`);
 		if (i?.part === "update") return /** @type {LocalizedString} */ (`Save`);

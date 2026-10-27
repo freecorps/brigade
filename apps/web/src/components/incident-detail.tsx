@@ -476,7 +476,7 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
               {noticesFor(["role"])}
             </CardContent>
           </Card>
-          <StatusPublishCard incidentId={row.id} />
+          <StatusPublishCard incidentId={row.id} serviceIds={row.serviceIds} />
           {row.escalation ? (
             // While it is escalating, phones show it above the roles: "Level 2 in 59 seconds" is what matters then.
             <div className={cn("min-w-0", escalating && "max-md:order-first")}>

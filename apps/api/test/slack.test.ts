@@ -689,6 +689,13 @@ function slackApi(answers: Record<string, () => Response | Promise<Response>> = 
       : ((await request.json()) as Record<string, unknown>);
     calls.push({ method, body });
     expect(request.headers.get("Authorization")).toBe(`Bearer ${BOT_TOKEN}`);
+    // As Slack does: these read a form only, and a JSON body names nobody there.
+    if (
+      ["users.info", "users.lookupByEmail", "conversations.list"].includes(method) &&
+      request.headers.get("Content-Type")?.startsWith("application/json")
+    ) {
+      return Response.json({ ok: false, error: "invalid_arguments" });
+    }
     if (answers[method]) return answers[method]();
     if (method === "users.lookupByEmail") {
       const user = [...slackUsers.values()].find((one) => Object(one.profile).email === body.email);

@@ -1,4 +1,4 @@
-import { m } from "@freecorps/brigade-i18n";
+import { formatNumber, getLocale, m } from "@freecorps/brigade-i18n";
 import {
   can,
   COMPONENT_GROUP_MAX,
@@ -10,6 +10,8 @@ import {
   MAX_COMPONENTS,
   STATUS_LOCALES,
   STATUS_PAGE_TITLE_MAX,
+  componentOrder,
+  statusFollowKey,
   type ComponentStatus,
   type StatusComponentRow,
   type StatusLocale,
@@ -203,7 +205,9 @@ export function StatusPagePanel(props: PanelProps) {
               </p>
             ) : null}
             {page ? <Components {...props} /> : null}
-            {page && props.subscribers ? <Subscribers api={props.subscribers} /> : null}
+            {page && props.subscribers ? (
+              <Subscribers api={props.subscribers} components={props.components} />
+            ) : null}
             {page && !manage ? (
               <p className="text-sm text-muted-foreground">{say("manage_only")}</p>
             ) : null}
@@ -856,10 +860,72 @@ function AddComponent({ full, onCreate }: Pick<PanelProps, "onCreate"> & { full:
 }
 
 /**
+ * What confirmed subscribers follow (RFC 0012 "Following components"): everything, then each group and component in the
+ * page's order with its count. Shown only once someone chose; keys of components that are gone are left out.
+ */
+function Following({
+  counts,
+  components,
+}: {
+  counts: SubscriberCounts;
+  components: readonly StatusComponentRow[];
+}) {
+  const follows = counts.follows ?? {};
+  if (Object.keys(follows).length === 0) return null;
+  const text = subscribersText;
+  const rows: { key: string; label: string; n: number; group?: boolean }[] = [
+    { key: "everything", label: text("following_everything"), n: counts.everything ?? 0 },
+  ];
+  const groups = new Set<string>();
+  for (const component of [...components].sort(componentOrder)) {
+    if (component.group !== null && !groups.has(component.group)) {
+      groups.add(component.group);
+      const key = statusFollowKey("g", component.group);
+      rows.push({
+        key,
+        label: text("following_group", { name: component.group }),
+        n: follows[key] ?? 0,
+        group: true,
+      });
+    }
+    const key = statusFollowKey("c", component.id);
+    rows.push({ key, label: component.name, n: follows[key] ?? 0 });
+  }
+  const shown = rows.filter((row) => row.n > 0);
+  if (shown.length === 0) return null;
+  return (
+    <div className="flex w-full flex-col gap-2">
+      <div className="flex flex-col gap-0.5">
+        <h4 className="text-sm font-medium">{text("following_title")}</h4>
+        <p className="max-w-prose text-sm text-muted-foreground">{text("following_hint")}</p>
+      </div>
+      <ul className="divide-y rounded-md border text-sm">
+        {shown.map((row) => (
+          <li key={row.key} className="flex min-h-10 items-center justify-between gap-4 px-3 py-2">
+            <span className={`min-w-0 break-words ${row.group ? "font-medium" : ""}`}>
+              {row.label}
+            </span>
+            <span className="shrink-0 tabular-nums text-muted-foreground">
+              {formatNumber(row.n, getLocale())}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
  * The page's email subscribers (RFC 0012 "Email subscriptions"), owners and admins only: how many, the CSV export, and
  * removing one by address. Addresses are only ever in the export; the card shows counts.
  */
-function Subscribers({ api }: { api: SubscribersApi }) {
+function Subscribers({
+  api,
+  components,
+}: {
+  api: SubscribersApi;
+  components: readonly StatusComponentRow[];
+}) {
   const [counts, setCounts] = useState<SubscriberCounts | null | "loading">("loading");
   const [attempt, setAttempt] = useState(0);
   const [email, setEmail] = useState("");
@@ -913,6 +979,7 @@ function Subscribers({ api }: { api: SubscribersApi }) {
             <DownloadIcon aria-hidden className="size-4" />
             {text("export")}
           </a>
+          <Following counts={counts} components={components} />
         </div>
       )}
       <form

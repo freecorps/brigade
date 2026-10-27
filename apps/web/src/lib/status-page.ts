@@ -86,17 +86,27 @@ export function normalizeSlug(input: string): string {
 /** The subscribers card's text for `part` (packages/i18n `status_subscribers`). */
 export function subscribersText(
   part: string,
-  args: { confirmed?: number; pending?: number; email?: string } = {},
+  args: { confirmed?: number; pending?: number; email?: string; name?: string } = {},
 ): string {
   return m.status_subscribers({
     part,
     confirmed: formatNumber(args.confirmed ?? 0, getLocale()),
     pending: formatNumber(args.pending ?? 0, getLocale()),
     email: args.email ?? "",
+    name: args.name ?? "",
   });
 }
 
-export type SubscriberCounts = { confirmed: number; pending: number };
+/**
+ * How many subscribers there are and, of the confirmed, what they follow (RFC 0012 "Following components"):
+ * `everything`, and each follow key (`statusFollowKey`) with its count. Absent from an older API.
+ */
+export type SubscriberCounts = {
+  confirmed: number;
+  pending: number;
+  everything?: number;
+  follows?: Record<string, number>;
+};
 
 const subscribersPath = (workspaceId: string) =>
   `/api/workspaces/${encodeURIComponent(workspaceId)}/status-page/subscribers`;
@@ -112,9 +122,15 @@ export async function loadSubscriberCounts(
     });
     if (!response.ok) return null;
     const body = (await response.json()) as Partial<SubscriberCounts>;
-    return typeof body.confirmed === "number" && typeof body.pending === "number"
-      ? { confirmed: body.confirmed, pending: body.pending }
-      : null;
+    if (typeof body.confirmed !== "number" || typeof body.pending !== "number") return null;
+    const counts: SubscriberCounts = { confirmed: body.confirmed, pending: body.pending };
+    if (typeof body.everything === "number") counts.everything = body.everything;
+    if (body.follows && typeof body.follows === "object") {
+      counts.follows = Object.fromEntries(
+        Object.entries(body.follows).filter(([, n]) => typeof n === "number"),
+      );
+    }
+    return counts;
   } catch {
     return null;
   }

@@ -12,6 +12,7 @@ import {
   ROLES,
   nextMaintenanceAt,
   STATUS_PAGE_ID,
+  statusFollowKey,
   TOKENS_ACTOR,
   type Actor,
   type EmailAbout,
@@ -640,13 +641,17 @@ export class WorkspaceDO extends DurableObject<Env> {
     change:
       | { action: "request"; subscriberId: string; send: number }
       | { action: "confirm"; subscriberId: string }
+      | { action: "follow"; subscriberId: string; follows: number }
       | { action: "remove"; subscriberId: string; reason: "unsubscribed" | "deleted" | "expired" },
     actor: Actor = ACCOUNT_ACTOR,
   ): { ok: true } | { ok: false; code: string } {
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
     // A subscriber is confirmed and removed once: the route runs this before its D1 write and runs it again when
-    // asked again after a failure, so a second call only says it is done.
-    const once = change.action === "request" ? null : `${change.action}:${change.subscriberId}`;
+    // asked again after a failure, so a second call only says it is done. Requests and follows may come again.
+    const once =
+      change.action === "request" || change.action === "follow"
+        ? null
+        : `${change.action}:${change.subscriberId}`;
     if (once !== null && this.statusMail.seen(once)) return { ok: true };
     const { action, ...args } = change;
     const now = Date.now();
@@ -683,6 +688,22 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (!result.ok) return result;
     }
     return { ok: true };
+  }
+
+  /**
+   * What each follow key of the page stands for now (RPC from the subscribers' CSV export, src/status-subscribers.ts):
+   * a component by its name, a group as `group: <name>`. Empty for a shard that serves another workspace.
+   */
+  statusFollowNames(workspaceId: string): Record<string, string> {
+    if (this.shard.workspace() !== workspaceId) return {};
+    const names: Record<string, string> = {};
+    for (const component of this.shard.store.scan("status_components")) {
+      names[statusFollowKey("c", component.id)] = component.name;
+      if (component.group !== null) {
+        names[statusFollowKey("g", component.group)] = `group: ${component.group}`;
+      }
+    }
+    return names;
   }
 
   /** What a status page email event asks for (RPC from the queue consumer, src/notify-status.ts). */

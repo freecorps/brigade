@@ -3,7 +3,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 
 /** @typedef {import('../runtime.js').LocalizedString} LocalizedString */
 
-/** @typedef {{ part: NonNullable<unknown>, confirmed: NonNullable<unknown>, pending: NonNullable<unknown>, email: NonNullable<unknown> }} Status_SubscribersInputs */
+/** @typedef {{ part: NonNullable<unknown>, confirmed: NonNullable<unknown>, pending: NonNullable<unknown>, email: NonNullable<unknown>, name: NonNullable<unknown> }} Status_SubscribersInputs */
 
 
 
@@ -23,6 +23,10 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "removed" | "Removed {email}." |
 * | "not_found" | "No subscriber has that address." |
 * | "remove_failed" | "Couldn't remove. Try again." |
+* | "following_title" | "What they follow" |
+* | "following_hint" | "Confirmed subscribers by what they chose. Those following everything hear about every component too." |
+* | "following_everything" | "Everything" |
+* | "following_group" | "All of {name}" |
 * | * | "Subscribers" |
 *
 * @param {Status_SubscribersInputs} inputs
@@ -45,6 +49,10 @@ export const status_subscribers = /** @type {((inputs: Status_SubscribersInputs,
 		if (i?.part === "removed") return /** @type {LocalizedString} */ (`${i?.email} foi removido.`);
 		if (i?.part === "not_found") return /** @type {LocalizedString} */ (`Nenhum inscrito tem esse endereço.`);
 		if (i?.part === "remove_failed") return /** @type {LocalizedString} */ (`Não foi possível remover. Tente de novo.`);
+		if (i?.part === "following_title") return /** @type {LocalizedString} */ (`O que acompanham`);
+		if (i?.part === "following_hint") return /** @type {LocalizedString} */ (`Inscritos confirmados pelo que escolheram. Quem acompanha tudo também fica sabendo de todos os componentes.`);
+		if (i?.part === "following_everything") return /** @type {LocalizedString} */ (`Tudo`);
+		if (i?.part === "following_group") return /** @type {LocalizedString} */ (`Todo o grupo ${i?.name}`);
 		return /** @type {LocalizedString} */ (`Inscritos`)
 	}
 	{
@@ -61,6 +69,10 @@ export const status_subscribers = /** @type {((inputs: Status_SubscribersInputs,
 		if (i?.part === "removed") return /** @type {LocalizedString} */ (`Removed ${i?.email}.`);
 		if (i?.part === "not_found") return /** @type {LocalizedString} */ (`No subscriber has that address.`);
 		if (i?.part === "remove_failed") return /** @type {LocalizedString} */ (`Couldn't remove. Try again.`);
+		if (i?.part === "following_title") return /** @type {LocalizedString} */ (`What they follow`);
+		if (i?.part === "following_hint") return /** @type {LocalizedString} */ (`Confirmed subscribers by what they chose. Those following everything hear about every component too.`);
+		if (i?.part === "following_everything") return /** @type {LocalizedString} */ (`Everything`);
+		if (i?.part === "following_group") return /** @type {LocalizedString} */ (`All of ${i?.name}`);
 		return /** @type {LocalizedString} */ (`Subscribers`)
 	}
 });

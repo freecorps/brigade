@@ -97,6 +97,49 @@ export const componentOrder = (
   a.createdAt - b.createdAt ||
   (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
+/**
+ * What a subscriber follows a component or a group by (RFC 0012 "Following components"): `c-` and 16 hex digits of a
+ * hash of the component's id, or `g-` and a hash of the group's name. It is in the snapshot and the public form, so it
+ * is not the id; a renamed component keeps its key, a renamed group gets a new one. Not a secret, only not an id.
+ */
+export function statusFollowKey(kind: "c" | "g", value: string): string {
+  // Two 32-bit FNV-1a passes with different offsets: 64 bits, so 50 components and their groups never collide.
+  let a = 0x811c9dc5;
+  let b = 0x01000193 ^ 0x5bd1e995;
+  const text = `${kind}:${value}`;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    a = Math.imul(a ^ code, 0x01000193);
+    b = Math.imul(b ^ code, 0x01000193) ^ (b >>> 15);
+  }
+  const hex = (n: number) => (n >>> 0).toString(16).padStart(8, "0");
+  return `${kind}-${hex(a)}${hex(b)}`;
+}
+
+/** A follow key as `statusFollowKey` writes them. */
+export const STATUS_FOLLOW_KEY = /^[cg]-[0-9a-f]{16}$/;
+
+/**
+ * Who hears of something touching `componentIds` (those still on the page): null for everyone (it touches no
+ * component), else the keys that match it (each component's and its group's) and every key the page has now, so a
+ * subscriber none of whose keys is on the page any more still hears of everything.
+ */
+export function statusAudience(
+  components: readonly Pick<StatusComponentRow, "id" | "group">[],
+  componentIds: readonly string[],
+): { affected: string[]; known: string[] } | null {
+  const keysOf = (component: Pick<StatusComponentRow, "id" | "group">) =>
+    component.group === null
+      ? [statusFollowKey("c", component.id)]
+      : [statusFollowKey("c", component.id), statusFollowKey("g", component.group)];
+  const touched = components.filter((component) => componentIds.includes(component.id));
+  if (touched.length === 0) return null;
+  return {
+    affected: [...new Set(touched.flatMap(keysOf))],
+    known: [...new Set(components.flatMap(keysOf))],
+  };
+}
+
 /** The worse of two statuses. */
 export function worseStatus(a: ComponentStatus, b: ComponentStatus): ComponentStatus {
   return COMPONENT_STATUSES.indexOf(a) >= COMPONENT_STATUSES.indexOf(b) ? a : b;
@@ -702,7 +745,13 @@ export const statusIncidentById = defineQuery({
 export type SnapshotComponentStatus = ComponentStatus | "maintenance";
 
 /** The public's copy of a component: its name, what it shows and, when linked to monitors, its uptime bar. */
-export type SnapshotComponent = { name: string; status: SnapshotComponentStatus; uptime?: Uptime };
+export type SnapshotComponent = {
+  name: string;
+  status: SnapshotComponentStatus;
+  uptime?: Uptime;
+  /** What the subscribe form follows it by (`statusFollowKey`). Absent from older snapshots. */
+  key?: string;
+};
 
 /** A maintenance window as the public reads it. */
 export type SnapshotMaintenance = {
@@ -715,7 +764,12 @@ export type SnapshotMaintenance = {
   publishedAt?: number;
   updatedAt?: number;
 };
-export type SnapshotGroup = { name: string | null; components: SnapshotComponent[] };
+export type SnapshotGroup = {
+  name: string | null;
+  components: SnapshotComponent[];
+  /** A named group's follow key (`statusFollowKey`). Absent from older snapshots and from the ungrouped. */
+  key?: string;
+};
 export type SnapshotIncident = {
   title: string;
   status: PublicStatus;
@@ -784,15 +838,24 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
         : derived;
     let group = groups.find((candidate) => candidate.name === component.group);
     if (!group) {
-      group = { name: component.group, components: [] };
-      if (component.group === null) groups.unshift(group);
-      else groups.push(group);
+      if (component.group === null) {
+        group = { name: null, components: [] };
+        groups.unshift(group);
+      } else {
+        group = {
+          name: component.group,
+          components: [],
+          key: statusFollowKey("g", component.group),
+        };
+        groups.push(group);
+      }
     }
     const monitorIds = component.monitorIds ?? [];
+    const key = statusFollowKey("c", component.id);
     group.components.push(
       monitorIds.length > 0
-        ? { name: component.name, status, uptime: uptime(monitorIds, monitors, alerts, now) }
-        : { name: component.name, status },
+        ? { name: component.name, status, uptime: uptime(monitorIds, monitors, alerts, now), key }
+        : { name: component.name, status, key },
     );
   }
   const toWindow = (row: MaintenanceRow): SnapshotMaintenance => ({

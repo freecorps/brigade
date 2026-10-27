@@ -33,6 +33,7 @@ describe("workspace.create", () => {
       "statusSubscriber.request",
       "statusSubscriber.confirm",
       "statusSubscriber.remove",
+      "statusSubscriber.follow",
       "statusEmail.continue",
       "workspace.create",
       "member.sync",

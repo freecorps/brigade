@@ -4,9 +4,10 @@ export type Status_SubscribersInputs = {
     confirmed: NonNullable<unknown>;
     pending: NonNullable<unknown>;
     email: NonNullable<unknown>;
+    name: NonNullable<unknown>;
 };
 /** @typedef {import('../runtime.js').LocalizedString} LocalizedString */
-/** @typedef {{ part: NonNullable<unknown>, confirmed: NonNullable<unknown>, pending: NonNullable<unknown>, email: NonNullable<unknown> }} Status_SubscribersInputs */
+/** @typedef {{ part: NonNullable<unknown>, confirmed: NonNullable<unknown>, pending: NonNullable<unknown>, email: NonNullable<unknown>, name: NonNullable<unknown> }} Status_SubscribersInputs */
 /**
 * | part | output |
 * | --- | --- |
@@ -23,6 +24,10 @@ export type Status_SubscribersInputs = {
 * | "removed" | "Removed {email}." |
 * | "not_found" | "No subscriber has that address." |
 * | "remove_failed" | "Couldn't remove. Try again." |
+* | "following_title" | "What they follow" |
+* | "following_hint" | "Confirmed subscribers by what they chose. Those following everything hear about every component too." |
+* | "following_everything" | "Everything" |
+* | "following_group" | "All of {name}" |
 * | * | "Subscribers" |
 *
 * @param {Status_SubscribersInputs} inputs

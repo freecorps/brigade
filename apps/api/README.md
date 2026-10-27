@@ -492,7 +492,9 @@ rate-limited by `STATUS_SUBSCRIBE_IP_LIMIT` and `STATUS_SUBSCRIBE_PAGE_LIMIT` (W
 4161-4163 and 4171-4173, one per environment). Pending subscribers who never confirm are deleted by the cron at minute
 37 of every hour, 48 hours after they asked. Apply `migrations/0009_status_subscriber.sql` and
 `migrations/0010_status_confirmation_caps.sql` with 0008 wherever the page is turned on (owner's call); they are not
-applied anywhere yet.
+applied anywhere yet. Following components (RFC 0012 "Following components") adds `migrations/0013_status_follows.sql`
+(a nullable `follows` column, so every existing row keeps getting everything): apply it with the others, before a
+deploy that includes it, since the subscribe, manage and notification queries read the column.
 
 ## Webhooks
 

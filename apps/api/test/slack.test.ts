@@ -1354,11 +1354,7 @@ describe("a channel per incident, and the timeline mirror", () => {
     const [posted] = await eventsOf(t, "incident.update_posted");
     const entryId = String(Reflect.get(Object(posted!.data), "entryId"));
     const caio = { kind: "user" as const, id: t.caio.id, role: "responder" as const };
-    await t.run(
-      "incident.editUpdate",
-      { id: posted!.subject!, entryId, body: "Fixed text" },
-      caio,
-    );
+    await t.run("incident.editUpdate", { id: posted!.subject!, entryId, body: "Fixed text" }, caio);
     const before = slack.calls.length;
     for (const one of await eventsOf(t, "incident.update_edited")) await deliver([one], slack.send);
     await deliver([posted!], slack.send);
@@ -1382,7 +1378,8 @@ describe("a channel per incident, and the timeline mirror", () => {
     const entryId = String(Reflect.get(Object(posted!.data), "entryId"));
     await t.run("incident.deleteUpdate", { id: posted!.subject!, entryId }, owner(t));
     const before = slack.calls.length;
-    for (const one of await eventsOf(t, "incident.update_deleted")) await deliver([one], slack.send);
+    for (const one of await eventsOf(t, "incident.update_deleted"))
+      await deliver([one], slack.send);
     await deliver([posted!], slack.send);
     expect(slack.calls.slice(before)).toEqual([]);
   });

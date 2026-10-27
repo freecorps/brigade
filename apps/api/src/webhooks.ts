@@ -597,7 +597,8 @@ export class WebhookDesk {
       .toArray();
     if (!kept) return {};
     const event = JSON.parse(kept.event) as BrigadeEvent;
-    if (event.type !== "incident.update_posted" && event.type !== "incident.update_edited") return {};
+    if (event.type !== "incident.update_posted" && event.type !== "incident.update_edited")
+      return {};
     const entryId = Reflect.get(Object(event.data), "entryId");
     return typeof entryId === "string" ? { entryId } : {};
   }

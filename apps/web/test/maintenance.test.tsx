@@ -5,7 +5,7 @@ import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
 import type { MaintenanceRow, StatusComponentRow, StatusPageRow } from "@freecorps/brigade-schema";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import {
   checkDraft,
   fromLocalInput,
@@ -20,6 +20,7 @@ import { loadSubscriberCounts, removeSubscriber } from "../src/lib/status-page";
 
 let root: Root | undefined;
 afterEach(() => {
+  vi.useRealTimers();
   act(() => root?.unmount());
   root = undefined;
   document.body.innerHTML = "";
@@ -49,6 +50,11 @@ const field = (container: HTMLElement, label: string) => {
 };
 
 const NOW = Date.UTC(2026, 9, 27, 12);
+// The form checks the times against the clock: held at `NOW`, so the fixed rows never turn past.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+});
 const HOUR = 60 * 60 * 1000;
 
 const component = (id: string, name: string): StatusComponentRow => ({

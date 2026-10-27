@@ -806,7 +806,9 @@ test("a region is stalled when every running monitor checked from it went quiet,
 
 test("a pattern that could cost too much says to use smaller repeats; other refusals say what is not supported", () => {
   const draft = { ...EMPTY_DRAFT, name: "API", url: "https://example.com" };
-  expect(checkDraft({ ...draft, keyword: "(?:[^<]?){100}a{40}", keywordMode: "regex" }, id())).toEqual({
+  expect(
+    checkDraft({ ...draft, keyword: "(?:[^<]?){100}a{40}", keywordMode: "regex" }, id()),
+  ).toEqual({
     ok: false,
     fields: ["keyword"],
   });
@@ -818,7 +820,9 @@ test("a pattern that could cost too much says to use smaller repeats; other refu
   }
   // The patterns that used to run out of steps on long pages are accepted.
   for (const keyword of ["[^<>]{0,60}down", "[^<]{0,100}error", '[^"]{0,80}"status":"down"']) {
-    expect(checkDraft({ ...draft, keyword, keywordMode: "regex" }, id())).toMatchObject({ ok: true });
+    expect(checkDraft({ ...draft, keyword, keywordMode: "regex" }, id())).toMatchObject({
+      ok: true,
+    });
   }
 });
 
@@ -838,9 +842,9 @@ test("a fresh check error names its monitor once; a stale one, a paused monitor 
   const old = row({ checks: [check("pattern_slow", now - 60 * 60 * 1000)] });
   const paused = row({ paused: true, checks: [check("pattern_slow")] });
   expect(checkErrorMonitors([unjudged, failing, old, paused], now)).toEqual([unjudged]);
-  expect(m.monitor_check_error({ reason: "pattern_slow", got: "", expected: "" }, { locale: "en" })).toBe(
-    "Check error: pattern too slow",
-  );
+  expect(
+    m.monitor_check_error({ reason: "pattern_slow", got: "", expected: "" }, { locale: "en" }),
+  ).toBe("Check error: pattern too slow");
   expect(m.monitor_check_errors({ monitors: "Status page" }, { locale: "pt-BR" })).toMatch(
     /ninguém é chamado/,
   );

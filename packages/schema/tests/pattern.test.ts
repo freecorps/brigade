@@ -260,28 +260,39 @@ describe("the work per character is bounded, whatever the text", () => {
     ["(\\w+\\s){0,20}outage", "there is a partial outage"],
     ['[^"]{0,80}"status":"down"', '{"region":"weur","status":"down"}'],
   ] as const;
-  const prose = "All systems operational. Every service answered within its usual time today, and nothing is degraded. ";
+  const prose =
+    "All systems operational. Every service answered within its usual time today, and nothing is degraded. ";
   const bodies = {
     prose: prose.repeat(Math.ceil(60_000 / prose.length)).slice(0, 60_000),
-    json: `[${'{"id":1234,"name":"checkout","status":"up","latency":42},'.repeat(1050)}{}]`.slice(0, 60_000),
-    html: "<li><a href=\"/checkout\">Checkout</a> <span class=\"ok\">Operational</span></li>\n"
+    json: `[${'{"id":1234,"name":"checkout","status":"up","latency":42},'.repeat(1050)}{}]`.slice(
+      0,
+      60_000,
+    ),
+    html: '<li><a href="/checkout">Checkout</a> <span class="ok">Operational</span></li>\n'
       .repeat(800)
       .slice(0, 60_000),
   };
 
-  test.each(ordinary)("%j saves, and matches or rules out on 60 KB of prose, JSON and HTML", (pattern, hit) => {
-    expect(patternProblem(pattern)).toBeNull();
-    const compiled = compilePattern(pattern);
-    if (!compiled.ok) throw new Error(compiled.reason);
-    expect(compiled.pattern.cost).toBeLessThanOrEqual(PATTERN_STEPS_PER_CHAR);
-    for (const body of Object.values(bodies)) {
-      expect(body.length).toBeGreaterThanOrEqual(59_000);
-      expect(matchPattern(compiled.pattern, body)).toBe(false);
-      // At the very end, so the whole body is walked first.
-      expect(matchPattern(compiled.pattern, `${body}${hit}`)).toBe(true);
-      expect(new RegExp(pattern.replace(/^\(\?i\)/, ""), pattern.startsWith("(?i)") ? "iu" : "u").test(`${body}${hit}`)).toBe(true);
-    }
-  });
+  test.each(ordinary)(
+    "%j saves, and matches or rules out on 60 KB of prose, JSON and HTML",
+    (pattern, hit) => {
+      expect(patternProblem(pattern)).toBeNull();
+      const compiled = compilePattern(pattern);
+      if (!compiled.ok) throw new Error(compiled.reason);
+      expect(compiled.pattern.cost).toBeLessThanOrEqual(PATTERN_STEPS_PER_CHAR);
+      for (const body of Object.values(bodies)) {
+        expect(body.length).toBeGreaterThanOrEqual(59_000);
+        expect(matchPattern(compiled.pattern, body)).toBe(false);
+        // At the very end, so the whole body is walked first.
+        expect(matchPattern(compiled.pattern, `${body}${hit}`)).toBe(true);
+        expect(
+          new RegExp(pattern.replace(/^\(\?i\)/, ""), pattern.startsWith("(?i)") ? "iu" : "u").test(
+            `${body}${hit}`,
+          ),
+        ).toBe(true);
+      }
+    },
+  );
 });
 
 describe("ignoring case", () => {

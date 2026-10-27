@@ -27,7 +27,7 @@ export function caseFoldGroups(): number[][] {
   const groups: number[][] = [];
   codes.forEach((code, index) => {
     if (grouped.has(code)) return;
-    const char = chars[index]!.replace(/[\\\]\[^-]/g, "\\$&");
+    const char = chars[index]!.replace(/[\\\][^-]/g, "\\$&");
     const same = new RegExp(`^[${char}]$`, "iu");
     const group = codes.filter((_, at) => same.test(chars[at]!));
     for (const member of group) grouped.add(member);
@@ -68,7 +68,8 @@ export function encode(groups: number[][]): string[] {
   const lines: string[] = [];
   for (const run of encoded) {
     const last = lines.at(-1);
-    if (last !== undefined && last.length + run.length < 100) lines[lines.length - 1] = `${last},${run}`;
+    if (last !== undefined && last.length + run.length < 100)
+      lines[lines.length - 1] = `${last},${run}`;
     else lines.push(run);
   }
   return lines;

@@ -67,15 +67,22 @@ async function forward(forwarded: Request, env: Upstreams, path: string): Promis
 }
 
 /** The API reference: public, the same for everyone, so any site and any cache may read it. */
+const REFERENCE_BODY = JSON.stringify(openApi);
+
 function reference(request: Request): Response {
   if (request.method !== "GET" && request.method !== "HEAD") {
     return Response.json(
       { error: "method_not_allowed" },
-      { status: 405, headers: { Allow: "GET, HEAD" } },
+      { status: 405, headers: { Allow: "GET, HEAD", "Access-Control-Allow-Origin": "*" } },
     );
   }
-  return Response.json(openApi, {
-    headers: { "Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*" },
+  // Serialized once per isolate; HEAD sends the headers alone.
+  return new Response(request.method === "HEAD" ? null : REFERENCE_BODY, {
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "public, max-age=300",
+      "Access-Control-Allow-Origin": "*",
+    },
   });
 }
 

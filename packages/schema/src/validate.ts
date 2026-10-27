@@ -24,6 +24,7 @@ export type Shape =
   | { kind: "boolean" }
   | { kind: "nullable"; inner: Validator<unknown> }
   | { kind: "optional"; inner: Validator<unknown> }
+  | { kind: "omittable"; inner: Validator<unknown> }
   | { kind: "array"; item: Validator<unknown>; min: number; max: number; unique: boolean }
   | { kind: "object"; shape: Readonly<Record<string, Validator<unknown>>> };
 
@@ -143,7 +144,10 @@ function optional<T>(inner: Validator<T>): Validator<T | null> {
 
 /** Like `optional`, but a left-out value stays left out (`undefined`), so "not given" and `null` stay apart. */
 function omittable<T>(inner: Validator<T>): Validator<T | undefined> {
-  return (input, path = "") => (input === undefined ? valid(undefined) : inner(input, path));
+  return described(
+    (input, path = "") => (input === undefined ? valid(undefined) : inner(input, path)),
+    { kind: "omittable", inner },
+  );
 }
 
 /**

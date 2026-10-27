@@ -53,6 +53,15 @@ describe("toJsonSchema", () => {
     });
   });
 
+  test("an omittable property is described like an optional one", () => {
+    expect(toJsonSchema(v.object({ policy: v.omittable(v.nullable(v.id("pol"))) }))).toEqual({
+      type: "object",
+      properties: { policy: { anyOf: [toJsonSchema(v.id("pol")), { type: "null" }] } },
+      required: [],
+      additionalProperties: false,
+    });
+  });
+
   test("an id's pattern is the one isId checks", () => {
     const { pattern } = toJsonSchema(v.id("inc")) as { pattern: string };
     const id = newId("inc", Date.now(), random);

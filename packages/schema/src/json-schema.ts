@@ -36,6 +36,7 @@ export function toJsonSchema(validator: Validator<unknown>): JsonSchema {
     case "nullable":
       return { anyOf: [toJsonSchema(shape.inner), { type: "null" }] };
     case "optional":
+    case "omittable":
       // Only a property can be left out: `object` leaves it out of `required`.
       return toJsonSchema(shape.inner);
     case "array":
@@ -51,7 +52,10 @@ export function toJsonSchema(validator: Validator<unknown>): JsonSchema {
       return {
         type: "object",
         properties: Object.fromEntries(keys.map((key) => [key, toJsonSchema(shape.shape[key]!)])),
-        required: keys.filter((key) => shapeOf(shape.shape[key]!)?.kind !== "optional"),
+        required: keys.filter((key) => {
+          const kind = shapeOf(shape.shape[key]!)?.kind;
+          return kind !== "optional" && kind !== "omittable";
+        }),
         additionalProperties: false,
       };
     }

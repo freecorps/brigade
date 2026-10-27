@@ -41,7 +41,6 @@
   "scripts": {
     "dev": "CLOUDFLARE_ENV=dev vp dev",
     "build": "vp build",
-    "build:dev": "CLOUDFLARE_ENV=dev vp build",
     "test": "wrangler types --check && vp test",
     "check": "vp check",
     "cf-typegen": "wrangler types"

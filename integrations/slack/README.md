@@ -23,11 +23,13 @@ is two things:
 
 Slack reaches these on the dashboard's origin: `brigade-web` forwards `/slack/*` here through its `SLACK` binding.
 
-## Setting it up (owner's call; nothing here is deployed yet)
+## Setting it up (owner's call; deployed on `dev`)
 
 1. **Create the app** at https://api.slack.com/apps → Create New App → From a manifest, with `manifest.yaml` after
    replacing `brigade.example.com` with the dashboard's origin. One app per Brigade instance; it installs into any
-   number of Slack workspaces.
+   number of Slack workspaces. Slack checks the Events API request URL when the manifest is saved, and this Worker
+   can only answer that check once it has its signing secret: create the app first without
+   `settings.event_subscriptions`, deploy (steps 2 to 6), then paste the whole manifest under App Manifest.
 2. **Secrets on the Slack Worker** (from the app's Basic Information page):
    ```bash
    wrangler secret put SLACK_SIGNING_SECRET   # Signing Secret
@@ -42,12 +44,14 @@ Slack reaches these on the dashboard's origin: `brigade-web` forwards `/slack/*`
    Without it Slack is off: no install starts and no message is sent. Losing or changing it means every workspace
    reconnects Slack (no `v2` rotation exists yet).
 4. **D1**: apply `apps/api/migrations/0006_slack_team.sql` (`wrangler d1 migrations apply DB --remote --env dev`).
-5. **Deploy in order**: the API (it exports `SlackBridge`), then this Worker (`CLOUDFLARE_ENV=dev vp build` here, then
-   `wrangler deploy`), then the dashboard.
-6. **The dashboard's `SLACK` binding**, once this Worker exists: add
-   `{ "binding": "SLACK", "service": "brigade-slack-dev" }` to `env.dev.services` in `apps/web/wrangler.jsonc`, run
-   `vp run cf-typegen` in `apps/web` and deploy the dashboard. It is not committed because a service binding to a
-   Worker that does not exist fails the dashboard's deploy; without it `/slack/*` answers 404.
+5. **Deploy in order**: the API (it exports `SlackBridge`), then this Worker (`vp build` here, then `wrangler deploy`;
+   the top-level config is already `brigade-slack-dev`, and `CLOUDFLARE_ENV=dev` would deploy it as
+   `brigade-slack-dev-dev`), then the dashboard. `wrangler deploy --secrets-file <file outside the repo>` sets the
+   step 2 secrets in the same go.
+6. **The dashboard's `SLACK` binding**: `env.dev.services` in `apps/web/wrangler.jsonc` binds `brigade-slack-dev`
+   (committed now that the Worker exists on `dev`). Another environment adds its own entry once its Slack Worker is
+   deployed: a service binding to a Worker that does not exist fails the dashboard's deploy, and without it
+   `/slack/*` answers 404.
 7. In the dashboard, an owner or admin presses **Add to Slack** on the Slack card, then picks the channel and, if they
    want them, turns on incident channels.
 

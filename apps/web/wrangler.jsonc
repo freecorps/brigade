@@ -33,10 +33,12 @@
       // The dashboard at https://brigade-web-dev.<subdomain>.workers.dev (the subdomain names the account, so it is
       // never written here); the API stays private behind the `API` binding. Preview URLs stay off.
       "workers_dev": true,
-      // No SLACK binding is committed: a service binding to a Worker that does not exist fails the deploy. Add
-      // `{ "binding": "SLACK", "service": "brigade-slack-<env>" }` here with the Slack Worker's first deploy
-      // (integrations/slack/README.md); without it /slack/* answers 404.
-      "services": [{ "binding": "API", "service": "brigade-api-dev" }],
+      // `SLACK` forwards /slack/* to the Slack Worker (integrations/slack/README.md). Another environment adds its
+      // own only once its Slack Worker exists: a service binding to a missing Worker fails the deploy.
+      "services": [
+        { "binding": "API", "service": "brigade-api-dev" },
+        { "binding": "SLACK", "service": "brigade-slack-dev" },
+      ],
     },
     "staging": {
       "services": [{ "binding": "API", "service": "brigade-api-staging" }],

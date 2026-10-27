@@ -23,6 +23,7 @@ import { finishDeps, keptSignOuts, phoneDeps, SESSION_LIFETIME_MS } from "@/lib/
 import { finishSignOut, signOutPhone, type FinishResult } from "@/lib/sign-out";
 import { knownWorkspace, memberActor, settledRole, WORKSPACE_KEY, type Server } from "@/lib/sync";
 import { createWorkspaceSync, setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
+import { BrigadeCall } from "../../modules/brigade-call";
 
 /** The signed-in member in their active workspace: what every signed-in screen reads. */
 export type Member = {
@@ -124,8 +125,11 @@ function usePaging(
     const foreground = AppState.addEventListener("change", (state) => {
       if (state === "active") void made.retry();
     });
+    // iOS: a new or withdrawn PushKit token is registered at once, so calls only go to a token the app holds.
+    const voipToken = BrigadeCall?.addListener("onVoipToken", () => void made.retry());
     return () => {
       foreground.remove();
+      voipToken?.remove();
       void made.stop();
       if (cycle.current === made) cycle.current = null;
     };

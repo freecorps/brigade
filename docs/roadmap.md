@@ -190,7 +190,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     ([write-up](spikes/s1-apns-encryption.md#real-iphone)).
   - Left: the production and staging queues (owner approval); `RELAY_SEND_TOKEN` on the deployed API (dev reaches
     its relay through the `RELAY` service binding; production and staging add theirs with their relay's first deploy);
-    VoIP call pages (`kind: "call"`, Phase 2 with RFC 0010); FCM for Android
+    VoIP call pages on a real iPhone (sent since Phase 2, RFC 0010); FCM for Android
     (Android devices are recorded as `unsupported`); replaying dead-lettered pages (today they are recorded, not
     re-sent); a member removed or demoted in D1 outside Brigade is still paged until the next sync upgrade
     reconciles the shard (RFC 0006 "Who is paged", Q18); holding back lower-urgency pushes while a page may be undelivered (RFC 0006
@@ -261,8 +261,16 @@ Validate the risky assumptions before writing product code. Each spike produces 
     migrations 0003, 0004 and 0005 to the deployed databases (owner's call, apps/api/README.md "Email"); verification no
     longer blocks it. A dashboard switch for the two settings; a per-member opt-out; the mobile app sending the
     user's language. Next on the same sender: an email to operators
-    when the paging pipeline degrades (Q19) and to owners when rotations change (Q20). VoIP call paging and the PSTN
-    notifier are still to come.
+    when the paging pipeline degrades (Q19) and to owners when rotations change (Q20). The PSTN notifier is still to
+    come.
+  - Done: in-app VoIP call paging on iOS (RFC 0010 "When a page rings"): a SEV1 page, and an escalation level of a
+    SEV1 or SEV2, rings as a call after its alert push, on every iOS device that registered a PushKit token. The
+    queue consumer sends the call through the relay (`kind: "call"`, a call id derived from the page's event) only
+    once the relay took the alert; a call that fails is logged and never changes the page's retries, delivery rows
+    or escalation. The app registers its PushKit token with `device.register` and again when PushKit changes it;
+    answering reads the page aloud and 1 acknowledges with `incident.ack`, as in S6.
+  - Left: trying it on an iPhone (VoIP Services on the App ID); delivery rows for calls; clearing a VoIP token APNs
+    refuses; a per-member choice of calls; Android calls (FCM).
 - [ ] Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup
 - [x] Delivery receipts and "why wasn't I paged" debugging view
   - Each page is a row per device (`deliveries`, synced to members): planned, handed to the relay, accepted by

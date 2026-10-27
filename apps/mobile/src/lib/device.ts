@@ -71,6 +71,11 @@ export type DeviceDeps = {
   permission: () => Promise<boolean>;
   pushToken: () => Promise<string>;
   /**
+   * iOS: PushKit's token, so pages can ring as calls (RFC 0010); null without one. Absent where the app cannot report a
+   * VoIP push to CallKit (no call module): the phone then never gets a call, only alerts.
+   */
+  voipToken?: () => Promise<string | null>;
+  /**
    * The instance this phone registers with (`https://brigade.example.com`) and where to keep it for the Notification
    * Service Extension (the App Group): it posts delivery receipts to that origin only, whatever URL a page names
    * (RFC 0006 "Delivery receipts"). Absent where there is no extension.
@@ -99,6 +104,7 @@ export async function registerPhone(
     const args = deviceRegistration({
       publicKey,
       pushToken: await deps.pushToken(),
+      voipToken: await callToken(deps),
       platform: deps.platform,
       apsEnvironment: deps.apsEnvironment,
     });
@@ -112,6 +118,19 @@ export async function registerPhone(
     return result.error.code === "forbidden" ? "taken" : "failed";
   } catch {
     return "failed";
+  }
+}
+
+/**
+ * The VoIP token to register: iOS only (Android rings through FCM, not yet set up), and never in registration's way:
+ * without it the phone gets alerts and no calls.
+ */
+async function callToken(deps: DeviceDeps): Promise<string | null> {
+  if (deps.platform !== "ios" || !deps.voipToken) return null;
+  try {
+    return (await deps.voipToken()) || null;
+  } catch {
+    return null;
   }
 }
 

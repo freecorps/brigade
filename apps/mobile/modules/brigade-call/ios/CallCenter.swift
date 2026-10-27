@@ -116,7 +116,9 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   private var audioActive = false
 
   private(set) var voipToken: String?
-  /// Set by the Expo module: `onAnswer`, `onEnd`, `onAcknowledgeKey`, `onSpoken`.
+  /// Who asked for the token before PushKit had one (`waitForVoipToken`).
+  private var tokenWaiters: [UUID: (String?) -> Void] = [:]
+  /// Set by the Expo module: `onAnswer`, `onEnd`, `onAcknowledgeKey`, `onSpoken`, `onVoipToken`.
   var emit: ((String, [String: Any?]) -> Void)?
 
   /// The answered call, from any thread: a copy of the value the main queue last stored.
@@ -137,12 +139,38 @@ final class CallCenter: NSObject, PKPushRegistryDelegate, CXProviderDelegate, AV
   // MARK: - PushKit
 
   func pushRegistry(_ registry: PKPushRegistry, didUpdate credentials: PKPushCredentials, for type: PKPushType) {
-    voipToken = credentials.token.map { String(format: "%02x", $0) }.joined()
+    setVoipToken(credentials.token.map { String(format: "%02x", $0) }.joined())
     log.info("voip token updated")
   }
 
   func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
-    voipToken = nil
+    setVoipToken(nil)
+  }
+
+  /// A new or withdrawn token: the app registers the device again (src/components/session.tsx), so the instance
+  /// only ever sends calls to a token this app reports to CallKit for.
+  private func setVoipToken(_ token: String?) {
+    let changed = token != voipToken
+    voipToken = token
+    let waiters = tokenWaiters.values
+    tokenWaiters = [:]
+    waiters.forEach { $0(token) }
+    if changed { emit?("onVoipToken", [:]) }
+  }
+
+  /// The PushKit token, waiting up to `timeout` for PushKit's first answer after launch: registration should not
+  /// go out without it only because PushKit was a moment late. Nil if none came; `onVoipToken` says when one does.
+  func waitForVoipToken(timeout: TimeInterval, _ done: @escaping (String?) -> Void) {
+    if let voipToken {
+      done(voipToken)
+      return
+    }
+    let id = UUID()
+    tokenWaiters[id] = done
+    DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+      guard let self, let waiter = self.tokenWaiters.removeValue(forKey: id) else { return }
+      waiter(self.voipToken)
+    }
   }
 
   func pushRegistry(

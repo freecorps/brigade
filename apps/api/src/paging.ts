@@ -27,7 +27,7 @@ import type { BrigadeEvent } from "./outbox.ts";
 import type { Shard } from "./shard.ts";
 import type { RowChange } from "./store.ts";
 
-/** Severities that page (urgency `page`: time-sensitive, and later a call); lower ones notify (`high`). */
+/** Severities that page (urgency `page`: time-sensitive, some ringing as a call too); lower ones notify (`high`). */
 export const PAGING_SEVERITIES: readonly Severity[] = ["sev1", "sev2"];
 /** How long the ledger remembers an event: past the Queue's longest retention (14 days), so a redelivery is known. */
 export const LEDGER_RETENTION_MS = 15 * 24 * 60 * 60 * 1000;
@@ -60,6 +60,8 @@ export type PageTarget = {
   environment: PushEnvironment;
   pushToken: string;
   publicKey: string;
+  /** PushKit's token, for a page that rings as a call (RFC 0010); null without one. */
+  voipToken: string | null;
   /** This page's delivery receipt token for the device (src/receipts.ts); absent when none could be minted. */
   receipt?: string;
 };
@@ -80,6 +82,11 @@ export type PagePlan =
       send: true;
       incident: Pick<IncidentRow, "id" | "number" | "title" | "severity">;
       urgency: Urgency;
+      /**
+       * Whether the page also rings as a call on devices with a VoIP token (`ringsAsCall`), after its alert push.
+       * Absent from a shard of the version before calls (during a deploy): no call.
+       */
+      call?: boolean;
       targets: PageTarget[];
       /** Handed back with the outcomes (`Pager.record`). */
       skipped: SkippedMember[];
@@ -147,6 +154,16 @@ export function asksForPage(event: BrigadeEvent): boolean {
   );
 }
 
+/**
+ * Whether a page also rings as a call (RFC 0010 "When a page rings"): a page at `page` urgency for a SEV1, or an
+ * escalation level fired because nobody acknowledged (SEV1 or SEV2). A SEV2's first page and anything lower are an
+ * alert push only. The alert push is sent either way, and first.
+ */
+export function ringsAsCall(event: BrigadeEvent, severity: Severity): boolean {
+  if (!PAGING_SEVERITIES.includes(severity)) return false;
+  return severity === "sev1" || event.type === "escalation.paged";
+}
+
 const rank = (severity: Severity) => ["sev1", "sev2", "sev3", "sev4"].indexOf(severity);
 
 /**
@@ -173,12 +190,13 @@ export function pageTargets(
   const devicesOf = (userId: string): PageTarget[] =>
     devices
       .filter((device) => device.userId === userId)
-      .map(({ id, platform, environment, pushToken, publicKey }) => ({
+      .map(({ id, platform, environment, pushToken, voipToken, publicKey }) => ({
         deviceId: id,
         userId,
         platform,
         environment,
         pushToken,
+        voipToken,
         publicKey,
       }));
   const noDevices: string[] = [];
@@ -364,6 +382,7 @@ export class Pager {
         severity: incident.severity,
       },
       urgency: PAGING_SEVERITIES.includes(incident.severity) ? "page" : "high",
+      call: ringsAsCall(event, incident.severity),
       targets,
       skipped,
     };
@@ -549,8 +568,16 @@ export class Pager {
       if (!member || member.role === "viewer") continue;
       const mine = devices.filter((device) => device.userId === userId);
       if (mine.length === 0) noDevices.push(userId);
-      for (const { id, platform, environment, pushToken, publicKey } of mine) {
-        targets.push({ deviceId: id, userId, platform, environment, pushToken, publicKey });
+      for (const { id, platform, environment, pushToken, voipToken, publicKey } of mine) {
+        targets.push({
+          deviceId: id,
+          userId,
+          platform,
+          environment,
+          pushToken,
+          voipToken,
+          publicKey,
+        });
       }
     }
     return { targets, noDevices };

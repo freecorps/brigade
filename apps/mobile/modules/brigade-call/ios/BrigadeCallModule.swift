@@ -5,7 +5,7 @@ public class BrigadeCallModule: Module {
   public func definition() -> ModuleDefinition {
     Name("BrigadeCall")
 
-    Events("onAnswer", "onEnd", "onAcknowledgeKey", "onSpoken")
+    Events("onAnswer", "onEnd", "onAcknowledgeKey", "onSpoken", "onVoipToken")
 
     OnCreate {
       CallCenter.shared.start()
@@ -67,9 +67,10 @@ public class BrigadeCallModule: Module {
       try url.setResourceValues(values)
     }
 
-    /// The PushKit token the relay sends calls to (hex), or null until PushKit has one.
-    AsyncFunction("getVoipToken") { () -> String? in
-      return CallCenter.shared.voipToken
+    /// The PushKit token the relay sends calls to (hex), waiting a few seconds for PushKit after launch; null if it
+    /// has none.
+    AsyncFunction("getVoipToken") { (promise: Promise) in
+      CallCenter.shared.waitForVoipToken(timeout: 5) { promise.resolve($0 as Any?) }
     }.runOnQueue(.main)
   }
 }

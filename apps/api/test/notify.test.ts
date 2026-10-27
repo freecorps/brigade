@@ -26,6 +26,7 @@ import {
   type TimelineRow,
 } from "@freecorps/brigade-schema";
 import {
+  callIdOf,
   consumeDeadLetters,
   consumeEvents,
   MAX_PAGE_ATTEMPTS,
@@ -35,7 +36,7 @@ import {
   type NotifyEnv,
 } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
-import { asksForPage, MAX_PAGE_DEVICES, pageTargets } from "../src/paging.ts";
+import { asksForPage, MAX_PAGE_DEVICES, pageTargets, ringsAsCall } from "../src/paging.ts";
 import worker from "../src/index.ts";
 import { Shard } from "../src/shard.ts";
 import { HEARTBEAT_EVENT, PING_TIMEOUT_MS, SYSTEM_WORKSPACE } from "../src/watchdog.ts";
@@ -100,20 +101,26 @@ async function workspace(members: Actor[] = [ana, bia, caio]) {
   /** Registers a device for `actor` and returns its key pair, to open what was sealed for it. */
   const device = async (
     actor: Actor,
-    options: { platform?: "ios" | "android"; environment?: "sandbox" | "production" } = {},
+    options: {
+      platform?: "ios" | "android";
+      environment?: "sandbox" | "production";
+      /** Registers a PushKit token too, so the phone can ring (RFC 0010). */
+      voip?: boolean;
+    } = {},
   ) => {
     const recipient = await generateRecipient();
     const deviceId = newId("dev", Date.now(), random);
     const pushToken = toBase64url(random(32)).replace(/[-_]/g, "a");
+    const voipToken = options.voip ? toBase64url(random(32)).replace(/[-_]/g, "b") : null;
     await run(actor, "device.register", {
       id: deviceId,
       platform: options.platform ?? "ios",
       environment: options.environment ?? "sandbox",
       pushToken,
-      voipToken: null,
+      voipToken,
       publicKey: toBase64url(recipient.publicKey),
     });
-    return { deviceId, pushToken, recipient, userId: actor.id };
+    return { deviceId, pushToken, voipToken, recipient, userId: actor.id };
   };
   /** Declares an incident as `actor` and returns its id and the `incident.declared` event from the outbox. */
   const declare = async (actor: Actor, severity = "sev1") => {
@@ -157,6 +164,9 @@ type RelayBody = {
   urgency: string;
   environment: string;
   collapseId: string;
+  /** `call` for a VoIP push (RFC 0010); absent for an alert. */
+  kind?: string;
+  callId?: string;
 };
 
 const relayEnv = {
@@ -403,6 +413,172 @@ describe("the push notifier", () => {
     expect((await deliver(update, fake.send)).acked).toEqual(["msg-0"]);
     expect((await deliver({ nope: true } as never, fake.send)).acked).toEqual(["msg-0"]);
     expect(fake.requests).toHaveLength(0);
+  });
+});
+
+describe("pages that ring as a call (RFC 0010)", () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const deliveries = (ws: Awaited<ReturnType<typeof workspace>>, incident: string) =>
+    ws.withShard((shard) =>
+      shard.store.scan("deliveries").filter((row) => row.incidentId === incident),
+    );
+
+  test("a SEV1 page rings the phones with a VoIP token after their alert push; the others get the alert only", async () => {
+    const ws = await workspace();
+    const anaPhone = await ws.device(ana, { voip: true, environment: "production" });
+    const biaPhone = await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR, "sev1");
+    const fake = relay();
+
+    expect(await deliver(event, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
+    const anas = fake.requests.filter((r) =>
+      [anaPhone.pushToken, anaPhone.voipToken].includes(r.body.deviceToken),
+    );
+    // The alert first, then the call to the PushKit token, in the device's environment.
+    expect(anas.map((r) => r.body.kind ?? "alert")).toEqual(["alert", "call"]);
+    const [alert, call] = anas;
+    expect(alert!.body.deviceToken).toBe(anaPhone.pushToken);
+    expect(call!.url).toBe("https://relay.test/send");
+    expect(call!.auth).toBe("Bearer test-token");
+    expect(call!.body).toMatchObject({
+      kind: "call",
+      deviceToken: anaPhone.voipToken,
+      urgency: "page",
+      environment: "production",
+    });
+    expect(call!.body.callId).toMatch(UUID);
+    expect(call!.body.callId).toBe(await callIdOf(event.id));
+    expect(await opened(anaPhone.recipient, call!.body.envelope)).toEqual({
+      title: "SEV1 · INC-1",
+      body: "Checkout is down",
+      incident,
+      workspace: event.workspaceId,
+    });
+    // No VoIP token: the alert only.
+    expect(
+      fake.requests
+        .filter((r) => r.body.deviceToken === biaPhone.pushToken)
+        .map((r) => r.body.kind),
+    ).toEqual([undefined]);
+    expect(fake.requests).toHaveLength(3);
+    expect((await deliveries(ws, incident)).every((row) => row.acceptedAt !== null)).toBe(true);
+  });
+
+  test("a SEV2's first page and a SEV3 do not ring; a severity raised into SEV1 does", async () => {
+    const ws = await workspace();
+    await ws.device(bia, { voip: true });
+    const fake = relay();
+    const sev2 = await ws.declare(ana, "sev2");
+    await deliver(sev2.event, fake.send);
+    const sev3 = await ws.declare(ana, "sev3");
+    await deliver(sev3.event, fake.send);
+    expect(fake.requests.map((r) => r.body.kind ?? "alert")).toEqual(["alert", "alert"]);
+
+    await ws.run(ana, "incident.setSeverity", { id: sev3.incident, severity: "sev1" });
+    const raised = (await ws.events(sev3.incident)).find(
+      (e) => e.type === "incident.severity_changed",
+    )!;
+    await deliver(raised, fake.send);
+    expect(fake.requests.map((r) => r.body.kind ?? "alert")).toEqual([
+      "alert",
+      "alert",
+      "alert",
+      "call",
+    ]);
+  });
+
+  test("the policy: SEV1 pages ring, and an escalation level of a SEV1 or SEV2; nothing below", () => {
+    const event = (type: string): BrigadeEvent => ({
+      id: "evt_x",
+      type,
+      source: "brigade://ws/workspace",
+      workspaceId: "ws",
+      time: new Date().toISOString(),
+      actor: { kind: "system", id: "sys_escalation" },
+      subject: "inc_x",
+      data: {},
+      specversion: "1.0",
+    });
+    expect(ringsAsCall(event("incident.declared"), "sev1")).toBe(true);
+    expect(ringsAsCall(event("incident.severity_changed"), "sev1")).toBe(true);
+    expect(ringsAsCall(event("escalation.paged"), "sev1")).toBe(true);
+    expect(ringsAsCall(event("escalation.paged"), "sev2")).toBe(true);
+    expect(ringsAsCall(event("incident.declared"), "sev2")).toBe(false);
+    expect(ringsAsCall(event("incident.severity_changed"), "sev2")).toBe(false);
+    expect(ringsAsCall(event("escalation.paged"), "sev3")).toBe(false);
+    expect(ringsAsCall(event("escalation.paged"), "sev4")).toBe(false);
+  });
+
+  test("a call the relay refuses or never answers leaves the alert delivered, with no retry", async () => {
+    for (const fails of [
+      () => Response.json({ status: 400, reason: "BadDeviceToken" }, { status: 502 }),
+      () => Response.json({ error: "relay_misconfigured" }, { status: 500 }),
+      () => Promise.reject(new Error("connection reset")),
+    ]) {
+      const ws = await workspace();
+      const phone = await ws.device(bia, { voip: true });
+      const { incident, event } = await ws.declare(ana, "sev1");
+      const fake = relay((body) =>
+        body.kind === "call" ? fails() : Response.json({ status: 200 }),
+      );
+
+      expect(await deliver(event, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
+      expect(fake.requests.map((r) => r.body.kind ?? "alert")).toEqual(["alert", "call"]);
+      const [row] = await deliveries(ws, incident);
+      expect(row).toMatchObject({ deviceId: phone.deviceId, error: null });
+      expect(row!.acceptedAt).not.toBeNull();
+      expect((await ws.timeline(incident)).map((r) => r.kind)).toEqual(["declared"]);
+      // The device stays: a refused VoIP token never drops the phone's alert token.
+      expect(
+        await ws.withShard((shard) => shard.store.get("devices", phone.deviceId)),
+      ).toBeDefined();
+      expect(
+        logged().some((line) =>
+          ["relay refused a call", "call not sent"].includes(String(line.message)),
+        ),
+      ).toBe(true);
+      // A redelivery sends nothing again, the call included.
+      await deliver(event, fake.send, { attempts: 2 });
+      expect(fake.requests).toHaveLength(2);
+    }
+  });
+
+  test("an alert that fails is not followed by a call; the retry that delivers it rings, under the same call id", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia, { voip: true });
+    const { event } = await ws.declare(ana, "sev1");
+    let down = true;
+    const fake = relay(() =>
+      down
+        ? Response.json({ error: "apns_unreachable" }, { status: 502 })
+        : Response.json({ status: 200 }),
+    );
+    expect((await deliver(event, fake.send)).retried).toHaveLength(1);
+    expect(fake.requests.map((r) => r.body.kind ?? "alert")).toEqual(["alert"]);
+
+    down = false;
+    expect((await deliver(event, fake.send, { attempts: 2 })).acked).toEqual(["msg-0"]);
+    expect(fake.requests.map((r) => r.body.kind ?? "alert")).toEqual(["alert", "alert", "call"]);
+    expect(fake.requests[2]!.body).toMatchObject({
+      deviceToken: phone.voipToken,
+      callId: await callIdOf(event.id),
+    });
+  });
+
+  test("an Android device never gets a call (no FCM yet), VoIP token or not", async () => {
+    const ws = await workspace();
+    await ws.device(bia, { platform: "android", environment: "production", voip: true });
+    const { event } = await ws.declare(ana, "sev1");
+    const fake = relay();
+    await deliver(event, fake.send);
+    expect(fake.requests).toHaveLength(0);
+  });
+
+  test("call ids: a UUID the relay takes, the same for one event and different for another", async () => {
+    const one = await callIdOf("evt_01");
+    expect(one).toMatch(UUID);
+    expect(await callIdOf("evt_01")).toBe(one);
+    expect(await callIdOf("evt_02")).not.toBe(one);
   });
 });
 

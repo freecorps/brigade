@@ -2,11 +2,12 @@
 // a page that failed to email (src/notify-email.ts), everything else to push, and an incident's events to Slack as
 // well (src/notify-slack.ts), next to push and never ahead of it. Push: for an event that pages, the
 // workspace shard plans who gets it, each device's push is sealed to its own key (HPKE, `packages/push`) and sent
-// through the relay (RFC 0006), and the outcomes go back to the shard. Delivery is at-least-once, so the shard's page
+// through the relay (RFC 0006), a page that rings rings as a call after its alert push (RFC 0010), and the outcomes
+// go back to the shard. Delivery is at-least-once, so the shard's page
 // ledger, keyed by `event.id`, makes a redelivery page nobody twice. What the Queue gives up on lands in
 // `brigade-events-dlq`, whose consumer (`consumeDeadLetters`) records it on the incident's timeline.
 
-import { sealPush, type PushReceipt } from "@freecorps/brigade-push";
+import { sealPush, type PushContent, type PushReceipt } from "@freecorps/brigade-push";
 import { formatIncidentNumber, type DeliveryError } from "@freecorps/brigade-schema";
 import { emailSender, type EmailEnv, type EmailSender } from "./email.ts";
 import { asksForEmail } from "./mailer.ts";
@@ -327,8 +328,12 @@ export async function notifyPush(
   const plan = await workspace.planPage(event);
   if (!plan.send) return false;
   const receipts = receiptUrl(env.DASHBOARD_URL);
+  // Every redelivery of this event rings under the same call id, so a phone rings for it once (RFC 0010).
+  const callId = plan.call && plan.urgency === "page" ? await callIdOf(event.id) : undefined;
   const sent = await Promise.all(
-    plan.targets.map((target) => pushOne(event.workspaceId, plan, target, env, send, receipts)),
+    plan.targets.map((target) =>
+      pushOne(event.workspaceId, plan, target, env, send, receipts, callId),
+    ),
   );
   const final = !sent.some((one) => one.retry) || attempts >= MAX_PAGE_ATTEMPTS;
   await workspace.recordPage(
@@ -355,10 +360,28 @@ export function receiptUrl(dashboard: string | undefined): string | undefined {
   }
 }
 
+/**
+ * A page's CallKit call id: a UUID (version 8, lowercase, as the relay takes it) from the event's id, so every
+ * redelivery of a page shares it and a later page (another event) rings anew.
+ */
+export async function callIdOf(eventId: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`brigade-call:${eventId}`)),
+  );
+  const bytes = digest.subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x80;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /** One device's outcome, and whether trying again may help. */
 type Sent = { outcome: DeviceOutcome; retry: boolean };
 
-/** Seals and sends one device's push; classifies the relay's answer. Never throws. */
+/**
+ * Seals and sends one device's push; classifies the relay's answer. Once the relay took the alert, rings the device
+ * as well when `callId` is given (`ringOne`). Never throws.
+ */
 async function pushOne(
   workspaceId: string,
   plan: Extract<PagePlan, { send: true }>,
@@ -366,6 +389,7 @@ async function pushOne(
   env: NotifyEnv,
   send: Fetch,
   receipts: string | undefined,
+  callId: string | undefined,
 ): Promise<Sent> {
   const { deviceId, userId } = target;
   let ms: number | undefined;
@@ -393,7 +417,7 @@ async function pushOne(
   if (target.platform !== "ios") return failed("unsupported", "unsupported");
 
   const { incident } = plan;
-  const content = {
+  const content: PushContent = {
     // Codes, not words, so the title needs no locale; the body is the incident's own title.
     title: [incident.severity.toUpperCase(), formatIncidentNumber(incident.number)]
       .filter(Boolean)
@@ -448,6 +472,9 @@ async function pushOne(
   ms = Date.now() - started;
   if (response.ok) {
     await response.body?.cancel();
+    // Step 2 of the ladder (RFC 0010): the alert is out, so the phone can ring. Whatever the call does, the alert's
+    // outcome stands.
+    if (callId !== undefined) await ringOne(callId, target, content, env, post);
     return { outcome: { deviceId, userId, ok: true, ms }, retry: false };
   }
   const answer = (await response.json().catch(() => ({}))) as {
@@ -497,6 +524,64 @@ async function pushOne(
         ? "relay_refused"
         : "relay_unreachable";
   return failed("undelivered", error, { ...(permanent ? {} : { retry: true }), apnsReason });
+}
+
+/**
+ * Rings one device as a call (RFC 0010): a VoIP push through the relay (`kind: "call"`) to its PushKit token. Only
+ * an iOS device with a VoIP token: PushKit requires the app to report every VoIP push to CallKit, which the app does
+ * for every push it gets (a malformed one included), so a call goes only to a token the app itself registered. The
+ * call carries no receipt token (the extension, which reports receipts, never sees it). Best effort: never throws,
+ * and a failure is only logged; the alert push already reached the relay, and the page is retried, escalated and
+ * recorded on the alert's outcome alone.
+ */
+async function ringOne(
+  callId: string,
+  target: PageTarget,
+  content: PushContent,
+  env: NotifyEnv,
+  post: (init: RequestInit) => Promise<Response>,
+): Promise<void> {
+  const { deviceId, voipToken } = target;
+  if (target.platform !== "ios" || !voipToken) return;
+  try {
+    const envelope = await sealPush(target.publicKey, content);
+    const response = await post({
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.RELAY_SEND_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        kind: "call",
+        callId,
+        deviceToken: voipToken,
+        envelope,
+        urgency: "page",
+        environment: target.environment,
+      }),
+      signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
+    });
+    if (response.ok) {
+      await response.body?.cancel();
+      log("call sent", { device: deviceId });
+      return;
+    }
+    const answer = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      status?: number;
+      reason?: string;
+    };
+    // Never the token or the envelope.
+    log("relay refused a call", {
+      device: deviceId,
+      status: response.status,
+      error: answer.error,
+      apnsStatus: answer.status,
+      reason: answer.reason,
+    });
+  } catch (error) {
+    log("call not sent", { device: deviceId, error: String(error) });
+  }
 }
 
 /** An event off the queue: the envelope's fields the consumer relies on, checked. */

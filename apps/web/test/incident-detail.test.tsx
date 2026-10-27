@@ -356,6 +356,88 @@ test("a burst of others' updates is announced as one count", async () => {
   expect(live.textContent).toBe("5 new updates from others");
 });
 
+test("my own update: edit in place with an edited marker, remove after asking; others' only show their text", async () => {
+  const view = await incidentPage();
+  view.shard.write(bia, "incident.postUpdate", { id: view.id, body: "Bia's update" });
+  await act(async () => setValue($<HTMLTextAreaElement>("textarea")!, "Rolling back"));
+  await click($$("button").find((button) => button.textContent === "Post update"));
+  await view.flush();
+  const timeline = () => card("Timeline")!;
+  const buttons = (text: string) =>
+    $$("button", timeline()).filter((button) => button.textContent === text);
+  // A responder edits and removes only their own.
+  expect(buttons("Edit")).toHaveLength(1);
+  expect(buttons("Remove")).toHaveLength(1);
+
+  await click(buttons("Edit")[0]);
+  const field = $$("textarea", timeline()).at(-1) as HTMLTextAreaElement;
+  expect(field.value).toBe("Rolling back");
+  expect(timeline().textContent).toContain(
+    "Editing doesn't change what was published on the status page.",
+  );
+  await act(async () => setValue(field, "Rolled back"));
+  await click($$("button", timeline()).find((button) => button.textContent === "Save"));
+  await view.flush();
+  expect(timeline().textContent).toContain("Rolled back");
+  expect(timeline().textContent).toContain("edited");
+  const row = view.shard.store
+    .scan("timeline")
+    .find((entry) => entry.kind === "update" && entry.actor === "usr_dev");
+  expect(row).toMatchObject({
+    body: "Rolled back",
+    edited: { count: 1, previous: "Rolling back" },
+  });
+
+  await click(buttons("Remove")[0]);
+  expect(timeline().textContent).toContain("Remove this update?");
+  await click(buttons("Remove update")[0]);
+  await view.flush();
+  expect(timeline().textContent).toContain("You posted an update and removed it");
+  expect(timeline().textContent).not.toContain("Rolled back");
+  expect(timeline().textContent).toContain("Bia's update");
+  expect(buttons("Edit")).toHaveLength(0);
+});
+
+test('an edit refused because the update was removed meanwhile shows the removal, never "already says that"', async () => {
+  const view = await incidentPage();
+  await act(async () => setValue($<HTMLTextAreaElement>("textarea")!, "Rolling back"));
+  await click($$("button").find((button) => button.textContent === "Post update"));
+  await view.flush();
+  const timeline = () => card("Timeline")!;
+  await click($$("button", timeline()).find((button) => button.textContent === "Edit"));
+  await act(async () =>
+    setValue($$("textarea", timeline()).at(-1) as HTMLTextAreaElement, "Fixed"),
+  );
+  const entry = view.shard.store
+    .scan("timeline")
+    .find((row) => row.kind === "update" && row.actor === "usr_dev")!;
+  // An owner removes it on the shard while the edit is on its way.
+  view.shard.write({ kind: "user", id: "usr_ana", role: "owner" }, "incident.deleteUpdate", {
+    id: view.id,
+    entryId: entry.id,
+  });
+  await click($$("button", timeline()).find((button) => button.textContent === "Save"));
+  await view.flush();
+  expect(timeline().textContent).toContain("You posted an update, removed by A teammate");
+  expect(timeline().textContent).not.toContain("The update already says that.");
+  expect(timeline().textContent).not.toContain("Fixed");
+});
+
+test("an admin removes anyone's update, and edits none but their own", async () => {
+  role = "admin";
+  const view = await incidentPage();
+  view.shard.write(bia, "incident.postUpdate", { id: view.id, body: "Bia's update" });
+  await view.flush();
+  const timeline = card("Timeline")!;
+  const named = (text: string) =>
+    $$("button", timeline).filter((button) => button.textContent === text);
+  expect(named("Edit")).toHaveLength(0);
+  await click(named("Remove")[0]);
+  await click(named("Remove update")[0]);
+  await view.flush();
+  expect(timeline.textContent).toContain("posted an update, removed by you");
+});
+
 test("back to the list puts focus on the incident's title link", async () => {
   const view = await mount("/");
   view.declare("Checkout down");

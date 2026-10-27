@@ -19,6 +19,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "role_taken" | "{actor} took the {a} role" |
 * | "role_left" | "{actor} stepped down as {a}" |
 * | "update" | "{actor} posted an update" |
+* | "update_removed" | "{actor} posted an update, removed by {a}" |
+* | "update_removed_own" | "{actor} posted an update and removed it" |
 * | "alert_recovered" | "{a} recovered, so its alert resolved" |
 * | "alert_paused" | "{actor} paused {a}, so its alert resolved" |
 * | "alert_deleted" | "{actor} deleted {a}, so its alert resolved" |
@@ -101,6 +103,8 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "role_taken") return /** @type {LocalizedString} */ (`${i?.actor} assumiu o papel de ${i?.a}`);
 		if (i?.kind === "role_left") return /** @type {LocalizedString} */ (`${i?.actor} deixou o papel de ${i?.a}`);
 		if (i?.kind === "update") return /** @type {LocalizedString} */ (`${i?.actor} publicou uma atualização`);
+		if (i?.kind === "update_removed") return /** @type {LocalizedString} */ (`${i?.actor} publicou uma atualização, removida por ${i?.a}`);
+		if (i?.kind === "update_removed_own") return /** @type {LocalizedString} */ (`${i?.actor} publicou uma atualização e a removeu`);
 		if (i?.kind === "alert_recovered") return /** @type {LocalizedString} */ (`${i?.a} se recuperou, e o alerta foi resolvido`);
 		if (i?.kind === "alert_paused") return /** @type {LocalizedString} */ (`${i?.actor} pausou ${i?.a}, e o alerta foi resolvido`);
 		if (i?.kind === "alert_deleted") return /** @type {LocalizedString} */ (`${i?.actor} excluiu ${i?.a}, e o alerta foi resolvido`);
@@ -177,6 +181,8 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "role_taken") return /** @type {LocalizedString} */ (`${i?.actor} took the ${i?.a} role`);
 		if (i?.kind === "role_left") return /** @type {LocalizedString} */ (`${i?.actor} stepped down as ${i?.a}`);
 		if (i?.kind === "update") return /** @type {LocalizedString} */ (`${i?.actor} posted an update`);
+		if (i?.kind === "update_removed") return /** @type {LocalizedString} */ (`${i?.actor} posted an update, removed by ${i?.a}`);
+		if (i?.kind === "update_removed_own") return /** @type {LocalizedString} */ (`${i?.actor} posted an update and removed it`);
 		if (i?.kind === "alert_recovered") return /** @type {LocalizedString} */ (`${i?.a} recovered, so its alert resolved`);
 		if (i?.kind === "alert_paused") return /** @type {LocalizedString} */ (`${i?.actor} paused ${i?.a}, so its alert resolved`);
 		if (i?.kind === "alert_deleted") return /** @type {LocalizedString} */ (`${i?.actor} deleted ${i?.a}, so its alert resolved`);

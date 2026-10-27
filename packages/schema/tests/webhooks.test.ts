@@ -798,6 +798,16 @@ describe("payload validators", () => {
     "incident.severity_changed": [incident.id, { from: "sev2", to: "sev1" }, { incident }],
     "incident.acknowledged": [incident.id, { by: "usr_ana" }, { incident }],
     "incident.update_posted": [incident.id, { body: "Rolling back.\nETA 10 min." }, { incident }],
+    "incident.update_edited": [
+      incident.id,
+      { entryId: `${incident.id}:4`, body: "Rolled back.", previous: "Rolling back." },
+      { incident },
+    ],
+    "incident.update_deleted": [
+      incident.id,
+      { entryId: `${incident.id}:4`, author: "usr_ana" },
+      { incident },
+    ],
     "incident.role_assigned": [
       incident.id,
       { role: "commander", from: null, to: "usr_ana" },

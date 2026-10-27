@@ -155,8 +155,8 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   under one cent. With 20 drafts a day per workspace (below), that is at most about $0.20 a day per workspace. Workers
   AI's free daily allocation covers light use. Change the model in `AI_MODEL` (`apps/api/src/postmortem.ts`).
 - **What the model reads** (`draftSource`): the incident's number, title, severity, status, declare time, type,
-  services, custom fields and role holders; the timeline's changes in plain English (updates included, each cut to
-  1500 characters); and the follow-ups. Members appear **by name** (every member already sees those names on the
+  services, custom fields and role holders; the timeline's changes in plain English (updates included as they read
+  now, "edited later" when edited, each cut to 1500 characters; removed ones left out); and the follow-ups. Members appear **by name** (every member already sees those names on the
   incident page). **Never** an email address, a device, a push token or a delivery: those tables are not read, and
   timeline entries about pages, emails and Slack are left out. A long timeline keeps its first ten entries and as much
   of its end as fits, dropping from the middle. Only the first 50 and the last 2,000 entries are read at all, and each
@@ -188,7 +188,8 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
 - **Who and what.** Owners and admins (`data:export`, a new permission) export one incident from its page, or the
   incidents declared in a range of UTC days (both ends included, up to 366 days, at most 500 incidents, at most
   25 MiB; more is refused, 413, to be split). The file (`buildExport`, format `brigade.export` version 1) holds, per
-  incident, the incident row (without its escalation run's internals), its whole timeline, its written updates, what
+  incident, the incident row (without its escalation run's internals), its whole timeline, its written updates (the text as it reads now, with `edited`, or `removed` and no text; an edited, not removed,
+  update's timeline entry keeps `edited.previous`, the text its last edit replaced), what
   the status page published, its follow-ups and its postmortem (its `sections` in the postmortem's own order, and
   `layout`, the keys with their titles, null for a built-in under its own name), plus the workspace's name and the members' ids and
   names, so the ids in it read. **Never** an email address, a device, a token or a delivery receipt.

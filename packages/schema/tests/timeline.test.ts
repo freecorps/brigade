@@ -515,3 +515,147 @@ describe("queries", () => {
     expect(runQuery(queries, "incident.timeline", { id: ID }, store, "viewer").ok).toBe(true);
   });
 });
+
+describe("editing and removing written updates", () => {
+  const ENTRY = `${ID}:1`;
+  const posted = () => {
+    const store = storeWith([legacy()]);
+    expect(run(store, "incident.postUpdate", { id: ID, body: "Rolling back." }).ok).toBe(true);
+    return store;
+  };
+  const entry = (store: ReturnType<typeof storeWith>) => store.get("timeline", ENTRY);
+
+  test("its author edits it in place, keeping the last edit and the text it replaced", () => {
+    const store = posted();
+    const edit = (body: string, now: number) =>
+      run(store, "incident.editUpdate", { id: ID, entryId: ENTRY, body }, ctx("responder", now));
+    const result = edit("Rolled back. Errors are down.", T + 10);
+    expect(result).toEqual({
+      ok: true,
+      events: [
+        {
+          type: "incident.update_edited",
+          subject: ID,
+          data: {
+            entryId: ENTRY,
+            body: "Rolled back. Errors are down.",
+            previous: "Rolling back.",
+          },
+        },
+      ],
+    });
+    expect(edit("Rolled back.", T + 20).ok).toBe(true);
+    expect(entry(store)).toMatchObject({
+      seq: 1,
+      at: T,
+      actor: "usr_ana",
+      body: "Rolled back.",
+      edited: { at: T + 20, by: "usr_ana", count: 2, previous: "Rolled back. Errors are down." },
+    });
+    expect(store.get("incidents", ID)?.timelineSeq).toBe(1);
+  });
+
+  test("nobody else edits it, not even an admin; the same text is a conflict", () => {
+    const store = posted();
+    const before = store.dump();
+    const args = { id: ID, entryId: ENTRY, body: "Mine now." };
+    expect(run(store, "incident.editUpdate", args, ctx("admin", T, true, "usr_bia"))).toMatchObject(
+      { ok: false, error: { code: "forbidden" } },
+    );
+    expect(run(store, "incident.editUpdate", { ...args, body: "Rolling back." }).ok).toBe(false);
+    expect(run(store, "incident.editUpdate", { ...args, entryId: `${ID}:9` })).toMatchObject({
+      ok: false,
+      error: { code: "not_found" },
+    });
+    expect(store.dump()).toEqual(before);
+  });
+
+  test("an API token edits what it posted, or what its creator did", () => {
+    const store = posted();
+    const token: MutationContext = {
+      actor: {
+        kind: "token",
+        id: "tok_x",
+        role: "responder",
+        by: "usr_ana",
+        scopes: ["incident:update"],
+      },
+      now: T,
+      server: true,
+    };
+    expect(
+      run(store, "incident.editUpdate", { id: ID, entryId: ENTRY, body: "Via a script." }, token)
+        .ok,
+    ).toBe(true);
+  });
+
+  test("removing leaves a tombstone in place, its text gone; once only", () => {
+    const store = posted();
+    run(store, "incident.editUpdate", { id: ID, entryId: ENTRY, body: "Rolled back." });
+    run(store, "incident.postUpdate", { id: ID, body: "Next." });
+    const result = run(
+      store,
+      "incident.deleteUpdate",
+      { id: ID, entryId: ENTRY },
+      ctx("responder", T + 30),
+    );
+    expect(result).toEqual({
+      ok: true,
+      events: [
+        {
+          type: "incident.update_deleted",
+          subject: ID,
+          data: { entryId: ENTRY, author: "usr_ana" },
+        },
+      ],
+    });
+    const tombstone = entry(store);
+    expect(tombstone).toMatchObject({
+      seq: 1,
+      body: "",
+      removed: { at: T + 30, by: "usr_ana" },
+      edited: { count: 1 },
+    });
+    expect(tombstone?.kind === "update" && tombstone.edited?.previous).toBeUndefined();
+    expect(evaluateQuery(incidentTimeline, { id: ID }, store).map((row) => row.seq)).toEqual([
+      1, 2,
+    ]);
+    expect(run(store, "incident.deleteUpdate", { id: ID, entryId: ENTRY })).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(
+      run(store, "incident.editUpdate", { id: ID, entryId: ENTRY, body: "Back." }),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+  });
+
+  test("owners and admins remove anyone's; another responder does not", () => {
+    const store = posted();
+    const args = { id: ID, entryId: ENTRY };
+    expect(
+      run(store, "incident.deleteUpdate", args, ctx("responder", T, true, "usr_dan")),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(run(store, "incident.deleteUpdate", args, ctx("admin", T, true, "usr_bia")).ok).toBe(
+      true,
+    );
+    expect(entry(store)).toMatchObject({ removed: { by: "usr_bia" } });
+  });
+
+  test("only written updates: another kind of entry is not found", () => {
+    const store = storeWith([legacy()]);
+    run(store, "incident.setStatus", { id: ID, status: "fixing" });
+    expect(
+      run(store, "incident.deleteUpdate", { id: ID, entryId: `${ID}:1` }, ctx("owner")),
+    ).toMatchObject({ ok: false, error: { code: "not_found" } });
+    expect(
+      run(store, "incident.deleteUpdate", { id: OTHER, entryId: `${ID}:1` }, ctx("owner")),
+    ).toMatchObject({ ok: false, error: { code: "not_found" } });
+  });
+
+  test("viewers do neither", () => {
+    const store = posted();
+    expect(
+      run(store, "incident.deleteUpdate", { id: ID, entryId: ENTRY }, ctx("viewer")),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+  });
+});

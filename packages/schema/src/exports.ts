@@ -8,7 +8,7 @@
 import { BUILTIN_LAYOUT } from "./postmortems.ts";
 import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
 import { defineQuery, prefixRange } from "./query.ts";
-import type { ExportRow, ExportScope, FollowUpRow, IncidentRow } from "./tables.ts";
+import type { ExportRow, ExportScope, FollowUpRow, IncidentRow, TimelineRow } from "./tables.ts";
 import { isDueDate } from "./followups.ts";
 import { v, type Validator } from "./validate.ts";
 
@@ -91,6 +91,15 @@ export function exportIncidents(
 const iso = (at: number | null | undefined) =>
   typeof at === "number" ? new Date(at).toISOString() : null;
 
+/** An update's edit and removal times as ISO 8601, as every other time in the file. */
+function updateTimes(entry: TimelineRow) {
+  if (entry.kind !== "update") return {};
+  return {
+    ...(entry.edited && { edited: { ...entry.edited, at: iso(entry.edited.at) } }),
+    ...(entry.removed && { removed: { ...entry.removed, at: iso(entry.removed.at) } }),
+  };
+}
+
 /** The file without its incidents: the format, the workspace, the scope and the members' names. */
 function exportHead(store: MutationStore, scope: ExportScope, now: number) {
   const workspace = store.scan("workspace")[0];
@@ -120,14 +129,25 @@ function exportEntry(store: MutationStore, incident: IncidentRow, followUps: Fol
       declaredAt: iso(incident.declaredAt),
       updatedAt: iso(incident.updatedAt),
     },
-    timeline: timeline.map((entry) => ({ ...entry, at: iso(entry.at) })),
-    updates: timeline
-      .filter((entry) => entry.kind === "update")
-      .map((entry) => ({
-        at: iso(entry.at),
-        by: entry.actor,
-        body: entry.kind === "update" ? entry.body : "",
-      })),
+    timeline: timeline.map((entry) => ({ ...entry, at: iso(entry.at), ...updateTimes(entry) })),
+    // The text as it reads now; an edited one says when it was last edited, a removed one who removed it (no text).
+    updates: timeline.flatMap((entry) =>
+      entry.kind === "update"
+        ? [
+            {
+              at: iso(entry.at),
+              by: entry.actor,
+              body: entry.body,
+              ...(entry.edited && {
+                edited: { at: iso(entry.edited.at), count: entry.edited.count },
+              }),
+              ...(entry.removed && {
+                removed: { at: iso(entry.removed.at), by: entry.removed.by },
+              }),
+            },
+          ]
+        : [],
+    ),
     statusPage: published
       ? {
           title: published.title,

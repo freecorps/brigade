@@ -766,6 +766,33 @@
       }
     }
   ],
+  "incident_update_change": [
+    {
+      "declarations": ["input part", "input time", "input reason"],
+      "selectors": ["part"],
+      "match": {
+        "part=edited": "editada",
+        "part=edited_at": "Editada {time}",
+        "part=actions": "Ações da atualização",
+        "part=edit": "Editar",
+        "part=remove": "Remover",
+        "part=edit_label": "Editar sua atualização",
+        "part=save": "Salvar",
+        "part=saving": "Salvando…",
+        "part=cancel": "Cancelar",
+        "part=unchanged": "A atualização já diz isso.",
+        "part=gone": "Esta atualização foi removida, então não há o que mudar.",
+        "part=edit_failed": "Não foi possível salvar a edição. {reason}",
+        "part=remove_title": "Remover esta atualização?",
+        "part=remove_body": "O texto é removido para todos, aqui e onde o Brigade o espelhou no Slack. A linha do tempo mantém uma linha dizendo quem removeu. O que foi publicado na página de status continua como está.",
+        "part=remove_confirm": "Remover atualização",
+        "part=removing": "Removendo…",
+        "part=remove_failed": "Não foi possível remover a atualização. {reason}",
+        "part=status_page_note": "Editar não muda o que foi publicado na página de status.",
+        "part=*": "editada"
+      }
+    }
+  ],
   "incident_update_length": "{count} de {max} caracteres",
   "incident_update_announced": "{actor} publicou uma atualização: {body}",
   "incident_updates_announced": [
@@ -813,6 +840,8 @@
         "kind=role_taken": "{actor} assumiu o papel de {a}",
         "kind=role_left": "{actor} deixou o papel de {a}",
         "kind=update": "{actor} publicou uma atualização",
+        "kind=update_removed": "{actor} publicou uma atualização, removida por {a}",
+        "kind=update_removed_own": "{actor} publicou uma atualização e a removeu",
         "kind=alert_recovered": "{a} se recuperou, e o alerta foi resolvido",
         "kind=alert_paused": "{actor} pausou {a}, e o alerta foi resolvido",
         "kind=alert_deleted": "{actor} excluiu {a}, e o alerta foi resolvido",
@@ -2534,6 +2563,7 @@
         "part=headers_dropped": "Salvar com um endereço em outro host remove os cabeçalhos personalizados deste endpoint. Informe-os de novo depois.",
         "part=replay_off": "Ligue este endpoint para reenviar uma entrega.",
         "part=replay_gone": "O Brigade não guarda mais esta entrega, então ela não pode ser reenviada.",
+        "part=replay_removed": "Esta atualização foi removida, então o texto dela não é enviado de novo.",
         "part=replay_failed": "Não foi possível reenviar. Tente de novo.",
         "part=replayed": "Reenvio",
         "part=*": "Webhooks"
@@ -2550,6 +2580,8 @@
         "type=incident.severity_changed": "Severidade alterada",
         "type=incident.acknowledged": "Reconhecido",
         "type=incident.update_posted": "Atualização publicada",
+        "type=incident.update_edited": "Atualização editada",
+        "type=incident.update_deleted": "Atualização removida",
         "type=incident.role_assigned": "Papel atribuído",
         "type=alert.fired": "Alerta disparado",
         "type=alert.resolved": "Alerta resolvido",
@@ -2572,6 +2604,7 @@
         "error=blocked": "Bloqueado: não é uma URL https pública",
         "error=secret": "Segredo ilegível no servidor",
         "error=expired": "Não enviado: conteúdo não é mais guardado",
+        "error=removed": "Não enviado: a atualização foi removida",
         "error=*": "Tempo esgotado"
       }
     }

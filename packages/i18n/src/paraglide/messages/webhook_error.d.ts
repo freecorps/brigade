@@ -15,6 +15,7 @@ export type Webhook_ErrorInputs = {
 * | "blocked" | "Blocked: not a public https URL" |
 * | "secret" | "Secret unreadable on the server" |
 * | "expired" | "Not sent: payload no longer kept" |
+* | "removed" | "Not sent: the update was removed" |
 * | * | "Timed out" |
 *
 * @param {Webhook_ErrorInputs} inputs

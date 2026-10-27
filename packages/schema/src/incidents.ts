@@ -4,10 +4,19 @@
 import { idTime } from "./id.ts";
 import { canTransition, INCIDENT_STATUSES, isActive, SEVERITIES } from "./lifecycle.ts";
 import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
-import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
+import {
+  actingMember,
+  defineMutation,
+  fail,
+  ok,
+  type Actor,
+  type DomainEvent,
+  type MutationResult,
+  type MutationStore,
+} from "./mutation.ts";
 import { defineQuery } from "./query.ts";
 import { isBuiltinRole, isLiveRole, isRoleId, roleDefinition, ROLE_ID_MAX } from "./roles.ts";
-import type { IncidentRow } from "./tables.ts";
+import type { IncidentRow, TimelineRow, UpdateEdit } from "./tables.ts";
 import type { MutationContext } from "./mutation.ts";
 import { appendTimeline } from "./timeline.ts";
 import { v } from "./validate.ts";
@@ -45,6 +54,16 @@ export type IncidentUpdatePosted = DomainEvent<
   "incident.update_posted",
   { entryId: string; body: string }
 >;
+/** Its author edited a written update: `body` is the text now, `previous` the text it replaced. */
+export type IncidentUpdateEdited = DomainEvent<
+  "incident.update_edited",
+  { entryId: string; body: string; previous: string }
+>;
+/** A written update was removed (its text gone); `author` wrote it, the event's actor removed it. */
+export type IncidentUpdateDeleted = DomainEvent<
+  "incident.update_deleted",
+  { entryId: string; author: string }
+>;
 /**
  * An incident role changed hands; `to` null: unassigned. `roleId` is the role's id (a built-in's name or a `rol_`
  * id); `role` is the built-in's name, or `custom` for a workspace role, so readers from before role definitions keep
@@ -67,6 +86,8 @@ export type IncidentEvent =
   | IncidentSeverityChanged
   | IncidentAcknowledged
   | IncidentUpdatePosted
+  | IncidentUpdateEdited
+  | IncidentUpdateDeleted
   | IncidentRoleAssigned;
 
 /** `INC-142`; null while the server has not numbered the incident yet. */
@@ -333,6 +354,127 @@ export const postIncidentUpdate = defineMutation({
       type: "incident.update_posted",
       subject: args.id,
       data: { entryId: entry.id, body: args.body },
+    };
+    return ok(event);
+  },
+});
+
+/** A timeline entry's id: `<incident id>:<seq>`. */
+const entryId = v.string({ min: 1, max: 64 });
+
+/**
+ * The written update `entryId` of incident `id`, for an edit or a removal; or why there is none to change: the
+ * incident, the entry or an update by that id is missing, or the update was removed already.
+ */
+function writtenUpdate(
+  store: MutationStore,
+  id: string,
+  entryId: string,
+): { ok: true; incident: IncidentRow; entry: UpdateRow } | { ok: false; result: MutationResult } {
+  const incident = store.get("incidents", id);
+  if (!incident) return { ok: false, result: fail("not_found", "Incident not found") };
+  const entry = store.get("timeline", entryId);
+  if (!entry || entry.incidentId !== id || entry.kind !== "update") {
+    return { ok: false, result: fail("not_found", "Update not found") };
+  }
+  if (entry.removed) return { ok: false, result: fail("conflict", UPDATE_REMOVED) };
+  return { ok: true, incident, entry };
+}
+
+type UpdateRow = Extract<TimelineRow, { kind: "update" }>;
+/**
+ * A patch of an update's own fields, checked against the update entry: the store's patch type (`Omit` over the entry
+ * union) keeps only the fields every kind has, so a literal passed to it straight would not be checked.
+ */
+type UpdatePatch = Partial<Omit<UpdateRow, "id" | "kind">>;
+
+/** `incident.editUpdate`'s and `incident.deleteUpdate`'s refusal of an update removed already. */
+export const UPDATE_REMOVED = "Update was removed";
+
+/**
+ * Whether the actor wrote `entry`: its member, or an API token (RFC 0014) that posted it or acts for the member who
+ * did.
+ */
+export function wroteUpdate(entry: Pick<TimelineRow, "actor">, actor: Actor): boolean {
+  return entry.actor === actor.id || entry.actor === actingMember(actor);
+}
+
+/** Whether the actor may remove `entry`: its author, or an owner or admin (anyone's, RFC 0003 "Update"). */
+export function mayRemoveUpdate(entry: Pick<TimelineRow, "actor">, actor: Actor): boolean {
+  return wroteUpdate(entry, actor) || actor.role === "owner" || actor.role === "admin";
+}
+
+/**
+ * Edits a written update (RFC 0003 "Update"): only its author, in place, so the entry keeps its number and time and
+ * reads "edited". The entry keeps the last edit (when, how many, the text it replaced); the event carries both texts.
+ * The status page is never touched: what was published there is a copy, corrected on its own (RFC 0012).
+ */
+export const editIncidentUpdate = defineMutation({
+  name: "incident.editUpdate",
+  args: v.object({
+    id: incidentId,
+    entryId,
+    body: v.string({ min: 1, max: UPDATE_BODY_MAX, multiline: true, joiners: true }),
+  }),
+  permission: "incident:update",
+  apply(store, args, ctx) {
+    const found = writtenUpdate(store, args.id, args.entryId);
+    if (!found.ok) return found.result;
+    const { entry } = found;
+    if (!wroteUpdate(entry, ctx.actor)) {
+      return fail("forbidden", "Only its author edits an update");
+    }
+    if (entry.body === args.body) return fail("conflict", "The update already says that");
+    const edited: UpdateEdit = {
+      at: ctx.now,
+      by: ctx.actor.id,
+      count: (entry.edited?.count ?? 0) + 1,
+      previous: entry.body,
+    };
+    const patch: UpdatePatch = { body: args.body, edited };
+    store.update("timeline", entry.id, patch);
+    store.update("incidents", args.id, { updatedAt: ctx.now });
+    const event: IncidentUpdateEdited = {
+      type: "incident.update_edited",
+      subject: args.id,
+      data: { entryId: entry.id, body: args.body, previous: entry.body },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * Removes a written update (RFC 0003 "Update"): its author, or an owner or admin. The entry stays where it was as a
+ * tombstone ("update removed by …") with its text gone, so the timeline's order never changes; the event names the
+ * entry, not the text.
+ */
+export const deleteIncidentUpdate = defineMutation({
+  name: "incident.deleteUpdate",
+  args: v.object({ id: incidentId, entryId }),
+  permission: "incident:update",
+  apply(store, args, ctx) {
+    const found = writtenUpdate(store, args.id, args.entryId);
+    if (!found.ok) return found.result;
+    const { entry } = found;
+    if (!mayRemoveUpdate(entry, ctx.actor)) {
+      return fail("forbidden", "Only its author, an owner or an admin removes an update");
+    }
+    const edited = entry.edited && {
+      at: entry.edited.at,
+      by: entry.edited.by,
+      count: entry.edited.count,
+    };
+    const patch: UpdatePatch = {
+      body: "",
+      removed: { at: ctx.now, by: ctx.actor.id },
+      ...(edited && { edited }),
+    };
+    store.update("timeline", entry.id, patch);
+    store.update("incidents", args.id, { updatedAt: ctx.now });
+    const event: IncidentUpdateDeleted = {
+      type: "incident.update_deleted",
+      subject: args.id,
+      data: { entryId: entry.id, author: entry.actor },
     };
     return ok(event);
   },

@@ -12,6 +12,8 @@ export type Webhook_EventInputs = {
 * | "incident.severity_changed" | "Severity changed" |
 * | "incident.acknowledged" | "Acknowledged" |
 * | "incident.update_posted" | "Update posted" |
+* | "incident.update_edited" | "Update edited" |
+* | "incident.update_deleted" | "Update removed" |
 * | "incident.role_assigned" | "Role assigned" |
 * | "alert.fired" | "Alert fired" |
 * | "alert.resolved" | "Alert resolved" |

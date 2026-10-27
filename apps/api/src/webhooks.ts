@@ -297,6 +297,24 @@ export class WebhookDesk {
     if (typeof webhookId !== "string" || typeof eventId !== "string" || typeof type !== "string") {
       return undefined;
     }
+    // An update removed after the replay was asked for: its text is not sent again (RFC 0003 "Update").
+    const { entryId } = this.updateOf(eventId);
+    const entry = entryId ? this.options.shard.store.get("timeline", entryId) : undefined;
+    if (entry?.kind === "update" && entry.removed) {
+      this.options.log("webhook replay dropped: update removed", {
+        event: eventId,
+        webhook: webhookId,
+      });
+      if (!this.send(replay.id, webhookId)?.done) {
+        this.record(
+          { id: eventId, type, workspaceId: replay.workspaceId, ledger: replay.id },
+          webhookId,
+          { at: now, ok: false, status: null, ms: null, error: "removed", snippet: null },
+          now,
+        );
+      }
+      return undefined;
+    }
     const keptBody = (id: string) =>
       this.sql
         .exec<{ body: string }>("select body from webhook_events where event_id = ?", id)
@@ -482,6 +500,7 @@ export class WebhookDesk {
           attempt: {
             eventId: event.id,
             type: event.type,
+            ...this.updateOf(event.id),
             attempt: attempts,
             ...outcome,
             ...(replay ? { replay } : {}),
@@ -569,6 +588,19 @@ export class WebhookDesk {
       done ? 1 : 0,
       now,
     );
+  }
+
+  /** The written update the kept event `eventId` is about (`incident.update_posted` or `_edited`), if it is one. */
+  private updateOf(eventId: string): { entryId?: string } {
+    const [kept] = this.sql
+      .exec<{ event: string }>("select event from webhook_events where event_id = ?", eventId)
+      .toArray();
+    if (!kept) return {};
+    const event = JSON.parse(kept.event) as BrigadeEvent;
+    if (event.type !== "incident.update_posted" && event.type !== "incident.update_edited")
+      return {};
+    const entryId = Reflect.get(Object(event.data), "entryId");
+    return typeof entryId === "string" ? { entryId } : {};
   }
 
   /** The kept payload of `event`, made and kept now if this is its first delivery; null when there is none. */

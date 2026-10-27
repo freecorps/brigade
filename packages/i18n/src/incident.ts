@@ -134,6 +134,12 @@ export function entryText(entry: TimelineRow, who: People): string {
         : say("role_assigned", role, personName(entry.to, who, "object"));
     }
     case "update":
+      // A removed update stays where it was, saying who removed it.
+      if (entry.removed) {
+        return entry.removed.by === entry.actor
+          ? say("update_removed_own")
+          : say("update_removed", personName(entry.removed.by, who, "object"));
+      }
       return say("update");
     case "alert_resolved":
       return say(`alert_${entry.reason}`, entry.monitor);

@@ -77,7 +77,7 @@ const SYSTEM_NAMES: Record<string, string> = {
   sys_ai: "Brigade AI",
 };
 
-/** One timeline entry in plain English for the model; null for entries about pages, devices or emails. */
+/** One timeline entry in plain English for the model; null for entries about pages, devices or emails, and removed updates. */
 export function describeEntry(
   entry: TimelineRow,
   name: (id: string | null) => string,
@@ -98,8 +98,10 @@ export function describeEntry(
         ? `removed ${name(entry.from)} as ${role}`
         : `made ${name(entry.to)} ${role}`;
     }
+    // The text as it reads now; a removed update is left out, its text gone.
     case "update":
-      return `posted an update: ${clipText(entry.body, UPDATE_CHARS)}`;
+      if (entry.removed) return null;
+      return `posted an update${entry.edited ? " (edited later)" : ""}: ${clipText(entry.body, UPDATE_CHARS)}`;
     case "alert_resolved":
       return `the alert of monitor "${entry.monitor}" resolved (${entry.reason})`;
     case "alert_grouped":

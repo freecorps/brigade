@@ -154,7 +154,13 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Timeline as its own synced table written by every incident mutation (and the monitor recovery note), written
     updates, three incident roles checked against the shard's member list, and an incident page in the dashboard
     (`/incidents/<number>`) to change status and severity, assign roles and post updates (RFC 0003).
-  - Left for later items: editing an update. Role definitions are done (Phase 3 item). Publishing an update to the status page
+  - Written updates are edited (their author only, in place, marked "edited" with the last edit and the text it
+    replaced kept) and removed (the author, owners and admins; a tombstone saying who removed it stays in place) from
+    the dashboard and the app (`incident.editUpdate`, `incident.deleteUpdate`; `incident.update_edited` and
+    `incident.update_deleted` in the webhook catalog); a mirrored Slack message follows, best effort; the status page
+    never changes with them (RFC 0003 "Editing and removing an update", RFC 0011 "Timeline mirror"). Left: REST
+    routes for editing and removing an update; editing a Slack message editing its update.
+  - Role definitions are done (Phase 3 item). Publishing an update to the status page
     is done (Phase 3 item). Members who join by invitation are in the shard's member list from the moment they accept. The mobile incident screen is done (Mobile item).
 - [ ] Brigade Sync in production for web + mobile
   - Done so far: D1 `brigade-db` and `brigade-db-staging` exist with the migrations applied. Left: production and
@@ -181,6 +187,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     idempotent per tap, so it stops the escalation run like any ack) and answered with a quiet notification;
     offline, the answer is a page again with the action (RFC 0004 "Acknowledging from a notification", RFC 0006
     "Acting from the notification").
+  - Done: editing and removing one's written updates on the incident screen, from a More button or a long press on
+    the text (a choice sheet, then the text in place or a confirmation), as on the dashboard (RFC 0003 "Editing and
+    removing an update").
   - Done: on the incident screen, "Page again" under a failed page for owners and admins while the incident waits
     for someone, as on the dashboard, asking first (RFC 0005 "Page again"); who was paged and why, as the dashboard's
     `?why=<member>` (RFC 0006 "Delivery receipts"); the incident screen and the explanation a readable width on a
@@ -189,8 +198,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     acknowledged from the notification ([write-up](spikes/s1-apns-encryption.md#real-iphone)).
   - Left: the Acknowledge action from a cold background launch; FCM for Android (until then Android
     says it is not paged); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
-    session's active one); creating an account or workspace from the app; editing and deleting written updates
-    (no mutation for it yet, on the dashboard either: RFC 0003); a tablet layout beyond a readable width.
+    session's active one); creating an account or workspace from the app; a tablet layout beyond a readable width.
 - [ ] Event outbox + queue + push notifier
   - Done: the shard alarm drains the outbox to `brigade-events` (`-dev`, `-staging`) in commit order, in bounded
     batches, deleting rows only after the send, with exponential backoff; a consumer in the API Worker routes events

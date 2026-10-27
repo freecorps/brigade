@@ -80,6 +80,8 @@ export const WEBHOOK_EVENT_TYPES = [
   "incident.severity_changed",
   "incident.acknowledged",
   "incident.update_posted",
+  "incident.update_edited",
+  "incident.update_deleted",
   "incident.role_assigned",
   "alert.fired",
   "alert.resolved",
@@ -105,7 +107,7 @@ export function isWebhookEventType(type: unknown): type is WebhookEventType {
  * Why a delivery attempt failed: `timeout` (no answer in time), `network` (no connection), `status` (an answer other
  * than 2xx), `redirect` (a 3xx: never followed), `blocked` (the URL breaks the target rules now), `secret` (the
  * signing secret could not be opened: `WEBHOOK_SECRET_KEY` changed), `expired` (a replay whose payload the shard no
- * longer keeps: nothing was sent).
+ * longer keeps: nothing was sent), `removed` (a replay of an update removed since: nothing was sent).
  */
 export const WEBHOOK_ERRORS = [
   "timeout",
@@ -115,6 +117,7 @@ export const WEBHOOK_ERRORS = [
   "blocked",
   "secret",
   "expired",
+  "removed",
 ] as const;
 export type WebhookError = (typeof WEBHOOK_ERRORS)[number];
 
@@ -634,7 +637,8 @@ const replaySlot = (index: number) => `webhook_replay.${index}`;
  * "Replay" a delivery from the endpoint's log: a `webhook.replay` event through the outbox, which the consumer delivers
  * to this endpoint once, with the event's kept body and its own id as `webhook-id` (so a receiver that has it already
  * de-duplicates), signed afresh. Any event in the log (`recent`), given up or not, while its payload is kept
- * (`webhookReplayableUntil`). Only an endpoint that is on: turn it back on first. At most one replay per endpoint per
+ * (`webhookReplayableUntil`), and not one about a written update removed since. Only an endpoint that is on: turn it
+ * back on first. At most one replay per endpoint per
  * `WEBHOOK_REPLAY_EVERY_MS`, `WEBHOOK_REPLAYS_PER_HOUR` an hour per endpoint and `WEBHOOK_WORKSPACE_REPLAYS_PER_HOUR` an
  * hour across the workspace (counted on the server, in `counters`, so deleting an endpoint does not reset it).
  */
@@ -652,6 +656,12 @@ export const replayWebhook = defineMutation({
     if (logged.length === 0) return fail("not_found", "That delivery is not in the endpoint's log");
     if (ctx.now > webhookReplayableUntil(args.eventId)) {
       return fail("not_found", "That delivery's payload is no longer kept");
+    }
+    // An update removed since is never sent again with its text (RFC 0003 "Editing and removing an update").
+    const entryId = logged.find((attempt) => attempt.entryId)?.entryId;
+    const entry = entryId ? store.get("timeline", entryId) : undefined;
+    if (entry?.kind === "update" && entry.removed) {
+      return fail("conflict", "That update was removed: its text is not sent again");
     }
     const replays = (current.replays ?? []).filter((at) => ctx.now - at < WEBHOOK_REPLAY_WINDOW_MS);
     const last = replays.length ? Math.max(...replays) : null;
@@ -715,6 +725,7 @@ export const sendWebhookTest = defineMutation({
 const attemptArgs = v.object({
   eventId: v.id("evt"),
   type: v.string({ min: 1, max: 64 }),
+  entryId: v.omittable(v.string({ min: 1, max: 64 })),
   attempt: v.integer({ min: 1, max: 100 }),
   at: v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }),
   ok: v.boolean(),
@@ -748,8 +759,9 @@ export const recordWebhookAttempt = defineMutation({
       store.update("webhooks", args.id, { recent, failures: 0, failingSince: null });
       return ok();
     }
-    // A replay whose payload was gone never reached the receiver: shown in the log, not counted against it.
-    if (args.attempt.error === "expired") {
+    // A replay whose payload was gone, or whose update was removed, never reached the receiver: shown in the log, not
+    // counted against it.
+    if (args.attempt.error === "expired" || args.attempt.error === "removed") {
       store.update("webhooks", args.id, { recent });
       return ok();
     }
@@ -878,7 +890,27 @@ export type WebhookPayload =
     >
   /** `by`: the actor's id, a member's (`usr_…`) or an API token's (`tok_…`). */
   | Envelope<"incident.acknowledged", { incident: WebhookIncident; by: string }>
-  | Envelope<"incident.update_posted", { incident: WebhookIncident; body: string }>
+  /**
+   * `entryId`: the update's timeline entry (`<incident id>:<seq>`), the same in its `incident.update_edited` and
+   * `incident.update_deleted`; left out (undefined) for events written before edits existed.
+   */
+  | Envelope<
+      "incident.update_posted",
+      { incident: WebhookIncident; entryId: string | undefined; body: string }
+    >
+  /** Its author edited an update (RFC 0003 "Update"): `body` is the text now, `previous` the text it replaced. */
+  | Envelope<
+      "incident.update_edited",
+      { incident: WebhookIncident; entryId: string; body: string; previous: string }
+    >
+  /**
+   * An update was removed: its author or an owner or admin (the event's `actor`). `author` wrote it. The text is not
+   * sent again.
+   */
+  | Envelope<
+      "incident.update_deleted",
+      { incident: WebhookIncident; entryId: string; author: string }
+    >
   /**
    * `roleId`: the role's id, a built-in's name or a workspace role's `rol_…` (RFC 0003 "Role definitions"); `role`:
    * the built-in's name, or `custom`; `roleName`: the workspace's name for it, null for a built-in under its own.
@@ -1078,8 +1110,24 @@ export function webhookPayload(
     }
     case "incident.update_posted": {
       const body = text("body");
+      const entryId = text("entryId");
       return incident && body !== undefined
-        ? { ...base, type, data: { incident, body } }
+        ? { ...base, type, data: { incident, entryId, body } }
+        : undefined;
+    }
+    case "incident.update_edited": {
+      const entryId = text("entryId");
+      const body = text("body");
+      const previous = text("previous");
+      return incident && entryId !== undefined && body !== undefined && previous !== undefined
+        ? { ...base, type, data: { incident, entryId, body, previous } }
+        : undefined;
+    }
+    case "incident.update_deleted": {
+      const entryId = text("entryId");
+      const author = text("author");
+      return incident && entryId !== undefined && author !== undefined
+        ? { ...base, type, data: { incident, entryId, author } }
         : undefined;
     }
     case "incident.role_assigned": {
@@ -1227,6 +1275,14 @@ function envelope<const Type extends string, const S extends Record<string, Vali
   );
 }
 
+const updateText = v.string({
+  min: 1,
+  max: WEBHOOK_PAYLOAD_TEXT_MAX,
+  multiline: true,
+  joiners: true,
+});
+const updateEntryId = v.string({ min: 1, max: OPEN_VALUE_MAX });
+
 const statusChange = { from: known(INCIDENT_STATUSES), to: known(INCIDENT_STATUSES) };
 const severityChange = { from: known(SEVERITIES), to: known(SEVERITIES) };
 
@@ -1247,7 +1303,19 @@ export const WEBHOOK_PAYLOADS = {
   }),
   "incident.update_posted": envelope("incident.update_posted", {
     incident: payloadIncident,
-    body: v.string({ min: 1, max: WEBHOOK_PAYLOAD_TEXT_MAX, multiline: true, joiners: true }),
+    entryId: v.omittable(updateEntryId),
+    body: updateText,
+  }),
+  "incident.update_edited": envelope("incident.update_edited", {
+    incident: payloadIncident,
+    entryId: updateEntryId,
+    body: updateText,
+    previous: updateText,
+  }),
+  "incident.update_deleted": envelope("incident.update_deleted", {
+    incident: payloadIncident,
+    entryId: updateEntryId,
+    author: actorId,
   }),
   "incident.role_assigned": envelope("incident.role_assigned", {
     incident: payloadIncident,

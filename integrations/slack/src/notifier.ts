@@ -322,6 +322,54 @@ export async function postEntry(options: {
 }
 
 /**
+ * Slack's answers that leave nothing to rewrite or remove: the message, or its channel, is gone or archived, or was
+ * removed in Slack. An edit or removal of a mirrored update is then done.
+ */
+const MESSAGE_GONE = new Set([
+  "message_not_found",
+  "channel_not_found",
+  "is_archived",
+  "cant_update_message",
+  "cant_delete_message",
+]);
+
+/**
+ * Rewrites the message at `ts` in `channel` (`chat.update`), as when an update the mirror posted is edited; Slack
+ * marks it "(edited)". A message already gone counts as done. Never throws.
+ */
+export async function updateEntry(options: {
+  token: string;
+  channel: string;
+  ts: string;
+  message: SlackMessage;
+  fetch: Fetch;
+  timeoutMs?: number;
+}): Promise<SlackPostOutcome> {
+  const { token, channel, ts, message, fetch, timeoutMs } = options;
+  const updated = await callSlack(
+    "chat.update",
+    { channel, ts, text: message.text, blocks: message.blocks },
+    { token, fetch, timeoutMs },
+  );
+  if (updated.ok || MESSAGE_GONE.has(updated.error)) return { ok: true, channel, ts };
+  return failed(updated);
+}
+
+/** Removes the message at `ts` in `channel` (`chat.delete`). A message already gone counts as done. Never throws. */
+export async function deleteEntry(options: {
+  token: string;
+  channel: string;
+  ts: string;
+  fetch: Fetch;
+  timeoutMs?: number;
+}): Promise<SlackPostOutcome> {
+  const { token, channel, ts, fetch, timeoutMs } = options;
+  const deleted = await callSlack("chat.delete", { channel, ts }, { token, fetch, timeoutMs });
+  if (deleted.ok || MESSAGE_GONE.has(deleted.error)) return { ok: true, channel, ts };
+  return failed(deleted);
+}
+
+/**
  * Creates the incident's channel (`conversations.create`), trying `-2` to `-4` when the name is taken. The bot that
  * creates it is in it. Never throws.
  */

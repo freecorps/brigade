@@ -36,7 +36,9 @@ address takes back an account someone else signed up with (RFC 0002 "Auth"), `mo
 `monitor.heartbeat_revoked` (`id`) with actor `sys_account`.
 
 Incidents emit `incident.declared`, `incident.status_changed`, `incident.severity_changed`,
-`incident.acknowledged`, `incident.update_posted` (`entryId`, `body`), `incident.paged_again` (`entries`: the
+`incident.acknowledged`, `incident.update_posted` (`entryId`, `body`), `incident.update_edited` (`entryId`, `body`,
+`previous`: the text it replaced), `incident.update_deleted` (`entryId`, `author`; never the text; RFC 0003
+"Editing and removing an update"), `incident.paged_again` (`entries`: the
 `page_failed` entries paged again, `userIds`, `everyone`, `causedBy`: who the interim rule leaves out; "Page again"
 below) and `incident.role_assigned` (`role`,
 `roleId`, `roleName`, `from`, `to`; `to` null when unassigned; `roleId` the role's id, a built-in's name or a
@@ -662,8 +664,10 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   (the envelope checked, `data` as sent) rather than an error; a field they do not know is dropped. The catalog
   (`WEBHOOK_EVENT_TYPES`) and each `data`:
   - `incident.declared` (`incident`), `incident.status_changed` and `incident.severity_changed` (`incident`, `from`,
-    `to`), `incident.acknowledged` (`incident`, `by`), `incident.update_posted` (`incident`, `body`: what the member
-    wrote, which every member already reads) and `incident.role_assigned` (`incident`, `role`, `roleId`, `roleName`,
+    `to`), `incident.acknowledged` (`incident`, `by`), `incident.update_posted` (`incident`, `entryId`, `body`: what the member
+    wrote, which every member already reads; `entryId` added with edits, absent from events before),
+    `incident.update_edited` (`incident`, `entryId`, `body`, `previous`), `incident.update_deleted` (`incident`,
+    `entryId`, `author`; the remover is the `actor`) and `incident.role_assigned` (`incident`, `role`, `roleId`, `roleName`,
     `from`, `to`, as the event has them; `roleId` added with role definitions, taken from `role` for events from
     before), where
     `incident` is `{ id, number, title, severity, status, declaredAt, acknowledgedAt }`;
@@ -718,7 +722,10 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   logged and not retried by itself (replay it again). Refused for an endpoint that is off (`invalid_transition`:
   decided, turn it back on first, since an endpoint is off because its receiver is broken or unwanted) or deleted
   (`not_found`); one turned off after it was asked is dropped. A payload the shard no longer has when the consumer
-  plans it is a failed attempt in the log (`expired`, not counted towards auto-disable), never a silent drop. At most
+  plans it is a failed attempt in the log (`expired`, not counted towards auto-disable), never a silent drop. A
+  delivery of `incident.update_posted` or `incident.update_edited` whose update was removed since is refused
+  (`conflict`; the log keeps the attempt's `entryId` for that), and one removed after the replay was asked is a failed
+  attempt (`removed`, not counted either): a removed update's text is never sent again (RFC 0003). At most
   one replay per endpoint per 10 s (`WEBHOOK_REPLAY_EVERY_MS`), 10 an hour per endpoint (`WEBHOOK_REPLAYS_PER_HOUR`)
   and 30 an hour across the workspace (`WEBHOOK_WORKSPACE_REPLAYS_PER_HOUR`, counted in server-only counters, so
   deleting an endpoint gives none back; `limit_reached`), so replays add at most 30 requests an hour to a receiver,

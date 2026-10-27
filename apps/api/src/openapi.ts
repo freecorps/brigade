@@ -1681,6 +1681,8 @@ const WEBHOOK_SUMMARIES: Record<WebhookPayloadType, string> = {
   "incident.severity_changed": "An incident's severity changed",
   "incident.acknowledged": "An incident was acknowledged",
   "incident.update_posted": "An update was posted to an incident",
+  "incident.update_edited": "Its author edited an update",
+  "incident.update_deleted": "An update was removed",
   "incident.role_assigned": "An incident role was assigned or cleared",
   "alert.fired": "A monitor's alert fired",
   "alert.resolved": "A monitor's alert resolved",

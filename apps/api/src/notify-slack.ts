@@ -1,6 +1,6 @@
 // The Slack notifier in the `brigade-events` consumer (RFC 0011): for an incident's events, the shard plans what to
 // do in Slack one job at a time (src/slack.ts): post or update the incident's message, create its channel and invite
-// its people, mirror a timeline entry, archive the channel, give a token back. This opens the bot token, does the job
+// its people, mirror a timeline entry (and edit or remove a mirrored update), archive the channel, give a token back. This opens the bot token, does the job
 // with the Slack code shared from integrations/slack, and reports back, until nothing is left or a job must wait. It
 // runs next to push for the same event and never decides whether a page is retried: a page that went out is settled
 // in the page ledger, so a retry for Slack's sake pages nobody again.
@@ -8,12 +8,14 @@
 import {
   archiveChannel,
   createIncidentChannel,
+  deleteEntry,
   deliverIncidentMessage,
   entryMessage,
   incidentMessage,
   inviteToChannel,
   postEntry,
   slackUserByEmail,
+  updateEntry,
   type Fetch,
   type SlackPostOutcome,
 } from "@freecorps/brigade-slack/notifier";
@@ -140,6 +142,17 @@ async function perform(
         fetch: send,
         timeoutMs,
       });
+    case "entry_edit":
+      return updateEntry({
+        token,
+        channel: work.channel,
+        ts: work.ts,
+        message: entryMessage(work.entry, plan.locale),
+        fetch: send,
+        timeoutMs,
+      });
+    case "entry_delete":
+      return deleteEntry({ token, channel: work.channel, ts: work.ts, fetch: send, timeoutMs });
     case "archive":
       return archiveChannel({ token, channel: work.channel, fetch: send, timeoutMs });
     case "revoke": {

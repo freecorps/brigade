@@ -533,6 +533,25 @@ describe("exports", () => {
     expect(JSON.stringify(file)).not.toContain("@");
   });
 
+  test("an edited update reads as it is now and says so; a removed one keeps who removed it, not its text", () => {
+    const store = shard();
+    run(store, "incident.postUpdate", { id: INC, body: "Rolling back." });
+    run(store, "incident.postUpdate", { id: INC, body: "Pasted a secret." });
+    const [first, second] = store
+      .scan("timeline")
+      .filter((row) => row.incidentId === INC && row.kind === "update");
+    run(store, "incident.editUpdate", { id: INC, entryId: first!.id, body: "Rolled back." });
+    run(store, "incident.deleteUpdate", { id: INC, entryId: second!.id });
+    const built = buildExport(store, { kind: "incident", incidentId: INC }, T);
+    const [one] = (built as { file: Record<string, any> }).file.incidents;
+    const at = new Date(T).toISOString();
+    expect(one.updates).toEqual([
+      { at, by: owner.actor.id, body: "Rolled back.", edited: { at, count: 1 } },
+      { at, by: owner.actor.id, body: "", removed: { at, by: owner.actor.id } },
+    ]);
+    expect(JSON.stringify(one)).not.toContain("Pasted a secret.");
+  });
+
   test("a range takes the incidents declared in it, UTC days both included, and has a cap", () => {
     const store = shard();
     const range = (from: string, to: string) => buildExport(store, { kind: "range", from, to }, T);

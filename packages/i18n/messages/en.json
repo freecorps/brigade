@@ -766,6 +766,33 @@
       }
     }
   ],
+  "incident_update_change": [
+    {
+      "declarations": ["input part", "input time", "input reason"],
+      "selectors": ["part"],
+      "match": {
+        "part=edited": "edited",
+        "part=edited_at": "Edited {time}",
+        "part=actions": "Update actions",
+        "part=edit": "Edit",
+        "part=remove": "Remove",
+        "part=edit_label": "Edit your update",
+        "part=save": "Save",
+        "part=saving": "Saving…",
+        "part=cancel": "Cancel",
+        "part=unchanged": "The update already says that.",
+        "part=gone": "This update was removed, so there's nothing to change.",
+        "part=edit_failed": "Couldn't save the edit. {reason}",
+        "part=remove_title": "Remove this update?",
+        "part=remove_body": "Its text is removed for everyone, here and where Brigade mirrored it in Slack. The timeline keeps a line saying who removed it. What was published on the status page stays as it is.",
+        "part=remove_confirm": "Remove update",
+        "part=removing": "Removing…",
+        "part=remove_failed": "Couldn't remove the update. {reason}",
+        "part=status_page_note": "Editing doesn't change what was published on the status page.",
+        "part=*": "edited"
+      }
+    }
+  ],
   "incident_update_length": "{count} of {max} characters",
   "incident_update_announced": "{actor} posted an update: {body}",
   "incident_updates_announced": [
@@ -813,6 +840,8 @@
         "kind=role_taken": "{actor} took the {a} role",
         "kind=role_left": "{actor} stepped down as {a}",
         "kind=update": "{actor} posted an update",
+        "kind=update_removed": "{actor} posted an update, removed by {a}",
+        "kind=update_removed_own": "{actor} posted an update and removed it",
         "kind=alert_recovered": "{a} recovered, so its alert resolved",
         "kind=alert_paused": "{actor} paused {a}, so its alert resolved",
         "kind=alert_deleted": "{actor} deleted {a}, so its alert resolved",
@@ -2534,6 +2563,7 @@
         "part=headers_dropped": "Saving with an address on another host removes this endpoint's custom headers. Enter them again afterwards.",
         "part=replay_off": "Turn this endpoint on to replay a delivery.",
         "part=replay_gone": "Brigade no longer keeps this delivery, so it can't be replayed.",
+        "part=replay_removed": "This update was removed, so its text isn't sent again.",
         "part=replay_failed": "Couldn't replay it. Try again.",
         "part=replayed": "Replay",
         "part=*": "Webhooks"
@@ -2550,6 +2580,8 @@
         "type=incident.severity_changed": "Severity changed",
         "type=incident.acknowledged": "Acknowledged",
         "type=incident.update_posted": "Update posted",
+        "type=incident.update_edited": "Update edited",
+        "type=incident.update_deleted": "Update removed",
         "type=incident.role_assigned": "Role assigned",
         "type=alert.fired": "Alert fired",
         "type=alert.resolved": "Alert resolved",
@@ -2572,6 +2604,7 @@
         "error=blocked": "Blocked: not a public https URL",
         "error=secret": "Secret unreadable on the server",
         "error=expired": "Not sent: payload no longer kept",
+        "error=removed": "Not sent: the update was removed",
         "error=*": "Timed out"
       }
     }

@@ -15,6 +15,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "incident.severity_changed" | "Severity changed" |
 * | "incident.acknowledged" | "Acknowledged" |
 * | "incident.update_posted" | "Update posted" |
+* | "incident.update_edited" | "Update edited" |
+* | "incident.update_deleted" | "Update removed" |
 * | "incident.role_assigned" | "Role assigned" |
 * | "alert.fired" | "Alert fired" |
 * | "alert.resolved" | "Alert resolved" |
@@ -35,6 +37,8 @@ export const webhook_event = /** @type {((inputs: Webhook_EventInputs, options?:
 		if (i?.type === "incident.severity_changed") return /** @type {LocalizedString} */ (`Severidade alterada`);
 		if (i?.type === "incident.acknowledged") return /** @type {LocalizedString} */ (`Reconhecido`);
 		if (i?.type === "incident.update_posted") return /** @type {LocalizedString} */ (`Atualização publicada`);
+		if (i?.type === "incident.update_edited") return /** @type {LocalizedString} */ (`Atualização editada`);
+		if (i?.type === "incident.update_deleted") return /** @type {LocalizedString} */ (`Atualização removida`);
 		if (i?.type === "incident.role_assigned") return /** @type {LocalizedString} */ (`Papel atribuído`);
 		if (i?.type === "alert.fired") return /** @type {LocalizedString} */ (`Alerta disparado`);
 		if (i?.type === "alert.resolved") return /** @type {LocalizedString} */ (`Alerta resolvido`);
@@ -49,6 +53,8 @@ export const webhook_event = /** @type {((inputs: Webhook_EventInputs, options?:
 		if (i?.type === "incident.severity_changed") return /** @type {LocalizedString} */ (`Severity changed`);
 		if (i?.type === "incident.acknowledged") return /** @type {LocalizedString} */ (`Acknowledged`);
 		if (i?.type === "incident.update_posted") return /** @type {LocalizedString} */ (`Update posted`);
+		if (i?.type === "incident.update_edited") return /** @type {LocalizedString} */ (`Update edited`);
+		if (i?.type === "incident.update_deleted") return /** @type {LocalizedString} */ (`Update removed`);
 		if (i?.type === "incident.role_assigned") return /** @type {LocalizedString} */ (`Role assigned`);
 		if (i?.type === "alert.fired") return /** @type {LocalizedString} */ (`Alert fired`);
 		if (i?.type === "alert.resolved") return /** @type {LocalizedString} */ (`Alert resolved`);

@@ -208,7 +208,7 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     (`device.signOut` with `deviceId`, only ever the signing-out user's own device, and only if last registered
     before the session ended); that sign-out waits for it, so the phone is free by the time it answers (RFC 0006
     "Device registration"). It is durable: before the row goes, the hook's `before` half writes one row per workspace
-    of the user to D1's `session_end` (`migrations/0009_session_end.sql`, one statement), and each shard's success
+    of the user to D1's `session_end` (`migrations/0011_session_end.sql`, one statement), and each shard's success
     deletes its row. A shard that failed every try keeps its row, acted on by whichever comes first: the shard itself
     before a phone registers in it (`POST /devices/register`) and after every sync upgrade into it
     (`WorkspaceDO.catchUpSessionEnds`), or the Worker's cron, every minute, for rows older than a minute

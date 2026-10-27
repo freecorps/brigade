@@ -111,7 +111,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     workspace and say "On call in" another one.
   - Left: mobile OAuth/OIDC with PKCE via the system browser and QR pairing (mobile email and password sign-in is
     done, see the Mobile item), and the production and staging secrets (owner approval); applying migrations 0003,
-    0004, 0005 and 0009 to the deployed databases; a `baseURL` per environment (`BETTER_AUTH_URL`, the dashboard's
+    0004, 0005 and 0011 to the deployed databases; a `baseURL` per environment (`BETTER_AUTH_URL`, the dashboard's
     `/api/auth` origin) once deployed hostnames exist, so email links point at the dashboard rather than the API
     Worker; repairing a workspace whose shard was never provisioned because the Worker died between the D1 write and
     the RPC, or whose undo failed, and a shard that committed `workspace.create` before its RPC failed and was undone

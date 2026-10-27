@@ -27,7 +27,7 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
     "organization",
     "rateLimit",
     "session",
-    // migrations/0009_session_end.sql (RFC 0004 "Session revocation").
+    // migrations/0011_session_end.sql (RFC 0004 "Session revocation").
     "session_end",
     // migrations/0006_slack_team.sql (RFC 0011).
     "slack_team",

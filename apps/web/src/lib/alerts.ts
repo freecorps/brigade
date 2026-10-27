@@ -41,8 +41,8 @@ export async function newAlertSourceUrl(
 
 /**
  * The Datadog webhook payload Brigade reads: the monitor and the group (`alert_id`, `scope`) key the alert, so each
- * group of a multi-alert monitor is its own; `transition` says when it warned or recovered. Datadog fills each
- * `$VARIABLE` in.
+ * group of a multi-alert monitor is its own; `transition` says when it warned or recovered; `date` when it happened,
+ * so a firing that starts after an early resolve still pages. Datadog fills each `$VARIABLE` in.
  */
 export const DATADOG_PAYLOAD = `{
   "alert_id": "$ALERT_ID",
@@ -53,7 +53,8 @@ export const DATADOG_PAYLOAD = `{
   "alert_type": "$ALERT_TYPE",
   "link": "$LINK",
   "tags": "$TAGS",
-  "aggregate": "$AGGREG_KEY"
+  "aggregate": "$AGGREG_KEY",
+  "date": "$DATE"
 }`;
 
 /** A request to try a generic source with. */

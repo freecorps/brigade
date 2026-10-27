@@ -98,12 +98,18 @@ export const SIGNATURE_HEADER = {
   grafana: "x-grafana-alerting-signature",
 } as const;
 
-/** The alert that stands for a payload Brigade cannot read (or the shard refused): it pages through the default. */
-function unreadable(source: AlertSourceRow): NormalizedAlert {
+/**
+ * The alert that stands for a payload Brigade cannot read (or the shard refused, or that was too large to read): it
+ * pages through the default. One key whatever the reason, so a broken sender is one alert.
+ */
+function unreadable(
+  source: AlertSourceRow,
+  part: "malformed" | "too_large" = "malformed",
+): NormalizedAlert {
   return {
     dedupKey: "malformed",
     // TODO(RFC 0008): the workspace's default locale, once workspaces have one.
-    title: alert_incident_title({ part: "malformed", name: source.name }, { locale: "en" }),
+    title: alert_incident_title({ part, name: source.name }, { locale: "en" }),
     severity: "high",
     status: "firing",
     link: null,
@@ -131,17 +137,9 @@ export class AlertIntake {
     headers: AlertHeaders,
   ): Promise<AlertIntakeResult> {
     const { shard, log } = this.options;
-    const source = shard.store.get("alert_sources", sourceId);
-    const secret = shard.store.get("alert_source_secrets", sourceId);
-    if (!source || !secret || !same(hexBytes(secret.tokenHash), digest)) {
-      return { status: "not_found" };
-    }
-    if (secret.headerHash !== null && source.headerName !== null) {
-      const value = headers[source.headerName];
-      if (value === undefined) return { status: "not_found" };
-      const hash = await crypto.subtle.digest("SHA-256", encoder.encode(value));
-      if (!same(hexBytes(secret.headerHash), hash)) return { status: "not_found" };
-    }
+    const source = await this.verified(sourceId, digest, headers);
+    if (!source) return { status: "not_found" };
+    const secret = shard.store.get("alert_source_secrets", sourceId)!;
     if (secret.signingSecret !== null && (source.kind === "sentry" || source.kind === "grafana")) {
       const sent = headers[SIGNATURE_HEADER[source.kind]]?.trim().toLowerCase();
       if (!sent || !/^[0-9a-f]{64}$/.test(sent)) return { status: "not_found" };
@@ -211,6 +209,61 @@ export class AlertIntake {
       message: fallback.error.message,
     });
     return { status: "busy" };
+  }
+
+  /**
+   * A payload of `sourceId` the Worker would not read: past `MAX_ALERT_BODY`. It still pages, as the unreadable alert
+   * ("… (payload too large)"), when the URL's secret and the source's header (if it has one) check out. A provider's
+   * signature cannot be checked without the body, so for a signed source the secret URL alone authenticates it: the
+   * most someone holding that URL can do is what they could do with any body, page this alert.
+   */
+  async receiveTooLarge(
+    sourceId: string,
+    digest: ArrayBuffer,
+    headers: AlertHeaders,
+  ): Promise<AlertIntakeResult> {
+    const { log } = this.options;
+    const source = await this.verified(sourceId, digest, headers);
+    if (!source) return { status: "not_found" };
+    if (!(await this.options.allow(sourceId))) {
+      log("alert source over its rate", { source: sourceId });
+      return { status: "busy" };
+    }
+    log("alert payload too large; paging the unreadable alert", {
+      source: sourceId,
+      kind: source.kind,
+    });
+    const result = this.ingest(source.id, [unreadable(source, "too_large")], true);
+    if (result.ok) return { status: "accepted", alerts: 1, malformed: true };
+    if (result.error.code === "not_found") return { status: "not_found" };
+    log("the unreadable alert was refused", {
+      source: sourceId,
+      code: result.error.code,
+      message: result.error.message,
+    });
+    return { status: "busy" };
+  }
+
+  /**
+   * The source, when `digest` is its URL secret's and the request carries its header (if it has one), both compared
+   * in constant time; undefined for every refusal alike. The provider's signature is the caller's to check.
+   */
+  private async verified(
+    sourceId: string,
+    digest: ArrayBuffer,
+    headers: AlertHeaders,
+  ): Promise<AlertSourceRow | undefined> {
+    const { shard } = this.options;
+    const source = shard.store.get("alert_sources", sourceId);
+    const secret = shard.store.get("alert_source_secrets", sourceId);
+    if (!source || !secret || !same(hexBytes(secret.tokenHash), digest)) return undefined;
+    if (secret.headerHash !== null && source.headerName !== null) {
+      const value = headers[source.headerName];
+      if (value === undefined) return undefined;
+      const hash = await crypto.subtle.digest("SHA-256", encoder.encode(value));
+      if (!same(hexBytes(secret.headerHash), hash)) return undefined;
+    }
+    return source;
   }
 
   /**

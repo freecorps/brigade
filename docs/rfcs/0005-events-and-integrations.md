@@ -330,10 +330,16 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   (server-only), since verifying needs it. Comparisons are constant-time: Workers' `crypto.subtle.timingSafeEqual` (a
   non-standard extension), else a loop over every byte.
 - **The request.** The Worker parses the token, checks the workspace in D1 (cached, fail open, as for a heartbeat),
-  reads at most 256 KiB (`413`), and hands the shard the bytes and the headers: the ones that authenticate a payload
+  reads at most 256 KiB, and hands the shard the bytes and the headers: the ones that authenticate a payload
   (`authorization`, `sentry-hook-*`, `x-grafana-alerting-signature`) always, and at most 64 others, where a source's
   own header must be. Every refusal, in the Worker or the shard (a wrong secret, header or signature, a deleted
-  source, a made-up workspace), is the same `404`. Accepted is `202`.
+  source, a made-up workspace), is the same `404`. Accepted is `202`. **A payload past 256 KiB still pages**: the
+  Worker stops reading there (never buffering more), logs it, and asks the shard (`alertTooLarge`), which checks the
+  URL's secret and the source's header and pages the unreadable alert, "Unreadable alert from <source> (payload too
+  large)", answered `202` so the sender does not drop it on a `413`. A provider's signature cannot be checked without
+  the body, so for a signed source (Sentry, a signed Grafana) the secret URL alone authenticates this one alert: whoever
+  holds the URL could page that alert with any body anyway. The dashboard's Grafana setup says to set the webhook's
+  Max alerts to 50 (the most a payload is read for), which keeps a Grafana group under the limit.
 - **Rate limits** (Workers Rate Limiting: approximate, per Cloudflare location, each failing open, since a lost alert is
   worse than a busy shard). `ALERT_WORKSPACE_LIMIT`, 1,200 a minute per workspace, before the shard wakes,
   spent only by a token the isolate has not seen the shard accept in the last hour (an LRU of at most 10,000 SHA-256s
@@ -341,7 +347,10 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   the shard still checks its secrets and spends its `ALERT_LIMIT`.
   `ALERT_LIMIT`, 300 a minute per source, spent by the shard only once the secrets matched, so requests with a wrong
   secret never use up the real source's budget. `ALERT_REFUSED_LIMIT`, 120 refused requests a minute per workspace,
-  counted apart; past it, a token refused in the last minute is refused by the Worker without waking the shard. Over a
+  counted apart; past it, a token refused in the last minute is answered by the Worker without waking the shard, with
+  `503` and `Retry-After` (the rest of that minute), not `404`: a real token refused once (a signature or header that
+  did not match, fixed since) is retried rather than dropped, since senders do not retry a `404`. A guesser learns
+  nothing from it: only a token the shard already refused with a `404` reaches it. Over a
   limit is `503` with `Retry-After`, never `429`: Datadog retries a 5xx and gives up on a 429. A flood of random
   secrets against one workspace spends its workspace budget and wakes its shard at most that often, but cannot hold
   back a source an isolate has accepted lately; a source's first payload on an isolate that has not seen it during
@@ -355,9 +364,13 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   resolves, `warning` is a warning and `critical` critical); generic: `dedup_key`, else the title. Datadog, with the
   payload the dashboard shows: the monitor and the group (`$ALERT_ID` and `$ALERT_SCOPE`), so the groups of a
   multi-alert monitor are separate alerts, else `$AGGREG_KEY`; with Datadog's default payload (`$ID`, `$EVENT_TITLE`,
-  …), the title without its `[Triggered on …]` bracket plus the scope in it, which Triggered and Recovered share
-  (`$ID` is new on every notification). Datadog's transition (`$ALERT_TRANSITION`, else the title's bracket):
+  …), the title without its `[Triggered on …]` bracket plus the scope in it, which Triggered and Recovered share; a
+  title with no bracket, with its scope if it has one, else a hash of the title and the tags. Never `$ID`: it is new
+  on every notification, so a recovery keyed by it would never resolve its firing. Datadog's transition (`$ALERT_TRANSITION`, else the title's bracket):
   Recovered resolves, a Warn is a warning whatever the monitor's priority, the rest fire. At most 50 alerts a payload.
+  When the sender says when an alert happened, it is kept (`at`): Grafana's `startsAt` (firing) or `endsAt`
+  (resolved), Sentry's metric alert `date_started` or `date_closed`, Datadog's `date` (`$DATE`, in the dashboard's
+  payload). Only an early resolve reads it.
 - **A payload Brigade cannot read still pages.** Not JSON, or no readable alert: it becomes one alert of its own
   ("Unreadable alert from <source>", key `malformed`, high) that skips the routes. Brigade's own alerts (this one and
   the capacity alert) are told apart from a sender's by why they exist, not by key: a sender's alert keyed `malformed`
@@ -387,8 +400,14 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   the routes give the alert, with one page: the raise comes first, marked `reopening`, and only the reopen pages.
   Reopened, it is no longer untouched, so the next resolve leaves it open for people; past the window, or after
   people resolved it, the key opens a new incident. A resolve that comes before its firing (out of order: a key with
-  no row at all, and no capacity alert firing that it may have been folded into) is remembered for an hour
-  (`EARLY_RESOLVE_TTL_MS`, server-only `alert_resolve_markers`, at most 200), and the late firing opens nothing. A
+  no row at all, and no capacity alert firing that it may have been folded into) is remembered for 5 minutes
+  (`EARLY_RESOLVE_TTL_MS`, server-only `alert_resolve_markers`, at most 200, with when the sender says it resolved),
+  and the late firing opens nothing. The span is the realistic reordering of a sender's retries and no more, because
+  the same marker is left when a firing's own delivery never reached Brigade (too large before it paged, a 503 the
+  sender gave up on, an outage, a source created mid-alert), and a real firing after it must not wait long. A firing
+  that says when it started (`at`) is held only if it started no later than the resolve (the sender's resolve time,
+  else when the resolve came): one that started after it is a new problem and always pages. A held firing is never
+  silent: it is recorded already resolved, as `resolved_early`, and the dashboard lists it with the other alerts. A
   resolve for a key that already fired (a sender resolving again, as Grafana does, or after people closed its
   incident, or after it expired or was let go for room) is remembered by nothing, so the key's next firing pages.
   Once `MAX_ALERT_ROWS` has pruned every row of a key, a repeated resolve of it counts as early again.
@@ -418,13 +437,17 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
 - **Paging** is the incident's: `incident.declare` as `sys_alerts`, through the same path as monitors, with the
   route's policy first in the policy order (RFC 0006 "Who is paged"). The route an incident was opened through is kept
   with it (server-only `incident_routes`, by incident id, written with the declaration), so its policy pages the
-  incident for as long as it lives, however many of its alert rows were pruned since. Tests: `apps/api/test/alerts.test.ts`, a
+  incident for as long as it lives, however many of its alert rows were pruned since. One row per incident: a flap
+  reopening the incident replaces it with the route that matches the alert now (deleting it when that is the default
+  route), so the reopen pages through that route's policy. Tests: `apps/api/test/alerts.test.ts`, a
   paging path ("a dedup storm pages once", "a malformed payload still pages instead of being silently dropped", "an
   unmatched alert still pages through the default route", "a dropped alert records which route dropped it", "past the
-  open-alert cap a new alert still pages", "a flapping alert reopens its incident and pages again"), and
+  open-alert cap a new alert still pages", "a flapping alert reopens its incident and pages again", "a payload over
+  the limit still pages, unread"), and
   `packages/schema/tests/alert-sources.test.ts` ("alerts that must still page": 200 closed incidents then a critical
   alert, the capacity alert, Datadog Warn to Triggered, Sentry warning to critical, astral text, re-routing, the
-  takeover).
+  takeover, "a firing that started after the early resolve is a new problem, and pages", "Datadog: a title with no
+  bracket fires and recovers as one alert", "a flap reopens through the route that matches now").
 - **Known limits.** Every payload scans the shard's alert rows (at most 300, plus up to 200 early resolves): fine at
   this size, and the reason grouping and deduplication move to `AlertGroupDO` before the caps rise. Grafana's signature
   is checked without its timestamp header, so a captured signed payload can be replayed; a replay is a repeat of an
@@ -432,7 +455,8 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   `$AGGREG_KEY`, which the groups of one multi-alert monitor may share; the dashboard's payload avoids it.
 - **Dashboard.** The Alert sources card: the sources with when each last sent, a new source's URL once with what to
   paste in Grafana, Datadog or Sentry, the routes in order with the default last, and the latest alerts with what
-  became of each (opened or added to which incident, suppressed, dropped, and by which route).
+  became of each (opened or added to which incident, suppressed, dropped, held by a resolve that came first, and by
+  which route).
 - **Not yet.** Monitor alerts through the routes; `AlertGroupDO`; a service's own policy (the catalog keeps one, unused for pages); a title or
   severity mapping per source; email ingest; Slack naming `sys_alerts` (it reads "a teammate" today).
 

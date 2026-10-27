@@ -48,7 +48,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "keep" | "Keep it open" |
 * | "close" | "Close" |
 * | "setup_title" | "Where to paste it" |
-* | "setup_grafana" | "In Grafana, open Alerting, then Contact points, and add a Webhook integration with this URL and the POST method. Then send a notification policy to that cont..." |
+* | "setup_grafana" | "In Grafana, open Alerting, then Contact points, and add a Webhook integration with this URL and the POST method. Under Optional Webhook settings, set Max ale..." |
 * | "setup_grafana_hmac" | "Under Optional Webhook settings, set HMAC Signature to the secret you gave Brigade. Keep the default signature header and leave the timestamp header empty." |
 * | "setup_datadog" | "In Datadog, open Integrations, then Webhooks, and add a webhook named brigade with this URL and the payload below. Then add @webhook-brigade to a monitor's m..." |
 * | "setup_sentry" | "In Sentry, open Settings, then Developer Settings, and create an internal integration with this webhook URL. Turn on Alert Rule Action, copy its client secre..." |
@@ -117,6 +117,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "outcome_grouped" | "Added to {name}" |
 * | "outcome_suppressed" | "Suppressed, no incident" |
 * | "outcome_dropped" | "Dropped" |
+* | "outcome_resolved_early" | "Its resolve came first, so no incident" |
 * | "via_route" | "Route: {name}" |
 * | "via_default" | "Default route" |
 * | "via_malformed" | "Unreadable payload, so the default route took it" |
@@ -171,7 +172,7 @@ export const alerts_card = /** @type {((inputs: Alerts_CardInputs, options?: { l
 		if (i?.part === "keep") return /** @type {LocalizedString} */ (`Manter aberto`);
 		if (i?.part === "close") return /** @type {LocalizedString} */ (`Fechar`);
 		if (i?.part === "setup_title") return /** @type {LocalizedString} */ (`Onde colar`);
-		if (i?.part === "setup_grafana") return /** @type {LocalizedString} */ (`No Grafana, abra Alerting e depois Contact points, e adicione uma integração Webhook com este URL e o método POST. Depois aponte uma política de notificação para esse ponto de contato.`);
+		if (i?.part === "setup_grafana") return /** @type {LocalizedString} */ (`No Grafana, abra Alerting e depois Contact points, e adicione uma integração Webhook com este URL e o método POST. Em Optional Webhook settings, defina Max alerts como 50, para que o conteúdo fique abaixo dos 256 KiB do Brigade. Depois aponte uma política de notificação para esse ponto de contato.`);
 		if (i?.part === "setup_grafana_hmac") return /** @type {LocalizedString} */ (`Em Optional Webhook settings, configure HMAC Signature com o segredo que você informou ao Brigade. Mantenha o cabeçalho de assinatura padrão e deixe o cabeçalho de timestamp vazio.`);
 		if (i?.part === "setup_datadog") return /** @type {LocalizedString} */ (`No Datadog, abra Integrations e depois Webhooks, e adicione um webhook chamado brigade com este URL e o payload abaixo. Depois coloque @webhook-brigade na mensagem de um monitor.`);
 		if (i?.part === "setup_sentry") return /** @type {LocalizedString} */ (`No Sentry, abra Settings e depois Developer Settings, e crie uma integração interna com este URL de webhook. Ative Alert Rule Action, copie o client secret para o Brigade e escolha a integração nas ações de uma regra de alerta.`);
@@ -240,6 +241,7 @@ export const alerts_card = /** @type {((inputs: Alerts_CardInputs, options?: { l
 		if (i?.part === "outcome_grouped") return /** @type {LocalizedString} */ (`Adicionado a ${i?.name}`);
 		if (i?.part === "outcome_suppressed") return /** @type {LocalizedString} */ (`Suprimido, sem incidente`);
 		if (i?.part === "outcome_dropped") return /** @type {LocalizedString} */ (`Descartado`);
+		if (i?.part === "outcome_resolved_early") return /** @type {LocalizedString} */ (`A resolução chegou antes, então sem incidente`);
 		if (i?.part === "via_route") return /** @type {LocalizedString} */ (`Rota: ${i?.name}`);
 		if (i?.part === "via_default") return /** @type {LocalizedString} */ (`Rota padrão`);
 		if (i?.part === "via_malformed") return /** @type {LocalizedString} */ (`Payload ilegível, então a rota padrão assumiu`);
@@ -288,7 +290,7 @@ export const alerts_card = /** @type {((inputs: Alerts_CardInputs, options?: { l
 		if (i?.part === "keep") return /** @type {LocalizedString} */ (`Keep it open`);
 		if (i?.part === "close") return /** @type {LocalizedString} */ (`Close`);
 		if (i?.part === "setup_title") return /** @type {LocalizedString} */ (`Where to paste it`);
-		if (i?.part === "setup_grafana") return /** @type {LocalizedString} */ (`In Grafana, open Alerting, then Contact points, and add a Webhook integration with this URL and the POST method. Then send a notification policy to that contact point.`);
+		if (i?.part === "setup_grafana") return /** @type {LocalizedString} */ (`In Grafana, open Alerting, then Contact points, and add a Webhook integration with this URL and the POST method. Under Optional Webhook settings, set Max alerts to 50, so a payload stays under Brigade's 256 KiB. Then send a notification policy to that contact point.`);
 		if (i?.part === "setup_grafana_hmac") return /** @type {LocalizedString} */ (`Under Optional Webhook settings, set HMAC Signature to the secret you gave Brigade. Keep the default signature header and leave the timestamp header empty.`);
 		if (i?.part === "setup_datadog") return /** @type {LocalizedString} */ (`In Datadog, open Integrations, then Webhooks, and add a webhook named brigade with this URL and the payload below. Then add @webhook-brigade to a monitor's message.`);
 		if (i?.part === "setup_sentry") return /** @type {LocalizedString} */ (`In Sentry, open Settings, then Developer Settings, and create an internal integration with this webhook URL. Turn on Alert Rule Action, copy its client secret into Brigade, and pick the integration in an alert rule's actions.`);
@@ -357,6 +359,7 @@ export const alerts_card = /** @type {((inputs: Alerts_CardInputs, options?: { l
 		if (i?.part === "outcome_grouped") return /** @type {LocalizedString} */ (`Added to ${i?.name}`);
 		if (i?.part === "outcome_suppressed") return /** @type {LocalizedString} */ (`Suppressed, no incident`);
 		if (i?.part === "outcome_dropped") return /** @type {LocalizedString} */ (`Dropped`);
+		if (i?.part === "outcome_resolved_early") return /** @type {LocalizedString} */ (`Its resolve came first, so no incident`);
 		if (i?.part === "via_route") return /** @type {LocalizedString} */ (`Route: ${i?.name}`);
 		if (i?.part === "via_default") return /** @type {LocalizedString} */ (`Default route`);
 		if (i?.part === "via_malformed") return /** @type {LocalizedString} */ (`Unreadable payload, so the default route took it`);

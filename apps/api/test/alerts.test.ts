@@ -226,7 +226,12 @@ describe("POST /alerts/:token", () => {
       WORKSPACE: watched(woken),
     } as unknown as Env;
     expect((await receiveAlerts(request(wrong), limits, wrong)).status).toBe(404);
-    expect((await receiveAlerts(request(wrong), limits, wrong)).status).toBe(404);
+    // Refused lately, answered without the shard: 503 with Retry-After (never a 404 a sender gives up on), so a real
+    // token refused once is retried once the minute is over, and checked again then.
+    const again = await receiveAlerts(request(wrong), limits, wrong);
+    expect(again.status).toBe(503);
+    expect(Number(again.headers.get("Retry-After"))).toBeGreaterThan(0);
+    expect(Number(again.headers.get("Retry-After"))).toBeLessThanOrEqual(60);
     expect(woken).toHaveLength(1);
     expect(refusedKeys).toEqual([ws.id]);
     // The real token still goes through, and the shard spends the source's own budget only for it.
@@ -265,11 +270,45 @@ describe("POST /alerts/:token", () => {
     expect(response.status).toBe(202);
   });
 
-  test("a body over the limit is refused unread", async () => {
+  test("a payload over the limit still pages, unread: the unreadable alert, answered 202", async () => {
     const ws = await workspace();
-    const { token } = await source(ws, "generic");
-    const response = await post(token, "x".repeat(MAX_ALERT_BODY + 1));
-    expect(response.status).toBe(413);
+    const { token } = await source(ws, "generic", { name: "Batch jobs" });
+    const huge = "x".repeat(MAX_ALERT_BODY + 1);
+    const response = await post(token, huge);
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ ok: true, alerts: 1, malformed: true, tooLarge: true });
+    // A wrong secret is still the same 404.
+    const [, sourceId] = token.split(".");
+    const wrong = alertSourceToken(ws.id, sourceId!, newHeartbeatSecret(random));
+    expect((await post(wrong, huge)).status).toBe(404);
+    // Sent again, a repeat: one alert, one page.
+    expect((await post(token, huge)).status).toBe(202);
+    await ws.withShard((shard, sql) => {
+      expect(pages(sql)).toEqual(["incident.declared by sys_alerts"]);
+      expect(shard.store.scan("incidents")).toMatchObject([
+        { title: "Unreadable alert from Batch jobs (payload too large)", severity: "sev2" },
+      ]);
+      expect(shard.store.scan("source_alerts")).toMatchObject([
+        { dedupKey: "malformed", outcome: "opened", reason: "malformed", repeats: 1 },
+      ]);
+    });
+  });
+
+  test("a payload over the limit checks the source's header; a signed source is authenticated by its URL alone", async () => {
+    const ws = await workspace();
+    const header = { name: "X-Brigade-Key", value: "example-header-value" };
+    const { token } = await source(ws, "grafana", { header });
+    const huge = "x".repeat(MAX_ALERT_BODY + 1);
+    expect((await post(token, huge)).status).toBe(404);
+    expect((await post(token, huge, { "X-Brigade-Key": "wrong" })).status).toBe(404);
+    expect((await post(token, huge, { "X-Brigade-Key": header.value })).status).toBe(202);
+    // Sentry signs every payload, but a signature cannot be checked without the body: the secret URL is the check.
+    const { token: signed } = await source(ws, "sentry", {
+      signingSecret: "example-client-secret",
+      name: "Sentry",
+    });
+    expect((await post(signed, huge, { "Sentry-Hook-Resource": "metric_alert" })).status).toBe(202);
+    await ws.withShard((_shard, sql) => expect(pages(sql)).toHaveLength(2));
   });
 
   test("a source's header is checked, by its hash", async () => {

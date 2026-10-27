@@ -11,6 +11,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | part | output |
 * | --- | --- |
 * | "malformed" | "Unreadable alert from {name}" |
+* | "too_large" | "Unreadable alert from {name} (payload too large)" |
 * | "capacity" | "Alert capacity reached" |
 * | * | "Unreadable alert from {name}" |
 *
@@ -22,11 +23,13 @@ export const alert_incident_title = /** @type {((inputs: Alert_Incident_TitleInp
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.part === "malformed") return /** @type {LocalizedString} */ (`Alerta ilegível de ${i?.name}`);
+		if (i?.part === "too_large") return /** @type {LocalizedString} */ (`Alerta ilegível de ${i?.name} (conteúdo grande demais)`);
 		if (i?.part === "capacity") return /** @type {LocalizedString} */ (`Capacidade de alertas atingida`);
 		return /** @type {LocalizedString} */ (`Alerta ilegível de ${i?.name}`)
 	}
 	{
 		if (i?.part === "malformed") return /** @type {LocalizedString} */ (`Unreadable alert from ${i?.name}`);
+		if (i?.part === "too_large") return /** @type {LocalizedString} */ (`Unreadable alert from ${i?.name} (payload too large)`);
 		if (i?.part === "capacity") return /** @type {LocalizedString} */ (`Alert capacity reached`);
 		return /** @type {LocalizedString} */ (`Unreadable alert from ${i?.name}`)
 	}

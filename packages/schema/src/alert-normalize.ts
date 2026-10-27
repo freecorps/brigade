@@ -31,7 +31,16 @@ export type NormalizedAlert = {
   /** Where to look in the sender's tool; null when it gave no http(s) link. */
   link: string | null;
   labels: Record<string, string>;
+  /**
+   * When the sender says it happened, in milliseconds: a firing's start, a resolve's end. Absent when it does not
+   * say. Only an early resolve reads it (`alert.ingest`): a firing that started after that resolve is a new problem.
+   */
+  at?: number | null;
 };
+
+/** Earliest and latest `at` taken: a provider's "no time" (Grafana's year 1) or a typo is no time at all. */
+export const ALERT_AT_MIN = Date.UTC(2000, 0, 1);
+export const ALERT_AT_MAX = Date.UTC(2200, 0, 1);
 
 /**
  * What a payload holds: alerts (`skipped`: left out past `MAX_ALERTS_PER_PAYLOAD`; `unreadable`: entries with no key
@@ -191,6 +200,24 @@ export function severityFrom(raw: unknown): AlertSeverity | undefined {
   }
 }
 
+/**
+ * A sender's timestamp in milliseconds: RFC 3339 text, or epoch milliseconds or seconds (as a number or digits).
+ * Undefined when it is none, or outside `ALERT_AT_MIN` to `ALERT_AT_MAX`.
+ */
+export function timeFrom(raw: unknown): number | undefined {
+  let ms: number;
+  if (typeof raw === "number" || (typeof raw === "string" && /^\d{1,16}$/.test(raw.trim()))) {
+    const n = Number(raw);
+    // Seconds until 5138; milliseconds after.
+    ms = n < 1e11 ? n * 1000 : n;
+  } else if (typeof raw === "string" && raw.length <= 64) {
+    ms = Date.parse(raw);
+  } else {
+    return undefined;
+  }
+  return Number.isSafeInteger(ms) && ms >= ALERT_AT_MIN && ms <= ALERT_AT_MAX ? ms : undefined;
+}
+
 /** A string field as text, else "" (never "[object Object]"). */
 const word = (value: unknown): string =>
   typeof value === "string" ? value : typeof value === "number" ? String(value) : "";
@@ -229,7 +256,8 @@ function alert(
   rest: Omit<NormalizedAlert, "dedupKey" | "title">,
 ): NormalizedAlert | undefined {
   if (key === undefined || title === undefined) return undefined;
-  return { dedupKey: key, title, ...rest };
+  const { at, ...others } = rest;
+  return { dedupKey: key, title, ...others, ...(at != null && { at }) };
 }
 
 function collect(
@@ -282,7 +310,8 @@ function generic(body: unknown): Normalized {
 /**
  * Grafana Alerting's webhook contact point (`version` "1"): one alert per entry of `alerts`, keyed by its
  * `fingerprint` (a hash of its labels). The title is the `summary` annotation, else `alertname`; the severity is the
- * `severity` label, default `high`; the link the panel, else the rule (`generatorURL`).
+ * `severity` label, default `high`; the link the panel, else the rule (`generatorURL`); `at` its `startsAt` while
+ * firing, its `endsAt` once resolved.
  */
 function grafana(body: unknown): Normalized {
   const root = record(body);
@@ -293,11 +322,13 @@ function grafana(body: unknown): Normalized {
     const labels = record(one.labels) ?? {};
     const annotations = record(one.annotations) ?? {};
     const title = firstText(ALERT_TITLE_MAX, annotations.summary, labels.alertname, root.title);
+    const resolved = one.status === "resolved";
     return alert(fitKey("", one.fingerprint), title, {
       severity: severityFrom(labels.severity) ?? "high",
-      status: one.status === "resolved" ? "resolved" : "firing",
+      status: resolved ? "resolved" : "firing",
       link: fitLink(one.panelURL) ?? fitLink(one.dashboardURL) ?? fitLink(one.generatorURL),
       labels: fitLabels(Object.entries(labels)),
+      at: timeFrom(resolved ? one.endsAt : one.startsAt),
     });
   });
 }
@@ -318,7 +349,10 @@ const scopeKey = (scope: string): string => scope.replace(/^\{|\}$/g, "").replac
  *
  * - **Key**: the monitor and the group (`$ALERT_ID` and `$ALERT_SCOPE`), so each group of a multi-alert monitor is its
  *   own alert; else `aggregate` (`$AGGREG_KEY`); else, for the default payload, the title without its bracket and
- *   the scope inside it, which Triggered and Recovered share; the event id (`$ID`, new on every notification) last.
+ *   the scope inside it, which Triggered and Recovered share; a title with no bracket, with its scope if it has one,
+ *   else a hash of the title and the tags. Never the event id (`$ID`): it is new on every notification, so a
+ *   recovery keyed by it would never resolve its firing.
+ * - **At**: `date` (`$DATE`, when the event happened), when the payload has it.
  * - **Resolved** when the transition (`$ALERT_TRANSITION`, else the title's bracket) is Recovered, or with neither,
  *   when the alert type is `success`. Every other transition fires.
  * - **Severity**: a Warn transition (or a `warning` alert type) is `warning`, so a Warn that becomes Triggered under
@@ -351,16 +385,25 @@ function datadog(body: unknown): Normalized {
     );
     const scope = scopeKey(word(one.scope) || bracket?.[3] || "");
     const monitor = word(one.alert_id).trim();
+    const title = firstText(ALERT_TITLE_MAX, one.title);
+    // What Triggered and Recovered share: the title after the bracket, or the whole title when it has none.
+    const named = bracket ? bracket[4]! : word(one.title);
+    const tagged = tags
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+      .sort()
+      .join(",");
     const key =
       (monitor && fitKey("datadog:", `${monitor}:${scope}`)) ||
       fitKey("datadog:", one.aggregate) ||
-      (bracket && fitKey("datadog:title:", `${scope}:${bracket[4]}`)) ||
-      fitKey("datadog:", one.id);
-    return alert(key, firstText(ALERT_TITLE_MAX, one.title), {
+      ((bracket || scope) && fitKey("datadog:title:", `${scope}:${named}`)) ||
+      (title !== undefined ? `datadog:hash:${keyHash(`${named}\n${tagged}`)}` : undefined);
+    return alert(key, title, {
       severity,
       status: resolved ? "resolved" : "firing",
       link: fitLink(one.link),
       labels,
+      at: timeFrom(one.date),
     });
   });
 }
@@ -368,7 +411,8 @@ function datadog(body: unknown): Normalized {
 /**
  * Sentry's integration platform webhooks, told apart by the `sentry-hook-resource` header. `event_alert` (an issue
  * alert rule fired) is keyed by the issue, so every event of one issue is one alert; `metric_alert` by the metric
- * alert's id, `resolved` resolving it and `critical` or `warning` firing it; `issue` fires on `created` and
+ * alert's id, `resolved` resolving it and `critical` or `warning` firing it (`at`: its `date_started`, or
+ * `date_closed` once resolved); `issue` fires on `created` and
  * `unresolved` and resolves on `resolved`. `installation` and the other resources are no alerts (`ignored`).
  */
 function sentry(body: unknown, headers: AlertHeaders): Normalized {
@@ -408,6 +452,7 @@ function sentry(body: unknown, headers: AlertHeaders): Normalized {
           status: action === "resolved" ? "resolved" : "firing",
           link: fitLink(data.web_url),
           labels: {},
+          at: timeFrom(action === "resolved" ? metric.date_closed : metric.date_started),
         },
       ),
     );

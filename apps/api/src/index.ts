@@ -1054,8 +1054,9 @@ function alertHeaders(request: Request): Record<string, string> {
 
 /**
  * Tokens the shard refused lately, per isolate, by their SHA-256 (hex), until they expire: once a workspace's
- * `ALERT_REFUSED_LIMIT` runs out, the same wrong token is answered here without waking the shard. Only refused tokens
- * go in, so the real source's never does.
+ * `ALERT_REFUSED_LIMIT` runs out, the same token is answered here (`503` with `Retry-After`) without waking the shard.
+ * Only refused tokens go in; a real one does only when its request was refused (a signature or header that did not
+ * match), and its retry after `REFUSED_TOKEN_MS` reaches the shard again.
  */
 const refusedTokens = new Map<string, number>();
 const REFUSED_TOKEN_MS = 60 * 1000;
@@ -1099,15 +1100,18 @@ const toHex = (bytes: ArrayBuffer) =>
  * looked up in D1 first, so a made-up one wakes no shard (a D1 failure asks the shard anyway, as for a heartbeat).
  * At most `MAX_ALERT_BODY` bytes are read. The shard checks the secret, the source's header and the provider's
  * signature (over the bytes as sent): every refusal, here or there, is the same 404. A payload Brigade cannot read is
- * still accepted, and pages (src/alert-intake.ts).
+ * still accepted, and pages (src/alert-intake.ts). So is one past `MAX_ALERT_BODY`, never read further: the shard
+ * checks the secret and the header (the signature needs the body; the secret URL authenticates it) and pages the
+ * unreadable alert "… (payload too large)", answered `202` so the sender does not drop it on a 413.
  *
  * Rate limits (Workers Rate Limiting, approximate and per location, each failing open): the workspace's
  * `ALERT_WORKSPACE_LIMIT` before its shard wakes, spent only by tokens this isolate has not seen accepted lately
  * (`acceptedTokens`), so a flood of made-up secrets spends it and wakes the shard at most that often, while a source
  * already sending flows past it; the source's `ALERT_LIMIT` in the shard, once the secrets matched; and
  * `ALERT_REFUSED_LIMIT`, which counts the workspace's refused requests apart, so wrong secrets never spend the
- * source's budget, and once it runs out a token refused lately is refused here. Over a limit is `503` with
- * `Retry-After`, never `429`: Datadog retries a 5xx, not a 429, and a dropped alert is worse than a late one.
+ * source's budget, and once it runs out a token refused lately is answered here, `503` with `Retry-After` until it
+ * expires (`REFUSED_TOKEN_MS`), so a real token refused once is retried rather than dropped. Over a limit is `503`
+ * with `Retry-After`, never `429`: Datadog retries a 5xx, not a 429, and a dropped alert is worse than a late one.
  */
 export async function receiveAlerts(request: Request, env: Env, token: string): Promise<Response> {
   if (request.method !== "POST") {
@@ -1132,8 +1136,14 @@ export async function receiveAlerts(request: Request, env: Env, token: string): 
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(parsed.secret));
   const tokenKey = `${parsed.workspaceId}:${parsed.sourceId}:${toHex(digest)}`;
   const refusedUntil = refusedTokens.get(tokenKey);
-  if (refusedUntil !== undefined && refusedUntil > Date.now())
-    return json({ error: "not_found" }, 404);
+  const now = Date.now();
+  if (refusedUntil !== undefined && refusedUntil > now) {
+    // Not the shard's 404: a sender gives up on a 404, and a real token refused once (a payload whose signature did
+    // not match, a header fixed since) must be retried. Only a token refused once already gets here, so it tells a
+    // guesser nothing the 404 did not.
+    const wait = Math.max(1, Math.ceil((refusedUntil - now) / 1000));
+    return json({ error: "unavailable" }, 503, { "Retry-After": String(wait) });
+  }
   if (
     !acceptedLately(tokenKey) &&
     !(await limited(env.ALERT_WORKSPACE_LIMIT, parsed.workspaceId, "alert workspace rate limit"))
@@ -1141,20 +1151,38 @@ export async function receiveAlerts(request: Request, env: Env, token: string): 
     return json({ error: "unavailable" }, 503, { "Retry-After": "60" });
   }
   const body = await readBoundedBytes(request, MAX_ALERT_BODY);
-  if (body === undefined) return json({ error: "too_large" }, 413);
-  try {
-    const result = await env.WORKSPACE.getByName(parsed.workspaceId).alert(
-      parsed.sourceId,
-      digest,
-      body,
-      alertHeaders(request),
+  if (body === undefined) {
+    console.warn(
+      JSON.stringify({
+        message: "alert payload too large; asking the shard to page the unreadable alert",
+        workspace: parsed.workspaceId,
+        source: parsed.sourceId,
+        limit: MAX_ALERT_BODY,
+      }),
     );
+  }
+  try {
+    const shard = env.WORKSPACE.getByName(parsed.workspaceId);
+    const headers = alertHeaders(request);
+    // Too large to read: the shard checks the URL's secret and the source's header, and pages the unreadable alert.
+    const result =
+      body === undefined
+        ? await shard.alertTooLarge(parsed.sourceId, digest, headers)
+        : await shard.alert(parsed.sourceId, digest, body, headers);
     // Accepted, ignored and busy all mean the secrets matched.
     if (result.status === "not_found") acceptedTokens.delete(tokenKey);
     else accepted(tokenKey);
     switch (result.status) {
       case "accepted":
-        return json({ ok: true, alerts: result.alerts, malformed: result.malformed }, 202);
+        return json(
+          {
+            ok: true,
+            alerts: result.alerts,
+            malformed: result.malformed,
+            ...(body === undefined && { tooLarge: true }),
+          },
+          202,
+        );
       case "ignored":
         return json({ ok: true, alerts: 0 }, 202);
       case "busy":
@@ -1181,7 +1209,7 @@ async function limited(limiter: RateLimit, key: string, what: string): Promise<b
 
 /**
  * Counts a refused request against the workspace's `ALERT_REFUSED_LIMIT`; past it, the token is remembered as refused
- * for `REFUSED_TOKEN_MS`, so sending it again wakes no shard.
+ * for `REFUSED_TOKEN_MS`, so sending it again wakes no shard (answered `503`, retried after it).
  */
 async function refused(env: Env, workspace: string, tokenKey: string): Promise<void> {
   if (await limited(env.ALERT_REFUSED_LIMIT, workspace, "alert refused rate limit")) return;

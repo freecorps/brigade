@@ -166,6 +166,7 @@ describe("normalizing provider payloads", () => {
           zone: "us-1",
           severity: "critical",
         },
+        at: Date.UTC(2026, 9, 27, 12, 0, 0),
       },
       {
         dedupKey: "bc97ff14869b13e3",
@@ -174,11 +175,18 @@ describe("normalizing provider payloads", () => {
         status: "firing",
         link: "https://grafana.example.com/d/abc?viewPanel=2",
         labels: { alertname: "High CPU usage", team: "blue", zone: "eu-1" },
+        at: Date.UTC(2026, 9, 27, 12, 0, 0),
       },
     ]);
+    // Resolved: when it ended. Grafana's "no time" (year 1) is no time at all.
     expect(alertsOf("grafana", grafanaResolved)).toMatchObject([
-      { dedupKey: "c6eadffa33fcdf37", status: "resolved" },
+      { dedupKey: "c6eadffa33fcdf37", status: "resolved", at: Date.UTC(2026, 9, 27, 12, 30, 0) },
     ]);
+    const [unset] = alertsOf("grafana", {
+      ...grafanaFiring,
+      alerts: [{ ...grafanaFiring.alerts[0], startsAt: "0001-01-01T00:00:00Z" }],
+    });
+    expect(unset).not.toHaveProperty("at");
   });
 
   test("Datadog: keyed by monitor and group, the transition and the priority", () => {
@@ -1035,12 +1043,23 @@ describe("alerts that must still page", () => {
     ]);
   });
 
-  test("a resolve that comes before its firing keeps the late firing from opening, for an hour", () => {
+  test("a resolve that comes before its firing keeps the late firing from opening, for EARLY_RESOLVE_TTL_MS", () => {
     const db = store();
     const source = createSource(db);
+    expect(EARLY_RESOLVE_TTL_MS).toBe(5 * 60 * 1000);
     expect(types(ingest(db, source, [firing({ status: "resolved" })]))).toEqual([]);
     expect(types(ingest(db, source, [firing()], T + 2000))).toEqual([]);
     expect(incidents(db)).toHaveLength(0);
+    // Never silent: the held firing is a row the dashboard lists, already resolved.
+    expect(alertRows(db)).toMatchObject([
+      {
+        dedupKey: "checkout-5xx",
+        status: "resolved",
+        outcome: "resolved_early",
+        incidentId: null,
+        resolvedAt: T + 2000,
+      },
+    ]);
     // Used once: the next firing opens.
     expect(types(ingest(db, source, [firing()], T + 3000))).toEqual([
       "incident.declared",
@@ -1051,6 +1070,52 @@ describe("alerts that must still page", () => {
     expect(
       types(ingest(db, source, [firing({ dedupKey: "late" })], T + 4000 + EARLY_RESOLVE_TTL_MS)),
     ).toEqual(["incident.declared", "alert.fired"]);
+  });
+
+  test("a firing that started after the early resolve is a new problem, and pages", () => {
+    // Its first firing never reached Brigade (too large, given up on, an outage): the resolve came, then it fired again.
+    const db = store();
+    const source = createSource(db);
+    const resolvedAt = T - 60_000;
+    ingest(db, source, [firing({ status: "resolved", at: resolvedAt })]);
+    expect(types(ingest(db, source, [firing({ at: resolvedAt + 1000 })], T + 2000))).toEqual([
+      "incident.declared",
+      "alert.fired",
+    ]);
+    expect(db.scan("alert_resolve_markers")).toEqual([]);
+    // Started no later than the resolve: the late delivery of what the resolve ended, held and recorded.
+    ingest(db, source, [firing({ dedupKey: "late", status: "resolved", at: resolvedAt })]);
+    expect(
+      types(ingest(db, source, [firing({ dedupKey: "late", at: resolvedAt - 5000 })], T + 2000)),
+    ).toEqual([]);
+    expect(alertRows(db).find((row) => row.dedupKey === "late")).toMatchObject({
+      outcome: "resolved_early",
+      status: "resolved",
+    });
+    // A resolve that does not say when is compared by when it came.
+    ingest(db, source, [firing({ dedupKey: "unsaid", status: "resolved" })], T + 3000);
+    expect(
+      types(ingest(db, source, [firing({ dedupKey: "unsaid", at: T + 4000 })], T + 5000)),
+    ).toEqual(["incident.declared", "alert.fired"]);
+  });
+
+  test("Grafana: a resolve delivered before its firing holds that firing, and a later firing still pages", () => {
+    const db = store();
+    const source = createSource(db);
+    // The resolve (ended 12:30) arrives first, then the firing it ended (started 12:00): held.
+    ingest(db, source, alertsOf("grafana", grafanaResolved), T + 31 * 60_000);
+    const late = alertsOf("grafana", grafanaFiring).slice(0, 1);
+    expect(types(ingest(db, source, late, T + 32 * 60_000))).toEqual([]);
+    expect(alertRows(db)).toMatchObject([{ outcome: "resolved_early", status: "resolved" }]);
+    // Its first firing never arrived: the resolve came, then the alert fired again at 12:32, a new problem that pages.
+    const db2 = store();
+    const source2 = createSource(db2);
+    ingest(db2, source2, alertsOf("grafana", grafanaResolved), T + 31 * 60_000);
+    const again = [{ ...late[0]!, at: Date.UTC(2026, 9, 27, 12, 32, 0) }];
+    expect(types(ingest(db2, source2, again, T + 33 * 60_000))).toEqual([
+      "incident.declared",
+      "alert.fired",
+    ]);
   });
 
   test("a repeated resolve keeps nothing from paging: fire, resolve, resolve, fire pages", () => {
@@ -1157,6 +1222,66 @@ describe("alerts that must still page", () => {
     }
   });
 
+  test("a flap reopens through the route that matches now: incident_routes is replaced, or cleared for the default", () => {
+    const policy = (db: MemoryStore<BrigadeTables>, name: string) => {
+      const id = newId("esc", T, random);
+      const result = runMutation(
+        mutations,
+        "escalation.createPolicy",
+        {
+          id,
+          name,
+          levels: [
+            {
+              id: newId("lvl", T, random),
+              targets: [{ kind: "member", id: "usr_ana" }],
+              timeoutMinutes: 5,
+            },
+          ],
+          repeat: 0,
+          isDefault: false,
+        },
+        db,
+        as("admin"),
+      );
+      expect(result.ok).toBe(true);
+      return id;
+    };
+    const open = (policyId: string) => ({
+      kind: "open",
+      severity: null,
+      typeId: null,
+      serviceIds: [],
+      policyId,
+    });
+    for (const now of ["other", "default"] as const) {
+      const db = store();
+      db.insert("members", { id: "usr_ana", name: "Ana", role: "admin", updatedAt: T });
+      const source = createSource(db);
+      const first = policy(db, "Payments");
+      const before = createRoute(db, {}, open(first), "Payments");
+      ingest(db, source, [firing()]);
+      const [incident] = incidents(db);
+      expect(db.scan("incident_routes")).toEqual([
+        { id: incident!.id, routeId: before, routeName: "Payments", policyId: first },
+      ]);
+      ingest(db, source, [firing({ status: "resolved" })], T + 2000);
+      runMutation(mutations, "alertRoute.delete", { id: before }, db, as("admin"));
+      const second = now === "other" ? policy(db, "Checkout") : null;
+      const after = second ? createRoute(db, {}, open(second), "Checkout") : null;
+      expect(types(ingest(db, source, [firing()], T + 3000))).toEqual([
+        "incident.status_changed",
+        "alert.fired",
+      ]);
+      // One row per incident: the reopen pages through the route that matched it now.
+      expect(db.scan("incident_routes")).toEqual(
+        after
+          ? [{ id: incident!.id, routeId: after, routeName: "Checkout", policyId: second }]
+          : [],
+      );
+    }
+  });
+
   test("a sender cannot merge into or resolve Brigade's own alerts by naming its key", () => {
     const db = store();
     const source = createSource(db);
@@ -1233,6 +1358,42 @@ describe("alerts that must still page", () => {
     ).toEqual(["alert.resolved", "incident.status_changed"]);
     expect(incidents(db)[0]?.status).toBe("resolved");
     expect(db.scan("alert_resolve_markers")).toEqual([]);
+  });
+
+  test("Datadog: a title with no bracket fires and recovers as one alert, never keyed by $ID", () => {
+    const db = store();
+    const source = createSource(db, "datadog");
+    const payload = {
+      id: "1001",
+      title: "Checkout latency is high",
+      transition: "Triggered",
+      alert_type: "error",
+      tags: "env:prod,service:checkout",
+    };
+    const [fired] = alertsOf("datadog", payload);
+    const [recovered] = alertsOf("datadog", {
+      ...payload,
+      id: "1002",
+      transition: "Recovered",
+      alert_type: "success",
+      tags: "service:checkout, env:prod",
+    });
+    expect(fired!.dedupKey).toMatch(/^datadog:hash:[0-9a-f]{16}$/);
+    expect(recovered).toMatchObject({ dedupKey: fired!.dedupKey, status: "resolved" });
+    // With a scope, keyed like the bracketed title: the scope and the title.
+    expect(alertsOf("datadog", { ...payload, scope: "host:web-1" })).toMatchObject([
+      { dedupKey: "datadog:title:host:web-1:Checkout latency is high" },
+    ]);
+    // Other tags, another alert.
+    expect(alertsOf("datadog", { ...payload, tags: "env:staging" })[0]!.dedupKey).not.toBe(
+      fired!.dedupKey,
+    );
+    expect(types(ingest(db, source, [fired!]))).toEqual(["incident.declared", "alert.fired"]);
+    expect(types(ingest(db, source, [recovered!], T + 2000))).toEqual([
+      "alert.resolved",
+      "incident.status_changed",
+    ]);
+    expect(incidents(db)[0]?.status).toBe("resolved");
   });
 
   test("a takeover disables the routes the taken-back account created, until someone saves them", () => {

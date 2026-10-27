@@ -867,6 +867,19 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
+   * An alert source's payload the Worker would not read, past `MAX_ALERT_BODY` (RPC from `POST /alerts/:token`): it
+   * pages as the unreadable alert when the URL's secret and the source's header check out (`AlertIntake.receiveTooLarge`).
+   */
+  async alertTooLarge(
+    sourceId: string,
+    digest: ArrayBuffer,
+    headers: Record<string, string>,
+  ): Promise<AlertIntakeResult> {
+    if (this.shard.workspace() === undefined) return { status: "not_found" };
+    return this.alerts.receiveTooLarge(sourceId, digest, headers);
+  }
+
+  /**
    * Whether a verified payload of `sourceId` may go on: `ALERT_LIMIT` (wrangler.jsonc), keyed on the workspace and the
    * source, spent only once the shard checked the secrets, so a flood with a wrong secret cannot use up the real
    * source's budget. Approximate and per Cloudflare location; a limiter that fails lets the payload through, since a

@@ -2528,7 +2528,7 @@
         "part=keep": "Manter aberto",
         "part=close": "Fechar",
         "part=setup_title": "Onde colar",
-        "part=setup_grafana": "No Grafana, abra Alerting e depois Contact points, e adicione uma integração Webhook com este URL e o método POST. Depois aponte uma política de notificação para esse ponto de contato.",
+        "part=setup_grafana": "No Grafana, abra Alerting e depois Contact points, e adicione uma integração Webhook com este URL e o método POST. Em Optional Webhook settings, defina Max alerts como 50, para que o conteúdo fique abaixo dos 256 KiB do Brigade. Depois aponte uma política de notificação para esse ponto de contato.",
         "part=setup_grafana_hmac": "Em Optional Webhook settings, configure HMAC Signature com o segredo que você informou ao Brigade. Mantenha o cabeçalho de assinatura padrão e deixe o cabeçalho de timestamp vazio.",
         "part=setup_datadog": "No Datadog, abra Integrations e depois Webhooks, e adicione um webhook chamado brigade com este URL e o payload abaixo. Depois coloque @webhook-brigade na mensagem de um monitor.",
         "part=setup_sentry": "No Sentry, abra Settings e depois Developer Settings, e crie uma integração interna com este URL de webhook. Ative Alert Rule Action, copie o client secret para o Brigade e escolha a integração nas ações de uma regra de alerta.",
@@ -2597,6 +2597,7 @@
         "part=outcome_grouped": "Adicionado a {name}",
         "part=outcome_suppressed": "Suprimido, sem incidente",
         "part=outcome_dropped": "Descartado",
+        "part=outcome_resolved_early": "A resolução chegou antes, então sem incidente",
         "part=via_route": "Rota: {name}",
         "part=via_default": "Rota padrão",
         "part=via_malformed": "Payload ilegível, então a rota padrão assumiu",
@@ -2628,6 +2629,7 @@
       "selectors": ["part"],
       "match": {
         "part=malformed": "Alerta ilegível de {name}",
+        "part=too_large": "Alerta ilegível de {name} (conteúdo grande demais)",
         "part=capacity": "Capacidade de alertas atingida",
         "part=*": "Alerta ilegível de {name}"
       }

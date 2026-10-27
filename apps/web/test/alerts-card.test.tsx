@@ -205,6 +205,13 @@ describe("AlertsPanel", () => {
             title: "Unreadable alert from Grafana production",
             incidentId: "inc_gone",
           }),
+          alert("alt_4", {
+            outcome: "resolved_early",
+            status: "resolved",
+            reason: "default",
+            incidentId: null,
+            title: "Checkout latency is high",
+          }),
         ],
       }),
     );
@@ -218,6 +225,8 @@ describe("AlertsPanel", () => {
     expect(text).toContain("Sent 3 more times");
     expect(text).toContain("Dropped · Route: Ignore info");
     expect(text).toContain("Opened an incident · Unreadable payload, so the default route took it");
+    // A firing held by its early resolve is listed, never silently gone.
+    expect(text).toContain("Its resolve came first, so no incident · Default route");
     expect(container.querySelector('a[href="/incidents/142"]')).not.toBeNull();
   });
 

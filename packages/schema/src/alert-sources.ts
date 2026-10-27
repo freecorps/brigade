@@ -6,6 +6,8 @@
 
 import type { Role } from "./access.ts";
 import {
+  ALERT_AT_MAX,
+  ALERT_AT_MIN,
   ALERT_KEY_MAX,
   ALERT_LABEL_KEY_MAX,
   ALERT_LABEL_VALUE_MAX,
@@ -43,6 +45,7 @@ import {
 } from "./mutation.ts";
 import { defineQuery, prefixRange } from "./query.ts";
 import type {
+  AlertResolveMarkerRow,
   AlertRouteRow,
   AlertSourceRow,
   IncidentRouteRow,
@@ -76,8 +79,13 @@ export const MAX_ALERT_ROWS = 300;
 export const ALERT_IDLE_TTL_MS = 24 * 60 * 60 * 1000;
 /** A key firing again this soon after its incident resolved by itself reopens that incident: 10 minutes. */
 export const FLAP_WINDOW_MS = 10 * 60 * 1000;
-/** A resolve that came before its firing is remembered this long, so the late firing opens nothing: 1 hour. */
-export const EARLY_RESOLVE_TTL_MS = 60 * 60 * 1000;
+/**
+ * A resolve that came before its firing is remembered this long, so the late firing opens nothing: 5 minutes, the
+ * span a sender's retries realistically reorder two notifications by. Kept short because a firing whose own first
+ * delivery never reached Brigade (too large, given up on, an outage, a source created mid-alert) also leaves a
+ * resolve with no row, and a real firing after it must not be held back for long.
+ */
+export const EARLY_RESOLVE_TTL_MS = 5 * 60 * 1000;
 /** Early resolves remembered at once; past it the oldest is forgotten. */
 export const MAX_RESOLVE_MARKERS = 200;
 /** The capacity alert's title when the shard gives none (it gives the workspace's language). */
@@ -97,7 +105,11 @@ export const ALERT_INCIDENT_SEVERITY: Record<AlertSeverity, Severity> = {
   info: "sev4",
 };
 
-export type AlertOutcome = "opened" | "grouped" | "suppressed" | "dropped";
+/**
+ * `resolved_early`: a firing that came after its own resolve (`EARLY_RESOLVE_TTL_MS`), so it opened nothing; recorded,
+ * already resolved, so the dashboard shows it rather than nothing.
+ */
+export type AlertOutcome = "opened" | "grouped" | "suppressed" | "dropped" | "resolved_early";
 /**
  * Why the outcome: a route `matched`, none did (`default`), the payload was `malformed` (straight to default), or
  * there was no room for it and it stands in the capacity alert (`capacity`, straight to default).
@@ -245,6 +257,7 @@ const normalizedAlert = v.object({
   status: v.picklist(["firing", "resolved"] as const),
   link: v.nullable(linkValue),
   labels: labelsRecord,
+  at: v.optional(v.nullable(v.integer({ min: ALERT_AT_MIN, max: ALERT_AT_MAX }))),
 });
 
 function checkNewId(id: string, ctx: MutationContext): MutationResult | undefined {
@@ -284,7 +297,7 @@ export type SourceAlertFired = DomainEvent<
     fingerprint: string;
     sourceId: string;
     incidentId: string | null;
-    outcome: Exclude<AlertOutcome, "dropped">;
+    outcome: Exclude<AlertOutcome, "dropped" | "resolved_early">;
     routeId: string | null;
     reason: AlertRouteReason;
   }
@@ -955,17 +968,21 @@ function sweep(store: MutationStore, ctx: MutationContext): DomainEvent[] {
 
 const markerId = (sourceId: string, dedupKey: string) => `${sourceId}:${dedupKey}`;
 
-/** Remembers a resolve that came before its firing, keeping at most `MAX_RESOLVE_MARKERS` (the newest). */
+/**
+ * Remembers a resolve that came before its firing, with when the sender says it resolved (`endedAt`, if it says),
+ * keeping at most `MAX_RESOLVE_MARKERS` (the newest).
+ */
 function markResolved(
   store: MutationStore,
   sourceId: string,
-  dedupKey: string,
+  alert: NormalizedAlert,
   ctx: MutationContext,
 ): void {
   if (!ctx.server) return;
-  const id = markerId(sourceId, dedupKey);
+  const id = markerId(sourceId, alert.dedupKey);
+  const endedAt = alert.at ?? null;
   if (store.get("alert_resolve_markers", id)) {
-    store.update("alert_resolve_markers", id, { at: ctx.now });
+    store.update("alert_resolve_markers", id, { at: ctx.now, endedAt });
     return;
   }
   const markers = store.scan("alert_resolve_markers");
@@ -973,13 +990,30 @@ function markResolved(
     const oldest = markers.reduce((a, b) => (b.at < a.at ? b : a));
     store.delete("alert_resolve_markers", oldest.id);
   }
-  store.insert("alert_resolve_markers", { id, at: ctx.now });
+  store.insert("alert_resolve_markers", { id, at: ctx.now, endedAt });
+}
+
+/**
+ * Whether a firing is the late one of the resolve `marker` remembers, so it opens nothing: the marker is recent
+ * (`EARLY_RESOLVE_TTL_MS`), and the firing did not start after the resolve. A firing that says when it started is
+ * compared with when the sender says it resolved (else when the resolve came): one that started later is a new
+ * problem, whose own earlier firing never reached Brigade, and pages.
+ */
+function lateFiring(
+  marker: AlertResolveMarkerRow,
+  alert: NormalizedAlert,
+  ctx: MutationContext,
+): boolean {
+  if (ctx.now - marker.at >= EARLY_RESOLVE_TTL_MS) return false;
+  if (alert.at == null) return true;
+  return alert.at <= (marker.endedAt ?? marker.at);
 }
 
 /** How loud a route action is: a quiet row is routed again once the routes would do something louder with it. */
 const LOUDNESS: Record<RouteAction["kind"] | AlertOutcome, number> = {
   drop: 0,
   dropped: 0,
+  resolved_early: 0,
   suppress: 1,
   suppressed: 1,
   open: 2,
@@ -1045,8 +1079,8 @@ type Intake = {
  *   has (raising it if the alert asks for more), else opens one; `suppress` records it without an incident; `drop`
  *   records only that a route dropped it, and why. Within `FLAP_WINDOW_MS` of this key's incident resolving by itself,
  *   that incident reopens (and pages, once, at the more urgent of its severity and the alert's) instead of a new one,
- *   unless the routes now keep the alert quiet. Within `EARLY_RESOLVE_TTL_MS` of a resolve that came first, nothing
- *   opens.
+ *   unless the routes now keep the alert quiet. Within `EARLY_RESOLVE_TTL_MS` of a resolve that came first, a firing
+ *   that did not start after that resolve opens nothing, and is recorded as `resolved_early` (`lateFiring`).
  * - **Resolved**: resolves the firing row; once nothing fires on its incident, the incident resolves if nobody
  *   worked on it, else gets an `alerts_resolved` timeline entry (`settleIncident`). A resolve for an alert not firing
  *   is remembered for `EARLY_RESOLVE_TTL_MS`, in case its firing is still on its way, only when the key never fired
@@ -1144,7 +1178,7 @@ function resolveOne(
           sameAlert(row, sourceId, alert.dedupKey, malformed) ||
           (row.reason === "capacity" && row.status === "firing"),
       );
-    if (!fired) markResolved(store, sourceId, alert.dedupKey, ctx);
+    if (!fired) markResolved(store, sourceId, alert, ctx);
     return [];
   }
   store.update("source_alerts", current.id, {
@@ -1195,7 +1229,8 @@ function flapped(store: MutationStore, alert: NormalizedAlert, { sourceId, ctx }
  * A firing alert with no firing row: a resolve that came first, a flap, or a new alert through its route. A flap goes
  * through the routes as they are now: one that keeps it quiet (a suppress or drop route added since) leaves the
  * incident resolved and records the alert as that route has it; otherwise the incident reopens at the more urgent of
- * its own severity and what the routes give the alert, with one page, the reopen's.
+ * its own severity and what the routes give the alert, with one page, the reopen's, through the policy of the route
+ * that matches now (`routeIncident`).
  */
 function fireNew(
   store: MutationStore,
@@ -1208,8 +1243,16 @@ function fireNew(
   const marker = store.get("alert_resolve_markers", markerId(sourceId, alert.dedupKey));
   if (marker) {
     store.delete("alert_resolve_markers", marker.id);
-    // Its resolve already came: the problem is over, so nothing opens.
-    if (ctx.now - marker.at < EARLY_RESOLVE_TTL_MS) return { events: [] };
+    if (lateFiring(marker, alert, ctx)) {
+      // Its resolve already came: the problem is over, so nothing opens. Recorded, resolved, never silent.
+      store.insert("source_alerts", {
+        ...newRow(alert, ids.alertId, intake),
+        status: "resolved",
+        outcome: "resolved_early",
+        resolvedAt: ctx.now,
+      });
+      return { events: [] };
+    }
   }
   const flap = flapped(store, alert, intake);
   if (!flap) return fire(store, alert, ids, intake);
@@ -1239,6 +1282,7 @@ function fireNew(
     ctx,
   );
   if (!reopened.ok) return fire(store, alert, ids, intake);
+  routeIncident(store, flap.incident.id, route, action.policyId, ctx);
   const row: SourceAlertRow = {
     ...newRow(alert, ids.alertId, intake),
     outcome: "grouped",
@@ -1252,6 +1296,29 @@ function fireNew(
   };
   store.insert("source_alerts", row);
   return { events: [...events, ...reopened.events, firedEvent(row)] };
+}
+
+/**
+ * Records the route that pages `incidentId` (`incident_routes`, one row per incident): written as a route declares
+ * it, and replaced as a flap reopens it, so the reopen pages through the route that matches now. The default route
+ * keeps no row (the default policy pages), so a reopen through it deletes the one there was.
+ */
+function routeIncident(
+  store: MutationStore,
+  incidentId: string,
+  route: AlertRouteRow | null,
+  policyId: string | null,
+  ctx: MutationContext,
+): void {
+  if (!ctx.server) return;
+  const kept = store.get("incident_routes", incidentId);
+  if (!route) {
+    if (kept) store.delete("incident_routes", incidentId);
+    return;
+  }
+  const row = { routeId: route.id, routeName: route.name, policyId };
+  if (kept) store.update("incident_routes", incidentId, row);
+  else store.insert("incident_routes", { id: incidentId, ...row });
 }
 
 function newRow(
@@ -1410,14 +1477,7 @@ function fire(
   );
   // Without its incident the alert would page nobody: the payload fails, and the shard pages its fallback alert.
   if (!declared.ok) return { failed: declared };
-  if (route && ctx.server) {
-    store.insert("incident_routes", {
-      id: ids.incidentId,
-      routeId: route.id,
-      routeName: route.name,
-      policyId: action.policyId,
-    });
-  }
+  routeIncident(store, ids.incidentId, route, action.policyId, ctx);
   const row: SourceAlertRow = {
     ...base,
     outcome: "opened",

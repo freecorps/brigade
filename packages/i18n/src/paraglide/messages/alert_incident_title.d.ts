@@ -9,6 +9,7 @@ export type Alert_Incident_TitleInputs = {
 * | part | output |
 * | --- | --- |
 * | "malformed" | "Unreadable alert from {name}" |
+* | "too_large" | "Unreadable alert from {name} (payload too large)" |
 * | "capacity" | "Alert capacity reached" |
 * | * | "Unreadable alert from {name}" |
 *

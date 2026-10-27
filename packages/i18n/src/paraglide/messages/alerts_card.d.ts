@@ -47,7 +47,7 @@ export type Alerts_CardInputs = {
 * | "keep" | "Keep it open" |
 * | "close" | "Close" |
 * | "setup_title" | "Where to paste it" |
-* | "setup_grafana" | "In Grafana, open Alerting, then Contact points, and add a Webhook integration with this URL and the POST method. Then send a notification policy to that cont..." |
+* | "setup_grafana" | "In Grafana, open Alerting, then Contact points, and add a Webhook integration with this URL and the POST method. Under Optional Webhook settings, set Max ale..." |
 * | "setup_grafana_hmac" | "Under Optional Webhook settings, set HMAC Signature to the secret you gave Brigade. Keep the default signature header and leave the timestamp header empty." |
 * | "setup_datadog" | "In Datadog, open Integrations, then Webhooks, and add a webhook named brigade with this URL and the payload below. Then add @webhook-brigade to a monitor's m..." |
 * | "setup_sentry" | "In Sentry, open Settings, then Developer Settings, and create an internal integration with this webhook URL. Turn on Alert Rule Action, copy its client secre..." |
@@ -116,6 +116,7 @@ export type Alerts_CardInputs = {
 * | "outcome_grouped" | "Added to {name}" |
 * | "outcome_suppressed" | "Suppressed, no incident" |
 * | "outcome_dropped" | "Dropped" |
+* | "outcome_resolved_early" | "Its resolve came first, so no incident" |
 * | "via_route" | "Route: {name}" |
 * | "via_default" | "Default route" |
 * | "via_malformed" | "Unreadable payload, so the default route took it" |

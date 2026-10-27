@@ -908,15 +908,17 @@ export type SourceAlertStatus = "firing" | "resolved" | "closed";
 
 /**
  * Server-only: a resolve that came before its firing (`alert.ingest`), so the firing that follows within
- * `EARLY_RESOLVE_TTL_MS` is not opened. `id`: `<source id>:<dedup key>` (a source id has no colon).
+ * `EARLY_RESOLVE_TTL_MS`, and did not start after it, is not opened. `id`: `<source id>:<dedup key>` (a source id
+ * has no colon). `at`: when the resolve came; `endedAt`: when the sender says it resolved, if it said.
  */
-export type AlertResolveMarkerRow = { id: string; at: number };
+export type AlertResolveMarkerRow = { id: string; at: number; endedAt?: number | null };
 
 /**
  * Server-only: the alert route an alert source opened an incident through (its id is the incident's), written with
  * the incident's declaration, so the route's policy pages it for as long as the incident lives (RFC 0006 "Who is
  * paged"), however many of its alert rows `MAX_ALERT_ROWS` deleted since. None for an incident the default route
- * opened, or a member declared.
+ * opened, or a member declared. A flap reopening the incident replaces it with the route that matches the alert now
+ * (or deletes it, for the default route), so the reopen pages through that route's policy.
  */
 export type IncidentRouteRow = {
   id: string;

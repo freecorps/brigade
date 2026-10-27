@@ -97,8 +97,11 @@ until its next run.
 A route, type or monitor naming none, deleted since, or naming a deleted policy falls through to the next, so a
 deletion never leaves an incident paged by nothing. An alert's incident opened by the default route has no route
 policy and goes straight to the default. The route is read from `incident_routes`, written as the route declares
-the incident, not from its alert rows, which `MAX_ALERT_ROWS` prunes. Tests: `packages/schema/tests/alert-sources.test.ts`
-("the route's policy pages the incident", "the route's policy outlives its alert rows").
+the incident, not from its alert rows, which `MAX_ALERT_ROWS` prunes, and replaced when a flap reopens the incident
+(one row per incident; deleted when the default route matches now), so the reopen pages through the route that
+matches the alert then, not the one that first opened it. Tests: `packages/schema/tests/alert-sources.test.ts`
+("the route's policy pages the incident", "the route's policy outlives its alert rows", "a flap reopens through the
+route that matches now").
 
 **Alerts that page again (decided).** Besides a declared incident, two things alert sources do page (RFC 0005 "Alert
 sources"). An alert that comes back more urgent raises its incident's severity as `sys_alerts`

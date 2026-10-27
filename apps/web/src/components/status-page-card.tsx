@@ -497,7 +497,6 @@ function ComponentRow({
 function AddComponent({ full, onCreate }: Pick<PanelProps, "onCreate"> & { full: boolean }) {
   const [name, setName] = useState("");
   const [group, setGroup] = useState("");
-  const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   if (full) return <p className="text-sm text-muted-foreground">{say("limit")}</p>;
   return (
@@ -508,12 +507,14 @@ function AddComponent({ full, onCreate }: Pick<PanelProps, "onCreate"> & { full:
         event.preventDefault();
         const trimmed = name.trim();
         if (trimmed === "") return;
-        setBusy(true);
         setFailed(false);
+        // Cleared at once (the row shows optimistically), so the next name can be typed while the shard confirms;
+        // a refused one comes back unless something else was typed meanwhile.
+        setName("");
         void onCreate(trimmed, group.trim() || null).then((ok) => {
-          setBusy(false);
-          if (!ok) return setFailed(true);
-          setName("");
+          if (ok) return;
+          setFailed(true);
+          setName((current) => (current === "" ? trimmed : current));
         });
       }}
     >
@@ -529,9 +530,9 @@ function AddComponent({ full, onCreate }: Pick<PanelProps, "onCreate"> & { full:
         maxLength={COMPONENT_GROUP_MAX}
         onChange={(event) => setGroup(event.target.value)}
       />
-      <Button type="submit" variant="outline" disabled={busy || name.trim() === ""}>
+      <Button type="submit" variant="outline" disabled={name.trim() === ""}>
         <PlusIcon aria-hidden />
-        {say(busy ? "adding" : "add")}
+        {say("add")}
       </Button>
       {failed ? (
         <div className="sm:col-span-3">

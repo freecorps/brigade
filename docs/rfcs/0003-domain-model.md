@@ -431,6 +431,10 @@ in `WorkspaceDO` and synced like types and fields (`incident_roles` table, query
   `type_changed` with the types' names then; `fromDeleted` when the type it had was deleted, so it reads as a change
   from a deleted type). It changes nothing else: severity defaults apply only when declaring, and a run under way
   keeps its levels.
+- **Its postmortem template** (`postmortem_templates`, keyed by the type's id; `postmortemTemplate.set` and `.reset`,
+  `catalog:manage`): the sections a new postmortem of an incident of the type starts with (RFC 0013 "Templates"),
+  else the workspace's `default` one, else the seven built-in sections. Deleting the type deletes its template.
+  A postmortem keeps the sections it was made with, so `incident.setType` never changes one already made.
 
 ## Custom fields
 
@@ -460,7 +464,8 @@ in `WorkspaceDO` and synced like types and fields (`incident_roles` table, query
 
 RFC 0013 has the detail. In short: **follow-ups** (`follow_ups`, `followUp.create`, `.update`, `.setStatus`,
 `.delete`) and the **postmortem** (`postmortems`, one per incident, `postmortem.save` over the revision its editor
-opened) are `incident:update`, so responders change them and viewers read them. Follow-up changes and the first save
+opened, its sections from its type's template when it was made) are `incident:update`, so responders change them
+and viewers read them; owners and admins set the templates (`catalog:manage`). Follow-up changes and the first save
 of a postmortem are timeline entries (`follow_up` with its `change` and title, `postmortem` with `started` or
 `ai_drafted`). A member removed or made a viewer is taken off their open follow-ups with their rotations. AI drafts are
 server-only mutations (`postmortem.requestDraft` as the member, `.writeDraft` and `.failDraft` as `sys_ai`). Exports

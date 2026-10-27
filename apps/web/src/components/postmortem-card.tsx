@@ -4,13 +4,14 @@ import {
   can,
   canDraftPostmortem,
   draftRunning,
-  EMPTY_SECTIONS,
   isBlankPostmortem,
   POSTMORTEM_SECTION_MAX,
-  POSTMORTEM_SECTIONS,
+  POSTMORTEM_TOTAL_MAX,
+  postmortemLayout,
   type IncidentRow,
   type PostmortemRow,
   type PostmortemSections,
+  type PostmortemTemplateSection,
 } from "@freecorps/brigade-schema";
 import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { cn } from "cn";
@@ -29,11 +30,18 @@ import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { postmortemText, requestDraft, useFeatures } from "@/lib/follow-ups";
+import { onlyStarters, sectionName, starterSections } from "@/lib/postmortem-templates";
 import { people, personName } from "@/lib/timeline";
 
 const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 /** A section shows how much room is left once it is this close to the cap. */
 const COUNT_FROM = POSTMORTEM_SECTION_MAX - 300;
+/** The whole document shows how much room is left once it is this close to its cap. */
+const TOTAL_FROM = POSTMORTEM_TOTAL_MAX - 1000;
+type Layout = readonly PostmortemTemplateSection[];
+/** Why the last save was refused as a conflict: a teammate's save, or a new template for a postmortem not yet made. */
+type Conflict = "saved" | "template" | null;
+const keysOf = (layout: Layout) => layout.map((section) => section.key).join(",");
 
 /** Why an AI draft request was refused, worded. */
 function refusalText(code: string): string {
@@ -44,8 +52,9 @@ function refusalText(code: string): string {
 }
 
 /**
- * The incident's postmortem (RFC 0013): seven plain-text sections, read here and edited in place by responders and
- * up. A save names the revision its editor opened, as the server confirmed it (its number and `updatedAt`); when
+ * The incident's postmortem (RFC 0013): plain-text sections, read here and edited in place by responders and up. Its
+ * sections are its own once it exists (the template it was made with), else the template its type takes now; a new
+ * one starts from the template's starter text. A save names the revision its editor opened, as the server confirmed it (its number and `updatedAt`); when
  * someone else saved since, it is refused and the editor keeps the text, so nothing is lost and nothing is overwritten
  * unseen. An editor never opens on a row holding an unconfirmed change, and saves one at a time: a base is never this
  * client's own optimistic revision. With Workers AI set up, "Draft with AI" asks for a
@@ -60,42 +69,61 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
   const query = useQuery("incident.postmortem", { id: incident.id });
   const members = useQuery("members.all", {});
   const tokens = useQuery("apiToken.all", {});
+  const templates = useQuery("postmortemTemplates.all", {});
   const save = useMutation("postmortem.save");
   const row: PostmortemRow | undefined = query.rows[0];
+  const layout = postmortemLayout(
+    row,
+    (id) => templates.rows.find((one) => one.id === id),
+    incident,
+  );
   const now = useNow(5_000);
-  const [editing, setEditing] = useState<{ base: Base; sections: PostmortemSections } | null>(null);
+  const [editing, setEditing] = useState<{
+    base: Base;
+    layout: Layout;
+    sections: Record<string, string>;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [conflict, setConflict] = useState(false);
+  const [conflict, setConflict] = useState<Conflict>(null);
   const [refused, setRefused] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
   const running = draftRunning(row, now);
   const blank = isBlankPostmortem(row);
   const who = people(member.userId, members.rows, tokens.rows);
 
-  // Whether `row` is the server's: not while it holds a change the server has not answered yet.
-  const confirmed = !query.pending;
+  // Whether `row` is the server's: not while it holds a change the server has not answered yet. A postmortem not yet
+  // made also waits for the templates, which say its sections.
+  const confirmed = !query.pending && (row !== undefined || templates.status === "ready");
   const open = () => {
     if (!confirmed) return;
-    setEditing({ base: baseOf(row), sections: { ...(row?.sections ?? EMPTY_SECTIONS) } });
+    setEditing({
+      base: baseOf(row),
+      layout,
+      sections: blank
+        ? starterSections(layout)
+        : Object.fromEntries(layout.map(({ key }) => [key, row?.sections[key] ?? ""])),
+    });
   };
   const startEditing = () => {
-    setConflict(false);
+    setConflict(null);
     setRefused(null);
     open();
   };
-  const onSave = (sections: PostmortemSections) => {
+  const onSave = (written: Record<string, string>) => {
     if (!editing || saving) return;
     setRefused(null);
+    // Only the editor's own sections, every one of them: the shard refuses any other set.
+    const sections: PostmortemSections = Object.fromEntries(
+      editing.layout.map(({ key }) => [key, written[key] ?? ""]),
+    );
     const unchanged =
       row !== undefined &&
       row.ai === null &&
       row.revision === editing.base.revision &&
       row.updatedAt === editing.base.updatedAt &&
-      POSTMORTEM_SECTIONS.every((key) => row.sections[key] === sections[key].trim());
-    if (
-      unchanged ||
-      (row === undefined && POSTMORTEM_SECTIONS.every((key) => !sections[key].trim()))
-    ) {
+      editing.layout.every(({ key }) => row.sections[key] === sections[key]!.trim());
+    // A blank postmortem holding only the template's starter text: nobody wrote anything yet.
+    if (unchanged || (blank && onlyStarters(sections, editing.layout))) {
       setEditing(null);
       return;
     }
@@ -109,12 +137,17 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
       setSaving(false);
       if (outcome.ok) {
         setEditing(null);
-        setConflict(false);
+        setConflict(null);
         return;
       }
-      // Unchanged text never reaches the shard (below), so a conflict is someone else's save since this edit began.
+      // Unchanged text never reaches the shard (above), so a conflict is someone else's save since this edit began,
+      // or, for a postmortem not yet made, its template changing.
       if (outcome.error.code === "conflict") {
-        setConflict(true);
+        setConflict(
+          editing.base.revision === 0 && keysOf(layout) !== keysOf(editing.layout)
+            ? "template"
+            : "saved",
+        );
         return;
       }
       setRefused(
@@ -206,19 +239,20 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
         {editing ? (
           <Editor
             initial={editing.sections}
+            layout={editing.layout}
             conflict={conflict}
             saving={saving}
             canReload={confirmed}
             onReload={() => {
-              setConflict(false);
+              setConflict(null);
               open();
             }}
             onCancel={() => {
               setEditing(null);
-              setConflict(false);
+              setConflict(null);
             }}
             onSave={onSave}
-            key={`${editing.base.revision}:${editing.base.updatedAt}`}
+            key={`${editing.base.revision}:${editing.base.updatedAt}:${keysOf(editing.layout)}`}
           />
         ) : blank ? (
           <p className="text-muted-foreground">
@@ -228,18 +262,18 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
         ) : row ? (
           <>
             <dl className="flex flex-col gap-4">
-              {POSTMORTEM_SECTIONS.map((section) => (
-                <div key={section} className="flex flex-col gap-1">
-                  <dt className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                    {postmortemText(`section_${section}`)}
+              {layout.map((section) => (
+                <div key={section.key} className="flex flex-col gap-1">
+                  <dt className="text-xs font-medium tracking-wide text-muted-foreground uppercase [overflow-wrap:anywhere]">
+                    {sectionName(section)}
                   </dt>
                   <dd
                     className={cn(
                       "whitespace-pre-wrap [overflow-wrap:anywhere]",
-                      row.sections[section] === "" && "text-muted-foreground italic",
+                      !row.sections[section.key] && "text-muted-foreground italic",
                     )}
                   >
-                    {row.sections[section] || postmortemText("section_empty")}
+                    {row.sections[section.key] || postmortemText("section_empty")}
                   </dd>
                 </div>
               ))}
@@ -267,6 +301,7 @@ const baseOf = (row: PostmortemRow | undefined): Base =>
 
 function Editor({
   initial,
+  layout,
   conflict,
   saving,
   canReload,
@@ -274,16 +309,18 @@ function Editor({
   onCancel,
   onSave,
 }: {
-  initial: PostmortemSections;
-  conflict: boolean;
+  initial: Record<string, string>;
+  layout: Layout;
+  conflict: Conflict;
   saving: boolean;
   canReload: boolean;
   onReload: () => void;
   onCancel: () => void;
-  onSave: (sections: PostmortemSections) => void;
+  onSave: (sections: Record<string, string>) => void;
 }) {
   const [sections, setSections] = useState(initial);
   const id = useId();
+  const total = layout.reduce((sum, { key }) => sum + (sections[key] ?? "").trim().length, 0);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     onSave(sections);
@@ -294,33 +331,46 @@ function Editor({
         <div role="alert" className="flex flex-col items-start gap-2 text-destructive">
           <p className="flex items-start gap-2">
             <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
-            {postmortemText("conflict")}
+            {postmortemText(conflict === "template" ? "template_changed" : "conflict")}
           </p>
           <Button type="button" variant="outline" onClick={onReload} disabled={!canReload}>
             {postmortemText("reload")}
           </Button>
         </div>
       ) : null}
-      {POSTMORTEM_SECTIONS.map((section, index) => {
-        const value = sections[section];
+      {layout.map((section, index) => {
+        const value = sections[section.key] ?? "";
         const left = POSTMORTEM_SECTION_MAX - value.length;
+        const hint = section.hint.trim();
         return (
-          <div key={section} className="flex min-w-0 flex-col gap-1.5">
-            <label htmlFor={`${id}-${section}`} className="text-sm font-medium">
-              {postmortemText(`section_${section}`)}
+          <div key={section.key} className="flex min-w-0 flex-col gap-1.5">
+            <label
+              htmlFor={`${id}-${section.key}`}
+              className="text-sm font-medium [overflow-wrap:anywhere]"
+            >
+              {sectionName(section)}
             </label>
+            {hint ? (
+              <p
+                id={`${id}-${section.key}-hint`}
+                className="text-sm whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]"
+              >
+                {hint}
+              </p>
+            ) : null}
             <textarea
-              id={`${id}-${section}`}
+              id={`${id}-${section.key}`}
+              aria-describedby={hint ? `${id}-${section.key}-hint` : undefined}
               className={cn(
                 TEXTAREA,
-                section === "timeline" || section === "summary" ? "min-h-28" : "",
+                section.key === "timeline" || section.key === "summary" ? "min-h-28" : "",
               )}
               value={value}
               maxLength={POSTMORTEM_SECTION_MAX}
               // oxlint-disable-next-line jsx-a11y/no-autofocus -- the editor opens on a click to type in it
               autoFocus={index === 0}
               onChange={(event) =>
-                setSections((current) => ({ ...current, [section]: event.target.value }))
+                setSections((current) => ({ ...current, [section.key]: event.target.value }))
               }
             />
             {value.length >= COUNT_FROM ? (
@@ -336,6 +386,17 @@ function Editor({
           </div>
         );
       })}
+      {total >= TOTAL_FROM ? (
+        <p
+          role="status"
+          className={cn(
+            "text-sm tabular-nums",
+            total > POSTMORTEM_TOTAL_MAX ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
+          {postmortemText("total", { count: POSTMORTEM_TOTAL_MAX - total })}
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={saving}>
           {saving ? (

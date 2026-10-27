@@ -19,6 +19,7 @@ import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { CheckIcon, PencilIcon, PlusIcon, RotateCcwIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { SeverityBadge } from "@/components/incident-badges";
+import { PostmortemTemplates } from "@/components/postmortem-templates";
 import { Description, FORM, FormButtons, LABEL, Refusal, SELECT } from "@/components/services-card";
 import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
@@ -61,14 +62,16 @@ import {
   type TypeRoleUse,
 } from "@/lib/catalog";
 import { queryErrorReason } from "@/lib/incidents";
+import { templateText } from "@/lib/postmortem-templates";
 
 type Editing = { kind: "type" | "field" | "role"; id: string | null } | null;
 
 /**
  * The workspace's incident types, custom fields and incident roles (RFC 0003 "Incident types", "Custom fields",
  * "Role definitions"), live from its shard. A type sets the severity a declare starts with, the policy its pages use,
- * the fields it requires and the roles it fills; a field is a typed detail every incident can carry; a role is who
- * does what, with the responsibilities that come with it. Owners and admins edit them; everyone else reads.
+ * the fields it requires and the roles it fills, and its postmortem template (RFC 0013 "Templates") the sections its
+ * postmortems start with; a field is a typed detail every incident can carry; a role is who does what, with the
+ * responsibilities that come with it. Owners and admins edit them; everyone else reads.
  */
 export function IncidentSettingsCard() {
   const { role } = useMember();
@@ -77,6 +80,7 @@ export function IncidentSettingsCard() {
   const fields = useQuery("customFields.all", {});
   const roleRows = useQuery("incidentRoles.all", {});
   const policies = useQuery("escalationPolicies.all", {});
+  const templates = useQuery("postmortemTemplates.all", {});
   const createType = useMutation("incidentType.create");
   const updateType = useMutation("incidentType.update");
   const deleteType = useMutation("incidentType.delete");
@@ -105,7 +109,8 @@ export function IncidentSettingsCard() {
     setEditing(next);
   };
   const loading = (status: string) => status !== "ready" && status !== "error";
-  const failed = [types, fields, roleRows].find((query) => query.status === "error") ?? null;
+  const failed =
+    [types, fields, roleRows, templates].find((query) => query.status === "error") ?? null;
 
   return (
     <Card aria-labelledby="incident-settings-title">
@@ -196,6 +201,21 @@ export function IncidentSettingsCard() {
               {catalogText("types_empty")}
             </p>
           ) : null}
+        </Section>
+
+        <Section
+          id="templates"
+          title={templateText("title")}
+          count={loading(types.status) || loading(templates.status) ? null : false}
+          add={null}
+        >
+          <p className="text-sm text-muted-foreground">{templateText("note")}</p>
+          <PostmortemTemplates
+            types={types.rows}
+            templates={templates.rows}
+            manage={manage}
+            onRefused={setRefused}
+          />
         </Section>
 
         <Section
@@ -371,7 +391,8 @@ function Section({
 }: {
   id: string;
   title: string;
-  count: string | null;
+  /** Null while it loads; false for a section that counts nothing. */
+  count: string | null | false;
   add: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -385,7 +406,7 @@ function Section({
           </h3>
           {count === null ? (
             <span aria-hidden className="block h-4 w-16 rounded-sm bg-muted" />
-          ) : (
+          ) : count === false ? null : (
             <span className="text-sm text-muted-foreground tabular-nums">{count}</span>
           )}
         </div>

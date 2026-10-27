@@ -47,6 +47,8 @@ export type Postmortem_TextInputs = {
 * | "ai_refused_other" | "Couldn't ask for a draft: {reason}" |
 * | "chars" | "{count} left" |
 * | "read_only" | "Only responders, admins and owners edit the postmortem." |
+* | "template_changed" | "The postmortem template for this incident changed while you were writing. Your text is still here: copy what you need, then load the new sections." |
+* | "total" | "{count} left in the whole postmortem" |
 * | * | "Postmortem" |
 *
 * @param {Postmortem_TextInputs} inputs

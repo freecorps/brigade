@@ -4,6 +4,7 @@
 import { env, exports } from "cloudflare:workers";
 import { createScheduledController, runInDurableObject } from "cloudflare:test";
 import {
+  BUILTIN_LAYOUT,
   createMemoryStore,
   EXPORT_TTL_MS,
   EXPORTS_PER_HOUR,
@@ -150,6 +151,15 @@ async function draft(
   return response;
 }
 
+const typeArgs = (id: string) => ({
+  id,
+  name: "Payments",
+  description: "",
+  defaultSeverity: null,
+  escalationPolicyId: null,
+  requiredFields: [],
+});
+
 const answer = {
   summary: "O checkout ficou fora do ar.",
   impact: "Pagamentos com cartão.",
@@ -204,6 +214,58 @@ describe("drafting a postmortem with Workers AI", () => {
     expect(events).toMatchObject([{ change: "ai_drafted", actor: "sys_ai" }]);
   });
 
+  test("the draft fills the type's template: its sections in order, by their titles and hints", async () => {
+    const t = await team();
+    const owner: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    const TYP = newId("typ", Date.now(), random);
+    const template = [
+      { key: "summary", title: "", hint: "", starter: "" },
+      {
+        key: "custom1",
+        title: "Customer comms",
+        hint: "What customers were told, and when",
+        starter: "",
+      },
+      { key: "rootCause", title: "Why it broke", hint: "", starter: "" },
+    ];
+    for (const result of [
+      await t.run("incidentType.create", typeArgs(TYP), owner),
+      await t.run("postmortemTemplate.set", { id: TYP, sections: template }, owner),
+      await t.run("incident.setType", { id: INC, typeId: TYP }, owner),
+    ]) {
+      expect(result).toMatchObject({ ok: true });
+    }
+    const seen: { messages: { content: string }[]; response_format: unknown }[] = [];
+    const ai: AiBinding = {
+      run: async (_model, inputs) => {
+        seen.push(inputs as (typeof seen)[number]);
+        return {
+          response: JSON.stringify({
+            summary: "O checkout ficou fora do ar.",
+            custom1: "Avisamos às 12:10.",
+            rootCause: "A definir.",
+            impact: "Not a section of this template.",
+          }),
+        };
+      },
+    };
+    expect((await draft(t, t.caio, ai)).status).toBe(202);
+    const system = seen[0]!.messages[0]!.content;
+    expect(system).toContain("Customer comms");
+    expect(system).toContain("What customers were told, and when");
+    expect(system).toContain("Why it broke");
+    expect(seen[0]!.response_format).toMatchObject({
+      json_schema: { required: ["summary", "custom1", "rootCause"] },
+    });
+    const row = await t.withShard((shard) => shard.store.get("postmortems", INC));
+    expect(row).toMatchObject({ revision: 1, ai: { by: t.caio.id }, layout: template });
+    expect(row!.sections).toEqual({
+      summary: "O checkout ficou fora do ar.",
+      custom1: "Avisamos às 12:10.",
+      rootCause: "A definir.",
+    });
+  });
+
   test("a model that fails or answers nothing usable leaves a failed draft", async () => {
     const t = await team();
     await draft(t, t.caio, { run: async () => ({ response: "I cannot help." }) });
@@ -242,11 +304,15 @@ describe("drafting a postmortem with Workers AI", () => {
       ),
     ).toBe("Line one\nLine two");
     expect(cleanSection("x".repeat(5000))).toHaveLength(2999);
-    expect(parseDraft({ response: "```json\n" + JSON.stringify(answer) + "\n```" })).toMatchObject({
+    expect(
+      parseDraft({ response: "```json\n" + JSON.stringify(answer) + "\n```" }, BUILTIN_LAYOUT),
+    ).toMatchObject({
       summary: answer.summary,
     });
-    expect(parseDraft({ response: answer })).toMatchObject({ impact: answer.impact });
-    expect(parseDraft({ response: "{}" })).toBeUndefined();
+    expect(parseDraft({ response: answer }, BUILTIN_LAYOUT)).toMatchObject({
+      impact: answer.impact,
+    });
+    expect(parseDraft({ response: "{}" }, BUILTIN_LAYOUT)).toBeUndefined();
   });
 
   test("a timeline of 10,000 entries is cut to fit, measuring the whole source at most twice", () => {

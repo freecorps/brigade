@@ -1,5 +1,7 @@
-// Postmortems (RFC 0013 "Postmortems"): one document per incident in fixed plain-text sections, edited by responders
-// and up. Saving is last-writer-wins with a conflict check: a save names the revision it was written over, and one
+// Postmortems (RFC 0013 "Postmortems"): one document per incident in plain-text sections, edited by responders and
+// up. Its sections come from a template (RFC 0013 "Templates"): its incident type's, else the workspace's default,
+// else the seven built-in ones. The postmortem keeps the template as it was when it was made (`layout`), so later
+// template edits and type changes never rewrite it. Saving is last-writer-wins with a conflict check: a save names the revision it was written over, and one
 // written over an older revision is refused, so nobody overwrites a teammate's edit unseen. A first draft can come from
 // Workers AI (the API Worker, off the request path); it is written through `postmortem.writeDraft` and marked as an AI
 // draft until a member saves the document.
@@ -16,10 +18,18 @@ import {
   type DomainEvent,
   type MutationStore,
 } from "./mutation.ts";
+import { isId } from "./id.ts";
 import { defineQuery } from "./query.ts";
-import type { PostmortemDraftFailure, PostmortemRow, PostmortemSections } from "./tables.ts";
+import type {
+  IncidentRow,
+  PostmortemDraftFailure,
+  PostmortemRow,
+  PostmortemSections,
+  PostmortemTemplateRow,
+  PostmortemTemplateSection,
+} from "./tables.ts";
 import { appendTimeline } from "./timeline.ts";
-import { v } from "./validate.ts";
+import { v, type Issue } from "./validate.ts";
 
 export const POSTMORTEM_SECTIONS = [
   "summary",
@@ -31,12 +41,32 @@ export const POSTMORTEM_SECTIONS = [
   "followUps",
 ] as const;
 export type PostmortemSection = (typeof POSTMORTEM_SECTIONS)[number];
+/** The custom sections a template may add, by key; a template has at most this many. */
+export const CUSTOM_POSTMORTEM_SECTIONS = ["custom1", "custom2", "custom3"] as const;
+export type CustomPostmortemSection = (typeof CUSTOM_POSTMORTEM_SECTIONS)[number];
+export const POSTMORTEM_SECTION_KEYS = [
+  ...POSTMORTEM_SECTIONS,
+  ...CUSTOM_POSTMORTEM_SECTIONS,
+] as const;
+export type PostmortemSectionKey = (typeof POSTMORTEM_SECTION_KEYS)[number];
+export const isBuiltinSection = (key: string): key is PostmortemSection =>
+  (POSTMORTEM_SECTIONS as readonly string[]).includes(key);
 
-/**
- * One section, in UTF-16 code units after trimming. Seven of them keep a save (and its JSON escapes) inside the
- * client frame limit of RFC 0004.
- */
+/** One section, in UTF-16 code units after trimming. */
 export const POSTMORTEM_SECTION_MAX = 3000;
+/**
+ * The whole document, every section together: what seven full sections held before templates. It keeps a save (and
+ * its JSON escapes) inside the client frame limit of RFC 0004 however many sections a template has.
+ */
+export const POSTMORTEM_TOTAL_MAX = 7 * POSTMORTEM_SECTION_MAX;
+/** Sections in a template: every built-in and every custom one. */
+export const MAX_TEMPLATE_SECTIONS = POSTMORTEM_SECTION_KEYS.length;
+/** A section's title, its hint and its starter text in a template. */
+export const TEMPLATE_TITLE_MAX = 60;
+export const TEMPLATE_HINT_MAX = 300;
+export const TEMPLATE_STARTER_MAX = 1000;
+/** The workspace's own template, for incidents with no type or a type without one. */
+export const DEFAULT_TEMPLATE_ID = "default";
 /** AI drafts a workspace may ask for in any 24 hours. */
 export const AI_DRAFTS_PER_DAY = 20;
 export const AI_DRAFT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -69,10 +99,29 @@ export type PostmortemDraftFailed = DomainEvent<
   { incidentId: string; requestId: string; reason: PostmortemDraftFailure }
 >;
 
-const characters = (sections: PostmortemSections) =>
-  POSTMORTEM_SECTIONS.reduce((sum, key) => sum + sections[key].length, 0);
+export type PostmortemTemplateUpdated = DomainEvent<
+  "postmortem_template.updated",
+  { id: string; typeId: string | null; sections: number; custom: number }
+>;
+export type PostmortemTemplateReset = DomainEvent<
+  "postmortem_template.reset",
+  { id: string; typeId: string | null }
+>;
 
-export const EMPTY_SECTIONS: PostmortemSections = {
+const characters = (sections: PostmortemSections) =>
+  Object.values(sections).reduce((sum, text) => sum + (text?.length ?? 0), 0);
+
+/** The seven built-in sections, in their order: the layout of a postmortem with no template. */
+export const BUILTIN_LAYOUT: readonly PostmortemTemplateSection[] = POSTMORTEM_SECTIONS.map(
+  (key) => ({
+    key,
+    title: "",
+    hint: "",
+    starter: "",
+  }),
+);
+
+export const EMPTY_SECTIONS: Required<Pick<PostmortemSections, PostmortemSection>> = {
   summary: "",
   impact: "",
   timeline: "",
@@ -84,7 +133,46 @@ export const EMPTY_SECTIONS: PostmortemSections = {
 
 /** Whether nobody wrote anything in it yet. */
 export function isBlankPostmortem(row: Pick<PostmortemRow, "sections"> | undefined): boolean {
-  return !row || POSTMORTEM_SECTIONS.every((key) => row.sections[key] === "");
+  return !row || Object.values(row.sections).every((text) => !text);
+}
+
+/**
+ * The template for incidents of type `typeId` (null: none): the type's, else the workspace's default; null when
+ * neither exists, meaning the built-in sections. `get` reads `postmortem_templates` by id.
+ */
+export function templateFor(
+  get: (id: string) => PostmortemTemplateRow | undefined,
+  typeId: string | null | undefined,
+): PostmortemTemplateSection[] | null {
+  return (typeId ? get(typeId) : undefined)?.sections ?? get(DEFAULT_TEMPLATE_ID)?.sections ?? null;
+}
+
+/**
+ * The sections of the incident's postmortem, in order: the row's own layout once it exists (whatever the templates
+ * or the incident's type became), else the template it would take now.
+ */
+export function postmortemLayout(
+  row: Pick<PostmortemRow, "layout"> | undefined,
+  get: (id: string) => PostmortemTemplateRow | undefined,
+  incident: Pick<IncidentRow, "typeId">,
+): readonly PostmortemTemplateSection[] {
+  if (row) return row.layout ?? BUILTIN_LAYOUT;
+  return templateFor(get, incident.typeId) ?? BUILTIN_LAYOUT;
+}
+
+/** Empty text for every section of `layout`. */
+export function emptySections(layout: readonly PostmortemTemplateSection[]): PostmortemSections {
+  return Object.fromEntries(layout.map((section) => [section.key, ""]));
+}
+
+/** `sections` without the keys left out (`undefined`). */
+const given = (sections: PostmortemSections): PostmortemSections =>
+  Object.fromEntries(Object.entries(sections).filter(([, text]) => text !== undefined));
+
+/** Whether `sections` holds exactly the keys of `layout`. */
+function fitsLayout(sections: PostmortemSections, layout: readonly PostmortemTemplateSection[]) {
+  const keys = Object.keys(sections);
+  return keys.length === layout.length && layout.every((section) => section.key in sections);
 }
 
 /** A draft that is still running: pending and not past `AI_DRAFT_STALE_MS`. */
@@ -103,16 +191,22 @@ export function canDraftPostmortem(row: PostmortemRow | undefined): boolean {
 
 // ---- Validation ---------------------------------------------------------------------------------------------------
 
-const section = v.string({ max: POSTMORTEM_SECTION_MAX, multiline: true, joiners: true });
-export const postmortemSections = v.object({
-  summary: section,
-  impact: section,
-  timeline: section,
-  rootCause: section,
-  wentWell: section,
-  wentPoorly: section,
-  followUps: section,
-});
+const section = v.omittable(
+  v.string({ max: POSTMORTEM_SECTION_MAX, multiline: true, joiners: true }),
+);
+/** The text of each section of the postmortem's layout; the keys must be the layout's (checked by the mutation). */
+export const postmortemSections = v.refine(
+  v.object(
+    Object.fromEntries(POSTMORTEM_SECTION_KEYS.map((key) => [key, section])) as Record<
+      PostmortemSectionKey,
+      typeof section
+    >,
+  ),
+  (value, path) =>
+    characters(value) > POSTMORTEM_TOTAL_MAX
+      ? { path, message: `Expected at most ${POSTMORTEM_TOTAL_MAX} characters in all` }
+      : null,
+);
 const incidentId = v.id("inc");
 const requestId = v.id("drf");
 
@@ -140,12 +234,21 @@ export const savePostmortem = defineMutation({
     if (revision !== args.baseRevision || (revision > 0 && row!.updatedAt !== args.baseUpdatedAt)) {
       return fail("conflict", "The postmortem changed since this edit started");
     }
-    const sections: PostmortemSections = args.sections;
-    if (
-      row &&
-      row.ai == null &&
-      POSTMORTEM_SECTIONS.every((key) => row.sections[key] === sections[key])
-    ) {
+    const sections = given(args.sections);
+    // A new postmortem takes its template now; an editor opened on another one (edited since) is refused, and keeps
+    // its text.
+    const template = row
+      ? null
+      : templateFor((id) => store.get("postmortem_templates", id), incident.typeId);
+    const layout = row ? (row.layout ?? BUILTIN_LAYOUT) : (template ?? BUILTIN_LAYOUT);
+    if (!fitsLayout(sections, layout)) {
+      return row
+        ? fail("invalid_args", "Expected the postmortem's own sections", [
+            { path: "sections", message: "Expected the postmortem's own sections" },
+          ])
+        : fail("conflict", "The postmortem template changed since this edit started");
+    }
+    if (row && row.ai == null && layout.every(({ key }) => row.sections[key] === sections[key])) {
       return fail("conflict", "Nothing changed");
     }
     const next = revision + 1;
@@ -161,6 +264,7 @@ export const savePostmortem = defineMutation({
       store.insert("postmortems", {
         id: args.id,
         sections,
+        layout: template,
         revision: next,
         ai: null,
         draft: null,
@@ -220,9 +324,12 @@ export const requestPostmortemDraft = defineMutation({
     };
     if (row) store.update("postmortems", row.id, { draft });
     else {
+      // The draft fills the template the incident takes now, kept as the postmortem's own.
+      const template = templateFor((id) => store.get("postmortem_templates", id), incident.typeId);
       store.insert("postmortems", {
         id: args.id,
-        sections: EMPTY_SECTIONS,
+        sections: emptySections(template ?? BUILTIN_LAYOUT),
+        layout: template,
         revision: 0,
         ai: null,
         draft,
@@ -275,7 +382,12 @@ export const writePostmortemDraft = defineMutation({
     // Past `AI_DRAFT_STALE_MS` the draft already reads as failed and may have been asked for again: a late result
     // never lands.
     if (ctx.now - draft.requestedAt >= AI_DRAFT_STALE_MS) return failDraftIn(store, row, "timeout");
-    const sections: PostmortemSections = args.sections;
+    const sections = given(args.sections);
+    if (!fitsLayout(sections, row.layout ?? BUILTIN_LAYOUT)) {
+      return fail("invalid_args", "Expected the postmortem's own sections", [
+        { path: "sections", message: "Expected the postmortem's own sections" },
+      ]);
+    }
     const revision = row.revision + 1;
     store.update("postmortems", row.id, {
       sections,
@@ -321,6 +433,100 @@ export const failPostmortemDraft = defineMutation({
   },
 });
 
+// ---- Templates ----------------------------------------------------------------------------------------------------
+
+const templateId = v.refine(v.string({ min: 1, max: 40 }), (value, path) =>
+  value === DEFAULT_TEMPLATE_ID || isId("typ", value)
+    ? null
+    : { path, message: `Expected "${DEFAULT_TEMPLATE_ID}" or an incident type id` },
+);
+const templateSection = v.object({
+  key: v.picklist(POSTMORTEM_SECTION_KEYS),
+  title: v.string({ max: TEMPLATE_TITLE_MAX }),
+  hint: v.string({ max: TEMPLATE_HINT_MAX, multiline: true, joiners: true }),
+  starter: v.string({ max: TEMPLATE_STARTER_MAX, multiline: true, joiners: true }),
+});
+
+/** What the store refuses in a template's sections: a key twice, a custom section without a title. */
+export function checkTemplateSections(sections: readonly PostmortemTemplateSection[]): Issue[] {
+  const issues: Issue[] = [];
+  const seen = new Set<string>();
+  sections.forEach((section, index) => {
+    if (seen.has(section.key)) {
+      issues.push({ path: `sections[${index}].key`, message: "Listed twice" });
+    }
+    seen.add(section.key);
+    if (!isBuiltinSection(section.key) && section.title === "") {
+      issues.push({ path: `sections[${index}].title`, message: "A custom section needs a title" });
+    }
+  });
+  return issues;
+}
+
+const typeOf = (id: string) => (id === DEFAULT_TEMPLATE_ID ? null : id);
+
+/**
+ * Sets the workspace's default template (`default`) or an incident type's: the sections new postmortems of it take,
+ * in order. Postmortems already made keep theirs.
+ */
+export const setPostmortemTemplate = defineMutation({
+  name: "postmortemTemplate.set",
+  args: v.object({
+    id: templateId,
+    sections: v.array(templateSection, { min: 1, max: MAX_TEMPLATE_SECTIONS }),
+  }),
+  permission: "catalog:manage",
+  apply(store, args, ctx) {
+    const typeId = typeOf(args.id);
+    if (typeId && !store.get("incident_types", typeId)) return fail("not_found", "Type not found");
+    const issues = checkTemplateSections(args.sections);
+    if (issues.length) {
+      return fail("invalid_args", "Invalid arguments for postmortemTemplate.set", issues);
+    }
+    const sections: PostmortemTemplateSection[] = args.sections.map(
+      (one: PostmortemTemplateSection) => ({ ...one }),
+    );
+    const row = store.get("postmortem_templates", args.id);
+    if (row && JSON.stringify(row.sections) === JSON.stringify(sections)) {
+      return fail("conflict", "Template is unchanged");
+    }
+    const next = { sections, updatedAt: ctx.now, updatedBy: ctx.actor.id };
+    if (row) store.update("postmortem_templates", args.id, next);
+    else store.insert("postmortem_templates", { id: args.id, ...next });
+    const event: PostmortemTemplateUpdated = {
+      type: "postmortem_template.updated",
+      subject: args.id,
+      data: {
+        id: args.id,
+        typeId,
+        sections: sections.length,
+        custom: sections.filter((one) => !isBuiltinSection(one.key)).length,
+      },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * Takes the template out: a type's incidents fall back to the workspace's default, and the default to the built-in
+ * sections. Postmortems already made keep theirs.
+ */
+export const resetPostmortemTemplate = defineMutation({
+  name: "postmortemTemplate.reset",
+  args: v.object({ id: templateId }),
+  permission: "catalog:manage",
+  apply(store, args) {
+    if (!store.get("postmortem_templates", args.id)) return fail("not_found", "Template not found");
+    store.delete("postmortem_templates", args.id);
+    const event: PostmortemTemplateReset = {
+      type: "postmortem_template.reset",
+      subject: args.id,
+      data: { id: args.id, typeId: typeOf(args.id) },
+    };
+    return ok(event);
+  },
+});
+
 // ---- Queries ------------------------------------------------------------------------------------------------------
 
 export const incidentPostmortem = defineQuery({
@@ -332,7 +538,19 @@ export const incidentPostmortem = defineQuery({
   filter: (row, args) => row.id === args.id,
 });
 
-export const postmortemMutations = [savePostmortem] as const;
+export const allPostmortemTemplates = defineQuery({
+  name: "postmortemTemplates.all",
+  args: v.object({}),
+  permission: "catalog:read",
+  table: "postmortem_templates",
+  filter: () => true,
+});
+
+export const postmortemMutations = [
+  savePostmortem,
+  setPostmortemTemplate,
+  resetPostmortemTemplate,
+] as const;
 export const postmortemServerMutations = [
   requestPostmortemDraft,
   writePostmortemDraft,

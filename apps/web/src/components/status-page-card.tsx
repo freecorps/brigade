@@ -395,6 +395,8 @@ function MoveButtons({
           key={by}
           variant="ghost"
           size="icon"
+          // Muted without the fill: a filled arrow next to a plain one reads as the chosen one, not the unavailable.
+          className="disabled:border-transparent disabled:bg-transparent disabled:text-muted-foreground/50"
           data-move={`${id}:${by}`}
           disabled={by === -1 ? first : last}
           aria-label={say(parts[by === -1 ? 0 : 1], { name })}

@@ -160,7 +160,9 @@ describe("feeds", () => {
   test("an entry is dated by its last change: a correction moves it, a window's start never does", () => {
     const shown = snapshot({
       active: [{ ...snapshot().active[0]!, updatedAt: T - 30 * 60 * 1000 }],
-      upcoming: [{ ...snapshot().upcoming![0]!, publishedAt: T - 3 * HOUR, updatedAt: T - 2 * HOUR }],
+      upcoming: [
+        { ...snapshot().upcoming![0]!, publishedAt: T - 3 * HOUR, updatedAt: T - 2 * HOUR },
+      ],
     });
     const items = JSON.parse(renderJsonFeed(shown, urls)).items;
     // The incident's newest update is an hour old; it was corrected since.

@@ -988,7 +988,8 @@ describe("the snapshot", () => {
     expect(xml).toContain("Looking &amp; checking.");
     expect(atom.headers.get("Cache-Control")).toBe("public, max-age=30");
     expect(atom.headers.get("Access-Control-Allow-Origin")).toBe("*");
-    for (const internal of ["db-7 OOM", t.ana.id, t.id, incident]) expect(xml).not.toContain(internal);
+    for (const internal of ["db-7 OOM", t.ana.id, t.id, incident])
+      expect(xml).not.toContain(internal);
     const head = await exports.default.fetch(`${ORIGIN}/status/${address}/feed.atom`, {
       method: "HEAD",
     });

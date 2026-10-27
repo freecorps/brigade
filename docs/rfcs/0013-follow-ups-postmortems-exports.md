@@ -6,7 +6,8 @@ What an incident leaves behind once it is over (RFC 0001 goal 6, RFC 0003 `Follo
 items with an owner and a due date, a postmortem document with a first draft from Workers AI, and a way to take the
 incidents out of Brigade as a file. None of it is on a paging path. The code: `packages/schema/src/followups.ts`,
 `postmortems.ts` and `exports.ts`; `apps/api/src/postmortem.ts` and `exports.ts`; and the dashboard's Follow-ups and
-Postmortem cards on the incident page, the overview's Open follow-ups and Export incidents cards, and `/follow-ups`.
+Postmortem cards on the incident page, the overview's Open follow-ups and Export incidents cards and the Postmortem
+templates part of its Incident settings card, and `/follow-ups`.
 
 ## Shape
 
@@ -84,10 +85,14 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
 
 ## Postmortems
 
-- **Row** (`postmortems`, synced, keyed by the incident id): seven plain-text sections, `summary`, `impact`,
-  `timeline`, `rootCause`, `wentWell`, `wentPoorly` and `followUps`, each up to 3000 characters (multi-line, the text
-  rules). Seven of them, with JSON escapes, stay inside RFC 0004's client frame limit. Plain text, not Markdown: the
-  dashboard renders it as written, and nothing in it can turn into markup.
+- **Row** (`postmortems`, synced, keyed by the incident id): plain-text sections by key, each up to 3000 characters
+  (multi-line, the text rules), and at most 21,000 in all (`POSTMORTEM_TOTAL_MAX`, what seven full sections held), so
+  a save, with JSON escapes, stays inside RFC 0004's client frame limit however many sections it has (tested). Which
+  sections, in which order, is its `layout`, taken from its template when the row is made (below); a row without one
+  (every postmortem from before templates, and any made with no template) has the seven built-in sections, `summary`,
+  `impact`, `timeline`, `rootCause`, `wentWell`, `wentPoorly` and `followUps`. A save or a draft must give exactly
+  the layout's keys. Plain text, not Markdown: the dashboard renders it as written, and nothing in it can turn into
+  markup.
 - **Versioning: last writer wins, with a conflict check.** `postmortem.save` (`incident:update`) sends the whole
   document with `baseRevision` and `baseUpdatedAt`, the revision the editor opened and when the server wrote it (0
   and 0 for none). A save over any other revision, or the same number written at another time, is refused
@@ -102,6 +107,35 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
 - **Timeline and events.** The first save is a `postmortem` entry (`started`); later saves are edits of a document,
   not incident changes, and only emit `postmortem.saved` (`incidentId`, `revision`, `characters`). **No event carries
   the text**: notifiers and logs never see the document.
+
+## Templates
+
+- **What.** A template is the sections a new postmortem starts with, in order: any of the seven built-in sections
+  (each may be renamed, up to 60 characters; an empty title keeps its own translated name) and up to three custom
+  ones (`custom1` to `custom3`, a title required), at most ten in all, each with a **hint** (up to 300 characters:
+  shown under the section's name in the editor, and given to the AI draft) and **starter text** (up to 1000: what the
+  editor of a new postmortem starts with). Table `postmortem_templates` (synced, `postmortemTemplates.all`,
+  `catalog:read`), keyed by an incident type's id, or `default` for the workspace's own.
+- **Who.** Owners and admins (`catalog:manage`): `postmortemTemplate.set` (the whole template; unchanged is a
+  `conflict`) and `postmortemTemplate.reset` (takes it out). Events `postmortem_template.updated` (`id`, `typeId`,
+  `sections`, `custom`: counts, never the text) and `postmortem_template.reset`. Deleting a type deletes its template.
+- **Which one.** An incident takes its type's template, else the `default` one, else the seven built-in sections
+  (`templateFor`). With no template set anywhere, nothing changes from before.
+- **A snapshot, decided once.** The template is copied into the postmortem's `layout` when its row is made: its
+  first save, or the first AI draft asked for. From then on the postmortem keeps those sections: editing or resetting
+  the template, deleting the type, or changing the incident's type (`incident.setType`) never rewrites one. A
+  document already being written in another layout cannot be moved without losing or inventing sections, and the
+  type is often set late, after someone started writing. Before the row exists, the editor follows the template the
+  incident would take now; if it changed while someone was writing the first version, the save is refused
+  (`conflict`) and the editor keeps the text and offers to load the new sections, as for a teammate's save.
+- **Starter text** fills a new postmortem's editor only: a save that changes nothing but the starter text is not
+  sent, so a postmortem that only holds it stays blank (and an AI draft may still be asked for).
+- **The editor** (dashboard, Incident settings, "Postmortem templates"): the default and each type, the sections in
+  order (move up and down, rename, hint, starter text, remove, add a built-in left out or a custom one), with a
+  preview of what a new postmortem's editor shows. The incident page's Postmortem card shows and edits the
+  postmortem's own sections, by their titles, with their hints.
+- **Not yet**: revision history (Q24); sharing one template between types; changing a postmortem's sections after
+  it was made.
 
 ## Drafting with AI
 
@@ -127,6 +161,10 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   timeline entries about pages, emails and Slack are left out. A long timeline keeps its first ten entries and as much
   of its end as fits, dropping from the middle. Only the first 50 and the last 2,000 entries are read at all, and each
   is measured once, so a timeline of any length costs the shard about the same. The data stays in the Cloudflare account that runs Brigade.
+- **Its sections** are the postmortem's own (its `layout`; for a new one, the template it takes as the draft makes the
+  row): the prompt lists each key with its title and hint (a built-in without either reads as its own name and what
+  it asks for), the model must answer exactly those keys (`response_format`), and the share of `POSTMORTEM_TOTAL_MAX`
+  each may use. Titles and hints are given as data, as the team's words about the sections.
 - **Language**: the status page's language when the workspace has one (the closest thing to a workspace language
   today), else the asker's dashboard language. The prompt asks for a blameless draft that only uses facts from the
   data and says what is unknown.
@@ -151,7 +189,8 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   incidents declared in a range of UTC days (both ends included, up to 366 days, at most 500 incidents, at most
   25 MiB; more is refused, 413, to be split). The file (`buildExport`, format `brigade.export` version 1) holds, per
   incident, the incident row (without its escalation run's internals), its whole timeline, its written updates (the text as it reads now, with `edited`, or `removed` and no text), what
-  the status page published, its follow-ups and its postmortem, plus the workspace's name and the members' ids and
+  the status page published, its follow-ups and its postmortem (its `sections` in the postmortem's own order, and
+  `layout`, the keys with their titles, null for a built-in under its own name), plus the workspace's name and the members' ids and
   names, so the ids in it read. **Never** an email address, a device, a token or a delivery receipt.
 - **Building it never holds the shard.** The shard (which also fires escalations) writes the file one incident at a
   time as UTF-8 parts, counting bytes as it goes: past 25 MiB it stops and answers `too_large` without ever holding
@@ -184,5 +223,4 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
 
 ## Not in this slice
 
-The mobile app's follow-ups and postmortem screens; push notifications for follow-ups due; postmortem
-templates per incident type; revision history; publishing a postmortem to the status page; issue-tracker sync.
+The mobile app's follow-ups and postmortem screens; push notifications for follow-ups due; revision history; publishing a postmortem to the status page; issue-tracker sync.

@@ -5,7 +5,7 @@
 // the bytes as it goes, stop at `MAX_EXPORT_BYTES` and let other work (escalations) run between incidents. Each start
 // takes a slot in the server-only `export_ledger` (`export.reserve`), at most `EXPORTS_PER_HOUR` a workspace.
 
-import { POSTMORTEM_SECTIONS } from "./postmortems.ts";
+import { BUILTIN_LAYOUT } from "./postmortems.ts";
 import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
 import { defineQuery, prefixRange } from "./query.ts";
 import type { ExportRow, ExportScope, FollowUpRow, IncidentRow, TimelineRow } from "./tables.ts";
@@ -170,8 +170,17 @@ function exportEntry(store: MutationStore, incident: IncidentRow, followUps: Fol
             updatedAt: iso(postmortem.updatedAt),
             updatedBy: postmortem.updatedBy,
             aiDraft: postmortem.ai != null,
+            // In the postmortem's own order (its template's); `layout` names them, a built-in under its own name
+            // having a null title.
+            layout: (postmortem.layout ?? BUILTIN_LAYOUT).map((section) => ({
+              key: section.key,
+              title: section.title || null,
+            })),
             sections: Object.fromEntries(
-              POSTMORTEM_SECTIONS.map((key) => [key, postmortem.sections[key]]),
+              (postmortem.layout ?? BUILTIN_LAYOUT).map(({ key }) => [
+                key,
+                postmortem.sections[key] ?? "",
+              ]),
             ),
           }
         : null,

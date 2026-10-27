@@ -2739,7 +2739,52 @@
         "part=ai_refused_other": "Couldn't ask for a draft: {reason}",
         "part=chars": "{count} left",
         "part=read_only": "Only responders, admins and owners edit the postmortem.",
+        "part=template_changed": "The postmortem template for this incident changed while you were writing. Your text is still here: copy what you need, then load the new sections.",
+        "part=total": "{count} left in the whole postmortem",
         "part=*": "Postmortem"
+      }
+    }
+  ],
+  "postmortem_template_text": [
+    {
+      "declarations": ["input part", "input name", "input count"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Postmortem templates",
+        "part=note": "The sections a new postmortem starts with, per incident type. A postmortem keeps the sections it was made with: editing a template or changing an incident's type later leaves it as it is.",
+        "part=default_name": "Workspace default",
+        "part=default_note": "For incidents with no type, or a type without its own template.",
+        "part=builtin": "The seven built-in sections",
+        "part=uses_default": "Uses the workspace default",
+        "part=sections": "Sections: {name}",
+        "part=edit": "Edit template",
+        "part=edit_on": "Edit the postmortem template of {name}",
+        "part=form_title": "Postmortem template: {name}",
+        "part=custom": "Custom",
+        "part=custom_name": "Custom section {count}",
+        "part=field_title": "Title",
+        "part=field_title_builtin": "Leave empty to keep “{name}”.",
+        "part=field_title_invalid": "A custom section needs a title.",
+        "part=field_hint": "Hint",
+        "part=field_hint_note": "Shown to whoever writes the section, and given to the AI draft.",
+        "part=field_starter": "Starter text",
+        "part=field_starter_note": "A new postmortem's editor starts with it.",
+        "part=field_invalid": "Remove hidden characters, or write something visible.",
+        "part=add": "Add section",
+        "part=add_custom": "Custom section",
+        "part=limit": "A template holds every built-in section and up to three custom ones.",
+        "part=move_up": "Move {name} up",
+        "part=move_down": "Move {name} down",
+        "part=remove": "Remove {name}",
+        "part=preview": "Preview",
+        "part=preview_note": "What a new postmortem's editor shows.",
+        "part=save": "Save template",
+        "part=cancel": "Cancel",
+        "part=reset_type": "Use the workspace default",
+        "part=reset_default": "Use the built-in sections",
+        "part=reset_confirm": "Stop using this template? New postmortems take {name}. Postmortems already written keep their sections.",
+        "part=reset_confirm_action": "Stop using it",
+        "part=*": "Postmortem templates"
       }
     }
   ],

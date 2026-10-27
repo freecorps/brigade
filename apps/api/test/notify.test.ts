@@ -1446,6 +1446,7 @@ describe("paging a lost declaration again on its own", () => {
     const ws = await workspace();
     const phone = await ws.device(bia);
     const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    const lost = Date.now();
     await deadLetter(event);
     // Not at once: the delay is for whatever stopped it to pass. The alarm before it is due pages nothing.
     expect((await ws.events(incident)).map((e) => e.type)).not.toContain("incident.paged_again");
@@ -1455,7 +1456,8 @@ describe("paging a lost declaration again on its own", () => {
       sql.exec<{ at: number }>("select at from page_replays").toArray(),
     );
     expect(queued).toHaveLength(1);
-    expect(queued[0]!.at).toBeGreaterThanOrEqual(Date.now() + PAGE_REPLAY_DELAY_MS - 5000);
+    // From when it was dead-lettered: never a bound on how long the steps since took.
+    expect(queued[0]!.at).toBeGreaterThanOrEqual(lost + PAGE_REPLAY_DELAY_MS);
 
     await replay(ws);
     const again = (await ws.events(incident)).filter((e) => e.type === "incident.paged_again");

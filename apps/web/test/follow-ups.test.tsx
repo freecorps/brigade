@@ -323,6 +323,120 @@ describe("postmortem", () => {
   });
 });
 
+describe("postmortem templates", () => {
+  const template = [
+    {
+      key: "custom1",
+      title: "Customer comms",
+      hint: "What customers were told",
+      starter: "Email:",
+    },
+    { key: "summary", title: "", hint: "", starter: "" },
+  ] as const;
+
+  test("a new postmortem opens on its template: titles, hints and starter text, saved by key", async () => {
+    const view = await mount("/incidents/1");
+    const id = view.declare("Checkout down");
+    view.shard.store.insert("postmortem_templates", {
+      id: "default",
+      sections: template.map((one) => ({ ...one })),
+      updatedAt: T0,
+      updatedBy: "usr_dev",
+    });
+    await act(() => view.router.load());
+    await view.flush();
+    const postmortem = card("Postmortem")!;
+    await click(
+      $$("button", postmortem).find((button) => button.textContent === "Write postmortem"),
+    );
+    const labels = $$("label", postmortem).map((label) => label.textContent);
+    expect(labels).toEqual(["Customer comms", "Summary"]);
+    expect(postmortem.textContent).toContain("What customers were told");
+    const [comms] = $$("textarea", postmortem) as HTMLTextAreaElement[];
+    expect(comms!.value).toBe("Email:");
+    // Only the starter text: nothing to save.
+    await click($$("button", postmortem).find((button) => button.textContent === "Save"));
+    await view.flush();
+    expect(view.shard.store.get("postmortems", id)).toBeUndefined();
+    await click(
+      $$("button", postmortem).find((button) => button.textContent === "Write postmortem"),
+    );
+    await act(async () => setValue($$("textarea", postmortem)[1] as HTMLTextAreaElement, "Down."));
+    await click($$("button", postmortem).find((button) => button.textContent === "Save"));
+    await view.flush();
+    expect(view.shard.store.get("postmortems", id)).toMatchObject({
+      revision: 1,
+      layout: template,
+      sections: { custom1: "Email:", summary: "Down." },
+    });
+    // Read back in the template's order, under its titles.
+    const terms = $$("dt", card("Postmortem")!).map((term) => term.textContent);
+    expect(terms).toEqual(["Customer comms", "Summary"]);
+  });
+
+  test("an owner edits the default template: reorders, adds a custom section, sees the preview", async () => {
+    role = "owner";
+    const view = await mount("/");
+    await act(() => view.router.load());
+    await view.flush();
+    const edit = $('[aria-label="Edit the postmortem template of Workspace default"]');
+    expect(edit).toBeTruthy();
+    await click(edit!);
+    const editor = $$("form").find((one) =>
+      one.textContent?.includes("Postmortem template: Workspace default"),
+    )!;
+    expect(editor.textContent).toContain("Preview");
+    await click($('[aria-label="Move Summary down"]', editor)!);
+    await click($$("button", editor).find((button) => button.textContent === "Custom section"));
+    // A custom section needs a title: refused in the form, nothing sent.
+    await click($$("button", editor).find((button) => button.textContent === "Save"));
+    expect(editor.textContent).toContain("A custom section needs a title.");
+    const title = $<HTMLInputElement>('[data-section="custom1"] [data-field="title"]', editor)!;
+    await act(async () => setValue(title, "Customer comms"));
+    await click($$("button", editor).find((button) => button.textContent === "Save"));
+    await view.flush();
+    const saved = view.shard.store.get("postmortem_templates", "default");
+    expect(saved?.sections.map((one) => one.key)).toEqual([
+      "impact",
+      "summary",
+      "timeline",
+      "rootCause",
+      "wentWell",
+      "wentPoorly",
+      "followUps",
+      "custom1",
+    ]);
+    expect(saved?.sections.at(-1)).toMatchObject({ title: "Customer comms" });
+  });
+
+  test("a postmortem keeps its own sections when the template changes", async () => {
+    const view = await mount("/incidents/1");
+    const id = view.declare("Checkout down");
+    view.shard.store.insert("postmortems", {
+      id,
+      sections: { ...EMPTY_SECTIONS, summary: "Down." },
+      revision: 1,
+      ai: null,
+      draft: null,
+      createdAt: T0,
+      updatedAt: T0,
+      updatedBy: "usr_dev",
+    });
+    view.shard.store.insert("postmortem_templates", {
+      id: "default",
+      sections: template.map((one) => ({ ...one })),
+      updatedAt: T0,
+      updatedBy: "usr_dev",
+    });
+    await act(() => view.router.load());
+    await view.flush();
+    const terms = $$("dt", card("Postmortem")!).map((term) => term.textContent);
+    expect(terms).toHaveLength(7);
+    expect(terms[0]).toBe("Summary");
+    expect(terms).not.toContain("Customer comms");
+  });
+});
+
 describe("helpers", () => {
   test("dates are the reader's calendar days, never shifted by a zone", () => {
     expect(localDate(Date.UTC(2026, 9, 27, 2, 0), "America/Sao_Paulo")).toBe("2026-10-26");

@@ -80,6 +80,7 @@ import {
 } from "./webhooks.ts";
 import { followUpMutations, followUpQueries } from "./followups.ts";
 import {
+  allPostmortemTemplates,
   incidentPostmortem,
   postmortemMutations,
   postmortemServerMutations,
@@ -161,6 +162,7 @@ export const queries = defineRegistry([
   ...catalogQueries,
   ...followUpQueries,
   incidentPostmortem,
+  allPostmortemTemplates,
   recentExports,
   allAlertSources,
   allAlertRoutes,

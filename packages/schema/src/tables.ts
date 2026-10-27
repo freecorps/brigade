@@ -9,7 +9,7 @@ import type { IncidentStatus, Severity } from "./lifecycle.ts";
 import type { EmailAbout, EmailFailure, PageFailure } from "./notifications.ts";
 import type { FieldKind, ServiceTier } from "./catalog.ts";
 import type { FollowUpStatus } from "./followups.ts";
-import type { POSTMORTEM_DRAFT_FAILURES } from "./postmortems.ts";
+import type { POSTMORTEM_DRAFT_FAILURES, PostmortemSectionKey } from "./postmortems.ts";
 import type { EscalationTargetKind } from "./policies.ts";
 import type { RotationUnit } from "./schedules.ts";
 import type {
@@ -1010,15 +1010,30 @@ export type FollowUpRow = {
   updatedAt: number;
 };
 
-/** A postmortem's text, one plain-text section each (`POSTMORTEM_SECTIONS`); empty when unwritten. */
-export type PostmortemSections = {
-  summary: string;
-  impact: string;
-  timeline: string;
-  rootCause: string;
-  wentWell: string;
-  wentPoorly: string;
-  followUps: string;
+/**
+ * A postmortem's text by section key (`POSTMORTEM_SECTION_KEYS`): the keys of its layout, in any order; empty when
+ * unwritten. The built-in layout is the seven built-in sections.
+ */
+export type PostmortemSections = { [K in PostmortemSectionKey]?: string };
+
+/**
+ * One section of a postmortem template, and of the layout a postmortem took from it (RFC 0013 "Templates"): a
+ * built-in (`summary` … `followUps`) or a custom one (`custom1` …), its title (empty: a built-in under its own
+ * translated name), a hint for whoever writes it and for the AI draft, and the text a new postmortem starts with.
+ */
+export type PostmortemTemplateSection = {
+  key: PostmortemSectionKey;
+  title: string;
+  hint: string;
+  starter: string;
+};
+
+/** A postmortem template (RFC 0013 "Templates"): `default` for the workspace's, or an incident type's id. */
+export type PostmortemTemplateRow = {
+  id: string;
+  sections: PostmortemTemplateSection[];
+  updatedAt: number;
+  updatedBy: string;
 };
 
 export type PostmortemDraftFailure = (typeof POSTMORTEM_DRAFT_FAILURES)[number];
@@ -1038,6 +1053,11 @@ export type PostmortemDraft = {
 export type PostmortemRow = {
   id: string;
   sections: PostmortemSections;
+  /**
+   * The sections it has, in order: its template as it was when the row was made (later template edits and type
+   * changes leave it). Absent or null: the seven built-in sections, as every postmortem had before templates.
+   */
+  layout?: PostmortemTemplateSection[] | null;
   /** 1 on the first save, one more per save or draft; 0 while only a draft was asked for. */
   revision: number;
   /** The text is an AI draft no member saved since: the model, when, and who asked. Null otherwise. */
@@ -1280,6 +1300,7 @@ export type BrigadeTables = {
   follow_ups: FollowUpRow;
   follow_up_reminders: FollowUpReminderRow;
   postmortems: PostmortemRow;
+  postmortem_templates: PostmortemTemplateRow;
   ai_drafts: AiDraftRow;
   exports: ExportRow;
   export_ledger: ExportLedgerRow;
@@ -1331,6 +1352,7 @@ export const TABLES = {
   follow_ups: { serverOnly: false },
   follow_up_reminders: { serverOnly: true },
   postmortems: { serverOnly: false },
+  postmortem_templates: { serverOnly: false },
   ai_drafts: { serverOnly: true },
   exports: { serverOnly: false },
   export_ledger: { serverOnly: true },

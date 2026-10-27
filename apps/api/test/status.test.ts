@@ -86,9 +86,14 @@ async function addMember(workspaceId: string, userId: string, role: string) {
     .run();
 }
 
-/** Ana owns a workspace; Caio is a responder there, Eva an outsider. */
-async function team() {
-  const [ana, caio, eva] = await Promise.all(["Ana", "Caio", "Eva"].map((name) => signUp(name)));
+/**
+ * Ana owns a workspace; Caio is a responder there, Eva an outsider. `crew` casts people signed up earlier in those
+ * parts: signing up hashes passwords, the slowest part of a team.
+ */
+async function team(crew?: { ana: Person; caio: Person; eva: Person }) {
+  const [ana, caio, eva] = crew
+    ? [crew.ana, crew.caio, crew.eva]
+    : await Promise.all(["Ana", "Caio", "Eva"].map((name) => signUp(name)));
   const id = await workspace(ana!);
   await addMember(id, caio!.id, "responder");
   const stub = env.WORKSPACE.getByName(id);
@@ -185,6 +190,34 @@ function hangingFirstPut() {
   return { kv, puts: () => puts, settle: (ok: boolean) => release!(ok) };
 }
 
+/**
+ * Parks the shard's own publisher: its alarm, armed by configuring, would otherwise race a test's own publisher on
+ * the same storage (push the change first, or fail it once more and double the backoff). `unparkStatus` puts it back.
+ */
+const parkStatus = (t: Team) =>
+  runInDurableObject(t.stub, (instance: WorkspaceDO) => {
+    const real = Reflect.get(instance, "status") as StatusPublisher;
+    const parked = new Proxy(real, {
+      get: (target, key) => {
+        if (key === "publish") return () => Promise.resolve();
+        // Parked: it asks for no alarm either, or a dirty page would bring the alarm straight back each run.
+        if (key === "nextAt") return () => null;
+        const value: unknown = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    Reflect.set(instance, "status", parked);
+    Reflect.set(instance, "parkedStatus", real);
+  });
+
+/** Puts the shard's own publisher back to work, and answers it. */
+const unparkStatus = (t: Team) =>
+  runInDurableObject(t.stub, (instance: WorkspaceDO) => {
+    const real = Reflect.get(instance, "parkedStatus") as StatusPublisher;
+    Reflect.set(instance, "status", real);
+    return real;
+  });
+
 /** A publisher on the shard's own storage with `kv`, recording its logs and the alarm times it asks for. */
 function publisherWith(state: DurableObjectState, kv: KVNamespace, db: D1Database = env.DB) {
   const shard = new Shard(state.storage, {
@@ -250,7 +283,8 @@ describe("PUT /workspaces/:id/status-page", () => {
 
   test("a slug another workspace holds is taken", async () => {
     const a = await team();
-    const b = await team();
+    // Owned by Eva, an outsider of the first.
+    const b = await team({ ana: a.eva, caio: a.caio, eva: a.ana });
     const address = slug();
     expect((await configure(a, a.ana, settings(address))).status).toBe(200);
     const response = await configure(b, b.ana, settings(address));
@@ -351,7 +385,7 @@ describe("the snapshot", () => {
 
   test("a new slug deletes the old snapshot, and D1 releases the old slug only after the caches' grace", async () => {
     const t = await team();
-    const other = await team();
+    const other = await team({ ana: t.eva, caio: t.caio, eva: t.ana });
     const first = slug();
     const second = slug();
     await configure(t, t.ana, settings(first));
@@ -569,20 +603,8 @@ describe("the snapshot", () => {
   test("a failed push keeps the change pending and backs off", async () => {
     const t = await team();
     const address = slug();
-    // The shard's own publisher stays parked until the end: its alarm, armed by configuring, would otherwise race the
-    // failing push below (push the change first, or fail it once more and double the backoff).
-    await runInDurableObject(t.stub, (instance: WorkspaceDO) => {
-      const real = Reflect.get(instance, "status") as StatusPublisher;
-      const parked = new Proxy(real, {
-        get: (target, key) => {
-          if (key === "publish") return () => Promise.resolve();
-          const value: unknown = Reflect.get(target, key);
-          return typeof value === "function" ? value.bind(target) : value;
-        },
-      });
-      Reflect.set(instance, "status", parked);
-      Reflect.set(instance, "parkedStatus", real);
-    });
+    // The shard's own publisher stays parked until the end, so only the failing push below runs.
+    await parkStatus(t);
     await configure(t, t.ana, settings(address));
     const logs: string[] = [];
     await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {
@@ -614,17 +636,16 @@ describe("the snapshot", () => {
     });
     expect(logs).toContain("publishing the status page failed");
     // Past the backoff, the shard's own publisher, back at work, pushes it.
-    await runInDurableObject(t.stub, async (instance: WorkspaceDO) => {
-      const publisher = Reflect.get(instance, "parkedStatus") as StatusPublisher;
-      Reflect.set(instance, "status", publisher);
-      await publisher.publish(t.id, Date.now() + 120_000);
-    });
+    const publisher = await unparkStatus(t);
+    await runInDurableObject(t.stub, () => publisher.publish(t.id, Date.now() + 120_000));
     expect(await snapshot(address)).toMatchObject({ title: "Acme" });
   });
 
   test("a push hung on KV backs the alarm off, holds nothing else, and the page can still be configured", async () => {
     const t = await team();
     const address = slug();
+    // Only the hanging publisher below pushes: the shard's own, run by the alarm configuring arms, would push first.
+    await parkStatus(t);
     await configure(t, t.ana, settings(address));
     const logs: string[] = [];
     const result = await runInDurableObject(t.stub, async (instance: WorkspaceDO, state) => {
@@ -682,6 +703,8 @@ describe("the snapshot", () => {
   test("a push that hangs, then lands, brings the alarm back at once for a change made meanwhile", async () => {
     const t = await team();
     const address = slug();
+    // Only the hanging publisher below pushes: the shard's own, run by the alarm configuring arms, would push first.
+    await parkStatus(t);
     await configure(t, t.ana, settings(address));
     const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
     await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {
@@ -716,6 +739,7 @@ describe("the snapshot", () => {
     test(`a push hung past the ceiling is abandoned, and when it ${lands ? "lands late" : "fails"} the page is pushed again`, async () => {
       const t = await team();
       const address = slug();
+      await parkStatus(t);
       await configure(t, t.ana, settings(address));
       const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
       await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {
@@ -752,6 +776,8 @@ describe("the snapshot", () => {
     const first = slug();
     const second = slug();
     const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    // Only the publisher below releases `first`: the shard's own, run by the alarm configuring arms, would do it first.
+    await parkStatus(t);
     await configure(t, t.ana, settings(first));
     await configure(t, t.ana, settings(second));
     await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {

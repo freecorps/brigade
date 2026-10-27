@@ -279,6 +279,7 @@ export * from './paging_reason_relay_unreachable.js';
 export * from './paging_title.js';
 export * from './paging_unknown.js';
 export * from './paging_unreachable.js';
+export * from './postmortem_template_text.js';
 export * from './postmortem_text.js';
 export * from './push_ack_already.js';
 export * from './push_ack_done.js';

@@ -46,6 +46,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "ai_refused_other" | "Couldn't ask for a draft: {reason}" |
 * | "chars" | "{count} left" |
 * | "read_only" | "Only responders, admins and owners edit the postmortem." |
+* | "template_changed" | "The postmortem template for this incident changed while you were writing. Your text is still here: copy what you need, then load the new sections." |
+* | "total" | "{count} left in the whole postmortem" |
 * | * | "Postmortem" |
 *
 * @param {Postmortem_TextInputs} inputs
@@ -91,6 +93,8 @@ export const postmortem_text = /** @type {((inputs: Postmortem_TextInputs, optio
 		if (i?.part === "ai_refused_other") return /** @type {LocalizedString} */ (`Não foi possível pedir um rascunho: ${i?.reason}`);
 		if (i?.part === "chars") return /** @type {LocalizedString} */ (`Restam: ${i?.count}`);
 		if (i?.part === "read_only") return /** @type {LocalizedString} */ (`Só responders, admins e owners editam o postmortem.`);
+		if (i?.part === "template_changed") return /** @type {LocalizedString} */ (`O modelo de postmortem deste incidente mudou enquanto você escrevia. Seu texto continua aqui: copie o que precisar e carregue as novas seções.`);
+		if (i?.part === "total") return /** @type {LocalizedString} */ (`${i?.count} restantes no postmortem inteiro`);
 		return /** @type {LocalizedString} */ (`Postmortem`)
 	}
 	{
@@ -130,6 +134,8 @@ export const postmortem_text = /** @type {((inputs: Postmortem_TextInputs, optio
 		if (i?.part === "ai_refused_other") return /** @type {LocalizedString} */ (`Couldn't ask for a draft: ${i?.reason}`);
 		if (i?.part === "chars") return /** @type {LocalizedString} */ (`${i?.count} left`);
 		if (i?.part === "read_only") return /** @type {LocalizedString} */ (`Only responders, admins and owners edit the postmortem.`);
+		if (i?.part === "template_changed") return /** @type {LocalizedString} */ (`The postmortem template for this incident changed while you were writing. Your text is still here: copy what you need, then load the new sections.`);
+		if (i?.part === "total") return /** @type {LocalizedString} */ (`${i?.count} left in the whole postmortem`);
 		return /** @type {LocalizedString} */ (`Postmortem`)
 	}
 });

@@ -14,10 +14,10 @@
   instance in the same colo, so a colo change, never a new instance, means a probe moved.
 - Each `ProbeDO` uses `alarm()` to run its monitors on schedule (min interval: 30s).
 - **Built (first slice):** `ProbeDO` is named `<workspace>:<region>` and created with that hint. Monitors offer only
-  the regions where objects spawn in-region in S2's first samples: `wnam`, `enam`, `weur`, `eeur`, `apac`, `oc`
+  the regions where objects spawn in-region (S2, over 48 hours): `wnam`, `enam`, `weur`, `eeur`, `apac`, `oc`
   (`PROBE_REGIONS` in `packages/schema`); `sam`, `afr` and `me` are not offered until Cloudflare places objects
   there. Every result carries the colo the probe really ran from (`/cdn-cgi/trace`, fetched once per alarm run), and
-  the dashboard shows it next to the region. S2's 48-hour result confirmed this list; `apac-ne` (Osaka) and
+  the dashboard shows it next to the region. `apac-ne` (Osaka) and
   `apac-se` (Singapore) also place in-region and are candidates for later regions.
 - **The alarm chain never ends on a failure:** every alarm sets the next one before doing anything else (as S2's
   probe did); the workspace shard re-pushes each region's checks every 10 minutes, and at once when an active

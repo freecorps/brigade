@@ -526,11 +526,13 @@ describe("alerts that page", () => {
     await ws.withShard((shard, sql) => {
       expect(pages(sql)).toHaveLength(3);
       expect(
-        shard.store.scan("incidents").some(
-          (incident) =>
-            incident.title === "This alert was triggered for zone us-1" &&
-            incident.severity === "sev1",
-        ),
+        shard.store
+          .scan("incidents")
+          .some(
+            (incident) =>
+              incident.title === "This alert was triggered for zone us-1" &&
+              incident.severity === "sev1",
+          ),
       ).toBe(true);
     });
   });

@@ -323,8 +323,8 @@ results (a new monitor is up on its first success).
   5. **Tests.** Today's monitor tests unchanged under the default; one per action; a routed declare that fails
      paging through the default; a quiet monitor alert paged once its route is deleted; a service named by a route
      paging a monitor's incident.
-  The service's policy already pages (RFC 0006 "Who is paged"); monitors' incidents name no services until routes
-  give them some.
+     The service's policy already pages (RFC 0006 "Who is paged"); monitors' incidents name no services until routes
+     give them some.
 
 ## Watching the watcher
 

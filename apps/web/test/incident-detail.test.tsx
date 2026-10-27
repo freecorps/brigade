@@ -383,7 +383,10 @@ test("my own update: edit in place with an edited marker, remove after asking; o
   const row = view.shard.store
     .scan("timeline")
     .find((entry) => entry.kind === "update" && entry.actor === "usr_dev");
-  expect(row).toMatchObject({ body: "Rolled back", edited: { count: 1, previous: "Rolling back" } });
+  expect(row).toMatchObject({
+    body: "Rolled back",
+    edited: { count: 1, previous: "Rolling back" },
+  });
 
   await click(buttons("Remove")[0]);
   expect(timeline().textContent).toContain("Remove this update?");

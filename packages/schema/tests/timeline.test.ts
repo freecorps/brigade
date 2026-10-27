@@ -536,7 +536,11 @@ describe("editing and removing written updates", () => {
         {
           type: "incident.update_edited",
           subject: ID,
-          data: { entryId: ENTRY, body: "Rolled back. Errors are down.", previous: "Rolling back." },
+          data: {
+            entryId: ENTRY,
+            body: "Rolled back. Errors are down.",
+            previous: "Rolling back.",
+          },
         },
       ],
     });
@@ -558,9 +562,7 @@ describe("editing and removing written updates", () => {
     expect(run(store, "incident.editUpdate", args, ctx("admin", T, true, "usr_bia"))).toMatchObject(
       { ok: false, error: { code: "forbidden" } },
     );
-    expect(
-      run(store, "incident.editUpdate", { ...args, body: "Rolling back." }).ok,
-    ).toBe(false);
+    expect(run(store, "incident.editUpdate", { ...args, body: "Rolling back." }).ok).toBe(false);
     expect(run(store, "incident.editUpdate", { ...args, entryId: `${ID}:9` })).toMatchObject({
       ok: false,
       error: { code: "not_found" },

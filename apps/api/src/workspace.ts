@@ -671,8 +671,10 @@ export class WorkspaceDO extends DurableObject<Env> {
       const parts: Uint8Array[] = [];
       let bytes = 0;
       let sinceYield = 0;
-      for (const chunk of plan.chunks) {
-        const part = encoder.encode(chunk);
+      let yielded = false;
+      for (let next = plan.chunks.next(); !next.done; next = plan.chunks.next(yielded)) {
+        yielded = false;
+        const part = encoder.encode(next.value);
         bytes += part.byteLength;
         if (bytes > MAX_EXPORT_BYTES) return { ok: false, code: "too_large" };
         parts.push(part);
@@ -680,6 +682,7 @@ export class WorkspaceDO extends DurableObject<Env> {
         if (sinceYield >= EXPORT_YIELD_BYTES) {
           sinceYield = 0;
           await new Promise((resolve) => setTimeout(resolve, 0));
+          yielded = true;
         }
       }
       return { ok: true, id, parts, bytes, incidents: plan.incidents };

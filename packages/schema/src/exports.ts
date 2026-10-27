@@ -191,21 +191,24 @@ export function exportChunks(
   scope: ExportScope,
   now: number,
 ):
-  | { ok: true; chunks: Iterable<string>; incidents: number }
+  | { ok: true; chunks: Generator<string, void, boolean | undefined>; incidents: number }
   | { ok: false; code: "not_found" | "limit_reached" } {
   const incidents = exportIncidents(store, scope);
   if (!incidents) return { ok: false, code: "not_found" };
   if (incidents.length > MAX_EXPORT_INCIDENTS) return { ok: false, code: "limit_reached" };
   const head = JSON.stringify(exportHead(store, scope, now));
-  function* chunks(): Generator<string> {
+  // `next(true)` tells it the caller let other work run since the last chunk, so what it holds may be stale.
+  function* chunks(): Generator<string, void, boolean | undefined> {
     // The head is an object: its closing brace makes room for the incidents.
-    yield `${head.slice(0, -1)},"incidents":[`;
-    const followUps = store.scan("follow_ups");
+    let resumed = yield `${head.slice(0, -1)},"incidents":[`;
+    let followUps = store.scan("follow_ups");
     for (const [index, incident] of incidents!.entries()) {
       // Read again as it is reached: the build yields between incidents, so each entry is the incident as it is now,
-      // with the timeline it has now. The file is consistent per incident, not one snapshot of the workspace.
+      // with the timeline and follow-ups it has now. The file is consistent per incident, not one snapshot.
+      if (resumed) followUps = store.scan("follow_ups");
       const current = store.get("incidents", incident.id) ?? incident;
-      yield `${index > 0 ? "," : ""}${JSON.stringify(exportEntry(store, current, followUps))}`;
+      resumed =
+        yield `${index > 0 ? "," : ""}${JSON.stringify(exportEntry(store, current, followUps))}`;
     }
     yield "]}";
   }

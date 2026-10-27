@@ -544,6 +544,22 @@ describe("exports", () => {
     });
   });
 
+  test("after the shard let other work run, the next incident's follow-ups are read again", () => {
+    const store = shard();
+    run(store, "incident.declare", { id: INC2, title: "Search slow" });
+    const scope = { kind: "range", from: "2026-10-26", to: "2026-10-26" } as const;
+    const chunked = exportChunks(store, scope, T);
+    if (!chunked.ok) throw new Error("Expected chunks");
+    chunked.chunks.next(); // the head
+    const first = JSON.parse(chunked.chunks.next().value as string) as { incident: { id: string } };
+    const second = first.incident.id === INC ? INC2 : INC;
+    // Added while the build waited: the caller says so with `next(true)`.
+    run(store, "followUp.create", followUp({ incidentId: second }));
+    const next = chunked.chunks.next(true).value as string;
+    const entry = JSON.parse(next.slice(1)) as { followUps: unknown[] };
+    expect(entry.followUps).toHaveLength(1);
+  });
+
   test("the chunks the shard writes join into the same file", () => {
     const store = shard();
     run(store, "incident.declare", { id: INC2, title: "Search slow" });

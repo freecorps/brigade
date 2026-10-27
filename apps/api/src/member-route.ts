@@ -20,7 +20,7 @@ export function json(body: unknown, status = 200, headers?: HeadersInit): Respon
  */
 export async function checkMember(
   request: Request,
-  env: Env,
+  env: Omit<Env, "AI">,
   lazyAuth: () => Auth,
   workspaceId: string,
   methods: readonly string[],

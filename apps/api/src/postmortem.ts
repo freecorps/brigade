@@ -363,7 +363,7 @@ const REQUEST_STATUS: Record<string, number> = {
  */
 export async function requestDraftRoute(
   request: Request,
-  env: Env & AiEnv,
+  env: Omit<Env, "AI"> & AiEnv,
   ctx: Pick<ExecutionContext, "waitUntil">,
   lazyAuth: () => Auth,
   workspaceId: string,

@@ -63,6 +63,7 @@ describe("workspace.create", () => {
       "postmortem.writeDraft",
       "postmortem.failDraft",
       "export.record",
+      "export.reserve",
     ]);
     const result = runMutation(
       mutations,

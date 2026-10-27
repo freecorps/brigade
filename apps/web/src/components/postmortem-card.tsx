@@ -45,8 +45,10 @@ function refusalText(code: string): string {
 
 /**
  * The incident's postmortem (RFC 0013): seven plain-text sections, read here and edited in place by responders and
- * up. A save names the revision its editor opened; when someone else saved since, it is refused and the editor keeps
- * the text, so nothing is lost and nothing is overwritten unseen. With Workers AI set up, "Draft with AI" asks for a
+ * up. A save names the revision its editor opened, as the server confirmed it (its number and `updatedAt`); when
+ * someone else saved since, it is refused and the editor keeps the text, so nothing is lost and nothing is overwritten
+ * unseen. An editor never opens on a row holding an unconfirmed change, and saves one at a time: a base is never this
+ * client's own optimistic revision. With Workers AI set up, "Draft with AI" asks for a
  * first draft while the document is empty (or still an unreviewed AI draft); it arrives through sync, marked as an AI
  * draft until a member saves it.
  */
@@ -60,9 +62,8 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
   const save = useMutation("postmortem.save");
   const row: PostmortemRow | undefined = query.rows[0];
   const now = useNow(5_000);
-  const [editing, setEditing] = useState<{ base: number; sections: PostmortemSections } | null>(
-    null,
-  );
+  const [editing, setEditing] = useState<{ base: Base; sections: PostmortemSections } | null>(null);
+  const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
@@ -70,18 +71,25 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
   const blank = isBlankPostmortem(row);
   const who = people(member.userId, members.rows);
 
+  // Whether `row` is the server's: not while it holds a change the server has not answered yet.
+  const confirmed = !query.pending;
+  const open = () => {
+    if (!confirmed) return;
+    setEditing({ base: baseOf(row), sections: { ...(row?.sections ?? EMPTY_SECTIONS) } });
+  };
   const startEditing = () => {
     setConflict(false);
     setRefused(null);
-    setEditing({ base: row?.revision ?? 0, sections: { ...(row?.sections ?? EMPTY_SECTIONS) } });
+    open();
   };
   const onSave = (sections: PostmortemSections) => {
-    if (!editing) return;
+    if (!editing || saving) return;
     setRefused(null);
     const unchanged =
       row !== undefined &&
       row.ai === null &&
-      row.revision === editing.base &&
+      row.revision === editing.base.revision &&
+      row.updatedAt === editing.base.updatedAt &&
       POSTMORTEM_SECTIONS.every((key) => row.sections[key] === sections[key].trim());
     if (
       unchanged ||
@@ -90,7 +98,14 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
       setEditing(null);
       return;
     }
-    void save({ id: incident.id, sections, baseRevision: editing.base }).then((outcome) => {
+    setSaving(true);
+    void save({
+      id: incident.id,
+      sections,
+      baseRevision: editing.base.revision,
+      baseUpdatedAt: editing.base.updatedAt,
+    }).then((outcome) => {
+      setSaving(false);
       if (outcome.ok) {
         setEditing(null);
         setConflict(false);
@@ -142,7 +157,11 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
                 </Button>
               ) : null}
               {!running ? (
-                <Button variant={blank ? "default" : "outline"} onClick={startEditing}>
+                <Button
+                  variant={blank ? "default" : "outline"}
+                  onClick={startEditing}
+                  disabled={!confirmed}
+                >
                   {blank ? <FileTextIcon aria-hidden /> : <PencilIcon aria-hidden />}
                   {postmortemText(blank ? "start" : "edit")}
                 </Button>
@@ -187,19 +206,18 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
           <Editor
             initial={editing.sections}
             conflict={conflict}
+            saving={saving}
+            canReload={confirmed}
             onReload={() => {
               setConflict(false);
-              setEditing({
-                base: row?.revision ?? 0,
-                sections: { ...(row?.sections ?? EMPTY_SECTIONS) },
-              });
+              open();
             }}
             onCancel={() => {
               setEditing(null);
               setConflict(false);
             }}
             onSave={onSave}
-            key={`${editing.base}`}
+            key={`${editing.base.revision}:${editing.base.updatedAt}`}
           />
         ) : blank ? (
           <p className="text-muted-foreground">
@@ -239,15 +257,26 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
   );
 }
 
+/** What a save is written over: a confirmed revision and when the server wrote it (0 and 0: none yet). */
+type Base = { revision: number; updatedAt: number };
+const baseOf = (row: PostmortemRow | undefined): Base =>
+  row && row.revision > 0
+    ? { revision: row.revision, updatedAt: row.updatedAt }
+    : { revision: 0, updatedAt: 0 };
+
 function Editor({
   initial,
   conflict,
+  saving,
+  canReload,
   onReload,
   onCancel,
   onSave,
 }: {
   initial: PostmortemSections;
   conflict: boolean;
+  saving: boolean;
+  canReload: boolean;
   onReload: () => void;
   onCancel: () => void;
   onSave: (sections: PostmortemSections) => void;
@@ -266,7 +295,7 @@ function Editor({
             <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
             {postmortemText("conflict")}
           </p>
-          <Button type="button" variant="outline" onClick={onReload}>
+          <Button type="button" variant="outline" onClick={onReload} disabled={!canReload}>
             {postmortemText("reload")}
           </Button>
         </div>
@@ -307,7 +336,12 @@ function Editor({
         );
       })}
       <div className="flex flex-wrap gap-2">
-        <Button type="submit">{postmortemText("save")}</Button>
+        <Button type="submit" disabled={saving}>
+          {saving ? (
+            <LoaderCircleIcon aria-hidden className="animate-spin motion-reduce:animate-none" />
+          ) : null}
+          {postmortemText("save")}
+        </Button>
         <Button type="button" variant="ghost" onClick={onCancel}>
           {postmortemText("cancel")}
         </Button>

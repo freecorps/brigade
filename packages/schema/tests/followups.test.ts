@@ -6,12 +6,16 @@ import {
   AI_DRAFT_STALE_MS,
   AI_DRAFTS_PER_DAY,
   buildExport,
+  exportChunks,
+  EXPORTS_PER_HOUR,
+  EXPORT_WINDOW_MS,
   createMemoryStore,
   EMPTY_SECTIONS,
   EXPORT_TTL_MS,
   isDueDate,
   isOverdue,
   MAX_FOLLOW_UPS_PER_INCIDENT,
+  MAX_OPEN_FOLLOW_UPS,
   MAX_LISTED_EXPORTS,
   MEMBERS_ACTOR,
   mutations,
@@ -163,6 +167,37 @@ describe("follow-ups", () => {
     });
   });
 
+  test(`at most ${MAX_OPEN_FOLLOW_UPS} open per workspace, on create and on reopen`, () => {
+    const store = shard();
+    const perIncident = MAX_FOLLOW_UPS_PER_INCIDENT;
+    const incidents = Array.from(
+      { length: MAX_OPEN_FOLLOW_UPS / perIncident + 1 },
+      (_, index) => `inc_01JG${String(index).padStart(22, "0")}`,
+    );
+    for (const id of incidents) run(store, "incident.declare", { id, title: "Load test" });
+    const fup = (index: number) => `fup_01JG${String(index).padStart(22, "0")}`;
+    for (let index = 0; index < MAX_OPEN_FOLLOW_UPS; index++) {
+      const incidentId = incidents[Math.floor(index / perIncident)]!;
+      expect(run(store, "followUp.create", followUp({ id: fup(index), incidentId }))).toMatchObject(
+        { ok: true },
+      );
+    }
+    const last = incidents.at(-1)!;
+    const extra = followUp({ id: fup(MAX_OPEN_FOLLOW_UPS), incidentId: last });
+    expect(run(store, "followUp.create", extra)).toMatchObject({
+      ok: false,
+      error: { code: "limit_reached" },
+    });
+    // Done ones leave room; reopening one counts again.
+    run(store, "followUp.setStatus", { id: fup(0), status: "done" });
+    expect(run(store, "followUp.create", extra)).toMatchObject({ ok: true });
+    expect(run(store, "followUp.setStatus", { id: fup(0), status: "open" })).toMatchObject({
+      ok: false,
+      error: { code: "limit_reached" },
+    });
+    expect(store.get("follow_ups", fup(0))!.status).toBe("done");
+  });
+
   test("an owner who leaves is taken off open follow-ups, not done ones", () => {
     const store = shard();
     run(store, "followUp.create", followUp());
@@ -208,23 +243,81 @@ describe("postmortems", () => {
   test("saves over the revision it opened, and refuses a stale one", () => {
     const store = shard();
     expect(
-      run(store, "postmortem.save", { id: INC, sections: sections(), baseRevision: 0 }, responder),
+      run(
+        store,
+        "postmortem.save",
+        { id: INC, sections: sections(), baseRevision: 0, baseUpdatedAt: 0 },
+        responder,
+      ),
     ).toMatchObject({ ok: true, events: [{ type: "postmortem.saved", data: { revision: 1 } }] });
     // Someone else saved over revision 1 meanwhile.
     run(store, "postmortem.save", {
       id: INC,
       sections: sections({ impact: "All card payments." }),
       baseRevision: 1,
+      baseUpdatedAt: T,
     });
     expect(
-      run(store, "postmortem.save", { id: INC, sections: sections(), baseRevision: 1 }, responder),
+      run(
+        store,
+        "postmortem.save",
+        { id: INC, sections: sections(), baseRevision: 1, baseUpdatedAt: T },
+        responder,
+      ),
     ).toMatchObject({ ok: false, error: { code: "conflict" } });
     expect(store.get("postmortems", INC)).toMatchObject({ revision: 2, updatedBy: "usr_ana" });
     // Only the first save is a timeline entry.
     expect(timelineKinds(store)).toEqual(["started"]);
     expect(
-      run(store, "postmortem.save", { id: INC, sections: sections(), baseRevision: 0 }, viewer),
+      run(
+        store,
+        "postmortem.save",
+        { id: INC, sections: sections(), baseRevision: 0, baseUpdatedAt: 0 },
+        viewer,
+      ),
     ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+  });
+
+  test("a save queued behind a refused one still conflicts: the base is what the server confirmed", () => {
+    const store = shard();
+    const save = (patch: Record<string, unknown>, context: MutationContext) =>
+      run(store, "postmortem.save", { id: INC, sections: sections(), ...patch }, context);
+    save({ baseRevision: 0, baseUpdatedAt: 0 }, owner);
+    // A opens revision 1.
+    const opened = store.get("postmortems", INC)!;
+    expect(opened.revision).toBe(1);
+    const base = { baseRevision: opened.revision, baseUpdatedAt: opened.updatedAt };
+    // B saves revision 2.
+    expect(
+      save(
+        { ...base, sections: sections({ impact: "B's text" }) },
+        ctx("usr_caio", "responder", T + 1000),
+      ),
+    ).toMatchObject({ ok: true });
+    // A saves over revision 1: refused.
+    const a = ctx("usr_ana", "owner", T + 2000);
+    expect(save({ ...base, sections: sections({ impact: "A's text" }) }, a)).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    // A edits again and saves: with the same base, or with the revision A's own optimistic save showed (2, stamped
+    // with A's clock), it still conflicts.
+    expect(save({ ...base, sections: sections({ impact: "A's text, again" }) }, a)).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(
+      save({ baseRevision: 2, baseUpdatedAt: T + 2000, sections: sections({ impact: "A" }) }, a),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(store.get("postmortems", INC)).toMatchObject({
+      revision: 2,
+      updatedBy: "usr_caio",
+      sections: { impact: "B's text" },
+    });
+    // Loading B's version gives a base that saves.
+    expect(
+      save({ baseRevision: 2, baseUpdatedAt: T + 1000, sections: sections({ impact: "A" }) }, a),
+    ).toMatchObject({ ok: true });
   });
 
   test("events never carry the text", () => {
@@ -233,6 +326,7 @@ describe("postmortems", () => {
       id: INC,
       sections: sections(),
       baseRevision: 0,
+      baseUpdatedAt: 0,
     });
     expect(JSON.stringify(result)).not.toContain("Checkout failed");
   });
@@ -244,6 +338,7 @@ describe("postmortems", () => {
         id: INC,
         sections: sections({ rootCause: "x".repeat(3001) }),
         baseRevision: 0,
+        baseUpdatedAt: 0,
       }),
     ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
   });
@@ -283,7 +378,12 @@ describe("postmortems", () => {
       status: "failed",
       reason: "timeout",
     });
-    run(store, "postmortem.save", { id: INC, sections: sections(), baseRevision: 1 }, responder);
+    run(
+      store,
+      "postmortem.save",
+      { id: INC, sections: sections(), baseRevision: 1, baseUpdatedAt: T },
+      responder,
+    );
     expect(store.get("postmortems", INC)!.ai).toBeNull();
     // Never over a member's own text.
     expect(
@@ -300,7 +400,12 @@ describe("postmortems", () => {
   test("a member's save while the draft runs wins: the draft fails as edited", () => {
     const store = shard();
     server(store, "postmortem.requestDraft", { id: INC, requestId: DRF }, responder);
-    run(store, "postmortem.save", { id: INC, sections: sections(), baseRevision: 0 });
+    run(store, "postmortem.save", {
+      id: INC,
+      sections: sections(),
+      baseRevision: 0,
+      baseUpdatedAt: 0,
+    });
     expect(
       server(
         store,
@@ -335,6 +440,28 @@ describe("postmortems", () => {
         ai(),
       ),
     ).toMatchObject({ ok: false, error: { code: "conflict" } });
+  });
+
+  test("a draft that went stale refuses its late result", () => {
+    const store = shard();
+    server(store, "postmortem.requestDraft", { id: INC, requestId: DRF }, responder);
+    expect(
+      server(
+        store,
+        "postmortem.writeDraft",
+        { id: INC, requestId: DRF, sections: sections({ summary: "Late" }), model: "m" },
+        ai(T + AI_DRAFT_STALE_MS),
+      ),
+    ).toMatchObject({
+      ok: true,
+      events: [{ type: "postmortem.draft_failed", data: { reason: "timeout" } }],
+    });
+    expect(store.get("postmortems", INC)).toMatchObject({
+      revision: 0,
+      ai: null,
+      sections: EMPTY_SECTIONS,
+      draft: { status: "failed", reason: "timeout" },
+    });
   });
 
   test(`at most ${AI_DRAFTS_PER_DAY} drafts a day per workspace`, () => {
@@ -382,7 +509,12 @@ describe("exports", () => {
     const store = shard();
     run(store, "incident.postUpdate", { id: INC, body: "Rolled back the gateway." });
     run(store, "followUp.create", followUp());
-    run(store, "postmortem.save", { id: INC, sections: sections(), baseRevision: 0 });
+    run(store, "postmortem.save", {
+      id: INC,
+      sections: sections(),
+      baseRevision: 0,
+      baseUpdatedAt: 0,
+    });
     const built = buildExport(store, { kind: "incident", incidentId: INC }, T);
     expect(built.ok).toBe(true);
     const file = (built as { file: Record<string, any> }).file;
@@ -410,6 +542,52 @@ describe("exports", () => {
       ok: false,
       code: "not_found",
     });
+  });
+
+  test("the chunks the shard writes join into the same file", () => {
+    const store = shard();
+    run(store, "incident.declare", { id: INC2, title: "Search slow" });
+    run(store, "incident.postUpdate", { id: INC, body: "Rolled back the gateway." });
+    run(store, "followUp.create", followUp());
+    const scope = { kind: "range", from: "2026-10-26", to: "2026-10-26" } as const;
+    const chunked = exportChunks(store, scope, T);
+    const built = buildExport(store, scope, T);
+    expect(chunked).toMatchObject({ ok: true, incidents: 2 });
+    const text = [...(chunked as { chunks: Iterable<string> }).chunks].join("");
+    expect(text).toBe(JSON.stringify((built as { file: unknown }).file));
+    const none = exportChunks(store, { kind: "range", from: "2026-10-27", to: "2026-10-27" }, T);
+    const empty = JSON.parse([...(none as { chunks: Iterable<string> }).chunks].join("")) as {
+      incidents: unknown[];
+    };
+    expect(empty.incidents).toEqual([]);
+  });
+
+  test(`at most ${EXPORTS_PER_HOUR} exports an hour per workspace, server only`, () => {
+    const store = shard();
+    const id = (index: number) => `exp_01JH${String(index).padStart(22, "0")}`;
+    for (let index = 0; index < EXPORTS_PER_HOUR; index++) {
+      expect(
+        server(store, "export.reserve", { id: id(index) }, ctx("usr_ana", "owner", T + index)),
+      ).toMatchObject({ ok: true, events: [] });
+    }
+    expect(server(store, "export.reserve", { id: id(99) })).toMatchObject({
+      ok: false,
+      error: { code: "limit_reached" },
+    });
+    expect(server(store, "export.reserve", { id: id(99) }, responder)).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
+    expect(
+      server(
+        store,
+        "export.reserve",
+        { id: id(99) },
+        ctx("usr_ana", "owner", T + EXPORT_WINDOW_MS),
+      ),
+    ).toMatchObject({ ok: true });
+    expect(store.scan("export_ledger")).toHaveLength(EXPORTS_PER_HOUR);
+    expect(Object.keys(mutations)).not.toContain("export.reserve");
   });
 
   test("owners and admins record exports; the list drops expired and old ones", () => {

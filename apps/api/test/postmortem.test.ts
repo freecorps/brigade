@@ -2,15 +2,25 @@
 // address or a device), the draft written through a mutation off the request path, and export files that only owners
 // and admins write and read back, which expire.
 import { env, exports } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
-import { EXPORT_TTL_MS, newId, type Actor } from "@freecorps/brigade-schema";
-import { describe, expect, test } from "vite-plus/test";
+import { createScheduledController, runInDurableObject } from "cloudflare:test";
+import {
+  createMemoryStore,
+  EXPORT_TTL_MS,
+  EXPORTS_PER_HOUR,
+  MAX_EXPORT_BYTES,
+  newId,
+  type Actor,
+  type BrigadeTables,
+  type TimelineRow,
+} from "@freecorps/brigade-schema";
+import { describe, expect, test, vi } from "vite-plus/test";
 import { exportKey, sweepExports } from "../src/exports.ts";
-import { workerAuth } from "../src/index.ts";
+import worker, { workerAuth } from "../src/index.ts";
 import { Shard } from "../src/shard.ts";
 import {
   cleanSection,
   draftSource,
+  MAX_SOURCE_CHARS,
   parseDraft,
   requestDraftRoute,
   type AiBinding,
@@ -222,15 +232,93 @@ describe("drafting a postmortem with Workers AI", () => {
   });
 
   test("the model's text is cleaned of hidden characters and cut to the cap", () => {
-    expect(cleanSection(`Line one\r\nLine​ two${String.fromCharCode(0x202e)}`)).toBe(
-      "Line one\nLine two",
-    );
+    expect(
+      cleanSection(
+        `Line one\r\nLine${String.fromCharCode(0x200b)} two${String.fromCharCode(0x202e)}`,
+      ),
+    ).toBe("Line one\nLine two");
     expect(cleanSection("x".repeat(5000))).toHaveLength(2999);
     expect(parseDraft({ response: "```json\n" + JSON.stringify(answer) + "\n```" })).toMatchObject({
       summary: answer.summary,
     });
     expect(parseDraft({ response: answer })).toMatchObject({ impact: answer.impact });
     expect(parseDraft({ response: "{}" })).toBeUndefined();
+  });
+
+  test("a timeline of 10,000 entries is cut to fit in linear time", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const at = Date.UTC(2026, 9, 26, 12);
+    const entries = 10_000;
+    store.insert("incidents", {
+      id: INC,
+      number: 1,
+      title: "Checkout down",
+      severity: "sev1",
+      status: "investigating",
+      declaredAt: at,
+      updatedAt: at,
+      timelineSeq: entries,
+    } as BrigadeTables["incidents"]);
+    for (let seq = 1; seq <= entries; seq++) {
+      store.insert("timeline", {
+        id: `${INC}:${seq}`,
+        incidentId: INC,
+        seq,
+        at: at + seq * 1000,
+        actor: "sys_monitors",
+        kind: "update",
+        body: `Update number ${seq}: ${"still looking into it. ".repeat(4)}`,
+      } as TimelineRow);
+    }
+    const stringify = vi.spyOn(JSON, "stringify");
+    const started = performance.now();
+    const source = draftSource(store, INC, "en")!;
+    const elapsed = performance.now() - started;
+    // The whole source is measured once (plus once for the room it leaves), not once per entry dropped.
+    const wholes = stringify.mock.calls.filter(
+      ([value]) => typeof value === "object" && value !== null && "omitted" in value,
+    ).length;
+    stringify.mockRestore();
+    expect(elapsed).toBeLessThan(50);
+    expect(wholes).toBeLessThanOrEqual(2);
+    expect(JSON.stringify(source).length).toBeLessThanOrEqual(MAX_SOURCE_CHARS);
+    // The start, then the end, the middle left out.
+    expect(source.timeline[0]!.what).toContain("Update number 1:");
+    expect(source.timeline[9]!.what).toContain("Update number 10:");
+    expect(source.timeline[10]!.what).not.toContain("Update number 11:");
+    expect(source.timeline.at(-1)!.what).toContain(`Update number ${entries}:`);
+    expect(source.omitted + source.timeline.length).toBe(entries);
+  });
+
+  test("an incident the shard does not have leaves no pending draft and uses no slot", async () => {
+    const t = await team();
+    const ai: AiBinding = { run: async () => ({ response: JSON.stringify(answer) }) };
+    const waits: Promise<unknown>[] = [];
+    const missing = "inc_01JB0000000000000000000009";
+    const request = new Request(
+      `${ORIGIN}/workspaces/${t.id}/incidents/${missing}/postmortem/draft`,
+      {
+        method: "POST",
+        headers: { Origin: ORIGIN, Cookie: t.caio.cookie, "Content-Type": "application/json" },
+        body: "{}",
+      },
+    );
+    const ctx = { waitUntil: (promise: Promise<unknown>) => void waits.push(promise) };
+    const response = await requestDraftRoute(
+      request,
+      { ...env, AI: ai },
+      ctx,
+      () => workerAuth(env, ctx, request),
+      t.id,
+      missing,
+    );
+    expect(response.status).toBe(404);
+    expect(waits).toHaveLength(0);
+    const left = await t.withShard((shard) => ({
+      postmortems: shard.store.scan("postmortems"),
+      ledger: shard.store.scan("ai_drafts"),
+    }));
+    expect(left).toEqual({ postmortems: [], ledger: [] });
   });
 
   test("entries about pages and emails never reach the model", async () => {
@@ -311,6 +399,79 @@ describe("exports", () => {
     expect(other.status).toBe(404);
   });
 
+  test("an export made in another workspace is not found through this one's route", async () => {
+    const a = await team();
+    const b = await team();
+    const created = await create(b, b.ana, { kind: "incident", incidentId: INC });
+    expect(created.status).toBe(201);
+    const { id } = (await created.json()) as { id: string };
+    // B's owner reads it through B; A's owner gets a 404 through A, even knowing the id.
+    expect(
+      (await api(`/workspaces/${b.id}/exports/${id}`, { headers: { Cookie: b.ana.cookie } }))
+        .status,
+    ).toBe(200);
+    expect(
+      (await api(`/workspaces/${a.id}/exports/${id}`, { headers: { Cookie: a.ana.cookie } }))
+        .status,
+    ).toBe(404);
+    // And A's owner is no member of B.
+    expect(
+      (await api(`/workspaces/${b.id}/exports/${id}`, { headers: { Cookie: a.ana.cookie } }))
+        .status,
+    ).toBe(403);
+  });
+
+  test(`at most ${EXPORTS_PER_HOUR} exports an hour per workspace`, async () => {
+    const t = await team();
+    const scope = { kind: "incident", incidentId: INC };
+    for (let index = 0; index < EXPORTS_PER_HOUR; index++) {
+      expect((await create(t, t.ana, scope)).status).toBe(201);
+    }
+    const refused = await create(t, t.ana, scope);
+    expect(refused.status).toBe(429);
+    expect(await refused.json()).toEqual({ error: "rate_limited" });
+    // Server-only: the ledger never syncs.
+    expect(await t.withShard((shard) => shard.store.scan("export_ledger").length)).toBe(
+      EXPORTS_PER_HOUR,
+    );
+  });
+
+  test("a file over the cap is refused before it is written, without building it whole", async () => {
+    const t = await team();
+    // Updates of 4,000 characters (the most one holds), in enough incidents to pass 25 MiB.
+    const body = "x".repeat(4000);
+    const owner: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    const perIncident = 900;
+    const incidents = Math.ceil(MAX_EXPORT_BYTES / (perIncident * body.length)) + 1;
+    for (let index = 0; index < incidents; index++) {
+      const id = `inc_01JK${String(index).padStart(22, "0")}`;
+      expect(await t.run("incident.declare", { id, title: `Load ${index}` }, owner)).toMatchObject({
+        ok: true,
+      });
+      // Written straight into the rows: a mutation per update would make the test slow, not the export.
+      await t.withShard((shard) => {
+        const at = Date.now();
+        for (let seq = 2; seq < perIncident + 2; seq++) {
+          shard.store.insert("timeline", {
+            id: `${id}:${seq}`,
+            incidentId: id,
+            seq,
+            at,
+            actor: t.ana.id,
+            kind: "update",
+            body,
+          } as TimelineRow);
+        }
+      });
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const refused = await create(t, t.ana, { kind: "range", from: today, to: today });
+    expect(refused.status).toBe(413);
+    expect(await refused.json()).toEqual({ error: "too_large" });
+    const listed = await env.EXPORTS!.list({ prefix: `workspaces/${t.id}/` });
+    expect(listed.objects).toHaveLength(0);
+  });
+
   test("an expired export is refused and deleted; the sweep deletes the rest", async () => {
     const t = await team();
     const bucket = env.EXPORTS!;
@@ -324,9 +485,80 @@ describe("exports", () => {
       headers: { Cookie: t.ana.cookie },
     });
     expect(download.status).toBe(410);
-    await bucket.put(old, "{}", { customMetadata: { expiresAt: String(Date.now() - 1) } });
-    expect(await sweepExports(bucket, Date.now())).toBeGreaterThanOrEqual(1);
-    expect(await bucket.head(old)).toBeNull();
+    // The sweep goes by when an object was uploaded: none of these is a week old yet.
+    expect(await sweepExports(bucket, Date.now())).toBe(0);
     expect(await bucket.head(fresh)).not.toBeNull();
+    expect(await sweepExports(bucket, Date.now() + EXPORT_TTL_MS + 1000)).toBeGreaterThanOrEqual(1);
+    expect(await bucket.head(fresh)).toBeNull();
+  });
+});
+
+describe("the cron", () => {
+  /** A bucket whose listing fails, and a watchdog that counts beats. */
+  function cron(minute: number) {
+    const list = vi.fn(async () => {
+      throw new Error("R2 is down");
+    });
+    const beat = vi.fn(async () => {});
+    const waits: Promise<unknown>[] = [];
+    const scheduled = worker.scheduled!(
+      createScheduledController({
+        scheduledTime: new Date(Date.UTC(2026, 9, 26, 12, minute)),
+        cron: "* * * * *",
+      }),
+      {
+        ...env,
+        EXPORTS: { list } as unknown as R2Bucket,
+        WATCHDOG: { getByName: () => ({ beat }) } as unknown as typeof env.WATCHDOG,
+      },
+      { waitUntil: (promise: Promise<unknown>) => void waits.push(promise) } as ExecutionContext,
+    );
+    return { list, beat, done: async () => (await scheduled, await Promise.all(waits)) };
+  }
+
+  test("sweeps exports only at minute 17, and a failing sweep never stops the heartbeat", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const at17 = cron(17);
+    await at17.done();
+    expect(at17.list).toHaveBeenCalledTimes(1);
+    expect(at17.beat).toHaveBeenCalledTimes(1);
+    expect(errors.mock.calls.flat().join(" ")).toContain("export sweep failed");
+    for (const minute of [0, 16, 18, 59]) {
+      const other = cron(minute);
+      await other.done();
+      expect(other.list).not.toHaveBeenCalled();
+      expect(other.beat).toHaveBeenCalledTimes(1);
+    }
+    errors.mockRestore();
+  });
+
+  test("the sweep pages through the bucket with its cursor", async () => {
+    const old = new Date(Date.now() - EXPORT_TTL_MS - 1000);
+    const pages = [
+      {
+        objects: [{ key: "workspaces/a/exports/1.json", uploaded: old }],
+        truncated: true,
+        cursor: "c1",
+      },
+      {
+        objects: [{ key: "workspaces/b/exports/2.json", uploaded: new Date() }],
+        truncated: true,
+        cursor: "c2",
+      },
+      { objects: [{ key: "workspaces/c/exports/3.json", uploaded: old }], truncated: false },
+    ];
+    const seen: (string | undefined)[] = [];
+    const deleted: string[] = [];
+    const bucket = {
+      list: async (options: R2ListOptions) => {
+        expect(options.include).toBeUndefined();
+        seen.push(options.cursor);
+        return pages[seen.length - 1];
+      },
+      delete: async (keys: string[]) => void deleted.push(...keys),
+    } as unknown as R2Bucket;
+    expect(await sweepExports(bucket, Date.now())).toBe(2);
+    expect(seen).toEqual([undefined, "c1", "c2"]);
+    expect(deleted).toEqual(["workspaces/a/exports/1.json", "workspaces/c/exports/3.json"]);
   });
 });

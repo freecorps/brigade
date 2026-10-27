@@ -765,6 +765,9 @@ export type PostmortemRow = {
 /** Server-only: an AI draft asked for at `at` (its request id), counted against `AI_DRAFTS_PER_DAY`. */
 export type AiDraftRow = { id: string; at: number };
 
+/** Server-only: an export started at `at` (its id), counted against `EXPORTS_PER_HOUR`. */
+export type ExportLedgerRow = { id: string; at: number };
+
 /** What an export covers: one incident, or the incidents declared from `from` to `to` (UTC days, both included). */
 export type ExportScope =
   | { kind: "incident"; incidentId: string }
@@ -817,6 +820,7 @@ export type BrigadeTables = {
   postmortems: PostmortemRow;
   ai_drafts: AiDraftRow;
   exports: ExportRow;
+  export_ledger: ExportLedgerRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -854,6 +858,7 @@ export const TABLES = {
   postmortems: { serverOnly: false },
   ai_drafts: { serverOnly: true },
   exports: { serverOnly: false },
+  export_ledger: { serverOnly: true },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

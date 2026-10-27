@@ -60,7 +60,8 @@ export type MutationDef<Name extends string = string, Args = unknown> = {
   permission: Permission;
   /**
    * May succeed without events. Only for a write that refreshes observed values (a monitor's latency, colo and
-   * check time) and is no domain event: it is synced like any change but writes nothing to the outbox (RFC 0005).
+   * check time), or keeps a server-only count (a rate limit's ledger), and is no domain event: it is synced like any
+   * change but writes nothing to the outbox (RFC 0005).
    */
   silent?: boolean;
   /** Deterministic and side-effect free: reads and writes only `store`, time only from `ctx.now`. */

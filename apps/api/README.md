@@ -380,8 +380,12 @@ In order, from `apps/api` unless noted:
 
    ```bash
    wrangler r2 bucket create brigade-exports-dev
-   wrangler r2 bucket lifecycle add brigade-exports-dev expire-exports workspaces/ --expire-days 8
+   wrangler r2 bucket lifecycle add brigade-exports-dev expire-exports workspaces/ --expire-days 8 --force
+   wrangler r2 bucket lifecycle list brigade-exports-dev
    ```
+
+   The rule deletes every object under `workspaces/` 8 days after it was written, a day after the cron's sweep would
+   have (`--force` skips the confirmation prompt); `list` should show `expire-exports` with that prefix and 8 days.
 
    then add to `env.dev` in `wrangler.jsonc`:
 
@@ -472,11 +476,14 @@ fake model.
 
 ## Exports
 
-RFC 0013. `POST /workspaces/:id/exports` (owners and admins; `src/exports.ts`) has the shard build the JSON file,
-writes it to the `EXPORTS` R2 bucket at `workspaces/<workspace id>/exports/<exp id>.json`, and has the shard record it
-(`export.record`, event `workspace.exported`). `GET /workspaces/:id/exports/:exportId` streams it back to an owner or
-admin of that workspace. Files expire after 7 days: a download after that answers 410 and deletes the file, and the
-cron sweeps expired files hourly (minute 17). The lifecycle rule above (8 days) is the backstop. `EXPORTS` is bound at
+RFC 0013. `POST /workspaces/:id/exports` (owners and admins; `src/exports.ts`) has the shard take one of the
+workspace's 10 exports an hour (429 `rate_limited` past it) and build the JSON file one incident at a time, counting
+bytes and stopping at 25 MiB (413 `too_large`), yielding between parts so escalations never wait on it. The Worker
+streams the parts into the `EXPORTS` R2 bucket at `workspaces/<workspace id>/exports/<exp id>.json`, and has the shard
+record it (`export.record`, event `workspace.exported`). `GET /workspaces/:id/exports/:exportId` streams it back to an
+owner or admin of that workspace. Files expire after 7 days: a download after that answers 410 and deletes the file,
+and the cron sweeps the files uploaded more than 7 days ago hourly (minute 17, paging through the bucket for at most
+20 s). The lifecycle rule above (8 days) is the backstop. `EXPORTS` is bound at
 the top level without a bucket name, for local runs and the tests (Miniflare simulates it). `dev` gets
 `brigade-exports-dev` with step 6 of "Deploying dev". Staging and production need their own bucket
 (`brigade-exports-staging`, `brigade-exports`, owner's call) with the same lifecycle rule. Give production's top-level

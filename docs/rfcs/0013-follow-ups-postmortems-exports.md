@@ -18,8 +18,8 @@ Dashboard ──POST /api/workspaces/:id/incidents/:inc/postmortem/draft──�
           ◀── 202 at once
             waitUntil: Workers AI (AI binding) ─▶ WorkspaceDO postmortem.writeDraft / failDraft (as sys_ai)
 
-Dashboard ──POST /api/workspaces/:id/exports──▶ api Worker ─▶ WorkspaceDO buildExport (JSON text)
-                                                 ─▶ R2 EXPORTS workspaces/<id>/exports/<exp>.json
+Dashboard ──POST /api/workspaces/:id/exports──▶ api Worker ─▶ WorkspaceDO buildExport (JSON in parts)
+                                                 ─▶ R2 EXPORTS workspaces/<id>/exports/<exp>.json (streamed)
                                                  ─▶ WorkspaceDO export.record (as the member)
 Dashboard ──GET  /api/workspaces/:id/exports/:exp──▶ api Worker ─▶ R2 get ─▶ streamed as an attachment
 ```
@@ -57,8 +57,12 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   rules). Seven of them, with JSON escapes, stay inside RFC 0004's client frame limit. Plain text, not Markdown: the
   dashboard renders it as written, and nothing in it can turn into markup.
 - **Versioning: last writer wins, with a conflict check.** `postmortem.save` (`incident:update`) sends the whole
-  document with `baseRevision`, the revision the editor opened (0 for none). A save over any other revision is
-  refused (`conflict`): someone else saved meanwhile. The dashboard keeps the editor's text and offers to load the
+  document with `baseRevision` and `baseUpdatedAt`, the revision the editor opened and when the server wrote it (0
+  and 0 for none). A save over any other revision, or the same number written at another time, is refused
+  (`conflict`): someone else saved meanwhile. The time matters because a client applies its own save optimistically:
+  its view then holds the next revision number too, stamped with its own clock, and a second save queued on it must
+  not pass as written over a teammate's. The dashboard opens the editor only on a row the server confirmed (no
+  unconfirmed change in it) and saves one at a time. The dashboard keeps the editor's text and offers to load the
   latest version, so nothing is lost and nothing is overwritten unseen. Each save adds one to `revision`. Keeping the
   last N revisions was the alternative. It would make every save copy the document (up to 21k characters) into a
   synced table for a restore nobody asked for yet. The outbox does not keep text either (below), so history waits on
@@ -88,8 +92,9 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   services, custom fields and role holders; the timeline's changes in plain English (updates included, each cut to
   1500 characters); and the follow-ups. Members appear **by name** (every member already sees those names on the
   incident page). **Never** an email address, a device, a push token or a delivery: those tables are not read, and
-  timeline entries about pages, emails and Slack are left out. A long timeline keeps its first ten entries and its
-  end, dropping from the middle. The data stays in the Cloudflare account that runs Brigade.
+  timeline entries about pages, emails and Slack are left out. A long timeline keeps its first ten entries and as much
+  of its end as fits, dropping from the middle. Only the first 50 and the last 2,000 entries are read at all, and each
+  is measured once, so a timeline of any length costs the shard about the same. The data stays in the Cloudflare account that runs Brigade.
 - **Language**: the status page's language when the workspace has one (the closest thing to a workspace language
   today), else the asker's dashboard language. The prompt asks for a blameless draft that only uses facts from the
   data and says what is unknown.
@@ -116,6 +121,13 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   incident, the incident row (without its escalation run's internals), its whole timeline, its written updates, what
   the status page published, its follow-ups and its postmortem, plus the workspace's name and the members' ids and
   names, so the ids in it read. **Never** an email address, a device, a token or a delivery receipt.
+- **Building it never holds the shard.** The shard (which also fires escalations) writes the file one incident at a
+  time as UTF-8 parts, counting bytes as it goes: past 25 MiB it stops and answers `too_large` without ever holding
+  the whole text, and it yields every 256 KiB so alarms and requests run in between. The Worker streams the parts
+  into R2 (`FixedLengthStream`); the file is never one string anywhere.
+- **Rate limit: 10 exports an hour per workspace** (`EXPORTS_PER_HOUR`, 429 `rate_limited`), counted in the shard's
+  server-only `export_ledger` by `export.reserve` before anything is built, so a refused or too-large export counts
+  too. The ledger write is bookkeeping, a `silent` mutation with no event.
 - **Order.** The shard builds the file from its own rows; the Worker writes it to R2 (`EXPORTS`) at
   `workspaces/<workspace id>/exports/<exp_ULID>.json`, then the shard records it (`export.record`, server-only, as
   the member), which lists it (`exports`, synced, `exports.recent` for `data:export`) and emits `workspace.exported`
@@ -125,8 +137,9 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   from the route's workspace, so an id from another workspace is a 404. The object is streamed from R2 as an
   attachment (`private, no-store`). **The bucket is never public** and has no public URL.
 - **Expiry: 7 days** (`EXPORT_TTL_MS`). Each object carries `expiresAt`. A download past it answers 410 and deletes
-  it. The cron sweeps expired objects once an hour (one list call of up to 1000, at minute 17, beside the dead-man
-  heartbeat and never in its way). The bucket's lifecycle rule (delete after 8 days under `workspaces/`) is the
+  it. The cron sweeps objects uploaded more than 7 days ago once an hour (at minute 17, beside the dead-man
+  heartbeat and never in its way: a failed sweep is only logged), paging through `workspaces/` with R2's cursor, 1000
+  a call, for at most 20 s; what it does not reach waits for the next hour. The bucket's lifecycle rule (delete after 8 days under `workspaces/`) is the
   backstop. The list in the shard keeps the 20 most recent and drops expired ones on the next export.
 - **Without the binding** both routes answer 503 `exports_unavailable` and the dashboard hides exporting.
   Locally and in the tests, Miniflare simulates the bucket; setting up a deployed one is apps/api/README.md

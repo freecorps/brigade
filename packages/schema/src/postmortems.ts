@@ -3,6 +3,10 @@
 // written over an older revision is refused, so nobody overwrites a teammate's edit unseen. A first draft can come from
 // Workers AI (the API Worker, off the request path); it is written through `postmortem.writeDraft` and marked as an AI
 // draft until a member saves the document.
+//
+// The base a save names is the revision and `updatedAt` the server confirmed, not the revision alone: a client that
+// applied its own save optimistically holds the next revision number too, stamped with its own clock, so a save queued
+// behind a refused one cannot pass as written over a teammate's.
 
 import {
   defineMutation,
@@ -115,8 +119,8 @@ const requestId = v.id("drf");
 // ---- Mutations ----------------------------------------------------------------------------------------------------
 
 /**
- * Saves the whole document over `baseRevision`, the revision the editor opened (0: none yet). Saving clears the AI
- * marker: a member who saves has read it.
+ * Saves the whole document over `baseRevision` and `baseUpdatedAt`, the revision the editor opened and when the server
+ * wrote it (0 and 0: none yet). Saving clears the AI marker: a member who saves has read it.
  */
 export const savePostmortem = defineMutation({
   name: "postmortem.save",
@@ -124,6 +128,7 @@ export const savePostmortem = defineMutation({
     id: incidentId,
     sections: postmortemSections,
     baseRevision: v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }),
+    baseUpdatedAt: v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }),
   }),
   permission: "incident:update",
   apply(store, args, ctx) {
@@ -131,7 +136,8 @@ export const savePostmortem = defineMutation({
     if (!incident) return fail("not_found", "Incident not found");
     const row = store.get("postmortems", args.id);
     const revision = row?.revision ?? 0;
-    if (revision !== args.baseRevision) {
+    // Revision 0 holds no text (only a draft was asked for), so only a written revision is matched on its time too.
+    if (revision !== args.baseRevision || (revision > 0 && row!.updatedAt !== args.baseUpdatedAt)) {
       return fail("conflict", "The postmortem changed since this edit started");
     }
     const sections: PostmortemSections = args.sections;
@@ -266,6 +272,9 @@ export const writePostmortemDraft = defineMutation({
       return fail("conflict", "No such draft is pending");
     }
     if (row.revision !== draft.baseRevision) return failDraftIn(store, row, "edited");
+    // Past `AI_DRAFT_STALE_MS` the draft already reads as failed and may have been asked for again: a late result
+    // never lands.
+    if (ctx.now - draft.requestedAt >= AI_DRAFT_STALE_MS) return failDraftIn(store, row, "timeout");
     const sections: PostmortemSections = args.sections;
     const revision = row.revision + 1;
     store.update("postmortems", row.id, {

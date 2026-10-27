@@ -29,6 +29,7 @@ export type Export_TextInputs = {
 * | "scope_range" | "{name}" |
 * | "failed_too_large" | "Too many incidents for one file. Pick a shorter range." |
 * | "failed_limit_reached" | "Too many incidents for one file. Pick a shorter range." |
+* | "failed_rate_limited" | "Too many exports this hour. Try again later." |
 * | "failed_invalid_args" | "Pick a range of up to 366 days, the start before the end." |
 * | "failed_exports_unavailable" | "Exports aren't set up on this server." |
 * | "failed_other" | "Couldn't export: {reason}" |

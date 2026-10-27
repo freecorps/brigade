@@ -67,7 +67,7 @@ import {
   postmortemMutations,
   postmortemServerMutations,
 } from "./postmortems.ts";
-import { recentExports, recordExport } from "./exports.ts";
+import { recentExports, recordExport, reserveExport } from "./exports.ts";
 import { invitationMutations } from "./invitations.ts";
 import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";
 import { allMembers, createWorkspace, setEmailSettings, syncMember } from "./workspaces.ts";
@@ -172,4 +172,5 @@ export const serverMutations = defineRegistry([
   redeliverWebhooks,
   ...postmortemServerMutations,
   recordExport,
+  reserveExport,
 ]);

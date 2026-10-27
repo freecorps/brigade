@@ -28,6 +28,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "scope_range" | "{name}" |
 * | "failed_too_large" | "Too many incidents for one file. Pick a shorter range." |
 * | "failed_limit_reached" | "Too many incidents for one file. Pick a shorter range." |
+* | "failed_rate_limited" | "Too many exports this hour. Try again later." |
 * | "failed_invalid_args" | "Pick a range of up to 366 days, the start before the end." |
 * | "failed_exports_unavailable" | "Exports aren't set up on this server." |
 * | "failed_other" | "Couldn't export: {reason}" |
@@ -58,6 +59,7 @@ export const export_text = /** @type {((inputs: Export_TextInputs, options?: { l
 		if (i?.part === "scope_range") return /** @type {LocalizedString} */ (`${i?.name}`);
 		if (i?.part === "failed_too_large") return /** @type {LocalizedString} */ (`Incidentes demais para um arquivo. Escolha um período menor.`);
 		if (i?.part === "failed_limit_reached") return /** @type {LocalizedString} */ (`Incidentes demais para um arquivo. Escolha um período menor.`);
+		if (i?.part === "failed_rate_limited") return /** @type {LocalizedString} */ (`Exportações demais nesta hora. Tente de novo mais tarde.`);
 		if (i?.part === "failed_invalid_args") return /** @type {LocalizedString} */ (`Escolha um período de até 366 dias, com o início antes do fim.`);
 		if (i?.part === "failed_exports_unavailable") return /** @type {LocalizedString} */ (`As exportações não estão configuradas neste servidor.`);
 		if (i?.part === "failed_other") return /** @type {LocalizedString} */ (`Não foi possível exportar: ${i?.reason}`);
@@ -82,6 +84,7 @@ export const export_text = /** @type {((inputs: Export_TextInputs, options?: { l
 		if (i?.part === "scope_range") return /** @type {LocalizedString} */ (`${i?.name}`);
 		if (i?.part === "failed_too_large") return /** @type {LocalizedString} */ (`Too many incidents for one file. Pick a shorter range.`);
 		if (i?.part === "failed_limit_reached") return /** @type {LocalizedString} */ (`Too many incidents for one file. Pick a shorter range.`);
+		if (i?.part === "failed_rate_limited") return /** @type {LocalizedString} */ (`Too many exports this hour. Try again later.`);
 		if (i?.part === "failed_invalid_args") return /** @type {LocalizedString} */ (`Pick a range of up to 366 days, the start before the end.`);
 		if (i?.part === "failed_exports_unavailable") return /** @type {LocalizedString} */ (`Exports aren't set up on this server.`);
 		if (i?.part === "failed_other") return /** @type {LocalizedString} */ (`Couldn't export: ${i?.reason}`);

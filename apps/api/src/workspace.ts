@@ -4,10 +4,11 @@ import type { SlackPostOutcome } from "@freecorps/brigade-slack/notifier";
 import {
   ACCOUNT_ACTOR,
   AI_ACTOR,
-  buildExport,
   can,
+  exportChunks,
   fitMemberName,
   isRole,
+  MAX_EXPORT_BYTES,
   newId,
   STATUS_PAGE_ID,
   type Actor,
@@ -72,6 +73,9 @@ import {
 import type { BuiltExport } from "./exports.ts";
 import { AI_MODEL, draftSource, type DraftRequestResult } from "./postmortem.ts";
 import type { RowChange } from "./store.ts";
+
+/** How much of an export the shard writes before it yields to other work (`buildExport`). */
+const EXPORT_YIELD_BYTES = 256 * 1024;
 
 export interface WorkspaceInfo {
   /** User tables in the object's SQLite database, read with SQL. */
@@ -561,6 +565,11 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
       return { ok: false, code: "not_a_member" };
     }
+    // What the model reads comes first: an incident it cannot read is refused before the draft is pending and the
+    // rate limit counts it. The mutation writes nothing `draftSource` reads, and nothing runs between the two.
+    const language = this.shard.store.get("status_page", STATUS_PAGE_ID)?.locale ?? locale;
+    const source = draftSource(this.shard.store, incidentId, language);
+    if (!source) return { ok: false, code: "not_found" };
     const now = Date.now();
     const requestId = newId("drf", now, (length) => crypto.getRandomValues(new Uint8Array(length)));
     const { result, changes } = this.shard.mutate({
@@ -574,9 +583,6 @@ export class WorkspaceDO extends DurableObject<Env> {
     });
     if (!result.ok) return { ok: false, code: result.error.code };
     this.broadcast(result.version, changes, undefined);
-    const language = this.shard.store.get("status_page", STATUS_PAGE_ID)?.locale ?? locale;
-    const source = draftSource(this.shard.store, incidentId, language);
-    if (!source) return { ok: false, code: "not_found" };
     return { ok: true, requestId, source };
   }
 
@@ -624,7 +630,11 @@ export class WorkspaceDO extends DurableObject<Env> {
 
   /**
    * The export file for `scope` (RPC from `POST /workspaces/:id/exports`, which checked the session and that the
-   * member may export): built from this shard's rows, as JSON text. Nothing is written until `recordExport`.
+   * member may export): takes a slot of the hourly limit (`export.reserve`), then writes the file from this shard's
+   * rows as UTF-8 parts, one incident at a time, counting the bytes and stopping at `MAX_EXPORT_BYTES` (`too_large`)
+   * without ever holding the whole text. It yields between parts, so a large export never holds the shard: alarms
+   * (escalations) and other requests run in between. The Worker streams the parts into R2; nothing else is written
+   * until `recordExport`.
    */
   async buildExport(workspaceId: string, actor: Actor, scope: ExportScope): Promise<BuiltExport> {
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
@@ -633,9 +643,39 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
     if (!isRole(actor.role) || !can(actor.role, "data:export"))
       return { ok: false, code: "forbidden" };
-    const built = buildExport(this.shard.store, scope, Date.now());
-    if (!built.ok) return built;
-    return { ok: true, body: JSON.stringify(built.file), incidents: built.incidents };
+    const now = Date.now();
+    const plan = exportChunks(this.shard.store, scope, now);
+    if (!plan.ok) return plan;
+    const id = newId("exp", now, (length) => crypto.getRandomValues(new Uint8Array(length)));
+    const { result } = this.shard.mutate({
+      clientId: "api",
+      mutationId: id,
+      actor,
+      name: "export.reserve",
+      args: { id },
+      now,
+      internal: true,
+    });
+    if (!result.ok) {
+      const code = result.error.code;
+      return { ok: false, code: code === "limit_reached" ? "rate_limited" : code };
+    }
+    const encoder = new TextEncoder();
+    const parts: Uint8Array[] = [];
+    let bytes = 0;
+    let sinceYield = 0;
+    for (const chunk of plan.chunks) {
+      const part = encoder.encode(chunk);
+      bytes += part.byteLength;
+      if (bytes > MAX_EXPORT_BYTES) return { ok: false, code: "too_large" };
+      parts.push(part);
+      sinceYield += part.byteLength;
+      if (sinceYield >= EXPORT_YIELD_BYTES) {
+        sinceYield = 0;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+    return { ok: true, id, parts, bytes, incidents: plan.incidents };
   }
 
   /** Records an export the Worker wrote to R2 (`export.record`, as the member), so it is listed and an event. */

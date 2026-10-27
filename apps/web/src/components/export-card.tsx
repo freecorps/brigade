@@ -24,18 +24,30 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Why an export was refused, worded. */
 function failure(code: string): string {
-  const known = ["too_large", "limit_reached", "invalid_args", "exports_unavailable"];
+  const known = [
+    "too_large",
+    "limit_reached",
+    "rate_limited",
+    "invalid_args",
+    "exports_unavailable",
+  ];
   return known.includes(code)
     ? exportText(`failed_${code}`)
     : exportText("failed_other", { reason: mutationErrorReason(code) });
 }
 
-/** Starts the browser's download of an export: the API streams it as the signed-in member. */
+/**
+ * Starts the browser's download of an export: the API streams it as the signed-in member. The link is in the document
+ * while it is clicked: Firefox and Safari ignore a click on a detached one.
+ */
 function download(workspaceId: string, id: string) {
   const link = document.createElement("a");
   link.href = exportUrl(workspaceId, id);
   link.download = "";
+  link.hidden = true;
+  document.body.append(link);
   link.click();
+  link.remove();
 }
 
 /**

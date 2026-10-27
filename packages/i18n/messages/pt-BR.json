@@ -2432,6 +2432,7 @@
         "part=scope_range": "{name}",
         "part=failed_too_large": "Incidentes demais para um arquivo. Escolha um período menor.",
         "part=failed_limit_reached": "Incidentes demais para um arquivo. Escolha um período menor.",
+        "part=failed_rate_limited": "Exportações demais nesta hora. Tente de novo mais tarde.",
         "part=failed_invalid_args": "Escolha um período de até 366 dias, com o início antes do fim.",
         "part=failed_exports_unavailable": "As exportações não estão configuradas neste servidor.",
         "part=failed_other": "Não foi possível exportar: {reason}",

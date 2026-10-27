@@ -1,6 +1,7 @@
 // Exports to R2 (RFC 0013 "Exports"). `POST /workspaces/:id/exports` (owners and admins) has the shard build the JSON
-// file (`buildExport`, packages/schema), writes it to the `EXPORTS` bucket under the workspace's prefix and has the
-// shard record it (`export.record`, its event through the outbox). `GET /workspaces/:id/exports/:exportId` streams it
+// file in parts (`WorkspaceDO.buildExport`: the hourly limit, then one incident at a time up to `MAX_EXPORT_BYTES`),
+// streams the parts into the `EXPORTS` bucket under the workspace's prefix and has the shard record it
+// (`export.record`, its event through the outbox). `GET /workspaces/:id/exports/:exportId` streams it
 // back to an owner or admin: the bucket is never public. A file lasts `EXPORT_TTL_MS`: the download refuses an
 // expired one and deletes it, the cron's hourly sweep deletes the rest (`sweepExports`), and the bucket's lifecycle
 // rule is the backstop (apps/api/README.md "Exports"). Without the binding every route answers 503.
@@ -10,16 +11,17 @@ import {
   EXPORT_TTL_MS,
   exportScope,
   isId,
-  newId,
+  MAX_EXPORT_BYTES,
   type ExportScope,
 } from "@freecorps/brigade-schema";
 import type { Auth } from "./auth.ts";
 import { checkMember, json, readJson } from "./member-route.ts";
 
-/** The largest file an export writes; a range over it is refused (`too_large`), to be split. */
-export const MAX_EXPORT_BYTES = 25 * 1024 * 1024;
-/** Objects one sweep lists at most (one R2 list call). */
-const SWEEP_LIMIT = 1000;
+export { MAX_EXPORT_BYTES };
+/** Objects one R2 list call of the sweep reads (the most R2 lists, and deletes, at once). */
+const SWEEP_PAGE = 1000;
+/** How long one sweep may page through the bucket; whatever it does not reach waits for the next hour. */
+const SWEEP_BUDGET_MS = 20_000;
 
 export type ExportEnv = { EXPORTS?: R2Bucket };
 
@@ -27,17 +29,19 @@ export type ExportEnv = { EXPORTS?: R2Bucket };
 export const exportKey = (workspaceId: string, exportId: string) =>
   `workspaces/${workspaceId}/exports/${exportId}.json`;
 
-/** What `WorkspaceDO.buildExport` answers: the file as JSON text, or why not. */
+/** What `WorkspaceDO.buildExport` answers: the export's id and the file as UTF-8 parts, in order, or why not. */
 export type BuiltExport =
-  | { ok: true; body: string; incidents: number }
-  | { ok: false; code: "not_found" | "limit_reached" | "forbidden" | "not_a_member" };
+  | { ok: true; id: string; parts: Uint8Array[]; bytes: number; incidents: number }
+  | { ok: false; code: string };
 
+/** `limit_reached`: a range over `MAX_EXPORT_INCIDENTS`; `rate_limited`: past `EXPORTS_PER_HOUR`. */
 const STATUS: Record<string, number> = {
   not_found: 404,
   forbidden: 403,
   not_a_member: 403,
   limit_reached: 413,
   too_large: 413,
+  rate_limited: 429,
   invalid_args: 400,
 };
 
@@ -65,18 +69,26 @@ export async function createExport(
     return failed("WorkspaceDO.buildExport failed", workspaceId, error);
   }
   if (!built.ok) return json({ error: built.code }, STATUS[built.code] ?? 500);
-  const bytes = new TextEncoder().encode(built.body);
-  if (bytes.byteLength > MAX_EXPORT_BYTES) return json({ error: "too_large" }, 413);
-  const now = Date.now();
-  const id = newId("exp", now, (length) => crypto.getRandomValues(new Uint8Array(length)));
+  const { id, parts, bytes } = built;
   const key = exportKey(workspaceId, id);
-  const expiresAt = now + EXPORT_TTL_MS;
+  const expiresAt = Date.now() + EXPORT_TTL_MS;
   try {
-    await bucket.put(key, bytes, {
-      httpMetadata: { contentType: "application/json; charset=utf-8" },
-      customMetadata: { expiresAt: String(expiresAt), createdBy: member.actor.id },
-    });
+    // The parts stream into R2 as they are: the file is never joined into one string or buffer here either.
+    const { readable, writable } = new FixedLengthStream(bytes);
+    const writing = (async () => {
+      const writer = writable.getWriter();
+      for (const part of parts) await writer.write(part);
+      await writer.close();
+    })();
+    await Promise.all([
+      bucket.put(key, readable, {
+        httpMetadata: { contentType: "application/json; charset=utf-8" },
+        customMetadata: { expiresAt: String(expiresAt), createdBy: member.actor.id },
+      }),
+      writing,
+    ]);
   } catch (error) {
+    await bucket.delete(key).catch(() => undefined);
     return failed("writing an export failed", workspaceId, error);
   }
   let recorded: { ok: boolean; code?: string };
@@ -85,7 +97,7 @@ export async function createExport(
       id,
       scope: scope.value,
       incidents: built.incidents,
-      bytes: bytes.byteLength,
+      bytes,
     });
   } catch (error) {
     recorded = { ok: false, code: String(error) };
@@ -98,7 +110,7 @@ export async function createExport(
     );
     return json({ error: "unavailable" }, 503);
   }
-  return json({ id, expiresAt, incidents: built.incidents, bytes: bytes.byteLength }, 201);
+  return json({ id, expiresAt, incidents: built.incidents, bytes }, 201);
 }
 
 /** `GET /workspaces/:id/exports/:exportId`: the file, streamed from R2 as an attachment. */
@@ -148,18 +160,29 @@ function expired(object: Pick<R2Object, "customMetadata" | "uploaded">, now: num
 }
 
 /**
- * Deletes expired exports (the cron, once an hour): one list call of up to `SWEEP_LIMIT` objects; returns how many
- * it deleted. The bucket's lifecycle rule catches whatever it does not reach.
+ * Deletes expired exports (the cron, once an hour): pages through `workspaces/` with R2's cursor, `SWEEP_PAGE` objects
+ * a call, for at most `SWEEP_BUDGET_MS`; returns how many it deleted. An object's age is its `uploaded` time, which
+ * every listing carries (its `expiresAt` metadata would cost a larger listing). The bucket's lifecycle rule catches
+ * whatever it does not reach.
  */
-export async function sweepExports(bucket: R2Bucket, now: number): Promise<number> {
-  const listed = await bucket.list({
-    prefix: "workspaces/",
-    limit: SWEEP_LIMIT,
-    include: ["customMetadata"],
-  });
-  const gone = listed.objects.filter((object) => expired(object, now)).map((object) => object.key);
-  if (gone.length > 0) await bucket.delete(gone);
-  return gone.length;
+export async function sweepExports(
+  bucket: R2Bucket,
+  now: number,
+  budgetMs = SWEEP_BUDGET_MS,
+): Promise<number> {
+  const started = Date.now();
+  let cursor: string | undefined;
+  let deleted = 0;
+  do {
+    const listed = await bucket.list({ prefix: "workspaces/", limit: SWEEP_PAGE, cursor });
+    const gone = listed.objects
+      .filter((object) => object.uploaded.getTime() + EXPORT_TTL_MS <= now)
+      .map((object) => object.key);
+    if (gone.length > 0) await bucket.delete(gone);
+    deleted += gone.length;
+    cursor = listed.truncated ? listed.cursor : undefined;
+  } while (cursor !== undefined && Date.now() - started < budgetMs);
+  return deleted;
 }
 
 /** Whether this deployment can draft with AI and export, for the dashboard (`GET /features`, signed in). */

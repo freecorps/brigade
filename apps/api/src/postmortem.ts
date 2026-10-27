@@ -38,6 +38,15 @@ export const AI_MAX_TOKENS = 2000;
 export const MAX_SOURCE_CHARS = 40_000;
 /** An update's text as the model reads it, at most. */
 const UPDATE_CHARS = 1500;
+/**
+ * The timeline entries `draftSource` reads at most: its first `HEAD_ENTRIES` and its last `TAIL_ENTRIES`. Far more
+ * than fit in `MAX_SOURCE_CHARS`, so a long incident costs the shard the same as one that just fits.
+ */
+export const HEAD_ENTRIES = 50;
+export const TAIL_ENTRIES = 2000;
+/** The entries a long timeline always keeps from its start, and at least from its end. */
+const KEEP_FIRST = 10;
+const KEEP_LAST = 10;
 
 /** The Workers AI binding, when the deployment has one (`"ai": { "binding": "AI" }`, apps/api/README.md). */
 export type AiBinding = { run(model: string, inputs: unknown): Promise<unknown> };
@@ -136,14 +145,20 @@ export function draftSource(
     id === null ? "nobody" : (SYSTEM_NAMES[id] ?? members.get(id) ?? "a teammate");
   const iso = (at: number) => new Date(at).toISOString();
   const { from, to } = prefixRange(`${incidentId}:`);
-  const timeline = store
+  const entries = store
     .range("timeline", from, to)
     .filter((entry) => entry.incidentId === incidentId)
-    .sort((a, b) => a.seq - b.seq)
-    .flatMap((entry) => {
-      const what = describeEntry(entry, name);
-      return what ? [{ at: iso(entry.at), who: name(entry.actor), what }] : [];
-    });
+    .sort((a, b) => a.seq - b.seq);
+  // Only the start and the end are read: the middle of a very long timeline would be dropped below anyway.
+  const skipped = Math.max(0, entries.length - HEAD_ENTRIES - TAIL_ENTRIES);
+  const read =
+    skipped > 0
+      ? [...entries.slice(0, HEAD_ENTRIES), ...entries.slice(entries.length - TAIL_ENTRIES)]
+      : entries;
+  const timeline = read.flatMap((entry) => {
+    const what = describeEntry(entry, name);
+    return what ? [{ at: iso(entry.at), who: name(entry.actor), what }] : [];
+  });
   const type = incident.typeId ? store.get("incident_types", incident.typeId) : undefined;
   const fields: Record<string, unknown> = {};
   for (const [id, value] of Object.entries(incident.fields ?? {})) {
@@ -171,7 +186,7 @@ export function draftSource(
       ),
       fields,
     },
-    timeline,
+    timeline: [],
     followUps: store
       .scan("follow_ups")
       .filter((one) => one.incidentId === incidentId)
@@ -183,12 +198,43 @@ export function draftSource(
       })),
     omitted: 0,
   };
-  // A long timeline keeps its start and its end; the middle goes first.
-  while (JSON.stringify(source).length > MAX_SOURCE_CHARS && source.timeline.length > 20) {
-    source.timeline.splice(10, 1);
-    source.omitted += 1;
+  return fitTimeline(source, timeline, skipped);
+}
+
+/**
+ * Puts `timeline` in `source`, inside `MAX_SOURCE_CHARS`: a long one keeps its first `KEEP_FIRST` entries and as much
+ * of its end as fits (at least `KEEP_LAST`), dropping from the middle. Each entry is measured once, so it is linear in
+ * the entries. `skipped` entries were never read; they count as omitted too.
+ */
+function fitTimeline(
+  source: DraftSource,
+  timeline: DraftSource["timeline"],
+  skipped: number,
+): DraftSource {
+  // An entry costs its JSON and a comma; the omitted count is measured at its widest.
+  const size = (entry: DraftSource["timeline"][number]) => JSON.stringify(entry).length + 1;
+  const room =
+    MAX_SOURCE_CHARS - JSON.stringify({ ...source, omitted: Number.MAX_SAFE_INTEGER }).length;
+  const sizes = timeline.map(size);
+  const total = sizes.reduce((sum, one) => sum + one, 0);
+  if (total <= room || timeline.length <= KEEP_FIRST + KEEP_LAST) {
+    return { ...source, timeline, omitted: skipped };
   }
-  return source;
+  let used = sizes.slice(0, KEEP_FIRST).reduce((sum, one) => sum + one, 0);
+  // `start` is the first entry of the end that is kept.
+  let start = timeline.length;
+  while (start > KEEP_FIRST) {
+    const next = sizes[start - 1]!;
+    const kept = timeline.length - start;
+    if (kept >= KEEP_LAST && used + next > room) break;
+    used += next;
+    start -= 1;
+  }
+  return {
+    ...source,
+    timeline: [...timeline.slice(0, KEEP_FIRST), ...timeline.slice(start)],
+    omitted: skipped + (start - KEEP_FIRST),
+  };
 }
 
 const LANGUAGE: Record<StatusLocale, string> = { en: "English", "pt-BR": "Brazilian Portuguese" };

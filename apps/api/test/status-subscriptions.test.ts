@@ -1210,13 +1210,21 @@ describe("following components", () => {
   test("an unreadable choice hears of everything and holds back nobody else", async () => {
     const t = await team();
     const made = await components(t);
-    const [api, broken] = [visitor(), visitor()];
-    await confirmed(t, api, [statusFollowKey("c", made.api)]);
+    const [onApi, broken] = [visitor(), visitor()];
+    await confirmed(t, onApi, [statusFollowKey("c", made.api)]);
     await confirmed(t, broken, [statusFollowKey("c", made.docs)]);
     await env.DB.prepare("update status_subscriber set follows = ? where email = ?")
       .bind("{not json", broken)
       .run();
-    expect(await recipients(t, [made.api])).toEqual([api, broken].sort());
+    expect(await recipients(t, [made.api])).toEqual([onApi, broken].sort());
+    const counts = await api(`/workspaces/${t.id}/status-page/subscribers`, {
+      headers: { Cookie: t.ana.cookie },
+    });
+    expect(await counts.json()).toMatchObject({
+      confirmed: 2,
+      everything: 1,
+      follows: { [statusFollowKey("c", made.api)]: 1 },
+    });
   });
 
   test("maintenance follows the same rule", async () => {

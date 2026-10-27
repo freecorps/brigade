@@ -138,8 +138,8 @@ async function run(
             `select id, email, origin from status_subscriber
              where workspace_id = ? and status = 'confirmed' and id > ?
                and (follows is null or not json_valid(follows)
-                 or exists (select 1 from json_each(follows) where value in (select value from json_each(?)))
-                 or not exists (select 1 from json_each(follows) where value in (select value from json_each(?))))
+                 or exists (select 1 from json_each(case when json_valid(follows) then follows else '[]' end) where value in (select value from json_each(?)))
+                 or not exists (select 1 from json_each(case when json_valid(follows) then follows else '[]' end) where value in (select value from json_each(?))))
              order by id limit ?`,
           )
             .bind(

@@ -797,7 +797,7 @@ export async function serveSubscribers(
       // Who follows what, confirmed only: every key with its count, and those following everything.
       const [follows, everything] = await env.DB.batch<{ key?: string; n: number }>([
         env.DB.prepare(
-          `select each.value as key, count(*) as n from status_subscriber, json_each(status_subscriber.follows) as each
+          `select each.value as key, count(*) as n from status_subscriber, json_each(case when json_valid(status_subscriber.follows) then status_subscriber.follows else '[]' end) as each
            where workspace_id = ? and status = 'confirmed' and json_valid(follows) group by each.value`,
         ).bind(workspaceId),
         env.DB.prepare(

@@ -47,14 +47,16 @@
         "env=dev, part=overview": "A development deployment on Cloudflare, for trying changes: the dashboard, its Worker, the API Worker and a Durable Object.",
         "env=dev, part=stack": "Dev stack",
         "env=dev, part=checking": "Checking the dev stack…",
+        "env=dev, part=hint": "Look for the error in this deployment's Worker logs, then check again.",
         "env=staging, part=badge": "Staging",
         "env=staging, part=overview": "A staging deployment on Cloudflare, for trying a release before production: the dashboard, its Worker, the API Worker and a Durable Object.",
         "env=staging, part=stack": "Staging stack",
         "env=staging, part=checking": "Checking the staging stack…",
+        "env=staging, part=hint": "Look for the error in this deployment's Worker logs, then check again.",
         "env=*, part=overview": "Your workspace's incidents, who is on call, and who gets paged.",
         "env=*, part=stack": "Services",
         "env=*, part=checking": "Checking the services…",
-        "env=*, part=hint": "Look for the error in this deployment's Worker logs, then check again.",
+        "env=*, part=hint": "Try again in a moment. If it keeps failing, tell whoever runs this Brigade.",
         "env=*, part=*": "Brigade"
       }
     }

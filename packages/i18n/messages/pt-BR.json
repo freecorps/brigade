@@ -47,14 +47,16 @@
         "env=dev, part=overview": "Um ambiente de desenvolvimento na Cloudflare, para testar mudanças: o painel, o Worker dele, o Worker da API e um Durable Object.",
         "env=dev, part=stack": "Stack de dev",
         "env=dev, part=checking": "Verificando a stack de dev…",
+        "env=dev, part=hint": "Procure o erro nos logs do Worker deste ambiente e verifique de novo.",
         "env=staging, part=badge": "Staging",
         "env=staging, part=overview": "Um ambiente de staging na Cloudflare, para testar uma versão antes da produção: o painel, o Worker dele, o Worker da API e um Durable Object.",
         "env=staging, part=stack": "Stack de staging",
         "env=staging, part=checking": "Verificando a stack de staging…",
+        "env=staging, part=hint": "Procure o erro nos logs do Worker deste ambiente e verifique de novo.",
         "env=*, part=overview": "Os incidentes do seu workspace, quem está de plantão e quem é acionado.",
         "env=*, part=stack": "Serviços",
         "env=*, part=checking": "Verificando os serviços…",
-        "env=*, part=hint": "Procure o erro nos logs do Worker deste ambiente e verifique de novo.",
+        "env=*, part=hint": "Tente de novo em instantes. Se continuar falhando, avise quem administra este Brigade.",
         "env=*, part=*": "Brigade"
       }
     }

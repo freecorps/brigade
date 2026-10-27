@@ -16,14 +16,16 @@ export type EnvironmentInputs = {
 * | "dev" | "overview" | "A development deployment on Cloudflare, for trying changes: the dashboard, its Worker, the API Worker and a Durable Object." |
 * | "dev" | "stack" | "Dev stack" |
 * | "dev" | "checking" | "Checking the dev stack…" |
+* | "dev" | "hint" | "Look for the error in this deployment's Worker logs, then check again." |
 * | "staging" | "badge" | "Staging" |
 * | "staging" | "overview" | "A staging deployment on Cloudflare, for trying a release before production: the dashboard, its Worker, the API Worker and a Durable Object." |
 * | "staging" | "stack" | "Staging stack" |
 * | "staging" | "checking" | "Checking the staging stack…" |
+* | "staging" | "hint" | "Look for the error in this deployment's Worker logs, then check again." |
 * | * | "overview" | "Your workspace's incidents, who is on call, and who gets paged." |
 * | * | "stack" | "Services" |
 * | * | "checking" | "Checking the services…" |
-* | * | "hint" | "Look for the error in this deployment's Worker logs, then check again." |
+* | * | "hint" | "Try again in a moment. If it keeps failing, tell whoever runs this Brigade." |
 * | * | * | "Brigade" |
 *
 * @param {EnvironmentInputs} inputs

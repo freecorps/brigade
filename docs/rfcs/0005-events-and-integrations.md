@@ -77,7 +77,8 @@ Devices and paging emit `device.registered` (`id`, `userId`, `platform`, `enviro
 the key), `device.unregistered` (`reason`: `unregistered` by the member, `token_invalid` when APNs said the token is
 gone, `member_removed` when its member left or was removed, `password_reset` when its member's password was reset,
 from `device.signOut`, or from `member.reconcile` when that failed, RFC 0002 "Auth") and `notification.failed` (`incidentId`, `eventId` of the event that asked for the page, `channel: "push"`,
-`userId` or null, `reason`: `no_devices`, `undelivered`, `unsupported`, `not_configured`, `over_limit`,
+`userId` or null, `reason`: `no_devices`, `token_invalid` (no device left because the push service refused the one a
+page of this incident went to), `undelivered`, `unsupported`, `not_configured`, `over_limit`,
 `dead_lettered`, and for escalation levels `nobody_on_call`, `schedule_missing`, `not_a_member`; `schedule`: the
 name of the schedule nobody was on call for, else null; `page`: the escalation run and step it belongs to, absent
 outside a run), with actor
@@ -154,7 +155,8 @@ or dependencies should not share the API's.
   once (`userId: null`, `no_devices`) when a monitor caused it; a member who declared it by hand knows. APNs saying
   a token is gone drops the device (`device.expire`, only if the token is still the one the push went to) and retries
   the page while attempts remain, so a commander whose only device just expired is replaced by everyone who can
-  respond on the next attempt.
+  respond on the next attempt. A member left without a device that way is recorded as `token_invalid`, not
+  `no_devices`, so the timeline and the email say the phone was refused and opening the app registers it again.
 - **The shard failing.** The shard being unreachable or throwing retries the whole message, up to the Queue's
   `max_retries` (10, so 11 deliveries); the last logs `page dead-lettered` (event, incident, workspace) and the
   message goes to `brigade-events-dlq`. The same Worker consumes that queue: for a page not already settled, on an
@@ -187,7 +189,7 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   code (an unverified sender, a suppressed address, a bad message) is final at once.
 - **What leads to an email.** Only `notification.failed` from push. The shard decides (`Mailer.plan`), reading the
   page ledger, never writing it:
-  - **A member a page missed** (`unpaged`: `no_devices`, `undelivered`, `unsupported`, `not_configured`,
+  - **A member a page missed** (`unpaged`: `no_devices`, `token_invalid`, `undelivered`, `unsupported`, `not_configured`,
     `over_limit`), for a SEV1 or SEV2 incident, once per incident and member: "Brigade tried to page you about
     SEV1 · INC-142 in Acme, but the page didn't reach your phone: …". A member without a phone also reads how to get
     pages on it.

@@ -18,14 +18,16 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "dev" | "overview" | "A development deployment on Cloudflare, for trying changes: the dashboard, its Worker, the API Worker and a Durable Object." |
 * | "dev" | "stack" | "Dev stack" |
 * | "dev" | "checking" | "Checking the dev stack…" |
+* | "dev" | "hint" | "Look for the error in this deployment's Worker logs, then check again." |
 * | "staging" | "badge" | "Staging" |
 * | "staging" | "overview" | "A staging deployment on Cloudflare, for trying a release before production: the dashboard, its Worker, the API Worker and a Durable Object." |
 * | "staging" | "stack" | "Staging stack" |
 * | "staging" | "checking" | "Checking the staging stack…" |
+* | "staging" | "hint" | "Look for the error in this deployment's Worker logs, then check again." |
 * | * | "overview" | "Your workspace's incidents, who is on call, and who gets paged." |
 * | * | "stack" | "Services" |
 * | * | "checking" | "Checking the services…" |
-* | * | "hint" | "Look for the error in this deployment's Worker logs, then check again." |
+* | * | "hint" | "Try again in a moment. If it keeps failing, tell whoever runs this Brigade." |
 * | * | * | "Brigade" |
 *
 * @param {EnvironmentInputs} inputs
@@ -43,14 +45,16 @@ export const environment = /** @type {((inputs: EnvironmentInputs, options?: { l
 		if (i?.env === "dev" && i?.part === "overview") return /** @type {LocalizedString} */ (`Um ambiente de desenvolvimento na Cloudflare, para testar mudanças: o painel, o Worker dele, o Worker da API e um Durable Object.`);
 		if (i?.env === "dev" && i?.part === "stack") return /** @type {LocalizedString} */ (`Stack de dev`);
 		if (i?.env === "dev" && i?.part === "checking") return /** @type {LocalizedString} */ (`Verificando a stack de dev…`);
+		if (i?.env === "dev" && i?.part === "hint") return /** @type {LocalizedString} */ (`Procure o erro nos logs do Worker deste ambiente e verifique de novo.`);
 		if (i?.env === "staging" && i?.part === "badge") return /** @type {LocalizedString} */ (`Staging`);
 		if (i?.env === "staging" && i?.part === "overview") return /** @type {LocalizedString} */ (`Um ambiente de staging na Cloudflare, para testar uma versão antes da produção: o painel, o Worker dele, o Worker da API e um Durable Object.`);
 		if (i?.env === "staging" && i?.part === "stack") return /** @type {LocalizedString} */ (`Stack de staging`);
 		if (i?.env === "staging" && i?.part === "checking") return /** @type {LocalizedString} */ (`Verificando a stack de staging…`);
+		if (i?.env === "staging" && i?.part === "hint") return /** @type {LocalizedString} */ (`Procure o erro nos logs do Worker deste ambiente e verifique de novo.`);
 		if (i?.part === "overview") return /** @type {LocalizedString} */ (`Os incidentes do seu workspace, quem está de plantão e quem é acionado.`);
 		if (i?.part === "stack") return /** @type {LocalizedString} */ (`Serviços`);
 		if (i?.part === "checking") return /** @type {LocalizedString} */ (`Verificando os serviços…`);
-		if (i?.part === "hint") return /** @type {LocalizedString} */ (`Procure o erro nos logs do Worker deste ambiente e verifique de novo.`);
+		if (i?.part === "hint") return /** @type {LocalizedString} */ (`Tente de novo em instantes. Se continuar falhando, avise quem administra este Brigade.`);
 		return /** @type {LocalizedString} */ (`Brigade`)
 	}
 	{
@@ -62,14 +66,16 @@ export const environment = /** @type {((inputs: EnvironmentInputs, options?: { l
 		if (i?.env === "dev" && i?.part === "overview") return /** @type {LocalizedString} */ (`A development deployment on Cloudflare, for trying changes: the dashboard, its Worker, the API Worker and a Durable Object.`);
 		if (i?.env === "dev" && i?.part === "stack") return /** @type {LocalizedString} */ (`Dev stack`);
 		if (i?.env === "dev" && i?.part === "checking") return /** @type {LocalizedString} */ (`Checking the dev stack…`);
+		if (i?.env === "dev" && i?.part === "hint") return /** @type {LocalizedString} */ (`Look for the error in this deployment's Worker logs, then check again.`);
 		if (i?.env === "staging" && i?.part === "badge") return /** @type {LocalizedString} */ (`Staging`);
 		if (i?.env === "staging" && i?.part === "overview") return /** @type {LocalizedString} */ (`A staging deployment on Cloudflare, for trying a release before production: the dashboard, its Worker, the API Worker and a Durable Object.`);
 		if (i?.env === "staging" && i?.part === "stack") return /** @type {LocalizedString} */ (`Staging stack`);
 		if (i?.env === "staging" && i?.part === "checking") return /** @type {LocalizedString} */ (`Checking the staging stack…`);
+		if (i?.env === "staging" && i?.part === "hint") return /** @type {LocalizedString} */ (`Look for the error in this deployment's Worker logs, then check again.`);
 		if (i?.part === "overview") return /** @type {LocalizedString} */ (`Your workspace's incidents, who is on call, and who gets paged.`);
 		if (i?.part === "stack") return /** @type {LocalizedString} */ (`Services`);
 		if (i?.part === "checking") return /** @type {LocalizedString} */ (`Checking the services…`);
-		if (i?.part === "hint") return /** @type {LocalizedString} */ (`Look for the error in this deployment's Worker logs, then check again.`);
+		if (i?.part === "hint") return /** @type {LocalizedString} */ (`Try again in a moment. If it keeps failing, tell whoever runs this Brigade.`);
 		return /** @type {LocalizedString} */ (`Brigade`)
 	}
 });

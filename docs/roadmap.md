@@ -203,10 +203,15 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Left: the production and staging queues (owner approval); `RELAY_SEND_TOKEN` on the deployed API (dev reaches
     its relay through the `RELAY` service binding; production and staging add theirs with their relay's first deploy);
     VoIP call pages on a real iPhone (sent since Phase 2, RFC 0010); FCM for Android
-    (Android devices are recorded as `unsupported`); replaying dead-lettered pages (today they are recorded, not
-    re-sent); a member removed or demoted in D1 outside Brigade is still paged until the next sync upgrade
-    reconciles the shard (RFC 0006 "Who is paged", Q18); holding back lower-urgency pushes while a page may be undelivered (RFC 0006
-    "Offline phones"); what is left of who is paged (Q18).
+    (Android devices are recorded as `unsupported`); a lower-urgency push for another incident can still replace a
+    page stored for an offline phone (the app re-syncing open pages is the fallback, RFC 0006 "Offline phones");
+    what is left of who is paged (Q18).
+  - Done: "Page again" for a failed page (owners and admins, `incident.pageAgain`, a new page through the outbox, never
+    the old event) and a lost SEV1 or SEV2 declaration paged again once on its own (RFC 0005 "Notifiers"); a
+    lower-urgency push never replaces a page of the same incident (its own collapse id, and held back while the page
+    may be undelivered, RFC 0006 "Offline phones"); a member removed or demoted in D1 outside Brigade stops being
+    paged without anyone opening Brigade (a periodic reconcile from the shard's alarm and a check before a page that
+    fails open, RFC 0006 "Who is paged", Q18).
 - [x] External dead-man switch
   - A Cron Trigger beats once a minute into the `WatchdogDO`'s outbox; the beat goes through the alarm, the outbox
     drain, the `brigade-events` Queue and the consumer, which checks the relay takes its send token; only a beat proved

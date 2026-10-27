@@ -5,22 +5,26 @@ import { env, exports } from "cloudflare:workers";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import {
   MAX_RECONCILED_MEMBERS,
+  MONITOR_ACTOR,
   newId,
   type Actor,
   type MemberChange,
   type Role,
 } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { ACTOR_HEADER, MEMBER_NAME_HEADER } from "../src/actor.ts";
 import {
+  MEMBER_CHECK_BUDGET_MS,
+  MEMBER_RECONCILE_PERIOD_MS,
   MEMBER_REPAIR_DELAY_MS,
   MEMBER_REPAIR_RETRY_MS,
+  MEMBER_STALE_MS,
   Membership,
   type MemberChangeResult,
 } from "../src/members.ts";
 import { OutboxDrain, type BrigadeEvent } from "../src/outbox.ts";
-import { pageTargets } from "../src/paging.ts";
+import { pageTargets, type PagePlan } from "../src/paging.ts";
 import { Shard } from "../src/shard.ts";
 import { MEMBER_CHANGE_LIMIT } from "../src/index.ts";
 import { WORKSPACE_HEADER, type SocketState, type WorkspaceDO } from "../src/workspace.ts";
@@ -271,6 +275,41 @@ async function repairNow(t: Team) {
   );
   expect(await runDurableObjectAlarm(t.stub)).toBe(true);
 }
+
+/** Moves the member list's last reconcile and its last activity back by `ms`, as if that much time passed. */
+const olderBy = (t: Team, ms: number) =>
+  t.withShard((_shard, state) =>
+    state.storage.sql.exec(
+      "update member_repair set value = value - ? where key in ('reconciled', 'active')",
+      ms,
+    ),
+  );
+
+/** Declares a SEV1 as a monitor through the shard's own object (so it counts as activity) and answers its event. */
+const declare = (t: Team) =>
+  runInDurableObject(t.stub, (instance: WorkspaceDO, state) => {
+    const { shard } = instance as unknown as { shard: Shard };
+    const id = newId("inc", Date.now(), random);
+    const { result } = shard.mutate({
+      clientId: "test",
+      mutationId: newId("mut", Date.now(), random),
+      actor: MONITOR_ACTOR,
+      name: "incident.declare",
+      args: { id, title: "Checkout is down", severity: "sev1" },
+      now: Date.now(),
+      internal: true,
+    });
+    expect(result).toMatchObject({ ok: true });
+    return state.storage.sql
+      .exec<{ event: string }>("select event from outbox order by seq")
+      .toArray()
+      .map((row) => JSON.parse(row.event) as BrigadeEvent)
+      .find((event) => event.type === "incident.declared" && event.subject === id)!;
+  });
+
+/** The members a plan sends to. */
+const reached = (plan: PagePlan) =>
+  plan.send ? [...new Set(plan.targets.map((target) => target.userId))] : [];
 
 const brokenDb = {
   prepare: () => {
@@ -676,7 +715,9 @@ describe("when one side fails", () => {
     ]);
     expect(
       await t.withShard((_shard, state) =>
-        state.storage.sql.exec("select * from member_repair").toArray(),
+        state.storage.sql
+          .exec("select * from member_repair where key not in ('reconciled', 'active')")
+          .toArray(),
       ),
     ).toEqual([]);
   });
@@ -808,7 +849,9 @@ describe("when one side fails", () => {
     expect(
       await t.withShard(
         (_shard, state) =>
-          state.storage.sql.exec<{ value: number }>("select value from member_repair").one().value,
+          state.storage.sql
+            .exec<{ value: number }>("select value from member_repair where key = 'at'")
+            .one().value,
       ),
     ).toBe(now + MEMBER_REPAIR_RETRY_MS);
   });
@@ -909,7 +952,9 @@ describe("a workspace past the reconcile limit", () => {
     expect(
       await t.withShard((_shard, state) =>
         state.storage.sql
-          .exec<{ key: string }>("select key from member_repair where key not like 'gone:%'")
+          .exec<{ key: string }>(
+            "select key from member_repair where key not like 'gone:%' and key not in ('reconciled', 'active')",
+          )
           .toArray(),
       ),
     ).toEqual([]);
@@ -1171,6 +1216,104 @@ describe("edits made outside Brigade", () => {
     });
     await t.stub.reconcileMembers();
     expect(await closed).toBe(1012);
+  });
+
+  // Q18: without anyone opening Brigade, the shard's alarm and the page itself check the copy against D1.
+  test("a member deleted in D1 stops being paged at the next periodic reconcile, with nobody opening Brigade", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    await env.DB.prepare(`delete from member where "organizationId" = ? and "userId" = ?`)
+      .bind(t.id, t.caio.id)
+      .run();
+    // As if a period passed with nothing happening: an idle shard reads nothing, so the copy stays.
+    await olderBy(t, MEMBER_RECONCILE_PERIOD_MS + 1);
+    await t.withShard((_shard, state) => state.storage.setAlarm(Date.now() + 60_000));
+    expect(await runDurableObjectAlarm(t.stub)).toBe(true);
+    expect(await paged(t)).toEqual([t.caio.id]);
+
+    // Activity (an incident declared) since the last reconcile, a period after it: it sets the alarm, which
+    // reconciles.
+    await declare(t);
+    await vi.waitFor(async () => expect(await paged(t)).toEqual([]));
+    expect(await events(t, "member.removed")).toMatchObject([
+      { actor: { id: "sys_members" }, data: { userId: t.caio.id, reason: "reconciled" } },
+    ]);
+  });
+
+  test("a page checks a member list not checked against D1 lately first", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    await env.DB.prepare(
+      `update member set role = 'viewer' where "organizationId" = ? and "userId" = ?`,
+    )
+      .bind(t.id, t.caio.id)
+      .run();
+    // Checked a moment ago: the page goes with the copy, and reads nothing.
+    expect(reached(await t.stub.planPage(await declare(t)))).toEqual([t.caio.id]);
+    await olderBy(t, MEMBER_STALE_MS + 1);
+    expect(reached(await t.stub.planPage(await declare(t)))).toEqual([]);
+    expect(await t.withShard((shard) => shard.store.get("members", t.caio.id)?.role)).toBe(
+      "viewer",
+    );
+  });
+
+  test("a page whose check D1 fails or hangs goes with the shard's copy", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    await env.DB.prepare(`delete from member where "organizationId" = ? and "userId" = ?`)
+      .bind(t.id, t.caio.id)
+      .run();
+    await olderBy(t, MEMBER_STALE_MS + 1);
+    const first = await declare(t);
+    const second = await declare(t);
+    await runInDurableObject(t.stub, async (instance: WorkspaceDO) => {
+      const own = (
+        instance as unknown as {
+          membership: { options: { db: D1Database }; checkBudgetMs: number; checkAfter: number };
+        }
+      ).membership;
+      own.options.db = brokenDb;
+      expect(reached(await instance.planPage(first))).toEqual([t.caio.id]);
+      own.options.db = hangingDb;
+      own.checkBudgetMs = 50;
+      own.checkAfter = 0;
+      const started = Date.now();
+      expect(reached(await instance.planPage(second))).toEqual([t.caio.id]);
+      expect(Date.now() - started).toBeLessThan(MEMBER_CHECK_BUDGET_MS);
+    });
+  });
+
+  test("a page whose check throws, rejects or never settles goes with the shard's copy, within 1.5 s", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    await olderBy(t, MEMBER_STALE_MS + 1);
+    const pages = [await declare(t), await declare(t), await declare(t)];
+    await runInDurableObject(t.stub, async (instance: WorkspaceDO) => {
+      const own = (
+        instance as unknown as {
+          membership: { reconcile: () => Promise<boolean>; checkAfter: number };
+        }
+      ).membership;
+      const checks: (() => Promise<boolean>)[] = [
+        () => {
+          throw new Error("reconcile threw");
+        },
+        () => Promise.reject(new Error("reconcile rejected")),
+        () => new Promise<boolean>(() => {}),
+      ];
+      for (const [i, check] of checks.entries()) {
+        own.reconcile = check;
+        own.checkAfter = 0;
+        const started = Date.now();
+        expect(reached(await instance.planPage(pages[i]!))).toEqual([t.caio.id]);
+        // The real budget, not a test's shorter one.
+        expect(Date.now() - started).toBeLessThan(MEMBER_CHECK_BUDGET_MS + 500);
+      }
+    });
   });
 });
 

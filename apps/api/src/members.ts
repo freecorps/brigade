@@ -13,7 +13,8 @@
 // If step 2 fails after D1 committed, the request answers `not_applied` and the shard records the member and arms
 // its alarm to catch up with D1 within `MEMBER_REPAIR_DELAY_MS` (`member.reconcile` as `MEMBERS_ACTOR`, or for a
 // workspace too large to reconcile, `member.remove`/`member.changeRole` for each recorded member), retrying until
-// it succeeds; every sync upgrade into the workspace reconciles too (arming the alarm when that fails), and closes
+// it succeeds; every sync upgrade into the workspace reconciles too (arming the alarm when that fails), and so do the
+// alarm a while after any activity (`periodic`) and a page whose copy is stale (`fresh`, failing open); each closes
 // sockets acting with a role D1 no longer gives them. The same request again also finishes it: a leaver D1 already
 // dropped may repeat their leave, and a member who may make the change has the shard catch up on that one member
 // (as `MEMBERS_ACTOR`, never as the caller).
@@ -166,9 +167,27 @@ export const MEMBER_REPAIR_RETRY_MS = 30 * 1000;
  * upgrade takes from the Worker's D1 check to the shard. After it, the Worker's own check refuses them.
  */
 export const MEMBER_TOMBSTONE_MS = 60 * 1000;
+/**
+ * A shard that has had activity (any change with events) since its member list last agreed with D1 reconciles from its
+ * alarm this long after that (RFC 0006 "Who is paged"), so a member removed or demoted outside Brigade stops being
+ * paged without anyone opening Brigade. One D1 read per period at most; an idle shard reads nothing.
+ */
+export const MEMBER_RECONCILE_PERIOD_MS = 10 * 60 * 1000;
+/**
+ * Before a page, a member list last checked against D1 longer ago than this is checked first (`Membership.fresh`).
+ */
+export const MEMBER_STALE_MS = 5 * 60 * 1000;
+/**
+ * How long a page waits on that check before it goes with the shard's copy: D1 must never be why a page is late or
+ * missing, so a slow or failing D1 pages everyone the copy has (fail open).
+ */
+export const MEMBER_CHECK_BUDGET_MS = 1500;
+/** After a check that failed or ran late, pages skip it this long, so a D1 outage does not cost every page its wait. */
+export const MEMBER_CHECK_BACKOFF_MS = 30 * 1000;
 
 // `at`: when the repair alarm wants to run; `target:<userId>`: a member whose change it owes the shard (when it was
-// recorded); `gone:<userId>`: a removed member's tombstone (until when it holds).
+// recorded); `gone:<userId>`: a removed member's tombstone (until when it holds); `reconciled`: when the member list
+// last agreed with D1 whole; `active`: the first change with events since then (`touched`).
 const REPAIR_SCHEMA = `
   create table if not exists member_repair (key text primary key, value integer not null) without rowid;
 `;
@@ -179,6 +198,8 @@ type Repair = "repaired" | "unchanged" | "failed";
 export class Membership {
   private tail: Promise<unknown> = Promise.resolve();
   private queued: Promise<boolean> | undefined;
+  /** Until when pages skip the check before them (`fresh`), after one failed. In memory: a restart tries again. */
+  private checkAfter = 0;
 
   constructor(
     private readonly options: {
@@ -491,6 +512,7 @@ export class Membership {
       }
       if (members.length === 0) {
         this.settle(members, () => true);
+        this.agreed();
         return true;
       }
       if (members.length > MAX_RECONCILED_MEMBERS) {
@@ -510,10 +532,13 @@ export class Membership {
           caughtUp &&= done;
           return done;
         });
+        // Reading D1 again would repair nothing more: the period bounds how often it is tried.
+        if (caughtUp) this.agreed();
         return caughtUp;
       }
       if (this.repair(members) === "failed") return false;
       this.settle(members, () => true);
+      this.agreed();
       return true;
     });
     this.queued = run;
@@ -648,6 +673,115 @@ export class Membership {
       this.options.log("arming the member repair failed", { error });
     }
   }
+
+  /** Records that the member list agrees with D1 now. Never throws. */
+  private agreed(): void {
+    try {
+      this.put("reconciled", Date.now());
+    } catch (error) {
+      this.options.log("recording a member reconcile failed", { error });
+    }
+  }
+
+  private read(key: string): number | null {
+    const row = this.options.sql
+      .exec<{ value: number }>("select value from member_repair where key = ?", key)
+      .toArray()[0];
+    return row?.value ?? null;
+  }
+
+  private put(key: string, value: number): void {
+    this.options.sql.exec(
+      "insert into member_repair (key, value) values (?, ?) on conflict (key) do update set value = excluded.value",
+      key,
+      value,
+    );
+  }
+
+  /**
+   * A change with events committed (the shard's `onOutbox`): the first one since the last reconcile is recorded, and
+   * the alarm set for the reconcile it asks for (`periodic`), `MEMBER_RECONCILE_PERIOD_MS` after the last one. One
+   * write per period. Never throws.
+   */
+  touched(now: number): void {
+    try {
+      const active = this.read("active");
+      const reconciled = this.read("reconciled");
+      if (active !== null && (reconciled === null || active > reconciled)) return;
+      this.put("active", now);
+      this.options.wake(Math.max(now, (reconciled ?? now) + MEMBER_RECONCILE_PERIOD_MS));
+    } catch (error) {
+      this.options.log("recording shard activity failed", { error });
+    }
+  }
+
+  /**
+   * The alarm's periodic reconcile (RFC 0006 "Who is paged", Q18): after activity since the last reconcile, one is
+   * due `MEMBER_RECONCILE_PERIOD_MS` after that reconcile (after the activity, for a shard never reconciled since
+   * this was deployed; a page does not wait for it, `fresh`). A due one asks for
+   * the repair now (`repairDue` runs it, and retries it while D1 fails). Returns when the next is due, or null with no
+   * activity to answer.
+   */
+  periodic(now: number): number | null {
+    const active = this.read("active");
+    const reconciled = this.read("reconciled");
+    if (active === null || (reconciled !== null && active <= reconciled)) return null;
+    const at = (reconciled ?? active) + MEMBER_RECONCILE_PERIOD_MS;
+    if (at > now) return at;
+    const repair = this.repairAt();
+    if (repair === null || repair > now) this.setRepairAt(now);
+    return null;
+  }
+
+  /**
+   * Before a page (RFC 0006 "Who is paged", Q18): when the member list last agreed with D1 more than `MEMBER_STALE_MS`
+   * ago, reconciles first, so a member removed or demoted outside Brigade is not paged. Fails open: waits at most
+   * `MEMBER_CHECK_BUDGET_MS` (the reconcile then finishes in the background), and a D1 that fails or is late leaves
+   * the page to the shard's copy, logged, with the check skipped for `MEMBER_CHECK_BACKOFF_MS`. Never throws or
+   * rejects, whatever the reconcile does (throws, rejects, never settles): a page waits `MEMBER_CHECK_BUDGET_MS` at
+   * most and then goes with the copy.
+   */
+  async fresh(workspaceId: string, now: number): Promise<void> {
+    try {
+      if (now < this.checkAfter) return;
+      const reconciled = this.read("reconciled");
+      if (reconciled !== null && now - reconciled < MEMBER_STALE_MS) return;
+    } catch (error) {
+      this.options.log("reading the member list's age failed", { error });
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<"late">((resolve) => {
+      timer = setTimeout(() => resolve("late"), this.checkBudgetMs);
+    });
+    // `reconcile` resolves false rather than reject, but a page must not rely on it: a throw or a rejection is a
+    // failed check, never a failed page.
+    const check = Promise.resolve()
+      .then(() => this.reconcile(workspaceId))
+      .catch((error: unknown) => {
+        try {
+          this.options.log("member reconcile before a page threw", { error: String(error) });
+        } catch {
+          // Logging is not worth the page.
+        }
+        return false;
+      });
+    const outcome = await Promise.race([check, late]).finally(() => clearTimeout(timer));
+    if (outcome === true) return;
+    this.checkAfter = Date.now() + MEMBER_CHECK_BACKOFF_MS;
+    try {
+      this.options.log("paging with the shard's member list: checking it against D1 failed", {
+        outcome: outcome === "late" ? "late" : "failed",
+      });
+      // The alarm keeps at it, so the copy catches up without waiting for the next page.
+      if (outcome === false) this.armRepair(Date.now());
+    } catch {
+      // The alarm's periodic reconcile still catches the copy up.
+    }
+  }
+
+  /** `MEMBER_CHECK_BUDGET_MS`; a field so tests can shorten it. */
+  checkBudgetMs = MEMBER_CHECK_BUDGET_MS;
 
   /** When the repair alarm wants to run next; null with nothing to repair. */
   repairAt(): number | null {

@@ -39,6 +39,10 @@ without a policy keeps the interim rule (commander, then every owner, admin and 
 - A monitor now picks its own policy (RFC 0003 "Escalation policies"); deleting a policy a monitor names puts it back
   on the default. An alert route picks one too, first in the order (RFC 0006 "Who is paged"). Still open: whether a
   member declaring by hand should be able to pick one.
+- A member removed or demoted in D1 outside Brigade is no longer paged until somebody opens Brigade: the shard's
+  alarm reconciles its member list a while after any activity, and a page checks a list not checked lately first,
+  failing open on D1 (RFC 0006 "Who is paged", decided). A failed page can be paged again by an owner or admin, and a
+  lost SEV1 or SEV2 declaration is paged again once on its own (RFC 0005 "Notifiers", decided).
 - A failed page is surfaced on the timeline, in logs and now by email (RFC 0005 "Email"): a member a SEV1 or SEV2
   page missed is told once per incident, and the owners are told when a page reached nobody and nothing else will
   page on its own; both on by default, `workspace.setEmail` turns either off. Still open: a dashboard switch for it;

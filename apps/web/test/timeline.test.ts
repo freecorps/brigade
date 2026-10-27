@@ -11,6 +11,7 @@ import {
   entryText,
   entryTime,
   itemText,
+  pageAgainEntries,
   pagesFailedNames,
   people,
   personName,
@@ -289,6 +290,57 @@ test("pages one run could not send for the same reason are one line, with the na
   expect(timelineItems([failed(1, "usr_bia")])).toEqual([
     { kind: "entry", entry: failed(1, "usr_bia") },
   ]);
+});
+
+test("a failed page paged again reads who it went to; a line offers its failures not paged again yet", async () => {
+  const again = (fields: Record<string, unknown>) =>
+    entry({ kind: "paged_again", entries: [`${ID}:2`], userIds: [], everyone: false, ...fields });
+  expect(entryText(again({ actor: "usr_me", userIds: ["usr_bia"] }), who)).toBe(
+    "You paged Bia Lima again",
+  );
+  expect(entryText(again({ everyone: true }), who)).toBe(
+    "Bia Lima paged everyone who can respond again",
+  );
+  expect(entryText(again({ actor: "sys_notifier", everyone: true, auto: true }), who)).toBe(
+    "The page was lost, so Brigade paged it again",
+  );
+  await setLocale("pt-BR");
+  expect(entryText(again({ userIds: ["usr_me"] }), who)).toBe("Bia Lima chamou você de novo");
+  await setLocale("en");
+
+  const failed = (n: number, userId: string | null, reason: string) =>
+    entry({ id: `${ID}:${n}`, kind: "page_failed", actor: "sys_notifier", userId, reason, at: 5 });
+  const rows = [failed(2, "usr_bia", "undelivered"), failed(3, "usr_me", "undelivered")];
+  const [group] = timelineItems(rows);
+  expect(pageAgainEntries(group!, rows)).toEqual([`${ID}:2`, `${ID}:3`]);
+  // One already paged again is left out; a failure paging again cannot change offers nothing.
+  expect(pageAgainEntries(group!, [...rows, again({ id: `${ID}:4` })])).toEqual([`${ID}:3`]);
+  const nobody = failed(5, null, "nobody_on_call");
+  expect(pageAgainEntries({ kind: "entry", entry: nobody }, [nobody])).toEqual([]);
+  const lost = failed(6, null, "dead_lettered");
+  expect(pageAgainEntries({ kind: "entry", entry: lost }, [lost])).toEqual([`${ID}:6`]);
+  // A lost escalation page its run paged again on its own is not offered: that level was paged twice otherwise.
+  const level = entry({
+    id: `${ID}:7`,
+    kind: "page_failed",
+    actor: "sys_notifier",
+    userId: null,
+    reason: "dead_lettered",
+    run: "evt_run",
+    step: 2,
+  });
+  const repaged = entry({
+    id: `${ID}:8`,
+    kind: "escalated",
+    level: 1,
+    round: 0,
+    userIds: ["usr_bia"],
+    reason: "timeout",
+    again: true,
+    repaged: { run: "evt_run", step: 2 },
+  });
+  expect(pageAgainEntries({ kind: "entry", entry: level }, [level])).toEqual([`${ID}:7`]);
+  expect(pageAgainEntries({ kind: "entry", entry: level }, [level, repaged])).toEqual([]);
 });
 
 test("a type change reads by the types' names then, and as from a deleted type when it was deleted", async () => {

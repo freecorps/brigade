@@ -66,6 +66,7 @@ import {
 import { Mailer, type EmailOutcome, type EmailPlan } from "./mailer.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
 import {
+  asksForPage,
   Pager,
   type DeadLetterResult,
   type DeviceOutcome,
@@ -283,6 +284,9 @@ export class WorkspaceDO extends DurableObject<Env> {
         this.armDrain();
         this.armStatus();
         this.armMaintenance();
+        // Activity: the alarm reconciles the member list with D1 a while after it (src/members.ts `periodic`).
+        // Undefined only while the constructor runs, before anything commits.
+        this.membership?.touched(Date.now());
       },
     });
     // TEST ONLY: the API's own tests (vite.config.ts) read events from the outbox, so they pause the drain; the
@@ -421,6 +425,20 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (repairAt !== null) this.wake(repairAt, "member repair");
     } catch (error) {
       this.log("arming the member repair failed", { error: String(error) });
+    }
+    // Likewise a lost page queued to be paged again (src/paging.ts `replayDue`).
+    try {
+      const replayAt = this.pager.replayAt();
+      if (replayAt !== null) this.wake(replayAt, "page again");
+    } catch (error) {
+      this.log("arming the page again failed", { error: String(error) });
+    }
+    // Likewise a push held back behind a page (src/paging.ts `releaseDue`).
+    try {
+      const releaseAt = this.pager.releaseAt(Date.now());
+      if (releaseAt !== null) this.wake(releaseAt, "held push");
+    } catch (error) {
+      this.log("arming the release of held pushes failed", { error: String(error) });
     }
   }
 
@@ -1403,6 +1421,9 @@ export class WorkspaceDO extends DurableObject<Env> {
    */
   async planPage(event: BrigadeEvent): Promise<PagePlan> {
     if (this.shard.workspace() !== event.workspaceId) return { send: false, reason: "not_found" };
+    // A member list that has not been checked against D1 lately is checked first, so a member removed or demoted
+    // outside Brigade is not paged; never in the page's way (it waits a moment at most, and fails open).
+    if (asksForPage(event)) await this.membership.fresh(event.workspaceId, Date.now());
     const now = Date.now();
     const plan = this.pager.plan(event, now);
     if (!plan.send) return plan;
@@ -1431,8 +1452,18 @@ export class WorkspaceDO extends DurableObject<Env> {
    * A phone's delivery receipt (RPC from the Worker's `POST /receipts`, which read nothing but the token's
    * workspace): see `Receipts.receive`. A shard that serves no workspace yet, or another, answers `invalid`.
    */
-  receipt(token: string): Promise<ReceiptResult> {
-    return this.receipts.receive(token, Date.now());
+  async receipt(token: string): Promise<ReceiptResult> {
+    const result = await this.receipts.receive(token, Date.now());
+    // The page the phone confirmed no longer holds a lower-urgency push back from it: that goes out now
+    // (src/paging.ts `releaseDue`). Never in the receipt's way: the alarm releases it otherwise.
+    if (result === "recorded") {
+      try {
+        if (this.pager.releaseDue(Date.now()) > 0) await this.drainOutbox();
+      } catch (error) {
+        this.log("releasing held pushes after a receipt failed", { error: String(error) });
+      }
+    }
+    return result;
   }
 
   /**
@@ -1642,6 +1673,18 @@ export class WorkspaceDO extends DurableObject<Env> {
       escalationsFailed = true;
       this.log("escalation failed", { error });
     }
+    // Lost declarations due to be paged again (src/paging.ts `replayDue`): pages too, so before anything that waits.
+    try {
+      if (this.pager.replayDue(Date.now()) > 0) await this.drainOutbox();
+    } catch (error) {
+      this.log("paging lost pages again failed", { error });
+    }
+    // Pushes held back behind a page whose hold ended (src/paging.ts `releaseDue`).
+    try {
+      if (this.pager.releaseDue(Date.now()) > 0) await this.drainOutbox();
+    } catch (error) {
+      this.log("releasing held pushes failed", { error });
+    }
     let monitors: number | null = now + MONITOR_TICK_MS;
     try {
       monitors = await this.monitoring.tick(now);
@@ -1691,6 +1734,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (outcome === "late") this.status.late(Date.now());
     }
     const before = this.backlog();
+    // The periodic reconcile (RFC 0006 "Who is paged"): a due one becomes a due repair, run just below.
+    let periodic: number | null = now + MONITOR_TICK_MS;
+    try {
+      periodic = this.membership.periodic(Date.now());
+    } catch (error) {
+      this.log("reading the member reconcile period failed", { error });
+    }
     let repair: number | null = now + MONITOR_TICK_MS;
     try {
       // D1 calls have no deadline of their own: a repair that hangs must not hold the alarm (and with it the next
@@ -1761,6 +1811,21 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("reading the slack archives failed", { error });
     }
+    let replayAt: number | null = now + MONITOR_TICK_MS;
+    try {
+      const at = this.pager.replayAt();
+      replayAt = at === null ? null : Math.max(at, Date.now() + (at <= now ? MONITOR_TICK_MS : 0));
+    } catch (error) {
+      this.log("reading the pages to page again failed", { error });
+    }
+    let releaseAt: number | null = now + MONITOR_TICK_MS;
+    try {
+      const at = this.pager.releaseAt(Date.now());
+      // One that could not go is tried again a tick later, not in a loop.
+      releaseAt = at === null ? null : Math.max(at, Date.now() + (at <= now ? MONITOR_TICK_MS : 0));
+    } catch (error) {
+      this.log("reading the held pushes failed", { error });
+    }
     let maintenanceAt: number | null = null;
     try {
       const at = nextMaintenanceAt(this.shard.store.scan("status_maintenance"));
@@ -1774,7 +1839,10 @@ export class WorkspaceDO extends DurableObject<Env> {
       earliest(earliest(monitors, escalationAt), earliest(repair, earliest(armed, maintenanceAt))),
       earliest(
         earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
-        earliest(earliest(webhookAt, archiveAt), earliest(expiryAt, tokenAt)),
+        earliest(
+          earliest(webhookAt, archiveAt),
+          earliest(expiryAt, earliest(tokenAt, earliest(replayAt, earliest(releaseAt, periodic)))),
+        ),
       ),
     );
     if (next === null) await this.ctx.storage.deleteAlarm();

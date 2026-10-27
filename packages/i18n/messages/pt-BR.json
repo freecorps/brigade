@@ -825,6 +825,9 @@
         "kind=escalated_started_aware": "Nível {a}: {b}",
         "kind=escalated_again": "Nível {a} chamado de novo: a chamada anterior se perdeu",
         "kind=escalated_everyone_again": "Todos que podem responder chamados de novo: a chamada anterior se perdeu",
+        "kind=paged_again": "{actor} chamou {a} de novo",
+        "kind=paged_again_everyone": "{actor} chamou de novo todos que podem responder",
+        "kind=paged_again_auto": "A chamada se perdeu, então o Brigade chamou de novo",
         "kind=page_nobody_else": "Ninguém mais foi chamado: só quem declarou pode responder",
         "kind=escalation_exhausted": "Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados",
         "kind=escalated_everyone_stalled": "Um nível de escalonamento continuou falhando, então todos que podem responder foram chamados",
@@ -1462,6 +1465,21 @@
         "reason=not_a_member": "{name} (não pode mais responder)",
         "reason=failed": "{name} (falha no envio)",
         "reason=*": "{name}"
+      }
+    }
+  ],
+  "incident_page_again": [
+    {
+      "declarations": ["input part", "input reason"],
+      "selectors": ["part"],
+      "match": {
+        "part=action": "Chamar de novo",
+        "part=pending": "Chamando de novo…",
+        "part=already": "Isso já foi chamado de novo, por alguém ou pelo Brigade.",
+        "part=acked": "Alguém confirmou o incidente, então não há o que chamar de novo.",
+        "part=resolved": "O incidente não está mais ativo, então não há o que chamar de novo.",
+        "part=failed": "Não foi possível chamar de novo. {reason}",
+        "part=*": "Chamar de novo"
       }
     }
   ],

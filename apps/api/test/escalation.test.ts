@@ -1485,6 +1485,49 @@ describe("escalating early when every push of a level fails (the paging path's)"
     ]);
   });
 
+  test("a push held back behind a page is pending: no early escalation, and the level's timeout still fires", async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    await withPolicy(ws, [
+      { targets: [{ kind: "schedule", id: SCHEDULE }] },
+      {
+        targets: [
+          { kind: "member", id: caio.id },
+          { kind: "member", id: eva.id },
+        ],
+      },
+      { targets: [{ kind: "member", id: bia.id }] },
+    ]);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    // APNs takes Caio's page; his phone has not confirmed it.
+    await deliver(event, relay().send);
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" }, false);
+    await ws.due(incident);
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+    const second = (await pagedEvents(ws, incident))[1]!;
+    // Level 2 at SEV3: Caio's push is held back behind his page, Eva's is refused.
+    const refused = refusing();
+    await deliver(second, refused.send);
+    expect(refused.tokens).toEqual([await pushTokenOf(ws, eva)]);
+    expect((await ws.levels(incident)).map((one) => [one.level, one.reason])).toEqual([
+      [1, "started"],
+      [2, "timeout"],
+    ]);
+    expect(
+      (await ws.timeline(incident))
+        .filter((row) => row.kind === "page_failed")
+        .map((row) => row.userId),
+    ).toEqual([eva.id]);
+
+    await ws.due(incident);
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+    expect((await ws.levels(incident)).map((one) => [one.level, one.reason])).toEqual([
+      [1, "started"],
+      [2, "timeout"],
+      [3, "timeout"],
+    ]);
+  });
+
   test("results that never arrive leave it to the alarm: the level's timeout still fires the next", async () => {
     const ws = await workspace();
     for (const member of [caio, eva]) await ws.device(member);

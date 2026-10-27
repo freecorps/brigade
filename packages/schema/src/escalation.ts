@@ -253,6 +253,7 @@ function paged(
         ...(later && { later }),
         ...(run.paged === 0 && page.userIds.includes(run.causedBy) && { causedBy: run.causedBy }),
         ...(page.again && { again: true }),
+        ...(lost !== undefined && { repaged: { run: run.eventId, step: run.paged } }),
         ...(page.unreached !== undefined && { unreached: page.unreached }),
       },
       ctx,

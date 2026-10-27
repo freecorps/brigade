@@ -718,6 +718,7 @@ const ENTRY_GLYPHS: Record<Exclude<TimelineRow["kind"], "status_changed">, Glyph
   status_published: { ios: "globe", android: "public", web: "public" },
   status_corrected: { ios: "pencil.line", android: "edit", web: "edit" },
   escalated: { ios: "bell.and.waves.left.and.right", android: "campaign", web: "campaign" },
+  paged_again: { ios: "phone.arrow.up.right", android: "phone_forwarded", web: "phone_forwarded" },
   escalation_exhausted: { ios: "hourglass", android: "hourglass_empty", web: "hourglass_empty" },
   type_changed: { ios: "tag", android: "label", web: "label" },
   services_changed: { ios: "square.stack.3d.up", android: "layers", web: "layers" },

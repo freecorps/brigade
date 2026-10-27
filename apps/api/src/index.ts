@@ -4,6 +4,7 @@ import {
   invitationEmail,
   isId,
   isRole,
+  parseAlertSourceToken,
   parseHeartbeatToken,
   workspaceName,
   type MemberChange,
@@ -37,8 +38,10 @@ import { beginSlackInstall } from "./slack-bridge.ts";
 import { configureStatusPage, serveStatusPage } from "./status-route.ts";
 import { createExport, downloadExport, features, sweepExports } from "./exports.ts";
 import { requestDraftRoute } from "./postmortem.ts";
-import { readBounded } from "./body.ts";
+
+import { readBounded, readBoundedBytes } from "./body.ts";
 import { webhookRequest } from "./webhook-routes.ts";
+import { MAX_ALERT_BODY } from "./alert-intake.ts";
 import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, RECEIPT_STATUS, USER_ID } from "./http.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
 import {
@@ -64,6 +67,7 @@ const SLACK_INSTALL_PATH = /^\/workspaces\/([^/]+)\/slack\/install$/;
 const WEBHOOKS_PATH = /^\/workspaces\/([^/]+)\/webhooks(?:\/([^/]+)\/rotate)?$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
+const ALERTS_PATH = /^\/alerts\/([^/]+)$/;
 const STATUS_PAGE_PATH = /^\/workspaces\/([^/]+)\/status-page$/;
 const DRAFT_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/postmortem\/draft$/;
 const EXPORTS_PATH = /^\/workspaces\/([^/]+)\/exports$/;
@@ -172,6 +176,8 @@ export default {
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
     if (pathname === "/receipts") return receiveReceipt(request, env);
+    const alerts = ALERTS_PATH.exec(pathname)?.[1];
+    if (alerts !== undefined) return receiveAlerts(request, env, alerts);
 
     if (pathname === "/health/paging") return pagingHealth(request, env, auth);
     if (pathname === "/account/takeover") return takeoverNotice(request, env, auth);
@@ -350,6 +356,9 @@ export type InheritedWorkspace = {
   paused: string[];
   /** Heartbeat URLs that stopped working. */
   revoked: number;
+  /** Alert source URLs that stopped working, and alert routes the account created that were disabled. */
+  sources?: number;
+  routes?: number;
   /** The shard could not be reached: nothing there was paused, and the owner should look. */
   failed: boolean;
 };
@@ -410,8 +419,16 @@ export function signOutWith(
             failure = undefined;
             // The shard found another member after all, and took nothing over.
             if (!sole || result.paused === undefined) return undefined;
-            const { paused, revoked = 0 } = result;
-            return { id: workspace.id, name: workspace.name, paused, revoked, failed: false };
+            const { paused, revoked = 0, sources = 0, routes = 0 } = result;
+            return {
+              id: workspace.id,
+              name: workspace.name,
+              paused,
+              revoked,
+              sources,
+              routes,
+              failed: false,
+            };
           } catch (error) {
             failure = error;
           }
@@ -494,6 +511,8 @@ function mergeNotice(
     }
     same.paused = [...new Set([...same.paused, ...workspace.paused])];
     same.revoked = Math.max(same.revoked, workspace.revoked);
+    same.sources = Math.max(same.sources ?? 0, workspace.sources ?? 0);
+    same.routes = Math.max(same.routes ?? 0, workspace.routes ?? 0);
     same.failed = same.failed && workspace.failed;
   }
   return merged;
@@ -1003,6 +1022,140 @@ export async function receiveHeartbeat(
   } catch (error) {
     return failed("WorkspaceDO.heartbeat failed", parsed.workspaceId, error);
   }
+}
+
+/** Headers handed to the shard besides the ones it always gets (`ALERT_KEPT_HEADERS`): enough for any provider's. */
+const MAX_ALERT_HEADERS = 64;
+const MAX_ALERT_HEADER_VALUE = 4096;
+
+/**
+ * Headers handed to the shard whatever `MAX_ALERT_HEADERS` leaves out: the ones that authenticate a payload or say
+ * what it is. A source's own header (`auth`) is among the first `MAX_ALERT_HEADERS` others (RFC 0005).
+ */
+function keptHeader(name: string): boolean {
+  return (
+    name === "authorization" ||
+    name === "x-grafana-alerting-signature" ||
+    name.startsWith("sentry-hook-")
+  );
+}
+
+/** The headers the shard reads a payload with: lower-cased, cookies never, values bounded. */
+function alertHeaders(request: Request): Record<string, string> {
+  const headers: Record<string, string> = {};
+  let others = 0;
+  for (const [name, value] of request.headers) {
+    if (name === "cookie") continue;
+    if (!keptHeader(name) && others++ >= MAX_ALERT_HEADERS) continue;
+    headers[name] = value.slice(0, MAX_ALERT_HEADER_VALUE);
+  }
+  return headers;
+}
+
+/**
+ * Tokens the shard refused lately, per isolate, by their SHA-256 (hex), until they expire: once a workspace's
+ * `ALERT_REFUSED_LIMIT` runs out, the same wrong token is answered here without waking the shard. Only refused tokens
+ * go in, so the real source's never does.
+ */
+const refusedTokens = new Map<string, number>();
+const REFUSED_TOKEN_MS = 60 * 1000;
+const REFUSED_TOKENS_MAX = 10_000;
+
+const toHex = (bytes: ArrayBuffer) =>
+  [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+
+/**
+ * `POST /alerts/:token`: an alert source's payload (RFC 0005 "Alert sources"). Like a heartbeat, the token names the
+ * workspace and the source and carries the secret, of which the shard keeps only the SHA-256; the workspace is
+ * looked up in D1 first, so a made-up one wakes no shard (a D1 failure asks the shard anyway, as for a heartbeat).
+ * At most `MAX_ALERT_BODY` bytes are read. The shard checks the secret, the source's header and the provider's
+ * signature (over the bytes as sent): every refusal, here or there, is the same 404. A payload Brigade cannot read is
+ * still accepted, and pages (src/alert-intake.ts).
+ *
+ * Rate limits (Workers Rate Limiting, approximate and per location, each failing open): the workspace's
+ * `ALERT_WORKSPACE_LIMIT` before its shard wakes; the source's `ALERT_LIMIT` in the shard, once the secrets matched;
+ * and `ALERT_REFUSED_LIMIT`, which counts the workspace's refused requests apart, so wrong secrets never spend the
+ * source's budget, and once it runs out a token refused lately is refused here. Over a limit is `503` with
+ * `Retry-After`, never `429`: Datadog retries a 5xx, not a 429, and a dropped alert is worse than a late one.
+ */
+export async function receiveAlerts(request: Request, env: Env, token: string): Promise<Response> {
+  if (request.method !== "POST") {
+    return json({ error: "method_not_allowed" }, 405, { Allow: "POST" });
+  }
+  const parsed = parseAlertSourceToken(token);
+  if (!parsed || !WORKSPACE_ID.test(parsed.workspaceId)) return json({ error: "not_found" }, 404);
+  try {
+    if (!(await workspaceExists(env.DB, parsed.workspaceId))) {
+      return json({ error: "not_found" }, 404);
+    }
+  } catch (error) {
+    // Fail open: a D1 outage must not drop a real alert. The shard still checks the secret.
+    console.error(
+      JSON.stringify({
+        message: "workspace lookup failed; asking the shard",
+        workspace: parsed.workspaceId,
+        error: String(error),
+      }),
+    );
+  }
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(parsed.secret));
+  const tokenKey = `${parsed.workspaceId}:${parsed.sourceId}:${toHex(digest)}`;
+  const refusedUntil = refusedTokens.get(tokenKey);
+  if (refusedUntil !== undefined && refusedUntil > Date.now())
+    return json({ error: "not_found" }, 404);
+  if (
+    !(await limited(env.ALERT_WORKSPACE_LIMIT, parsed.workspaceId, "alert workspace rate limit"))
+  ) {
+    return json({ error: "unavailable" }, 503, { "Retry-After": "60" });
+  }
+  const body = await readBoundedBytes(request, MAX_ALERT_BODY);
+  if (body === undefined) return json({ error: "too_large" }, 413);
+  try {
+    const result = await env.WORKSPACE.getByName(parsed.workspaceId).alert(
+      parsed.sourceId,
+      digest,
+      body,
+      alertHeaders(request),
+    );
+    switch (result.status) {
+      case "accepted":
+        return json({ ok: true, alerts: result.alerts, malformed: result.malformed }, 202);
+      case "ignored":
+        return json({ ok: true, alerts: 0 }, 202);
+      case "busy":
+        return json({ error: "unavailable" }, 503, { "Retry-After": "60" });
+      default:
+        await refused(env, parsed.workspaceId, tokenKey);
+        return json({ error: "not_found" }, 404);
+    }
+  } catch (error) {
+    return failed("WorkspaceDO.alert failed", parsed.workspaceId, error);
+  }
+}
+
+/** Spends one of `key`'s requests on `limiter`; true when there was one left, or the limiter failed (fail open). */
+async function limited(limiter: RateLimit, key: string, what: string): Promise<boolean> {
+  try {
+    const { success } = await limiter.limit({ key });
+    return success;
+  } catch (error) {
+    console.error(JSON.stringify({ message: `${what} failed`, key, error: String(error) }));
+    return true;
+  }
+}
+
+/**
+ * Counts a refused request against the workspace's `ALERT_REFUSED_LIMIT`; past it, the token is remembered as refused
+ * for `REFUSED_TOKEN_MS`, so sending it again wakes no shard.
+ */
+async function refused(env: Env, workspace: string, tokenKey: string): Promise<void> {
+  if (await limited(env.ALERT_REFUSED_LIMIT, workspace, "alert refused rate limit")) return;
+  // Oldest first: a Map iterates in insertion order.
+  if (refusedTokens.size >= REFUSED_TOKENS_MAX) {
+    refusedTokens.delete(refusedTokens.keys().next().value!);
+  }
+  refusedTokens.delete(tokenKey);
+  refusedTokens.set(tokenKey, Date.now() + REFUSED_TOKEN_MS);
 }
 
 /** Largest `POST /receipts` body read, in bytes: a token and its JSON. */

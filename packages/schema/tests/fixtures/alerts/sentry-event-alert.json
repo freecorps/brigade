@@ -1,0 +1,24 @@
+{
+  "action": "triggered",
+  "actor": { "id": "sentry", "name": "Sentry", "type": "application" },
+  "data": {
+    "event": {
+      "event_id": "e4874d664c3540c1a32eab185f12c5ab",
+      "issue_id": "1117540176",
+      "title": "ReferenceError: heck is not defined",
+      "culprit": "?(<anonymous>)",
+      "level": "error",
+      "project": 1,
+      "url": "https://sentry.example.com/api/0/projects/example/front-end/events/e4874d664c3540c1a32eab185f12c5ab/",
+      "web_url": "https://sentry.example.com/organizations/example/issues/1117540176/events/e4874d664c3540c1a32eab185f12c5ab/",
+      "issue_url": "https://sentry.example.com/api/0/issues/1117540176/",
+      "tags": [
+        ["browser", "Chrome 75.0.3770"],
+        ["level", "error"],
+        ["handled", "no"]
+      ]
+    },
+    "triggered_rule": "Very Important Alert!"
+  },
+  "installation": { "uuid": "a8e5d37a-696c-4c54-adb5-b3f28d64c7de" }
+}

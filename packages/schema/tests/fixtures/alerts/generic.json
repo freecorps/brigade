@@ -1,0 +1,8 @@
+{
+  "dedup_key": "checkout-5xx",
+  "title": "Checkout returns 5xx",
+  "severity": "critical",
+  "status": "firing",
+  "link": "https://status.example.com/checks/checkout",
+  "labels": { "service": "checkout", "env": "prod" }
+}

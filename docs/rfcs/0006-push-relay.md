@@ -81,11 +81,33 @@ relay's bearer token):
 
 ## Who is paged
 
-An incident pages through the escalation policy of its **type** when the type names one (RFC 0003 "Incident
-types"), else through the policy of the **monitor** that opened it when that monitor names one, else through the
-workspace's **default escalation policy** (RFC 0003 "Escalation policies"); with none, the **interim rule** pages,
-unchanged since Phase 1. A type, monitor or policy gone falls through to the next (`incidentPolicy`). The policy is
-read when a run starts: changing an incident's type mid-run changes nothing until its next run.
+An incident pages through an escalation policy picked in a fixed order, below; with none, the **interim rule** pages,
+unchanged since Phase 1. The policy is read when a run starts: changing an incident's type mid-run changes nothing
+until its next run.
+
+**Which policy (decided).** A run takes the first of these that names a policy that still exists (`incidentPolicy`):
+
+1. the **alert route** an alert source opened the incident through (RFC 0005 "Alert sources"; the run records it as
+   `route`, and the incident page says "set on the alert route …");
+2. the incident's **type** (RFC 0003 "Incident types");
+3. the **monitor** that opened it (`monitor`);
+4. the workspace's **default** policy (RFC 0003 "Escalation policies");
+5. else the **interim rule** below.
+
+A route, type or monitor naming none, deleted since, or naming a deleted policy falls through to the next, so a
+deletion never leaves an incident paged by nothing. An alert's incident opened by the default route has no route
+policy and goes straight to the default. Tests: `packages/schema/tests/alert-sources.test.ts` ("the route's policy
+pages the incident").
+
+**Alerts that page again (decided).** Besides a declared incident, two things alert sources do page (RFC 0005 "Alert
+sources"). An alert that comes back more urgent raises its incident's severity as `sys_alerts`
+(`incident.severity_changed`), which pages under the rule for any raise into SEV1 or SEV2: the level paged last
+again while a run is under way, else a new run. And a flapping alert, firing again within 10 minutes of its
+incident resolving by itself, reopens that incident as `sys_alerts`; `asksForPage` counts an
+`incident.status_changed` from a closed status to an active one by `sys_alerts` as a page (a member reopening an
+incident still pages nobody), and since the reopen cleared the acknowledgement, it starts a new run. Tests:
+`apps/api/test/notify.test.ts` ("an incident the alerts reopen … pages"), `apps/api/test/alerts.test.ts` ("a flapping
+alert reopens its incident and pages again").
 
 **Through the policy.** The first page of an incident (`incident.declared`, or a severity raised into SEV1 or SEV2
 while no run is under way) starts an escalation run in the shard (`escalation.start`) and pages level 1 on that same

@@ -25,7 +25,10 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countExact", "countPlural"],
+      "selectors": [
+        "countExact",
+        "countPlural"
+      ],
       "match": {
         "countExact=0, countPlural=*": "No active incidents",
         "countExact=*, countPlural=one": "{countFormatted} active incident",
@@ -36,8 +39,14 @@
   "skip_to_content": "Skip to content",
   "environment": [
     {
-      "declarations": ["input env", "input part"],
-      "selectors": ["env", "part"],
+      "declarations": [
+        "input env",
+        "input part"
+      ],
+      "selectors": [
+        "env",
+        "part"
+      ],
       "match": {
         "env=local, part=badge": "Local",
         "env=local, part=overview": "The dashboard, its Worker, the API Worker and a Durable Object, all running on your machine.",
@@ -167,7 +176,9 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{countFormatted} is SEV1",
         "countPlural=*": "{countFormatted} are SEV1"
@@ -202,8 +213,12 @@
   "mobile_change_hint": "Opens the choices",
   "mobile_session": [
     {
-      "declarations": ["input part"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=sign_in_hint": "New to Brigade? Create an account on the dashboard, then sign in here.",
         "part=no_server": "This build doesn't say which Brigade to connect to.",
@@ -354,7 +369,10 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countExact", "countPlural"],
+      "selectors": [
+        "countExact",
+        "countPlural"
+      ],
       "match": {
         "countExact=0, countPlural=*": "No monitors",
         "countExact=*, countPlural=one": "{countFormatted} monitor",
@@ -369,7 +387,9 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{countFormatted} down",
         "countPlural=*": "{countFormatted} down"
@@ -380,8 +400,12 @@
   "monitor_add": "Add monitor",
   "monitor_kind": [
     {
-      "declarations": ["input kind"],
-      "selectors": ["kind"],
+      "declarations": [
+        "input kind"
+      ],
+      "selectors": [
+        "kind"
+      ],
       "match": {
         "kind=http": "HTTP check",
         "kind=tcp": "TCP port",
@@ -391,8 +415,12 @@
   ],
   "monitor_kind_short": [
     {
-      "declarations": ["input kind"],
-      "selectors": ["kind"],
+      "declarations": [
+        "input kind"
+      ],
+      "selectors": [
+        "kind"
+      ],
       "match": {
         "kind=http": "HTTP",
         "kind=tcp": "TCP",
@@ -403,8 +431,12 @@
   "monitor_limit_reached": "This workspace has {max} monitors, the most it can have. Delete one to add another.",
   "monitor_status": [
     {
-      "declarations": ["input status"],
-      "selectors": ["status"],
+      "declarations": [
+        "input status"
+      ],
+      "selectors": [
+        "status"
+      ],
       "match": {
         "status=up": "Up",
         "status=down": "Down",
@@ -416,8 +448,12 @@
   ],
   "monitor_region": [
     {
-      "declarations": ["input region"],
-      "selectors": ["region"],
+      "declarations": [
+        "input region"
+      ],
+      "selectors": [
+        "region"
+      ],
       "match": {
         "region=wnam": "US West",
         "region=enam": "US East",
@@ -430,8 +466,12 @@
   ],
   "monitor_pause_action": [
     {
-      "declarations": ["input action"],
-      "selectors": ["action"],
+      "declarations": [
+        "input action"
+      ],
+      "selectors": [
+        "action"
+      ],
       "match": {
         "action=pause": "Pause",
         "action=prompt": "Pause this monitor? Its checks stop until you resume it.",
@@ -442,8 +482,13 @@
   ],
   "monitor_last_result": [
     {
-      "declarations": ["input state", "input when"],
-      "selectors": ["state"],
+      "declarations": [
+        "input state",
+        "input when"
+      ],
+      "selectors": [
+        "state"
+      ],
       "match": {
         "state=paused_you": "Paused by you {when}",
         "state=paused_other": "Paused by a teammate {when}",
@@ -455,8 +500,12 @@
   "monitor_create": "Create monitor",
   "monitor_field_invalid": [
     {
-      "declarations": ["input field"],
-      "selectors": ["field"],
+      "declarations": [
+        "input field"
+      ],
+      "selectors": [
+        "field"
+      ],
       "match": {
         "field=name": "Give the monitor a name.",
         "field=url": "Use a public http or https address, on a web port such as 80, 443, 8080 or 8443.",
@@ -479,8 +528,12 @@
   "monitor_change_failed": "Couldn't change {name}: {reason}",
   "monitor_field_label": [
     {
-      "declarations": ["input field"],
-      "selectors": ["field"],
+      "declarations": [
+        "input field"
+      ],
+      "selectors": [
+        "field"
+      ],
       "match": {
         "field=kind": "Monitor type",
         "field=name": "Name",
@@ -500,8 +553,12 @@
   ],
   "monitor_field_hint": [
     {
-      "declarations": ["input field"],
-      "selectors": ["field"],
+      "declarations": [
+        "input field"
+      ],
+      "selectors": [
+        "field"
+      ],
       "match": {
         "field=url": "Everyone in the workspace, viewers too, can see this URL: keep tokens and passwords out of it.",
         "field=expected_status": "Empty: any 2xx or 3xx. Redirects are not followed.",
@@ -516,8 +573,14 @@
   ],
   "monitor_check_error": [
     {
-      "declarations": ["input reason", "input got", "input expected"],
-      "selectors": ["reason"],
+      "declarations": [
+        "input reason",
+        "input got",
+        "input expected"
+      ],
+      "selectors": [
+        "reason"
+      ],
       "match": {
         "reason=timeout": "Timed out",
         "reason=network": "Couldn't connect",
@@ -532,8 +595,13 @@
   ],
   "monitor_heartbeat": [
     {
-      "declarations": ["input part", "input interval"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input interval"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=once": "Shown only once",
         "part=send": "Send a POST to this URL at least every {interval}. Brigade keeps only a hash of it, so it can't be shown again.",
@@ -550,8 +618,13 @@
   ],
   "monitor_incident_link": [
     {
-      "declarations": ["input has", "input number"],
-      "selectors": ["has"],
+      "declarations": [
+        "input has",
+        "input number"
+      ],
+      "selectors": [
+        "has"
+      ],
       "match": {
         "has=yes": "Open {number}",
         "has=*": "Open incident"
@@ -560,8 +633,13 @@
   ],
   "monitor_edit": [
     {
-      "declarations": ["input part", "input name"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input name"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=action": "Edit",
         "part=form": "Edit {name}",
@@ -573,8 +651,13 @@
   ],
   "monitor_delete": [
     {
-      "declarations": ["input part", "input name"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input name"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=action": "Delete monitor",
         "part=prompt": "Delete {name}? Its checks stop and its results are gone for good.",
@@ -588,8 +671,13 @@
   ],
   "monitor_rotate": [
     {
-      "declarations": ["input part", "input name"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input name"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=label": "Heartbeat URL",
         "part=hint": "Brigade keeps only a hash of it, so the current URL can't be shown again. A new one replaces it.",
@@ -609,8 +697,13 @@
   "monitor_gone": "It was deleted.",
   "monitor_policy": [
     {
-      "declarations": ["input kind", "input name"],
-      "selectors": ["kind"],
+      "declarations": [
+        "input kind",
+        "input name"
+      ],
+      "selectors": [
+        "kind"
+      ],
       "match": {
         "kind=own": "Pages through {name}",
         "kind=default": "Pages through {name} (default)",
@@ -623,8 +716,13 @@
   ],
   "monitor_discard": [
     {
-      "declarations": ["input part", "input name"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input name"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=prompt": "Discard your changes to {name}?",
         "part=prompt_new": "Discard this new monitor?",
@@ -636,8 +734,12 @@
   ],
   "incident_page": [
     {
-      "declarations": ["input part"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=back": "All incidents",
         "part=loading": "Loading the incident…",
@@ -657,6 +759,7 @@
         "part=you": "You",
         "part=you_object": "you",
         "part=monitors": "A monitor",
+        "part=alerts": "An alert source",
         "part=teammate": "A teammate",
         "part=read_only": "Viewers follow the incident; responders and admins change it.",
         "part=not_found_title": "Incident not found",
@@ -679,7 +782,9 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "1 new update from others",
         "countPlural=*": "{countFormatted} new updates from others"
@@ -688,8 +793,14 @@
   ],
   "incident_role": [
     {
-      "declarations": ["input role", "input form"],
-      "selectors": ["role", "form"],
+      "declarations": [
+        "input role",
+        "input form"
+      ],
+      "selectors": [
+        "role",
+        "form"
+      ],
       "match": {
         "role=commander, form=sentence": "incident commander",
         "role=communications, form=sentence": "communications lead",
@@ -703,8 +814,15 @@
   ],
   "timeline_entry": [
     {
-      "declarations": ["input kind", "input actor", "input a", "input b"],
-      "selectors": ["kind"],
+      "declarations": [
+        "input kind",
+        "input actor",
+        "input a",
+        "input b"
+      ],
+      "selectors": [
+        "kind"
+      ],
       "match": {
         "kind=declared": "{actor} declared the incident as {a}",
         "kind=status_changed": "{actor} changed the status from {a} to {b}",
@@ -771,6 +889,7 @@
         "kind=follow_up_removed": "{actor} removed the follow-up {a}",
         "kind=postmortem_started": "{actor} started the postmortem",
         "kind=postmortem_ai_drafted": "Workers AI drafted the postmortem",
+        "kind=alerts_resolved": "Every alert on this incident resolved. It stays open because people are working on it.",
         "kind=*": "{actor} changed the incident"
       }
     }
@@ -783,7 +902,10 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["reason", "countPlural"],
+      "selectors": [
+        "reason",
+        "countPlural"
+      ],
       "match": {
         "reason=no_devices, countPlural=one": "Couldn't page {countFormatted} person: no registered device",
         "reason=no_devices, countPlural=*": "Couldn't page {countFormatted} people: no registered device",
@@ -806,8 +928,14 @@
   ],
   "incident_change_failed": [
     {
-      "declarations": ["input kind", "input role", "input reason"],
-      "selectors": ["kind"],
+      "declarations": [
+        "input kind",
+        "input role",
+        "input reason"
+      ],
+      "selectors": [
+        "kind"
+      ],
       "match": {
         "kind=update": "Couldn't post the update. {reason}",
         "kind=*": "Couldn't change the {role}. {reason}"
@@ -822,7 +950,10 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countExact", "countPlural"],
+      "selectors": [
+        "countExact",
+        "countPlural"
+      ],
       "match": {
         "countExact=0, countPlural=*": "No members",
         "countExact=*, countPlural=one": "{countFormatted} member",
@@ -832,8 +963,12 @@
   ],
   "member_role": [
     {
-      "declarations": ["input role"],
-      "selectors": ["role"],
+      "declarations": [
+        "input role"
+      ],
+      "selectors": [
+        "role"
+      ],
       "match": {
         "role=owner": "Owner",
         "role=admin": "Admin",
@@ -845,8 +980,13 @@
   ],
   "members_part": [
     {
-      "declarations": ["input part", "input name"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input name"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=title": "Members",
         "part=description": "Owners and admins change roles and remove members. Someone removed stops being paged right away.",
@@ -872,8 +1012,12 @@
   ],
   "member_change_failed": [
     {
-      "declarations": ["input reason"],
-      "selectors": ["reason"],
+      "declarations": [
+        "input reason"
+      ],
+      "selectors": [
+        "reason"
+      ],
       "match": {
         "reason=forbidden": "You can't make this change.",
         "reason=last_owner": "A workspace needs at least one owner. Make someone else an owner first.",
@@ -888,8 +1032,13 @@
   ],
   "member_demote_prompt": [
     {
-      "declarations": ["input kind", "input role"],
-      "selectors": ["kind"],
+      "declarations": [
+        "input kind",
+        "input role"
+      ],
+      "selectors": [
+        "kind"
+      ],
       "match": {
         "kind=owner": "Change your role to {role}? You can no longer manage owners; only an owner can give it back.",
         "kind=all": "Change your role to {role}? You can no longer manage members or owners; only an owner can give it back.",
@@ -904,7 +1053,9 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "Show all {countFormatted} member",
         "countPlural=*": "Show all {countFormatted} members"
@@ -918,7 +1069,9 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "Show all {countFormatted} invitation",
         "countPlural=*": "Show all {countFormatted} invitations"
@@ -934,7 +1087,10 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countExact", "countPlural"],
+      "selectors": [
+        "countExact",
+        "countPlural"
+      ],
       "match": {
         "countExact=0, countPlural=*": "No schedules",
         "countExact=*, countPlural=one": "{countFormatted} schedule",
@@ -950,8 +1106,15 @@
   "oncall_upcoming_none": "No handoffs in the next 4 weeks",
   "oncall_shift_length": [
     {
-      "declarations": ["input unit", "input count", "local countPlural = count: plural"],
-      "selectors": ["unit", "countPlural"],
+      "declarations": [
+        "input unit",
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "unit",
+        "countPlural"
+      ],
       "match": {
         "unit=hours, countPlural=one": "Every hour",
         "unit=hours, countPlural=*": "Every {count} hours",
@@ -966,8 +1129,12 @@
   "oncall_time_zone": "Times in {zone} ({offset})",
   "oncall_unit": [
     {
-      "declarations": ["input unit"],
-      "selectors": ["unit"],
+      "declarations": [
+        "input unit"
+      ],
+      "selectors": [
+        "unit"
+      ],
       "match": {
         "unit=hours": "Hours",
         "unit=days": "Days",
@@ -979,8 +1146,12 @@
   "oncall_layers_hint": "Layers stack: a later layer wins where it has someone on call. Handoffs follow the time zone's clock, also across daylight saving changes.",
   "oncall_field_invalid": [
     {
-      "declarations": ["input field"],
-      "selectors": ["field"],
+      "declarations": [
+        "input field"
+      ],
+      "selectors": [
+        "field"
+      ],
       "match": {
         "field=name": "Enter a name, up to 80 characters.",
         "field=time_zone": "Choose a time zone.",
@@ -1003,8 +1174,12 @@
   "oncall_unnamed": "Unnamed member",
   "oncall_field": [
     {
-      "declarations": ["input field"],
-      "selectors": ["field"],
+      "declarations": [
+        "input field"
+      ],
+      "selectors": [
+        "field"
+      ],
       "match": {
         "field=name": "Name",
         "field=time_zone": "Time zone",
@@ -1022,8 +1197,12 @@
   ],
   "oncall_action": [
     {
-      "declarations": ["input action"],
-      "selectors": ["action"],
+      "declarations": [
+        "input action"
+      ],
+      "selectors": [
+        "action"
+      ],
       "match": {
         "action=add_schedule": "Add schedule",
         "action=add_override": "Add override",
@@ -1040,8 +1219,13 @@
   ],
   "oncall_action_on": [
     {
-      "declarations": ["input action", "input name"],
-      "selectors": ["action"],
+      "declarations": [
+        "input action",
+        "input name"
+      ],
+      "selectors": [
+        "action"
+      ],
       "match": {
         "action=edit": "Edit {name}",
         "action=add_override": "Add override to {name}",
@@ -1055,8 +1239,12 @@
   ],
   "oncall_heading": [
     {
-      "declarations": ["input heading"],
-      "selectors": ["heading"],
+      "declarations": [
+        "input heading"
+      ],
+      "selectors": [
+        "heading"
+      ],
       "match": {
         "heading=new": "New schedule",
         "heading=layers": "Layers",
@@ -1068,8 +1256,14 @@
   ],
   "oncall_handoff": [
     {
-      "declarations": ["input unit", "input day", "input time"],
-      "selectors": ["unit"],
+      "declarations": [
+        "input unit",
+        "input day",
+        "input time"
+      ],
+      "selectors": [
+        "unit"
+      ],
       "match": {
         "unit=weeks": "hands off {day} at {time}",
         "unit=from": "starting {day} at {time}",
@@ -1079,8 +1273,13 @@
   ],
   "oncall_layer_now": [
     {
-      "declarations": ["input state", "input name"],
-      "selectors": ["state"],
+      "declarations": [
+        "input state",
+        "input name"
+      ],
+      "selectors": [
+        "state"
+      ],
       "match": {
         "state=active": "Now: {name}",
         "state=hidden": "Now: {name}, hidden by a later layer",
@@ -1096,7 +1295,9 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=*": "+{countFormatted} more"
       }
@@ -1104,8 +1305,15 @@
   ],
   "oncall_text": [
     {
-      "declarations": ["input text", "input name", "input max", "input time"],
-      "selectors": ["text"],
+      "declarations": [
+        "input text",
+        "input name",
+        "input max",
+        "input time"
+      ],
+      "selectors": [
+        "text"
+      ],
       "match": {
         "text=your_time": "{time} your time",
         "text=members_max": "Up to {max} people per layer.",
@@ -1118,8 +1326,12 @@
   ],
   "oncall_zone": [
     {
-      "declarations": ["input part"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=placeholder": "Search a city or UTC offset",
         "part=empty": "No time zone matches.",
@@ -1131,8 +1343,12 @@
   ],
   "oncall_layer_name": [
     {
-      "declarations": ["input number"],
-      "selectors": ["number"],
+      "declarations": [
+        "input number"
+      ],
+      "selectors": [
+        "number"
+      ],
       "match": {
         "number=1": "Primary",
         "number=*": "Layer {number}"
@@ -1141,8 +1357,14 @@
   ],
   "oncall_mine": [
     {
-      "declarations": ["input part", "input name", "input time"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input name",
+        "input time"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=on_call": "You're on call",
         "part=off_call": "You're not on call",
@@ -1167,7 +1389,9 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=*": "On call until {time} ({countFormatted} schedules)"
       }
@@ -1180,7 +1404,9 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "For the next hour",
         "countPlural=*": "For the next {countFormatted} hours"
@@ -1189,8 +1415,13 @@
   ],
   "escalation_level_round": [
     {
-      "declarations": ["input level", "input round"],
-      "selectors": ["round"],
+      "declarations": [
+        "input level",
+        "input round"
+      ],
+      "selectors": [
+        "round"
+      ],
       "match": {
         "round=0": "{level}",
         "round=*": "{level} (repeat {round})"
@@ -1207,7 +1438,9 @@
         "input reason",
         "input who"
       ],
-      "selectors": ["text"],
+      "selectors": [
+        "text"
+      ],
       "match": {
         "text=title": "Escalation",
         "text=empty": "No escalation policies yet. Without a default policy, pages go to the incident's commander, or to everyone who can respond.",
@@ -1245,6 +1478,7 @@
         "text=level_empty_draft": "Nobody to page yet: add a schedule or a person, or remove this level.",
         "text=policy_default": "Policy: {name}, the workspace default",
         "text=policy_monitor": "Policy: {name}, set on the monitor {who}",
+        "text=policy_route": "Policy: {name}, set on the alert route {who}",
         "text=early": "Paged now: nobody on level {level} could be reached",
         "text=*": "Escalation"
       }
@@ -1258,7 +1492,11 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["kind", "count", "countPlural"],
+      "selectors": [
+        "kind",
+        "count",
+        "countPlural"
+      ],
       "match": {
         "kind=policies, count=*, countPlural=one": "{countFormatted} policy",
         "kind=policies, count=*, countPlural=*": "{countFormatted} policies",
@@ -1283,8 +1521,12 @@
   ],
   "escalation_action": [
     {
-      "declarations": ["input action"],
-      "selectors": ["action"],
+      "declarations": [
+        "input action"
+      ],
+      "selectors": [
+        "action"
+      ],
       "match": {
         "action=add_policy": "New policy",
         "action=edit": "Edit",
@@ -1303,8 +1545,13 @@
   ],
   "escalation_action_on": [
     {
-      "declarations": ["input action", "input name"],
-      "selectors": ["action"],
+      "declarations": [
+        "input action",
+        "input name"
+      ],
+      "selectors": [
+        "action"
+      ],
       "match": {
         "action=edit": "Edit {name}",
         "action=remove_target": "Remove {name}",
@@ -1315,8 +1562,14 @@
   ],
   "escalation_field": [
     {
-      "declarations": ["input field", "input form"],
-      "selectors": ["field", "form"],
+      "declarations": [
+        "input field",
+        "input form"
+      ],
+      "selectors": [
+        "field",
+        "form"
+      ],
       "match": {
         "field=name, form=label": "Name",
         "field=timeout, form=label": "Minutes before the next level",
@@ -1335,8 +1588,14 @@
   ],
   "escalation_progress": [
     {
-      "declarations": ["input part", "input time", "input level"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input time",
+        "input level"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=running": "Escalating",
         "part=resolved": "Stopped: resolved {time}",
@@ -1358,8 +1617,13 @@
   "escalation_early": "Nobody on level {from} could be reached, so level {level} was paged now: {who}",
   "escalation_miss": [
     {
-      "declarations": ["input reason", "input name"],
-      "selectors": ["reason"],
+      "declarations": [
+        "input reason",
+        "input name"
+      ],
+      "selectors": [
+        "reason"
+      ],
       "match": {
         "reason=no_devices": "{name} (no phone registered)",
         "reason=nobody_on_call": "{name} (nobody on call)",
@@ -1372,8 +1636,15 @@
   ],
   "incident_ack": [
     {
-      "declarations": ["input part", "input name", "input time", "input reason"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input name",
+        "input time",
+        "input reason"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=action": "Acknowledge",
         "part=hint": "Stops paging: no further escalation level fires.",
@@ -1394,7 +1665,9 @@
         "input reason",
         "input url"
       ],
-      "selectors": ["part"],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=unpaged_subject": "{incident}: {title} (Brigade couldn't page you)",
         "part=unpaged_intro": "Brigade tried to page you about {incident} in {workspace}, but the page didn't reach your phone: {reason}.",
@@ -1419,8 +1692,15 @@
   ],
   "page_why": [
     {
-      "declarations": ["input text", "input name", "input time", "input detail"],
-      "selectors": ["text"],
+      "declarations": [
+        "input text",
+        "input name",
+        "input time",
+        "input detail"
+      ],
+      "selectors": [
+        "text"
+      ],
       "match": {
         "text=title": "Who was paged",
         "text=why_title": "Paging for {name}",
@@ -1524,8 +1804,13 @@
   ],
   "email_verify": [
     {
-      "declarations": ["input part", "input email"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input email"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=subject": "Confirm your email for Brigade",
         "part=intro": "Confirm that {email} is your address. Until you do, Brigade won't email you about incidents, and you can't invite people or accept invitations.",
@@ -1538,8 +1823,15 @@
   ],
   "email_invite": [
     {
-      "declarations": ["input part", "input inviter", "input workspace", "input role"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input inviter",
+        "input workspace",
+        "input role"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=subject": "{inviter} invited you to {workspace} on Brigade",
         "part=intro": "{inviter} invited you to join {workspace} on Brigade, where the team responds to incidents, as {role}.",
@@ -1553,8 +1845,13 @@
   ],
   "verify_notice": [
     {
-      "declarations": ["input part", "input email"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input email"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=title": "Confirm your email",
         "part=body": "We sent a link to {email}. Until you open it, Brigade won't email you, and you can't invite people or accept invitations.",
@@ -1570,8 +1867,12 @@
   ],
   "verify_page": [
     {
-      "declarations": ["input part"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=page_title": "Confirm email",
         "part=checking": "Confirming your email…",
@@ -1594,8 +1895,15 @@
   ],
   "invite_part": [
     {
-      "declarations": ["input part", "input email", "input date", "input name"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input email",
+        "input date",
+        "input name"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=open": "Invite",
         "part=title": "Invite someone",
@@ -1624,8 +1932,13 @@
   ],
   "invite_error": [
     {
-      "declarations": ["input reason", "input email"],
-      "selectors": ["reason"],
+      "declarations": [
+        "input reason",
+        "input email"
+      ],
+      "selectors": [
+        "reason"
+      ],
       "match": {
         "reason=forbidden": "You can't make this change.",
         "reason=already_member": "{email} is already a member.",
@@ -1655,7 +1968,9 @@
         "input role",
         "input email"
       ],
-      "selectors": ["part"],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=page_title": "Invitation",
         "part=title": "Join {workspace}",
@@ -1695,8 +2010,13 @@
   ],
   "accept_error": [
     {
-      "declarations": ["input reason", "input workspace"],
-      "selectors": ["reason"],
+      "declarations": [
+        "input reason",
+        "input workspace"
+      ],
+      "selectors": [
+        "reason"
+      ],
       "match": {
         "reason=workspace_full": "{workspace} has reached its member limit. Ask an owner to make room.",
         "reason=workspace_limit": "You already belong to as many workspaces as Brigade allows. Leave one first.",
@@ -1713,8 +2033,13 @@
   "auth_sign_up_invited_description": "Use the address the invitation was sent to. After you confirm it, you can accept the invitation.",
   "email_reset": [
     {
-      "declarations": ["input part", "input email"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input email"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=subject": "Reset your Brigade password",
         "part=intro": "Someone asked to reset the password of the Brigade account for {email}. If it was you, choose a new password with this link.",
@@ -1727,8 +2052,13 @@
   ],
   "reset_page": [
     {
-      "declarations": ["input part", "input email"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input email"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=forgot_link": "Forgot your password?",
         "part=forgot_page_title": "Forgot password",
@@ -1762,14 +2092,18 @@
   ],
   "takeover_notice": [
     {
-      "declarations": ["input part"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=title": "You took this account back",
-        "part=body": "Someone signed up with your email address before you confirmed it, and created the workspaces below. They're yours now. So nobody else can page you through what they set up, Brigade paused every monitor there and turned off their heartbeat URLs.",
-        "part=after": "Resume the monitors you want to keep. Give each heartbeat you keep a new URL (New URL in its Edit form) before you resume it. Check each workspace's on-call schedules and escalation policies too.",
+        "part=body": "Someone signed up with your email address before you confirmed it, and created the workspaces below. They're yours now. So nobody else can page you through what they set up, Brigade paused every monitor there, turned off their heartbeat and alert source URLs, and turned off the alert routes they created.",
+        "part=after": "Resume the monitors you want to keep. Give each heartbeat and alert source you keep a new URL before you resume it, and save each alert route you want to keep. Check each workspace's on-call schedules and escalation policies too.",
         "part=failed": "Brigade couldn't reach this workspace, so nothing in it was paused. Check its monitors now.",
-        "part=nothing": "It had no monitors.",
+        "part=nothing": "Nothing there needed turning off.",
         "part=dismiss": "Got it",
         "part=dismissing": "Hiding…",
         "part=dismiss_failed": "Couldn't hide this notice. Try again.",
@@ -1784,7 +2118,9 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{countFormatted} monitor paused",
         "countPlural=*": "{countFormatted} monitors paused"
@@ -1798,7 +2134,9 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{countFormatted} heartbeat URL turned off",
         "countPlural=*": "{countFormatted} heartbeat URLs turned off"
@@ -1815,7 +2153,9 @@
         "input workspace",
         "input list"
       ],
-      "selectors": ["part"],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=message_declared_by": "Declared by {name}",
         "part=message_acknowledged_by": "Acknowledged by {name}",
@@ -1847,8 +2187,14 @@
   ],
   "slack_card": [
     {
-      "declarations": ["input part", "input team", "input channel"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input team",
+        "input channel"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=title": "Slack",
         "part=description": "Declare and acknowledge incidents from Slack with /inc, and keep one message per incident in a channel.",
@@ -1885,8 +2231,14 @@
   ],
   "status_text": [
     {
-      "declarations": ["input part", "input time", "input list"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input time",
+        "input list"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=public_investigating": "Investigating",
         "part=public_identified": "Identified",
@@ -1921,8 +2273,15 @@
   ],
   "status_card": [
     {
-      "declarations": ["input part", "input url", "input name", "input status"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input url",
+        "input name",
+        "input status"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=title": "Status page",
         "part=description": "A public page where customers see which parts of your service work and what you tell them about incidents. Nothing from the internal timeline appears there unless someone publishes it.",
@@ -2004,8 +2363,14 @@
   ],
   "catalog_text": [
     {
-      "declarations": ["input text", "input name", "input reason"],
-      "selectors": ["text"],
+      "declarations": [
+        "input text",
+        "input name",
+        "input reason"
+      ],
+      "selectors": [
+        "text"
+      ],
       "match": {
         "text=services_title": "Services",
         "text=services_empty": "No services yet. List what you run, who owns it and how critical it is, so incidents can say what they affect.",
@@ -2069,8 +2434,12 @@
   ],
   "catalog_action": [
     {
-      "declarations": ["input action"],
-      "selectors": ["action"],
+      "declarations": [
+        "input action"
+      ],
+      "selectors": [
+        "action"
+      ],
       "match": {
         "action=add_service": "New service",
         "action=add_type": "New type",
@@ -2094,8 +2463,13 @@
   ],
   "catalog_action_on": [
     {
-      "declarations": ["input action", "input name"],
-      "selectors": ["action"],
+      "declarations": [
+        "input action",
+        "input name"
+      ],
+      "selectors": [
+        "action"
+      ],
       "match": {
         "action=edit": "Edit {name}",
         "action=remove": "Remove {name}",
@@ -2107,8 +2481,14 @@
   ],
   "catalog_field": [
     {
-      "declarations": ["input field", "input form"],
-      "selectors": ["field", "form"],
+      "declarations": [
+        "input field",
+        "input form"
+      ],
+      "selectors": [
+        "field",
+        "form"
+      ],
       "match": {
         "field=name, form=label": "Name",
         "field=description, form=label": "Description (optional)",
@@ -2135,8 +2515,12 @@
   ],
   "catalog_tier": [
     {
-      "declarations": ["input tier"],
-      "selectors": ["tier"],
+      "declarations": [
+        "input tier"
+      ],
+      "selectors": [
+        "tier"
+      ],
       "match": {
         "tier=tier1": "Tier 1 · Critical",
         "tier=tier2": "Tier 2 · Important",
@@ -2153,7 +2537,11 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["kind", "count", "countPlural"],
+      "selectors": [
+        "kind",
+        "count",
+        "countPlural"
+      ],
       "match": {
         "kind=services, count=*, countPlural=one": "{countFormatted} service",
         "kind=services, count=*, countPlural=*": "{countFormatted} services",
@@ -2173,8 +2561,14 @@
   ],
   "webhooks_card": [
     {
-      "declarations": ["input part", "input host", "input when"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input host",
+        "input when"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=title": "Webhooks",
         "part=description": "Send signed JSON to your own services when incidents, alerts and monitors change.",
@@ -2254,8 +2648,12 @@
   ],
   "webhook_event": [
     {
-      "declarations": ["input type"],
-      "selectors": ["type"],
+      "declarations": [
+        "input type"
+      ],
+      "selectors": [
+        "type"
+      ],
       "match": {
         "type=incident.declared": "Incident declared",
         "type=incident.status_changed": "Status changed",
@@ -2274,8 +2672,13 @@
   ],
   "webhook_error": [
     {
-      "declarations": ["input error", "input status"],
-      "selectors": ["error"],
+      "declarations": [
+        "input error",
+        "input status"
+      ],
+      "selectors": [
+        "error"
+      ],
       "match": {
         "error=timeout": "Timed out",
         "error=network": "Couldn't connect",
@@ -2294,7 +2697,9 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{countFormatted} event",
         "countPlural=*": "{countFormatted} events"
@@ -2303,8 +2708,15 @@
   ],
   "email_webhook_disabled": [
     {
-      "declarations": ["input part", "input workspace", "input webhook", "input failures"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input workspace",
+        "input webhook",
+        "input failures"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=subject": "A webhook in {workspace} was turned off",
         "part=intro": "Brigade turned off the webhook {webhook} in {workspace}: its last {failures} deliveries failed, over more than a day.",
@@ -2317,8 +2729,16 @@
   ],
   "followup_text": [
     {
-      "declarations": ["input text", "input name", "input date", "input count", "input reason"],
-      "selectors": ["text"],
+      "declarations": [
+        "input text",
+        "input name",
+        "input date",
+        "input count",
+        "input reason"
+      ],
+      "selectors": [
+        "text"
+      ],
       "match": {
         "text=title": "Follow-ups",
         "text=description": "What this incident leaves to do, with an owner and a due date.",
@@ -2366,8 +2786,16 @@
   ],
   "postmortem_text": [
     {
-      "declarations": ["input part", "input name", "input time", "input count", "input reason"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input name",
+        "input time",
+        "input count",
+        "input reason"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=title": "Postmortem",
         "part=description": "What happened and what the team learned, section by section. Plain text.",
@@ -2411,8 +2839,16 @@
   ],
   "export_text": [
     {
-      "declarations": ["input part", "input name", "input time", "input count", "input reason"],
-      "selectors": ["part"],
+      "declarations": [
+        "input part",
+        "input name",
+        "input time",
+        "input count",
+        "input reason"
+      ],
+      "selectors": [
+        "part"
+      ],
       "match": {
         "part=title": "Export",
         "part=incident_action": "Export JSON",
@@ -2447,10 +2883,205 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": ["countPlural"],
+      "selectors": [
+        "countPlural"
+      ],
       "match": {
         "countPlural=one": "{countFormatted} incident",
         "countPlural=*": "{countFormatted} incidents"
+      }
+    }
+  ],
+  "takeover_sources_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{countFormatted} alert source URL turned off",
+        "countPlural=*": "{countFormatted} alert source URLs turned off"
+      }
+    }
+  ],
+  "takeover_routes_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{countFormatted} alert route turned off",
+        "countPlural=*": "{countFormatted} alert routes turned off"
+      }
+    }
+  ],
+  "alerts_card": [
+    {
+      "declarations": [
+        "input part",
+        "input name",
+        "input value"
+      ],
+      "selectors": [
+        "part"
+      ],
+      "match": {
+        "part=title": "Alert sources",
+        "part=description": "Grafana, Datadog, Sentry or anything that sends a webhook posts alerts to a secret URL. Routes decide which alerts open incidents and who is paged.",
+        "part=load_failed": "Couldn't load alert sources.",
+        "part=retry": "Try again",
+        "part=add": "Add source",
+        "part=sources_empty": "No alert sources yet. Add one to get a URL to paste into your monitoring tool.",
+        "part=manage_only": "Only owners and admins add alert sources and change routes.",
+        "part=name_label": "Name",
+        "part=name_required": "Give the source a name.",
+        "part=kind_label": "Sent by",
+        "part=kind_generic": "Any webhook",
+        "part=kind_grafana": "Grafana",
+        "part=kind_datadog": "Datadog",
+        "part=kind_sentry": "Sentry",
+        "part=header_label": "Extra header (optional)",
+        "part=header_hint": "Brigade also checks this header. For Basic auth, use Authorization.",
+        "part=header_value_label": "Header value",
+        "part=header_invalid": "Use letters, digits and hyphens, and not a header the transport uses.",
+        "part=header_value_required": "Enter the value the header carries.",
+        "part=secret_label_sentry": "Client secret",
+        "part=secret_hint_sentry": "From your Sentry internal integration. Brigade checks every webhook's signature with it.",
+        "part=secret_label_grafana": "HMAC secret (optional)",
+        "part=secret_hint_grafana": "Set the same secret in the contact point's HMAC signature settings.",
+        "part=secret_required": "Sentry signs every webhook: paste its client secret.",
+        "part=secret_invalid": "Use 8 to 256 characters, without spaces.",
+        "part=create": "Create source",
+        "part=creating": "Creating…",
+        "part=cancel": "Cancel",
+        "part=create_failed": "Couldn't create the source. Try again.",
+        "part=limit": "This workspace has as many alert sources as it can ({value}). Delete one to add another.",
+        "part=url_once": "Copy this URL now. Brigade keeps only a hash of it, so it is shown once.",
+        "part=url_rotated": "New URL for {name}. The old one no longer works.",
+        "part=copy": "Copy",
+        "part=copied": "Copied",
+        "part=close_prompt": "Close without copying? You'd need a new URL.",
+        "part=keep": "Keep it open",
+        "part=close": "Close",
+        "part=setup_title": "Where to paste it",
+        "part=setup_grafana": "In Grafana, open Alerting, then Contact points, and add a Webhook integration with this URL and the POST method. Then send a notification policy to that contact point.",
+        "part=setup_grafana_hmac": "Under Optional Webhook settings, set HMAC Signature to the secret you gave Brigade. Keep the default signature header and leave the timestamp header empty.",
+        "part=setup_datadog": "In Datadog, open Integrations, then Webhooks, and add a webhook named brigade with this URL and the payload below. Then add @webhook-brigade to a monitor's message.",
+        "part=setup_sentry": "In Sentry, open Settings, then Developer Settings, and create an internal integration with this webhook URL. Turn on Alert Rule Action, copy its client secret into Brigade, and pick the integration in an alert rule's actions.",
+        "part=setup_generic": "POST JSON to this URL. Only title is required. Send the same dedup_key while the alert fires, and status resolved when it's over.",
+        "part=setup_header": "Also send the header {name} with the value you entered.",
+        "part=setup_show": "How to connect it",
+        "part=last_received": "Last alert {value}",
+        "part=never_received": "No alert received yet",
+        "part=signed": "Signature checked",
+        "part=header_checked": "Checks {name}",
+        "part=rotate": "New URL",
+        "part=rotate_confirm": "The current URL stops working at once. Update whatever sends to it.",
+        "part=rotate_failed": "Couldn't make a new URL. The current one still works.",
+        "part=delete": "Delete",
+        "part=delete_confirm": "Delete {name}? Its URL stops working and its firing alerts resolve. Incidents they opened stay open.",
+        "part=delete_failed": "Couldn't delete it. Try again.",
+        "part=keep_source": "Keep it",
+        "part=routes_title": "Alert routes",
+        "part=routes_hint": "Tried from the top: the first route that matches decides. An alert no route matches opens an incident at its own severity, paged through the default policy.",
+        "part=default_route": "Everything else",
+        "part=default_route_action": "Opens an incident at the alert's severity, paged through the default policy. Unreadable payloads always come here.",
+        "part=route_name": "Route name",
+        "part=route_name_required": "Give the route a name.",
+        "part=match_sources": "From",
+        "part=any_source": "Any source",
+        "part=match_severities": "Alert severity",
+        "part=any_severity": "Any severity",
+        "part=severity_critical": "Critical",
+        "part=severity_high": "High",
+        "part=severity_warning": "Warning",
+        "part=severity_info": "Info",
+        "part=match_labels": "Labels",
+        "part=labels_hint": "key=value, separated by commas. A key alone matches any value.",
+        "part=labels_invalid": "Write each label as key=value, at most 10.",
+        "part=action_label": "Then",
+        "part=action_open": "Open an incident",
+        "part=action_group": "Group into one open incident",
+        "part=action_suppress": "Keep the alert, open no incident",
+        "part=action_drop": "Drop it",
+        "part=severity_label": "Incident severity",
+        "part=severity_from_alert": "The alert's own",
+        "part=policy_label": "Escalation policy",
+        "part=policy_default": "Default policy",
+        "part=type_label": "Incident type",
+        "part=type_none": "No type",
+        "part=services_label": "Services",
+        "part=group_by": "Group by label",
+        "part=group_by_hint": "Alerts with the same value of this label join one open incident.",
+        "part=group_by_required": "Name the label to group by.",
+        "part=add_route": "Add route",
+        "part=save": "Save",
+        "part=saving": "Saving…",
+        "part=save_failed": "Couldn't save the route. Try again.",
+        "part=edit": "Edit",
+        "part=move_up": "Move up",
+        "part=move_down": "Move down",
+        "part=route_limit": "This workspace has as many routes as it can ({value}).",
+        "part=any_alert": "Any alert",
+        "part=deleted_source": "a deleted source",
+        "part=recent_title": "Recent alerts",
+        "part=recent_empty": "No alerts received yet.",
+        "part=status_firing": "Firing",
+        "part=status_resolved": "Resolved",
+        "part=status_closed": "Closed",
+        "part=outcome_opened": "Opened {name}",
+        "part=outcome_grouped": "Added to {name}",
+        "part=outcome_suppressed": "Suppressed, no incident",
+        "part=outcome_dropped": "Dropped",
+        "part=via_route": "Route: {name}",
+        "part=via_default": "Default route",
+        "part=via_malformed": "Unreadable payload, so the default route took it",
+        "part=via_capacity": "Too many alerts firing, so it paged as the capacity alert",
+        "part=route_disabled": "Off since the account that created it was taken back. Save it to turn it on again.",
+        "part=source_link": "Open in the source",
+        "part=an_incident": "an incident",
+        "part=*": "Alert sources"
+      }
+    }
+  ],
+  "alerts_repeats": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Sent {countFormatted} more time",
+        "countPlural=*": "Sent {countFormatted} more times"
+      }
+    }
+  ],
+  "alert_incident_title": [
+    {
+      "declarations": [
+        "input part",
+        "input name"
+      ],
+      "selectors": [
+        "part"
+      ],
+      "match": {
+        "part=malformed": "Unreadable alert from {name}",
+        "part=capacity": "Alert capacity reached",
+        "part=*": "Unreadable alert from {name}"
       }
     }
   ]

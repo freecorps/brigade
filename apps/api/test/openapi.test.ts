@@ -5,6 +5,7 @@
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import {
+  alertSourceToken,
   checkJsonSchema,
   heartbeatToken,
   INVITATION_RESEND_INTERVAL_MS,
@@ -160,6 +161,24 @@ const CASES: Record<string, () => Promise<Case>> = {
     return {
       path: `/heartbeat/${heartbeatToken(t.id, monitorId, secret)}`,
       init: { method: "POST" },
+      status: 202,
+    };
+  },
+  sendAlerts: async () => {
+    const t = await team();
+    const sourceId = newId("src", Date.now(), random);
+    const secret = newHeartbeatSecret(random);
+    await t.run("alertSource.create", {
+      id: sourceId,
+      name: "Generic",
+      kind: "generic",
+      tokenHash: await sha256Hex(secret),
+      auth: null,
+      signingSecret: null,
+    });
+    return {
+      path: `/alerts/${alertSourceToken(t.id, sourceId, secret)}`,
+      init: { method: "POST", body: JSON.stringify({ title: "Disk almost full on web-1" }) },
       status: 202,
     };
   },

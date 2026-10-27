@@ -22,6 +22,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "alert_recovered" | "{a} recovered, so its alert resolved" |
 * | "alert_paused" | "{actor} paused {a}, so its alert resolved" |
 * | "alert_deleted" | "{actor} deleted {a}, so its alert resolved" |
+* | "alerts_resolved" | "Every alert on this incident resolved. It stays open because people are working on it." |
 * | "page_failed_undelivered" | "Couldn't page {a}: the push didn't go through" |
 * | "page_failed_unsupported" | "Couldn't page {a}: Brigade can't push to Android phones yet" |
 * | "page_failed_not_configured" | "Couldn't page {a}: push notifications aren't set up on this server" |
@@ -96,6 +97,7 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "alert_recovered") return /** @type {LocalizedString} */ (`${i?.a} se recuperou, e o alerta foi resolvido`);
 		if (i?.kind === "alert_paused") return /** @type {LocalizedString} */ (`${i?.actor} pausou ${i?.a}, e o alerta foi resolvido`);
 		if (i?.kind === "alert_deleted") return /** @type {LocalizedString} */ (`${i?.actor} excluiu ${i?.a}, e o alerta foi resolvido`);
+		if (i?.kind === "alerts_resolved") return /** @type {LocalizedString} */ (`Todos os alertas deste incidente foram resolvidos. Ele continua aberto porque há pessoas trabalhando nele.`);
 		if (i?.kind === "page_failed_undelivered") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: o push não foi entregue`);
 		if (i?.kind === "page_failed_unsupported") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: o Brigade ainda não envia pushes para Android`);
 		if (i?.kind === "page_failed_not_configured") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: as notificações push não estão configuradas neste servidor`);
@@ -164,6 +166,7 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "alert_recovered") return /** @type {LocalizedString} */ (`${i?.a} recovered, so its alert resolved`);
 		if (i?.kind === "alert_paused") return /** @type {LocalizedString} */ (`${i?.actor} paused ${i?.a}, so its alert resolved`);
 		if (i?.kind === "alert_deleted") return /** @type {LocalizedString} */ (`${i?.actor} deleted ${i?.a}, so its alert resolved`);
+		if (i?.kind === "alerts_resolved") return /** @type {LocalizedString} */ (`Every alert on this incident resolved. It stays open because people are working on it.`);
 		if (i?.kind === "page_failed_undelivered") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: the push didn't go through`);
 		if (i?.kind === "page_failed_unsupported") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: Brigade can't push to Android phones yet`);
 		if (i?.kind === "page_failed_not_configured") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: push notifications aren't set up on this server`);

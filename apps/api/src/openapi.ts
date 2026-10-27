@@ -46,7 +46,15 @@ export type Operation = {
   /** OpenAPI's form, `{name}` for a path parameter; through the dashboard's Worker, under `/api`. */
   path: string;
   operationId: string;
-  tag: "Health" | "Monitors" | "Workspaces" | "Members" | "Invitations" | "Incidents" | "Sync";
+  tag:
+    | "Health"
+    | "Monitors"
+    | "Alerts"
+    | "Workspaces"
+    | "Members"
+    | "Invitations"
+    | "Incidents"
+    | "Sync";
   summary: string;
   description?: string;
   /** `session`: the Better Auth session cookie; `optional`: answers more with one; `none`: no auth. */
@@ -85,6 +93,7 @@ const REFUSED: Record<number, string> = {
   404: "Not found.",
   409: "Conflicts with the current state.",
   410: "Expired.",
+  413: "The body is too large.",
   426: "Not a WebSocket upgrade.",
   429: "Too many requests.",
   500: "Failed. Not retried by itself.",
@@ -187,6 +196,47 @@ export const OPERATIONS: readonly Operation[] = [
     responses: answers(
       { 202: { description: "The ping was recorded.", body: ref("Ok") } },
       refusals({ 404: ["not_found"] }, SHARD_FAILED),
+    ),
+  },
+  {
+    method: "post",
+    path: "/alerts/{token}",
+    operationId: "sendAlerts",
+    tag: "Alerts",
+    summary: "Send alerts to an alert source",
+    description:
+      'What Grafana, Datadog, Sentry or any webhook posts (RFC 0005 "Alert sources"). The token is the source URL\'s ' +
+      "last segment (shown once, when the source is made or its URL rotated). The body is the provider's own " +
+      "payload, at most 256 KiB; a Sentry source also needs `Sentry-Hook-Signature`, a Grafana source with an HMAC " +
+      "secret `X-Grafana-Alerting-Signature`, and a source with a header that header. A payload Brigade cannot read " +
+      "is still accepted (`malformed`), and pages. Every refusal of the URL, header or signature is the same `404`; " +
+      "`503` carries `Retry-After` (over a rate limit too: Datadog retries a 5xx, not a 429).",
+    auth: "none",
+    parameters: [
+      {
+        name: "token",
+        in: "path",
+        description: "`<workspaceId>.<sourceId>.<secret>`, from the alert source's URL.",
+        schema: { type: "string" },
+      },
+    ],
+    body: { description: "The provider's webhook payload, as JSON." },
+    responses: answers(
+      {
+        202: {
+          description: "Accepted: how many alerts it held, and whether it was unreadable.",
+          body: {
+            type: "object",
+            properties: {
+              ok: { const: true },
+              alerts: { type: "integer", minimum: 0 },
+              malformed: { type: "boolean" },
+            },
+            required: ["ok", "alerts"],
+          },
+        },
+      },
+      refusals({ 404: ["not_found"], 413: ["too_large"] }, SHARD_FAILED),
     ),
   },
   {

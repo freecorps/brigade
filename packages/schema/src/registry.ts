@@ -68,6 +68,15 @@ import {
   postmortemServerMutations,
 } from "./postmortems.ts";
 import { recentExports, recordExport, reserveExport } from "./exports.ts";
+import {
+  alertSourceMutations,
+  allAlertRoutes,
+  allAlertSources,
+  ingestAlerts,
+  rerouteAlerts,
+  recentAlerts,
+  takeOverAlertSources,
+} from "./alert-sources.ts";
 import { invitationMutations } from "./invitations.ts";
 import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";
 import { allMembers, createWorkspace, setEmailSettings, syncMember } from "./workspaces.ts";
@@ -93,6 +102,7 @@ export const mutations = defineRegistry([
   ...webhookMutations,
   ...followUpMutations,
   ...postmortemMutations,
+  ...alertSourceMutations,
 ]);
 
 export const queries = defineRegistry([
@@ -116,6 +126,9 @@ export const queries = defineRegistry([
   ...followUpQueries,
   incidentPostmortem,
   recentExports,
+  allAlertSources,
+  allAlertRoutes,
+  recentAlerts,
 ]);
 
 /**
@@ -142,6 +155,7 @@ export const serverMutations = defineRegistry([
   ...webhookMutations,
   ...followUpMutations,
   ...postmortemMutations,
+  ...alertSourceMutations,
   configureStatusPage,
   createWorkspace,
   syncMember,
@@ -173,4 +187,7 @@ export const serverMutations = defineRegistry([
   ...postmortemServerMutations,
   recordExport,
   reserveExport,
+  ingestAlerts,
+  rerouteAlerts,
+  takeOverAlertSources,
 ]);

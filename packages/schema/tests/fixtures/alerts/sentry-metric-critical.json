@@ -1,0 +1,22 @@
+{
+  "action": "critical",
+  "actor": { "id": "sentry", "name": "Sentry", "type": "application" },
+  "data": {
+    "metric_alert": {
+      "id": "7",
+      "identifier": "7",
+      "title": "Sacred Marmot",
+      "status": 20,
+      "alert_rule": {
+        "id": "3",
+        "name": "Too many errors",
+        "aggregate": "count()",
+        "time_window": 10
+      }
+    },
+    "description_title": "Critical: Too many errors",
+    "description_text": "1000 events in the last 10 minutes",
+    "web_url": "https://sentry.example.com/organizations/example/alerts/rules/details/3/?alert=7"
+  },
+  "installation": { "uuid": "a8e5d37a-696c-4c54-adb5-b3f28d64c7de" }
+}

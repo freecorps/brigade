@@ -4,6 +4,7 @@
 // the incident's timeline through `notification.fail`.
 
 import {
+  ALERTS_ACTOR,
   deliveryId,
   type DeliveryError,
   ESCALATION_ACTOR,
@@ -18,6 +19,7 @@ import {
   type DevicePlatform,
   incidentPolicy,
   type IncidentRow,
+  type IncidentStatus,
   type PageFailure,
   prefixRange,
   type PushEnvironment,
@@ -153,11 +155,23 @@ export type DeviceOutcome =
  * Whether an event asks for a page (RFC 0006 "Who is paged"), from the event alone: a declared incident (any
  * severity; SEV1 and SEV2 at `page` urgency), a severity raised into SEV1 or SEV2, or an escalation level fired by
  * the shard's alarm (the level a run starts with is sent on the event that started it). Monitors open incidents with
- * `incident.declared` as `sys_monitors` (SEV2), so they page through the same rule.
+ * `incident.declared` as `sys_monitors` (SEV2), so they page through the same rule. An incident reopened by the
+ * alerts' actor pages too: its alert fired again soon after it resolved by itself, unacknowledged (RFC 0005 "Alert
+ * sources", flapping); a reopen by a member does not.
  */
 export function asksForPage(event: BrigadeEvent): boolean {
   if (event.subject === undefined) return false;
   if (event.type === "incident.declared") return true;
+  if (event.type === "incident.status_changed") {
+    const { from, to } = (event.data ?? {}) as { from?: IncidentStatus; to?: IncidentStatus };
+    return (
+      event.actor.id === ALERTS_ACTOR.id &&
+      from !== undefined &&
+      to !== undefined &&
+      !isActive(from) &&
+      isActive(to)
+    );
+  }
   if (event.type === "escalation.paged") {
     return (event.data as Partial<EscalationPaged["data"]> | null)?.started === false;
   }

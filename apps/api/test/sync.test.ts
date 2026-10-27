@@ -515,6 +515,9 @@ describe("GET /sync/:workspaceId", () => {
       DB: env.DB,
       EMAIL: env.EMAIL,
       RECEIPT_LIMIT: env.RECEIPT_LIMIT,
+      ALERT_LIMIT: env.ALERT_LIMIT,
+      ALERT_WORKSPACE_LIMIT: env.ALERT_WORKSPACE_LIMIT,
+      ALERT_REFUSED_LIMIT: env.ALERT_REFUSED_LIMIT,
       BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
     };
     const request = new Request(`http://localhost/sync/${workspace()}`, {

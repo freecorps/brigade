@@ -248,7 +248,7 @@ The same sender sends the account emails (RFC 0002 "Auth", RFC 0003 "Invitations
   every session, signs the account's phones and sockets out of each workspace (retried, then caught up by the
   shard's member reconcile from `user.passwordResetAt`) and marks the address verified, which is how the owner of an
   address someone else signed up with takes the account back (RFC 0002 "Auth"); on such a takeover the monitors of
-  the workspaces it is alone in are paused, their heartbeat URLs revoked, and the dashboard tells the owner once
+  the workspaces it is alone in are paused, their heartbeat and alert source URLs revoked, and the dashboard tells the owner once
   (`GET`/`DELETE /account/takeover`). Without a sender, asking answers `503 EMAIL_NOT_CONFIGURED`.
 - **Invitations**: `member.invited` from the workspace shard's outbox, sent by the same queue consumer
   (`src/notify-invite.ts`), in the invitee's language if they have an account, else the inviter's. The link opens the
@@ -281,6 +281,25 @@ heartbeat token's SHA-256); `monitor.*` mutations need `monitor:manage` (owners 
   interval plus grace as down, re-pushes probe configs every 10 minutes or when a region stops reporting (which
   re-arms a probe whose alarm was lost), turns monitors whose results went stale `unknown` (`monitor.evaluate`), and
   retries failed pushes.
+
+## Alert sources
+
+RFC 0005 "Alert sources". `POST /alerts/:token` (`src/index.ts` `receiveAlerts`, also under the dashboard's `/api`):
+the token is `<workspace id>.<source id>.<secret>`. The Worker checks the workspace in D1, holds the workspace to
+`ALERT_WORKSPACE_LIMIT`, reads at most 256 KiB, and calls `WorkspaceDO.alert()` with the bytes; the shard
+(`src/alert-intake.ts`) checks the secret's hash, the source's header and the provider's signature, then holds the
+source to `ALERT_LIMIT`, normalizes the payload and runs `alert.ingest` as `sys_alerts`, which routes each alert and
+opens incidents through `incident.declare`. Refused requests are counted apart (`ALERT_REFUSED_LIMIT`). The three
+limits are Workers Rate Limiting (wrangler.jsonc, one namespace per environment: `4111`/`4121`/`4131` production (the
+top-level config, also what local runs use), `4113`/`4123`/`4133` dev, `4112`/`4122`/`4132` staging), and over one is `503` with `Retry-After`. Every refusal is the
+same 404; an unreadable payload is accepted and pages through the default route. To try one locally after creating a generic
+source in the dashboard:
+
+```bash
+curl -fsS -X POST -H 'Content-Type: application/json' \
+  -d '{"title":"Disk almost full on web-1","dedup_key":"disk-web-1","severity":"high"}' \
+  http://localhost:5173/api/alerts/<token>
+```
 
 ## Dead-man switch
 

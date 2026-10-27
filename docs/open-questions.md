@@ -37,8 +37,8 @@ without a policy keeps the interim rule (commander, then every owner, admin and 
 - Should SEV3 and SEV4 escalate at all (today a run starts for every declared incident, at `high` urgency below
   SEV2), or should a policy say from which severity it runs?
 - A monitor now picks its own policy (RFC 0003 "Escalation policies"); deleting a policy a monitor names puts it back
-  on the default. Still open: alert routes (Phase 3) picking one, and whether a member declaring by hand should be
-  able to pick one.
+  on the default. An alert route picks one too, first in the order (RFC 0006 "Who is paged"). Still open: whether a
+  member declaring by hand should be able to pick one.
 - A failed page is surfaced on the timeline, in logs and now by email (RFC 0005 "Email"): a member a SEV1 or SEV2
   page missed is told once per incident, and the owners are told when a page reached nobody and nothing else will
   page on its own; both on by default, `workspace.setEmail` turns either off. Still open: a dashboard switch for it;
@@ -129,8 +129,9 @@ to confirm in production:
   Schedules and escalation policies only page members, for incidents only the owner or a (paused) monitor can open,
   so they are left as they are. A Slack connection is the open one: a workspace connected to the other person's
   Slack team would keep posting there, and may let that team's users act on incidents. The takeover should also
-  disconnect it (or the notice should list it) once the Slack app lands (RFC 0011). Any future inbound integration
-  (alert webhooks, email ingest) needs the same: its secret revoked on a takeover.
+  disconnect it (or the notice should list it) once the Slack app lands (RFC 0011). Alert source URLs are revoked on a
+  takeover (`alertSource.takeOver`), the alert routes the account created are disabled (one could drop what the owner
+  needs paged), and the notice counts both; a future inbound integration (email ingest) needs the same.
 - None of these counts the sender's own quota (Cloudflare Email Sending's limits answer `E_RATE_LIMIT_EXCEEDED`,
   retried); a Brigade-wide daily ceiling may be needed before open sign-up on a shared instance.
 

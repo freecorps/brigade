@@ -620,7 +620,15 @@ describe("an address someone else signed up with", () => {
       notice: { workspaces: InheritedWorkspace[] } | null;
     };
     expect(told.notice?.workspaces).toEqual([
-      { id: w.id, name: "Squat", paused: ["Their host", "Their cron"], revoked: 1, failed: false },
+      {
+        id: w.id,
+        name: "Squat",
+        paused: ["Their host", "Their cron"],
+        revoked: 1,
+        sources: 0,
+        routes: 0,
+        failed: false,
+      },
     ]);
     expect((await notice(cookie, "DELETE")).status).toBe(204);
     expect(await (await notice(cookie)).json()).toEqual({ notice: null });
@@ -700,7 +708,15 @@ describe("an address someone else signed up with", () => {
       .bind(xia.id)
       .first<{ workspaces: string }>();
     expect(JSON.parse(row!.workspaces)).toEqual([
-      { id: w.id, name: "Squat", paused: ["Their host", "Their cron"], revoked: 1, failed: false },
+      {
+        id: w.id,
+        name: "Squat",
+        paused: ["Their host", "Their cron"],
+        revoked: 1,
+        sources: 0,
+        routes: 0,
+        failed: false,
+      },
     ]);
   });
 

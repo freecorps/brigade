@@ -18,6 +18,7 @@ import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import {
   ArrowLeftIcon,
+  BellCheckIcon,
   BellOffIcon,
   BellRingIcon,
   ChevronDownIcon,
@@ -725,6 +726,7 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
   role_assigned: UserRoundIcon,
   update: MessageSquareTextIcon,
   alert_resolved: HeartPulseIcon,
+  alerts_resolved: BellCheckIcon,
   page_failed: PhoneMissedIcon,
   email_failed: MailWarningIcon,
   slack_failed: MessageSquareWarningIcon,

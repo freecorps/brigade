@@ -5,9 +5,18 @@
  * unread, and a stream (no length, or a wrong one) is read only up to the limit.
  */
 export async function readBounded(request: Request, max: number): Promise<string | undefined> {
+  const bytes = await readBoundedBytes(request, max);
+  return bytes === undefined ? undefined : new TextDecoder().decode(bytes);
+}
+
+/** The body's bytes as sent, bounded like `readBounded`: for a signature, which is over the bytes, not the text. */
+export async function readBoundedBytes(
+  request: Request,
+  max: number,
+): Promise<ArrayBuffer | undefined> {
   const declared = Number(request.headers.get("Content-Length") ?? "0");
   if (!Number.isFinite(declared) || declared > max) return undefined;
-  if (!request.body) return "";
+  if (!request.body) return new ArrayBuffer(0);
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
@@ -27,5 +36,5 @@ export async function readBounded(request: Request, max: number): Promise<string
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(bytes);
+  return bytes.buffer;
 }

@@ -25,6 +25,7 @@ export type Incident_PageInputs = {
 * | "you" | "You" |
 * | "you_object" | "you" |
 * | "monitors" | "A monitor" |
+* | "alerts" | "An alert source" |
 * | "teammate" | "A teammate" |
 * | "read_only" | "Viewers follow the incident; responders and admins change it." |
 * | "not_found_title" | "Incident not found" |

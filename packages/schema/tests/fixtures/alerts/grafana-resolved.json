@@ -1,0 +1,44 @@
+{
+  "receiver": "Brigade",
+  "status": "resolved",
+  "orgId": 1,
+  "alerts": [
+    {
+      "status": "resolved",
+      "labels": {
+        "alertname": "High memory usage",
+        "team": "blue",
+        "zone": "us-1",
+        "severity": "critical"
+      },
+      "annotations": {
+        "description": "The system has high memory usage",
+        "runbook_url": "https://grafana.example.com/runbooks/memory",
+        "summary": "This alert was triggered for zone us-1"
+      },
+      "startsAt": "2026-10-27T12:00:00Z",
+      "endsAt": "2026-10-27T12:30:00Z",
+      "generatorURL": "https://grafana.example.com/alerting/1afz29v7z/edit",
+      "fingerprint": "c6eadffa33fcdf37",
+      "silenceURL": "https://grafana.example.com/alerting/silence/new?alertmanager=grafana&matchers=alertname%3DHigh+memory+usage",
+      "dashboardURL": "",
+      "panelURL": "",
+      "values": {
+        "B": 44.23,
+        "C": 1
+      }
+    }
+  ],
+  "groupLabels": {},
+  "commonLabels": {
+    "team": "blue"
+  },
+  "commonAnnotations": {},
+  "externalURL": "https://grafana.example.com/",
+  "version": "1",
+  "groupKey": "{}:{}",
+  "truncatedAlerts": 0,
+  "title": "[RESOLVED:1]  (blue)",
+  "state": "ok",
+  "message": "**Firing**"
+}

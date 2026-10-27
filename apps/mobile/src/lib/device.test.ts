@@ -17,6 +17,7 @@ import {
   pushEnvironment,
   registerPhone,
   unregisterPhone,
+  VOIP_GRACE_MS,
   type DeviceDeps,
 } from "./device";
 import { neverOpened } from "./sync";
@@ -263,4 +264,13 @@ test("a socket that opens is not taken for a refusal", async () => {
   expect(gaveUp).toBe(false);
   refused.dispose();
   client.close();
+});
+
+test("a VoIP token that is slow to come never holds the alert token back", async () => {
+  const store = createMemoryStore<BrigadeTables>();
+  const started = Date.now();
+  const never = () => new Promise<string | null>(() => {});
+  expect(await registerPhone(phone(shard(store)(ANA), { voipToken: never }))).toBe("on");
+  expect(Date.now() - started).toBeLessThan(VOIP_GRACE_MS + 1000);
+  expect(store.scan("devices")).toMatchObject([{ voipToken: null }]);
 });

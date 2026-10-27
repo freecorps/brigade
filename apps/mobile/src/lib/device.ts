@@ -101,10 +101,14 @@ export async function registerPhone(
   try {
     const publicKey = await deps.publicKey();
     if (!(await deps.permission())) return "off";
+    // Asked for together: PushKit may take its time (or never answer), and the alert token must not wait for it.
+    // A VoIP token that is not there by the time the alert token is gets registered when it arrives (`onVoipToken`).
+    const voip = callToken(deps);
+    const pushToken = await deps.pushToken();
     const args = deviceRegistration({
       publicKey,
-      pushToken: await deps.pushToken(),
-      voipToken: await callToken(deps),
+      pushToken,
+      voipToken: await Promise.race([voip, later(VOIP_GRACE_MS, null)]),
       platform: deps.platform,
       apsEnvironment: deps.apsEnvironment,
     });
@@ -125,6 +129,13 @@ export async function registerPhone(
  * The VoIP token to register: iOS only (Android rings through FCM, not yet set up), and never in registration's way:
  * without it the phone gets alerts and no calls.
  */
+/** How long registering waits for PushKit after the alert token is in hand. */
+export const VOIP_GRACE_MS = 500;
+
+function later<T>(ms: number, value: T): Promise<T> {
+  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
+}
+
 async function callToken(deps: DeviceDeps): Promise<string | null> {
   if (deps.platform !== "ios" || !deps.voipToken) return null;
   try {

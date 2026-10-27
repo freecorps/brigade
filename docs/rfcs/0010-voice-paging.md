@@ -102,6 +102,8 @@ A page rings as a call (`ringsAsCall`, apps/api/src/paging.ts) when it is at `pa
 
 - the incident is **SEV1** (declared, raised into SEV1, or any escalation level of it), or
 - it is an **escalation level** the shard's alarm fired because nobody acknowledged (SEV1 or SEV2).
+  The rule reads the event type (`escalation.paged`), so a SEV2 first page the Queue dead-lettered and
+  `escalation.repage` made again also rings: a page that was lost once rings the second time.
 
 A SEV2's first page and anything SEV3 or lower stay an alert push only. There is no setting yet: the rule is the
 same for every workspace and member, and a per-member preference (or "calls off" on a phone) is left.

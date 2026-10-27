@@ -338,4 +338,30 @@ describe("device.signOut", () => {
     ]);
     expect(store.get("devices", fresh)).toBeDefined();
   });
+
+  test("with `deviceId`, only that device of the user, as `unregistered` (a sign-out on that phone)", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const [phone, laptop, theirs] = [deviceId(), deviceId(), deviceId()];
+    run(store, ana, "device.register", args(phone));
+    run(
+      store,
+      ana,
+      "device.register",
+      args(laptop, { pushToken: "b".repeat(64), publicKey: OTHER_KEY }),
+    );
+    run(store, bia, "device.register", args(theirs, { pushToken: "c".repeat(64) }));
+    const result = run(store, ACCOUNT_ACTOR, "device.signOut", {
+      userId: "usr_ana",
+      deviceId: phone,
+    });
+    expect(result.ok && result.events.map((event) => event.data)).toEqual([
+      { id: phone, userId: "usr_ana", reason: "unregistered" },
+    ]);
+    expect(store.get("devices", laptop)).toBeDefined();
+    // Another user's device is never theirs to drop.
+    expect(
+      run(store, ACCOUNT_ACTOR, "device.signOut", { userId: "usr_ana", deviceId: theirs }),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(store.get("devices", theirs)).toBeDefined();
+  });
 });

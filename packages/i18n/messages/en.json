@@ -883,6 +883,7 @@
         "reason=conflict": "Someone else changed this member meanwhile. Check the list and try again.",
         "reason=not_applied": "Saved. Paging catches up on its own within a minute.",
         "reason=unavailable": "Brigade couldn't reach its database. Nothing changed; try again.",
+        "reason=rate_limited": "Too many changes in a minute. Wait a moment and try again.",
         "reason=network": "Couldn't confirm the change; check the list.",
         "reason=*": "Something went wrong. Try again."
       }
@@ -2806,6 +2807,43 @@
         "part=viewer": "Owners, admins and responders can schedule maintenance.",
         "part=past_title": "Completed",
         "part=*": "Maintenance"
+      }
+    }
+  ],
+  "email_signup_attempt": [
+    {
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "Someone tried to sign up with your email",
+        "part=intro": "Someone tried to create a Brigade account with {email}, which already has one. Nothing changed: no account was created and your password is the same.",
+        "part=open": "Sign in to Brigade",
+        "part=reset": "If it was you, sign in instead. Forgot your password? Choose a new one from \"Forgot your password?\" on the sign-in page.",
+        "part=footer": "If it wasn't you, ignore this email.",
+        "part=*": "Brigade"
+      }
+    }
+  ],
+  "account_flow": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=sign_up_taken": "Couldn't sign you in. If this email already has an account, we've emailed its owner: sign in instead, or reset the password if it's yours.",
+        "part=switcher": "Switch workspace",
+        "part=workspaces": "Workspaces",
+        "part=current": "Current workspace",
+        "part=switch_to": "Switch to {name}",
+        "part=new_workspace": "New workspace",
+        "part=switching": "Switching…",
+        "part=switch_failed": "Couldn't switch workspaces. Check your connection and try again.",
+        "part=list_failed": "Couldn't load your workspaces.",
+        "part=new_title": "Create a workspace",
+        "part=new_description": "You'll own it. Your other workspaces stay as they are, and you can switch between them any time.",
+        "part=cancel": "Cancel",
+        "part=mobile_paging": "This phone stays paged for every workspace you open on it, until you sign out or leave the workspace.",
+        "part=no_workspace": "Your account isn't in a workspace yet. Create one to get started, or ask an owner to invite you.",
+        "part=*": "Brigade"
       }
     }
   ]

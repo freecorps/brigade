@@ -4,8 +4,8 @@
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
-import { unregisterPhone, type DeviceDeps } from "@/lib/device";
-import { SESSION_LIFETIME_S } from "@freecorps/brigade-schema";
+import { deviceId, unregisterPhone, type DeviceDeps } from "@/lib/device";
+import { DEVICE_HEADER, SESSION_LIFETIME_S } from "@freecorps/brigade-schema";
 import { leftovers, SIGNED_OUT_KEY, type FinishDeps } from "@/lib/sign-out";
 import { memberActor, neverOpened, type Server } from "@/lib/sync";
 import { createWorkspaceSync, type WorkspaceSync } from "@/lib/sync-client";
@@ -54,6 +54,18 @@ export function phoneDeps(sync: WorkspaceSync, server?: Server): DeviceDeps {
         }
       : {}),
   };
+}
+
+/**
+ * This phone's device id, sent on sign-out (`DEVICE_HEADER`) so the server takes it off every workspace of the member,
+ * not only the one the app has open. Undefined without a device key (Android until FCM), which registers nowhere.
+ */
+export async function phoneDeviceId(): Promise<string | undefined> {
+  try {
+    return BrigadePush ? deviceId(await BrigadePush.getPublicKey()) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The sign-outs kept from offline, in secure storage: one list for the app, so its changes run in turn. */
@@ -121,9 +133,15 @@ export function finishDeps(server: Server): FinishDeps {
     },
     signOut: async (cookie) => {
       try {
+        const device = await phoneDeviceId();
         const response = await fetch(`${server.auth}/sign-out`, {
           method: "POST",
-          headers: { ...headers(cookie), "content-type": "application/json" },
+          headers: {
+            ...headers(cookie),
+            "content-type": "application/json",
+            // The member's other workspaces: the shard of the kept one was told already.
+            ...(device ? { [DEVICE_HEADER]: device } : {}),
+          },
           body: "{}",
         });
         return response.ok;

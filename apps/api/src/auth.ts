@@ -6,6 +6,7 @@
 // creates exactly what these options need, and prints the SQL for anything missing.
 
 import {
+  DEVICE_HEADER,
   memberName,
   newId,
   roles,
@@ -22,6 +23,7 @@ import { organization } from "better-auth/plugins";
 import {
   dashboardLink,
   renderPasswordResetEmail,
+  renderSignUpAttemptEmail,
   renderVerificationEmail,
 } from "./email-templates.ts";
 import { linkFallback, type EmailSender } from "./email.ts";
@@ -110,14 +112,45 @@ export type AuthBindings = {
    * someone else signed up with. Must not throw.
    */
   onPasswordReset?: (userId: string, reset: { takeOver: boolean; at: number }) => Promise<void>;
+  /**
+   * Called for every session that ends (sign-out, a revoked or expired session, a password reset): closes the sockets
+   * opened with it in each of the user's workspaces, and with `deviceId` (the mobile app signing out names its device,
+   * `DEVICE_HEADER`) takes that phone off them too (src/index.ts). Must not throw.
+   */
+  onSessionEnded?: (session: {
+    userId: string;
+    sessionId: string;
+    deviceId?: string;
+  }) => Promise<void>;
 };
+
+/**
+ * The device the mobile app names on `/sign-out` (`DEVICE_HEADER`). Only ever drops a device of the user signing
+ * out, so a made-up id harms nobody.
+ */
+const DEVICE_ID = /^dev_[0-9A-HJKMNP-TV-Z]{26}$/;
 
 /**
  * Requests per window for Better Auth's routes, counted per client IP and path in D1 (the `rateLimit` table), so
  * every isolate sees the same counts. Better Auth's own stricter rules still apply on top: 3 per 10 s for
- * `/sign-in/*`, `/sign-up/*`, `/change-password` and `/change-email`.
+ * `/sign-up/*`, `/change-password` and `/change-email` (sign-in has its own, `SIGN_IN_IP_LIMIT`).
  */
 export const RATE_LIMIT = { window: 60, max: 100 };
+/**
+ * Sign-in with email and password (RFC 0002 "Auth"): per client IP, loose enough for a team behind one office or
+ * carrier NAT signing in at once during an incident (Better Auth's default, 3 per 10 s, locked them out), and per
+ * address from anywhere (`SIGN_IN_ACCOUNT_LIMIT`, counted in D1's `rateLimit` table for any address, account or not,
+ * so a 429 says nothing about whether it has one), which is what bounds guessing one account's password from many
+ * addresses. The cost: whoever knows an address can keep its sign-in at the limit, a minute at a time; a signed-in
+ * phone or dashboard keeps its session, and a password reset still works.
+ */
+export const SIGN_IN_IP_LIMIT = { window: 60, max: 30 };
+export const SIGN_IN_ACCOUNT_LIMIT = { window: 60, max: 5 };
+/**
+ * "Someone tried to sign up with your address" emails (`onExistingUserSignUp`), per account: a sign-up with a taken
+ * address answers as for a new one, and its owner is told, at most this often, so sign-ups cannot flood an inbox.
+ */
+export const SIGN_UP_NOTICE_LIMIT = { window: 24 * 60 * 60, max: 3 };
 /**
  * Reads the dashboard makes on every load: never limited (and no D1 write each), so a team behind one office or
  * carrier NAT opening the dashboard during an incident cannot hit 429.
@@ -222,9 +255,32 @@ const beforeHook = (bindings: AuthBindings, background?: BackgroundReset) => {
     if (ctx.path === "/request-password-reset") {
       return checkResetRequest(bindings, ctx, background, admitted);
     }
+    if (ctx.path === "/sign-in/email") return checkSignIn(bindings, ctx);
     return checkName(ctx);
   });
 };
+
+/**
+ * `/sign-in/email`: counts the try against its address (`SIGN_IN_ACCOUNT_LIMIT`), account or not, on top of the per-IP
+ * rule Better Auth counts first. The address as Better Auth looks it up (lower case), trimmed, so spelling it another
+ * way does not get another count.
+ */
+async function checkSignIn(
+  bindings: AuthBindings,
+  ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0],
+) {
+  const email: unknown = Reflect.get(Object(ctx.body), "email");
+  // Anything else is Better Auth's to refuse (400).
+  if (typeof email !== "string" || email.length > 254) return;
+  const key = `signin:${email.trim().toLowerCase()}`;
+  const { window, max } = SIGN_IN_ACCOUNT_LIMIT;
+  if ((await countRequest(bindings.database, key, window, Date.now())) > max) {
+    throw APIError.from("TOO_MANY_REQUESTS", {
+      code: "TOO_MANY_REQUESTS",
+      message: "Too many sign-in attempts for this account",
+    });
+  }
+}
 
 /** What `/request-password-reset` answers, for every address. Better Auth's own words, so both paths say the same. */
 export const RESET_REQUESTED = {
@@ -293,7 +349,7 @@ type BackgroundReset = (body: Record<string, unknown>, request: Request) => Prom
  * Counts one more request under `key` in D1's `rateLimit` table and answers the count in the current window
  * (`window` seconds from its first request). One statement, so requests at once each get their own count.
  */
-async function countRequest(
+export async function countRequest(
   db: D1Database,
   key: string,
   window: number,
@@ -361,6 +417,52 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
     // (RFC 0002 "Auth").
     emailAndPassword: {
       enabled: true,
+      // A uniform sign-up (RFC 0002 "Auth"): with no session handed out, Better Auth answers a sign-up with a taken
+      // address the same as one that created an account (a made-up user, no session, the password hashed all the
+      // same), so the answer cannot tell whether an address has an account. The clients sign in right after.
+      autoSignIn: false,
+      // Its owner is told instead, at most `SIGN_UP_NOTICE_LIMIT`; run after the response (`backgroundTasks`).
+      onExistingUserSignUp: async ({ user }, request) => {
+        const sender = bindings.email?.sender;
+        if (!sender) return;
+        const { window, max } = SIGN_UP_NOTICE_LIMIT;
+        if (
+          (await countRequest(bindings.database, `signup-notice:${user.id}`, window, Date.now())) >
+          max
+        ) {
+          return;
+        }
+        const link = dashboardLink(
+          "/sign-in",
+          {},
+          bindings.email?.dashboardUrl,
+          linkFallback(sender, request ? new URL(request.url).origin : undefined),
+        );
+        if (!link) {
+          console.error(
+            JSON.stringify({ message: "sign-up notice not sent: DASHBOARD_URL is not set" }),
+          );
+          return;
+        }
+        const locale = Reflect.get(user, "locale");
+        // Never the name, nor anything the person signing up typed but the address.
+        const result = await sender.send(
+          renderSignUpAttemptEmail(
+            { email: user.email },
+            link,
+            resolveLocale(typeof locale === "string" ? locale : undefined),
+          ),
+        );
+        if (!result.ok) {
+          console.error(
+            JSON.stringify({
+              message: "sign-up notice refused",
+              sender: sender.id,
+              code: result.code,
+            }),
+          );
+        }
+      },
       // Password reset (RFC 0002 "Auth"): the link is the dashboard's `/reset-password#token=…`, and using it proves
       // control of the address, so it also marks the address verified and ends every session. That is how an
       // address someone else signed up with and never verified comes back to its owner.
@@ -482,6 +584,7 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
         "/send-verification-email": VERIFICATION_IP_LIMIT,
         "/request-password-reset": RESET_IP_LIMIT,
         "/reset-password": RESET_SUBMIT_LIMIT,
+        "/sign-in/email": SIGN_IN_IP_LIMIT,
       },
     },
     databaseHooks: {
@@ -497,6 +600,29 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
                 limit: 1,
               })) ?? [];
             return { data: { ...session, activeOrganizationId: member?.organizationId ?? null } };
+          },
+        },
+        // Every way a session ends (sign-out, revoking one or all, a password reset, an expired one found) deletes
+        // its row through here: its sockets close in every workspace (RFC 0004 "Session revocation").
+        delete: {
+          after: async (session, ctx) => {
+            const ended = bindings.onSessionEnded;
+            if (!ended) return;
+            const named = ctx?.path === "/sign-out" ? ctx.headers?.get(DEVICE_HEADER) : null;
+            const deviceId = named && DEVICE_ID.test(named) ? named : undefined;
+            const done = ended({
+              userId: session.userId,
+              sessionId: session.id,
+              ...(deviceId ? { deviceId } : {}),
+            }).catch((error: unknown) =>
+              console.error(
+                JSON.stringify({ message: "ending a session failed", error: String(error) }),
+              ),
+            );
+            // A phone signing out waits, so the next member signing in on it never finds it still registered as
+            // the last one; anything else closes its sockets after the response.
+            if (deviceId || !bindings.waitUntil) await done;
+            else bindings.waitUntil(done);
           },
         },
       },

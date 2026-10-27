@@ -33,6 +33,8 @@ export type Server = {
    */
   forgotPassword: string;
   sync: (workspaceId: string) => string;
+  /** `POST` here creates a workspace (the dashboard's `/api/workspaces`, apps/api `createWorkspace`). */
+  workspaces: string;
   ack: (workspaceId: string, incidentId: string) => string;
 };
 
@@ -58,6 +60,7 @@ export function brigadeServer({
     auth: `${origin}/api/auth`,
     forgotPassword: `${origin}/forgot-password`,
     sync: (workspaceId) => `${socket}/api/sync/${encodeURIComponent(workspaceId)}`,
+    workspaces: `${origin}/api/workspaces`,
     ack: (workspaceId, incidentId) =>
       `${origin}/api/workspaces/${encodeURIComponent(workspaceId)}/incidents/${encodeURIComponent(incidentId)}/ack`,
   };

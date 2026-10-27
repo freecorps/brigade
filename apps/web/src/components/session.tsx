@@ -1,7 +1,7 @@
 import { m } from "@freecorps/brigade-i18n";
 import { isRole, type Role } from "@freecorps/brigade-schema";
 import { SyncProvider } from "@freecorps/brigade-sync/react";
-import { Navigate } from "@tanstack/react-router";
+import { Link, Navigate, useNavigate } from "@tanstack/react-router";
 import { LoaderCircleIcon, RefreshCwIcon } from "lucide-react";
 import {
   createContext,
@@ -55,7 +55,12 @@ export function useMember(): Member {
 function ActiveWorkspace({ userId, children }: { userId: string; children: ReactNode }) {
   const workspace = authClient.useActiveOrganization();
   const member = authClient.useActiveMember();
-  if (!workspace.data || !member.data) {
+  // Just after a switch, the member read may still be the old workspace's: its role is not this one's.
+  if (
+    !workspace.data ||
+    !member.data ||
+    (member.data.organizationId !== undefined && member.data.organizationId !== workspace.data.id)
+  ) {
     if (workspace.error || member.error) {
       return (
         <Unavailable
@@ -74,7 +79,13 @@ function ActiveWorkspace({ userId, children }: { userId: string; children: React
   setSyncActor({ kind: "user", id: userId, role });
   return (
     <SyncProvider client={syncClient} shard={workspace.data.id}>
-      <MemberProvider workspaceId={workspace.data.id} userId={userId} role={role}>
+      {/* Keyed: a switch starts every card over, so no state of one workspace shows in another. */}
+      <MemberProvider
+        key={workspace.data.id}
+        workspaceId={workspace.data.id}
+        userId={userId}
+        role={role}
+      >
         {children}
       </MemberProvider>
     </SyncProvider>
@@ -91,7 +102,7 @@ export function MemberProvider({
   return <MemberContext.Provider value={value}>{children}</MemberContext.Provider>;
 }
 
-function Loading() {
+export function Loading() {
   usePageTitle(m.page_title_loading());
   return (
     <div
@@ -117,11 +128,15 @@ function Unavailable({ retry }: { retry: () => void }) {
   );
 }
 
-/** Signed in without a workspace: sign-up's second step failed, or the user left their last one. */
-function CreateWorkspace() {
+/**
+ * Signed in without a workspace (sign-up's last step failed, or the user left their last one), or, with `another`,
+ * New workspace from the header's switcher (`/workspaces/new`), which can go back.
+ */
+export function CreateWorkspace({ another = false }: { another?: boolean }) {
   // Read so a language switch rewords the form (RequireWorkspace's route does not read it).
   usePreferences();
   usePageTitle(m.page_title_create_workspace());
+  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | undefined>();
   const [failure, setFailure] = useState<string | null>(null);
@@ -151,10 +166,25 @@ function CreateWorkspace() {
       return;
     }
     await openWorkspace(created.workspace.id);
+    if (another) await navigate({ to: "/" });
   };
 
   return (
-    <AuthPage title={m.workspace_create_title()} description={m.workspace_create_description()}>
+    <AuthPage
+      title={another ? m.account_flow({ part: "new_title", name: "" }) : m.workspace_create_title()}
+      description={
+        another
+          ? m.account_flow({ part: "new_description", name: "" })
+          : m.workspace_create_description()
+      }
+      footer={
+        another ? (
+          <Link to="/" className="font-medium text-primary underline-offset-4 hover:underline">
+            {m.account_flow({ part: "cancel", name: "" })}
+          </Link>
+        ) : undefined
+      }
+    >
       <form onSubmit={submit} noValidate className="flex flex-col gap-4" aria-busy={busy}>
         <Field
           ref={input}

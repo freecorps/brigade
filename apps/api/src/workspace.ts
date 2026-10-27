@@ -33,7 +33,7 @@ import {
   type ServerMessage,
   type SubscriptionChanges,
 } from "@freecorps/brigade-sync/protocol";
-import { readActor, readMemberName, readResetAt } from "./actor.ts";
+import { readActor, readMemberName, readResetAt, readSessionId, sessionTag } from "./actor.ts";
 import {
   MEMBER_REPAIR_RETRY_MS,
   Membership,
@@ -879,6 +879,36 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
   }
 
+  /**
+   * After a Better Auth session of `userId` ended (sign-out, a revoked or expired session; RPC from the API Worker's
+   * session hook, RFC 0004 "Session revocation"): closes the sockets opened with it (`1012`; they reconnect without a
+   * session and are refused). `deviceId`: the phone signed out on names itself, and comes off this workspace too
+   * (`device.signOut`), since the app takes it off only the workspace it has open (RFC 0006 "Device registration").
+   * The sockets close whatever happens; a storage failure throws, and the Worker tries again. A shard that serves
+   * another workspace, or none yet, answers `not_found`.
+   */
+  endSession(
+    workspaceId: string,
+    session: { userId: string; sessionId: string; deviceId?: string },
+  ): { ok: true } | { ok: false; code: "not_found" } {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    try {
+      if (session.deviceId !== undefined) {
+        this.serverMutation("device.signOut", {
+          userId: session.userId,
+          deviceId: session.deviceId,
+        });
+      }
+      return { ok: true };
+    } finally {
+      for (const ws of this.ctx.getWebSockets(sessionTag(session.sessionId))) {
+        const state = ws.deserializeAttachment() as SocketState | null;
+        if (state?.closed) continue;
+        close(ws, CLOSE_SERVICE_RESTART, "signed out");
+      }
+    }
+  }
+
   /** Runs a server-only mutation as `ACCOUNT_ACTOR`; a `conflict` is nothing to do. Throws on anything else. */
   private serverMutation(name: string, args: Record<string, unknown>): void {
     const now = Date.now();
@@ -1444,7 +1474,9 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
     if (name !== undefined) this.syncMember(actor, name);
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
-    this.ctx.acceptWebSocket(server);
+    // Tagged with the session it came with, so ending that session closes it (`endSession`).
+    const sessionId = readSessionId(request.headers);
+    this.ctx.acceptWebSocket(server, sessionId ? [sessionTag(sessionId)] : []);
     const state: SocketState = { workspace, actor, clientId: null, subs: [], openedAt: Date.now() };
     server.serializeAttachment(state);
     // The Worker read the member's role before this request arrived, and a member change may have landed in

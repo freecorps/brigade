@@ -75,7 +75,19 @@ relay's bearer token):
   unregisters it first (`device.unregister`, given up after 5 s so signing out offline still works; the device then
   stays registered until someone signs out on it online or APNs drops its token), then ends the session. The account
   section says whether the phone is paged: on, notifications off, no device key yet (Android until FCM), taken by the
-  last member signed in on it, or failed. Registering into one workspace only: the active one.
+  last member signed in on it, or failed.
+- **Several workspaces (decided).** The app registers the phone in each workspace the member opens on it and keeps
+  the earlier registrations when they switch: switching to look at another workspace must never stop the pages of
+  the one they are on call in, since "Who is paged" resolves targets per workspace and a phone missing from one is
+  `no_devices` there. So a member in two workspaces gets both's pages on the phone once they have opened each on it.
+  Sign-out takes the phone off all of them: the app unregisters it from the workspace it has open, as before, and
+  names its device on Better Auth's `/sign-out` (`Brigade-Device`), whose session hook takes it off every other
+  workspace of the member before answering (`device.signOut` with `deviceId`, a `device.unregistered`
+  `unregistered`; RFC 0002 "Auth"). A sign-out kept from offline sends the same header when it is finished. Leaving a
+  workspace or being removed drops the member's devices there (RFC 0003 "Members"). The account section says the
+  phone stays paged for every workspace opened on it. If the session hook cannot reach a shard (3 tries), the phone
+  stays registered there for the member who left until someone signs out on it online again, they leave that
+  workspace, or APNs drops the token: the same gap as an offline sign-out that could not be kept.
 - **The relay** takes the device's `environment` with each push and picks the APNs host from it (one provider token
   signs for both).
 

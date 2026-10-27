@@ -883,6 +883,7 @@
         "reason=conflict": "Outra pessoa mudou este membro enquanto isso. Confira a lista e tente de novo.",
         "reason=not_applied": "Salvo. Os chamados se atualizam sozinhos em até um minuto.",
         "reason=unavailable": "O Brigade não conseguiu acessar o banco de dados. Nada mudou; tente de novo.",
+        "reason=rate_limited": "Muitas mudanças em um minuto. Espere um pouco e tente de novo.",
         "reason=network": "Não foi possível confirmar a mudança; confira a lista.",
         "reason=*": "Algo deu errado. Tente de novo."
       }
@@ -2806,6 +2807,43 @@
         "part=viewer": "Owners, admins e responders podem programar manutenções.",
         "part=past_title": "Concluídas",
         "part=*": "Manutenção"
+      }
+    }
+  ],
+  "email_signup_attempt": [
+    {
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "Alguém tentou se cadastrar com seu email",
+        "part=intro": "Alguém tentou criar uma conta no Brigade com {email}, que já tem uma. Nada mudou: nenhuma conta foi criada e sua senha continua a mesma.",
+        "part=open": "Entrar no Brigade",
+        "part=reset": "Se foi você, entre na sua conta. Esqueceu a senha? Escolha uma nova em \"Esqueceu a senha?\" na página de entrada.",
+        "part=footer": "Se não foi você, ignore este email.",
+        "part=*": "Brigade"
+      }
+    }
+  ],
+  "account_flow": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=sign_up_taken": "Não foi possível entrar. Se este email já tem uma conta, avisamos o dono por email: entre com ela ou redefina a senha, se for sua.",
+        "part=switcher": "Trocar de espaço de trabalho",
+        "part=workspaces": "Espaços de trabalho",
+        "part=current": "Espaço de trabalho atual",
+        "part=switch_to": "Trocar para {name}",
+        "part=new_workspace": "Novo espaço de trabalho",
+        "part=switching": "Trocando…",
+        "part=switch_failed": "Não foi possível trocar de espaço de trabalho. Confira sua conexão e tente de novo.",
+        "part=list_failed": "Não foi possível carregar seus espaços de trabalho.",
+        "part=new_title": "Criar um espaço de trabalho",
+        "part=new_description": "Você será o proprietário. Seus outros espaços de trabalho continuam como estão, e você pode trocar entre eles quando quiser.",
+        "part=cancel": "Cancelar",
+        "part=mobile_paging": "Este celular continua recebendo chamados de todo espaço de trabalho que você abrir nele, até você sair da conta ou do espaço de trabalho.",
+        "part=no_workspace": "Sua conta ainda não está em um espaço de trabalho. Crie um para começar ou peça a um proprietário para convidar você.",
+        "part=*": "Brigade"
       }
     }
   ]

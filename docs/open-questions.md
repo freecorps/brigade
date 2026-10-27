@@ -132,6 +132,10 @@ to confirm in production:
   disconnect it (or the notice should list it) once the Slack app lands (RFC 0011). Alert source URLs are revoked on a
   takeover (`alertSource.takeOver`), the alert routes the account created are disabled (one could drop what the owner
   needs paged), and the notice counts both; a future inbound integration (email ingest) needs the same.
+- **Sign-up notices** (someone signed up with an address that has an account, RFC 0002 "Auth"): at most 3 a day per
+  account. The sign-up itself answers as for a new account; whoever then signs in with a free address learns it was
+  free (and holds it unverified until a reset). Requiring verification before sign-in would close that on instances
+  with email; should it be an instance setting?
 - None of these counts the sender's own quota (Cloudflare Email Sending's limits answer `E_RATE_LIMIT_EXCEEDED`,
   retried); a Brigade-wide daily ceiling may be needed before open sign-up on a shared instance.
 

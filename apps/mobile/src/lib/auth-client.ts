@@ -2,7 +2,7 @@
 // kept in the Keychain or Android Keystore (expo-secure-store) by `@better-auth/expo`, which sends it back as a
 // `Cookie` header and the app's scheme as `expo-origin` (apps/api/src/auth.ts, `APP_ORIGIN`).
 import { expoClient } from "@better-auth/expo/client";
-import { organizationClient } from "better-auth/client/plugins";
+import { inferAdditionalFields, organizationClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
@@ -34,6 +34,8 @@ export function brigadeAuthClient(baseURL: string, storage: SessionStorage) {
         storage,
       }),
       organizationClient(),
+      // `locale`: the language Brigade writes to the user in, set at sign-up (apps/api src/auth.ts).
+      inferAdditionalFields({ user: { locale: { type: "string", required: false } } }),
     ],
   });
 }

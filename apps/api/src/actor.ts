@@ -21,13 +21,23 @@ export const MEMBER_NAME_HEADER = "Brigade-Member-Name";
  * the epoch, RFC 0002 "Auth"). The shard drops the member's devices from before it ahead of the socket.
  */
 export const RESET_AT_HEADER = "Brigade-Reset-At";
+/**
+ * Set next to `MEMBER_NAME_HEADER`: the Better Auth session the upgrade came with (its id, never its token). The
+ * shard tags the socket with it, so ending that session closes it (`WorkspaceDO.endSession`, RFC 0004 "Session
+ * revocation").
+ */
+export const SESSION_HEADER = "Brigade-Session";
+/** The tag a shard gives a socket opened with session `sessionId` (`acceptWebSocket`). */
+export function sessionTag(sessionId: string): string {
+  return `session:${sessionId}`;
+}
 
 /**
- * `name`: the member's name from Better Auth; `resetAt`: when their password was last reset, if ever. Both absent for
- * the dev actor, which has no user.
+ * `name`: the member's name from Better Auth; `resetAt`: when their password was last reset, if ever; `sessionId`: the
+ * session the upgrade came with. All absent for the dev actor, which has no user.
  */
 export type ActorResult =
-  | { ok: true; actor: Actor; name?: string; resetAt?: number }
+  | { ok: true; actor: Actor; name?: string; resetAt?: number; sessionId?: string }
   | { ok: false; response: Response };
 
 /** Hosts a local run serves on: the dev actor never applies to a request for any other host. */
@@ -93,6 +103,7 @@ export async function resolveActor(
     ok: true,
     actor: { kind: "user", id: session.user.id, role: member.role },
     name: session.user.name,
+    sessionId: session.session.id,
     ...(member.resetAt !== null ? { resetAt: member.resetAt } : {}),
   };
 }
@@ -135,6 +146,15 @@ export function readResetAt(headers: Headers): number | undefined {
   const at = Number(raw);
   return Number.isSafeInteger(at) ? at : undefined;
 }
+
+/** The session id the Worker set on a forwarded upgrade, or undefined. */
+export function readSessionId(headers: Headers): string | undefined {
+  const raw = headers.get(SESSION_HEADER);
+  return raw !== null && SESSION_ID.test(raw) ? raw : undefined;
+}
+
+/** A Better Auth session id as `authId` makes them (`ses_` and a ULID); short enough for a socket tag. */
+export const SESSION_ID = /^ses_[0-9A-HJKMNP-TV-Z]{26}$/;
 
 /** The member name the Worker set on a forwarded upgrade, or undefined. */
 export function readMemberName(headers: Headers): string | undefined {

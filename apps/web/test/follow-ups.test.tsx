@@ -48,6 +48,7 @@ vi.mock("../src/lib/auth", async (original) => {
         session: { activeOrganizationId: "demo" },
       })),
       useActiveOrganization: done(() => ({ id: "demo", name: "Demo" })),
+      useListOrganizations: done(() => [{ id: "demo", name: "Demo" }]),
       useActiveMember: done(() => ({ role })),
     },
   };

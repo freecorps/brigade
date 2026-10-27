@@ -38,6 +38,7 @@ import { workerAuth } from "../src/index.ts";
 import committedFixture from "../../../packages/sdk/tests/fixtures/server-signed.json?raw";
 import { serverSignedFixtureJson } from "./sdk-fixture.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
+import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
 const PASSWORD = "correct horse battery staple";
@@ -132,10 +133,7 @@ async function signUp(name: string): Promise<Person> {
   });
   expect(response.status).toBe(200);
   const body = (await response.json()) as { user: { id: string } };
-  const cookie = response.headers
-    .getSetCookie()
-    .map((value) => value.split(";")[0])
-    .join("; ");
+  const cookie = await sessionCookie(email, PASSWORD);
   await env.DB.prepare(`update "user" set "emailVerified" = 1 where id = ?`)
     .bind(body.user.id)
     .run();

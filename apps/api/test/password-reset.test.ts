@@ -21,6 +21,7 @@ import type { BrigadeEvent } from "../src/outbox.ts";
 import { pageTargets } from "../src/paging.ts";
 import { Shard, type MutateInput } from "../src/shard.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
+import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
 const PASSWORD = "correct horse battery staple";
@@ -79,7 +80,7 @@ async function signUp(name: string, email = address(name), locale?: string) {
   });
   expect(response.status).toBe(200);
   const body = (await response.json()) as { user: { id: string } };
-  return { id: body.user.id, email, cookie: cookieOf(response) };
+  return { id: body.user.id, email, cookie: await sessionCookie(email, PASSWORD) };
 }
 
 const cookieOf = (response: Response) =>

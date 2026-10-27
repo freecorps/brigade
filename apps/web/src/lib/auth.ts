@@ -83,6 +83,23 @@ export async function openWorkspace(
   reload();
 }
 
+/**
+ * Makes another of the member's workspaces active in the session (`set-active`, which also tells the session,
+ * active-organization and active-member hooks to fetch again): the dashboard then opens that workspace's shard. True
+ * once the server answered.
+ */
+export async function switchWorkspace(
+  id: string,
+  client: Pick<typeof authClient, "organization"> = authClient,
+): Promise<boolean> {
+  try {
+    const { error } = await client.organization.setActive({ organizationId: id });
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
 export type SignUpField = "name" | "email" | "password" | "workspace";
 
 /** The workspace name as the API will store it, or why it would refuse it. */

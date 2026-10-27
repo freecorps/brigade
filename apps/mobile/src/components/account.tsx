@@ -1,12 +1,24 @@
 import { m } from "@freecorps/brigade-i18n";
 import { radius, spacing } from "@freecorps/brigade-ui";
 import { useState } from "react";
-import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, View } from "react-native";
+import { router } from "expo-router";
+import { SymbolView } from "expo-symbols";
+import {
+  AccessibilityInfo,
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Pressable,
+  StyleSheet,
+  View,
+} from "react-native";
 import { Row, Section } from "@/components/section";
 import { useMember } from "@/components/session";
 import { ThemedText } from "@/components/themed-text";
 import { useTheme } from "@/hooks/use-theme";
+import { authClient } from "@/lib/auth-client";
 import type { Paging } from "@/lib/device";
+import { CHECK_GLYPH } from "@/components/glyphs";
 
 const PAGING: Record<Paging, Parameters<typeof m.mobile_session>[0]["part"]> = {
   pending: "pages_pending",
@@ -102,6 +114,111 @@ export function PagingNotice() {
   );
 }
 
+/**
+ * The member's workspaces (Better Auth's organization list), the active one checked, and New workspace. Tapping
+ * another makes it active: the session moves to it, the incident list, on-call and the widget follow, and the phone
+ * registers there too while staying registered in the others, so it keeps getting their pages (RFC 0006 "Device
+ * registration"). Changes not sent yet stay with the workspace they were made in.
+ */
+function Workspaces({ current, currentName }: { current: string; currentName: string }) {
+  const colors = useTheme();
+  const list = authClient.useListOrganizations();
+  const [switching, setSwitching] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  // The active one is always shown, even before (or without) the list: offline, it is all the app knows.
+  const workspaces = list.data ?? [{ id: current, name: currentName }];
+  const pick = async (id: string) => {
+    if (id === current || switching) return;
+    setSwitching(id);
+    setFailed(false);
+    let ok = false;
+    try {
+      ok = !(await authClient.organization.setActive({ organizationId: id })).error;
+    } catch {
+      ok = false;
+    }
+    setSwitching(null);
+    if (!ok) {
+      setFailed(true);
+      const message = m.account_flow({ part: "switch_failed", name: "" });
+      if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(message);
+    }
+  };
+  return (
+    <>
+      <Row>
+        <ThemedText variant="label">{m.account_flow({ part: "workspaces", name: "" })}</ThemedText>
+      </Row>
+      {workspaces.map((workspace) => {
+        const active = workspace.id === current;
+        return (
+          <Pressable
+            key={workspace.id}
+            accessibilityRole="button"
+            accessibilityLabel={
+              active
+                ? `${workspace.name}, ${m.account_flow({ part: "current", name: "" })}`
+                : m.account_flow({ part: "switch_to", name: workspace.name })
+            }
+            accessibilityState={{ selected: active, busy: switching === workspace.id }}
+            disabled={active || switching !== null}
+            onPress={() => void pick(workspace.id)}
+            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+          >
+            <Row>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing[2] }}>
+                <ThemedText selectable={active} numberOfLines={2} style={{ flex: 1 }}>
+                  {workspace.name}
+                </ThemedText>
+                {switching === workspace.id ? (
+                  <ActivityIndicator color={colors.mutedForeground} />
+                ) : active ? (
+                  <SymbolView
+                    name={CHECK_GLYPH}
+                    tintColor={colors.primary}
+                    size={20}
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                  />
+                ) : null}
+              </View>
+            </Row>
+          </Pressable>
+        );
+      })}
+      {failed ? (
+        <Row>
+          <ThemedText
+            selectable
+            accessibilityLiveRegion="polite"
+            style={{ color: colors.destructive }}
+          >
+            {m.account_flow({ part: "switch_failed", name: "" })}
+          </ThemedText>
+        </Row>
+      ) : null}
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => router.push("/new-workspace")}
+        style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+      >
+        <Row>
+          <ThemedText style={{ color: colors.primary }}>
+            {m.account_flow({ part: "new_workspace", name: "" })}
+          </ThemedText>
+        </Row>
+      </Pressable>
+      {workspaces.length > 1 ? (
+        <Row>
+          <ThemedText variant="caption">
+            {m.account_flow({ part: "mobile_paging", name: "" })}
+          </ThemedText>
+        </Row>
+      ) : null}
+    </>
+  );
+}
+
 /** Who is signed in, in which workspace, whether this phone is paged, and Sign out. */
 export function Account() {
   const member = useMember();
@@ -169,10 +286,7 @@ export function Account() {
           {member.email}
         </ThemedText>
       </Row>
-      <Row>
-        <ThemedText variant="label">{m.workspace_label()}</ThemedText>
-        <ThemedText selectable>{member.workspaceName}</ThemedText>
-      </Row>
+      <Workspaces current={member.workspaceId} currentName={member.workspaceName} />
       <Row>
         <ThemedText variant="label">{m.mobile_session({ part: "pages" })}</ThemedText>
         <ThemedText

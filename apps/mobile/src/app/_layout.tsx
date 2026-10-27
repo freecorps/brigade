@@ -64,11 +64,21 @@ export default function RootLayout() {
               />
               <Stack.Screen name="legend" options={{ title: m.legend_title() }} />
               <Stack.Screen name="intl" options={{ title: m.intl_title() }} />
+              <Stack.Screen
+                name="new-workspace"
+                options={{
+                  title: m.account_flow({ part: "new_title", name: "" }),
+                  presentation: "formSheet",
+                  sheetAllowedDetents: [0.6, 1],
+                  sheetGrabberVisible: true,
+                }}
+              />
             </Stack.Protected>
-            {/* Signing in, and every state before a member is ready (loading, no workspace, offline): the only
-                screen signed out, so a guarded route always lands here. */}
+            {/* Signing in, and every state before a member is ready (loading, no workspace, offline), and signing
+                up: sign-in is first, so a guarded route always lands there. */}
             <Stack.Protected guard={!signedIn}>
               <Stack.Screen name="sign-in" options={{ title: m.auth_sign_in_title() }} />
+              <Stack.Screen name="sign-up" options={{ title: m.auth_sign_up_title() }} />
             </Stack.Protected>
           </Stack>
         )}

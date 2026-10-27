@@ -13,6 +13,7 @@ export type Member_Change_FailedInputs = {
 * | "conflict" | "Someone else changed this member meanwhile. Check the list and try again." |
 * | "not_applied" | "Saved. Paging catches up on its own within a minute." |
 * | "unavailable" | "Brigade couldn't reach its database. Nothing changed; try again." |
+* | "rate_limited" | "Too many changes in a minute. Wait a moment and try again." |
 * | "network" | "Couldn't confirm the change; check the list." |
 * | * | "Something went wrong. Try again." |
 *

@@ -6,18 +6,19 @@ import {
   type FieldErrors,
   type SignInField,
 } from "@freecorps/brigade-i18n/auth";
-import { fontSize, radius, spacing } from "@freecorps/brigade-ui";
-import { useRef, useState, type ComponentRef, type Ref } from "react";
+import { spacing } from "@freecorps/brigade-ui";
+import { router } from "expo-router";
+import { useRef, useState, type ComponentRef } from "react";
 import {
   AccessibilityInfo,
   ActivityIndicator,
   Linking,
-  Pressable,
   ScrollView,
   TextInput,
   View,
-  type TextInputProps,
 } from "react-native";
+import { Field, PrimaryButton, TextButton } from "@/components/form";
+import { NewWorkspaceForm } from "@/components/new-workspace";
 import { useSessionView } from "@/components/session";
 import { ThemedText } from "@/components/themed-text";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
@@ -26,7 +27,7 @@ import { authClient, server } from "@/lib/auth-client";
 
 /**
  * Everything before a member is ready: the sign-in form, or why there is none yet (loading, no server, offline,
- * an account without a workspace). Accounts are created on the dashboard; the app only signs in.
+ * an account without a workspace, which can create one here). "Create an account" opens the sign-up screen.
  */
 export function SignIn() {
   const view = useSessionView();
@@ -54,9 +55,12 @@ export function SignIn() {
           <TextButton label={m.stack_check_again()} onPress={view.retry} />
         </View>
       ) : view.kind === "no-workspace" ? (
-        <View style={{ gap: spacing[3], alignItems: "flex-start" }}>
-          <ThemedText selectable>{m.mobile_session({ part: "no_workspace" })}</ThemedText>
-          <TextButton label={m.sign_out()} onPress={() => void view.signOut()} />
+        <View style={{ gap: spacing[5] }}>
+          <ThemedText selectable>{m.account_flow({ part: "no_workspace", name: "" })}</ThemedText>
+          <NewWorkspaceForm />
+          <View style={{ alignItems: "flex-start" }}>
+            <TextButton label={m.sign_out()} onPress={() => void view.signOut()} />
+          </View>
         </View>
       ) : (
         <SignInForm />
@@ -156,28 +160,11 @@ function SignInForm() {
           {failure}
         </ThemedText>
       ) : null}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ busy, disabled: busy }}
+      <PrimaryButton
+        busy={busy}
+        label={busy ? m.auth_signing_in() : m.auth_sign_in_submit()}
         onPress={() => void submit()}
-        style={({ pressed }) => ({
-          minHeight: spacing[12],
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: spacing[2],
-          paddingHorizontal: spacing[4],
-          borderRadius: radius.md,
-          borderCurve: "continuous",
-          backgroundColor: colors.primary,
-          opacity: busy ? 0.7 : pressed ? 0.8 : 1,
-        })}
-      >
-        {busy ? <ActivityIndicator color={colors.primaryForeground} /> : null}
-        <ThemedText style={{ color: colors.primaryForeground }}>
-          {busy ? m.auth_signing_in() : m.auth_sign_in_submit()}
-        </ThemedText>
-      </Pressable>
+      />
       {forgotPassword ? (
         // The reset happens on the dashboard, where its email's link lands too.
         <View style={{ alignItems: "flex-start" }}>
@@ -187,98 +174,17 @@ function SignInForm() {
           />
         </View>
       ) : null}
-      <ThemedText variant="caption">{m.mobile_session({ part: "sign_in_hint" })}</ThemedText>
-    </View>
-  );
-}
-
-/** A labelled text field with its error under it; `secret` hides the text, with Show password beside it. */
-function Field({
-  label,
-  error,
-  ref,
-  secret = false,
-  ...input
-}: TextInputProps & {
-  label: string;
-  error?: string;
-  secret?: boolean;
-  ref?: Ref<ComponentRef<typeof TextInput>>;
-}) {
-  const colors = useTheme();
-  const [shown, setShown] = useState(false);
-  return (
-    <View style={{ gap: spacing[2] }}>
-      <ThemedText variant="label">{label}</ThemedText>
       <View
         style={{
           flexDirection: "row",
+          flexWrap: "wrap",
           alignItems: "center",
-          minHeight: spacing[12],
-          borderRadius: radius.md,
-          borderCurve: "continuous",
-          borderWidth: 1,
-          borderColor: error ? colors.destructive : colors.input,
+          columnGap: spacing[2],
         }}
       >
-        <TextInput
-          ref={ref}
-          accessibilityLabel={label}
-          accessibilityHint={error}
-          placeholderTextColor={colors.mutedForeground}
-          secureTextEntry={secret && !shown}
-          style={{
-            flex: 1,
-            minHeight: spacing[12],
-            paddingHorizontal: spacing[3],
-            color: colors.foreground,
-            fontSize: fontSize.base.size,
-          }}
-          {...input}
-        />
-        {secret ? (
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setShown((value) => !value)}
-            style={({ pressed }) => ({
-              minHeight: spacing[12],
-              justifyContent: "center",
-              paddingHorizontal: spacing[3],
-              opacity: pressed ? 0.6 : 1,
-            })}
-          >
-            <ThemedText style={{ color: colors.primary }}>
-              {m.mobile_session({ part: shown ? "hide_password" : "show_password" })}
-            </ThemedText>
-          </Pressable>
-        ) : null}
+        <ThemedText variant="caption">{m.auth_no_account()}</ThemedText>
+        <TextButton label={m.auth_to_sign_up()} onPress={() => router.push("/sign-up")} />
       </View>
-      {error ? (
-        <ThemedText
-          selectable
-          accessibilityLiveRegion="polite"
-          style={{ color: colors.destructive }}
-        >
-          {error}
-        </ThemedText>
-      ) : null}
     </View>
-  );
-}
-
-function TextButton({ label, onPress }: { label: string; onPress: () => void }) {
-  const colors = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => ({
-        minHeight: spacing[12],
-        justifyContent: "center",
-        opacity: pressed ? 0.6 : 1,
-      })}
-    >
-      <ThemedText style={{ color: colors.primary }}>{label}</ThemedText>
-    </Pressable>
   );
 }

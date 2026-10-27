@@ -1,4 +1,4 @@
-import { newId, type Role } from "@freecorps/brigade-schema";
+import { DEVICE_HEADER, newId, type Role } from "@freecorps/brigade-schema";
 import { SyncProvider } from "@freecorps/brigade-sync/react";
 import { getRandomBytes } from "expo-crypto";
 import { useNetworkState } from "expo-network";
@@ -19,7 +19,13 @@ import { registerPhone, unregisterPhone, type Paging } from "@/lib/device";
 import { pagingCycle } from "@/lib/paging";
 import { dropQueues, openQueue } from "@/lib/pending";
 import { pendingFiles } from "@/lib/pending-files";
-import { finishDeps, keptSignOuts, phoneDeps, SESSION_LIFETIME_MS } from "@/lib/phone";
+import {
+  finishDeps,
+  keptSignOuts,
+  phoneDeps,
+  phoneDeviceId,
+  SESSION_LIFETIME_MS,
+} from "@/lib/phone";
 import { finishSignOut, signOutPhone, type FinishResult } from "@/lib/sign-out";
 import { knownWorkspace, memberActor, settledRole, WORKSPACE_KEY, type Server } from "@/lib/sync";
 import { createWorkspaceSync, setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
@@ -172,7 +178,10 @@ export function Session({ children }: { children: (ready: boolean) => ReactNode 
   if (!server) view = { kind: "no-server" };
   else if (data && workspaceId) {
     return (
+      // Keyed: switching workspaces opens the new one from scratch (its own socket, queue of unsent changes and
+      // registration), while the old one's registration stays, so its pages still arrive (RFC 0006).
       <ActiveWorkspace
+        key={`${data.user.id}:${workspaceId}`}
         userId={data.user.id}
         name={data.user.name}
         email={data.user.email}
@@ -213,7 +222,13 @@ function ClearWidgetWhen({ signedOut }: { signedOut: boolean }) {
  */
 async function signOutHere(): Promise<boolean> {
   try {
-    return !(await authClient.signOut()).error;
+    // Named, so the server takes this phone off the member's other workspaces too (RFC 0006 "Device registration").
+    const device = await phoneDeviceId();
+    return !(
+      await authClient.signOut(
+        device ? { fetchOptions: { headers: { [DEVICE_HEADER]: device } } } : undefined,
+      )
+    ).error;
   } catch {
     // A network failure.
     return false;

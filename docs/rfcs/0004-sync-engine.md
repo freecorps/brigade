@@ -409,8 +409,14 @@ SyncClient (web/mobile)┤
   origin (`ws://` read as `http://`), and both pass; the app's scheme (`brigade://`) is not accepted as a socket's
   `Origin`, since the app never sends it there. A cookie header a page cannot set is what the app proves itself
   with, so no bearer token is needed (decided in the mobile sign-in slice; the first draft planned bearer tokens).
-  The app makes one `SyncClient` per member and workspace and closes it on sign-out, so a phone signed in as someone
-  else never reuses an open socket.
+  The app makes one `SyncClient` per member and workspace and closes it on sign-out or on switching workspaces, so a
+  phone signed in as someone else never reuses an open socket.
+- **Switching workspaces** (dashboard header, app account section) makes another workspace active in the session
+  (`organization/set-active`) and opens its shard; nothing of the old one is shown in the new one (the dashboard
+  remounts below the switch, the app makes a new `SyncClient`). Changes not answered yet stay with the workspace they
+  were made in: in the dashboard each shard's pending mutations live in the one `SyncClient` and are still sent and
+  answered on the old shard's socket, which closes idle once they are; in the app each member and workspace has its
+  own queue on disk (`pending-files`), restored when they switch back.
 - For an entity shard, the Worker first checks that the entity belongs to the workspace (`inc_456` is in
   `WorkspaceDO(ws_123)`'s index) and names the shard from both ids (`ws_123:inc_456`), never from the client's id
   alone.
@@ -432,9 +438,12 @@ SyncClient (web/mobile)┤
   (RFC 0003 "Members"), so an open socket never keeps a role or a membership D1 took away for longer than until the
   next change or upgrade into the workspace. A password reset closes every socket of the account in each of its
   workspaces (`1012`; they reconnect without a session and are refused), since it ends every session (RFC 0002
-  "Auth"). Not built yet: closing sockets on sign-out or one revoked session (the Worker would record active sockets
-  per session in the shard and a Better Auth hook would close them), and an edit made in D1 outside Brigade reaching
-  sockets before the next upgrade.
+  "Auth"). A session that ends (sign-out, a revoked or expired session) closes its sockets in every workspace of the
+  account (`1012`): the Worker passes the upgrade's session id to the shard (`Brigade-Session`, the id, never the
+  token), which tags the socket with it (`acceptWebSocket(ws, ["session:<id>"])`), and Better Auth's session-delete
+  hook asks each of the user's shards (D1 lists them) to close the sockets with that tag (`WorkspaceDO.endSession`),
+  3 tries each. A shard that still fails leaves its socket open until it next reconnects, refused then for want of a
+  session. Not built yet: an edit made in D1 outside Brigade reaching sockets before the next upgrade.
 
 **Upgrade path (only if spike S3 or production metrics show a need):** a `SessionDO` per client session holding the
 single client socket and fanning out to shards over DO RPC, with shards pushing patches back via RPC. It costs an

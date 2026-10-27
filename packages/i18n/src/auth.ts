@@ -36,13 +36,26 @@ export function checkSignIn(values: Record<SignInField, string>): FieldErrors<Si
 /** The shape Better Auth's client returns errors in (`{ status, code?, message? }`), or a thrown fetch error. */
 export type AuthFailure = { status?: number; code?: string } | null | undefined;
 
-/** What to tell the user about a failed sign-in or sign-up. */
-export function authErrorMessage(error: AuthFailure, during: "sign-in" | "sign-up"): string {
+/**
+ * What to tell the user about a failed sign-in or sign-up. `after-sign-up`: the sign-in a form makes right after a
+ * sign-up went through. A sign-up answers the same whether or not the address had an account (RFC 0002 "Auth"), so
+ * a password that does not match there means the address was taken, and its owner was emailed.
+ */
+export function authErrorMessage(
+  error: AuthFailure,
+  during: "sign-in" | "sign-up" | "after-sign-up",
+): string {
   const status = error?.status ?? 0;
+  if (
+    during === "after-sign-up" &&
+    (status === 401 || error?.code === "INVALID_EMAIL_OR_PASSWORD")
+  ) {
+    return m.account_flow({ part: "sign_up_taken", name: "" });
+  }
   if (status === 0) return m.auth_error_network();
   if (status === 429) return m.auth_error_rate_limited();
   // Brigade signs unverified accounts in (RFC 0002 "Auth"); a server that requires verification answers this.
-  if (during === "sign-in" && error?.code === "EMAIL_NOT_VERIFIED") {
+  if (during !== "sign-up" && error?.code === "EMAIL_NOT_VERIFIED") {
     return m.auth_error_email_not_verified();
   }
   if (during === "sign-in" && (status === 401 || error?.code === "INVALID_EMAIL_OR_PASSWORD")) {

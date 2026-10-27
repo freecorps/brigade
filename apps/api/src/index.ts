@@ -16,9 +16,11 @@ import {
   memberRole,
   RESET_AT_HEADER,
   resolveActor,
+  SESSION_HEADER,
 } from "./actor.ts";
 import {
   AUTH_BASE_PATH,
+  countRequest,
   createAuth,
   WORKSPACE_LIMIT_CODE,
   type Auth,
@@ -369,11 +371,66 @@ export function workerAuth(
     secureCookies: new URL(request.url).protocol === "https:",
     onWorkspaceCreated: onWorkspaceCreated ?? provisionWith(env),
     onPasswordReset: signOutWith(env),
+    onSessionEnded: endSessionWith(env),
     // Made only when a verification email goes out, so other requests never read the email settings.
     get email() {
       return { sender: emailSender(env), dashboardUrl: (env as NotifyEnv).DASHBOARD_URL };
     },
   });
+}
+
+/**
+ * When a Better Auth session ends (RFC 0004 "Session revocation"): asks the shard of every workspace the user is in
+ * (D1's `member`) to close the sockets opened with it, and with `deviceId` to take that phone off too
+ * (`WorkspaceDO.endSession`), each tried `SIGN_OUT_ATTEMPTS` times. Never throws. A shard that still fails is logged:
+ * its sockets stay open until they next reconnect (refused then, the session being gone), and a phone it still
+ * pages for the member is what the app's own `device.unregister` of the workspace it had open does not cover.
+ */
+export function endSessionWith(
+  env: Env,
+  retryMs = SIGN_OUT_RETRY_MS,
+): NonNullable<AuthBindings["onSessionEnded"]> {
+  return async (session) => {
+    let workspaces: string[];
+    try {
+      const { results } = await env.DB.prepare(
+        `select "organizationId" as id from member where "userId" = ?`,
+      )
+        .bind(session.userId)
+        .all<{ id: string }>();
+      workspaces = results.map((row) => row.id).filter((id) => WORKSPACE_ID.test(id));
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          message: "reading an ended session's workspaces failed",
+          error: String(error),
+        }),
+      );
+      return;
+    }
+    await Promise.all(
+      workspaces.map(async (workspaceId) => {
+        let failure: unknown;
+        for (let attempt = 1; attempt <= SIGN_OUT_ATTEMPTS; attempt++) {
+          if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, retryMs * attempt));
+          try {
+            // `not_found`: a shard never provisioned has no sockets; nothing to retry.
+            await env.WORKSPACE.getByName(workspaceId).endSession(workspaceId, session);
+            return;
+          } catch (error) {
+            failure = error;
+          }
+        }
+        console.error(
+          JSON.stringify({
+            message: "closing an ended session's sockets failed",
+            workspace: workspaceId,
+            error: String(failure),
+          }),
+        );
+      }),
+    );
+  };
 }
 
 /** Tries per workspace at signing a reset account out (`signOutWith`), and the wait before each retry. */
@@ -651,6 +708,13 @@ export async function createWorkspace(request: Request, lazyAuth: () => Auth): P
 }
 
 /**
+ * Member changes (`PATCH`/`DELETE /workspaces/:id/members/:userId`) one member may make in one workspace per window,
+ * counted in D1's `rateLimit` table: far more than a person managing a team clicks, few enough that a script cannot
+ * keep the shard and D1 busy.
+ */
+export const MEMBER_CHANGE_LIMIT = { window: 60, max: 20 };
+
+/**
  * `PATCH /workspaces/:id/members/:userId` `{ role }` changes a member's role; `DELETE` removes them, or, for one's
  * own id, leaves the workspace (RFC 0003 "Members"). The Worker checks the origin, the session and that the caller
  * is a member; the workspace's shard checks the rules against D1, writes D1, then its own copy and the outbox, and
@@ -675,6 +739,17 @@ export async function changeMember(
   }
   const session = await lazyAuth().api.getSession({ headers: request.headers });
   if (!session) return json({ error: "unauthenticated" }, 401);
+  // Each change reads D1 and wakes the shard: bounded per member and workspace before either.
+  try {
+    const { window, max } = MEMBER_CHANGE_LIMIT;
+    const key = `member-change:${workspaceId}:${session.user.id}`;
+    if ((await countRequest(env.DB, key, window, Date.now())) > max) {
+      return json({ error: "rate_limited" }, 429, { "Retry-After": String(window) });
+    }
+  } catch (error) {
+    console.error(JSON.stringify({ message: "member change count failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
 
   let change: MemberChange = { kind: "remove" };
   if (request.method === "PATCH") {
@@ -979,8 +1054,8 @@ export async function acknowledgeIncident(
  * `GET /sync/:workspaceId` with `Upgrade: websocket`: hands the socket to the workspace's shard (RFC 0004
  * "Socket topology"). The Worker authenticates the upgrade (`resolveActor`: 401 without a session, 403 for a
  * non-member or another site's page) and forwards a request it builds itself, carrying only the upgrade, the
- * workspace id and the verified actor (with the member's name and when their password was last reset), so no client
- * header reaches the shard.
+ * workspace id and the verified actor (with the member's name, when their password was last reset and the session's
+ * id, which tags the socket), so no client header reaches the shard.
  */
 async function openSync(
   request: Request,
@@ -1005,6 +1080,7 @@ async function openSync(
     headers.set(MEMBER_NAME_HEADER, encodeURIComponent(resolved.name));
   }
   if (resolved.resetAt !== undefined) headers.set(RESET_AT_HEADER, String(resolved.resetAt));
+  if (resolved.sessionId !== undefined) headers.set(SESSION_HEADER, resolved.sessionId);
   try {
     return await env.WORKSPACE.getByName(workspace).fetch(request.url, { headers });
   } catch (error) {

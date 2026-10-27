@@ -16,6 +16,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "conflict" | "Someone else changed this member meanwhile. Check the list and try again." |
 * | "not_applied" | "Saved. Paging catches up on its own within a minute." |
 * | "unavailable" | "Brigade couldn't reach its database. Nothing changed; try again." |
+* | "rate_limited" | "Too many changes in a minute. Wait a moment and try again." |
 * | "network" | "Couldn't confirm the change; check the list." |
 * | * | "Something went wrong. Try again." |
 *
@@ -32,6 +33,7 @@ export const member_change_failed = /** @type {((inputs: Member_Change_FailedInp
 		if (i?.reason === "conflict") return /** @type {LocalizedString} */ (`Outra pessoa mudou este membro enquanto isso. Confira a lista e tente de novo.`);
 		if (i?.reason === "not_applied") return /** @type {LocalizedString} */ (`Salvo. Os chamados se atualizam sozinhos em até um minuto.`);
 		if (i?.reason === "unavailable") return /** @type {LocalizedString} */ (`O Brigade não conseguiu acessar o banco de dados. Nada mudou; tente de novo.`);
+		if (i?.reason === "rate_limited") return /** @type {LocalizedString} */ (`Muitas mudanças em um minuto. Espere um pouco e tente de novo.`);
 		if (i?.reason === "network") return /** @type {LocalizedString} */ (`Não foi possível confirmar a mudança; confira a lista.`);
 		return /** @type {LocalizedString} */ (`Algo deu errado. Tente de novo.`)
 	}
@@ -42,6 +44,7 @@ export const member_change_failed = /** @type {((inputs: Member_Change_FailedInp
 		if (i?.reason === "conflict") return /** @type {LocalizedString} */ (`Someone else changed this member meanwhile. Check the list and try again.`);
 		if (i?.reason === "not_applied") return /** @type {LocalizedString} */ (`Saved. Paging catches up on its own within a minute.`);
 		if (i?.reason === "unavailable") return /** @type {LocalizedString} */ (`Brigade couldn't reach its database. Nothing changed; try again.`);
+		if (i?.reason === "rate_limited") return /** @type {LocalizedString} */ (`Too many changes in a minute. Wait a moment and try again.`);
 		if (i?.reason === "network") return /** @type {LocalizedString} */ (`Couldn't confirm the change; check the list.`);
 		return /** @type {LocalizedString} */ (`Something went wrong. Try again.`)
 	}

@@ -12,6 +12,7 @@ import {
 } from "../src/auth.ts";
 import type { EmailSender, OutgoingEmail } from "../src/email.ts";
 import { renderVerificationEmail } from "../src/email-templates.ts";
+import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
 const PASSWORD = "correct horse battery staple";
@@ -56,10 +57,7 @@ async function signUp(name: string, locale?: string, address?: string) {
   });
   expect(response.status).toBe(200);
   const body = (await response.json()) as { user: { id: string } };
-  const cookie = response.headers
-    .getSetCookie()
-    .map((value) => value.split(";")[0])
-    .join("; ");
+  const cookie = await sessionCookie(email, PASSWORD);
   return { id: body.user.id, email, cookie };
 }
 
@@ -324,7 +322,8 @@ describe("an address held by an account nobody verified", () => {
     )![0];
     const token = new URL(link).searchParams.get("token")!;
 
-    // A sign-up with the address is refused, however old the account is.
+    // A sign-up with the address creates nothing, however old the account is (it answers as for a new one, RFC 0002
+    // "Auth").
     await env.DB.prepare(`update "user" set "createdAt" = ? where id = ?`)
       .bind(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), first.id)
       .run();
@@ -332,7 +331,11 @@ describe("an address held by an account nobody verified", () => {
       method: "POST",
       body: JSON.stringify({ name: "Jo", email: first.email, password: PASSWORD }),
     });
-    expect(again.status).toBe(422);
+    expect(again.status).toBe(200);
+    const holders = await env.DB.prepare(`select id from "user" where email = ?`)
+      .bind(first.email)
+      .all<{ id: string }>();
+    expect(holders.results.map((row) => row.id)).toEqual([first.id]);
     // Nor can the account be deleted or moved off the address, the other ways a newer account could get it.
     const deleted = await api("/auth/delete-user", {
       method: "POST",

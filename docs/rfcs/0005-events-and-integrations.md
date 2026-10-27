@@ -308,6 +308,16 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   consumer handles a batch's messages in parallel and acks each on its own: a page in the same batch as an email
   goes to the relay without waiting for it (tested). Every wait on the email side is bounded (10 s a send, 5 s the
   D1 read).
+- **Status page emails** (RFC 0012 "Email subscriptions", `src/notify-status.ts`): the confirmation of a
+  subscription and the page's notifications (incidents published, updated and resolved; maintenance scheduled,
+  started, ended and called off) to its confirmed subscribers, who are not members: addresses in D1
+  (`status_subscriber`), a ledger in the shard, batches of 50 within a 3 s budget through the side connection slots,
+  carried on through the outbox (`status_email.continue`), 5000 a day per page. The only emails with extra headers:
+  RFC 8058's `List-Unsubscribe` and `List-Unsubscribe-Post` (https links only), `Auto-Submitted` and
+  `Content-Language` (`OutgoingEmail.headers`, only headers Email Sending allows). The confirmation is the one email to
+  an address nobody proved, counted per inbox (`+tag` dropped, and Gmail's dots): at most 3 per inbox and page while it
+  is pending, 5 per inbox and 200 per recipient domain a day across pages, and 200 a day per page, apart from the
+  page's notifications.
 - **Not yet.** No email to Brigade's operators when the paging pipeline degrades (Q19), to owners when a rotation
   changes (Q20); each can build on the `EmailSender`.
 

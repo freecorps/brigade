@@ -8,6 +8,7 @@ import {
   statusPageArgs,
   statusSnapshot,
   STATUS_PAGE_ID,
+  uptimeMoving,
   type Actor,
 } from "@freecorps/brigade-schema";
 import type { Shard } from "./shard.ts";
@@ -34,9 +35,12 @@ export const STATUS_PUSH_ABANDON_MS = 3 * 60 * 1000;
 export const STATUS_SLUG_GRACE_MS = 5 * 60 * 1000;
 /**
  * A public page is rebuilt at least this often even when nothing changed, so its 90-day history and its "Updated"
- * time stay true on a quiet page.
+ * time stay true on a quiet page. It is rebuilt at the first UTC midnight after its last push, which is never later,
+ * so the uptime bars' "today" moves on with the date.
  */
 export const STATUS_REFRESH_MS = 24 * 60 * 60 * 1000;
+/** While a monitor linked to an uptime bar has an alert firing, the page is rebuilt this often, so the outage grows. */
+export const STATUS_OUTAGE_REFRESH_MS = 5 * 60 * 1000;
 
 export type StatusConfigureCode =
   | "forbidden"
@@ -167,8 +171,8 @@ export class StatusPublisher {
   /**
    * When the alarm should come back to push: null when there is nothing to do, else the earliest moment the backoff
    * and KV's one write a second allow. Something to do: a change not pushed yet, an abandoned push that settled (its
-   * write may have landed after a newer one), a public page not rebuilt for a day (`STATUS_REFRESH_MS`), a retired slug whose snapshot is still in KV or whose grace (`STATUS_SLUG_GRACE_MS`) has
-   * run out. Without KV only retired slugs, released at once: nothing was ever published under them.
+   * write may have landed after a newer one), a public page due its rebuild (`refreshAt`), a retired slug whose
+   * snapshot is still in KV or whose grace (`STATUS_SLUG_GRACE_MS`) has run out. Without KV only retired slugs, released at once: nothing was ever published under them.
    */
   nextAt(now: number): number | null {
     const { kv } = this.deps;
@@ -176,9 +180,7 @@ export class StatusPublisher {
     let due: number | null = null;
     if (kv) {
       if (shard.statusDirty() !== undefined || this.meta("status_repush") !== undefined) due = now;
-      if (shard.store.get("status_page", STATUS_PAGE_ID)?.enabled) {
-        due = earliest(due, (this.meta("status_pushed_at") ?? 0) + STATUS_REFRESH_MS);
-      }
+      due = earliest(due, this.refreshAt());
     }
     for (const retired of shard.store.scan("status_retired")) {
       due = earliest(
@@ -259,8 +261,8 @@ export class StatusPublisher {
         const dirty = shard.statusDirty();
         const repush = this.meta("status_repush") !== undefined;
         const page = shard.store.get("status_page", STATUS_PAGE_ID);
-        const stale =
-          page?.enabled === true && (this.meta("status_pushed_at") ?? 0) + STATUS_REFRESH_MS <= now;
+        const refresh = this.refreshAt();
+        const stale = refresh !== null && refresh <= now;
         if ((dirty !== undefined || repush || stale) && page) {
           // Built and read in one turn: a change landing during the write marks a newer version, pushed next.
           const snapshot = statusSnapshot(shard.store, now);
@@ -308,6 +310,25 @@ export class StatusPublisher {
       if (handle.abandoned) this.deps.log("an abandoned status page push failed", { error });
       else this.failed(now, error);
     }
+  }
+
+  /**
+   * When a public page is due a rebuild with nothing changed: the first UTC midnight after its last push (never more
+   * than `STATUS_REFRESH_MS` on), or `STATUS_OUTAGE_REFRESH_MS` after it while a linked monitor's alert is firing.
+   * Null for a page that is not public.
+   */
+  private refreshAt(): number | null {
+    const { store } = this.deps.shard;
+    if (!store.get("status_page", STATUS_PAGE_ID)?.enabled) return null;
+    const pushedAt = this.meta("status_pushed_at") ?? 0;
+    const midnight = (Math.floor(pushedAt / STATUS_REFRESH_MS) + 1) * STATUS_REFRESH_MS;
+    const linked = new Set(
+      store.scan("status_components").flatMap((component) => component.monitorIds ?? []),
+    );
+    if (linked.size > 0 && uptimeMoving(linked, store.scan("alerts"))) {
+      return Math.min(midnight, pushedAt + STATUS_OUTAGE_REFRESH_MS);
+    }
+    return midnight;
   }
 
   /** Records a failed or stuck push: tried again after `STATUS_RETRY_MIN_MS`, doubling, with jitter. */

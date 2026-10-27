@@ -6,7 +6,7 @@ How something that is not a browser calls Brigade's public HTTP API (RFC 0002 "P
 Sync: a per-workspace token sent as `Authorization: Bearer`. Until now only the Better Auth session cookie worked,
 which a script or a CI job cannot hold comfortably. The code: `packages/schema/src/api-tokens.ts` (scopes, the shard's
 copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving a bearer), the D1 table
-`migrations/0009_api_token.sql`, and the dashboard's API tokens card.
+`migrations/0011_api_token.sql`, and the dashboard's API tokens card.
 
 ## Who mints them, and what they carry
 

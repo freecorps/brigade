@@ -1919,6 +1919,8 @@
         "part=unavailable_title": "Status page unavailable",
         "part=unavailable_body": "The status page can't be shown right now. Try again in a minute.",
         "part=powered": "Status page by Brigade",
+        "part=component_maintenance": "Under maintenance",
+        "part=overall_maintenance": "Scheduled maintenance in progress",
         "part=*": "Status"
       }
     }
@@ -2002,6 +2004,11 @@
         "part=withdrawn": "Taken off the page. Visitors may still see it for about 2 minutes.",
         "part=corrected": "Corrected. Visitors may still see the old version for about 2 minutes.",
         "part=correct_failed": "Couldn't change the status page. Try again.",
+        "part=uptime_label": "Uptime bar from monitors",
+        "part=uptime_hint": "The page shows 90 days of uptime from these monitors, from when they were created. Leave all unchecked for no bar.",
+        "part=uptime_no_monitors": "No monitors yet. Add one under Monitors to show an uptime bar.",
+        "part=uptime_from": "Uptime from {name}",
+        "part=uptime_limit": "At most 5 monitors per component.",
         "part=*": "Status page"
       }
     }
@@ -2633,6 +2640,173 @@
         "part=too_large": "Unreadable alert from {name} (payload too large)",
         "part=capacity": "Alert capacity reached",
         "part=*": "Unreadable alert from {name}"
+      }
+    }
+  ],
+  "status_uptime": [
+    {
+      "declarations": ["input part", "input percent", "input date", "input minutes"],
+      "selectors": ["part"],
+      "match": {
+        "part=summary": "{percent}% uptime in the last 90 days",
+        "part=no_data": "No uptime data yet",
+        "part=day_up": "{date}: no downtime",
+        "part=day_degraded": "{date}: {minutes} min of downtime",
+        "part=day_down": "{date}: down for {minutes} min",
+        "part=day_none": "{date}: no data",
+        "part=start": "90 days ago",
+        "part=end": "Today",
+        "part=*": "Uptime"
+      }
+    }
+  ],
+  "status_maintenance": [
+    {
+      "declarations": ["input part", "input time", "input until"],
+      "selectors": ["part"],
+      "match": {
+        "part=active_title": "Maintenance in progress",
+        "part=upcoming_title": "Scheduled maintenance",
+        "part=window_upcoming": "{time} to {until} UTC",
+        "part=window_active": "Until {until} UTC",
+        "part=*": "Maintenance"
+      }
+    }
+  ],
+  "status_subscribe": [
+    {
+      "declarations": ["input part", "input email", "input page"],
+      "selectors": ["part"],
+      "match": {
+        "part=form_title": "Get email updates",
+        "part=form_hint": "We'll email you when an incident is posted here or maintenance is planned. You confirm from your inbox and can unsubscribe at any time.",
+        "part=email_label": "Email address",
+        "part=submit": "Subscribe",
+        "part=honeypot": "Leave this field empty",
+        "part=check_title": "Check your inbox",
+        "part=check_body": "If {email} isn't subscribed to {page} yet, we've sent it a link to confirm. The link expires in 48 hours.",
+        "part=invalid_title": "Check the address",
+        "part=invalid_body": "That doesn't look like an email address. Go back and try again.",
+        "part=limited_title": "Too many requests",
+        "part=limited_body": "Too many subscriptions were asked for just now. Try again in a minute.",
+        "part=confirm_title": "Confirm your subscription",
+        "part=confirm_body": "Confirm to get email updates from {page}.",
+        "part=confirm_button": "Confirm subscription",
+        "part=confirmed_title": "You're subscribed",
+        "part=confirmed_body": "You'll get an email when {page} posts an incident or plans maintenance. Every email has a link to unsubscribe.",
+        "part=expired_title": "This link has expired",
+        "part=expired_body": "Subscribe again from the status page to get a new one.",
+        "part=manage_title": "Email updates",
+        "part=manage_body": "{email} gets email updates from {page}.",
+        "part=unsubscribe_button": "Unsubscribe",
+        "part=unsubscribed_title": "You're unsubscribed",
+        "part=unsubscribed_body": "You won't get any more emails from {page}.",
+        "part=back": "Back to the status page",
+        "part=*": "Email updates"
+      }
+    }
+  ],
+  "email_status": [
+    {
+      "declarations": [
+        "input part",
+        "input page",
+        "input title",
+        "input status",
+        "input time",
+        "input until",
+        "input list"
+      ],
+      "selectors": ["part"],
+      "match": {
+        "part=confirm_subject": "Confirm your subscription to {page}",
+        "part=confirm_intro": "Someone, hopefully you, asked for email updates from the {page} status page at this address.",
+        "part=confirm_open": "Confirm subscription",
+        "part=confirm_after": "The link expires in 48 hours. If you didn't ask for this, ignore this email: you won't get anything else.",
+        "part=confirm_footer": "You get this email because this address was entered on the {page} status page.",
+        "part=incident_created_subject": "{page}: {title}",
+        "part=incident_updated_subject": "{page} update: {title}",
+        "part=incident_resolved_subject": "{page} resolved: {title}",
+        "part=maintenance_scheduled_subject": "{page} scheduled maintenance: {title}",
+        "part=maintenance_started_subject": "{page} maintenance started: {title}",
+        "part=maintenance_ended_subject": "{page} maintenance completed: {title}",
+        "part=maintenance_cancelled_subject": "{page} maintenance called off: {title}",
+        "part=status": "Status: {status}",
+        "part=affects": "Affects {list}",
+        "part=window": "{time} to {until} UTC",
+        "part=started": "The maintenance has started. It's planned to end {until} UTC.",
+        "part=ended": "The maintenance is over.",
+        "part=cancelled": "This maintenance won't happen.",
+        "part=open": "View the status page",
+        "part=footer": "You get this email because you subscribed to updates from {page}.",
+        "part=manage": "Manage your subscription",
+        "part=unsubscribe": "Unsubscribe",
+        "part=*": "{page}"
+      }
+    }
+  ],
+  "status_subscribers": [
+    {
+      "declarations": ["input part", "input confirmed", "input pending", "input email"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Email subscribers",
+        "part=hint": "Visitors subscribe on the public page and confirm by email. Only owners and admins see this, and addresses never appear on the page.",
+        "part=count": "{confirmed} confirmed, {pending} waiting to confirm",
+        "part=load_failed": "Couldn't load the subscribers.",
+        "part=retry": "Try again",
+        "part=export": "Export CSV",
+        "part=remove_label": "Remove a subscriber",
+        "part=remove_hint": "Their address. They get no email about it.",
+        "part=remove": "Remove",
+        "part=removing": "Removing…",
+        "part=removed": "Removed {email}.",
+        "part=not_found": "No subscriber has that address.",
+        "part=remove_failed": "Couldn't remove. Try again.",
+        "part=*": "Subscribers"
+      }
+    }
+  ],
+  "maintenance_card": [
+    {
+      "declarations": ["input part", "input name", "input time", "input until"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Scheduled maintenance",
+        "part=description": "Tell customers about planned work. It shows on the status page, and subscribers get an email when it's planned, when it starts and when it ends.",
+        "part=empty": "No maintenance planned.",
+        "part=schedule": "Schedule maintenance",
+        "part=title_label": "Public title",
+        "part=body_label": "What the public should know",
+        "part=components_label": "Affected components",
+        "part=starts_label": "Starts",
+        "part=ends_label": "Ends",
+        "part=times_hint": "In your time zone ({name}). The public page shows UTC.",
+        "part=save": "Schedule",
+        "part=saving": "Saving…",
+        "part=update": "Save",
+        "part=failed": "Couldn't save. Try again.",
+        "part=title_required": "The public needs a title.",
+        "part=body_required": "Write what the public should know.",
+        "part=times_required": "Pick when it starts and ends.",
+        "part=ends_before": "The window must end after it starts.",
+        "part=too_long": "A window lasts at most 14 days.",
+        "part=ended": "That window has already ended.",
+        "part=limit": "At most 20 windows can be planned at once.",
+        "part=phase_scheduled": "Scheduled",
+        "part=phase_in_progress": "In progress",
+        "part=phase_completed": "Completed",
+        "part=window": "{time} to {until}",
+        "part=edit": "Edit",
+        "part=cancel": "Cancel",
+        "part=end_now": "End now",
+        "part=call_off": "Call off",
+        "part=call_off_confirm": "Call off {name}? It leaves the status page and subscribers get an email saying so.",
+        "part=keep": "Keep",
+        "part=not_set_up": "Set up the status page first to plan maintenance on it.",
+        "part=viewer": "Owners, admins and responders can schedule maintenance.",
+        "part=past_title": "Completed",
+        "part=*": "Maintenance"
       }
     }
   ],

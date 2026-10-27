@@ -29,6 +29,11 @@ describe("workspace.create", () => {
     expect(Object.keys(serverMutations)).toEqual([
       ...Object.keys(mutations),
       "statusPage.configure",
+      "maintenance.advance",
+      "statusSubscriber.request",
+      "statusSubscriber.confirm",
+      "statusSubscriber.remove",
+      "statusEmail.continue",
       "workspace.create",
       "member.sync",
       "member.changeRole",

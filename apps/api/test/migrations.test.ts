@@ -20,7 +20,7 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
   ).all<{ type: string; name: string }>();
   expect(results.filter((row) => row.type === "table").map((row) => row.name)).toEqual([
     "account",
-    // migrations/0009_api_token.sql (RFC 0014).
+    // migrations/0011_api_token.sql (RFC 0014).
     "api_token",
     "d1_migrations",
     "invitation",
@@ -31,8 +31,14 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
     "session",
     // migrations/0006_slack_team.sql (RFC 0011).
     "slack_team",
+    // migrations/0009_status_subscriber.sql (RFC 0012 "Email subscriptions").
+    "status_confirmation_domain",
+    // migrations/0010_status_confirmation_caps.sql.
+    "status_confirmation_page_domain",
+    "status_confirmation_send",
     // migrations/0008_status_slug.sql (RFC 0012).
     "status_slug",
+    "status_subscriber",
     "takeover_notice",
     "user",
     "verification",
@@ -40,4 +46,5 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
   expect(results.map((row) => row.name)).toContain("member_organizationId_idx");
   expect(results.map((row) => row.name)).toContain("rateLimit_lastRequest_idx");
   expect(results.map((row) => row.name)).toContain("api_token_workspace_id_idx");
+  expect(results.map((row) => row.name)).toContain("status_subscriber_inbox_idx");
 });

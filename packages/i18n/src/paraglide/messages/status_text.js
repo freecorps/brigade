@@ -37,6 +37,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "unavailable_title" | "Status page unavailable" |
 * | "unavailable_body" | "The status page can't be shown right now. Try again in a minute." |
 * | "powered" | "Status page by Brigade" |
+* | "component_maintenance" | "Under maintenance" |
+* | "overall_maintenance" | "Scheduled maintenance in progress" |
 * | * | "Status" |
 *
 * @param {Status_TextInputs} inputs
@@ -73,6 +75,8 @@ export const status_text = /** @type {((inputs: Status_TextInputs, options?: { l
 		if (i?.part === "unavailable_title") return /** @type {LocalizedString} */ (`Página de status indisponível`);
 		if (i?.part === "unavailable_body") return /** @type {LocalizedString} */ (`A página de status não pode ser exibida agora. Tente de novo em um minuto.`);
 		if (i?.part === "powered") return /** @type {LocalizedString} */ (`Página de status do Brigade`);
+		if (i?.part === "component_maintenance") return /** @type {LocalizedString} */ (`Em manutenção`);
+		if (i?.part === "overall_maintenance") return /** @type {LocalizedString} */ (`Manutenção programada em andamento`);
 		return /** @type {LocalizedString} */ (`Status`)
 	}
 	{
@@ -103,6 +107,8 @@ export const status_text = /** @type {((inputs: Status_TextInputs, options?: { l
 		if (i?.part === "unavailable_title") return /** @type {LocalizedString} */ (`Status page unavailable`);
 		if (i?.part === "unavailable_body") return /** @type {LocalizedString} */ (`The status page can't be shown right now. Try again in a minute.`);
 		if (i?.part === "powered") return /** @type {LocalizedString} */ (`Status page by Brigade`);
+		if (i?.part === "component_maintenance") return /** @type {LocalizedString} */ (`Under maintenance`);
+		if (i?.part === "overall_maintenance") return /** @type {LocalizedString} */ (`Scheduled maintenance in progress`);
 		return /** @type {LocalizedString} */ (`Status`)
 	}
 });

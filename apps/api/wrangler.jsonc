@@ -78,6 +78,8 @@
   // ALERT_REFUSED_LIMIT, refused requests per workspace, past which a token refused lately wakes no shard. Repeats are
   // deduplicated anyway; these bound the shard's work.
   // API_TOKEN_LIMIT (RFC 0014, src/api-tokens.ts): requests per API token a minute, counted once the token is valid.
+  // The status page's subscribe form (src/status-subscribers.ts): 5 a minute per caller address and 30 a minute per
+  // page, checked before D1 or a shard is touched. Namespace ids 416x and 417x, one per environment like the receipts'.
   "ratelimits": [
     { "name": "RECEIPT_LIMIT", "namespace_id": "4101", "simple": { "limit": 120, "period": 60 } },
     { "name": "ALERT_LIMIT", "namespace_id": "4111", "simple": { "limit": 300, "period": 60 } },
@@ -95,6 +97,16 @@
       "name": "API_TOKEN_LIMIT",
       "namespace_id": "4141",
       "simple": { "limit": 300, "period": 60 },
+    },
+    {
+      "name": "STATUS_SUBSCRIBE_IP_LIMIT",
+      "namespace_id": "4161",
+      "simple": { "limit": 5, "period": 60 },
+    },
+    {
+      "name": "STATUS_SUBSCRIBE_PAGE_LIMIT",
+      "namespace_id": "4171",
+      "simple": { "limit": 30, "period": 60 },
     },
   ],
   // The public status page's snapshots (RFC 0012, src/status-page.ts): each workspace shard pushes its page here on
@@ -186,6 +198,16 @@
           "namespace_id": "4143",
           "simple": { "limit": 300, "period": 60 },
         },
+        {
+          "name": "STATUS_SUBSCRIBE_IP_LIMIT",
+          "namespace_id": "4163",
+          "simple": { "limit": 5, "period": 60 },
+        },
+        {
+          "name": "STATUS_SUBSCRIBE_PAGE_LIMIT",
+          "namespace_id": "4173",
+          "simple": { "limit": 30, "period": 60 },
+        },
       ],
       // `brigade-status-dev`, the dev status page snapshots (RFC 0012).
       "kv_namespaces": [{ "binding": "STATUS", "id": "cc29234582db43538204e0ae375d8ec8" }],
@@ -254,6 +276,16 @@
           "name": "API_TOKEN_LIMIT",
           "namespace_id": "4142",
           "simple": { "limit": 300, "period": 60 },
+        },
+        {
+          "name": "STATUS_SUBSCRIBE_IP_LIMIT",
+          "namespace_id": "4162",
+          "simple": { "limit": 5, "period": 60 },
+        },
+        {
+          "name": "STATUS_SUBSCRIBE_PAGE_LIMIT",
+          "namespace_id": "4172",
+          "simple": { "limit": 30, "period": 60 },
         },
       ],
       "secrets": { "required": ["BETTER_AUTH_SECRET"] },

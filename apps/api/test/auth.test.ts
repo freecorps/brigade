@@ -726,6 +726,8 @@ describe("GET /sync/:workspaceId: the actor", () => {
       ALERT_WORKSPACE_LIMIT: env.ALERT_WORKSPACE_LIMIT,
       ALERT_REFUSED_LIMIT: env.ALERT_REFUSED_LIMIT,
       API_TOKEN_LIMIT: env.API_TOKEN_LIMIT,
+      STATUS_SUBSCRIBE_IP_LIMIT: env.STATUS_SUBSCRIBE_IP_LIMIT,
+      STATUS_SUBSCRIBE_PAGE_LIMIT: env.STATUS_SUBSCRIBE_PAGE_LIMIT,
       BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET,
     };
     const request = new Request(`${ORIGIN}/sync/${workspace.id}`, {

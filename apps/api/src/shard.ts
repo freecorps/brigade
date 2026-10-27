@@ -35,7 +35,30 @@ const STATUS_TABLES: ReadonlySet<string> = new Set([
   "status_page",
   "status_components",
   "status_incidents",
+  "status_maintenance",
 ]);
+
+/**
+ * Whether `changes` put the public status page's snapshot out of date (RFC 0012): a change to its own tables, or an
+ * alert of a monitor some component is linked to (it moves that component's uptime bar, "Uptime"). Every other alert
+ * leaves the page alone, so a busy monitor nobody shows never rebuilds it.
+ */
+export function touchesStatusPage(
+  changes: readonly Pick<RowChange, "table" | "id">[],
+  store: Pick<SqlStore, "get" | "scan">,
+): boolean {
+  if (changes.some((change) => STATUS_TABLES.has(change.table))) return true;
+  const alerts = changes.filter((change) => change.table === "alerts");
+  if (alerts.length === 0) return false;
+  const linked = new Set(
+    store.scan("status_components").flatMap((component) => component.monitorIds ?? []),
+  );
+  if (linked.size === 0) return false;
+  return alerts.some((change) => {
+    const alert = store.get("alerts", change.id);
+    return alert !== undefined && linked.has(alert.monitorId);
+  });
+}
 
 /** How many versions the change log keeps. A resume from further back gets a snapshot instead of a patch. */
 export const CHANGE_LOG_VERSIONS = 1000;
@@ -289,8 +312,7 @@ export class Shard {
     this.compact(version);
     // The public status page's snapshot is out of date (RFC 0012): set in the change's own transaction, so the
     // shard's alarm pushes a new one even if the object dies right after this commit.
-    if (changes.some((change) => STATUS_TABLES.has(change.table)))
-      this.setMeta("status_dirty", version);
+    if (touchesStatusPage(changes, this.store)) this.setMeta("status_dirty", version);
     writeOutbox(this.sql, events, {
       workspaceId,
       shard: this.options.shard,

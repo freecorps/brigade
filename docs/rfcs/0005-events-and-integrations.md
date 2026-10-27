@@ -7,8 +7,8 @@
 Every successful mutation emits one or more events with a CloudEvents-style envelope (the one exception is a
 mutation declared `silent`: today `monitor.report`'s routine refreshes, `member.sync`, the shard's cache of the
 members in D1, `webhook.record`, an outbound webhook's delivery log, which emits only when it turns the endpoint
-off, and `export.reserve`, an export's slot in the hourly limit, whose export emits `workspace.exported` once recorded;
-RFC 0004):
+off, `export.reserve`, an export's slot in the hourly limit, whose export emits `workspace.exported` once recorded,
+and `alert.ingest`, an alert source's payload, whose repeats change rows but are no domain event; RFC 0004):
 
 ```ts
 interface BrigadeEvent<T = unknown> {
@@ -130,14 +130,16 @@ Alert sources (below, "Alert sources") emit `alert_source.created` and `alert_so
 `headerName`, `signed`; never the token, the header value or the signing secret), `alert_source.rotated` (`id`),
 `alert_source.deleted` (`id`, `resolved`: how many firing alerts it resolved) and, on a takeover (RFC 0002 "Auth"),
 `alert_source.revoked` (`id`, actor `sys_account`); routes emit `alert_route.created` and `alert_route.updated` (`id`,
-`name`, `position`, `match`, `action`, and `reason: policy_deleted` when the policy it named was deleted),
+`name`, `position`, `match`, `action`, and `reason`: `policy_deleted` when the policy it named was deleted, or
+`takeover` when a takeover disabled it),
 `alert_route.moved` (`id`, `position`) and `alert_route.deleted` (`id`). Ingesting, as `sys_alerts`, emits
 `alert.fired` (`id`, `fingerprint`, `sourceId`, `incidentId` or null, `outcome`: `opened`, `grouped` or
-`suppressed`, `routeId` or null, `reason`: `matched`, `default` or `malformed`) after the `incident.declared` it
-opened, `alert.dropped` (`id`, `fingerprint`, `sourceId`, `routeId`, `routeName`) and `alert.resolved` (`id`,
-`sourceId`, `reason`: `resolved`, `incident_closed` or `source_deleted`, and `resolvedIncident` when the incident
-resolved with it, followed by its `incident.status_changed`). A monitor's `alert.*` events carry `monitorId` instead
-of `sourceId`. A repeat of a firing alert emits nothing.
+`suppressed`, `routeId` or null, `reason`: `matched`, `default`, `malformed` or `capacity`) after the
+`incident.declared` it opened, `alert.dropped` (`id`, `fingerprint`, `sourceId`, `routeId`, `routeName`) and
+`alert.resolved` (`id`, `sourceId`, `reason`: `resolved`, `source_deleted`, `incident_closed`, `expired`, `evicted` or
+`rerouted`, and `resolvedIncident` when the incident resolved with it, followed by its `incident.status_changed`). A
+monitor's `alert.*` events carry `monitorId` instead of `sourceId`. A repeat of a firing alert emits nothing, nor
+does a firing held by a resolve that came before it (recorded as `resolved_early`, "Alert sources").
 
 The paging pipeline's own watchdog (RFC 0007 "Watching the watcher") writes events too, through its own outbox and
 the same Queue, with `workspaceId` `_system` (no workspace can have it; `source` `brigade://_system/watchdog`, actor

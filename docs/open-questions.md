@@ -160,13 +160,18 @@ the email Slack confirmed for one of the connected team's own users (RFC 0011 "W
 - Misses are not rate-limited: each made-up address costs one KV read per location a minute (the cached 404). A
   rate limit per IP on `/status/*` misses (Workers rate limiting binding) would bound a flood of distinct addresses;
   is that worth it before custom domains bring Cloudflare's own protection?
-- Subscribers and their emails (slice 2): 5 subscribes a minute per caller address and 30 per page, at most 3
-  confirmations per address and page a week and 5 per address a day across pages, 1000 subscribers per page and 5000
-  emails a page a day. A page past 1000 drops new subscribers silently (the answer cannot say so without telling who
-  is subscribed); should it be higher, per plan, or should owners be told? Should subscribers pick components?
-- Uptime counts an alert firing as downtime and anything else as up, including a paused monitor and a degraded
-  component the team set by hand. Should a pause be `none`, and should hand-set or incident impact count as degraded?
-  An hour of downtime makes a day `down`; is that the right line?
+- Subscribers and their emails (slice 2): 5 subscribes a minute per caller address and 30 per page; caps counted per
+  inbox (`+tag` dropped, and Gmail's dots): at most 3 confirmations per inbox and page while it is pending and 5 per
+  inbox a day across pages; 200 confirmations a day per recipient domain across the instance and 200 a day per page;
+  1000 confirmed and 200 pending subscribers per page, a pending one deleted 48 hours after it asked; 5000
+  notifications a page a day. A page past its caps drops new subscribers silently (the answer cannot say so without
+  telling who is subscribed); should they be higher, per plan, or should owners be told? The domain cap stops a
+  catch-all domain being flooded with made-up addresses, but on a busy instance 200 a day for gmail.com is something
+  anyone can use up: should large mail providers get their own, higher caps? Should subscribers pick components?
+- Uptime counts an alert firing as downtime and anything else as up, including a degraded component the team set by
+  hand. A monitor paused now shows no data from its pause on; earlier pauses are not kept, so they count as up. Should
+  pauses be kept so they always show as no data, and should hand-set or incident impact count as degraded? An hour of
+  downtime makes a day `down`; is that the right line?
 - Maintenance never changes the page's overall status, and a component under maintenance shows it only while nothing
   worse does. Should a window be able to say it takes a component down (planned outage)?
 - Slugs can be probed: `GET /status/<slug>` tells anyone which public pages exist, and saving a slug another

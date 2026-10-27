@@ -118,7 +118,9 @@ describe("maintenance", () => {
       run(store, "maintenance.advance", { id: args.id }, ctx("admin", T + 3 * HOUR)),
     ).toMatchObject({ ok: true, events: [{ type: "maintenance.ended", data: { early: false } }] });
     expect(nextMaintenanceAt(store.scan("status_maintenance"))).toBeNull();
-    expect(statusSnapshot(store, T + 4 * HOUR)?.maintenance).toEqual([]);
+    // Nothing left under way or upcoming: written as a version 1 again, without the new fields.
+    expect(statusSnapshot(store, T + 4 * HOUR)).toMatchObject({ v: 1 });
+    expect(statusSnapshot(store, T + 4 * HOUR)?.maintenance).toBeUndefined();
   });
 
   test("an incident on the component shows over maintenance", () => {
@@ -216,7 +218,12 @@ describe("subscriber events", () => {
 });
 
 describe("uptime", () => {
-  const monitor = (createdAt: number) => ({ id: id("mon", createdAt), createdAt });
+  const monitor = (createdAt: number, pausedAt: number | null = null) => ({
+    id: id("mon", createdAt),
+    createdAt,
+    paused: pausedAt !== null,
+    pausedAt,
+  });
 
   test("90 days, `none` before the monitor existed, then up, degraded and down", () => {
     const watched = monitor(T - 3 * DAY);
@@ -261,6 +268,25 @@ describe("uptime", () => {
     expect(uptime(["mon_gone"], [], [], T)).toMatchObject({ percent: null });
   });
 
+  test("a paused monitor has no data from its pause on, and its downtime then is not counted", () => {
+    const today = Math.floor(T / DAY) * DAY;
+    const paused = monitor(T - 3 * DAY, today - DAY);
+    const bar = uptime(
+      [paused.id],
+      [paused],
+      [{ monitorId: paused.id, firedAt: today - DAY - HOUR, resolvedAt: null }],
+      T,
+    );
+    // Paused at yesterday's start: yesterday and today have no data, and the alert counts only until the pause.
+    expect(bar.days.at(-1)).toMatchObject({ state: "none" });
+    expect(bar.days.at(-2)).toMatchObject({ state: "none" });
+    expect(bar.days.at(-3)).toMatchObject({ state: "down", down: 60 });
+    // Another linked monitor still running keeps the days watched.
+    const running = { ...monitor(T - 3 * DAY), id: id("mon", T - 3 * DAY + 1) };
+    const both = uptime([paused.id, running.id], [paused, running], [], T);
+    expect(both.days.at(-1)).toMatchObject({ state: "up" });
+  });
+
   test("linking needs status:manage and real monitors; the snapshot carries the bar", () => {
     const { store, api } = ready();
     const mon = id("mon", T - DAY);
@@ -274,6 +300,8 @@ describe("uptime", () => {
     expect(
       run(store, "statusComponent.linkMonitors", { id: api, monitorIds: [mon] }),
     ).toMatchObject({ ok: true, events: [{ type: "status_component.monitors_linked" }] });
+    // A bar is new in version 2, so the snapshot is one.
+    expect(statusSnapshot(store, T)).toMatchObject({ v: 2, maintenance: [], upcoming: [] });
     const component = statusSnapshot(store, T)!.groups[0]!.components[0]!;
     expect(component.uptime?.days).toHaveLength(UPTIME_DAYS);
     expect(JSON.stringify(component)).not.toContain("mon_");

@@ -130,7 +130,9 @@ built, the overall status, the groups with each component's name, derived status
 and its updates (newest first), and the maintenance windows under way and upcoming. It holds no ids, no members and
 nothing internal (tested: the snapshot never contains the internal title, any member, workspace, incident, component,
 monitor or maintenance id). Version 2 added uptime, maintenance and the `maintenance` component status; the reader
-renders 1 and 2 and refuses anything else, and a 1 carrying the new fields.
+renders 1 and 2 and refuses anything else, including a 1 carrying the new fields. A page with no uptime bar and no
+maintenance window under way or upcoming is still written as a 1, so a Worker rolled back to a reader of 1 keeps
+serving it; only a page using what 2 added needs the newer reader.
 
 - **Where it lives: Workers KV** (binding `STATUS`, key `status:<slug>`). Chosen for the read path: KV is built for
   data read far more often than it is written and cached at the edge near readers (cacheTtl, default 60 s, at least
@@ -158,9 +160,11 @@ renders 1 and 2 and refuses anything else, and a 1 carrying the new fields.
   levels fire before the push in every alarm, the alarm's next time includes theirs, and the alarm waits on the push
   no longer than until the next level is due (at least 100 ms), so a level is never late because of the page (tested
   with a KV that never answers and with one that answers after 3 s).
-- **Rebuilt daily.** A public page is pushed again at least once a day (`STATUS_REFRESH_MS`) even when nothing changed,
-  under the same backoff, so the 90-day history drops what aged out and "Updated" stays true on a quiet page. One KV
-  write a day per page.
+- **Rebuilt daily.** A public page is pushed again at the first UTC midnight after its last push (so at least once a
+  day, `STATUS_REFRESH_MS`) even when nothing changed, under the same backoff, so the 90-day history drops what aged
+  out, the uptime bars' "today" moves on with the date and "Updated" stays true on a quiet page. One KV write a day
+  per page, and one every 5 minutes (`STATUS_OUTAGE_REFRESH_MS`) while an alert of a monitor linked to an uptime bar
+  is firing, so an outage under way grows on the bar instead of showing as the blip it was at its last push.
 - **Fallback.** A failed push keeps everything pending and is retried from the alarm with backoff (1 s doubling to
   5 minutes, jittered), logged on every failure. The page always says when its snapshot was built ("Updated … UTC"),
   so a visitor can tell how fresh it is; while KV or the shard is down, visitors keep reading the last snapshot,
@@ -200,10 +204,12 @@ renders 1 and 2 and refuses anything else, and a 1 carrying the new fields.
   once); an alert is the monitor's own verdict after its consecutive checks (RFC 0007), so one failed check is not
   downtime. A day is `up` with none, `degraded` under an hour (`UPTIME_DOWN_MS`), `down` from an hour, and `none`
   before the first linked monitor existed. The percentage is the watched time that was up, two decimals, rounded down
-  so 99.999 never shows 100. Monitors keep no history of their checks, which is why alerts are the source; paused
-  time counts as up (Q23).
-- **Pushed when it moves**: an alert firing or resolving marks the snapshot dirty when any component is linked, and
-  the daily rebuild moves the bars on at midnight.
+  so 99.999 never shows 100. Monitors keep no history of their checks, which is why alerts are the source. A
+  monitor paused now has watched nothing since its pause: those days are `none` unless another linked monitor
+  watched, and downtime counts only while one did. Earlier pauses are not kept, so they count as up (Q23).
+- **Pushed when it moves**: an alert firing or resolving marks the snapshot dirty when any component is linked, the
+  page is rebuilt every 5 minutes while one fires, and at UTC midnight the bars move on to the new day ("The
+  snapshot").
 - **On the page**: 90 thin bars under the component, coloured like the component scale, each with its day as a
   tooltip, hidden from screen readers behind one text alternative (`role="img"`): the percentage and every day with
   downtime and how long. No script.
@@ -233,33 +239,50 @@ renders 1 and 2 and refuses anything else, and a 1 carrying the new fields.
 
 Visitors subscribe on the page to hear of incidents and maintenance by email, in the page's language.
 
-- **Subscribers live in D1** (`status_subscriber`, migration 0009: id `ssb_…`, workspace, lower-cased address,
-  `pending` or `confirmed`, when, and how many confirmations were asked for), never in the shard: the shard keeps no
-  email addresses (RFC 0005 "Email"), and a refused or repeated subscribe never wakes it. Every change still emits an
-  event through the shard's outbox, with the subscriber's id and never the address: `status_subscriber.requested`
-  (`subscriberId`, `send`), `.confirmed`, `.removed` (`reason`: `unsubscribed` or `deleted`), from server-only
-  mutations run after the D1 write.
+- **Subscribers live in D1** (`status_subscriber`, migration 0009: id `ssb_…`, workspace, lower-cased address, the
+  inbox it reaches (`canonical`: the `+tag` dropped, and at Gmail the dots, `googlemail.com` as `gmail.com`), `pending`
+  or `confirmed`, when, and how many confirmations were asked for), never in the shard: the shard keeps no email
+  addresses (RFC 0005 "Email"), and a refused or repeated subscribe never wakes it. One inbox is one subscriber per
+  page, whichever spelling it came with. Every change still emits an event through the shard's outbox, with the
+  subscriber's id and never the address: `status_subscriber.requested` (`subscriberId`, `send`), `.confirmed`,
+  `.removed` (`reason`: `unsubscribed`, `deleted` or `expired`), from server-only mutations.
+- **The shard and D1 stay in step.** A request writes D1, then runs its mutation; a shard that refuses or cannot be
+  reached gives the confirmation back in D1 (the new row deleted, or its send counted back), so asking again sends it.
+  Confirming, unsubscribing and deleting run the shard's mutation first and then write D1; the shard records each
+  subscriber's confirmation and removal once (`status_subscriber_events`, kept 15 days), so a retry after a failure
+  in between finishes the D1 write without a second event.
 - **The form**: a plain `POST /status/:slug/subscribe` form on the page (no script), shown only where email can be
   sent. The answer is always "Check your inbox: if this address isn't subscribed yet, we've sent it a link", whether
   the address was new, pending, confirmed, over its caps or the honeypot field (`website`, off-screen, never filled by
-  a person) was filled: the form tells nobody who is subscribed. A bad address is a 400, another origin a 403.
+  a person) was filled: the form tells nobody who is subscribed. Nor does its timing: past the rate limits the answer
+  goes out at once, and D1 and the shard run after it (`waitUntil`). A bad address is a 400, another origin a 403.
 - **Abuse.** Workers Rate Limiting before D1 or a shard: 5 a minute per caller address
-  (`STATUS_SUBSCRIBE_IP_LIMIT`) and 30 a minute per page (`STATUS_SUBSCRIBE_PAGE_LIMIT`), namespaces 411x and 412x
-  per environment; over either a 429 page. A pending address gets at most 3 confirmations from one page a week
-  (`STATUS_CONFIRM_SENDS`), and an address at most 5 a day from every page together, counted in D1 when sent
-  (`status_confirmation_send`), so many pages cannot add up to flood one inbox. A page holds at most 1000 subscribers
-  (`STATUS_SUBSCRIBERS_MAX`). Nothing but that one confirmation ever goes to an unconfirmed address. Q21 has the
-  numbers.
+  (`STATUS_SUBSCRIBE_IP_LIMIT`) and 30 a minute per page (`STATUS_SUBSCRIBE_PAGE_LIMIT`), namespaces 416x and 417x
+  per environment; over either a 429 page. Every cap on an address counts its inbox (`canonical`), so `+tags` and
+  Gmail's dots add up to one. A pending inbox gets at most 3 confirmations from one page (`STATUS_CONFIRM_SENDS`), an
+  inbox at most 5 a day from every page together (`status_confirmation_send`) and a recipient domain at most 200 a
+  day (`STATUS_CONFIRM_DOMAIN_DAILY_CAP`, `status_confirmation_domain`), both counted in D1 when sent, so many pages
+  or many spellings cannot add up to flood one inbox and made-up addresses cannot flood a catch-all domain. A page
+  sends at most 200 confirmations a day (`STATUS_CONFIRM_PAGE_DAILY_CAP`, counted in the shard apart from its
+  notifications, so sign-ups never spend their budget). A page holds at most 1000 confirmed subscribers
+  (`STATUS_SUBSCRIBERS_MAX`) and, apart from them, 200 pending (`STATUS_PENDING_MAX`). A pending subscriber is
+  deleted once its link has expired, 48 hours after it was last asked for, by the API's cron once an hour
+  (`sweepSubscribers`, each with its `expired` event), which also drops the daily counts of days gone. Nothing but
+  that one confirmation ever goes to an unconfirmed address. Q21 and Q23 have the numbers.
 - **Double opt-in.** The confirmation email links `/status/:slug/confirm?t=…`, signed (HMAC-SHA256 under a key
-  derived from `BETTER_AUTH_SECRET`; the token carries the kind, workspace, subscriber and expiry) and valid 48 hours.
+  derived from `BETTER_AUTH_SECRET`; the token carries the kind, workspace, subscriber and expiry) and valid until 48
+  hours after the subscribe it answers, when the row is swept.
   A `GET` only shows a "Confirm subscription" button that posts, so a mail scanner opening links confirms nobody.
+- **Links work from their token alone.** It names the workspace, so a link keeps working after the page moved to
+  another address or stopped being public: the page's title and language come from the address only while it still
+  shows this workspace's page, and otherwise the page is plain English named by the address in the link.
 - **Leaving.** Every notification carries a manage link (`/manage?t=…`, signed, no expiry, dead once the row is
   gone) showing the masked address and an Unsubscribe button, and RFC 8058's `List-Unsubscribe` (https only, which
   Email Sending requires) with `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, so a mail client unsubscribes in
   one click with a `POST`. Unsubscribing deletes the row.
 - **Owners and admins** (`status:manage`, checked in D1): `GET /workspaces/:id/status-page/subscribers` (counts),
   `…/export` (CSV of address, status and times; a value starting with a formula character is quoted), and `DELETE`
-  with `{ email }`. The dashboard's Status page card shows the counts, the export and removal by address; no other
+  with `{ email }` (any spelling of the inbox). The dashboard's Status page card shows the counts, the export and removal by address; no other
   member ever sees an address, and none reaches the page or the snapshot.
 - **What is sent.** `incident.update_published` (the first update of an incident is "created", a `resolved` one
   "resolved", the rest "updated"; the text as it reads when the email goes out, so a correction made first goes out
@@ -272,7 +295,9 @@ Visitors subscribe on the page to hear of incidents and maintenance by email, in
   confirmed subscribers from D1 after the ledger's cursor, at most 50 (`STATUS_EMAIL_BATCH`), sends each through a
   side connection slot (shared with Slack and webhooks, so the relay always has its own) and reports back. Sends start
   only within `STATUS_EMAIL_BUDGET_MS` (3 s); one under way past that finishes under `waitUntil`, and the delivery lets
-  go at most 2 s later, so the next batch's pages never wait on email. Subscribers left: the shard runs
+  go at most 2 s later, so the next batch's pages never wait on email. A confirmation runs its D1 reads, its caps and
+  its send in one slot the same way, so a flood of sign-ups in a batch never holds a page's relay call (tested); one
+  that finds no slot in time is tried again soon, without counting as a failure. Subscribers left: the shard runs
   `statusEmail.continue`, whose `status_email.continue` event brings the event back through the outbox, never riding
   the original message's Queue retries. A refusal a retry may fix stops the batch there and is retried (30 s doubling
   to 5 minutes, at most 5 failed batches, then given up and logged); one refused for good is skipped. A lost report

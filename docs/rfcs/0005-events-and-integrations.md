@@ -315,7 +315,9 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   carried on through the outbox (`status_email.continue`), 5000 a day per page. The only emails with extra headers:
   RFC 8058's `List-Unsubscribe` and `List-Unsubscribe-Post` (https links only), `Auto-Submitted` and
   `Content-Language` (`OutgoingEmail.headers`, only headers Email Sending allows). The confirmation is the one email to
-  an address nobody proved, capped at 3 per address and page a week and 5 per address a day across pages.
+  an address nobody proved, counted per inbox (`+tag` dropped, and Gmail's dots): at most 3 per inbox and page while it
+  is pending, 5 per inbox and 200 per recipient domain a day across pages, and 200 a day per page, apart from the
+  page's notifications.
 - **Not yet.** No email to Brigade's operators when the paging pipeline degrades (Q19), to owners when a rotation
   changes (Q20); each can build on the `EmailSender`.
 

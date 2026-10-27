@@ -474,7 +474,8 @@ with a key derived from `BETTER_AUTH_SECRET`, and the emails go out from the que
 the shard's ledger in `src/status-mail.ts`) with links on `DASHBOARD_URL`. The form shows only where email is set up
 (`EMAIL_FROM`, or `EMAIL_LOG=1` under `vp run dev`, where each email is logged with its links). Subscribing is
 rate-limited by `STATUS_SUBSCRIBE_IP_LIMIT` and `STATUS_SUBSCRIBE_PAGE_LIMIT` (Workers Rate Limiting, namespaces
-4111-4113 and 4121-4123, one per environment). Apply `migrations/0009_status_subscriber.sql` with 0008 wherever the
+4161-4163 and 4171-4173, one per environment). Pending subscribers who never confirm are deleted by the cron at minute
+37 of every hour, 48 hours after they asked. Apply `migrations/0009_status_subscriber.sql` with 0008 wherever the
 page is turned on (owner's call); it is not applied anywhere yet.
 
 ## Webhooks

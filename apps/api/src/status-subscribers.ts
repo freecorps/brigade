@@ -5,24 +5,30 @@
 // event that names the subscriber's id, never the address; the emails themselves go out from the queue
 // (src/notify-status.ts), never from these routes.
 
-import { can, isId, newId, STATUS_SLUG, type Role } from "@freecorps/brigade-schema";
+import { can, isId, newId, STATUS_SLUG, type Actor, type Role } from "@freecorps/brigade-schema";
 import type { Auth } from "./auth.ts";
 import { memberRole } from "./actor.ts";
 import { readBounded } from "./body.ts";
 import { renderSubscriptionPage, type SubscriptionPage } from "./status-html.ts";
 import { isSnapshot, statusPageHeaders } from "./status-route.ts";
 import { statusKey } from "./status-page.ts";
-import { ORGANIZATION_ID } from "./workspace.ts";
+import { ORGANIZATION_ID, type WorkspaceDO } from "./workspace.ts";
 
 /** How long a confirmation link works. */
 export const STATUS_CONFIRM_TTL_MS = 48 * 60 * 60 * 1000;
 /** Confirmation emails one pending address gets from one page within `STATUS_CONFIRM_WINDOW_MS`. */
 export const STATUS_CONFIRM_SENDS = 3;
 export const STATUS_CONFIRM_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-/** Confirmation emails one address gets in a UTC day, from every page together (counted when sent). */
+/** Confirmation emails one inbox (`canonicalEmail`) gets in a UTC day, from every page together (counted when sent). */
 export const STATUS_CONFIRM_DAILY_CAP = 5;
-/** Subscribers (pending and confirmed) one page may have; past it a subscribe does nothing (and says the same). */
+/** Confirmation emails one recipient domain gets in a UTC day, from every page together (counted when sent). */
+export const STATUS_CONFIRM_DOMAIN_DAILY_CAP = 200;
+/** Confirmed subscribers one page may have; past it a subscribe does nothing (and says the same). */
 export const STATUS_SUBSCRIBERS_MAX = 1000;
+/** Pending subscribers one page may have at once, counted apart from the confirmed ones. */
+export const STATUS_PENDING_MAX = 200;
+/** Expired pending subscribers one sweep deletes at most (the rest go in the next). */
+export const STATUS_SWEEP_MAX = 500;
 /** The longest address accepted (RFC 5321's path limit). */
 export const STATUS_EMAIL_MAX = 254;
 /** The largest form body read. */
@@ -36,6 +42,25 @@ export function normalizeEmail(input: unknown): string | undefined {
   return /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:".]{2,}$/.test(email)
     ? email
     : undefined;
+}
+
+const GMAIL = new Set(["gmail.com", "googlemail.com"]);
+
+/**
+ * The inbox a normalized address reaches, for the caps and for one subscriber per inbox: the `+tag` dropped, and at
+ * Gmail the dots too (with `googlemail.com` as `gmail.com`). Every spelling of one inbox counts as one.
+ */
+export function canonicalEmail(email: string): string {
+  const at = email.lastIndexOf("@");
+  let local = email.slice(0, at);
+  let domain = email.slice(at + 1);
+  const plus = local.indexOf("+");
+  if (plus > 0) local = local.slice(0, plus);
+  if (GMAIL.has(domain)) {
+    local = local.replace(/\./g, "");
+    domain = "gmail.com";
+  }
+  return `${local}@${domain}`;
 }
 
 /** `a•••@example.com`: enough for the owner of the address to recognise it on the manage page. */
@@ -153,11 +178,14 @@ type PageFacts = { title: string; locale: "en" | "pt-BR" };
 /**
  * `/status/:slug/subscribe` (POST, the page's form), `/confirm` (GET shows a button, POST confirms), `/manage` (GET)
  * and `/unsubscribe` (POST, also RFC 8058's one-click from a mail client). Always an HTML page, never cached. A GET
- * only shows a button, so a mail scanner opening links confirms or unsubscribes nobody.
+ * only shows a button, so a mail scanner opening links confirms or unsubscribes nobody. Subscribing needs the public
+ * page; the links work from their signed token alone (it names the workspace), so a link keeps working after the page
+ * moved to another address or stopped being public.
  */
 export async function serveSubscription(
   request: Request,
   env: Env,
+  ctx: Pick<ExecutionContext, "waitUntil">,
   slug: string,
   action: SubscriptionAction,
 ): Promise<Response> {
@@ -167,15 +195,18 @@ export async function serveSubscription(
     return new Response(null, { status: 405, headers: { Allow: allowed.join(", ") } });
   }
   if (!STATUS_SLUG.test(slug)) return page(404, { kind: "not_found" }, undefined, slug);
-  const facts = await readPage(env, slug);
-  if (facts === "unavailable") return page(503, { kind: "unavailable" }, undefined, slug);
-  if (!facts) return page(404, { kind: "not_found" }, undefined, slug);
-  if (action === "subscribe") return subscribe(request, env, slug, facts);
+  if (action === "subscribe") {
+    const facts = await readPage(env, slug);
+    if (facts === "unavailable") return page(503, { kind: "unavailable" }, undefined, slug);
+    if (!facts) return page(404, { kind: "not_found" }, undefined, slug);
+    return subscribe(request, env, ctx, slug, facts);
+  }
   const now = Date.now();
   const token = new URL(request.url).searchParams.get("t");
   const kind: LinkKind = action === "confirm" ? "c" : "m";
   const claims = await verifyLink(env.BETTER_AUTH_SECRET, token, kind, now);
-  if (!claims) return page(400, { kind: "expired" }, facts, slug);
+  if (!claims) return page(400, { kind: "expired" }, undefined, slug);
+  const facts = await linkFacts(env, slug, claims.workspaceId);
   try {
     if (action === "confirm") {
       if (request.method === "GET")
@@ -213,13 +244,36 @@ async function readPage(env: Env, slug: string): Promise<PageFacts | null | "una
 }
 
 /**
- * A visitor asked to subscribe. The answer is the same page whether the address was new, pending, confirmed, capped
- * or the honeypot was filled, so the form never tells anyone who is subscribed. Rate limits come first (per address
- * and per page), then D1, and only a confirmation that should go out wakes the shard (its outbox event).
+ * The title and language a link's page is shown with: the public page at `slug` when it is still `workspaceId`'s,
+ * else none (a plain page in English). Never fails: the link works without them.
+ */
+async function linkFacts(
+  env: Env,
+  slug: string,
+  workspaceId: string,
+): Promise<PageFacts | undefined> {
+  try {
+    const owner = await env.DB.prepare("select workspace_id from status_slug where slug = ?")
+      .bind(slug)
+      .first<{ workspace_id: string }>();
+    if (owner?.workspace_id !== workspaceId) return undefined;
+  } catch (error) {
+    log("reading a status page's owner for a link failed", { error: String(error) });
+    return undefined;
+  }
+  const facts = await readPage(env, slug);
+  return facts && facts !== "unavailable" ? facts : undefined;
+}
+
+/**
+ * A visitor asked to subscribe. The answer is the same page, sent at once, whether the address was new, pending,
+ * confirmed, capped or the honeypot was filled, so neither the form nor its timing tells anyone who is subscribed:
+ * after the rate limits (per address and per page), D1 and the shard run after the answer, under `waitUntil`.
  */
 async function subscribe(
   request: Request,
   env: Env,
+  ctx: Pick<ExecutionContext, "waitUntil">,
   slug: string,
   facts: PageFacts,
 ): Promise<Response> {
@@ -236,32 +290,55 @@ async function subscribe(
   const email = normalizeEmail(form.get("email"));
   if (!email) return page(400, { kind: "invalid" }, facts, slug);
   if (!(await allowed(env, request, slug))) return page(429, { kind: "limited" }, facts, slug);
-  const answer = () => page(200, { kind: "check", email }, facts, slug);
-  if (trap) return answer();
+  if (!trap) ctx.waitUntil(requestSubscription(env, slug, email, own, Date.now()));
+  return page(200, { kind: "check", email }, facts, slug);
+}
+
+/**
+ * The subscribe's work, after the answer: the row in D1, then the shard's event for a confirmation that should go out.
+ * A shard that refuses or cannot be reached gives the confirmation back (`undoRequest`), so asking again sends it.
+ * Never throws.
+ */
+async function requestSubscription(
+  env: Env,
+  slug: string,
+  email: string,
+  origin: string,
+  now: number,
+): Promise<void> {
   try {
     const owner = await env.DB.prepare("select workspace_id from status_slug where slug = ?")
       .bind(slug)
       .first<{ workspace_id: string }>();
-    if (!owner) return page(404, { kind: "not_found" }, undefined, slug);
-    const asked = await recordSubscriber(env.DB, owner.workspace_id, email, own, Date.now());
-    if (asked) {
-      const result = await env.WORKSPACE.getByName(owner.workspace_id).statusSubscription(
+    if (!owner) return;
+    const asked = await recordSubscriber(env.DB, owner.workspace_id, email, origin, now);
+    if (!asked) return;
+    let result: { ok: true } | { ok: false; code: string };
+    try {
+      result = await env.WORKSPACE.getByName(owner.workspace_id).statusSubscription(
         owner.workspace_id,
         { action: "request", subscriberId: asked.id, send: asked.send },
       );
-      if (!result.ok) log("a status subscription was not recorded", { code: result.code });
+    } catch (error) {
+      result = { ok: false, code: String(error) };
+    }
+    if (!result.ok) {
+      log("a status subscription was not recorded", { code: result.code });
+      await undoRequest(env.DB, asked);
     }
   } catch (error) {
     log("a status subscription failed", { error: String(error) });
-    return page(503, { kind: "unavailable" }, facts, slug);
   }
-  return answer();
 }
 
+/** A confirmation asked for (`recordSubscriber`). */
+export type SubscriberRequest = { id: string; send: number; created: boolean };
+
 /**
- * Records the address in D1 and says whether a confirmation should go out (and which one, `send`): a new address, or a
- * pending one under `STATUS_CONFIRM_SENDS` in its window. A confirmed address, one over its sends, or a full page
- * (`STATUS_SUBSCRIBERS_MAX`) gets nothing. Two requests at once for one address insert one row.
+ * Records the address in D1 and says whether a confirmation should go out (and which one, `send`): a new inbox
+ * (`canonicalEmail`), or a pending one under `STATUS_CONFIRM_SENDS` in its window. A confirmed inbox, one over its
+ * sends, or a full page gets nothing: `STATUS_SUBSCRIBERS_MAX` confirmed or `STATUS_PENDING_MAX` pending. Two
+ * requests at once for one inbox insert one row.
  */
 export async function recordSubscriber(
   db: D1Database,
@@ -269,20 +346,27 @@ export async function recordSubscriber(
   email: string,
   origin: string,
   now: number,
-): Promise<{ id: string; send: number } | null> {
+): Promise<SubscriberRequest | null> {
   type Row = { id: string; status: string; confirm_sends: number; confirm_since: number };
+  const canonical = canonicalEmail(email);
   const select = db
     .prepare(
-      "select id, status, confirm_sends, confirm_since from status_subscriber where workspace_id = ? and email = ?",
+      "select id, status, confirm_sends, confirm_since from status_subscriber where workspace_id = ? and canonical = ?",
     )
-    .bind(workspaceId, email);
+    .bind(workspaceId, canonical);
   let row = await select.first<Row>();
   if (!row) {
-    const count = await db
-      .prepare("select count(*) as n from status_subscriber where workspace_id = ?")
+    const counts = await db
+      .prepare(
+        `select coalesce(sum(status = 'confirmed'), 0) as confirmed, coalesce(sum(status = 'pending'), 0) as pending
+         from status_subscriber where workspace_id = ?`,
+      )
       .bind(workspaceId)
-      .first<{ n: number }>();
-    if ((count?.n ?? 0) >= STATUS_SUBSCRIBERS_MAX) {
+      .first<{ confirmed: number; pending: number }>();
+    if (
+      (counts?.confirmed ?? 0) >= STATUS_SUBSCRIBERS_MAX ||
+      (counts?.pending ?? 0) >= STATUS_PENDING_MAX
+    ) {
       log("a status page is full: subscription dropped", { workspaceId });
       return null;
     }
@@ -290,13 +374,14 @@ export async function recordSubscriber(
     const inserted = await db
       .prepare(
         `insert into status_subscriber
-           (id, workspace_id, email, status, created_at, confirmed_at, confirm_sends, confirm_since, origin)
-         values (?, ?, ?, 'pending', ?, null, 1, ?, ?)
-         on conflict (workspace_id, email) do nothing`,
+           (id, workspace_id, email, canonical, status, created_at, confirmed_at, requested_at, confirm_sends,
+            confirm_since, origin)
+         values (?, ?, ?, ?, 'pending', ?, null, ?, 1, ?, ?)
+         on conflict (workspace_id, canonical) do nothing`,
       )
-      .bind(id, workspaceId, email, now, now, origin)
+      .bind(id, workspaceId, email, canonical, now, now, now, origin)
       .run();
-    if (inserted.meta.changes === 1) return { id, send: 1 };
+    if (inserted.meta.changes === 1) return { id, send: 1, created: true };
     row = await select.first<Row>();
     if (!row) return null;
   }
@@ -306,71 +391,154 @@ export async function recordSubscriber(
   if (send > STATUS_CONFIRM_SENDS) return null;
   const updated = await db
     .prepare(
-      `update status_subscriber set confirm_sends = ?, confirm_since = ?, origin = ?
+      `update status_subscriber set confirm_sends = ?, confirm_since = ?, requested_at = ?, origin = ?
        where id = ? and status = 'pending' and confirm_sends = ?`,
     )
-    .bind(send, fresh ? now : row.confirm_since, origin, row.id, row.confirm_sends)
+    .bind(send, fresh ? now : row.confirm_since, now, origin, row.id, row.confirm_sends)
     .run();
-  return updated.meta.changes === 1 ? { id: row.id, send } : null;
+  return updated.meta.changes === 1 ? { id: row.id, send, created: false } : null;
 }
 
+/** Gives back a confirmation the shard never recorded: the new row deleted, or the send counted back. */
+async function undoRequest(db: D1Database, asked: SubscriberRequest): Promise<void> {
+  try {
+    if (asked.created) {
+      await db
+        .prepare(
+          "delete from status_subscriber where id = ? and status = 'pending' and confirm_sends = 1",
+        )
+        .bind(asked.id)
+        .run();
+    } else {
+      await db
+        .prepare(
+          `update status_subscriber set confirm_sends = ? where id = ? and status = 'pending' and confirm_sends = ?`,
+        )
+        .bind(asked.send - 1, asked.id, asked.send)
+        .run();
+    }
+  } catch (error) {
+    log("giving back a status confirmation failed", { error: String(error) });
+  }
+}
+
+/**
+ * The shard first, then D1, so a failure in between is mended by trying again: the shard records each subscriber's
+ * confirmation and removal once (`statusSubscription`), and D1's write is the one that is retried.
+ */
 async function confirm(
   env: Env,
   claims: LinkClaims,
-  facts: PageFacts,
+  facts: PageFacts | undefined,
   slug: string,
 ): Promise<Response> {
-  const now = Date.now();
-  const result = await env.DB.prepare(
-    `update status_subscriber set status = 'confirmed', confirmed_at = ?
-     where id = ? and workspace_id = ? and status = 'pending'`,
-  )
-    .bind(now, claims.subscriberId, claims.workspaceId)
-    .run();
-  if (result.meta.changes === 1) {
-    await env.WORKSPACE.getByName(claims.workspaceId).statusSubscription(claims.workspaceId, {
-      action: "confirm",
-      subscriberId: claims.subscriberId,
-    });
-    return page(200, { kind: "confirmed" }, facts, slug);
-  }
   const row = await env.DB.prepare(
     "select status from status_subscriber where id = ? and workspace_id = ?",
   )
     .bind(claims.subscriberId, claims.workspaceId)
     .first<{ status: string }>();
-  return row?.status === "confirmed"
-    ? page(200, { kind: "confirmed" }, facts, slug)
-    : page(400, { kind: "expired" }, facts, slug);
+  if (!row) return page(400, { kind: "expired" }, facts, slug);
+  if (row.status === "confirmed") return page(200, { kind: "confirmed" }, facts, slug);
+  await shardChange(env, claims.workspaceId, {
+    action: "confirm",
+    subscriberId: claims.subscriberId,
+  });
+  await env.DB.prepare(
+    `update status_subscriber set status = 'confirmed', confirmed_at = ?
+     where id = ? and workspace_id = ? and status = 'pending'`,
+  )
+    .bind(Date.now(), claims.subscriberId, claims.workspaceId)
+    .run();
+  return page(200, { kind: "confirmed" }, facts, slug);
 }
 
 async function unsubscribe(
   env: Env,
   claims: LinkClaims,
-  facts: PageFacts,
+  facts: PageFacts | undefined,
   slug: string,
 ): Promise<Response> {
-  const removed = await deleteSubscriber(env.DB, claims.workspaceId, claims.subscriberId);
-  if (removed) {
-    await env.WORKSPACE.getByName(claims.workspaceId).statusSubscription(claims.workspaceId, {
+  const row = await env.DB.prepare(
+    "select id from status_subscriber where id = ? and workspace_id = ?",
+  )
+    .bind(claims.subscriberId, claims.workspaceId)
+    .first<{ id: string }>();
+  if (row) {
+    await shardChange(env, claims.workspaceId, {
       action: "remove",
       subscriberId: claims.subscriberId,
       reason: "unsubscribed",
     });
+    await env.DB.prepare("delete from status_subscriber where id = ? and workspace_id = ?")
+      .bind(claims.subscriberId, claims.workspaceId)
+      .run();
   }
   return page(200, { kind: "unsubscribed" }, facts, slug);
 }
 
-async function deleteSubscriber(
-  db: D1Database,
+type SubscriberChange = Parameters<WorkspaceDO["statusSubscription"]>[1];
+
+/** Runs `change` in the workspace's shard; throws when it was not recorded (a workspace that is gone counts as done). */
+async function shardChange(
+  env: Env,
   workspaceId: string,
-  subscriberId: string,
-): Promise<boolean> {
-  const result = await db
-    .prepare("delete from status_subscriber where id = ? and workspace_id = ?")
-    .bind(subscriberId, workspaceId)
-    .run();
-  return result.meta.changes === 1;
+  change: SubscriberChange,
+  actor?: Actor,
+): Promise<void> {
+  const result = await env.WORKSPACE.getByName(workspaceId).statusSubscription(
+    workspaceId,
+    change,
+    actor,
+  );
+  if (!result.ok && result.code !== "not_found") {
+    throw new Error(`the shard refused the change: ${result.code}`);
+  }
+}
+
+/**
+ * Deletes pending subscribers whose confirmation link has expired (`STATUS_CONFIRM_TTL_MS` after it was asked for),
+ * at most `STATUS_SWEEP_MAX` a run, each with its `status_subscriber.removed` event (`expired`) from its shard first;
+ * then the confirmation counts of days gone. Run from the API's cron; throws on a D1 failure (the next run carries on).
+ */
+export async function sweepSubscribers(env: Env, now: number): Promise<void> {
+  const cutoff = now - STATUS_CONFIRM_TTL_MS;
+  const { results } = await env.DB.prepare(
+    `select id, workspace_id from status_subscriber where status = 'pending' and requested_at <= ?
+     order by requested_at limit ?`,
+  )
+    .bind(cutoff, STATUS_SWEEP_MAX)
+    .all<{ id: string; workspace_id: string }>();
+  const byWorkspace = new Map<string, string[]>();
+  for (const row of results) {
+    byWorkspace.set(row.workspace_id, [...(byWorkspace.get(row.workspace_id) ?? []), row.id]);
+  }
+  for (const [workspaceId, ids] of byWorkspace) {
+    try {
+      const result = await env.WORKSPACE.getByName(workspaceId).expireStatusSubscribers(
+        workspaceId,
+        ids,
+      );
+      if (!result.ok && result.code !== "not_found") {
+        log("expiring status subscribers was refused", { workspaceId, code: result.code });
+        continue;
+      }
+    } catch (error) {
+      log("expiring status subscribers failed", { workspaceId, error: String(error) });
+      continue;
+    }
+    await env.DB.batch(
+      ids.map((id) =>
+        env.DB.prepare(
+          "delete from status_subscriber where id = ? and status = 'pending' and requested_at <= ?",
+        ).bind(id, cutoff),
+      ),
+    );
+  }
+  const yesterday = new Date(now - 86_400_000).toISOString().slice(0, 10);
+  await env.DB.batch([
+    env.DB.prepare("delete from status_confirmation_send where day < ?").bind(yesterday),
+    env.DB.prepare("delete from status_confirmation_domain where day < ?").bind(yesterday),
+  ]);
 }
 
 /**
@@ -482,17 +650,22 @@ export async function serveSubscribers(
     }
     const email = normalizeEmail((body as { email?: unknown } | undefined)?.email);
     if (!email) return json({ error: "invalid_args" }, 400);
+    // Any spelling of the inbox finds it. The shard first, then D1: deleting again after a failure finishes it.
     const row = await env.DB.prepare(
-      "delete from status_subscriber where workspace_id = ? and email = ? returning id",
+      "select id from status_subscriber where workspace_id = ? and canonical = ?",
     )
-      .bind(workspaceId, email)
+      .bind(workspaceId, canonicalEmail(email))
       .first<{ id: string }>();
     if (!row) return json({ error: "not_found" }, 404);
-    await env.WORKSPACE.getByName(workspaceId).statusSubscription(
+    await shardChange(
+      env,
       workspaceId,
       { action: "remove", subscriberId: row.id, reason: "deleted" },
       { kind: "user", id: session.user.id, role },
     );
+    await env.DB.prepare("delete from status_subscriber where id = ? and workspace_id = ?")
+      .bind(row.id, workspaceId)
+      .run();
     return json({ ok: true });
   } catch (error) {
     log("status subscribers request failed", { error: String(error) });

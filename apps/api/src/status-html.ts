@@ -347,10 +347,14 @@ export function renderSubscriptionPage(
   page: { title: string | null; locale: Locale; slug: string },
 ): string {
   const { locale, slug } = page;
-  if (view.kind === "not_found" || view.kind === "unavailable" || page.title === null) {
+  if (view.kind === "not_found" || view.kind === "unavailable") {
     return renderStatusMessage(view.kind === "unavailable" ? "unavailable" : "not_found", locale);
   }
-  const args = { page: page.title, email: "email" in view ? view.email : "" };
+  // A link whose page moved or is no longer public still works: it names the page by the address it was sent from,
+  // and links back to none.
+  const named = page.title !== null;
+  const name = page.title ?? slug;
+  const args = { page: name, email: "email" in view ? view.email : "" };
   const parts: Record<SubscriptionPage["kind"], [string, string]> = {
     check: ["check_title", "check_body"],
     invalid: ["invalid_title", "invalid_body"],
@@ -374,8 +378,8 @@ export function renderSubscriptionPage(
   const heading = saySubscribe(locale, title);
   return document(
     locale,
-    `${heading} · ${escape(page.title)}`,
-    `<p class="meta">${escape(page.title)}</p><h1>${heading}</h1><p>${saySubscribe(locale, text, args)}</p><div class="actions">${button}<a href="${base}">${saySubscribe(locale, "back")}</a></div>`,
+    named ? `${heading} · ${escape(name)}` : heading,
+    `${named ? `<p class="meta">${escape(name)}</p>` : ""}<h1>${heading}</h1><p>${saySubscribe(locale, text, args)}</p><div class="actions">${button}${named ? `<a href="${base}">${saySubscribe(locale, "back")}</a>` : ""}</div>`,
   );
 }
 

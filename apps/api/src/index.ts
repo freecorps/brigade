@@ -39,6 +39,7 @@ import { configureStatusPage, serveStatusPage } from "./status-route.ts";
 import {
   serveSubscribers,
   serveSubscription,
+  sweepSubscribers,
   type SubscriptionAction,
 } from "./status-subscribers.ts";
 import { createExport, downloadExport, features, sweepExports } from "./exports.ts";
@@ -82,6 +83,8 @@ const EXPORTS_PATH = /^\/workspaces\/([^/]+)\/exports$/;
 const EXPORT_PATH = /^\/workspaces\/([^/]+)\/exports\/([^/]+)$/;
 /** Minute of the hour the cron sweeps expired exports (src/exports.ts). */
 const EXPORT_SWEEP_MINUTE = 17;
+/** Minute of the hour the cron deletes status page subscribers who never confirmed (src/status-subscribers.ts). */
+const SUBSCRIBER_SWEEP_MINUTE = 37;
 /** `/status/<slug>`; `/status` and `/status/` alone are the page's 404 (no slug). */
 const PUBLIC_STATUS_PATH = /^\/status(?:\/([^/]*))?$/;
 const READ_METHODS = ["GET", "HEAD"];
@@ -185,6 +188,7 @@ export default {
       return serveSubscription(
         request,
         env,
+        ctx,
         subscription[1]!,
         subscription[2] as SubscriptionAction,
       );
@@ -232,6 +236,13 @@ export default {
     if (bucket && new Date(controller.scheduledTime).getUTCMinutes() === EXPORT_SWEEP_MINUTE) {
       const sweep = sweepExports(bucket, Date.now()).catch((error: unknown) =>
         console.error(JSON.stringify({ message: "export sweep failed", error: String(error) })),
+      );
+      ctx?.waitUntil(sweep);
+    }
+    // Status page subscribers who never confirmed (RFC 0012 "Email subscriptions"), once an hour, likewise.
+    if (new Date(controller.scheduledTime).getUTCMinutes() === SUBSCRIBER_SWEEP_MINUTE) {
+      const sweep = sweepSubscribers(env, Date.now()).catch((error: unknown) =>
+        console.error(JSON.stringify({ message: "subscriber sweep failed", error: String(error) })),
       );
       ctx?.waitUntil(sweep);
     }

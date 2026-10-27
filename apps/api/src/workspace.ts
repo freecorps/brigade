@@ -545,10 +545,14 @@ export class WorkspaceDO extends DurableObject<Env> {
     change:
       | { action: "request"; subscriberId: string; send: number }
       | { action: "confirm"; subscriberId: string }
-      | { action: "remove"; subscriberId: string; reason: "unsubscribed" | "deleted" },
+      | { action: "remove"; subscriberId: string; reason: "unsubscribed" | "deleted" | "expired" },
     actor: Actor = ACCOUNT_ACTOR,
   ): { ok: true } | { ok: false; code: string } {
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    // A subscriber is confirmed and removed once: the route runs this before its D1 write and runs it again when
+    // asked again after a failure, so a second call only says it is done.
+    const once = change.action === "request" ? null : `${change.action}:${change.subscriberId}`;
+    if (once !== null && this.statusMail.seen(once)) return { ok: true };
     const { action, ...args } = change;
     const now = Date.now();
     const { result, changes } = this.shard.mutate({
@@ -561,7 +565,28 @@ export class WorkspaceDO extends DurableObject<Env> {
       internal: true,
     });
     if (!result.ok) return { ok: false, code: result.error.code };
+    if (once !== null) this.statusMail.remember(once, now);
     this.broadcast(result.version, changes, undefined);
+    return { ok: true };
+  }
+
+  /**
+   * Pending subscribers whose confirmation link expired (RPC from the API's cron, src/status-subscribers.ts
+   * `sweepSubscribers`, before it deletes their rows): a `status_subscriber.removed` event each, `expired`.
+   */
+  expireStatusSubscribers(
+    workspaceId: string,
+    subscriberIds: string[],
+  ): { ok: true } | { ok: false; code: string } {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    for (const subscriberId of subscriberIds) {
+      const result = this.statusSubscription(workspaceId, {
+        action: "remove",
+        subscriberId,
+        reason: "expired",
+      });
+      if (!result.ok) return result;
+    }
     return { ok: true };
   }
 

@@ -2,11 +2,18 @@
 // the shard as the member; the shard pushes a sanitized snapshot to KV; `GET /status/:slug` reads only KV.
 import { env, exports } from "cloudflare:workers";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { newId, type Actor, type StatusSnapshot } from "@freecorps/brigade-schema";
+import {
+  newId,
+  type Actor,
+  type AlertRow,
+  type MonitorRow,
+  type StatusSnapshot,
+} from "@freecorps/brigade-schema";
 import { describe, expect, test, vi } from "vite-plus/test";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import {
+  STATUS_OUTAGE_REFRESH_MS,
   STATUS_PUSH_ABANDON_MS,
   STATUS_REFRESH_MS,
   STATUS_SLUG_GRACE_MS,
@@ -436,7 +443,8 @@ describe("the snapshot", () => {
     const next = await runInDurableObject(t.stub, (instance: WorkspaceDO) =>
       (Reflect.get(instance, "status") as StatusPublisher).nextAt(pushed + 1),
     );
-    expect(next).toBe(pushed + STATUS_REFRESH_MS);
+    // At the next UTC midnight, so "today" on the uptime bars moves on with the date.
+    expect(next).toBe((Math.floor(pushed / STATUS_REFRESH_MS) + 1) * STATUS_REFRESH_MS);
     await t.push(STATUS_REFRESH_MS);
     expect((await snapshot(address))!.generatedAt).toBeGreaterThanOrEqual(
       built + STATUS_REFRESH_MS,
@@ -450,6 +458,65 @@ describe("the snapshot", () => {
       ),
     );
     expect(draft).toBeNull();
+  });
+
+  test("while a linked monitor's alert fires, the page is rebuilt every few minutes", async () => {
+    const t = await team();
+    const address = slug();
+    await configure(t, t.ana, settings(address));
+    const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    const component = newId("cmp", Date.now(), random);
+    const monitor = newId("mon", Date.now(), random);
+    await t.run("statusComponent.create", { id: component, name: "API", group: null }, ana);
+    await t.withShard((shard) => {
+      shard.store.insert("monitors", {
+        id: monitor,
+        createdAt: Date.now() - 86_400_000,
+        paused: false,
+        pausedAt: null,
+      } as MonitorRow);
+    });
+    expect(
+      await t.run("statusComponent.linkMonitors", { id: component, monitorIds: [monitor] }, ana),
+    ).toMatchObject({ ok: true });
+    await t.push();
+    const nextAt = (at: number) =>
+      runInDurableObject(t.stub, (instance: WorkspaceDO) =>
+        (Reflect.get(instance, "status") as StatusPublisher).nextAt(at),
+      );
+    const pushedAt = () =>
+      t.withShard(
+        (_shard, state) =>
+          state.storage.sql
+            .exec<{ value: number }>("select value from shard_meta where key = 'status_pushed_at'")
+            .one().value,
+      );
+    const pushed = await pushedAt();
+    const midnight = (Math.floor(pushed / STATUS_REFRESH_MS) + 1) * STATUS_REFRESH_MS;
+    expect(await nextAt(pushed + 1)).toBe(midnight);
+    // Down now: the bar grows while the page stands still, so it is rebuilt every few minutes.
+    const alert = newId("alt", Date.now(), random);
+    await t.withShard((shard) => {
+      shard.store.insert("alerts", {
+        id: alert,
+        monitorId: monitor,
+        status: "firing",
+        firedAt: pushed - 60_000,
+        resolvedAt: null,
+      } as AlertRow);
+    });
+    await t.push();
+    const during = await pushedAt();
+    expect(await nextAt(during + 1)).toBe(Math.min(midnight, during + STATUS_OUTAGE_REFRESH_MS));
+    // Back up: once a day again.
+    await t.withShard((shard) => {
+      shard.store.update("alerts", alert, { status: "resolved", resolvedAt: during });
+    });
+    await t.push();
+    const after = await pushedAt();
+    expect(await nextAt(after + 1)).toBe(
+      (Math.floor(after / STATUS_REFRESH_MS) + 1) * STATUS_REFRESH_MS,
+    );
   });
 
   test("a failed push keeps the change pending and backs off", async () => {
@@ -744,14 +811,19 @@ describe("the snapshot", () => {
     await configure(t, t.ana, settings(address));
     await t.push();
     const good = (await snapshot(address))!;
+    // Nothing version 2 added: written as a 1, which a Worker rolled back to version 1 still reads.
+    expect(good).toMatchObject({ v: 1 });
+    expect(good).not.toHaveProperty("maintenance");
+    const good2 = { ...good, v: 2, maintenance: [], upcoming: [] };
     const broken = [
       { ...good, locale: "fr" },
       { ...good, status: "on_fire" },
       { ...good, generatedAt: "yesterday" },
       { ...good, v: 3 },
-      { ...good, v: 1 },
+      // A 1 carrying version 2's fields.
+      { ...good2, v: 1 },
       {
-        ...good,
+        ...good2,
         groups: [
           {
             name: null,
@@ -762,7 +834,7 @@ describe("the snapshot", () => {
         ],
       },
       {
-        ...good,
+        ...good2,
         upcoming: [{ title: "Upgrade", body: "", components: [], startsAt: "soon", endsAt: 1 }],
       },
       {

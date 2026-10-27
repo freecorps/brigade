@@ -10,10 +10,16 @@ import { linkFallback, type EmailSender } from "./email.ts";
 import { emailRetryDelay, RECIPIENTS_TIMEOUT_MS } from "./notify-email.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 import { NotStarted, type SideConnections } from "./side-connections.ts";
-import { STATUS_EMAIL_CLAIM_MS, type StatusEmailPlan } from "./status-mail.ts";
 import {
+  STATUS_EMAIL_CLAIM_MS,
+  type StatusEmailPlan,
+  type StatusEmailReport,
+} from "./status-mail.ts";
+import {
+  canonicalEmail,
   signLink,
   STATUS_CONFIRM_DAILY_CAP,
+  STATUS_CONFIRM_DOMAIN_DAILY_CAP,
   STATUS_CONFIRM_TTL_MS,
   subscriptionLink,
 } from "./status-subscribers.ts";
@@ -34,6 +40,7 @@ export type StatusNotifyEnv = {
 };
 
 type Subscriber = { id: string; email: string; origin: string | null };
+type Pending = Subscriber & { requested_at: number };
 
 /**
  * The emails one status event asks for. Returns the seconds to wait before the message is delivered again, or
@@ -82,7 +89,7 @@ export async function notifyStatus(
   }
 }
 
-type Report = { cursor: string; sent: number; more: boolean; failed: boolean };
+type Report = StatusEmailReport;
 
 async function run(
   event: BrigadeEvent,
@@ -98,45 +105,18 @@ async function run(
   const base = (subscriber: Subscriber) =>
     env.DASHBOARD_URL ? env.DASHBOARD_URL : linkFallback(sender, subscriber.origin);
   if (plan.confirm) {
-    let subscriber: Subscriber | null;
+    // In a side slot like every other send, D1 included, so a flood of sign-ups never holds a page's relay call.
     try {
-      subscriber = await withTimeout(
-        env.DB?.prepare(
-          "select id, email, origin from status_subscriber where id = ? and workspace_id = ? and status = 'pending'",
-        )
-          .bind(plan.confirm.subscriberId, event.workspaceId)
-          .first<Subscriber>(),
+      return await slots.run(
+        () => confirmation(event, plan, plan.confirm!.subscriberId, env, secret, sender, base),
+        deadline,
       );
     } catch (error) {
-      log("status confirmation: D1 could not be read", { event: event.id, error: String(error) });
-      return { cursor: "", sent: 0, more: false, failed: true };
+      if (error instanceof NotStarted) {
+        return { cursor: "", sent: 0, more: false, failed: false, putOff: true };
+      }
+      throw error;
     }
-    const origin = subscriber ? base(subscriber) : undefined;
-    if (!subscriber || !origin) {
-      if (subscriber)
-        log("status confirmation not sent: DASHBOARD_URL is not set", { event: event.id });
-      return { cursor: "", sent: 0, more: false, failed: false };
-    }
-    if (!(await underAddressCap(env.DB!, subscriber.email))) {
-      log("status confirmation capped for this address today", { event: event.id });
-      return { cursor: "", sent: 0, more: false, failed: false };
-    }
-    const token = await signLink(secret, {
-      kind: "c",
-      workspaceId: event.workspaceId,
-      subscriberId: subscriber.id,
-      expires: Date.now() + STATUS_CONFIRM_TTL_MS,
-    });
-    const email = renderStatusConfirmEmail(
-      plan.page.title,
-      { email: subscriber.email },
-      subscriptionLink(origin, slug, "confirm", token),
-      locale,
-    );
-    const result = await sender.send(email);
-    if (result.ok) return { cursor: "", sent: 1, more: false, failed: false };
-    log("status confirmation refused", { event: event.id, code: result.code, retry: result.retry });
-    return { cursor: "", sent: 0, more: false, failed: result.retry };
   }
   const notify = plan.notify!;
   let subscribers: Subscriber[];
@@ -208,20 +188,94 @@ async function run(
   return { cursor, sent, more: more || stop >= 0, failed };
 }
 
-/** Counts one confirmation to `email` today in D1; false when the address had `STATUS_CONFIRM_DAILY_CAP` already. */
-async function underAddressCap(db: D1Database, email: string): Promise<boolean> {
-  const day = new Date().toISOString().slice(0, 10);
-  const row = await withTimeout(
-    db
-      .prepare(
-        `insert into status_confirmation_send (email, day, count) values (?, ?, 1)
-         on conflict (email, day) do update set count = count + 1 where count < ?
-         returning count`,
+/**
+ * The confirmation one subscriber asked for. Its link expires with the request (`requested_at` plus
+ * `STATUS_CONFIRM_TTL_MS`), when the row is swept, so a late send never links to a row that is gone.
+ */
+async function confirmation(
+  event: BrigadeEvent,
+  plan: Extract<StatusEmailPlan, { send: true }>,
+  subscriberId: string,
+  env: StatusNotifyEnv,
+  secret: string,
+  sender: EmailSender,
+  base: (subscriber: Subscriber) => string | undefined,
+): Promise<Report> {
+  let subscriber: Pending | null;
+  try {
+    subscriber = await withTimeout(
+      env.DB?.prepare(
+        `select id, email, origin, requested_at from status_subscriber
+         where id = ? and workspace_id = ? and status = 'pending'`,
       )
-      .bind(email, day, STATUS_CONFIRM_DAILY_CAP)
-      .first<{ count: number }>(),
+        .bind(subscriberId, event.workspaceId)
+        .first<Pending>(),
+    );
+  } catch (error) {
+    log("status confirmation: D1 could not be read", { event: event.id, error: String(error) });
+    return { cursor: "", sent: 0, more: false, failed: true };
+  }
+  const origin = subscriber ? base(subscriber) : undefined;
+  if (!subscriber || !origin) {
+    if (subscriber)
+      log("status confirmation not sent: DASHBOARD_URL is not set", { event: event.id });
+    return { cursor: "", sent: 0, more: false, failed: false };
+  }
+  const expires = subscriber.requested_at + STATUS_CONFIRM_TTL_MS;
+  if (expires <= Date.now()) return { cursor: "", sent: 0, more: false, failed: false };
+  let under: boolean;
+  try {
+    under = await underCaps(env.DB!, subscriber.email);
+  } catch (error) {
+    log("status confirmation: D1 could not be written", { event: event.id, error: String(error) });
+    return { cursor: "", sent: 0, more: false, failed: true };
+  }
+  if (!under) {
+    log("status confirmation capped for this address or domain today", { event: event.id });
+    return { cursor: "", sent: 0, more: false, failed: false };
+  }
+  const token = await signLink(secret, {
+    kind: "c",
+    workspaceId: event.workspaceId,
+    subscriberId: subscriber.id,
+    expires,
+  });
+  const email = renderStatusConfirmEmail(
+    plan.page.title,
+    { email: subscriber.email },
+    subscriptionLink(origin, plan.page.slug, "confirm", token),
+    resolveLocale(plan.page.locale),
   );
-  return row !== null && row !== undefined;
+  const result = await sender.send(email);
+  if (result.ok) return { cursor: "", sent: 1, more: false, failed: false };
+  log("status confirmation refused", { event: event.id, code: result.code, retry: result.retry });
+  return { cursor: "", sent: 0, more: false, failed: result.retry };
+}
+
+/**
+ * Counts one confirmation to `email` today in D1, by its inbox (`canonicalEmail`, `STATUS_CONFIRM_DAILY_CAP`), then by
+ * its domain (`STATUS_CONFIRM_DOMAIN_DAILY_CAP`); false when either had its cap already. An inbox over its cap never
+ * spends its domain's; one counted when its domain then refused only errs towards sending less.
+ */
+async function underCaps(db: D1Database, email: string): Promise<boolean> {
+  const day = new Date().toISOString().slice(0, 10);
+  const inbox = canonicalEmail(email);
+  const counted = (table: string, key: string, value: string, cap: number) =>
+    withTimeout(
+      db
+        .prepare(
+          `insert into ${table} (${key}, day, count) values (?, ?, 1)
+           on conflict (${key}, day) do update set count = count + 1 where count < ?
+           returning count`,
+        )
+        .bind(value, day, cap)
+        .first<{ count: number }>(),
+    ).then((row) => row !== null && row !== undefined);
+  if (!(await counted("status_confirmation_send", "email", inbox, STATUS_CONFIRM_DAILY_CAP))) {
+    return false;
+  }
+  const domain = inbox.slice(inbox.lastIndexOf("@") + 1);
+  return counted("status_confirmation_domain", "domain", domain, STATUS_CONFIRM_DOMAIN_DAILY_CAP);
 }
 
 async function withTimeout<T>(promise: Promise<T> | undefined): Promise<T> {

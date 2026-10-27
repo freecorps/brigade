@@ -480,7 +480,7 @@ describe("statusSnapshot", () => {
     );
     const snapshot = statusSnapshot(store, T + 5)!;
     expect(snapshot).toMatchObject({
-      v: 2,
+      v: 1,
       title: "Acme",
       locale: "pt-BR",
       generatedAt: T + 5,
@@ -497,9 +497,10 @@ describe("statusSnapshot", () => {
         },
       ],
       history: [],
-      maintenance: [],
-      upcoming: [],
     });
+    // No uptime bar and no maintenance: a version 1, which a reader rolled back to 1 still renders.
+    expect(snapshot).not.toHaveProperty("maintenance");
+    expect(snapshot).not.toHaveProperty("upcoming");
     const text = JSON.stringify(snapshot);
     for (const internal of ["db primary OOM", "usr_", incident, api, web, "inc_", "cmp_"]) {
       expect(text).not.toContain(internal);

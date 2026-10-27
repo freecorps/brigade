@@ -57,7 +57,8 @@ export const STATUS_HISTORY_DAYS = 90;
 export const STATUS_HISTORY_MAX = 50;
 /**
  * The snapshot's shape; bumped when a reader would misread a newer one. 2 added uptime bars, maintenance windows and
- * the `maintenance` component status; a reader of 2 still renders a 1.
+ * the `maintenance` component status; a reader of 2 still renders a 1. A page that uses none of them is still written
+ * as a 1, so a Worker rolled back to a reader of 1 keeps serving it.
  */
 export const STATUS_SNAPSHOT_VERSION = 2;
 /** Upcoming maintenance windows in the snapshot, soonest first. */
@@ -621,7 +622,8 @@ export type SnapshotIncident = {
  * renders. Everything in it was written for the public; no id, member or internal title is.
  */
 export type StatusSnapshot = {
-  v: typeof STATUS_SNAPSHOT_VERSION;
+  /** 1 when the page uses nothing version 2 added, else `STATUS_SNAPSHOT_VERSION`. */
+  v: 1 | typeof STATUS_SNAPSHOT_VERSION;
   title: string;
   locale: StatusLocale;
   /** When the shard built it. */
@@ -712,8 +714,7 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
     .filter((row) => row.status === "resolved" && (row.resolvedAt ?? 0) >= since)
     .sort((a, b) => (b.resolvedAt ?? 0) - (a.resolvedAt ?? 0))
     .slice(0, STATUS_HISTORY_MAX);
-  return {
-    v: STATUS_SNAPSHOT_VERSION,
+  const base = {
     title: page.title,
     locale: page.locale,
     generatedAt: now,
@@ -721,6 +722,12 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
     groups,
     active: active.map(toPublic),
     history: history.map(toPublic),
+  };
+  // No uptime bar, no window and so no component under maintenance: version 1, which every reader renders.
+  if (!linked && inProgress.length === 0 && upcoming.length === 0) return { v: 1, ...base };
+  return {
+    v: STATUS_SNAPSHOT_VERSION,
+    ...base,
     maintenance: inProgress.map(toWindow),
     upcoming: upcoming.map(toWindow),
   };

@@ -14,8 +14,13 @@ import type { BrigadeEvent } from "./outbox.ts";
 import { LEDGER_RETENTION_MS } from "./paging.ts";
 import type { Shard } from "./shard.ts";
 
-/** Emails one page sends in a UTC day, every event together; past it the rest of the day's are dropped (logged). */
+/**
+ * Notifications one page sends in a UTC day, every event together; past it the rest of the day's are dropped (logged).
+ * Confirmations are counted apart (`STATUS_CONFIRM_PAGE_DAILY_CAP`), so a flood of sign-ups never spends it.
+ */
 export const STATUS_EMAIL_DAILY_CAP = 5000;
+/** Confirmation emails one page sends in a UTC day; past it the rest of the day's are dropped (logged). */
+export const STATUS_CONFIRM_PAGE_DAILY_CAP = 200;
 /** Subscribers one batch emails at most. */
 export const STATUS_EMAIL_BATCH = 50;
 /** How long a plan holds an event's emails, so two deliveries never send the same batch at once. */
@@ -89,6 +94,8 @@ export type StatusEmailReport = {
   more: boolean;
   /** A send failed in a way a retry may fix: the batch stopped there. */
   failed: boolean;
+  /** Nothing started: the budget ran out first. Tried again soon, and no failure. */
+  putOff?: boolean;
 };
 
 const SCHEMA = `
@@ -107,6 +114,15 @@ const SCHEMA = `
     day text primary key,
     sent integer not null
   ) without rowid;
+  create table if not exists status_confirm_days (
+    day text primary key,
+    sent integer not null
+  ) without rowid;
+  create table if not exists status_subscriber_events (
+    key text primary key,
+    at integer not null
+  ) without rowid;
+  create index if not exists status_subscriber_events_at on status_subscriber_events (at);
 `;
 
 type Row = {
@@ -185,6 +201,20 @@ export class StatusMailer {
     }
     const facts: StatusEmailPage = { title: page.title, slug: page.slug, locale: page.locale };
     if (subscriberId !== null) {
+      // Counted when first planned, so deliveries at once never pass the cap together.
+      if (!row) {
+        const day = dayOf(now);
+        if (this.count("status_confirm_days", day) >= STATUS_CONFIRM_PAGE_DAILY_CAP) {
+          this.deps.log("status page confirmations capped for today", { event: key });
+          this.finish(key);
+          return { send: false, reason: "capped" };
+        }
+        this.deps.sql.exec(
+          `insert into status_confirm_days (day, sent) values (?, 1)
+           on conflict (day) do update set sent = sent + 1`,
+          day,
+        );
+      }
       this.claim(key, now);
       return { send: true, key, page: facts, confirm: { subscriberId } };
     }
@@ -193,7 +223,7 @@ export class StatusMailer {
       this.finish(key);
       return { send: false, reason: "nothing" };
     }
-    const left = STATUS_EMAIL_DAILY_CAP - this.sentOn(dayOf(now));
+    const left = STATUS_EMAIL_DAILY_CAP - this.count("status_email_days", dayOf(now));
     if (left <= 0) {
       this.deps.log("status page emails capped for today", { event: key });
       this.finish(key);
@@ -216,6 +246,10 @@ export class StatusMailer {
   record(key: string, report: StatusEmailReport, now: number): { retry: boolean } {
     const row = this.row(key);
     if (!row || row.done) return { retry: false };
+    if (report.putOff) {
+      this.deps.sql.exec("update status_emails set claimed_until = 0 where key = ?", key);
+      return { retry: true };
+    }
     const failures = row.failures + (report.failed ? 1 : 0);
     const givenUp = failures >= STATUS_EMAIL_MAX_FAILURES;
     const done = givenUp || (!report.more && !report.failed);
@@ -228,7 +262,7 @@ export class StatusMailer {
       done ? 1 : 0,
       key,
     );
-    if (report.sent > 0) {
+    if (report.sent > 0 && !key.startsWith("confirm:")) {
       this.deps.sql.exec(
         `insert into status_email_days (day, sent) values (?, ?)
          on conflict (day) do update set sent = sent + excluded.sent`,
@@ -314,16 +348,41 @@ export class StatusMailer {
     this.deps.sql.exec("update status_emails set done = 1, claimed_until = 0 where key = ?", key);
   }
 
-  private sentOn(day: string): number {
+  private count(table: "status_email_days" | "status_confirm_days", day: string): number {
     return (
       this.deps.sql
-        .exec<{ sent: number }>("select sent from status_email_days where day = ?", day)
+        .exec<{ sent: number }>(`select sent from ${table} where day = ?`, day)
         .toArray()[0]?.sent ?? 0
+    );
+  }
+
+  /** Whether the subscriber change `key` (`confirm:<id>`, `remove:<id>`) already has its event. */
+  seen(key: string): boolean {
+    return (
+      this.deps.sql.exec("select 1 from status_subscriber_events where key = ?", key).toArray()
+        .length > 0
+    );
+  }
+
+  /** Records that the subscriber change `key` has its event (in the same turn as the mutation). */
+  remember(key: string, now: number): void {
+    this.deps.sql.exec(
+      "insert into status_subscriber_events (key, at) values (?, ?) on conflict (key) do nothing",
+      key,
+      now,
     );
   }
 
   private prune(now: number): void {
     this.deps.sql.exec("delete from status_emails where at < ?", now - LEDGER_RETENTION_MS);
     this.deps.sql.exec("delete from status_email_days where day < ?", dayOf(now - 2 * 86_400_000));
+    this.deps.sql.exec(
+      "delete from status_confirm_days where day < ?",
+      dayOf(now - 2 * 86_400_000),
+    );
+    this.deps.sql.exec(
+      "delete from status_subscriber_events where at < ?",
+      now - LEDGER_RETENTION_MS,
+    );
   }
 }

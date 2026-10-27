@@ -286,7 +286,8 @@ export type StatusSubscriberConfirmed = DomainEvent<
   "status_subscriber.confirmed",
   { subscriberId: string }
 >;
-export const SUBSCRIBER_REMOVALS = ["unsubscribed", "deleted"] as const;
+/** Why a subscriber left: they unsubscribed, an owner or admin deleted them, or they never confirmed in time. */
+export const SUBSCRIBER_REMOVALS = ["unsubscribed", "deleted", "expired"] as const;
 export type StatusSubscriberRemoved = DomainEvent<
   "status_subscriber.removed",
   { subscriberId: string; reason: (typeof SUBSCRIBER_REMOVALS)[number] }
@@ -330,7 +331,10 @@ export const confirmStatusSubscription = defineMutation({
   },
 });
 
-/** A subscriber unsubscribed, or an owner or admin deleted them (`status:manage` checked by the API for that). */
+/**
+ * A subscriber unsubscribed, an owner or admin deleted them (`status:manage` checked by the API for that), or their
+ * confirmation link expired before they followed it.
+ */
 export const removeStatusSubscription = defineMutation({
   name: "statusSubscriber.remove",
   args: v.object({ subscriberId, reason: v.picklist(SUBSCRIBER_REMOVALS) }),

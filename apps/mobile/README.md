@@ -143,6 +143,10 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
   lays out an entry per handoff, so it flips on time with the app closed, and past 24 hours asks to open Brigade. The
   widget cannot run Paraglide, so it bundles its strings and the snapshot names the app's language, which the widget
   uses over the system's. Its decisions are in `src/lib/widget.ts` (tested) and mirrored in `WidgetState.swift`.
+  The extension is its own target (`app.freecorps.brigade.Widget`, App Group `group.app.freecorps.brigade`), so the
+  first EAS build after it needs its credentials once, interactively (`eas credentials -p ios`, or an interactive
+  `eas build`): the App ID with App Groups on, and an ad hoc and an App Store profile for it. Until then a
+  non-interactive build stops at the credentials step.
 - **Critical Alerts (off):** `BRIGADE_CRITICAL_ALERTS=1` at build time adds the entitlement, asks for Critical Alerts
   with the notification permission and reports them in `device.register`; SEV1 pages then ring through silent mode
   on phones that allow them. Leave it unset until Apple grants the entitlement (RFC 0006 "Critical Alerts").

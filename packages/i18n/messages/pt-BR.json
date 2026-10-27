@@ -249,7 +249,7 @@
   "widget_off_call": "Fora do plantão",
   "widget_until": "Até {time}",
   "widget_next": "Próximo turno {time}",
-  "widget_no_shift": "Sem plantão nas próximas 4 semanas",
+  "widget_no_shift": "Nenhum plantão pela frente",
   "widget_no_schedules": "Nenhuma escala de plantão",
   "widget_open_incidents": "Incidentes abertos",
   "widget_stale": "Abra o Brigade para atualizar",

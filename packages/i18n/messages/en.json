@@ -249,7 +249,7 @@
   "widget_off_call": "Not on call",
   "widget_until": "Until {time}",
   "widget_next": "Next shift {time}",
-  "widget_no_shift": "No shift in the next 4 weeks",
+  "widget_no_shift": "No upcoming shift",
   "widget_no_schedules": "No on-call schedules",
   "widget_open_incidents": "Open incidents",
   "widget_stale": "Open Brigade to update",

@@ -128,7 +128,14 @@ export async function registerPhone(
       apsEnvironment: deps.apsEnvironment,
     });
     if (!proceed()) return "pending";
-    const result = await deps.mutate("device.register", args);
+    let result = await deps.mutate("device.register", args);
+    // An instance from before Critical Alerts refuses the unknown key: register without it, so the phone is still
+    // paged (time-sensitive) rather than not at all.
+    if (!result.ok && result.error.code === "invalid_args" && "criticalAlerts" in args) {
+      const { criticalAlerts: _, ...older } = args;
+      if (!proceed()) return "pending";
+      result = await deps.mutate("device.register", older);
+    }
     // `conflict`: registered already with these values. The member's device limit is `limit_reached`.
     if (result.ok || result.error.code === "conflict") {
       keepReceiptOrigin(deps);

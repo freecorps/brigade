@@ -5,7 +5,7 @@ export type Widget_No_ShiftInputs = {};
 /**
 * | output |
 * | --- |
-* | "No shift in the next 4 weeks" |
+* | "No upcoming shift" |
 *
 * @param {Widget_No_ShiftInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" }} options

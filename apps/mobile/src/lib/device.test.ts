@@ -301,3 +301,21 @@ test("a VoIP token that is slow to come never holds the alert token back", async
   expect(Date.now() - started).toBeLessThan(VOIP_GRACE_MS + 1000);
   expect(store.scan("devices")).toMatchObject([{ voipToken: null }]);
 });
+
+test("an instance from before Critical Alerts still registers the phone, without them", async () => {
+  const store = createMemoryStore<BrigadeTables>();
+  const sent: unknown[] = [];
+  const current = shard(store)(ANA);
+  // An older shard: its validator refuses any key it does not know.
+  const older: DeviceDeps["mutate"] = async (name, args) => {
+    sent.push(args);
+    if (args && typeof args === "object" && "criticalAlerts" in args) {
+      return { ok: false, error: { code: "invalid_args", message: "Unknown key" } };
+    }
+    return current(name, args);
+  };
+  expect(await registerPhone(phone(older, { criticalAlerts: async () => true }))).toBe("on");
+  expect(sent).toHaveLength(2);
+  expect(sent[1]).not.toHaveProperty("criticalAlerts");
+  expect(store.scan("devices")).toHaveLength(1);
+});

@@ -43,6 +43,7 @@ import {
   type ServicePatchRequest,
   type ServiceRow,
   type Severity,
+  trimSpace,
 } from "@freecorps/brigade-schema";
 import type { MutationResultMessage } from "@freecorps/brigade-sync/protocol";
 import type { Shard } from "./shard.ts";
@@ -371,7 +372,8 @@ function declare(ctx: WriteContext, body: DeclareRequest): RestResult {
 
 /**
  * Posts a written update; the answer names its timeline entry (`entryId`), so the caller can edit or remove it. The
- * entry is the actor's update written when the mutation first ran (the stored result's time, on a retry).
+ * entry is the actor's update with this text written when the mutation first ran (the stored result's time, on a
+ * retry).
  */
 function postUpdate(ctx: WriteContext, id: string, body: string): RestResult {
   const parts = [id, "update"];
@@ -383,7 +385,10 @@ function postUpdate(ctx: WriteContext, id: string, body: string): RestResult {
   let entryId: string | null = null;
   let seq = 0;
   for (const entry of ctx.shard.store.range("timeline", from, to)) {
+    // Its text too: two updates the same actor posted in the same millisecond are told apart by what they say (a
+    // retry carries the same text, the request digest makes sure).
     if (entry.kind !== "update" || entry.actor !== ctx.actor.id || entry.at !== at) continue;
+    if (entry.body !== trimSpace(body)) continue;
     if (entry.seq > seq) [entryId, seq] = [entry.id, entry.seq];
   }
   return { ok: true, body: { ok: true, entryId } };
@@ -435,7 +440,16 @@ function updateIncident(ctx: WriteContext, id: string, body: IncidentPatch): Res
   }
   for (const [name, args, step] of steps) {
     const result = run(ctx, name, args, [id, step]);
-    if (!result.ok && !unchanged(result)) return failure(result);
+    if (result.ok || unchanged(result)) continue;
+    // A refused role is named as the request named it (`roles.<role id>`), not by the mutation's own argument.
+    if (step.startsWith("role:") && result.error.issues?.length) {
+      const path = `roles.${step.slice("role:".length)}`;
+      return refused(
+        result.error.code,
+        result.error.issues.map((issue) => ({ ...issue, path })),
+      );
+    }
+    return failure(result);
   }
   const row = ctx.shard.store.get("incidents", id);
   if (!row) return refused("internal");

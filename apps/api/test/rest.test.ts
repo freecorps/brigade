@@ -799,7 +799,7 @@ describe("renaming and incident roles", () => {
     expect(refused.status).toBe(400);
     expect(await refused.json()).toMatchObject({
       error: "invalid_args",
-      issues: [{ path: "userId" }],
+      issues: [{ path: "roles.commander" }],
     });
     const row = await t.withShard((shard) => shard.store.get("incidents", incident));
     expect(row).toMatchObject({ title: "Checkout down", severity: "sev3", roles: {} });

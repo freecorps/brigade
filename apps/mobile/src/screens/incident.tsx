@@ -376,7 +376,8 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
       roleLabel(role.id, role.name),
       [
         ...(holder === null ? [] : [{ value: "", label: m.incident_page({ part: "unassign" }) }]),
-        ...listed
+        // A removed role can only be taken away: the shard refuses giving it to anyone.
+        ...(role.removed ? [] : listed)
           .filter((option) => option.id !== holder)
           .map((option) => ({ value: option.id, label: personName(option.id, who) })),
       ],

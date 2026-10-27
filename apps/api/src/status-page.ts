@@ -22,6 +22,11 @@ export const STATUS_PUSH_SPACING_MS = 1000;
 export const STATUS_RETRY_MIN_MS = 1000;
 export const STATUS_RETRY_MAX_MS = 5 * 60 * 1000;
 /**
+ * A push still out after this long is given up on: the next due push starts beside it. When the abandoned one settles
+ * the page is pushed again, so its write, landing late, is never the last.
+ */
+export const STATUS_PUSH_ABANDON_MS = 3 * 60 * 1000;
+/**
  * How long a slug the page gave up stays claimed in D1 after its snapshot was deleted from KV: the delete takes up to
  * a minute to reach every location, then KV's cache (`cacheTtl`) and the edge cache may each keep the old page 30 s
  * more. Released earlier, another workspace's new page could share the address with the old one meanwhile.
@@ -58,12 +63,15 @@ type Deps = {
 const earliest = (a: number | null, b: number | null) =>
   a === null ? b : b === null ? a : Math.min(a, b);
 
+/** A push: when it started (its `now`), and whether a later push gave up on it (`STATUS_PUSH_ABANDON_MS`). */
+type Push = { startedAt: number; abandoned: boolean };
+
 export class StatusPublisher {
   /**
-   * The push under way. KV calls have no deadline, so one can outlast the alarm that started it; another is never
-   * started beside it, since two could land in KV out of order.
+   * The push under way. KV calls have no deadline, so one can outlast the alarm that started it; another is not
+   * started beside it (two could land in KV out of order) until it is abandoned, `STATUS_PUSH_ABANDON_MS` on.
    */
-  private pushing: Promise<void> | null = null;
+  private pushing: Push | null = null;
 
   constructor(private readonly deps: Deps) {}
 
@@ -158,8 +166,8 @@ export class StatusPublisher {
 
   /**
    * When the alarm should come back to push: null when there is nothing to do, else the earliest moment the backoff
-   * and KV's one write a second allow. Something to do: a change not pushed yet, a public page not rebuilt for a day
-   * (`STATUS_REFRESH_MS`), a retired slug whose snapshot is still in KV or whose grace (`STATUS_SLUG_GRACE_MS`) has
+   * and KV's one write a second allow. Something to do: a change not pushed yet, an abandoned push that settled (its
+   * write may have landed after a newer one), a public page not rebuilt for a day (`STATUS_REFRESH_MS`), a retired slug whose snapshot is still in KV or whose grace (`STATUS_SLUG_GRACE_MS`) has
    * run out. Without KV only retired slugs, released at once: nothing was ever published under them.
    */
   nextAt(now: number): number | null {
@@ -167,7 +175,7 @@ export class StatusPublisher {
     const { shard } = this.deps;
     let due: number | null = null;
     if (kv) {
-      if (shard.statusDirty() !== undefined) due = now;
+      if (shard.statusDirty() !== undefined || this.meta("status_repush") !== undefined) due = now;
       if (shard.store.get("status_page", STATUS_PAGE_ID)?.enabled) {
         due = earliest(due, (this.meta("status_pushed_at") ?? 0) + STATUS_REFRESH_MS);
       }
@@ -186,14 +194,12 @@ export class StatusPublisher {
 
   /**
    * Runs a push if one is due (see `nextAt`). Run from the shard's alarm; never throws. A failure keeps everything
-   * pending and backs off (`STATUS_RETRY_MIN_MS` to `STATUS_RETRY_MAX_MS`). While an earlier push is still out, none
-   * starts and it backs off the same way, so an alarm never comes straight back to wait on a KV that hangs.
+   * pending and backs off (`STATUS_RETRY_MIN_MS` to `STATUS_RETRY_MAX_MS`). A push due while an earlier one is still
+   * out does not start and backs off the same way, so an alarm never comes straight back to wait on a KV that hangs;
+   * past `STATUS_PUSH_ABANDON_MS` the earlier one is abandoned and the new one starts. Every push, when it settles,
+   * brings the alarm forward for whatever is due by then (a change made while it was out goes out at once).
    */
   publish(workspaceId: string, now: number): Promise<void> {
-    if (this.pushing) {
-      this.failed(now, new Error("the previous push has not finished"));
-      return Promise.resolve();
-    }
     let at: number | null;
     try {
       at = this.nextAt(now);
@@ -202,11 +208,34 @@ export class StatusPublisher {
       return Promise.resolve();
     }
     if (at === null || at > now) return Promise.resolve();
-    const run = this.push(workspaceId, now).finally(() => {
+    if (this.pushing) {
+      if (now - this.pushing.startedAt < STATUS_PUSH_ABANDON_MS) {
+        this.failed(now, new Error("the previous push has not finished"));
+        return Promise.resolve();
+      }
+      this.deps.log("abandoning a stuck status page push", { startedAt: this.pushing.startedAt });
+      this.pushing.abandoned = true;
       this.pushing = null;
-    });
-    this.pushing = run;
-    return run;
+    }
+    const handle: Push = { startedAt: now, abandoned: false };
+    this.pushing = handle;
+    return this.push(workspaceId, now, handle).finally(() => this.settled(handle));
+  }
+
+  /**
+   * A push settled. An abandoned one may have written an older snapshot after a newer push wrote its own, so the page
+   * is marked to be pushed again (`status_repush`, the time it settled: only a push started after it clears it).
+   * Then the alarm is brought forward for what is due now. Never throws.
+   */
+  private settled(handle: Push): void {
+    if (this.pushing === handle) this.pushing = null;
+    try {
+      if (handle.abandoned) this.setMeta("status_repush", Date.now());
+      const at = this.nextAt(Date.now());
+      if (at !== null) this.deps.wake(at);
+    } catch (error) {
+      this.deps.log("re-arming the status page push failed", { error });
+    }
   }
 
   /**
@@ -220,24 +249,29 @@ export class StatusPublisher {
   /**
    * Pushes the snapshot when the page changed since the last push or is due its daily rebuild (put when public,
    * deleted when not), then deletes the snapshots of slugs the page gave up, and releases them in D1 once their grace
-   * is over, so no other workspace can claim a slug whose old snapshot may still be served.
+   * is over, so no other workspace can claim a slug whose old snapshot may still be served. An abandoned push records
+   * nothing once it is abandoned: the push that replaced it owns the outcome.
    */
-  private async push(workspaceId: string, now: number): Promise<void> {
+  private async push(workspaceId: string, now: number, handle: Push): Promise<void> {
     const { shard, kv } = this.deps;
     try {
       if (kv) {
         const dirty = shard.statusDirty();
+        const repush = this.meta("status_repush") !== undefined;
         const page = shard.store.get("status_page", STATUS_PAGE_ID);
         const stale =
           page?.enabled === true && (this.meta("status_pushed_at") ?? 0) + STATUS_REFRESH_MS <= now;
-        if ((dirty !== undefined || stale) && page) {
+        if ((dirty !== undefined || repush || stale) && page) {
           // Built and read in one turn: a change landing during the write marks a newer version, pushed next.
           const snapshot = statusSnapshot(shard.store, now);
           if (snapshot) await kv.put(statusKey(page.slug), JSON.stringify(snapshot));
           else await kv.delete(statusKey(page.slug));
+          if (handle.abandoned) return;
           this.setMeta("status_pushed_at", now);
         }
         if (dirty !== undefined) shard.statusPushed(dirty);
+        // Only a mark set before this push started: an abandoned push settling during this one marks it again.
+        this.deps.sql.exec("delete from shard_meta where key = 'status_repush' and value < ?", now);
       }
       for (const retired of shard.store.scan("status_retired")) {
         if (shard.store.get("status_page", STATUS_PAGE_ID)?.slug === retired.id) {
@@ -247,27 +281,32 @@ export class StatusPublisher {
         let cleared = retired.cleared;
         if (kv && cleared === undefined) {
           await kv.delete(statusKey(retired.id));
+          if (handle.abandoned) return;
           cleared = now;
-          // Taken back while KV deleted it: still this workspace's, nothing to release.
-          if (!shard.store.get("status_retired", retired.id)) continue;
+          // Taken back while KV deleted it: still this workspace's, nothing to release. Taken back and given up again:
+          // a newer retirement, whose snapshot may have been written since, so the next push deletes it again.
+          if (shard.store.get("status_retired", retired.id)?.at !== retired.at) continue;
           shard.store.update("status_retired", retired.id, { cleared });
         }
         if (kv && (cleared ?? now) + STATUS_SLUG_GRACE_MS > now) continue;
-        // Only a row stamped before it was given up: one stamped later is a claim made since.
+        // Only a row stamped before it was given up: one stamped later (or in the same millisecond) is a claim made
+        // since.
         await this.deps.db
-          .prepare(
-            "delete from status_slug where slug = ? and workspace_id = ? and created_at <= ?",
-          )
+          .prepare("delete from status_slug where slug = ? and workspace_id = ? and created_at < ?")
           .bind(retired.id, workspaceId, retired.at)
           .run();
-        if (shard.store.get("status_retired", retired.id)) {
+        if (handle.abandoned) return;
+        // Only this retirement: one taken back and given up again during the D1 call is a newer record, released
+        // after its own grace.
+        if (shard.store.get("status_retired", retired.id)?.at === retired.at) {
           shard.store.delete("status_retired", retired.id);
         }
       }
       this.clearMeta("status_attempts");
       this.clearMeta("status_retry_at");
     } catch (error) {
-      this.failed(now, error);
+      if (handle.abandoned) this.deps.log("an abandoned status page push failed", { error });
+      else this.failed(now, error);
     }
   }
 

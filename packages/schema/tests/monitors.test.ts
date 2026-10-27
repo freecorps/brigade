@@ -914,10 +914,16 @@ describe("monitor.report: quorum → alert → incident", () => {
     // Every other state change emits an event through the outbox (RFC 0005); a new silent mutation needs a reason.
     // `member.sync` copies D1's membership into the shard: a cache, not a domain change (RFC 0004). `webhook.record`
     // keeps an endpoint's delivery log: an attempt is no domain event, and turning the endpoint off emits one.
+    // `export.reserve` takes a slot of the server-only export rate limit; the export itself is `workspace.exported`.
     const silent = Object.values(serverMutations)
       .filter((def) => (def as { silent?: boolean }).silent)
       .map((def) => def.name);
-    expect(silent).toEqual(["member.sync", "monitor.report", "webhook.record"]);
+    expect(silent).toEqual([
+      "member.sync",
+      "monitor.report",
+      "webhook.record",
+      "export.reserve",
+    ]);
   });
 
   test("is server only", () => {

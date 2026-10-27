@@ -1062,13 +1062,15 @@ export class WorkspaceDO extends DurableObject<Env> {
             route.createdBy === userId && (!route.disabled || route.disabled === "takeover"),
         ).length;
       this.serverMutation("alertSource.takeOver", { tokenHash, userId });
-      if (routes > 0) this.rerouteAlerts();
       const paused = this.shard.store
         .scan("monitors")
         .filter((monitor) => !monitor.paused)
         .map((monitor) => monitor.name);
       const revoked = this.shard.store.scan("heartbeats").length;
       this.serverMutation("monitor.takeOver", { tokenHash });
+      // After the monitors are paused: a monitor the routes kept quiet must not page the owner on the way out (RFC
+      // 0002 "Taking back an address"); paused monitors are never rerouted.
+      if (routes > 0) this.rerouteAlerts();
       return { ok: true, paused, revoked, sources, routes };
     } catch (error) {
       this.membership.armRepair(Date.now());

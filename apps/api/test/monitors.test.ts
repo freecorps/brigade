@@ -608,6 +608,55 @@ describe("monitor down → alert → incident", () => {
     });
   });
 
+  test("taking the account back never pages the owner for a monitor its route kept quiet", async () => {
+    const ws = await workspace();
+    const monitorId = newId("mon", Date.now(), random);
+    await ws.run("monitor.createHttp", {
+      id: monitorId,
+      name: "Planted",
+      url: "https://example.com/health",
+      method: "GET",
+      expectedStatus: null,
+      keyword: null,
+      intervalSeconds: 60,
+      timeoutSeconds: 5,
+      regions: ["weur"],
+    });
+    expect(
+      await ws.run("alertRoute.create", {
+        id: newId("rte", Date.now(), random),
+        name: "Quiet monitors",
+        match: { sourceIds: ["monitors"], severities: [], labels: [] },
+        action: { kind: "suppress" },
+      }),
+    ).toMatchObject({ ok: true });
+    const at = Date.now();
+    const verdict = (up: boolean, when: number) => ({
+      reportId: newId("rep", when, random),
+      id: monitorId,
+      at: when,
+      up,
+      latencyMs: 80,
+      colo: "CDG",
+      httpStatus: up ? 200 : 503,
+      error: up ? null : "status",
+    });
+    expect(await ws.stub.report("weur", [verdict(true, at - 2)])).toEqual([true]);
+    expect(await ws.stub.report("weur", [verdict(false, at - 1)])).toEqual([true]);
+    expect(await ws.stub.signOutUser(ws.id, admin.id, { takeOver: true })).toMatchObject({
+      ok: true,
+      paused: ["Planted"],
+      routes: 1,
+    });
+    await ws.withShard((shard) => {
+      expect(shard.store.get("monitors", monitorId)).toMatchObject({
+        paused: true,
+        incidentId: null,
+      });
+      expect(shard.store.scan("incidents")).toEqual([]);
+    });
+  });
+
   test("a down monitor a deleted suppress route kept quiet is paged by the shard alarm if routing it again failed", async () => {
     const ws = await workspace();
     const monitorId = newId("mon", Date.now(), random);

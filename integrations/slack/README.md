@@ -70,6 +70,7 @@ action; this Worker answers through each request's `response_url`.
 ## Locally
 
 The unit tests run in Node with a fake Slack and a fake bridge (`vp test`); the API's side, the shard and the queue
-consumer are tested in `apps/api/test/slack.test.ts`, against a fake Web API. Nothing here has run against a real
-Slack workspace yet. `vp run dev` here starts this Worker alone (its `API` binding
+consumer are tested in `apps/api/test/slack.test.ts`, against a fake Web API. Both fakes refuse a JSON body on the
+read methods (`users.info`, `users.lookupByEmail`, `conversations.list`), as Slack does: those read a form only. `dev`
+runs against a real Slack workspace. `vp run dev` here starts this Worker alone (its `API` binding
 shows as not connected); Slack itself cannot reach a local Worker without a tunnel.

@@ -56,13 +56,42 @@ export type NotifyEnv = EmailEnv &
     WORKSPACE: Env["WORKSPACE"];
     /** The dead-man switch's watchdog (src/watchdog.ts); without it a heartbeat is logged and dropped. */
     WATCHDOG?: Env["WATCHDOG"];
-    /** The relay's base URL, e.g. a `brigade-relay-<env>` Worker. A secret, so hostnames stay out of the repo. */
+    /**
+     * The relay Worker on this account, as a service binding: when bound, every relay call goes through it and
+     * `RELAY_URL` is not used. A Worker's subrequest to another workers.dev Worker on the same account is answered 404,
+     * so a relay deployed next to the API must be reached this way.
+     */
+    RELAY?: Env["RELAY"];
+    /**
+     * The relay's base URL when it is not bound, e.g. Freecorps' hosted relay for a self-hosted instance (RFC 0006). A
+     * secret, so hostnames stay out of the repo.
+     */
     RELAY_URL?: string;
     /** Bearer token for the relay's `POST /send`. */
     RELAY_SEND_TOKEN?: string;
   };
 
 export type Fetch = (request: Request) => Promise<Response>;
+
+/** The URL of a relay call through the `RELAY` binding: the host is never resolved, only the path matters. */
+export const RELAY_BINDING_SEND_URL = "https://relay.internal/send";
+
+/**
+ * Posts to the relay's `POST /send`: through the `RELAY` binding when bound, otherwise to `RELAY_URL` through `send`
+ * (global `fetch`). Undefined without either or without the send token: paging is not configured. A bad `RELAY_URL`
+ * rejects like an unreachable relay.
+ */
+function relayPost(
+  env: Pick<NotifyEnv, "RELAY" | "RELAY_URL" | "RELAY_SEND_TOKEN">,
+  send: Fetch,
+): ((init: RequestInit) => Promise<Response>) | undefined {
+  if (!env.RELAY_SEND_TOKEN) return undefined;
+  const binding = env.RELAY;
+  if (binding) return async (init) => binding.fetch(new Request(RELAY_BINDING_SEND_URL, init));
+  const base = env.RELAY_URL;
+  if (base) return async (init) => send(new Request(new URL("/send", base), init));
+  return undefined;
+}
 
 /**
  * The queue handler: one message per event; each is acked or retried on its own, all of a batch's at once, so a
@@ -222,7 +251,7 @@ export async function consumeDeadLetters(
  */
 export async function proveHeartbeat(
   event: BrigadeEvent,
-  env: Pick<NotifyEnv, "WATCHDOG" | "RELAY_URL" | "RELAY_SEND_TOKEN">,
+  env: Pick<NotifyEnv, "WATCHDOG" | "RELAY" | "RELAY_URL" | "RELAY_SEND_TOKEN">,
   send: Fetch,
 ): Promise<void> {
   if (event.type !== HEARTBEAT_EVENT) return;
@@ -245,19 +274,18 @@ export async function proveHeartbeat(
  * anything else that it is not answering as a relay. Its `/health` would say nothing about the token.
  */
 async function relayHealth(
-  env: Pick<NotifyEnv, "RELAY_URL" | "RELAY_SEND_TOKEN">,
+  env: Pick<NotifyEnv, "RELAY" | "RELAY_URL" | "RELAY_SEND_TOKEN">,
   send: Fetch,
 ): Promise<RelayHealth> {
   // No token is the same as no relay for paging (`pushOne` says `not_configured`), so say that, not "refused".
-  if (!env.RELAY_URL || !env.RELAY_SEND_TOKEN) return "not_configured";
+  const post = relayPost(env, send);
+  if (!post) return "not_configured";
   try {
-    const response = await send(
-      new Request(new URL("/send", env.RELAY_URL), {
-        method: "POST",
-        headers: { Authorization: `Bearer ${env.RELAY_SEND_TOKEN ?? ""}` },
-        signal: AbortSignal.timeout(RELAY_HEALTH_TIMEOUT_MS),
-      }),
-    );
+    const response = await post({
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.RELAY_SEND_TOKEN ?? ""}` },
+      signal: AbortSignal.timeout(RELAY_HEALTH_TIMEOUT_MS),
+    });
     const status = response.status;
     const body: unknown = await response.json().catch(() => null);
     if (status === 400 && Reflect.get(Object(body), "error") === "invalid_body") return "ok";
@@ -359,7 +387,8 @@ async function pushOne(
     },
     retry: more.retry ?? false,
   });
-  if (!env.RELAY_URL || !env.RELAY_SEND_TOKEN) return failed("not_configured", "not_configured");
+  const post = relayPost(env, send);
+  if (!post) return failed("not_configured", "not_configured");
   // The relay speaks APNs only; Android needs FCM (RFC 0006).
   if (target.platform !== "ios") return failed("unsupported", "unsupported");
 
@@ -394,24 +423,22 @@ async function pushOne(
   let response: Response;
   const started = Date.now();
   try {
-    response = await send(
-      new Request(new URL("/send", env.RELAY_URL), {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.RELAY_SEND_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          deviceToken: target.pushToken,
-          envelope,
-          urgency: plan.urgency,
-          environment: target.environment,
-          // A redelivered page replaces the one on screen instead of stacking.
-          collapseId: incident.id,
-        }),
-        signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
+    response = await post({
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.RELAY_SEND_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        deviceToken: target.pushToken,
+        envelope,
+        urgency: plan.urgency,
+        environment: target.environment,
+        // A redelivered page replaces the one on screen instead of stacking.
+        collapseId: incident.id,
       }),
-    );
+      signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
+    });
   } catch (error) {
     ms = Date.now() - started;
     // The relay is down or slow: the paging path's first fallback is trying again.

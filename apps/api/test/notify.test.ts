@@ -941,6 +941,148 @@ describe("a heartbeat in the same batch as a page", () => {
   });
 });
 
+// The relay is reached through the `RELAY` service binding when it is bound (a Worker cannot fetch another
+// workers.dev Worker on its own account), and at RELAY_URL otherwise (a self-hosted instance, RFC 0006).
+describe("how the consumer reaches the relay", () => {
+  const heartbeat = (): BrigadeEvent => ({
+    id: newId("evt", Date.now(), random),
+    type: HEARTBEAT_EVENT,
+    source: `brigade://${SYSTEM_WORKSPACE}/watchdog`,
+    workspaceId: SYSTEM_WORKSPACE,
+    time: new Date().toISOString(),
+    actor: { kind: "system", id: "sys_watchdog" },
+    data: { beat: 1 },
+    specversion: "1.0",
+  });
+
+  /** A relay as apps/relay answers: `400 invalid_body` to the empty token check, 200 to a page. */
+  function fakeRelay() {
+    const calls: { url: string; auth: string | null; deviceToken?: string }[] = [];
+    const send: Fetch = async (request) => {
+      const text = await request.text();
+      const deviceToken = text === "" ? undefined : (JSON.parse(text) as RelayBody).deviceToken;
+      calls.push({ url: request.url, auth: request.headers.get("Authorization"), deviceToken });
+      if (text === "") return Response.json({ error: "invalid_body" }, { status: 400 });
+      return Response.json({ status: 200 });
+    };
+    return { calls, send };
+  }
+
+  /** The `RELAY` service binding, answering as `relay` does. */
+  function binding(relay: ReturnType<typeof fakeRelay>): Fetcher {
+    return {
+      fetch: (input: RequestInfo | URL, init?: RequestInit) => relay.send(new Request(input, init)),
+      connect: () => {
+        throw new Error("the relay is only fetched");
+      },
+    };
+  }
+
+  /** Delivers a heartbeat and `page` in one batch; returns what the watchdog was told about the relay. */
+  async function deliverBoth(page: BrigadeEvent, environment: NotifyEnv, send: Fetch) {
+    const proofs: string[] = [];
+    const watchdog = {
+      getByName: () => ({
+        proved: async (_time: string, relay: string) => {
+          proofs.push(relay);
+        },
+      }),
+    };
+    const batch = createMessageBatch("brigade-events", [
+      { id: "beat", timestamp: new Date(), attempts: 1, body: heartbeat() },
+      { id: "page", timestamp: new Date(), attempts: 1, body: page },
+    ]);
+    const ctx = createExecutionContext();
+    await consumeEvents(
+      batch,
+      { ...environment, WATCHDOG: watchdog as unknown as NonNullable<NotifyEnv["WATCHDOG"]> },
+      send,
+    );
+    const result = await getQueueResult(batch, ctx);
+    return { acked: result.explicitAcks.sort(), proofs };
+  }
+
+  test("with the RELAY binding, the token check and the page go through it, never through fetch", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    const bound = fakeRelay();
+    const internet = fakeRelay();
+    const globalFetch = vi.spyOn(globalThis, "fetch");
+    // RELAY_URL is set too: the binding wins.
+    const result = await deliverBoth(event, { ...relayEnv, RELAY: binding(bound) }, internet.send);
+    expect(result).toEqual({ acked: ["beat", "page"], proofs: ["ok"] });
+    expect(bound.calls).toHaveLength(2);
+    expect(bound.calls).toContainEqual({
+      url: "https://relay.internal/send",
+      auth: "Bearer test-token",
+      deviceToken: undefined,
+    });
+    expect(bound.calls).toContainEqual({
+      url: "https://relay.internal/send",
+      auth: "Bearer test-token",
+      deviceToken: phone.pushToken,
+    });
+    expect(internet.calls).toEqual([]);
+    expect(globalFetch).not.toHaveBeenCalled();
+    // Bia's phone took the page; only members without a phone are recorded as missed.
+    expect(await ws.timeline(incident)).not.toContainEqual(
+      expect.objectContaining({ kind: "page_failed", userId: "usr_bia" }),
+    );
+  });
+
+  test("the RELAY binding without a send token is not configured", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    const bound = fakeRelay();
+    const result = await deliverBoth(
+      event,
+      { WORKSPACE: env.WORKSPACE, RELAY: binding(bound) },
+      fakeRelay().send,
+    );
+    expect(result).toEqual({ acked: ["beat", "page"], proofs: ["not_configured"] });
+    expect(bound.calls).toEqual([]);
+    expect(await ws.timeline(incident)).toContainEqual(
+      expect.objectContaining({ kind: "page_failed", userId: "usr_bia", reason: "not_configured" }),
+    );
+  });
+
+  test("without the binding, the token check and the page go to RELAY_URL", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    const internet = fakeRelay();
+    const result = await deliverBoth(event, relayEnv, internet.send);
+    expect(result).toEqual({ acked: ["beat", "page"], proofs: ["ok"] });
+    expect(internet.calls).toHaveLength(2);
+    for (const deviceToken of [undefined, phone.pushToken]) {
+      expect(internet.calls).toContainEqual({
+        url: "https://relay.test/send",
+        auth: "Bearer test-token",
+        deviceToken,
+      });
+    }
+  });
+
+  test("with neither the binding nor RELAY_URL, paging is not configured", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    const internet = fakeRelay();
+    const result = await deliverBoth(
+      event,
+      { WORKSPACE: env.WORKSPACE, RELAY_SEND_TOKEN: "test-token" },
+      internet.send,
+    );
+    expect(result).toEqual({ acked: ["beat", "page"], proofs: ["not_configured"] });
+    expect(internet.calls).toEqual([]);
+    expect(await ws.timeline(incident)).toContainEqual(
+      expect.objectContaining({ kind: "page_failed", userId: "usr_bia", reason: "not_configured" }),
+    );
+  });
+});
+
 describe("end to end: outbox → queue → consumer", () => {
   test("the shard alarm drains a monitor's incident to brigade-events, and the consumer records the page", async () => {
     const ws = await workspace();

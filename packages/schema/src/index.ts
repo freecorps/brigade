@@ -21,4 +21,5 @@ export * from "./devices.ts";
 export * from "./deliveries.ts";
 export * from "./notifications.ts";
 export * from "./slack.ts";
+export * from "./status.ts";
 export * from "./registry.ts";

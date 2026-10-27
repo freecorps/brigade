@@ -55,6 +55,12 @@ viewer carries the schedule and policy events with
 `member.removed` or `member.role_changed`, in the same transaction; a viewer role copied from D1 by `member.sync`
 carries them alone (no `member.*` event: that change happened outside Brigade).
 
+The status page (RFC 0012) emits `status_page.configured` (`slug`, `title`, `locale`, `enabled`, `previousSlug`),
+`status_component.created` and `status_component.updated` (`id`, `name`, `group`, `status`),
+`status_component.deleted` (`id`, `incidents`) and `incident.update_published` (`entryId`, `title`, `status`,
+`impact`, `componentIds`, `body`), with a `status_published` timeline entry for the last. The public snapshot is not
+an event consumer: the shard pushes it to KV from its alarm.
+
 Users, sessions and membership live in D1, written by Better Auth (RFC 0002), not by a shard. A change there that
 integrations care about is announced by the workspace shard: creating a workspace runs `workspace.create` in its
 new `WorkspaceDO` (`workspace.created`, subject the workspace id). Member changes made through Brigade emit

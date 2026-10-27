@@ -50,6 +50,7 @@ import {
 import type { ProbeReport } from "./probe.ts";
 import { Receipts, type ReceiptResult } from "./receipts.ts";
 import { SlackDesk, type SlackPlan, type SlackShardAction } from "./slack.ts";
+import { StatusPublisher, type StatusConfigureResult } from "./status-page.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
 import type { RowChange } from "./store.ts";
 
@@ -148,6 +149,8 @@ const MAX_SALVAGE_LENGTH = 1024 * 1024;
  */
 /** How long the alarm waits on a due member repair before it lets the repair finish in the background. */
 export const REPAIR_BUDGET_MS = 5 * 1000;
+/** How long the alarm waits on a status page push (RFC 0012) before it lets the push finish in the background. */
+export const STATUS_PUSH_BUDGET_MS = 5 * 1000;
 
 export class WorkspaceDO extends DurableObject<Env> {
   /** `REPAIR_BUDGET_MS`; a field so tests can shorten it. */
@@ -163,6 +166,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly escalations: Escalations;
   private readonly membership: Membership;
   private readonly invitations: Invitations;
+  private readonly status: StatusPublisher;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -175,7 +179,10 @@ export class WorkspaceDO extends DurableObject<Env> {
       shard: "workspace",
       randomBytes,
       log: (message, fields) => this.log(message, fields),
-      onOutbox: () => this.armDrain(),
+      onOutbox: () => {
+        this.armDrain();
+        this.armStatus();
+      },
     });
     // TEST ONLY: the API's own tests (vite.config.ts) read events from the outbox, so they pause the drain; the
     // drain's tests drive it directly. No deployed environment sets it (apps/web test/worker-config.test.ts).
@@ -248,6 +255,19 @@ export class WorkspaceDO extends DurableObject<Env> {
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
     });
+    // The public status page's snapshot (RFC 0012): pushed to KV from the alarm after every change to it.
+    this.status = new StatusPublisher({
+      shard: this.shard,
+      sql: ctx.storage.sql,
+      kv: env.STATUS,
+      db: env.DB,
+      randomBytes,
+      log: (message, fields) => this.log(message, fields),
+      committed: (version, changes) => this.broadcast(version, changes, undefined),
+      wake: (at) => this.wake(at, "status page push"),
+    });
+    // Likewise a snapshot still to push (a failed push, a restart before the alarm ran).
+    this.armStatus();
     // Events left in the outbox (an alarm that failed to arm, a restart) arm the drain again whenever the object
     // wakes, so a backlog never waits for an unrelated change.
     try {
@@ -424,6 +444,23 @@ export class WorkspaceDO extends DurableObject<Env> {
   recordInvitationEmail(event: BrigadeEvent, key: string, done: boolean): void {
     if (this.shard.workspace() !== event.workspaceId) return;
     this.invitations.recordEmail(key, done);
+  }
+
+  /**
+   * Sets up or changes the status page (RPC from `PUT /workspaces/:id/status-page`, which checked the session and read
+   * the member's role in D1): see `StatusPublisher.configure`. A member removed within the tombstone is refused as
+   * their sync upgrade would be; a shard that serves another workspace, or none yet, answers `not_found`.
+   */
+  async configureStatusPage(
+    workspaceId: string,
+    actor: Actor,
+    args: unknown,
+  ): Promise<StatusConfigureResult | { ok: false; code: "not_a_member" }> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    return this.status.configure(workspaceId, actor, args);
   }
 
   /**
@@ -760,6 +797,19 @@ export class WorkspaceDO extends DurableObject<Env> {
       this.log("monitor tick failed", { error });
     }
     await this.drainOutbox();
+    // The status page after the outbox: a page never waits on KV. Never throws; KV calls have no deadline of their
+    // own, so past `STATUS_PUSH_BUDGET_MS` the push carries on in the background and the alarm goes on (the next
+    // escalation's time is set below).
+    const workspace = this.shard.workspace();
+    if (workspace !== undefined) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        this.status.publish(workspace, Date.now()),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, STATUS_PUSH_BUDGET_MS);
+        }),
+      ]).finally(() => clearTimeout(timer));
+    }
     const before = this.backlog();
     let repair: number | null = now + MONITOR_TICK_MS;
     try {
@@ -802,9 +852,15 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("reading the escalation timers failed", { error });
     }
+    let statusAt: number | null = null;
+    try {
+      statusAt = this.status.nextAt(Date.now());
+    } catch (error) {
+      this.log("reading the status page push failed", { error });
+    }
     const next = earliest(
       earliest(earliest(monitors, escalationAt), earliest(repair, armed)),
-      this.drainPaused ? null : this.drain.nextWake(Date.now()),
+      earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
     );
     if (next === null) await this.ctx.storage.deleteAlarm();
     else await this.ctx.storage.setAlarm(next);
@@ -851,6 +907,16 @@ export class WorkspaceDO extends DurableObject<Env> {
       return;
     }
     this.wake(at, "outbox drain");
+  }
+
+  /** Brings the alarm forward for a status page push that is due. Never throws. */
+  private armStatus(): void {
+    try {
+      const at = this.status.nextAt(Date.now());
+      if (at !== null) this.wake(at, "status page push");
+    } catch (error) {
+      this.log("arming the status page push failed", { error: String(error) });
+    }
   }
 
   /** Brings the alarm forward to `at` unless it is already set sooner. Fire and forget; a failure is logged. */

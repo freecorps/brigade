@@ -36,6 +36,7 @@
 | The paging pipeline's heartbeat and health (the external dead-man switch, RFC 0007) | `WatchdogDO` (one, named `watchdog`)              | One beat a minute from a Cron Trigger; tiny state        |
 | Users, sessions, workspace membership, cross-workspace search and reports           | D1                                                | Global queries DOs cannot answer                         |
 | Attachments, postmortem exports, DO backups                                         | R2                                                | Blobs                                                    |
+| Public status page snapshots (a projection of `WorkspaceDO`'s status tables)        | KV (`STATUS`)                                     | Read at the edge by the public; never wakes a shard      |
 
 **Consistency rule:** a DO is the source of truth for what it owns. Anything copied elsewhere (D1 index,
 `WorkspaceDO` incident list) is a projection, updated through the transactional outbox described in RFC 0005,

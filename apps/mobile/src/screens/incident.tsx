@@ -692,6 +692,7 @@ const ENTRY_GLYPHS: Record<Exclude<TimelineRow["kind"], "status_changed">, Glyph
     android: "feedback",
     web: "feedback",
   },
+  status_published: { ios: "globe", android: "public", web: "public" },
   escalated: { ios: "bell.and.waves.left.and.right", android: "campaign", web: "campaign" },
   escalation_exhausted: { ios: "hourglass", android: "hourglass_empty", web: "hourglass_empty" },
 };
@@ -753,7 +754,7 @@ function Timeline({
           entry.kind === "email_failed" ||
           entry.kind === "slack_failed"
             ? colors.destructive
-            : entry.kind === "update"
+            : entry.kind === "update" || entry.kind === "status_published"
               ? colors.primary
               : colors.mutedForeground;
         return (
@@ -777,7 +778,9 @@ function Timeline({
                     {entryTime(entry.at, now, locale, timeZone)}
                   </ThemedText>
                 )}
-                {entry.kind === "update" ? <UpdateBody body={entry.body} /> : null}
+                {entry.kind === "update" || entry.kind === "status_published" ? (
+                  <UpdateBody body={entry.body} />
+                ) : null}
                 {item.kind === "pages_failed" ? <FailedNames item={item} who={who} /> : null}
               </View>
             </View>

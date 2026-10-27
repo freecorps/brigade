@@ -91,6 +91,22 @@ describe("web worker routing", () => {
   });
 });
 
+describe("status page routing", () => {
+  test("forwards /status/* to the API unchanged, never the SPA", async () => {
+    const { api, assets, env } = bindings();
+    const response = await handle(new Request("http://web.test/status/acme"), env);
+    expect(await response.json()).toEqual({ path: "/status/acme" });
+    expect(api.seen[0]?.url).toBe("http://web.test/status/acme");
+    expect(assets.seen).toHaveLength(0);
+  });
+
+  test("/status alone is the SPA's", async () => {
+    const { api, env } = bindings();
+    await handle(new Request("http://web.test/status"), env);
+    expect(api.seen).toHaveLength(0);
+  });
+});
+
 describe("Slack routing", () => {
   test("forwards /slack/* to the Slack binding unchanged: path, method, headers and the signed body", async () => {
     const { api, assets, env } = bindings();

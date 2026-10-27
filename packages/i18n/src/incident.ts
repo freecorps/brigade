@@ -147,6 +147,11 @@ export function entryText(entry: TimelineRow, who: People): string {
     case "slack_failed":
       // Written by the notifier: about the channel message, not who wrote it.
       return say(`slack_failed_${entry.reason}`);
+    case "status_published":
+      return say(
+        "status_published",
+        m.status_text({ part: `public_${entry.status}`, time: "", list: "" }),
+      );
   }
 }
 

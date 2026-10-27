@@ -29,6 +29,13 @@ import {
   type WireRow,
 } from "@freecorps/brigade-sync/protocol";
 
+/** The tables the public status page's snapshot is built from (`statusSnapshot`, packages/schema). */
+const STATUS_TABLES: ReadonlySet<string> = new Set([
+  "status_page",
+  "status_components",
+  "status_incidents",
+]);
+
 /** How many versions the change log keeps. A resume from further back gets a snapshot instead of a patch. */
 export const CHANGE_LOG_VERSIONS = 1000;
 /**
@@ -279,6 +286,10 @@ export class Shard {
       );
     }
     this.compact(version);
+    // The public status page's snapshot is out of date (RFC 0012): set in the change's own transaction, so the
+    // shard's alarm pushes a new one even if the object dies right after this commit.
+    if (changes.some((change) => STATUS_TABLES.has(change.table)))
+      this.setMeta("status_dirty", version);
     writeOutbox(this.sql, events, {
       workspaceId,
       shard: this.options.shard,
@@ -377,6 +388,19 @@ export class Shard {
       .exec<{ value: number }>("select value from shard_meta where key = ?", key)
       .toArray();
     return row?.value;
+  }
+
+  /** The version whose change last touched the status page's snapshot, if it has not been pushed since. */
+  statusDirty(): number | undefined {
+    return this.meta("status_dirty");
+  }
+
+  /**
+   * Marks the snapshot pushed as of `version`. A change committed while the push was under way set a newer version,
+   * which stays, so that change is pushed too.
+   */
+  statusPushed(version: number): void {
+    this.sql.exec("delete from shard_meta where key = 'status_dirty' and value <= ?", version);
   }
 
   private setMeta(key: string, value: number): void {

@@ -24,6 +24,7 @@ import {
   CircleAlertIcon,
   CirclePlusIcon,
   GaugeIcon,
+  GlobeIcon,
   HeartPulseIcon,
   LoaderCircleIcon,
   MessageSquareTextIcon,
@@ -52,6 +53,7 @@ import { SeverityMenu, StatusMenu } from "@/components/incident-item";
 import { ANNOUNCE_MS, useNow } from "@/components/incidents-card";
 import { EscalationProgress } from "@/components/escalation-progress";
 import { usePreferences } from "@/components/preferences";
+import { StatusPublishCard } from "@/components/status-publish";
 import { PagingCard, WhyPagedView, type PagingData } from "@/components/why-paged";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
@@ -444,6 +446,7 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
               {noticesFor(["role"])}
             </CardContent>
           </Card>
+          <StatusPublishCard incidentId={row.id} />
           {row.escalation ? (
             // While it is escalating, phones show it above the roles: "Level 2 in 59 seconds" is what matters then.
             <div className={cn("min-w-0", escalating && "max-md:order-first")}>
@@ -706,6 +709,7 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
   page_failed: PhoneMissedIcon,
   email_failed: MailWarningIcon,
   slack_failed: MessageSquareWarningIcon,
+  status_published: GlobeIcon,
   escalated: BellRingIcon,
   escalation_exhausted: TimerOffIcon,
 };
@@ -762,7 +766,8 @@ function Timeline({
                 <span
                   className={cn(
                     "flex size-8 shrink-0 items-center justify-center rounded-full border bg-card",
-                    entry.kind === "update" && "border-primary/40 text-primary",
+                    (entry.kind === "update" || entry.kind === "status_published") &&
+                      "border-primary/40 text-primary",
                     (entry.kind === "page_failed" ||
                       entry.kind === "email_failed" ||
                       entry.kind === "slack_failed") &&
@@ -784,7 +789,9 @@ function Timeline({
                     {entryTime(entry.at, now, locale, TIME_ZONE)}
                   </time>
                 </p>
-                {entry.kind === "update" ? <UpdateBody body={entry.body} /> : null}
+                {entry.kind === "update" || entry.kind === "status_published" ? (
+                  <UpdateBody body={entry.body} />
+                ) : null}
                 {item.kind === "pages_failed" ? <FailedNames item={item} who={who} /> : null}
               </div>
             </li>

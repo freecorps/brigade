@@ -20,9 +20,10 @@
   "assets": {
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    // Only API calls (worker/index.ts strips the prefix) and /slack/* (the Slack app, RFC 0011, through the optional
-    // SLACK binding) reach the Worker; everything else is an asset or index.html.
-    "run_worker_first": ["/api", "/api/*", "/slack/*"],
+    // Only API calls (worker/index.ts strips the prefix), /slack/* (the Slack app, RFC 0011, through the optional
+    // SLACK binding) and /status/* (the public status page, RFC 0012, rendered by the API) reach the Worker;
+    // everything else is an asset or index.html.
+    "run_worker_first": ["/api", "/api/*", "/slack/*", "/status/*"],
   },
   // In `vp dev` the API Worker runs alongside as an auxiliary worker (vite.config.ts).
   "services": [{ "binding": "API", "service": "brigade-api" }],

@@ -147,6 +147,18 @@ the email Slack confirmed for one of the connected team's own users (RFC 0011 "W
 - Who may connect Slack: owners and admins (`workspace:manage`). Should integrations get their own permission?
 - Getting the Slack app (Freecorps' hosted app, the dev app): who creates it in Slack, and under which Slack workspace?
 
+## Q23 — Status page choices to confirm (RFC 0012)
+
+- Responders may publish to the status page (`status:publish`), as they post updates. Should it be owners, admins
+  and the incident's communications role only, once role definitions exist?
+- The page shows when its snapshot was built and nothing else about freshness. Should it also say "this page may be
+  out of date" past a threshold? A quiet page is legitimately old, so that needs the shard to re-push on a timer
+  (an alarm per page, forever), which this slice avoids.
+- Times are shown in UTC because the page has no script. Is a small script for local times worth giving up
+  `default-src 'none'`?
+- Without a `STATUS` KV namespace every address answers 404. Deployed environments need one each (apps/api README
+  "Status page"); should self-host setup create it?
+
 # Decided
 
 | #   | Question                       | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |

@@ -53,8 +53,9 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   `WorkspaceDO`); it gets a number index when `IncidentDO` takes them over.
 - **Updates** (`incident.postUpdate`, `incident:update`, event `incident.update_posted`): a timeline entry of
   kind `update` with a multi-line body of 1 to 4000 characters (the text rules of RFC 0004), allowed in every
-  status so a resolved incident can get closing notes. No visibility flag yet: every update is internal, and
-  publishing one to a status page (Phase 3) will be its own action with its own event.
+  status so a resolved incident can get closing notes. Every update is internal: publishing to the status page is its own action
+  (`incident.publishUpdate`, `status:publish`, event `incident.update_published`, a `status_published` timeline
+  entry) with text written for the public, never a copy of an update (RFC 0012 "Publishing").
 - **Roles** (`incident.assignRole`, `incident:update`, event `incident.role_assigned`): a fixed set until role
   definitions exist (Phase 3), `commander`, `communications` and `operations`, at most one member each, stored on
   the incident (`roles`). `userId: null` unassigns. The assignee must be in the shard's member list and not a
@@ -335,6 +336,8 @@ How a page uses them is RFC 0006 "Who is paged".
 - Monitors (`monitor:read`, `monitor:manage`): owners and admins manage them (create, edit, pause, delete);
   responders and viewers read them. Responders run the incidents monitors open, but changing what is watched is an
   admin's call.
+- The status page (`status:read`, `status:manage`, `status:publish`; RFC 0012): owners and admins set it up and
+  manage its components; owners, admins and responders publish incident updates to it; everyone reads it.
 - Workspace settings (`workspace:manage`): owners and admins. The first is who is emailed when paging fails
   (`workspace.setEmail`, `workspace.email_changed`; kept on the `workspace` row as `email`, absent meaning both on;
   RFC 0005 "Email"). A failed email is an `email_failed` timeline entry, written by `sys_notifier` like

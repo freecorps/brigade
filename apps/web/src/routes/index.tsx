@@ -10,6 +10,7 @@ import { PagingHealthNotice } from "@/components/paging-health";
 import { usePreferences } from "@/components/preferences";
 import { RequireWorkspace } from "@/components/session";
 import { SlackCard } from "@/components/slack-card";
+import { StatusPageCard } from "@/components/status-page-card";
 import { StackCard } from "@/components/stack-card";
 import { TakeoverNotice } from "@/components/takeover-notice";
 import { VerifyNotice } from "@/components/verify-notice";
@@ -51,6 +52,7 @@ function Overview() {
       <EscalationCard />
       <MonitorsCard />
       <MembersCard />
+      <StatusPageCard />
       <SlackCard />
       <StackCard />
       <LegendCard />

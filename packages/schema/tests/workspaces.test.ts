@@ -28,6 +28,7 @@ describe("workspace.create", () => {
     expect(Object.keys(mutations)).not.toContain("workspace.create");
     expect(Object.keys(serverMutations)).toEqual([
       ...Object.keys(mutations),
+      "statusPage.configure",
       "workspace.create",
       "member.sync",
       "member.changeRole",

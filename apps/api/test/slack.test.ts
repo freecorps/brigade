@@ -1506,6 +1506,20 @@ describe("what must happen once: escalations, messages, retried events, the clai
     ]);
   });
 
+  test("escalating right after the run's first page goes through", async () => {
+    const t = await team();
+    const { teamId, incidentId } = await escalating(t);
+    // Level 1 was paged a moment ago, when the run started: no level moved, so nobody is made to wait.
+    expect(await escalate(t, teamId, t.ana.email)).toMatchObject({ ok: true, did: "escalated" });
+    expect(await run(t, incidentId)).toMatchObject({ paged: 2, status: "running" });
+    // The page that escalation made does hold the next one back.
+    expect(await escalate(t, teamId, t.caio.email)).toMatchObject({
+      ok: false,
+      code: "just_paged",
+      level: 2,
+    });
+  });
+
   test("escalating right after the level's timeout fired does not skip the level it paged", async () => {
     const t = await team();
     const { teamId, incidentId } = await escalating(t);

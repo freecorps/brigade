@@ -196,8 +196,9 @@ text (`should_escape: true`), so a user arrives as `<@U…|name>`; what people w
   as the timeline says, like a run nobody acknowledged (the commander is not paged first: tested). It never skips a
   level someone did not see: the request carries the run's page count the person saw (`step`, when a button or
   message knew it) and `escalation.now` refuses a run that moved past it; a typed `/inc escalate`, which knows none,
-  is refused while the run's last page is younger than 30 s (`SLACK_ESCALATE_WINDOW_MS`), since the person most
-  likely did not see it: two people escalating at once, or escalate racing the level's own timeout. Both are answered
+  is refused while the run's last page moved a level and is younger than 30 s (`SLACK_ESCALATE_WINDOW_MS`), since the
+  person most likely did not see it: two people escalating at once, or escalate racing the level's own timeout. The
+  run's first page and a page made again move no level, so escalating right after either goes through. Both are answered
   "level N was paged just now", and running it again after that escalates. The shard runs one request at a time, so
   of two at once the first escalates and the second sees its page (tested). No run under way (no policy,
   acknowledged, resolved) is answered as such.

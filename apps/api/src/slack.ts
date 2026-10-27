@@ -601,12 +601,16 @@ export class SlackDesk {
         // What the person saw: the step the request carries (a button or message that knew it), else the run's last
         // page, which must be older than `SLACK_ESCALATE_WINDOW_MS`: a page that young was most likely not on their
         // screen (two people escalating at once, or the level's timeout just fired), and escalating again would skip
-        // a level. `escalation.now` refuses a step the run moved past.
+        // a level. The run's first page and a page made again moved no level, so they never hold an escalation back:
+        // the person who sees at once that the wrong level was paged is not made to wait. `escalation.now` refuses a
+        // step the run moved past.
         const last = escalation.pages[escalation.pages.length - 1];
         if (
           action.step === undefined &&
           last &&
           last.level !== null &&
+          last.reason !== "started" &&
+          !last.again &&
           now - last.at < SLACK_ESCALATE_WINDOW_MS
         ) {
           return { ...refused("just_paged"), incident: summary(incident), level: last.level };

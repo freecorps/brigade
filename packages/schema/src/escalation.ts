@@ -453,8 +453,8 @@ export const unreachedEscalation = defineMutation({
  * acknowledged, and the run ends), with `reason: "manual"`. `step` is the run's page count the person saw: a run
  * that moved past it since (another member escalated, or the level timed out) is `conflict`, never escalated past a
  * level nobody saw. Slack sends the step its button or message carried; a typed command knows none, so Slack sends the
- * run's own only once its last page is old enough to have been seen (`SLACK_ESCALATE_WINDOW_MS`). `not_found` without
- * a run under way; `conflict` for an incident acknowledged or no longer active.
+ * run's own unless its last page moved a level too recently to have been seen (`SLACK_ESCALATE_WINDOW_MS`). `not_found`
+ * without a run under way; `conflict` for an incident acknowledged or no longer active.
  */
 export const escalateNow = defineMutation({
   name: "escalation.now",

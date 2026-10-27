@@ -4,8 +4,9 @@ The SDK for [Freecorps Brigade](https://github.com/freecorps/brigade), open-sour
 
 - **`verifyWebhook`** checks a webhook delivery from Brigade ([Standard Webhooks](https://www.standardwebhooks.com))
   and parses its payload into a typed `WebhookPayload`;
-- **`createClient`** calls Brigade's public HTTP API ([`docs/api/openapi.json`](../../docs/api/openapi.json)) with
-  typed answers and errors;
+- **`createClient`** calls Brigade's public HTTP API
+  ([`docs/api/openapi.json`](https://github.com/freecorps/brigade/blob/main/docs/api/openapi.json)) with typed answers
+  and errors;
 - the payload types and their validators.
 
 Web Crypto and `fetch` only, no dependencies: it runs in Cloudflare Workers, Node 20+, Deno, Bun and browsers. ESM.
@@ -30,7 +31,16 @@ export default {
       // The body exactly as sent: never JSON.stringify(await request.json()).
       body: await request.text(),
     });
-    if (!result.ok) return new Response(result.error.code, { status: 400 });
+    // 400 only when the signature or timestamp does not hold: see "Answer 2xx" below.
+    if (
+      !result.ok &&
+      result.error.code !== "invalid_json" &&
+      result.error.code !== "invalid_payload"
+    ) {
+      return new Response(result.error.code, { status: 400 });
+    }
+    // Signed by Brigade, but not something this SDK can read (a type added since, a version 2): log it, answer 2xx.
+    if (!result.ok || !result.known) return new Response(null, { status: 204 });
 
     const { payload } = result;
     switch (payload.type) {
@@ -49,12 +59,22 @@ export default {
 
 - **Rotation.** While you switch to a new secret, Brigade signs with both for 24 hours: pass both,
   `secret: [newSecret, oldSecret]`.
+- **Answer 2xx** to every delivery whose signature holds, even one this SDK cannot read, and 400 only when the
+  signature or timestamp does not (`missing_header`, `invalid_timestamp`, `timestamp_too_old`, `timestamp_too_new`,
+  `invalid_signature`). Brigade retries anything but 2xx, and turns off an endpoint whose deliveries all failed for 24
+  hours: refusing the events a newer Brigade sends would stop every webhook, not just those.
 - **Errors.** `result.error` is a `WebhookVerificationError` with a `code`: `missing_header`, `invalid_timestamp`,
-  `timestamp_too_old`, `timestamp_too_new` (more than `toleranceSeconds`, default 300, either way), `invalid_secret`,
-  `invalid_signature`, `invalid_json` or `invalid_payload`. The last one means the signature was valid but the payload
-  is not one this version knows (`error.body` holds it): update the SDK.
-- **Versions.** Every payload is `version: 1`. Brigade may add fields to it; the SDK drops the ones it does not know.
-  A change that is not purely additive will be `version: 2`.
+  `timestamp_too_old`, `timestamp_too_new` (more than `toleranceSeconds`, default 300, either way), `invalid_secret`
+  and `invalid_option` (a mistake in your call: a bad secret, a `toleranceSeconds` that is not a finite number of 0 or
+  more, a `now` that is not a finite time), `invalid_signature`, `invalid_json` or `invalid_payload`. The last two mean
+  the signature was valid but the body is no version 1 payload (`error.body` holds it).
+- **Versions.** Every payload is `version: 1`. Within it, Brigade may add event types, values to any list (a
+  severity, a status, a reason…) and fields. So `result.known` is false for a `type` this SDK does not know yet
+  (`payload` is then an `UnknownWebhookPayload`: the envelope, and `data` as sent); a value it does not know is kept
+  as a string (`payload.data.incident.severity` is `Open<Severity>`: the known ones, or `string`), so give every
+  `switch` on one a `default`; fields it does not know are dropped. Removing or renaming anything will be `version: 2`.
+- **Repeated headers.** A header sent twice reads as `Headers.get` reads it, values joined with `, `, whether you pass a
+  `Headers` or a plain object.
 - **Node.** `headers` takes a `Headers` or Node's `req.headers`; `body` a string, `Uint8Array` or `ArrayBuffer` of the
   raw body (with Express, `express.raw({ type: "application/json" })`).
 
@@ -81,8 +101,8 @@ import { createClient, isBrigadeApiError } from "@freecorps/brigade-sdk";
 
 const brigade = createClient({
   baseUrl: "https://brigade.example.com/api",
-  // A Better Auth session cookie (`POST /api/auth/sign-in/email` sets it). API tokens are not there yet: when they
-  // are, they go in `headers`.
+  // A Better Auth session cookie (`POST /api/auth/sign-in/email` sets it), on a server. API tokens are not there
+  // yet: when they are, they go in `headers`.
   cookie: process.env.BRIGADE_SESSION_COOKIE,
 });
 
@@ -109,9 +129,15 @@ try {
 | `acknowledgeIncident(ws, incidentId, { idempotencyKey? })`                                                   | `POST /workspaces/:id/incidents/:incidentId/ack`  |
 
 Every method resolves with the documented success and rejects with a `BrigadeApiError` (`operation`, `status`,
-`code`, `body`) for any other answer; a network failure is `fetch`'s own error. `fetch` can be injected
-(`createClient({ fetch })`), for tests or a Worker's service binding. Incidents, monitors and the rest are read and
-changed over Brigade Sync (`@freecorps/brigade-sync`), not this API.
+`code`, `body`) for any other answer, `unexpected` for one outside the reference (a 2xx that is no JSON object, or a
+redirect: never followed, so a cookie or token never goes elsewhere). An id that is empty, `.` or `..` is a
+`BrigadeArgumentError` (`invalid_argument`), before anything is sent; a network failure is `fetch`'s own error.
+
+- **Browsers.** The `cookie` option is for servers: a browser ignores a `Cookie` header a script sets, and sends its
+  own cookies instead. On a page of the API's own origin it does so already; from another origin, pass
+  `credentials: "include"` (and the API must allow that origin). `fetch` can be injected
+  (`createClient({ fetch })`), for tests or a Worker's service binding. Incidents, monitors and the rest are read and
+  changed over Brigade Sync (`@freecorps/brigade-sync`), not this API.
 
 ## Development
 

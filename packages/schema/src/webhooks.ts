@@ -15,7 +15,6 @@ import {
 import {
   isCloudflareAddress,
   MONITOR_KINDS,
-  MONITOR_NAME_MAX,
   MONITOR_STATUSES,
   MONITOR_URL_MAX,
   targetProblem,
@@ -26,7 +25,7 @@ import type { EscalationReason, IncidentRow, MonitorRow, WebhookRow } from "./ta
 import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
 import { idTime } from "./id.ts";
-import { ID_CLOCK_SKEW_MS, INCIDENT_TITLE_MAX, UPDATE_BODY_MAX } from "./incidents.ts";
+import { ID_CLOCK_SKEW_MS } from "./incidents.ts";
 import { v, type Validated, type Validator } from "./validate.ts";
 
 /** At most this many endpoints per workspace (`limit_reached` past it). */
@@ -478,6 +477,12 @@ export const allWebhooks = defineQuery({
 });
 
 // ---- Payload -------------------------------------------------------------------------------------------------------
+// Within version 1, Brigade may add event types, values to any of the lists below and fields; removing or renaming
+// any of them is a new version (RFC 0005 "Payloads"). So the types a receiver reads are open: `Open<Severity>` is
+// every severity known now, or a string a newer Brigade sends.
+
+/** One of the values known now, or another string a newer Brigade added within the same version. */
+export type Open<Known extends string> = Known | (string & {});
 
 /** An incident as a payload carries it. */
 export type WebhookIncident = {
@@ -485,8 +490,8 @@ export type WebhookIncident = {
   /** `142` for INC-142; null in the rare case the shard has not numbered it. */
   number: number | null;
   title: string;
-  severity: Severity;
-  status: IncidentStatus;
+  severity: Open<Severity>;
+  status: Open<IncidentStatus>;
   /** ISO 8601. */
   declaredAt: string;
   acknowledgedAt: string | null;
@@ -496,12 +501,12 @@ export type WebhookIncident = {
 export type WebhookMonitor = {
   id: string;
   name: string | null;
-  kind: MonitorKind | null;
-  status: MonitorStatus | null;
+  kind: Open<MonitorKind> | null;
+  status: Open<MonitorStatus> | null;
 };
 
 /** Who caused the event: a member's id (`usr_…`) or a system actor (`sys_monitors`); never a name or an address. */
-export type WebhookActor = { kind: "user" | "system" | "integration"; id: string };
+export type WebhookActor = { kind: Open<"user" | "system" | "integration">; id: string };
 
 type Envelope<Type extends string, Data> = {
   version: typeof WEBHOOK_PAYLOAD_VERSION;
@@ -520,26 +525,31 @@ export type WebhookPayload =
   | Envelope<"incident.declared", { incident: WebhookIncident }>
   | Envelope<
       "incident.status_changed",
-      { incident: WebhookIncident; from: IncidentStatus; to: IncidentStatus }
+      { incident: WebhookIncident; from: Open<IncidentStatus>; to: Open<IncidentStatus> }
     >
   | Envelope<
       "incident.severity_changed",
-      { incident: WebhookIncident; from: Severity; to: Severity }
+      { incident: WebhookIncident; from: Open<Severity>; to: Open<Severity> }
     >
   | Envelope<"incident.acknowledged", { incident: WebhookIncident; by: string }>
   | Envelope<"incident.update_posted", { incident: WebhookIncident; body: string }>
   | Envelope<
       "incident.role_assigned",
-      { incident: WebhookIncident; role: IncidentRole; from: string | null; to: string | null }
+      {
+        incident: WebhookIncident;
+        role: Open<IncidentRole>;
+        from: string | null;
+        to: string | null;
+      }
     >
   | Envelope<"alert.fired", { alertId: string; monitor: WebhookMonitor; incidentId: string }>
   | Envelope<
       "alert.resolved",
-      { alertId: string; monitor: WebhookMonitor; reason: "recovered" | "paused" | "deleted" }
+      { alertId: string; monitor: WebhookMonitor; reason: Open<AlertResolvedReason> }
     >
   | Envelope<
       "monitor.status_changed",
-      { monitor: WebhookMonitor; from: MonitorStatus; to: MonitorStatus }
+      { monitor: WebhookMonitor; from: Open<MonitorStatus>; to: Open<MonitorStatus> }
     >
   | Envelope<
       "escalation.paged",
@@ -548,13 +558,19 @@ export type WebhookPayload =
         /** 1-based; null: everyone who can respond was paged. */
         level: number | null;
         round: number;
-        reason: EscalationReason;
+        reason: Open<EscalationReason>;
         /** How many people the level paged, and how many it could not. */
         paged: number;
         missed: number;
       }
     >
   | Envelope<"webhook.test", { webhookId: string }>;
+
+/**
+ * A version 1 payload of a `type` this copy of the schema does not know: one Brigade added since. Its envelope is
+ * checked; its `data` is left as sent.
+ */
+export type UnknownWebhookPayload = Envelope<string, unknown>;
 
 /** The event as the outbox wrote it (apps/api `BrigadeEvent`), as far as a payload needs it. */
 export type WebhookSourceEvent = {
@@ -580,7 +596,8 @@ export const ESCALATION_REASONS = [
   "stalled",
 ] as const satisfies readonly EscalationReason[];
 /** Why an alert resolves (`alert.resolved`). */
-const ALERT_RESOLVED_REASONS = ["recovered", "paused", "deleted"] as const;
+export const ALERT_RESOLVED_REASONS = ["recovered", "paused", "deleted"] as const;
+export type AlertResolvedReason = (typeof ALERT_RESOLVED_REASONS)[number];
 
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
 
@@ -772,21 +789,33 @@ export function webhookWants(row: WebhookRow, event: WebhookSourceEvent): boolea
 
 // ---- Payload validators --------------------------------------------------------------------------------------------
 // What a receiver may check a payload against (the SDK's `verifyWebhook`), and the API reference's `webhooks` section
-// (`toJsonSchema`). Open objects: a field added to version 1 is dropped by an older receiver, never refused. A test
-// holds each to `WebhookPayload` and to what `webhookPayload` makes.
+// (`toJsonSchema`). Lenient wherever version 1 may grow, so an older receiver never refuses what a newer Brigade
+// sends: open objects (a field added since is dropped), open lists (`v.openPicklist`: a value added since is kept as
+// a string), text far longer than Brigade writes today, and a `type` added since parses as `UnknownWebhookPayload`.
+// A test holds each to `WebhookPayload` and to what `webhookPayload` makes.
 
 /** A user id, or a system actor's (`sys_monitors`): never a name or an address. */
 const actorId = v.string({ min: 1, max: 64 });
 /** An ISO 8601 time, as `Date.prototype.toISOString` writes it. */
 const isoTime = v.string({ min: 1, max: 64 });
+/** The longest value of an open list a receiver takes: far more than any Brigade uses. */
+const OPEN_VALUE_MAX = 64;
+/**
+ * The longest text a receiver takes (a title, a name, an update): far more than Brigade allows today, so raising its
+ * own limits later breaks no receiver.
+ */
+export const WEBHOOK_PAYLOAD_TEXT_MAX = 65_536;
+const known = <const T extends string>(values: readonly T[]) =>
+  v.openPicklist(values, { max: OPEN_VALUE_MAX });
+const payloadText = v.string({ min: 1, max: WEBHOOK_PAYLOAD_TEXT_MAX });
 
 const payloadIncident = v.object(
   {
     id: v.id("inc"),
     number: v.nullable(v.integer({ min: 1, max: Number.MAX_SAFE_INTEGER })),
-    title: v.string({ min: 1, max: INCIDENT_TITLE_MAX }),
-    severity: v.picklist(SEVERITIES),
-    status: v.picklist(INCIDENT_STATUSES),
+    title: payloadText,
+    severity: known(SEVERITIES),
+    status: known(INCIDENT_STATUSES),
     declaredAt: isoTime,
     acknowledgedAt: v.nullable(isoTime),
   },
@@ -796,36 +825,34 @@ const payloadIncident = v.object(
 const payloadMonitor = v.object(
   {
     id: v.id("mon"),
-    name: v.nullable(v.string({ min: 1, max: MONITOR_NAME_MAX })),
-    kind: v.nullable(v.picklist(MONITOR_KINDS)),
-    status: v.nullable(v.picklist(MONITOR_STATUSES)),
+    name: v.nullable(payloadText),
+    kind: v.nullable(known(MONITOR_KINDS)),
+    status: v.nullable(known(MONITOR_STATUSES)),
   },
   { open: true },
 );
+
+/** The envelope every version 1 payload has, whatever its `type`. */
+const envelopeFields = {
+  version: v.literal(WEBHOOK_PAYLOAD_VERSION),
+  id: v.id("evt"),
+  time: isoTime,
+  workspaceId: v.id("ws"),
+  actor: v.object({ kind: known(["user", "system", "integration"]), id: actorId }, { open: true }),
+};
 
 function envelope<const Type extends string, const S extends Record<string, Validator<unknown>>>(
   type: Type,
   data: S,
 ) {
   return v.object(
-    {
-      version: v.literal(WEBHOOK_PAYLOAD_VERSION),
-      id: v.id("evt"),
-      type: v.literal(type),
-      time: isoTime,
-      workspaceId: v.id("ws"),
-      actor: v.object(
-        { kind: v.picklist(["user", "system", "integration"]), id: actorId },
-        { open: true },
-      ),
-      data: v.object(data, { open: true }),
-    },
+    { ...envelopeFields, type: v.literal(type), data: v.object(data, { open: true }) },
     { open: true },
   );
 }
 
-const statusChange = { from: v.picklist(INCIDENT_STATUSES), to: v.picklist(INCIDENT_STATUSES) };
-const severityChange = { from: v.picklist(SEVERITIES), to: v.picklist(SEVERITIES) };
+const statusChange = { from: known(INCIDENT_STATUSES), to: known(INCIDENT_STATUSES) };
+const severityChange = { from: known(SEVERITIES), to: known(SEVERITIES) };
 
 /** One validator per payload `type`, in the catalog's order, then `webhook.test`. */
 export const WEBHOOK_PAYLOADS = {
@@ -844,11 +871,11 @@ export const WEBHOOK_PAYLOADS = {
   }),
   "incident.update_posted": envelope("incident.update_posted", {
     incident: payloadIncident,
-    body: v.string({ min: 1, max: UPDATE_BODY_MAX, multiline: true, joiners: true }),
+    body: v.string({ min: 1, max: WEBHOOK_PAYLOAD_TEXT_MAX, multiline: true, joiners: true }),
   }),
   "incident.role_assigned": envelope("incident.role_assigned", {
     incident: payloadIncident,
-    role: v.picklist(INCIDENT_ROLES),
+    role: known(INCIDENT_ROLES),
     from: v.nullable(actorId),
     to: v.nullable(actorId),
   }),
@@ -860,38 +887,57 @@ export const WEBHOOK_PAYLOADS = {
   "alert.resolved": envelope("alert.resolved", {
     alertId: v.id("alt"),
     monitor: payloadMonitor,
-    reason: v.picklist(ALERT_RESOLVED_REASONS),
+    reason: known(ALERT_RESOLVED_REASONS),
   }),
   "monitor.status_changed": envelope("monitor.status_changed", {
     monitor: payloadMonitor,
-    from: v.picklist(MONITOR_STATUSES),
-    to: v.picklist(MONITOR_STATUSES),
+    from: known(MONITOR_STATUSES),
+    to: known(MONITOR_STATUSES),
   }),
   "escalation.paged": envelope("escalation.paged", {
     incident: payloadIncident,
     level: v.nullable(v.integer({ min: 1, max: Number.MAX_SAFE_INTEGER })),
     round: v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }),
-    reason: v.picklist(ESCALATION_REASONS),
+    reason: known(ESCALATION_REASONS),
     paged: v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }),
     missed: v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }),
   }),
   "webhook.test": envelope("webhook.test", { webhookId: v.id("whk") }),
 } as const satisfies Record<WebhookPayload["type"], Validator<unknown>>;
 
-/** Every payload `type` a receiver may get: the catalog and `webhook.test`. */
+/** Every payload `type` this copy of the schema knows: the catalog and `webhook.test`. */
 export type WebhookPayloadType = WebhookPayload["type"];
 
+/** Whether `payload` is of a `type` this copy of the schema knows (not an `UnknownWebhookPayload`). */
+export function isKnownWebhookPayload(
+  payload: WebhookPayload | UnknownWebhookPayload,
+): payload is WebhookPayload {
+  return Object.prototype.hasOwnProperty.call(WEBHOOK_PAYLOADS, payload.type);
+}
+
+/** A payload of a `type` added since: the envelope checked, `data` as sent. */
+const unknownPayload = v.object(
+  { ...envelopeFields, type: v.string({ min: 1, max: OPEN_VALUE_MAX }) },
+  { open: true },
+);
+
 /**
- * `input` (parsed JSON) as a payload, or the issues that keep it from being one: a `type` outside the catalog, another
- * `version`, or a field that breaks its validator. Fields Brigade added since are dropped, not refused.
+ * `input` (parsed JSON) as a version 1 payload, or the issues that keep it from being one: another `version`, a
+ * broken envelope, or a known `type` whose fields break its validator. A `type` added since is an
+ * `UnknownWebhookPayload` (tell them apart with `isKnownWebhookPayload`); fields added since are dropped.
  */
-export const webhookPayloadValidator: Validator<WebhookPayload> = (input, path = "") => {
+export const webhookPayloadValidator: Validator<WebhookPayload | UnknownWebhookPayload> = (
+  input,
+  path = "",
+) => {
   const type = field(input, "type");
-  if (typeof type !== "string" || !Object.prototype.hasOwnProperty.call(WEBHOOK_PAYLOADS, type)) {
-    return {
-      ok: false,
-      issues: [{ path: path ? `${path}.type` : "type", message: "Unknown type" }],
-    };
+  if (typeof type === "string" && Object.prototype.hasOwnProperty.call(WEBHOOK_PAYLOADS, type)) {
+    return WEBHOOK_PAYLOADS[type as WebhookPayloadType](input, path) as Validated<WebhookPayload>;
   }
-  return WEBHOOK_PAYLOADS[type as WebhookPayloadType](input, path) as Validated<WebhookPayload>;
+  const parsed = unknownPayload(input, path);
+  if (!parsed.ok) return parsed;
+  return {
+    ok: true,
+    value: { ...parsed.value, data: field(input, "data") } as UnknownWebhookPayload,
+  };
 };

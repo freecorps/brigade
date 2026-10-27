@@ -15,6 +15,7 @@ export {
 
 export {
   BrigadeApiError,
+  BrigadeArgumentError,
   createClient,
   isBrigadeApiError,
   OPERATION_ERRORS,
@@ -32,6 +33,7 @@ export {
 
 // The payloads and the values they draw from, from the schema package the server itself runs.
 export {
+  ALERT_RESOLVED_REASONS,
   ESCALATION_REASONS,
   INCIDENT_ROLES,
   INCIDENT_STATUSES,
@@ -40,17 +42,22 @@ export {
   ROLES,
   SEVERITIES,
   WEBHOOK_EVENT_TYPES,
+  WEBHOOK_PAYLOAD_TEXT_MAX,
   WEBHOOK_PAYLOAD_VERSION,
   WEBHOOK_PAYLOADS,
+  isKnownWebhookPayload,
   webhookPayloadValidator,
+  type AlertResolvedReason,
   type EscalationReason,
   type IncidentRole,
   type IncidentStatus,
   type Issue,
   type MonitorKind,
   type MonitorStatus,
+  type Open,
   type Role,
   type Severity,
+  type UnknownWebhookPayload,
   type WebhookActor,
   type WebhookEventType,
   type WebhookIncident,

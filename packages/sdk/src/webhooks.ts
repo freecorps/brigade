@@ -5,8 +5,10 @@
 // and browsers. Written apart from the API's signer (apps/api src/webhook-sign.ts), which its tests check it against.
 
 import {
+  isKnownWebhookPayload,
   webhookPayloadValidator,
   type Issue,
+  type UnknownWebhookPayload,
   type WebhookPayload,
 } from "@freecorps/brigade-schema";
 
@@ -22,9 +24,12 @@ const HEADER_MAX = 4096;
  * - `invalid_timestamp`: `webhook-timestamp` is not whole Unix seconds;
  * - `timestamp_too_old`, `timestamp_too_new`: further than `toleranceSeconds` from now (a replay, or a wrong clock);
  * - `invalid_secret`: a secret is not `whsec_` and base64 (a mistake on your side: no delivery verifies);
+ * - `invalid_option`: `toleranceSeconds` is not a finite number of 0 or more, or `now` is not a finite time (a mistake
+ *   on your side too: refused rather than replaced by a default, so the replay check is never quietly off);
  * - `invalid_signature`: no `v1` signature matches any secret;
  * - `invalid_json`: signed, but the body is not JSON;
- * - `invalid_payload`: signed JSON, but not a version 1 payload this SDK knows (`issues` says why; `body` holds it).
+ * - `invalid_payload`: signed JSON, but no version 1 payload: another `version`, a broken envelope, or a known `type`
+ *   with fields that break it (`issues` says why; `body` holds it). A `type` added since is no refusal: see `known`.
  */
 export type WebhookVerificationCode =
   | "missing_header"
@@ -32,6 +37,7 @@ export type WebhookVerificationCode =
   | "timestamp_too_old"
   | "timestamp_too_new"
   | "invalid_secret"
+  | "invalid_option"
   | "invalid_signature"
   | "invalid_json"
   | "invalid_payload";
@@ -56,7 +62,10 @@ export class WebhookVerificationError extends Error {
   }
 }
 
-/** Headers as `Request.headers` has them, or a plain object (Node's `IncomingHttpHeaders`, any case). */
+/**
+ * Headers as `Request.headers` has them, or a plain object (Node's `IncomingHttpHeaders`, any case). A header sent
+ * twice reads as `Headers` reads it, whichever you pass: its values joined with `", "`.
+ */
 export type WebhookHeaders =
   | { get(name: string): string | null }
   | Readonly<Record<string, string | readonly string[] | undefined>>;
@@ -67,20 +76,28 @@ export type VerifyWebhookOptions = {
   headers: WebhookHeaders;
   /** The body exactly as received: read it with `request.text()` or as bytes, never re-serialized JSON. */
   body: string | Uint8Array | ArrayBuffer;
-  /** Default `DEFAULT_TOLERANCE_SECONDS`. */
+  /** Default `DEFAULT_TOLERANCE_SECONDS`; a finite number of 0 or more (`invalid_option` otherwise). */
   toleranceSeconds?: number;
-  /** The current time, epoch milliseconds or a `Date`; for tests. */
+  /** The current time, epoch milliseconds or a `Date`; for tests. Must be finite (`invalid_option` otherwise). */
   now?: number | Date;
 };
 
-export type VerifiedWebhook = {
+type Verified = {
   ok: true;
-  payload: WebhookPayload;
   /** `webhook-id`: the event's id, the same on every retry. De-duplicate by it. */
   webhookId: string;
   /** `webhook-timestamp`: when this attempt was signed, Unix seconds. */
   timestamp: number;
 };
+
+/**
+ * A delivery whose signature and timestamp hold. `known`: its `type` is one this SDK knows, and `payload` narrows by
+ * it. Otherwise it is an event Brigade added since this SDK was built (`UnknownWebhookPayload`: the envelope, and
+ * `data` as sent): answer it with a 2xx all the same, or Brigade retries it and may turn the endpoint off.
+ */
+export type VerifiedWebhook =
+  | (Verified & { known: true; payload: WebhookPayload })
+  | (Verified & { known: false; payload: UnknownWebhookPayload });
 
 export type WebhookVerification = VerifiedWebhook | { ok: false; error: WebhookVerificationError };
 
@@ -107,8 +124,16 @@ export async function verifyWebhook(options: VerifyWebhookOptions): Promise<Webh
   }
   const timestamp = Number(stamp);
   const now = options.now ?? Date.now();
-  const nowSeconds = Math.floor((typeof now === "number" ? now : now.getTime()) / 1000);
+  const nowMs = typeof now === "number" ? now : now.getTime();
   const tolerance = options.toleranceSeconds ?? DEFAULT_TOLERANCE_SECONDS;
+  // NaN or Infinity would make both comparisons below false, and so turn the replay check off.
+  if (typeof tolerance !== "number" || !Number.isFinite(tolerance) || tolerance < 0) {
+    return refuse("invalid_option", "toleranceSeconds is not a finite number of 0 or more");
+  }
+  if (typeof nowMs !== "number" || !Number.isFinite(nowMs)) {
+    return refuse("invalid_option", "now is not a finite time");
+  }
+  const nowSeconds = Math.floor(nowMs / 1000);
   if (timestamp < nowSeconds - tolerance) {
     return refuse("timestamp_too_old", "webhook-timestamp is too far in the past");
   }
@@ -129,7 +154,8 @@ export async function verifyWebhook(options: VerifyWebhookOptions): Promise<Webh
   const signed = concat(encoder.encode(`${id}.${stamp}.`), body);
   const expected = await Promise.all(keys.map((key) => hmac(key, signed)));
   let matched = false;
-  for (const entry of signature.split(" ")) {
+  // Space separated; `, ` too where a header sent twice was joined (a signature never ends in a comma).
+  for (const entry of signature.split(/,?\s+/)) {
     const comma = entry.indexOf(",");
     // Other versions (`v1a,…`) are not Brigade's: skipped, as the specification says.
     if (comma < 0 || entry.slice(0, comma) !== "v1") continue;
@@ -148,12 +174,15 @@ export async function verifyWebhook(options: VerifyWebhookOptions): Promise<Webh
   }
   const parsed = webhookPayloadValidator(json);
   if (!parsed.ok) {
-    return refuse("invalid_payload", "Not a payload this SDK knows: update it?", {
+    return refuse("invalid_payload", "Not a version 1 payload", {
       issues: parsed.issues,
       body: json,
     });
   }
-  return { ok: true, payload: parsed.value, webhookId: id, timestamp };
+  const verified = { ok: true as const, webhookId: id, timestamp };
+  return isKnownWebhookPayload(parsed.value)
+    ? { ...verified, known: true, payload: parsed.value }
+    : { ...verified, known: false, payload: parsed.value };
 }
 
 function header(headers: WebhookHeaders, name: string): string | undefined {
@@ -165,7 +194,8 @@ function header(headers: WebhookHeaders, name: string): string | undefined {
     const key = Object.keys(record).find((one) => one.toLowerCase() === name);
     value = key === undefined ? undefined : record[key];
   }
-  // A repeated header (Node keeps a list): never guess which one was signed.
+  // A repeated header (Node keeps a list): joined as `Headers.get` joins it, so both read the same.
+  if (Array.isArray(value)) value = value.join(", ");
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 && trimmed.length <= HEADER_MAX ? trimmed : undefined;

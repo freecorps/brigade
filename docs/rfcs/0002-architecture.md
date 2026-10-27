@@ -122,7 +122,8 @@ actor) before anything outside a browser can call the API comfortably.
 
 **Webhooks.** The reference's OpenAPI 3.1 `webhooks` section describes what Brigade sends to the endpoints a workspace
 registers (RFC 0005 "Outbound webhooks"): one entry per payload `type`, its body converted from that type's validator
-(`WEBHOOK_PAYLOADS` in `packages/schema`, open objects: fields may be added within `version: 1`) and the three
+(`WEBHOOK_PAYLOADS` in `packages/schema`; event types, list values and fields may be added within `version: 1`, so
+lists are an `anyOf` of the known values and any string, and objects are open) and the three
 Standard Webhooks headers. The same test checks it is current and that payloads the API signs match their type's schema.
 
 **SDK.** `packages/sdk` (`@freecorps/brigade-sdk`, MIT, 0.1.0, not on npm yet: publishing is the owner's call) is the

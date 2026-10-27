@@ -19,6 +19,7 @@ export const MAX_ISSUES = 10;
 export type Shape =
   | { kind: "string"; min: number; max: number; multiline: boolean }
   | { kind: "picklist"; values: readonly string[] }
+  | { kind: "openPicklist"; values: readonly string[]; max: number }
   | { kind: "literal"; value: string | number | boolean }
   | { kind: "id"; prefix: string }
   | { kind: "integer"; min: number; max: number }
@@ -93,6 +94,23 @@ function picklist<const T extends string>(values: readonly T[]): Validator<T> {
         ? valid(input as T)
         : invalid(path, `Expected one of ${values.join(", ")}`),
     { kind: "picklist", values },
+  );
+}
+
+/**
+ * One of `values` or any other string of 1 to `max` characters, typed as the known ones plus `string`: for values
+ * Brigade sends and may add to (webhook payloads), so an older receiver takes a new one instead of refusing it.
+ */
+function openPicklist<const T extends string>(
+  values: readonly T[],
+  options: { max: number },
+): Validator<T | (string & {})> {
+  return described(
+    (input, path = "") =>
+      typeof input === "string" && input.length >= 1 && input.length <= options.max
+        ? valid(input)
+        : invalid(path, `Expected a string of 1 to ${options.max} characters`),
+    { kind: "openPicklist", values, max: options.max },
   );
 }
 
@@ -233,6 +251,7 @@ function object<const S extends Record<string, Validator<unknown>>>(
 export const v = {
   string,
   picklist,
+  openPicklist,
   literal,
   id,
   object,

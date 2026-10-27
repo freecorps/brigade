@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, expectTypeOf, test } from "vite-plus/test";
 import {
   BrigadeApiError,
+  BrigadeArgumentError,
   createClient,
   isBrigadeApiError,
   OPERATION_ERRORS,
@@ -170,6 +171,44 @@ describe("requests", () => {
     await client.pingHeartbeat("a/b?c");
     expect(requests[0]!.url).toBe("https://brigade.example.com/api/heartbeat/a%2Fb%3Fc");
   });
+
+  test("an empty, `.` or `..` id is refused before any request", async () => {
+    const { client, requests } = recorder();
+    for (const id of ["", ".", ".."]) {
+      for (const call of [
+        () => client.acknowledgeIncident(WS, id),
+        () => client.acknowledgeIncident(id, INC),
+        () => client.pingHeartbeat(id),
+        () => client.getInvitation(id),
+      ]) {
+        // A rejection, like every other refusal: never a throw from the call itself.
+        const error = await call().catch((caught: unknown) => caught);
+        expect(error, JSON.stringify(id)).toBeInstanceOf(BrigadeArgumentError);
+        expect(error).toMatchObject({ code: "invalid_argument" });
+      }
+    }
+    expect(requests).toHaveLength(0);
+    // Dots inside an id are fine.
+    await client.pingHeartbeat("a..b");
+    expect(requests[0]!.url).toBe("https://brigade.example.com/api/heartbeat/a..b");
+  });
+
+  test("redirects are not followed; credentials only when asked", async () => {
+    const { client, requests } = recorder();
+    await client.getHealth();
+    expect(requests[0]!.redirect).toBe("manual");
+    const sent: Request[] = [];
+    const browser = createClient({
+      baseUrl: "https://brigade.example.com/api",
+      credentials: "include",
+      fetch: async (request) => {
+        sent.push(request);
+        return Response.json({ ok: true });
+      },
+    });
+    await browser.getHealth();
+    expect(sent[0]!.credentials).toBe("include");
+  });
 });
 
 describe("refusals", () => {
@@ -196,6 +235,12 @@ describe("refusals", () => {
       () => Response.json({ error: "something_new" }, { status: 409 }),
       () => new Response("<html>Bad gateway</html>", { status: 502 }),
       () => new Response(null, { status: 405 }),
+      () => new Response(null, { status: 302, headers: { Location: "https://elsewhere.example" } }),
+      // A 2xx that is not the API: a captive portal's page, nothing, or JSON that is no object.
+      () => new Response("<html>Sign in to the Wi-Fi</html>", { status: 200 }),
+      () => new Response(null, { status: 204 }),
+      () => Response.json(null),
+      () => Response.json("ok"),
     ]) {
       const { client } = recorder(answer);
       const error = await client.getPagingHealth().catch((caught: unknown) => caught);

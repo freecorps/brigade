@@ -24,6 +24,12 @@ describe("toJsonSchema", () => {
     });
     expect(toJsonSchema(v.string({ max: 5 }))).toEqual({ type: "string", maxLength: 5 });
     expect(toJsonSchema(v.picklist(ROLES))).toEqual({ type: "string", enum: [...ROLES] });
+    expect(toJsonSchema(v.openPicklist(ROLES, { max: 9 }))).toEqual({
+      anyOf: [
+        { type: "string", enum: [...ROLES] },
+        { type: "string", minLength: 1, maxLength: 9 },
+      ],
+    });
     expect(toJsonSchema(v.integer({ min: 0, max: 9 }))).toEqual({
       type: "integer",
       minimum: 0,

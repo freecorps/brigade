@@ -27,6 +27,14 @@ export function toJsonSchema(validator: Validator<unknown>): JsonSchema {
       };
     case "picklist":
       return { type: "string", enum: [...shape.values] };
+    case "openPicklist":
+      // The known values, or any other: a receiver should expect values added since.
+      return {
+        anyOf: [
+          { type: "string", enum: [...shape.values] },
+          { type: "string", minLength: 1, maxLength: shape.max },
+        ],
+      };
     case "literal":
       return { const: shape.value };
     case "id":

@@ -2706,9 +2706,6 @@
                     "type": "string",
                     "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
                   },
-                  "type": {
-                    "const": "incident.declared"
-                  },
                   "time": {
                     "type": "string",
                     "minLength": 1,
@@ -2722,11 +2719,20 @@
                     "type": "object",
                     "properties": {
                       "kind": {
-                        "type": "string",
-                        "enum": [
-                          "user",
-                          "system",
-                          "integration"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "system",
+                              "integration"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "id": {
@@ -2739,6 +2745,9 @@
                       "kind",
                       "id"
                     ]
+                  },
+                  "type": {
+                    "const": "incident.declared"
                   },
                   "data": {
                     "type": "object",
@@ -2765,26 +2774,44 @@
                           "title": {
                             "type": "string",
                             "minLength": 1,
-                            "maxLength": 200
+                            "maxLength": 65536
                           },
                           "severity": {
-                            "type": "string",
-                            "enum": [
-                              "sev1",
-                              "sev2",
-                              "sev3",
-                              "sev4"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "sev1",
+                                  "sev2",
+                                  "sev3",
+                                  "sev4"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "status": {
-                            "type": "string",
-                            "enum": [
-                              "triage",
-                              "investigating",
-                              "fixing",
-                              "monitoring",
-                              "resolved",
-                              "declined"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "triage",
+                                  "investigating",
+                                  "fixing",
+                                  "monitoring",
+                                  "resolved",
+                                  "declined"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "declaredAt": {
@@ -2824,10 +2851,10 @@
                 "required": [
                   "version",
                   "id",
-                  "type",
                   "time",
                   "workspaceId",
                   "actor",
+                  "type",
                   "data"
                 ]
               }
@@ -2893,9 +2920,6 @@
                     "type": "string",
                     "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
                   },
-                  "type": {
-                    "const": "incident.status_changed"
-                  },
                   "time": {
                     "type": "string",
                     "minLength": 1,
@@ -2909,11 +2933,20 @@
                     "type": "object",
                     "properties": {
                       "kind": {
-                        "type": "string",
-                        "enum": [
-                          "user",
-                          "system",
-                          "integration"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "system",
+                              "integration"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "id": {
@@ -2926,6 +2959,9 @@
                       "kind",
                       "id"
                     ]
+                  },
+                  "type": {
+                    "const": "incident.status_changed"
                   },
                   "data": {
                     "type": "object",
@@ -2952,26 +2988,44 @@
                           "title": {
                             "type": "string",
                             "minLength": 1,
-                            "maxLength": 200
+                            "maxLength": 65536
                           },
                           "severity": {
-                            "type": "string",
-                            "enum": [
-                              "sev1",
-                              "sev2",
-                              "sev3",
-                              "sev4"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "sev1",
+                                  "sev2",
+                                  "sev3",
+                                  "sev4"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "status": {
-                            "type": "string",
-                            "enum": [
-                              "triage",
-                              "investigating",
-                              "fixing",
-                              "monitoring",
-                              "resolved",
-                              "declined"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "triage",
+                                  "investigating",
+                                  "fixing",
+                                  "monitoring",
+                                  "resolved",
+                                  "declined"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "declaredAt": {
@@ -3003,25 +3057,43 @@
                         ]
                       },
                       "from": {
-                        "type": "string",
-                        "enum": [
-                          "triage",
-                          "investigating",
-                          "fixing",
-                          "monitoring",
-                          "resolved",
-                          "declined"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "triage",
+                              "investigating",
+                              "fixing",
+                              "monitoring",
+                              "resolved",
+                              "declined"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "to": {
-                        "type": "string",
-                        "enum": [
-                          "triage",
-                          "investigating",
-                          "fixing",
-                          "monitoring",
-                          "resolved",
-                          "declined"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "triage",
+                              "investigating",
+                              "fixing",
+                              "monitoring",
+                              "resolved",
+                              "declined"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       }
                     },
@@ -3035,10 +3107,10 @@
                 "required": [
                   "version",
                   "id",
-                  "type",
                   "time",
                   "workspaceId",
                   "actor",
+                  "type",
                   "data"
                 ]
               }
@@ -3104,9 +3176,6 @@
                     "type": "string",
                     "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
                   },
-                  "type": {
-                    "const": "incident.severity_changed"
-                  },
                   "time": {
                     "type": "string",
                     "minLength": 1,
@@ -3120,11 +3189,20 @@
                     "type": "object",
                     "properties": {
                       "kind": {
-                        "type": "string",
-                        "enum": [
-                          "user",
-                          "system",
-                          "integration"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "system",
+                              "integration"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "id": {
@@ -3137,6 +3215,9 @@
                       "kind",
                       "id"
                     ]
+                  },
+                  "type": {
+                    "const": "incident.severity_changed"
                   },
                   "data": {
                     "type": "object",
@@ -3163,26 +3244,44 @@
                           "title": {
                             "type": "string",
                             "minLength": 1,
-                            "maxLength": 200
+                            "maxLength": 65536
                           },
                           "severity": {
-                            "type": "string",
-                            "enum": [
-                              "sev1",
-                              "sev2",
-                              "sev3",
-                              "sev4"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "sev1",
+                                  "sev2",
+                                  "sev3",
+                                  "sev4"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "status": {
-                            "type": "string",
-                            "enum": [
-                              "triage",
-                              "investigating",
-                              "fixing",
-                              "monitoring",
-                              "resolved",
-                              "declined"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "triage",
+                                  "investigating",
+                                  "fixing",
+                                  "monitoring",
+                                  "resolved",
+                                  "declined"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "declaredAt": {
@@ -3214,21 +3313,39 @@
                         ]
                       },
                       "from": {
-                        "type": "string",
-                        "enum": [
-                          "sev1",
-                          "sev2",
-                          "sev3",
-                          "sev4"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "sev1",
+                              "sev2",
+                              "sev3",
+                              "sev4"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "to": {
-                        "type": "string",
-                        "enum": [
-                          "sev1",
-                          "sev2",
-                          "sev3",
-                          "sev4"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "sev1",
+                              "sev2",
+                              "sev3",
+                              "sev4"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       }
                     },
@@ -3242,10 +3359,10 @@
                 "required": [
                   "version",
                   "id",
-                  "type",
                   "time",
                   "workspaceId",
                   "actor",
+                  "type",
                   "data"
                 ]
               }
@@ -3311,9 +3428,6 @@
                     "type": "string",
                     "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
                   },
-                  "type": {
-                    "const": "incident.acknowledged"
-                  },
                   "time": {
                     "type": "string",
                     "minLength": 1,
@@ -3327,11 +3441,20 @@
                     "type": "object",
                     "properties": {
                       "kind": {
-                        "type": "string",
-                        "enum": [
-                          "user",
-                          "system",
-                          "integration"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "system",
+                              "integration"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "id": {
@@ -3344,6 +3467,9 @@
                       "kind",
                       "id"
                     ]
+                  },
+                  "type": {
+                    "const": "incident.acknowledged"
                   },
                   "data": {
                     "type": "object",
@@ -3370,26 +3496,44 @@
                           "title": {
                             "type": "string",
                             "minLength": 1,
-                            "maxLength": 200
+                            "maxLength": 65536
                           },
                           "severity": {
-                            "type": "string",
-                            "enum": [
-                              "sev1",
-                              "sev2",
-                              "sev3",
-                              "sev4"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "sev1",
+                                  "sev2",
+                                  "sev3",
+                                  "sev4"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "status": {
-                            "type": "string",
-                            "enum": [
-                              "triage",
-                              "investigating",
-                              "fixing",
-                              "monitoring",
-                              "resolved",
-                              "declined"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "triage",
+                                  "investigating",
+                                  "fixing",
+                                  "monitoring",
+                                  "resolved",
+                                  "declined"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "declaredAt": {
@@ -3435,10 +3579,10 @@
                 "required": [
                   "version",
                   "id",
-                  "type",
                   "time",
                   "workspaceId",
                   "actor",
+                  "type",
                   "data"
                 ]
               }
@@ -3504,9 +3648,6 @@
                     "type": "string",
                     "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
                   },
-                  "type": {
-                    "const": "incident.update_posted"
-                  },
                   "time": {
                     "type": "string",
                     "minLength": 1,
@@ -3520,11 +3661,20 @@
                     "type": "object",
                     "properties": {
                       "kind": {
-                        "type": "string",
-                        "enum": [
-                          "user",
-                          "system",
-                          "integration"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "system",
+                              "integration"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "id": {
@@ -3537,6 +3687,9 @@
                       "kind",
                       "id"
                     ]
+                  },
+                  "type": {
+                    "const": "incident.update_posted"
                   },
                   "data": {
                     "type": "object",
@@ -3563,26 +3716,44 @@
                           "title": {
                             "type": "string",
                             "minLength": 1,
-                            "maxLength": 200
+                            "maxLength": 65536
                           },
                           "severity": {
-                            "type": "string",
-                            "enum": [
-                              "sev1",
-                              "sev2",
-                              "sev3",
-                              "sev4"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "sev1",
+                                  "sev2",
+                                  "sev3",
+                                  "sev4"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "status": {
-                            "type": "string",
-                            "enum": [
-                              "triage",
-                              "investigating",
-                              "fixing",
-                              "monitoring",
-                              "resolved",
-                              "declined"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "triage",
+                                  "investigating",
+                                  "fixing",
+                                  "monitoring",
+                                  "resolved",
+                                  "declined"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "declaredAt": {
@@ -3616,7 +3787,7 @@
                       "body": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 4000
+                        "maxLength": 65536
                       }
                     },
                     "required": [
@@ -3628,10 +3799,10 @@
                 "required": [
                   "version",
                   "id",
-                  "type",
                   "time",
                   "workspaceId",
                   "actor",
+                  "type",
                   "data"
                 ]
               }
@@ -3697,9 +3868,6 @@
                     "type": "string",
                     "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
                   },
-                  "type": {
-                    "const": "incident.role_assigned"
-                  },
                   "time": {
                     "type": "string",
                     "minLength": 1,
@@ -3713,11 +3881,20 @@
                     "type": "object",
                     "properties": {
                       "kind": {
-                        "type": "string",
-                        "enum": [
-                          "user",
-                          "system",
-                          "integration"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "system",
+                              "integration"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "id": {
@@ -3730,6 +3907,9 @@
                       "kind",
                       "id"
                     ]
+                  },
+                  "type": {
+                    "const": "incident.role_assigned"
                   },
                   "data": {
                     "type": "object",
@@ -3756,26 +3936,44 @@
                           "title": {
                             "type": "string",
                             "minLength": 1,
-                            "maxLength": 200
+                            "maxLength": 65536
                           },
                           "severity": {
-                            "type": "string",
-                            "enum": [
-                              "sev1",
-                              "sev2",
-                              "sev3",
-                              "sev4"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "sev1",
+                                  "sev2",
+                                  "sev3",
+                                  "sev4"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "status": {
-                            "type": "string",
-                            "enum": [
-                              "triage",
-                              "investigating",
-                              "fixing",
-                              "monitoring",
-                              "resolved",
-                              "declined"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "triage",
+                                  "investigating",
+                                  "fixing",
+                                  "monitoring",
+                                  "resolved",
+                                  "declined"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "declaredAt": {
@@ -3807,11 +4005,20 @@
                         ]
                       },
                       "role": {
-                        "type": "string",
-                        "enum": [
-                          "commander",
-                          "communications",
-                          "operations"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "commander",
+                              "communications",
+                              "operations"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "from": {
@@ -3850,10 +4057,10 @@
                 "required": [
                   "version",
                   "id",
-                  "type",
                   "time",
                   "workspaceId",
                   "actor",
+                  "type",
                   "data"
                 ]
               }
@@ -3919,9 +4126,6 @@
                     "type": "string",
                     "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
                   },
-                  "type": {
-                    "const": "alert.fired"
-                  },
                   "time": {
                     "type": "string",
                     "minLength": 1,
@@ -3935,11 +4139,20 @@
                     "type": "object",
                     "properties": {
                       "kind": {
-                        "type": "string",
-                        "enum": [
-                          "user",
-                          "system",
-                          "integration"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "system",
+                              "integration"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "id": {
@@ -3952,6 +4165,9 @@
                       "kind",
                       "id"
                     ]
+                  },
+                  "type": {
+                    "const": "alert.fired"
                   },
                   "data": {
                     "type": "object",
@@ -3972,7 +4188,7 @@
                               {
                                 "type": "string",
                                 "minLength": 1,
-                                "maxLength": 80
+                                "maxLength": 65536
                               },
                               {
                                 "type": "null"
@@ -3982,11 +4198,20 @@
                           "kind": {
                             "anyOf": [
                               {
-                                "type": "string",
-                                "enum": [
-                                  "http",
-                                  "tcp",
-                                  "heartbeat"
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "http",
+                                      "tcp",
+                                      "heartbeat"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 64
+                                  }
                                 ]
                               },
                               {
@@ -3997,12 +4222,21 @@
                           "status": {
                             "anyOf": [
                               {
-                                "type": "string",
-                                "enum": [
-                                  "pending",
-                                  "up",
-                                  "down",
-                                  "unknown"
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "pending",
+                                      "up",
+                                      "down",
+                                      "unknown"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 64
+                                  }
                                 ]
                               },
                               {
@@ -4033,10 +4267,10 @@
                 "required": [
                   "version",
                   "id",
-                  "type",
                   "time",
                   "workspaceId",
                   "actor",
+                  "type",
                   "data"
                 ]
               }
@@ -4102,9 +4336,6 @@
                     "type": "string",
                     "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
                   },
-                  "type": {
-                    "const": "alert.resolved"
-                  },
                   "time": {
                     "type": "string",
                     "minLength": 1,
@@ -4118,11 +4349,20 @@
                     "type": "object",
                     "properties": {
                       "kind": {
-                        "type": "string",
-                        "enum": [
-                          "user",
-                          "system",
-                          "integration"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "system",
+                              "integration"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "id": {
@@ -4135,6 +4375,9 @@
                       "kind",
                       "id"
                     ]
+                  },
+                  "type": {
+                    "const": "alert.resolved"
                   },
                   "data": {
                     "type": "object",
@@ -4155,7 +4398,7 @@
                               {
                                 "type": "string",
                                 "minLength": 1,
-                                "maxLength": 80
+                                "maxLength": 65536
                               },
                               {
                                 "type": "null"
@@ -4165,11 +4408,20 @@
                           "kind": {
                             "anyOf": [
                               {
-                                "type": "string",
-                                "enum": [
-                                  "http",
-                                  "tcp",
-                                  "heartbeat"
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "http",
+                                      "tcp",
+                                      "heartbeat"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 64
+                                  }
                                 ]
                               },
                               {
@@ -4180,12 +4432,21 @@
                           "status": {
                             "anyOf": [
                               {
-                                "type": "string",
-                                "enum": [
-                                  "pending",
-                                  "up",
-                                  "down",
-                                  "unknown"
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "pending",
+                                      "up",
+                                      "down",
+                                      "unknown"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 64
+                                  }
                                 ]
                               },
                               {
@@ -4202,11 +4463,20 @@
                         ]
                       },
                       "reason": {
-                        "type": "string",
-                        "enum": [
-                          "recovered",
-                          "paused",
-                          "deleted"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "recovered",
+                              "paused",
+                              "deleted"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       }
                     },
@@ -4220,10 +4490,10 @@
                 "required": [
                   "version",
                   "id",
-                  "type",
                   "time",
                   "workspaceId",
                   "actor",
+                  "type",
                   "data"
                 ]
               }
@@ -4289,9 +4559,6 @@
                     "type": "string",
                     "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
                   },
-                  "type": {
-                    "const": "monitor.status_changed"
-                  },
                   "time": {
                     "type": "string",
                     "minLength": 1,
@@ -4305,11 +4572,20 @@
                     "type": "object",
                     "properties": {
                       "kind": {
-                        "type": "string",
-                        "enum": [
-                          "user",
-                          "system",
-                          "integration"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "system",
+                              "integration"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "id": {
@@ -4322,6 +4598,9 @@
                       "kind",
                       "id"
                     ]
+                  },
+                  "type": {
+                    "const": "monitor.status_changed"
                   },
                   "data": {
                     "type": "object",
@@ -4338,7 +4617,7 @@
                               {
                                 "type": "string",
                                 "minLength": 1,
-                                "maxLength": 80
+                                "maxLength": 65536
                               },
                               {
                                 "type": "null"
@@ -4348,11 +4627,20 @@
                           "kind": {
                             "anyOf": [
                               {
-                                "type": "string",
-                                "enum": [
-                                  "http",
-                                  "tcp",
-                                  "heartbeat"
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "http",
+                                      "tcp",
+                                      "heartbeat"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 64
+                                  }
                                 ]
                               },
                               {
@@ -4363,12 +4651,21 @@
                           "status": {
                             "anyOf": [
                               {
-                                "type": "string",
-                                "enum": [
-                                  "pending",
-                                  "up",
-                                  "down",
-                                  "unknown"
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "pending",
+                                      "up",
+                                      "down",
+                                      "unknown"
+                                    ]
+                                  },
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 64
+                                  }
                                 ]
                               },
                               {
@@ -4385,21 +4682,39 @@
                         ]
                       },
                       "from": {
-                        "type": "string",
-                        "enum": [
-                          "pending",
-                          "up",
-                          "down",
-                          "unknown"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "up",
+                              "down",
+                              "unknown"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "to": {
-                        "type": "string",
-                        "enum": [
-                          "pending",
-                          "up",
-                          "down",
-                          "unknown"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "up",
+                              "down",
+                              "unknown"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       }
                     },
@@ -4413,10 +4728,10 @@
                 "required": [
                   "version",
                   "id",
-                  "type",
                   "time",
                   "workspaceId",
                   "actor",
+                  "type",
                   "data"
                 ]
               }
@@ -4482,9 +4797,6 @@
                     "type": "string",
                     "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
                   },
-                  "type": {
-                    "const": "escalation.paged"
-                  },
                   "time": {
                     "type": "string",
                     "minLength": 1,
@@ -4498,11 +4810,20 @@
                     "type": "object",
                     "properties": {
                       "kind": {
-                        "type": "string",
-                        "enum": [
-                          "user",
-                          "system",
-                          "integration"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "system",
+                              "integration"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "id": {
@@ -4515,6 +4836,9 @@
                       "kind",
                       "id"
                     ]
+                  },
+                  "type": {
+                    "const": "escalation.paged"
                   },
                   "data": {
                     "type": "object",
@@ -4541,26 +4865,44 @@
                           "title": {
                             "type": "string",
                             "minLength": 1,
-                            "maxLength": 200
+                            "maxLength": 65536
                           },
                           "severity": {
-                            "type": "string",
-                            "enum": [
-                              "sev1",
-                              "sev2",
-                              "sev3",
-                              "sev4"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "sev1",
+                                  "sev2",
+                                  "sev3",
+                                  "sev4"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "status": {
-                            "type": "string",
-                            "enum": [
-                              "triage",
-                              "investigating",
-                              "fixing",
-                              "monitoring",
-                              "resolved",
-                              "declined"
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "triage",
+                                  "investigating",
+                                  "fixing",
+                                  "monitoring",
+                                  "resolved",
+                                  "declined"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
                             ]
                           },
                           "declaredAt": {
@@ -4609,14 +4951,23 @@
                         "maximum": 9007199254740991
                       },
                       "reason": {
-                        "type": "string",
-                        "enum": [
-                          "started",
-                          "timeout",
-                          "unreachable",
-                          "undelivered",
-                          "exhausted",
-                          "stalled"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "started",
+                              "timeout",
+                              "unreachable",
+                              "undelivered",
+                              "exhausted",
+                              "stalled"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "paged": {
@@ -4643,10 +4994,10 @@
                 "required": [
                   "version",
                   "id",
-                  "type",
                   "time",
                   "workspaceId",
                   "actor",
+                  "type",
                   "data"
                 ]
               }
@@ -4712,9 +5063,6 @@
                     "type": "string",
                     "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
                   },
-                  "type": {
-                    "const": "webhook.test"
-                  },
                   "time": {
                     "type": "string",
                     "minLength": 1,
@@ -4728,11 +5076,20 @@
                     "type": "object",
                     "properties": {
                       "kind": {
-                        "type": "string",
-                        "enum": [
-                          "user",
-                          "system",
-                          "integration"
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "system",
+                              "integration"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
                         ]
                       },
                       "id": {
@@ -4745,6 +5102,9 @@
                       "kind",
                       "id"
                     ]
+                  },
+                  "type": {
+                    "const": "webhook.test"
                   },
                   "data": {
                     "type": "object",
@@ -4762,10 +5122,10 @@
                 "required": [
                   "version",
                   "id",
-                  "type",
                   "time",
                   "workspaceId",
                   "actor",
+                  "type",
                   "data"
                 ]
               }

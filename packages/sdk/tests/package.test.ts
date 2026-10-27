@@ -8,14 +8,34 @@ const root = new URL("../", import.meta.url);
 const read = (path: string) => readFileSync(new URL(path, root), "utf8");
 const pkg = JSON.parse(read("package.json")) as Record<string, unknown>;
 
-/** Every module specifier `text` imports or re-exports. */
+// A statement that starts with `import` or `export` and names no string before `from "x"`; `import "x"` at the start
+// of a line; `import("x")` anywhere. Prose in comments (a quoted "from", say) is none of them.
+const IMPORT =
+  /^\s*(?:import|export)\b[^;"'`]*?\bfrom\s*["']([^"']+)["']|^\s*import\s*["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)/gm;
+
+/**
+ * Every module specifier `text` imports or re-exports: `import … from "x"`, `export … from "x"` (types and `*` too),
+ * `import "x"` for its side effects, and `import("x")`.
+ */
 function specifiers(text: string): string[] {
-  return [
-    ...text.matchAll(
-      /(?:import|export)[^"';]*?from\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g,
-    ),
-  ].map((match) => (match[1] ?? match[2])!);
+  return [...text.matchAll(IMPORT)].map((match) => (match[1] ?? match[2] ?? match[3])!);
 }
+
+test("specifiers finds every form of import", () => {
+  const text = [
+    'import { a } from "./a.ts";',
+    'import type { B } from "b";',
+    'import "c";',
+    "import 'd';",
+    'export * from "e";',
+    'export { f } from "f";',
+    'export type { G } from "g";',
+    'const h = await import("h");',
+    'import {\n  i,\n  j,\n} from "ij";',
+    '// a "from" in prose is not an import, nor is "imported" text',
+  ].join("\n");
+  expect(specifiers(text)).toEqual(["./a.ts", "b", "c", "d", "e", "f", "g", "h", "ij"]);
+});
 
 describe("package", () => {
   test("MIT, ESM, side-effect free, with types, publishing dist only", () => {

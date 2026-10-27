@@ -19,6 +19,9 @@ export default defineConfig({
         moduleSideEffects: (id: string) => !id.includes("/packages/schema/src/"),
         // Making a mutation, a query or a validator has no effect but its value: unused, it is dropped.
         manualPureFunctions: ["defineMutation", "defineQuery", "defineRegistry", "v"],
+        // Nothing in it has getters: reading a property (a spread of a mutation's fields) does nothing either, so the
+        // monitors' and the other mutations' validators are dropped with them.
+        propertyReadSideEffects: false,
       },
     },
     // Build from the runtime tsconfig (src only, no Node types); the package one also covers tests.

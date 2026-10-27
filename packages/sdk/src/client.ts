@@ -144,7 +144,7 @@ export type Operation = keyof typeof OPERATION_ERRORS;
 
 /**
  * An `error` code `operation` documents, or `unexpected`: an answer outside the reference (a proxy's error page, a
- * `405`, a code added to the API since).
+ * `405`, a redirect, a 2xx that is no JSON, a code added to the API since).
  */
 export type ApiErrorCode<Op extends Operation = Operation> =
   | (typeof OPERATION_ERRORS)[Op][number]
@@ -187,8 +187,16 @@ export type ClientOptions = {
   baseUrl: string;
   /** Default `globalThis.fetch`. */
   fetch?: (request: Request) => Promise<Response>;
-  /** A Better Auth session cookie (`name=value`), sent as `Cookie`. For servers: a browser sends its own. */
+  /**
+   * A Better Auth session cookie (`name=value`), sent as `Cookie`. For servers only: a browser never sends a `Cookie`
+   * header a script set, and sends its own instead (see `credentials`).
+   */
   cookie?: string;
+  /**
+   * Whether a browser sends its own cookies: `fetch`'s `credentials`, default `same-origin`. `include` for a page on
+   * another origin than the API (which must then allow that origin). Ignored outside browsers.
+   */
+  credentials?: RequestCredentials;
   /**
    * Headers for every request, made per request: where an API token will go once the API has them (RFC 0002
    * "Public HTTP API"), and anything a proxy in front of Brigade needs.
@@ -198,41 +206,70 @@ export type ClientOptions = {
 
 export type BrigadeClient = ReturnType<typeof createClient>;
 
+/** The rejection, before any request, for an argument that cannot be sent (an id that is empty, `.` or `..`). */
+export class BrigadeArgumentError extends TypeError {
+  override readonly name = "BrigadeArgumentError";
+  readonly code = "invalid_argument";
+}
+
+/**
+ * One path segment. Empty, `.` and `..` are refused: a URL parser would drop or climb them (`..` in place of an
+ * incident id would send the ack to another route), and encoding leaves them as they are.
+ */
+function segment(value: string): string {
+  if (typeof value !== "string" || value === "" || value === "." || value === "..") {
+    throw new BrigadeArgumentError(`Expected an id, got ${JSON.stringify(value)}`);
+  }
+  return encodeURIComponent(value);
+}
+
 /**
  * A client for one Brigade deployment. Every method resolves with the documented success and rejects with a
- * `BrigadeApiError` for any other answer.
+ * `BrigadeApiError` for any other answer (redirects are not followed: they are `unexpected`), or a
+ * `BrigadeArgumentError`, before sending anything, for an id it cannot send.
  */
 export function createClient(options: ClientOptions) {
   const base = options.baseUrl.replace(/\/+$/, "");
   const send = options.fetch ?? ((request: Request) => globalThis.fetch(request));
-  const segment = encodeURIComponent;
 
   async function call<T, Op extends Operation>(
     operation: Op,
     method: string,
-    path: string,
+    // A function when it holds ids: `segment` may refuse one, and that is a rejection like any other.
+    path: string | (() => string),
     init: { body?: unknown; headers?: Record<string, string> } = {},
   ): Promise<T> {
+    const url = `${base}${typeof path === "function" ? path() : path}`;
     const headers = new Headers(await options.headers?.());
     headers.set("Accept", "application/json");
     if (options.cookie !== undefined) headers.set("Cookie", options.cookie);
     for (const [name, value] of Object.entries(init.headers ?? {})) headers.set(name, value);
     if (init.body !== undefined) headers.set("Content-Type", "application/json");
     const response = await send(
-      new Request(`${base}${path}`, {
+      new Request(url, {
         method,
         headers,
         body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        // A redirect would carry the cookie and the token headers elsewhere: an answer of its own, never followed.
+        redirect: "manual",
+        ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
       }),
     );
     const text = await response.text();
     let body: unknown;
+    let json = true;
     try {
       body = text ? JSON.parse(text) : undefined;
     } catch {
       body = undefined;
+      json = false;
     }
-    if (response.ok) return body as T;
+    // Every success the API documents is a JSON object: anything else is not the API answering (a captive portal, a
+    // proxy's page).
+    if (response.ok && json && typeof body === "object" && body !== null) return body as T;
+    if (response.ok) {
+      throw new BrigadeApiError(operation, response.status, "unexpected" as ApiErrorCode<Op>, body);
+    }
     const code =
       typeof body === "object" && body !== null ? (body as { error?: unknown }).error : undefined;
     const known = (OPERATION_ERRORS[operation] as readonly unknown[]).includes(code);
@@ -257,7 +294,7 @@ export function createClient(options: ClientOptions) {
      * (`<workspaceId>.<monitorId>.<secret>`); no session needed. A wrong token is `not_found`, like a missing monitor.
      */
     pingHeartbeat: (token: string) =>
-      call<Ok, "pingHeartbeat">("pingHeartbeat", "POST", `/heartbeat/${segment(token)}`),
+      call<Ok, "pingHeartbeat">("pingHeartbeat", "POST", () => `/heartbeat/${segment(token)}`),
 
     /** `POST /workspaces`: the signed-in user becomes its owner. */
     createWorkspace: (body: { name: Infer<typeof workspaceName> }) =>
@@ -268,7 +305,7 @@ export function createClient(options: ClientOptions) {
       call<Ok, "changeMemberRole">(
         "changeMemberRole",
         "PATCH",
-        `/workspaces/${segment(workspaceId)}/members/${segment(userId)}`,
+        () => `/workspaces/${segment(workspaceId)}/members/${segment(userId)}`,
         { body },
       ),
 
@@ -277,7 +314,7 @@ export function createClient(options: ClientOptions) {
       call<Ok, "removeMember">(
         "removeMember",
         "DELETE",
-        `/workspaces/${segment(workspaceId)}/members/${segment(userId)}`,
+        () => `/workspaces/${segment(workspaceId)}/members/${segment(userId)}`,
       ),
 
     /** `GET /workspaces/:id/invitations`: pending invitations, newest first. */
@@ -285,7 +322,7 @@ export function createClient(options: ClientOptions) {
       call<{ invitations: Invitation[] }, "listInvitations">(
         "listInvitations",
         "GET",
-        `/workspaces/${segment(workspaceId)}/invitations`,
+        () => `/workspaces/${segment(workspaceId)}/invitations`,
       ),
 
     /** `POST /workspaces/:id/invitations`: Brigade emails the invitation. */
@@ -293,7 +330,7 @@ export function createClient(options: ClientOptions) {
       call<{ ok: true; invitation: Invitation }, "invite">(
         "invite",
         "POST",
-        `/workspaces/${segment(workspaceId)}/invitations`,
+        () => `/workspaces/${segment(workspaceId)}/invitations`,
         { body },
       ),
 
@@ -302,7 +339,7 @@ export function createClient(options: ClientOptions) {
       call<Ok, "revokeInvitation">(
         "revokeInvitation",
         "DELETE",
-        `/workspaces/${segment(workspaceId)}/invitations/${segment(invitationId)}`,
+        () => `/workspaces/${segment(workspaceId)}/invitations/${segment(invitationId)}`,
       ),
 
     /** `POST /workspaces/:id/invitations/:invitationId/resend`: again, with a new expiry. */
@@ -310,7 +347,7 @@ export function createClient(options: ClientOptions) {
       call<Ok, "resendInvitation">(
         "resendInvitation",
         "POST",
-        `/workspaces/${segment(workspaceId)}/invitations/${segment(invitationId)}/resend`,
+        () => `/workspaces/${segment(workspaceId)}/invitations/${segment(invitationId)}/resend`,
       ),
 
     /** `GET /invitations/:id`: the invitation as its invitee sees it. */
@@ -318,7 +355,7 @@ export function createClient(options: ClientOptions) {
       call<{ invitation: InvitationPreview }, "getInvitation">(
         "getInvitation",
         "GET",
-        `/invitations/${segment(invitationId)}`,
+        () => `/invitations/${segment(invitationId)}`,
       ),
 
     /** `POST /invitations/:id/accept`. */
@@ -326,7 +363,7 @@ export function createClient(options: ClientOptions) {
       call<{ ok: true; role: Role; workspaceId: string }, "acceptInvitation">(
         "acceptInvitation",
         "POST",
-        `/invitations/${segment(invitationId)}/accept`,
+        () => `/invitations/${segment(invitationId)}/accept`,
       ),
 
     /** `POST /invitations/:id/decline`. */
@@ -334,7 +371,7 @@ export function createClient(options: ClientOptions) {
       call<Ok, "declineInvitation">(
         "declineInvitation",
         "POST",
-        `/invitations/${segment(invitationId)}/decline`,
+        () => `/invitations/${segment(invitationId)}/decline`,
       ),
 
     /**
@@ -350,7 +387,7 @@ export function createClient(options: ClientOptions) {
       call<Ok, "acknowledgeIncident">(
         "acknowledgeIncident",
         "POST",
-        `/workspaces/${segment(workspaceId)}/incidents/${segment(incidentId)}/ack`,
+        () => `/workspaces/${segment(workspaceId)}/incidents/${segment(incidentId)}/ack`,
         { headers: { "Idempotency-Key": options.idempotencyKey ?? crypto.randomUUID() } },
       ),
   };

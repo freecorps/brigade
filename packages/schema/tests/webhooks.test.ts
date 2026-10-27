@@ -1,6 +1,8 @@
 import { describe, expect, expectTypeOf, test } from "vite-plus/test";
 import {
   createMemoryStore,
+  INCIDENT_TITLE_MAX,
+  isKnownWebhookPayload,
   MAX_WEBHOOKS_PER_WORKSPACE,
   mutations,
   newId,
@@ -539,7 +541,7 @@ describe("payload validators", () => {
     }
   });
 
-  test("drop fields added since, refuse another version, type or shape", () => {
+  test("drop fields added since, refuse another version or shape", () => {
     const payload = {
       version: 1,
       id: at(1),
@@ -559,12 +561,52 @@ describe("payload validators", () => {
     });
     expect(parsed.ok && "extra" in parsed.value).toBe(false);
     expect(webhookPayloadValidator({ ...payload, version: 2 }).ok).toBe(false);
-    expect(webhookPayloadValidator({ ...payload, type: "member.removed" })).toEqual({
-      ok: false,
-      issues: [{ path: "type", message: "Unknown type" }],
-    });
-    expect(webhookPayloadValidator({ ...payload, type: "toString" }).ok).toBe(false);
     expect(webhookPayloadValidator({ ...payload, data: {} }).ok).toBe(false);
+    expect(webhookPayloadValidator({ ...payload, id: "nope" }).ok).toBe(false);
     expect(webhookPayloadValidator(null).ok).toBe(false);
+  });
+
+  test("take what a newer Brigade may add within version 1", () => {
+    const incidentPayload = webhookPayload(
+      {
+        id: at(1),
+        type: "incident.status_changed",
+        time: new Date(T).toISOString(),
+        workspaceId: newId("ws", T, random),
+        actor: { kind: "user", id: "usr_ana" },
+        subject: incident.id,
+        data: { from: "triage", to: "investigating" },
+      },
+      { incident },
+    )!;
+    const newer = JSON.parse(JSON.stringify(incidentPayload));
+    newer.actor.kind = "robot";
+    newer.data.to = "postmortem";
+    newer.data.incident.severity = "sev0";
+    newer.data.incident.title = "x".repeat(INCIDENT_TITLE_MAX * 10);
+    const parsed = webhookPayloadValidator(newer);
+    expect(parsed).toEqual({ ok: true, value: newer });
+    expect(parsed.ok && isKnownWebhookPayload(parsed.value)).toBe(true);
+    expect(
+      webhookPayloadValidator({ ...newer, data: { ...newer.data, to: "x".repeat(65) } }).ok,
+    ).toBe(false);
+    expect(
+      webhookPayloadValidator({
+        ...newer,
+        data: { ...newer.data, incident: { ...newer.data.incident, title: "x".repeat(70_000) } },
+      }).ok,
+    ).toBe(false);
+
+    // A type added since: the envelope checked, the data as sent.
+    const added = { ...newer, type: "member.removed", data: { anything: [1, 2] } };
+    const unknown = webhookPayloadValidator(added);
+    expect(unknown).toEqual({ ok: true, value: added });
+    expect(unknown.ok && isKnownWebhookPayload(unknown.value)).toBe(false);
+    const own = webhookPayloadValidator({ ...added, type: "toString" });
+    expect(own.ok && isKnownWebhookPayload(own.value)).toBe(false);
+    expect(webhookPayloadValidator({ ...added, version: 2 }).ok).toBe(false);
+    expect(webhookPayloadValidator({ ...added, workspaceId: "nope" }).ok).toBe(false);
+    expect(webhookPayloadValidator({ ...added, type: "" }).ok).toBe(false);
+    expect(webhookPayloadValidator({ ...added, type: 1 }).ok).toBe(false);
   });
 });

@@ -7,6 +7,7 @@ import {
   DEFAULT_TOLERANCE_SECONDS,
   verifyWebhook,
   WebhookVerificationError,
+  type UnknownWebhookPayload,
   type WebhookPayload,
   type WebhookVerification,
 } from "../src/index.ts";
@@ -105,6 +106,7 @@ describe("deliveries Brigade's API signed", () => {
       });
       expect(result, delivery.headers["webhook-id"]).toMatchObject({
         ok: true,
+        known: true,
         webhookId: delivery.headers["webhook-id"],
         timestamp: Number(delivery.headers["webhook-timestamp"]),
       });
@@ -149,7 +151,10 @@ describe("deliveries Brigade's API signed", () => {
       expect(code(result)).toBe("ok");
       // A body decoded as anything but UTF-8 would not match its signature: this one is not ASCII.
       expect(
-        result.ok && result.payload.type === "incident.update_posted" && result.payload.data.body,
+        result.ok &&
+          result.known &&
+          result.payload.type === "incident.update_posted" &&
+          result.payload.data.body,
       ).toBe("Revertendo a implantação. ETA 10 min");
     }
   });
@@ -157,10 +162,13 @@ describe("deliveries Brigade's API signed", () => {
   test("the payload narrows by type", async () => {
     const result = await verifyWebhook({ secret: current, ...fixture.deliveries[0]!, now });
     if (!result.ok) throw result.error;
+    expectTypeOf(result.payload).toEqualTypeOf<WebhookPayload | UnknownWebhookPayload>();
+    if (!result.known) throw new Error("Expected a known type");
     expectTypeOf(result.payload).toEqualTypeOf<WebhookPayload>();
     if (result.payload.type === "incident.declared") {
+      // The severities known now, or one added since.
       expectTypeOf(result.payload.data.incident.severity).toEqualTypeOf<
-        "sev1" | "sev2" | "sev3" | "sev4"
+        "sev1" | "sev2" | "sev3" | "sev4" | (string & {})
       >();
       expect(result.payload.data.incident.number).toBe(142);
     } else throw new Error("Expected incident.declared");
@@ -222,7 +230,25 @@ describe("refused", () => {
     }
   });
 
-  test("missing or repeated headers", async () => {
+  test("an option that would turn the replay check off", async () => {
+    const headers = await signed(seconds - 3_600);
+    for (const toleranceSeconds of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+      const result = await verifyWebhook({ secret, headers, body, now, toleranceSeconds });
+      expect(code(result), String(toleranceSeconds)).toBe("invalid_option");
+    }
+    for (const at of [Number.NaN, Number.POSITIVE_INFINITY, new Date(Number.NaN)]) {
+      const result = await verifyWebhook({ secret, headers, body, now: at });
+      expect(code(result), String(at)).toBe("invalid_option");
+    }
+    // 0 is no tolerance at all, not an invalid one.
+    expect(
+      code(
+        await verifyWebhook({ secret, headers: await signed(), body, now, toleranceSeconds: 0 }),
+      ),
+    ).toBe("ok");
+  });
+
+  test("missing headers; one sent twice reads the same from Headers or a plain object", async () => {
     const headers = await signed();
     for (const name of Object.keys(headers)) {
       const without = { ...headers, [name]: undefined };
@@ -230,8 +256,24 @@ describe("refused", () => {
         "missing_header",
       );
     }
-    const twice = { ...headers, "webhook-signature": [headers["webhook-signature"], "v1,x"] };
-    expect(code(await verifyWebhook({ secret, headers: twice, body, now }))).toBe("missing_header");
+    for (const [name, values, expected] of [
+      ["webhook-signature", ["v1,eA==", headers["webhook-signature"]], "ok"],
+      ["webhook-signature", ["v1,eA==", "v1,eQ=="], "invalid_signature"],
+      [
+        "webhook-timestamp",
+        [headers["webhook-timestamp"], headers["webhook-timestamp"]],
+        "invalid_timestamp",
+      ],
+      ["webhook-id", [id, id], "invalid_signature"],
+    ] as const) {
+      const plain = { ...headers, [name]: values };
+      const real = new Headers(headers);
+      real.delete(name);
+      for (const value of values) real.append(name, value);
+      for (const one of [plain, real]) {
+        expect(code(await verifyWebhook({ secret, headers: one, body, now })), name).toBe(expected);
+      }
+    }
   });
 
   test("signatures: other versions skipped, any v1 may match, garbage never does", async () => {
@@ -281,5 +323,61 @@ describe("refused", () => {
     });
     expect(code(result)).toBe("invalid_payload");
     expect(!result.ok && result.error.issues).toEqual([{ path: "version", message: "Expected 1" }]);
+  });
+});
+
+describe("what a newer Brigade may send within version 1", () => {
+  const secret = `whsec_${toBase64(new Uint8Array(32).fill(9))}`;
+  const id = "evt_01M5W19VG01C5GP2RB1C5GP2RB";
+  const now = Date.UTC(2026, 9, 26, 12, 0, 0);
+  const seconds = now / 1000;
+  const envelope = {
+    version: 1,
+    id,
+    time: new Date(now).toISOString(),
+    workspaceId: "ws_01M5W19VG0040G2081040G2081",
+    actor: { kind: "user", id: "usr_ana" },
+  };
+  const deliver = async (payload: object) => {
+    const text = JSON.stringify(payload);
+    const headers = {
+      "webhook-id": id,
+      "webhook-timestamp": String(seconds),
+      "webhook-signature": await sign(secret, id, seconds, text),
+    };
+    return verifyWebhook({ secret, headers, body: text, now });
+  };
+
+  test("a type added since verifies, as an unknown payload", async () => {
+    const payload = { ...envelope, type: "incident.merged", data: { into: "inc_x" } };
+    const result = await deliver(payload);
+    expect(result).toMatchObject({ ok: true, known: false, webhookId: id, payload });
+    if (!result.ok || result.known) throw new Error("Expected an unknown payload");
+    expectTypeOf(result.payload).toEqualTypeOf<UnknownWebhookPayload>();
+    expectTypeOf(result.payload.data).toEqualTypeOf<unknown>();
+  });
+
+  test("a value added to a list, and a longer text, are kept as sent", async () => {
+    const incident = {
+      id: "inc_01M5W19VG0081040G2081040G2",
+      number: 7,
+      title: "Checkout down ".repeat(100).trim(),
+      severity: "sev0",
+      status: "postmortem",
+      declaredAt: envelope.time,
+      acknowledgedAt: null,
+    };
+    const payload = {
+      ...envelope,
+      actor: { kind: "robot", id: "sys_new" },
+      type: "incident.status_changed",
+      data: { incident, from: "resolved", to: "postmortem", extra: true },
+    };
+    const result = await deliver(payload);
+    expect(result).toMatchObject({ ok: true, known: true });
+    expect(result.ok && result.payload).toEqual({
+      ...payload,
+      data: { incident, from: "resolved", to: "postmortem" },
+    });
   });
 });

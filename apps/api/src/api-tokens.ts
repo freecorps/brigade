@@ -258,7 +258,9 @@ async function creatorNow(
     .first<{ role: string; since: string | number | null; emailVerified: number | null }>();
   if (!row || !isRole(row.role)) return undefined;
   const since = typeof row.since === "number" ? row.since : Date.parse(String(row.since));
-  if (since > token.createdAt) return undefined;
+  // A membership date that can't be read disables the token: this is what keeps a creator who left and came back
+  // from reviving an old one.
+  if (!Number.isFinite(since) || since > token.createdAt) return undefined;
   return { role: row.role, emailVerified: row.emailVerified === 1 };
 }
 

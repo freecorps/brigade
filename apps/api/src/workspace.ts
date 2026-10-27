@@ -1563,6 +1563,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (name !== undefined && (await this.membership.refuses(workspace, actor.id, Date.now()))) {
       return Response.json({ error: "not_a_member" }, { status: 403 });
     }
+    // The same for a token whose creator was just removed: it acts for them, so it is refused with them.
+    if (
+      actor.kind === "token" &&
+      (await this.membership.refuses(workspace, actor.by ?? actor.id, Date.now()))
+    ) {
+      return Response.json({ error: "not_a_member" }, { status: 403 });
+    }
     // Before the socket exists, so no `device.register` of this session can come first: a register that changes
     // nothing is a `conflict` that leaves `updatedAt` alone, and the reconcile would then drop the phone the member
     // just signed in on again.

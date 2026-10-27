@@ -202,7 +202,10 @@ export function exportChunks(
     yield `${head.slice(0, -1)},"incidents":[`;
     const followUps = store.scan("follow_ups");
     for (const [index, incident] of incidents!.entries()) {
-      yield `${index > 0 ? "," : ""}${JSON.stringify(exportEntry(store, incident, followUps))}`;
+      // Read again as it is reached: the build yields between incidents, so each entry is the incident as it is now,
+      // with the timeline it has now. The file is consistent per incident, not one snapshot of the workspace.
+      const current = store.get("incidents", incident.id) ?? incident;
+      yield `${index > 0 ? "," : ""}${JSON.stringify(exportEntry(store, current, followUps))}`;
     }
     yield "]}";
   }

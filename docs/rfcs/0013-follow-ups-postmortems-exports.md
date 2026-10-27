@@ -125,6 +125,10 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   time as UTF-8 parts, counting bytes as it goes: past 25 MiB it stops and answers `too_large` without ever holding
   the whole text, and it yields every 256 KiB so alarms and requests run in between. The Worker streams the parts
   into R2 (`FixedLengthStream`); the file is never one string anywhere.
+  One build runs at a time per shard (a second answers 429 `rate_limited` before taking a slot), so parallel exports
+  can't outgrow the isolate's memory. Since it yields, the file is not one snapshot of the workspace: each incident
+  is read again when it is reached, so its row, timeline and postmortem agree with each other, but two incidents may
+  be read a moment apart. A single huge incident is still built in one go.
 - **Rate limit: 10 exports an hour per workspace** (`EXPORTS_PER_HOUR`, 429 `rate_limited`), counted in the shard's
   server-only `export_ledger` by `export.reserve` before anything is built, so a refused or too-large export counts
   too. The ledger write is bookkeeping, a `silent` mutation with no event.

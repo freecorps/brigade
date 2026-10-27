@@ -6,8 +6,9 @@
 
 Every successful mutation emits one or more events with a CloudEvents-style envelope (the one exception is a
 mutation declared `silent`: today `monitor.report`'s routine refreshes, `member.sync`, the shard's cache of the
-members in D1, and `webhook.record`, an outbound webhook's delivery log, which emits only when it turns the endpoint
-off; RFC 0004):
+members in D1, `webhook.record`, an outbound webhook's delivery log, which emits only when it turns the endpoint
+off, and `export.reserve`, an export's slot in the hourly limit, whose export emits `workspace.exported` once recorded;
+RFC 0004):
 
 ```ts
 interface BrigadeEvent<T = unknown> {

@@ -80,13 +80,16 @@ export async function createExport(
       for (const part of parts) await writer.write(part);
       await writer.close();
     })();
-    await Promise.all([
+    // Both settle before any cleanup, so a delete never lands before a put still running.
+    const [put, wrote] = await Promise.allSettled([
       bucket.put(key, readable, {
         httpMetadata: { contentType: "application/json; charset=utf-8" },
         customMetadata: { expiresAt: String(expiresAt), createdBy: member.actor.id },
       }),
       writing,
     ]);
+    if (put.status === "rejected") throw put.reason;
+    if (wrote.status === "rejected") throw wrote.reason;
   } catch (error) {
     await bucket.delete(key).catch(() => undefined);
     return failed("writing an export failed", workspaceId, error);

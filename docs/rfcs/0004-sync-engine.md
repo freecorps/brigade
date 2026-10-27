@@ -528,6 +528,8 @@ One code path for every write → one audit trail.
   for `member.sync`, which copies the socket's own member (name and role, as the Worker read them in D1) into the
   shard's `members` table on an upgrade whose copy is missing or stale (RFC 0003 "Members in the shard"): a cache
   of D1, not a change to the workspace. It runs as that member, client id `api`, and refuses any other id or role.
+  Also for server-only bookkeeping the domain event comes from elsewhere: `webhook.record` (a delivery log) and
+  `export.reserve` (an export's slot in the hourly limit; the export emits `workspace.exported` when recorded).
 - Ids and text a server mutation needs (a new incident's and alert's ids, the incident title rendered with
   `packages/i18n`) are made by the shard before it runs the mutation and passed in its args, so `apply` stays
   deterministic.

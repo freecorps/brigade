@@ -183,6 +183,8 @@ export const WEBHOOK_REDRIVE_MIN_MS = 1000;
 export const STATUS_PUSH_MIN_BUDGET_MS = 100;
 
 export class WorkspaceDO extends DurableObject<Env> {
+  /** An export is being built (`buildExport`): in memory only, so a reset frees it. */
+  private exporting = false;
   /** `REPAIR_BUDGET_MS`; a field so tests can shorten it. */
   private repairBudgetMs = REPAIR_BUDGET_MS;
   /** `STATUS_PUSH_BUDGET_MS`; a field so tests can shorten it. */
@@ -643,6 +645,9 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
     if (!isRole(actor.role) || !can(actor.role, "data:export"))
       return { ok: false, code: "forbidden" };
+    // One build at a time: each holds up to MAX_EXPORT_BYTES of parts in this isolate, and yields, so several at once
+    // could outgrow its memory and reset the shard that pages. A second one is told to try again shortly.
+    if (this.exporting) return { ok: false, code: "rate_limited" };
     const now = Date.now();
     const plan = exportChunks(this.shard.store, scope, now);
     if (!plan.ok) return plan;
@@ -660,22 +665,27 @@ export class WorkspaceDO extends DurableObject<Env> {
       const code = result.error.code;
       return { ok: false, code: code === "limit_reached" ? "rate_limited" : code };
     }
-    const encoder = new TextEncoder();
-    const parts: Uint8Array[] = [];
-    let bytes = 0;
-    let sinceYield = 0;
-    for (const chunk of plan.chunks) {
-      const part = encoder.encode(chunk);
-      bytes += part.byteLength;
-      if (bytes > MAX_EXPORT_BYTES) return { ok: false, code: "too_large" };
-      parts.push(part);
-      sinceYield += part.byteLength;
-      if (sinceYield >= EXPORT_YIELD_BYTES) {
-        sinceYield = 0;
-        await new Promise((resolve) => setTimeout(resolve, 0));
+    this.exporting = true;
+    try {
+      const encoder = new TextEncoder();
+      const parts: Uint8Array[] = [];
+      let bytes = 0;
+      let sinceYield = 0;
+      for (const chunk of plan.chunks) {
+        const part = encoder.encode(chunk);
+        bytes += part.byteLength;
+        if (bytes > MAX_EXPORT_BYTES) return { ok: false, code: "too_large" };
+        parts.push(part);
+        sinceYield += part.byteLength;
+        if (sinceYield >= EXPORT_YIELD_BYTES) {
+          sinceYield = 0;
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
       }
+      return { ok: true, id, parts, bytes, incidents: plan.incidents };
+    } finally {
+      this.exporting = false;
     }
-    return { ok: true, id, parts, bytes, incidents: plan.incidents };
   }
 
   /** Records an export the Worker wrote to R2 (`export.record`, as the member), so it is listed and an event. */

@@ -454,7 +454,7 @@ describe("AlertsPanel", () => {
       });
     edit(0);
     // Saved again as it is: the list stays empty, every source and no monitor, as before.
-    expect(input(container, "Every source").checked).toBe(true);
+    expect((input(container, "Every source") as HTMLInputElement).checked).toBe(true);
     type(input(container, "Route name"), "Everything else");
     await save();
     expect(updated[0]?.match.sourceIds).toEqual([]);

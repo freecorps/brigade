@@ -23,8 +23,8 @@ Workspace ─┬─ Member (User + role: owner | admin | responder | viewer)
                         ├─ Update (human-written status update, may publish to status page)
                         ├─ Alert(s) attached
                         ├─ Page(s) — an escalation run (level, acks)
-                        ├─ FollowUp (action item; optional external issue link)
-                        └─ Postmortem (document, generated draft)
+                        ├─ FollowUp (action item: owner, due date, optional issue link; RFC 0013)
+                        └─ Postmortem (sectioned document, optional Workers AI draft; RFC 0013)
 ```
 
 ## Incident lifecycle
@@ -402,6 +402,16 @@ First slice of Phase 3, in `packages/schema` (`catalog.ts`), stored in `Workspac
   ignored, then dropped by the incident's next field write.
 - Filtering incidents by type, service or field comes later; the mobile app shows them read-only for now.
 
+## Follow-ups and postmortems
+
+RFC 0013 has the detail. In short: **follow-ups** (`follow_ups`, `followUp.create`, `.update`, `.setStatus`,
+`.delete`) and the **postmortem** (`postmortems`, one per incident, `postmortem.save` over the revision its editor
+opened) are `incident:update`, so responders change them and viewers read them. Follow-up changes and the first save
+of a postmortem are timeline entries (`follow_up` with its `change` and title, `postmortem` with `started` or
+`ai_drafted`). A member removed or made a viewer is taken off their open follow-ups with their rotations. AI drafts are
+server-only mutations (`postmortem.requestDraft` as the member, `.writeDraft` and `.failDraft` as `sys_ai`). Exports
+(`data:export`, owners and admins) are recorded by the server-only `export.record` in the `exports` table.
+
 ## Tenancy and access control
 
 - **Workspace = Better Auth organization** (`organization` plugin). Users can belong to many workspaces and switch
@@ -430,6 +440,7 @@ First slice of Phase 3, in `packages/schema` (`catalog.ts`), stored in `Workspac
   admin's call.
 - The status page (`status:read`, `status:manage`, `status:publish`; RFC 0012): owners and admins set it up and
   manage its components; owners, admins and responders publish incident updates to it; everyone reads it.
+- Exports (`data:export`; RFC 0013): owners and admins take incidents out as a file and read the list of exports.
 - Workspace settings (`workspace:manage`): owners and admins. The first is who is emailed when paging fails
   (`workspace.setEmail`, `workspace.email_changed`; kept on the `workspace` row as `email`, absent meaning both on;
   RFC 0005 "Email"). A failed email is an `email_failed` timeline entry, written by `sys_notifier` like

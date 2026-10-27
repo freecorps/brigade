@@ -6,8 +6,9 @@
 
 Every successful mutation emits one or more events with a CloudEvents-style envelope (the one exception is a
 mutation declared `silent`: today `monitor.report`'s routine refreshes, `member.sync`, the shard's cache of the
-members in D1, and `webhook.record`, an outbound webhook's delivery log, which emits only when it turns the endpoint
-off; RFC 0004):
+members in D1, `webhook.record`, an outbound webhook's delivery log, which emits only when it turns the endpoint
+off, and `export.reserve`, an export's slot in the hourly limit, whose export emits `workspace.exported` once recorded;
+RFC 0004):
 
 ```ts
 interface BrigadeEvent<T = unknown> {
@@ -47,6 +48,14 @@ The catalog (RFC 0003 "Service catalog", "Incident types", "Custom fields") emit
 and `custom_field.deleted`. On incidents: `incident.type_changed` (`from`, `to`: type ids or null),
 `incident.services_changed` (`serviceIds`, `added`, `removed`) and `incident.field_changed` (`fieldId`, `kind`,
 `value`: the text, number or option ids, null when cleared).
+
+Follow-ups, postmortems and exports (RFC 0013) emit `follow_up.created`, `follow_up.updated` (plus `reason`: `edited`,
+or `member_removed` when its owner left), `follow_up.completed`, `follow_up.reopened` and `follow_up.deleted` (each
+with `id`, `incidentId`, `title`, `ownerId`, `dueDate`, `status`); `postmortem.saved` (`incidentId`, `revision`,
+`characters`: never the text), `postmortem.draft_requested` (`incidentId`, `requestId`, `by`), `postmortem.drafted`
+(the same as saved, plus `requestId` and `model`) and `postmortem.draft_failed` (`incidentId`, `requestId`, `reason`);
+and `workspace.exported` (`id`, `scope`, `incidents`, `bytes`, `expiresAt`). No notifier acts on them yet and none pages; they are not in the outbound webhook catalog
+(`WEBHOOK_EVENT_TYPES`) yet either.
 
 On-call schedules (RFC 0003 "Schedules") emit `schedule.created` (`id`, `name`, `timeZone`, `layers`: how many),
 `schedule.updated` (the same, plus `reason`: `edited`, or `member_removed` with the `userId` taken out of the

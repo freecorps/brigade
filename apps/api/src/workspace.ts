@@ -3,14 +3,24 @@ import type { SlackActOutcome } from "@freecorps/brigade-slack/bridge";
 import type { SlackPostOutcome } from "@freecorps/brigade-slack/notifier";
 import {
   ACCOUNT_ACTOR,
+  AI_ACTOR,
+  can,
+  exportChunks,
   fitMemberName,
+  isRole,
+  MAX_EXPORT_BYTES,
   newId,
+  STATUS_PAGE_ID,
   type Actor,
   type EmailAbout,
   type MemberChange,
   type MutationErrorCode,
+  type ExportScope,
+  type PostmortemDraftFailure,
+  type PostmortemSections,
   type ProbeRegion,
   type Role,
+  type StatusLocale,
 } from "@freecorps/brigade-schema";
 import {
   encode,
@@ -60,7 +70,12 @@ import {
   type WebhookPlan,
   type WebhookRunResult,
 } from "./webhooks.ts";
+import type { BuiltExport } from "./exports.ts";
+import { AI_MODEL, draftSource, type DraftRequestResult } from "./postmortem.ts";
 import type { RowChange } from "./store.ts";
+
+/** How much of an export the shard writes before it yields to other work (`buildExport`). */
+const EXPORT_YIELD_BYTES = 256 * 1024;
 
 export interface WorkspaceInfo {
   /** User tables in the object's SQLite database, read with SQL. */
@@ -168,6 +183,8 @@ export const WEBHOOK_REDRIVE_MIN_MS = 1000;
 export const STATUS_PUSH_MIN_BUDGET_MS = 100;
 
 export class WorkspaceDO extends DurableObject<Env> {
+  /** An export is being built (`buildExport`): in memory only, so a reset frees it. */
+  private exporting = false;
   /** `REPAIR_BUDGET_MS`; a field so tests can shorten it. */
   private repairBudgetMs = REPAIR_BUDGET_MS;
   /** `STATUS_PUSH_BUDGET_MS`; a field so tests can shorten it. */
@@ -530,6 +547,168 @@ export class WorkspaceDO extends DurableObject<Env> {
         });
     if (!result.ok) return { ok: false, code: result.error.code };
     if (!stored) this.broadcast(result.version, changes, undefined);
+    return { ok: true };
+  }
+
+  /**
+   * Asks for an AI draft of the incident's postmortem (RPC from `POST
+   * /workspaces/:id/incidents/:incidentId/postmortem/draft`, which checked the session, the member's role and that
+   * the deployment has the `AI` binding): runs the server-only `postmortem.requestDraft` as the member (RBAC, the
+   * rate limit, its event) and hands back what the model may read (src/postmortem.ts). The language is the status
+   * page's when the workspace has one, else `locale`, the asker's.
+   */
+  async requestPostmortemDraft(
+    workspaceId: string,
+    actor: Actor,
+    incidentId: string,
+    locale: StatusLocale,
+  ): Promise<DraftRequestResult> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    // What the model reads comes first: an incident it cannot read is refused before the draft is pending and the
+    // rate limit counts it. The mutation writes nothing `draftSource` reads, and nothing runs between the two.
+    const language = this.shard.store.get("status_page", STATUS_PAGE_ID)?.locale ?? locale;
+    const source = draftSource(this.shard.store, incidentId, language);
+    if (!source) return { ok: false, code: "not_found" };
+    const now = Date.now();
+    const requestId = newId("drf", now, (length) => crypto.getRandomValues(new Uint8Array(length)));
+    const { result, changes } = this.shard.mutate({
+      clientId: "api",
+      mutationId: requestId,
+      actor,
+      name: "postmortem.requestDraft",
+      args: { id: incidentId, requestId },
+      now,
+      internal: true,
+    });
+    if (!result.ok) return { ok: false, code: result.error.code };
+    this.broadcast(result.version, changes, undefined);
+    return { ok: true, requestId, source };
+  }
+
+  /** Writes the model's draft, or why there is none, as `sys_ai` (RPC from the Worker's `waitUntil`). */
+  finishPostmortemDraft(
+    workspaceId: string,
+    incidentId: string,
+    requestId: string,
+    outcome:
+      | { ok: true; sections: PostmortemSections }
+      | { ok: false; reason: PostmortemDraftFailure },
+  ): { ok: boolean; code?: string } {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    const run = (name: string, args: unknown) =>
+      this.shard.mutate({
+        clientId: "ai",
+        mutationId: `${requestId}:${name}`,
+        actor: AI_ACTOR,
+        name,
+        args,
+        now: Date.now(),
+        internal: true,
+      });
+    let { result, changes } = outcome.ok
+      ? run("postmortem.writeDraft", {
+          id: incidentId,
+          requestId,
+          sections: outcome.sections,
+          model: AI_MODEL,
+        })
+      : run("postmortem.failDraft", { id: incidentId, requestId, reason: outcome.reason });
+    // A draft the text rules still refuse is a failed draft, not a pending one.
+    if (!result.ok && outcome.ok && result.error.code === "invalid_args") {
+      this.log("an AI draft was refused", { issues: result.error.issues });
+      ({ result, changes } = run("postmortem.failDraft", {
+        id: incidentId,
+        requestId,
+        reason: "failed",
+      }));
+    }
+    if (!result.ok) return { ok: false, code: result.error.code };
+    this.broadcast(result.version, changes, undefined);
+    return { ok: true };
+  }
+
+  /**
+   * The export file for `scope` (RPC from `POST /workspaces/:id/exports`, which checked the session and that the
+   * member may export): takes a slot of the hourly limit (`export.reserve`), then writes the file from this shard's
+   * rows as UTF-8 parts, one incident at a time, counting the bytes and stopping at `MAX_EXPORT_BYTES` (`too_large`)
+   * without ever holding the whole text. It yields between parts, so a large export never holds the shard: alarms
+   * (escalations) and other requests run in between. The Worker streams the parts into R2; nothing else is written
+   * until `recordExport`.
+   */
+  async buildExport(workspaceId: string, actor: Actor, scope: ExportScope): Promise<BuiltExport> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    if (!isRole(actor.role) || !can(actor.role, "data:export"))
+      return { ok: false, code: "forbidden" };
+    // One build at a time: each holds up to MAX_EXPORT_BYTES of parts in this isolate, and yields, so several at once
+    // could outgrow its memory and reset the shard that pages. A second one is told to try again shortly.
+    if (this.exporting) return { ok: false, code: "rate_limited" };
+    const now = Date.now();
+    const plan = exportChunks(this.shard.store, scope, now);
+    if (!plan.ok) return plan;
+    const id = newId("exp", now, (length) => crypto.getRandomValues(new Uint8Array(length)));
+    const { result } = this.shard.mutate({
+      clientId: "api",
+      mutationId: id,
+      actor,
+      name: "export.reserve",
+      args: { id },
+      now,
+      internal: true,
+    });
+    if (!result.ok) {
+      const code = result.error.code;
+      return { ok: false, code: code === "limit_reached" ? "rate_limited" : code };
+    }
+    this.exporting = true;
+    try {
+      const encoder = new TextEncoder();
+      const parts: Uint8Array[] = [];
+      let bytes = 0;
+      let sinceYield = 0;
+      let yielded = false;
+      for (let next = plan.chunks.next(); !next.done; next = plan.chunks.next(yielded)) {
+        yielded = false;
+        const part = encoder.encode(next.value);
+        bytes += part.byteLength;
+        if (bytes > MAX_EXPORT_BYTES) return { ok: false, code: "too_large" };
+        parts.push(part);
+        sinceYield += part.byteLength;
+        if (sinceYield >= EXPORT_YIELD_BYTES) {
+          sinceYield = 0;
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          yielded = true;
+        }
+      }
+      return { ok: true, id, parts, bytes, incidents: plan.incidents };
+    } finally {
+      this.exporting = false;
+    }
+  }
+
+  /** Records an export the Worker wrote to R2 (`export.record`, as the member), so it is listed and an event. */
+  recordExport(
+    workspaceId: string,
+    actor: Actor,
+    args: { id: string; scope: ExportScope; incidents: number; bytes: number },
+  ): { ok: boolean; code?: string } {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    const { result, changes } = this.shard.mutate({
+      clientId: "api",
+      mutationId: args.id,
+      actor,
+      name: "export.record",
+      args,
+      now: Date.now(),
+      internal: true,
+    });
+    if (!result.ok) return { ok: false, code: result.error.code };
+    this.broadcast(result.version, changes, undefined);
     return { ok: true };
   }
 

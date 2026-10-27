@@ -24,10 +24,12 @@ import {
   CircleAlertIcon,
   CircleDotIcon,
   CirclePlusIcon,
+  FileTextIcon,
   GaugeIcon,
   GlobeIcon,
   HeartPulseIcon,
   LayersIcon,
+  ListTodoIcon,
   LoaderCircleIcon,
   MessageSquareTextIcon,
   MailWarningIcon,
@@ -58,6 +60,9 @@ import { SeverityMenu, StatusMenu } from "@/components/incident-item";
 import { ANNOUNCE_MS, useNow } from "@/components/incidents-card";
 import { EscalationProgress } from "@/components/escalation-progress";
 import { IncidentDetailsCard } from "@/components/incident-details";
+import { IncidentExportButton } from "@/components/export-card";
+import { FollowUpsCard } from "@/components/follow-ups-card";
+import { PostmortemCard } from "@/components/postmortem-card";
 import { usePreferences } from "@/components/preferences";
 import { StatusPublishCard } from "@/components/status-publish";
 import { PagingCard, WhyPagedView, type PagingData } from "@/components/why-paged";
@@ -474,8 +479,12 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
             <PagingCard data={paging} who={who} number={row.number} />
           ) : null}
           <IncidentDetailsCard row={row} />
+          <IncidentExportButton incident={row} />
         </div>
       </div>
+      {/* What the incident leaves behind (RFC 0013): its follow-ups and its postmortem, full width under the rest. */}
+      <FollowUpsCard incident={row} />
+      <PostmortemCard incident={row} />
     </Shell>
   );
 }
@@ -726,6 +735,8 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
   type_changed: TagIcon,
   services_changed: LayersIcon,
   field_changed: SquarePenIcon,
+  follow_up: ListTodoIcon,
+  postmortem: FileTextIcon,
 };
 
 /**

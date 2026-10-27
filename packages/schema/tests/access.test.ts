@@ -35,6 +35,7 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "webhook:manage": true,
     "catalog:read": true,
     "catalog:manage": true,
+    "data:export": true,
   },
   admin: {
     "incident:read": true,
@@ -59,6 +60,7 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "webhook:manage": true,
     "catalog:read": true,
     "catalog:manage": true,
+    "data:export": true,
   },
   responder: {
     "incident:read": true,
@@ -83,6 +85,7 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "webhook:manage": false,
     "catalog:read": true,
     "catalog:manage": false,
+    "data:export": false,
   },
   viewer: {
     "incident:read": true,
@@ -107,6 +110,7 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "webhook:manage": false,
     "catalog:read": true,
     "catalog:manage": false,
+    "data:export": false,
   },
 };
 
@@ -134,6 +138,7 @@ test("every permission comes from the statement", () => {
     "webhook:manage",
     "catalog:read",
     "catalog:manage",
+    "data:export",
   ]);
 });
 

@@ -1,6 +1,8 @@
 import { m } from "@freecorps/brigade-i18n";
 import { createFileRoute } from "@tanstack/react-router";
 import { EscalationCard } from "@/components/escalation-card";
+import { ExportCard } from "@/components/export-card";
+import { OpenFollowUpsCard } from "@/components/follow-ups-card";
 import { IncidentSettingsCard } from "@/components/incident-settings-card";
 import { IncidentsCard } from "@/components/incidents-card";
 import { LegendCard } from "@/components/legend-card";
@@ -51,6 +53,7 @@ function Overview() {
       {user ? <VerifyNotice email={user.email} verified={user.emailVerified} /> : null}
       {user ? <TakeoverNotice key={user.id} /> : null}
       <IncidentsCard />
+      <OpenFollowUpsCard />
       <OnCallCard />
       <EscalationCard />
       <MonitorsCard />
@@ -60,6 +63,7 @@ function Overview() {
       <StatusPageCard />
       <SlackCard />
       <WebhooksCard />
+      <ExportCard />
       <StackCard />
       <LegendCard />
     </div>

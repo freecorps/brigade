@@ -61,6 +61,13 @@ import {
   rotateWebhookSecret,
   webhookMutations,
 } from "./webhooks.ts";
+import { followUpMutations, followUpQueries } from "./followups.ts";
+import {
+  incidentPostmortem,
+  postmortemMutations,
+  postmortemServerMutations,
+} from "./postmortems.ts";
+import { recentExports, recordExport, reserveExport } from "./exports.ts";
 import { invitationMutations } from "./invitations.ts";
 import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";
 import { allMembers, createWorkspace, setEmailSettings, syncMember } from "./workspaces.ts";
@@ -84,6 +91,8 @@ export const mutations = defineRegistry([
   disconnectSlack,
   ...statusMutations,
   ...webhookMutations,
+  ...followUpMutations,
+  ...postmortemMutations,
 ]);
 
 export const queries = defineRegistry([
@@ -104,6 +113,9 @@ export const queries = defineRegistry([
   statusIncidentById,
   allWebhooks,
   ...catalogQueries,
+  ...followUpQueries,
+  incidentPostmortem,
+  recentExports,
 ]);
 
 /**
@@ -128,6 +140,8 @@ export const serverMutations = defineRegistry([
   disconnectSlack,
   ...statusMutations,
   ...webhookMutations,
+  ...followUpMutations,
+  ...postmortemMutations,
   configureStatusPage,
   createWorkspace,
   syncMember,
@@ -156,4 +170,7 @@ export const serverMutations = defineRegistry([
   rotateWebhookSecret,
   recordWebhookAttempt,
   redeliverWebhooks,
+  ...postmortemServerMutations,
+  recordExport,
+  reserveExport,
 ]);

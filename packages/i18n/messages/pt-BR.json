@@ -764,6 +764,13 @@
         "kind=services_updated": "{actor} mudou os serviços afetados",
         "kind=field_set": "{actor} definiu {a} como {b}",
         "kind=field_cleared": "{actor} limpou {a}",
+        "kind=follow_up_added": "{actor} adicionou a ação {a}",
+        "kind=follow_up_edited": "{actor} editou a ação {a}",
+        "kind=follow_up_done": "{actor} concluiu a ação {a}",
+        "kind=follow_up_reopened": "{actor} reabriu a ação {a}",
+        "kind=follow_up_removed": "{actor} removeu a ação {a}",
+        "kind=postmortem_started": "{actor} começou o postmortem",
+        "kind=postmortem_ai_drafted": "O Workers AI escreveu um rascunho do postmortem",
         "kind=*": "{actor} alterou o incidente"
       }
     }
@@ -2305,6 +2312,145 @@
         "part=open": "Abrir o painel",
         "part=footer": "Você recebe este email porque é proprietário de {workspace} no Brigade.",
         "part=*": "Um webhook em {workspace} foi desligado"
+      }
+    }
+  ],
+  "followup_text": [
+    {
+      "declarations": ["input text", "input name", "input date", "input count", "input reason"],
+      "selectors": ["text"],
+      "match": {
+        "text=title": "Ações de acompanhamento",
+        "text=description": "O que este incidente deixa para fazer, com responsável e prazo.",
+        "text=empty": "Nenhuma ação de acompanhamento ainda.",
+        "text=add": "Adicionar ação",
+        "text=title_label": "O que precisa ser feito",
+        "text=title_placeholder": "Adicionar limite de novas tentativas ao cliente de pagamentos",
+        "text=owner_label": "Responsável",
+        "text=no_owner": "Sem responsável",
+        "text=due_label": "Prazo",
+        "text=no_due": "Sem prazo",
+        "text=link_label": "Link do chamado",
+        "text=link_placeholder": "https://",
+        "text=link_invalid": "Informe um link que comece com http:// ou https://.",
+        "text=save": "Salvar",
+        "text=cancel": "Cancelar",
+        "text=edit": "Editar {name}",
+        "text=delete": "Remover {name}",
+        "text=delete_confirm": "Remover {name}? Ela continua na linha do tempo.",
+        "text=mark_done": "Marcar {name} como concluída",
+        "text=mark_open": "Reabrir {name}",
+        "text=due_on": "Prazo {date}",
+        "text=overdue": "Atrasada desde {date}",
+        "text=done_on": "Concluída {date}",
+        "text=open_link": "Abrir chamado",
+        "text=owner_former": "Ex-membro",
+        "text=done_count": "Concluídas: {count}",
+        "text=limit": "Este incidente já tem o máximo de ações. Remova uma concluída antes.",
+        "text=change_failed": "Não foi possível alterar {name}: {reason}",
+        "text=read_only": "Só responders, admins e owners alteram ações de acompanhamento.",
+        "text=open_title": "Ações em aberto",
+        "text=open_description": "Todas as ações em aberto do workspace, pelo prazo mais próximo.",
+        "text=open_empty": "Nada em aberto. As ações adicionadas aos incidentes aparecem aqui até serem concluídas.",
+        "text=open_link_all": "Todas as ações em aberto",
+        "text=overdue_count": "Atrasadas: {count}",
+        "text=loading": "Carregando ações…",
+        "text=load_failed": "Não foi possível carregar as ações: {reason}",
+        "text=incident_column": "Incidente",
+        "text=mine": "Só as minhas",
+        "text=back": "Visão geral",
+        "text=title_required": "Diga o que precisa ser feito.",
+        "text=*": "Ações de acompanhamento"
+      }
+    }
+  ],
+  "postmortem_text": [
+    {
+      "declarations": ["input part", "input name", "input time", "input count", "input reason"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Postmortem",
+        "part=description": "O que aconteceu e o que o time aprendeu, seção por seção. Texto simples.",
+        "part=empty": "Nenhum postmortem ainda.",
+        "part=start": "Escrever postmortem",
+        "part=edit": "Editar",
+        "part=save": "Salvar",
+        "part=cancel": "Cancelar",
+        "part=saving": "Salvando…",
+        "part=section_summary": "Resumo",
+        "part=section_impact": "Impacto",
+        "part=section_timeline": "Linha do tempo",
+        "part=section_rootCause": "Causa raiz",
+        "part=section_wentWell": "O que deu certo",
+        "part=section_wentPoorly": "O que deu errado",
+        "part=section_followUps": "Ações de acompanhamento",
+        "part=section_empty": "Ainda não escrito.",
+        "part=updated": "Revisão {count}, salva {time} por {name}",
+        "part=conflict": "Alguém salvou o postmortem enquanto você editava. Seu texto continua aqui: copie o que precisar e carregue a versão dessa pessoa.",
+        "part=reload": "Carregar a versão mais recente",
+        "part=save_failed": "Não foi possível salvar o postmortem: {reason}",
+        "part=ai_draft": "Rascunho com IA",
+        "part=ai_redraft": "Novo rascunho com IA",
+        "part=ai_hint": "O Workers AI escreve um primeiro rascunho a partir da linha do tempo, das atualizações e das ações. Nenhum e-mail ou dispositivo é enviado.",
+        "part=ai_pending": "Escrevendo um rascunho…",
+        "part=ai_marker": "Rascunho de IA — revise antes de compartilhar",
+        "part=ai_marker_hint": "Escrito pelo Workers AI a partir da linha do tempo. Confira cada seção; salvar marca como revisado.",
+        "part=ai_failed_failed": "O rascunho de IA falhou. Tente de novo daqui a pouco.",
+        "part=ai_failed_timeout": "O rascunho de IA demorou demais. Tente de novo.",
+        "part=ai_failed_edited": "Alguém salvou o postmortem enquanto a IA escrevia, então o texto dessa pessoa foi mantido.",
+        "part=ai_failed_unavailable": "Os rascunhos de IA não estão disponíveis agora.",
+        "part=ai_refused_limit_reached": "Este workspace já pediu o máximo de rascunhos de IA hoje. Tente amanhã.",
+        "part=ai_refused_conflict": "Um rascunho já está sendo escrito, ou o postmortem tem texto escrito por um membro.",
+        "part=ai_refused_ai_unavailable": "Os rascunhos de IA não estão configurados neste servidor.",
+        "part=ai_refused_other": "Não foi possível pedir um rascunho: {reason}",
+        "part=chars": "Restam: {count}",
+        "part=read_only": "Só responders, admins e owners editam o postmortem.",
+        "part=*": "Postmortem"
+      }
+    }
+  ],
+  "export_text": [
+    {
+      "declarations": ["input part", "input name", "input time", "input count", "input reason"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Exportar",
+        "part=incident_action": "Exportar JSON",
+        "part=incident_hint": "O incidente, sua linha do tempo, atualizações, ações e postmortem, em um arquivo JSON. Só owners e admins.",
+        "part=card_title": "Exportar incidentes",
+        "part=card_description": "Baixe os incidentes declarados em um período (UTC) em JSON: linhas do tempo, atualizações, ações e postmortems. Os arquivos ficam disponíveis por 7 dias.",
+        "part=from": "De",
+        "part=to": "Até",
+        "part=create": "Exportar",
+        "part=creating": "Exportando…",
+        "part=ready": "Exportação pronta.",
+        "part=download": "Baixar",
+        "part=recent": "Exportações recentes",
+        "part=none": "Nenhuma exportação ainda.",
+        "part=expires": "Expira {time}",
+        "part=scope_incident": "Um incidente",
+        "part=scope_range": "{name}",
+        "part=failed_too_large": "Incidentes demais para um arquivo. Escolha um período menor.",
+        "part=failed_limit_reached": "Incidentes demais para um arquivo. Escolha um período menor.",
+        "part=failed_rate_limited": "Exportações demais nesta hora. Tente de novo mais tarde.",
+        "part=failed_invalid_args": "Escolha um período de até 366 dias, com o início antes do fim.",
+        "part=failed_exports_unavailable": "As exportações não estão configuradas neste servidor.",
+        "part=failed_other": "Não foi possível exportar: {reason}",
+        "part=*": "Exportar"
+      }
+    }
+  ],
+  "export_incidents": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} incidente",
+        "countPlural=*": "{countFormatted} incidentes"
       }
     }
   ]

@@ -4,6 +4,8 @@ import type { DevicePlatform, PushEnvironment } from "./devices.ts";
 import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
 import type { EmailAbout, EmailFailure, PageFailure } from "./notifications.ts";
 import type { FieldKind, ServiceTier } from "./catalog.ts";
+import type { FollowUpStatus } from "./followups.ts";
+import type { POSTMORTEM_DRAFT_FAILURES } from "./postmortems.ts";
 import type { EscalationTargetKind } from "./policies.ts";
 import type { RotationUnit } from "./schedules.ts";
 import type { SlackFailure, SlackLocale } from "./slack.ts";
@@ -301,7 +303,15 @@ export type TimelineEntry =
       fieldKind: FieldKind;
       value: string | number | string[] | null;
       labels?: string[];
-    };
+    }
+  /** A follow-up was added, edited, completed, reopened or removed (RFC 0013), by its title then. */
+  | {
+      kind: "follow_up";
+      change: "added" | "edited" | "done" | "reopened" | "removed";
+      title: string;
+    }
+  /** The postmortem was first saved (`started`), or Workers AI wrote a draft of it (`ai_drafted`). */
+  | { kind: "postmortem"; change: "started" | "ai_drafted" };
 
 /**
  * One entry of an incident's timeline: append-only, written by the mutation that made the change, in its
@@ -691,6 +701,90 @@ export type WebhookSecretRow = {
  */
 export type CatalogDeletedRow = { id: string; at: number };
 
+/** An action item an incident leaves behind (RFC 0013 "Follow-ups"). */
+export type FollowUpRow = {
+  id: string; // fup_<ULID>, made by the client
+  incidentId: string;
+  /** The incident's number and title when it was added (titles never change), for the workspace-wide list. */
+  incidentNumber: number | null;
+  incidentTitle: string;
+  title: string;
+  /** The member who owns it; null: nobody yet (or its owner left). */
+  ownerId: string | null;
+  /** `YYYY-MM-DD`, a calendar date read in each reader's own time zone; null: none. */
+  dueDate: string | null;
+  /** An issue elsewhere (`http(s)`); null: none. */
+  link: string | null;
+  status: FollowUpStatus;
+  createdAt: number;
+  createdBy: string;
+  /** When and by whom it was marked done; null while open. */
+  doneAt: number | null;
+  doneBy: string | null;
+  updatedAt: number;
+};
+
+/** A postmortem's text, one plain-text section each (`POSTMORTEM_SECTIONS`); empty when unwritten. */
+export type PostmortemSections = {
+  summary: string;
+  impact: string;
+  timeline: string;
+  rootCause: string;
+  wentWell: string;
+  wentPoorly: string;
+  followUps: string;
+};
+
+export type PostmortemDraftFailure = (typeof POSTMORTEM_DRAFT_FAILURES)[number];
+
+/** An AI draft asked for (RFC 0013 "Drafting with AI"): running, or why it failed. */
+export type PostmortemDraft = {
+  id: string; // drf_<ULID>, made by the shard
+  status: "pending" | "failed";
+  requestedAt: number;
+  requestedBy: string;
+  /** The revision it was asked over: a save since then wins over the draft. */
+  baseRevision: number;
+  reason: PostmortemDraftFailure | null;
+};
+
+/** An incident's postmortem (RFC 0013 "Postmortems"); its id is the incident's. */
+export type PostmortemRow = {
+  id: string;
+  sections: PostmortemSections;
+  /** 1 on the first save, one more per save or draft; 0 while only a draft was asked for. */
+  revision: number;
+  /** The text is an AI draft no member saved since: the model, when, and who asked. Null otherwise. */
+  ai: { at: number; model: string; by: string } | null;
+  draft: PostmortemDraft | null;
+  createdAt: number;
+  updatedAt: number;
+  updatedBy: string;
+};
+
+/** Server-only: an AI draft asked for at `at` (its request id), counted against `AI_DRAFTS_PER_DAY`. */
+export type AiDraftRow = { id: string; at: number };
+
+/** Server-only: an export started at `at` (its id), counted against `EXPORTS_PER_HOUR`. */
+export type ExportLedgerRow = { id: string; at: number };
+
+/** What an export covers: one incident, or the incidents declared from `from` to `to` (UTC days, both included). */
+export type ExportScope =
+  | { kind: "incident"; incidentId: string }
+  | { kind: "range"; from: string; to: string };
+
+/** An export written to R2 (RFC 0013 "Exports"), downloadable until `expiresAt`. */
+export type ExportRow = {
+  id: string; // exp_<ULID>, made by the API Worker
+  scope: ExportScope;
+  incidents: number;
+  /** The file's size in bytes. */
+  bytes: number;
+  createdAt: number;
+  createdBy: string;
+  expiresAt: number;
+};
+
 /** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only. */
 export type CounterRow = { id: string; value: number };
 
@@ -722,6 +816,11 @@ export type BrigadeTables = {
   incident_types: IncidentTypeRow;
   custom_fields: CustomFieldRow;
   catalog_deleted: CatalogDeletedRow;
+  follow_ups: FollowUpRow;
+  postmortems: PostmortemRow;
+  ai_drafts: AiDraftRow;
+  exports: ExportRow;
+  export_ledger: ExportLedgerRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -755,6 +854,11 @@ export const TABLES = {
   incident_types: { serverOnly: false },
   custom_fields: { serverOnly: false },
   catalog_deleted: { serverOnly: true },
+  follow_ups: { serverOnly: false },
+  postmortems: { serverOnly: false },
+  ai_drafts: { serverOnly: true },
+  exports: { serverOnly: false },
+  export_ledger: { serverOnly: true },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

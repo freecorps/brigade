@@ -1053,6 +1053,188 @@ describe("alerts that must still page", () => {
     ).toEqual(["incident.declared", "alert.fired"]);
   });
 
+  test("a repeated resolve keeps nothing from paging: fire, resolve, resolve, fire pages", () => {
+    const db = store();
+    const source = createSource(db);
+    ingest(db, source, [firing()]);
+    ingest(db, source, [firing({ status: "resolved" })], T + 2000);
+    // Grafana sends a resolve again: the key already fired, so it is no resolve-before-fire.
+    expect(types(ingest(db, source, [firing({ status: "resolved" })], T + 3000))).toEqual([]);
+    expect(db.scan("alert_resolve_markers")).toEqual([]);
+    // Within FLAP_WINDOW_MS it reopens the incident, which pages.
+    expect(types(ingest(db, source, [firing()], T + 4000))).toEqual([
+      "incident.status_changed",
+      "alert.fired",
+    ]);
+    // And after it, a new incident.
+    ingest(db, source, [firing({ status: "resolved" })], T + 5000);
+    ingest(db, source, [firing({ status: "resolved" })], T + 6000);
+    expect(types(ingest(db, source, [firing()], T + 6000 + 30 * 60 * 1000))).toEqual([
+      "incident.declared",
+      "alert.fired",
+    ]);
+  });
+
+  test("a sender's resolve after people closed its incident keeps nothing from paging", () => {
+    const db = store();
+    const source = createSource(db);
+    ingest(db, source, [firing()]);
+    const [incident] = incidents(db);
+    expect(close(db, incident!.id).ok).toBe(true);
+    expect(types(ingest(db, source, [firing({ status: "resolved" })], T + 2000))).toEqual([]);
+    expect(db.scan("alert_resolve_markers")).toEqual([]);
+    expect(types(ingest(db, source, [firing()], T + 2000 + 30 * 60 * 1000))).toEqual([
+      "incident.declared",
+      "alert.fired",
+    ]);
+  });
+
+  test("a resolve of an alert folded into the capacity alert keeps nothing from paging", () => {
+    const db = store();
+    const source = createSource(db);
+    for (let i = 0; i < MAX_OPEN_ALERTS; i += 50) {
+      const batch = Array.from({ length: 50 }, (_, j) => firing({ dedupKey: `k${i + j}` }));
+      ingest(db, source, batch);
+    }
+    ingest(db, source, [firing({ dedupKey: "folded" })], T + 2000);
+    ingest(db, source, [firing({ dedupKey: "folded", status: "resolved" })], T + 3000);
+    expect(db.scan("alert_resolve_markers")).toEqual([]);
+  });
+
+  test("a flap that comes back more urgent reopens at that severity, with one page", () => {
+    const db = store();
+    const source = createSource(db);
+    ingest(db, source, [firing({ severity: "warning" })]);
+    ingest(db, source, [firing({ status: "resolved" })], T + 2000);
+    const [incident] = incidents(db);
+    expect(incident).toMatchObject({ status: "resolved", severity: "sev3" });
+    const result = ingest(db, source, [firing({ severity: "critical" })], T + 3000);
+    expect(types(result)).toEqual([
+      "incident.severity_changed",
+      "incident.status_changed",
+      "alert.fired",
+    ]);
+    expect(db.get("incidents", incident!.id)).toMatchObject({
+      status: "investigating",
+      severity: "sev1",
+    });
+    // The raise is marked as the reopen's, which is the one page (apps/api `asksForPage`).
+    expect(result.ok && result.events[0]?.data).toEqual({
+      from: "sev3",
+      to: "sev1",
+      reopening: true,
+    });
+    // Never lowered: a flap back at a lower severity leaves it as it was.
+    const db2 = store();
+    const source2 = createSource(db2);
+    ingest(db2, source2, [firing({ severity: "critical" })]);
+    ingest(db2, source2, [firing({ status: "resolved" })], T + 2000);
+    expect(types(ingest(db2, source2, [firing({ severity: "warning" })], T + 3000))).toEqual([
+      "incident.status_changed",
+      "alert.fired",
+    ]);
+    expect(incidents(db2)[0]?.severity).toBe("sev1");
+  });
+
+  test("a flap goes through the routes as they are now: a route that quiets it leaves the incident resolved", () => {
+    for (const kind of ["suppress", "drop"] as const) {
+      const db = store();
+      const source = createSource(db);
+      ingest(db, source, [firing()]);
+      ingest(db, source, [firing({ status: "resolved" })], T + 2000);
+      const [incident] = incidents(db);
+      const route = createRoute(db, {}, { kind }, "Maintenance");
+      expect(types(ingest(db, source, [firing()], T + 3000))).toEqual([
+        kind === "drop" ? "alert.dropped" : "alert.fired",
+      ]);
+      expect(db.get("incidents", incident!.id)?.status).toBe("resolved");
+      expect(alertRows(db).find((row) => row.status === "firing")).toMatchObject({
+        outcome: kind === "drop" ? "dropped" : "suppressed",
+        routeId: route,
+        routeName: "Maintenance",
+        incidentId: null,
+      });
+    }
+  });
+
+  test("a sender cannot merge into or resolve Brigade's own alerts by naming its key", () => {
+    const db = store();
+    const source = createSource(db);
+    const unreadable = firing({ dedupKey: "malformed", title: "Unreadable alert from Grafana" });
+    expect(types(ingest(db, source, [unreadable], T + 1000, true))).toEqual([
+      "incident.declared",
+      "alert.fired",
+    ]);
+    // A real alert keyed `malformed` is its own alert, through the routes, and its resolve leaves the system one.
+    expect(types(ingest(db, source, [firing({ dedupKey: "malformed" })], T + 2000))).toEqual([
+      "incident.declared",
+      "alert.fired",
+    ]);
+    ingest(db, source, [firing({ dedupKey: "malformed", status: "resolved" })], T + 3000);
+    const system = alertRows(db).find((row) => row.reason === "malformed");
+    expect(system?.status).toBe("firing");
+    // Nor can it resolve the capacity alert.
+    const full = store();
+    const other = createSource(full);
+    for (let i = 0; i < MAX_OPEN_ALERTS; i += 50) {
+      const batch = Array.from({ length: 50 }, (_, j) => firing({ dedupKey: `k${i + j}` }));
+      ingest(full, other, batch);
+    }
+    ingest(full, other, [firing({ dedupKey: "x1" })], T + 2000);
+    ingest(full, other, [firing({ dedupKey: "capacity", status: "resolved" })], T + 3000);
+    expect(alertRows(full).find((row) => row.reason === "capacity")?.status).toBe("firing");
+  });
+
+  test("200 grouped alerts make room for a different alert, which pages", () => {
+    const db = store();
+    const source = createSource(db);
+    createRoute(
+      db,
+      {},
+      {
+        kind: "group",
+        groupBy: "service",
+        severity: null,
+        typeId: null,
+        serviceIds: [],
+        policyId: null,
+      },
+      "By service",
+    );
+    for (let i = 0; i < MAX_OPEN_ALERTS; i += 50) {
+      const batch = Array.from({ length: 50 }, (_, j) =>
+        firing({ dedupKey: `pod-${i + j}`, labels: { service: "pods" } }),
+      );
+      expect(ingest(db, source, batch, T + 1000 + i).ok).toBe(true);
+    }
+    expect(incidents(db)).toHaveLength(1);
+    const result = ingest(
+      db,
+      source,
+      [firing({ dedupKey: "db", title: "Database down", labels: { service: "db" } })],
+      T + 2000,
+    );
+    expect(types(result)).toEqual(["alert.resolved", "incident.declared", "alert.fired"]);
+    expect(alertRows(db).some((row) => row.reason === "capacity")).toBe(false);
+    expect(incidents(db).find((one) => one.title === "Database down")).toBeTruthy();
+    // The incident that opened the group is still held: the row that opened it was not the one let go.
+    expect(alertRows(db).find((row) => row.outcome === "opened")?.status).toBe("firing");
+  });
+
+  test("Datadog's default payload: Triggered opens, Recovered resolves the incident", () => {
+    const db = store();
+    const source = createSource(db, "datadog");
+    expect(types(ingest(db, source, alertsOf("datadog", datadogDefault)))).toEqual([
+      "incident.declared",
+      "alert.fired",
+    ]);
+    expect(
+      types(ingest(db, source, alertsOf("datadog", datadogDefaultRecovered), T + 2000)),
+    ).toEqual(["alert.resolved", "incident.status_changed"]);
+    expect(incidents(db)[0]?.status).toBe("resolved");
+    expect(db.scan("alert_resolve_markers")).toEqual([]);
+  });
+
   test("a takeover disables the routes the taken-back account created, until someone saves them", () => {
     const db = store();
     const source = createSource(db);
@@ -1210,5 +1392,96 @@ describe("alert routes", () => {
     expect(types(deleted)).toEqual(["escalation_policy.deleted", "alert_route.updated"]);
     expect(db.get("alert_routes", route)?.action).toMatchObject({ policyId: null });
     expect(fallback).toBeTruthy();
+  });
+
+  test("the route's policy outlives its alert rows: pruned, a raise into SEV1 pages through it", () => {
+    const db = store();
+    const source = createSource(db);
+    db.insert("members", { id: "usr_ana", name: "Ana", role: "admin", updatedAt: T });
+    const policy = (name: string, isDefault: boolean) => {
+      const id = newId("esc", T, random);
+      runMutation(
+        mutations,
+        "escalation.createPolicy",
+        {
+          id,
+          name,
+          levels: [
+            {
+              id: newId("lvl", T, random),
+              targets: [{ kind: "member", id: "usr_ana" }],
+              timeoutMinutes: 5,
+            },
+          ],
+          repeat: 0,
+          isDefault,
+        },
+        db,
+        as("admin"),
+      );
+      return id;
+    };
+    policy("Default", true);
+    const own = policy("Payments", false);
+    const route = createRoute(
+      db,
+      { labels: [{ key: "team", value: "payments" }] },
+      { kind: "open", severity: "sev3", typeId: null, serviceIds: [], policyId: own },
+      "Payments",
+    );
+    ingest(db, source, [firing({ labels: { team: "payments" } })]);
+    const [incident] = incidents(db);
+    // People work on it (an update, no ack yet), so it stays open once its alert resolves.
+    runMutation(
+      mutations,
+      "incident.postUpdate",
+      { id: incident!.id, body: "Looking" },
+      db,
+      as("responder"),
+    );
+    ingest(db, source, [firing({ status: "resolved", labels: { team: "payments" } })], T + 1500);
+    expect(db.get("incidents", incident!.id)?.status).toBe("triage");
+    // MAX_ALERT_ROWS and more rows since, all resolved: the row that opened the incident is pruned.
+    for (let i = 0; i < 320; i += 40) {
+      const keys = Array.from({ length: 40 }, (_, j) => `other-${i + j}`);
+      ingest(
+        db,
+        source,
+        keys.map((dedupKey) => firing({ dedupKey })),
+        T + 2000 + i,
+      );
+      ingest(
+        db,
+        source,
+        keys.map((dedupKey) => firing({ dedupKey, status: "resolved" })),
+        T + 3000 + i,
+      );
+    }
+    expect(alertRows(db).some((row) => row.incidentId === incident!.id)).toBe(false);
+    expect(
+      runMutation(
+        mutations,
+        "incident.setSeverity",
+        { id: incident!.id, severity: "sev1" },
+        db,
+        as("responder", T + 5000),
+      ).ok,
+    ).toBe(true);
+    const started = runMutation(
+      { [startEscalation.name]: startEscalation },
+      "escalation.start",
+      { incidentId: incident!.id, eventId: newId("evt", T, random), causedBy: "usr_ana" },
+      db,
+      {
+        actor: { kind: "system", id: "sys_escalation", role: "admin" },
+        now: T + 6000,
+        server: true,
+      },
+    );
+    expect(started.ok).toBe(true);
+    expect(db.get("incidents", incident!.id)?.escalation).toMatchObject({
+      policyId: own,
+      route: { id: route, name: "Payments" },
+    });
   });
 });

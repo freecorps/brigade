@@ -1061,6 +1061,35 @@ const refusedTokens = new Map<string, number>();
 const REFUSED_TOKEN_MS = 60 * 1000;
 const REFUSED_TOKENS_MAX = 10_000;
 
+/**
+ * Tokens the shard accepted lately, per isolate, by their SHA-256 (hex), least recently used first, until they
+ * expire: a source that is sending skips `ALERT_WORKSPACE_LIMIT`, so a flood of made-up secrets for its workspace
+ * (which spends that bucket) never holds a real alert back. It still spends its source's `ALERT_LIMIT` in the shard,
+ * which checks its secrets again. Only the shard puts a token in (it matched), so a guessed one never is; a token it
+ * refuses is taken out.
+ */
+const acceptedTokens = new Map<string, number>();
+const ACCEPTED_TOKEN_MS = 60 * 60 * 1000;
+const ACCEPTED_TOKENS_MAX = 10_000;
+
+/** Whether `tokenKey` was accepted lately, moving it to the most recently used end. */
+function acceptedLately(tokenKey: string): boolean {
+  const until = acceptedTokens.get(tokenKey);
+  if (until === undefined) return false;
+  acceptedTokens.delete(tokenKey);
+  if (until <= Date.now()) return false;
+  acceptedTokens.set(tokenKey, until);
+  return true;
+}
+
+function accepted(tokenKey: string): void {
+  acceptedTokens.delete(tokenKey);
+  if (acceptedTokens.size >= ACCEPTED_TOKENS_MAX) {
+    acceptedTokens.delete(acceptedTokens.keys().next().value!);
+  }
+  acceptedTokens.set(tokenKey, Date.now() + ACCEPTED_TOKEN_MS);
+}
+
 const toHex = (bytes: ArrayBuffer) =>
   [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
@@ -1073,8 +1102,10 @@ const toHex = (bytes: ArrayBuffer) =>
  * still accepted, and pages (src/alert-intake.ts).
  *
  * Rate limits (Workers Rate Limiting, approximate and per location, each failing open): the workspace's
- * `ALERT_WORKSPACE_LIMIT` before its shard wakes; the source's `ALERT_LIMIT` in the shard, once the secrets matched;
- * and `ALERT_REFUSED_LIMIT`, which counts the workspace's refused requests apart, so wrong secrets never spend the
+ * `ALERT_WORKSPACE_LIMIT` before its shard wakes, spent only by tokens this isolate has not seen accepted lately
+ * (`acceptedTokens`), so a flood of made-up secrets spends it and wakes the shard at most that often, while a source
+ * already sending flows past it; the source's `ALERT_LIMIT` in the shard, once the secrets matched; and
+ * `ALERT_REFUSED_LIMIT`, which counts the workspace's refused requests apart, so wrong secrets never spend the
  * source's budget, and once it runs out a token refused lately is refused here. Over a limit is `503` with
  * `Retry-After`, never `429`: Datadog retries a 5xx, not a 429, and a dropped alert is worse than a late one.
  */
@@ -1104,6 +1135,7 @@ export async function receiveAlerts(request: Request, env: Env, token: string): 
   if (refusedUntil !== undefined && refusedUntil > Date.now())
     return json({ error: "not_found" }, 404);
   if (
+    !acceptedLately(tokenKey) &&
     !(await limited(env.ALERT_WORKSPACE_LIMIT, parsed.workspaceId, "alert workspace rate limit"))
   ) {
     return json({ error: "unavailable" }, 503, { "Retry-After": "60" });
@@ -1117,6 +1149,9 @@ export async function receiveAlerts(request: Request, env: Env, token: string): 
       body,
       alertHeaders(request),
     );
+    // Accepted, ignored and busy all mean the secrets matched.
+    if (result.status === "not_found") acceptedTokens.delete(tokenKey);
+    else accepted(tokenKey);
     switch (result.status) {
       case "accepted":
         return json({ ok: true, alerts: result.alerts, malformed: result.malformed }, 202);

@@ -96,8 +96,9 @@ until its next run.
 
 A route, type or monitor naming none, deleted since, or naming a deleted policy falls through to the next, so a
 deletion never leaves an incident paged by nothing. An alert's incident opened by the default route has no route
-policy and goes straight to the default. Tests: `packages/schema/tests/alert-sources.test.ts` ("the route's policy
-pages the incident").
+policy and goes straight to the default. The route is read from `incident_routes`, written as the route declares
+the incident, not from its alert rows, which `MAX_ALERT_ROWS` prunes. Tests: `packages/schema/tests/alert-sources.test.ts`
+("the route's policy pages the incident", "the route's policy outlives its alert rows").
 
 **Alerts that page again (decided).** Besides a declared incident, two things alert sources do page (RFC 0005 "Alert
 sources"). An alert that comes back more urgent raises its incident's severity as `sys_alerts`
@@ -105,7 +106,9 @@ sources"). An alert that comes back more urgent raises its incident's severity a
 again while a run is under way, else a new run. And a flapping alert, firing again within 10 minutes of its
 incident resolving by itself, reopens that incident as `sys_alerts`; `asksForPage` counts an
 `incident.status_changed` from a closed status to an active one by `sys_alerts` as a page (a member reopening an
-incident still pages nobody), and since the reopen cleared the acknowledgement, it starts a new run. Tests:
+incident still pages nobody), and since the reopen cleared the acknowledgement, it starts a new run. A flap that comes
+back more urgent raises the incident just before reopening it; that `incident.severity_changed` carries
+`reopening: true` and pages nothing, so the flap is one page, at the raised severity. Tests:
 `apps/api/test/notify.test.ts` ("an incident the alerts reopen … pages"), `apps/api/test/alerts.test.ts` ("a flapping
 alert reopens its incident and pages again").
 

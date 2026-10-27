@@ -26,6 +26,7 @@ import {
   MAX_INCIDENT_SERVICES,
   setIncidentSeverity,
   setIncidentStatus,
+  type IncidentSeverityChanged,
 } from "./incidents.ts";
 import { isActive, SEVERITIES, type Severity } from "./lifecycle.ts";
 import {
@@ -44,6 +45,7 @@ import { defineQuery, prefixRange } from "./query.ts";
 import type {
   AlertRouteRow,
   AlertSourceRow,
+  IncidentRouteRow,
   IncidentRow,
   RouteAction,
   RouteMatch,
@@ -885,17 +887,31 @@ export function alertIssues(alert: unknown): Issue[] {
   return result.ok ? [] : result.issues;
 }
 
-/** The firing row an alert of `sourceId` with `dedupKey` belongs to, if any. */
+/**
+ * Whether `row` is the alert of `sourceId` with `dedupKey`. Brigade's own alerts (the unreadable payload's, the
+ * capacity alert) are kept apart from a sender's by their `reason`, whatever the key: a sender that names its alert
+ * `malformed` or `capacity` neither merges into them nor resolves them.
+ */
+function sameAlert(
+  row: SourceAlertRow,
+  sourceId: string,
+  dedupKey: string,
+  system: boolean,
+): boolean {
+  const own = row.reason === "malformed" || row.reason === "capacity";
+  return row.sourceId === sourceId && row.dedupKey === dedupKey && own === system;
+}
+
+/** The firing row an alert of `sourceId` with `dedupKey` belongs to, if any (`system`: one of Brigade's own). */
 function firingRow(
   store: MutationStore,
   sourceId: string,
   dedupKey: string,
+  system: boolean,
 ): SourceAlertRow | undefined {
   return store
     .scan("source_alerts")
-    .find(
-      (row) => row.sourceId === sourceId && row.dedupKey === dedupKey && row.status === "firing",
-    );
+    .find((row) => row.status === "firing" && sameAlert(row, sourceId, dedupKey, system));
 }
 
 /** Deletes the oldest resolved and closed rows, then the oldest dropped ones, past `MAX_ALERT_ROWS`. Firing ones stay. */
@@ -1028,14 +1044,16 @@ type Intake = {
  *   `incident.declare` (with RBAC) in this transaction; `group` attaches it to the open incident its group already
  *   has (raising it if the alert asks for more), else opens one; `suppress` records it without an incident; `drop`
  *   records only that a route dropped it, and why. Within `FLAP_WINDOW_MS` of this key's incident resolving by itself,
- *   that incident reopens (and pages) instead of a new one. Within `EARLY_RESOLVE_TTL_MS` of a resolve that came
- *   first, nothing opens.
+ *   that incident reopens (and pages, once, at the more urgent of its severity and the alert's) instead of a new one,
+ *   unless the routes now keep the alert quiet. Within `EARLY_RESOLVE_TTL_MS` of a resolve that came first, nothing
+ *   opens.
  * - **Resolved**: resolves the firing row; once nothing fires on its incident, the incident resolves if nobody
  *   worked on it, else gets an `alerts_resolved` timeline entry (`settleIncident`). A resolve for an alert not firing
- *   is remembered for `EARLY_RESOLVE_TTL_MS`, in case its firing is still on its way.
+ *   is remembered for `EARLY_RESOLVE_TTL_MS`, in case its firing is still on its way, only when the key never fired
+ *   (no row of it at all): a repeated resolve, or one after people closed the incident, keeps nothing from paging.
  *
- * A new alert is never refused for room: past `MAX_OPEN_ALERTS` the oldest suppressed one is let go, else the alert
- * becomes the workspace's single "alert capacity reached" alert, which pages through the default route. Declared
+ * A new alert is never refused for room: past `MAX_OPEN_ALERTS` the oldest suppressed one is let go, else the oldest grouped
+ * one whose incident another alert still holds, else the alert becomes the workspace's single "alert capacity reached" alert, which pages through the default route. Declared
  * `silent` since a payload of repeats changes rows but is no domain event.
  */
 export const ingestAlerts = defineMutation({
@@ -1065,7 +1083,7 @@ export const ingestAlerts = defineMutation({
     for (const { alert, alertId, incidentId, malformed: unreadable } of args.alerts) {
       const malformed = args.malformed || unreadable === true;
       intake.malformed = malformed;
-      const current = firingRow(store, source.id, alert.dedupKey);
+      const current = firingRow(store, source.id, alert.dedupKey, malformed);
       if (alert.status === "resolved") {
         events.push(...resolveOne(store, current, alert, intake));
         continue;
@@ -1106,15 +1124,27 @@ export const ingestAlerts = defineMutation({
   },
 });
 
-/** A resolve: of the firing row, else remembered in case the firing comes after it. */
+/**
+ * A resolve: of the firing row, else, when this key never fired at all, remembered in case its firing comes after
+ * it. A key with any row (resolved, closed by people or by Brigade) already fired: the resolve is a repeat, or comes
+ * after its incident was closed, and must not keep the key's next firing from paging.
+ */
 function resolveOne(
   store: MutationStore,
   current: SourceAlertRow | undefined,
   alert: NormalizedAlert,
-  { sourceId, ctx }: Intake,
+  { sourceId, malformed, ctx }: Intake,
 ): DomainEvent[] {
   if (!current) {
-    markResolved(store, sourceId, alert.dedupKey, ctx);
+    // While the capacity alert fires, a key with no row may have been folded into it: it fired, so no marker either.
+    const fired = store
+      .scan("source_alerts")
+      .some(
+        (row) =>
+          sameAlert(row, sourceId, alert.dedupKey, malformed) ||
+          (row.reason === "capacity" && row.status === "firing"),
+      );
+    if (!fired) markResolved(store, sourceId, alert.dedupKey, ctx);
     return [];
   }
   store.update("source_alerts", current.id, {
@@ -1143,8 +1173,7 @@ function flapped(store: MutationStore, alert: NormalizedAlert, { sourceId, ctx }
     .scan("source_alerts")
     .filter(
       (row) =>
-        row.sourceId === sourceId &&
-        row.dedupKey === alert.dedupKey &&
+        sameAlert(row, sourceId, alert.dedupKey, false) &&
         row.status === "resolved" &&
         row.incidentId !== null &&
         row.resolvedAt !== null &&
@@ -1162,14 +1191,20 @@ function flapped(store: MutationStore, alert: NormalizedAlert, { sourceId, ctx }
   return closedByAlerts ? { row: last, incident } : undefined;
 }
 
-/** A firing alert with no firing row: a resolve that came first, a flap, or a new alert through its route. */
+/**
+ * A firing alert with no firing row: a resolve that came first, a flap, or a new alert through its route. A flap goes
+ * through the routes as they are now: one that keeps it quiet (a suppress or drop route added since) leaves the
+ * incident resolved and records the alert as that route has it; otherwise the incident reopens at the more urgent of
+ * its own severity and what the routes give the alert, with one page, the reopen's.
+ */
 function fireNew(
   store: MutationStore,
   alert: NormalizedAlert,
   ids: { alertId: string; incidentId: string },
   intake: Intake,
 ): { events: DomainEvent[] } | { failed: MutationResult } {
-  const { sourceId, ctx } = intake;
+  const { sourceId, malformed, ctx } = intake;
+  if (malformed) return fire(store, alert, ids, intake);
   const marker = store.get("alert_resolve_markers", markerId(sourceId, alert.dedupKey));
   if (marker) {
     store.delete("alert_resolve_markers", marker.id);
@@ -1178,6 +1213,24 @@ function fireNew(
   }
   const flap = flapped(store, alert, intake);
   if (!flap) return fire(store, alert, ids, intake);
+  const { route, action, reason } = pickRoute(intake.routes, sourceId, alert, false);
+  if (action.kind !== "open" && action.kind !== "group") return fire(store, alert, ids, intake);
+  const events: DomainEvent[] = [];
+  const severity = targetSeverity(store, action, alert);
+  if (SEVERITIES.indexOf(severity) < SEVERITIES.indexOf(flap.incident.severity)) {
+    // Raised while still resolved, and marked so it asks for no page of its own: the reopen right after pages, at
+    // this severity (apps/api `asksForPage`).
+    const raised = nested(store, "incident.setSeverity", { id: flap.incident.id, severity }, ctx);
+    if (raised.ok) {
+      events.push(
+        ...raised.events.map((event) =>
+          event.type === "incident.severity_changed"
+            ? { ...event, data: { ...(event as IncidentSeverityChanged).data, reopening: true } }
+            : event,
+        ),
+      );
+    }
+  }
   // Reopened as the alerts' actor, which pages again (`asksForPage`): nobody acknowledged it before it closed.
   const reopened = nested(
     store,
@@ -1189,16 +1242,16 @@ function fireNew(
   const row: SourceAlertRow = {
     ...newRow(alert, ids.alertId, intake),
     outcome: "grouped",
-    reason: flap.row.reason,
-    routeId: flap.row.routeId,
-    routeName: flap.row.routeName,
+    reason,
+    routeId: route?.id ?? null,
+    routeName: route?.name ?? null,
     groupKey: flap.row.groupKey,
-    policyId: flap.row.policyId,
+    policyId: action.policyId,
     incidentId: flap.incident.id,
     incidentNumber: flap.incident.number,
   };
   store.insert("source_alerts", row);
-  return { events: [...reopened.events, firedEvent(row)] };
+  return { events: [...events, ...reopened.events, firedEvent(row)] };
 }
 
 function newRow(
@@ -1249,7 +1302,9 @@ function firedEvent(row: SourceAlertRow): SourceAlertFired {
 
 /**
  * Makes room for one more firing alert: past `MAX_OPEN_ALERTS` (the capacity alert aside), the oldest suppressed
- * one is let go. False when every firing alert holds an open incident, so none can be.
+ * one is let go, else the oldest alert grouped onto an incident that another firing alert still holds (the incident
+ * stays open and paged; the alert sent again groups onto it again). False when every firing alert is the only one
+ * holding its open incident, so none can be.
  */
 function makeRoom(store: MutationStore, ctx: MutationContext, events: DomainEvent[]): boolean {
   const holding = store
@@ -1258,9 +1313,16 @@ function makeRoom(store: MutationStore, ctx: MutationContext, events: DomainEven
       (row) => row.status === "firing" && row.outcome !== "dropped" && row.reason !== "capacity",
     );
   if (holding.length < MAX_OPEN_ALERTS) return true;
-  const oldest = holding
-    .filter((row) => row.outcome === "suppressed")
-    .sort((a, b) => a.lastSeenAt - b.lastSeenAt)[0];
+  const held = new Map<string, number>();
+  for (const row of holding) {
+    if (row.incidentId !== null) held.set(row.incidentId, (held.get(row.incidentId) ?? 0) + 1);
+  }
+  const byAge = (a: SourceAlertRow, b: SourceAlertRow) => a.lastSeenAt - b.lastSeenAt;
+  const oldest =
+    holding.filter((row) => row.outcome === "suppressed").sort(byAge)[0] ??
+    holding
+      .filter((row) => row.outcome === "grouped" && (held.get(row.incidentId ?? "") ?? 0) > 1)
+      .sort(byAge)[0];
   if (!oldest) return false;
   events.push(closeRow(store, oldest, "evicted", ctx));
   return true;
@@ -1348,6 +1410,14 @@ function fire(
   );
   // Without its incident the alert would page nobody: the payload fails, and the shard pages its fallback alert.
   if (!declared.ok) return { failed: declared };
+  if (route && ctx.server) {
+    store.insert("incident_routes", {
+      id: ids.incidentId,
+      routeId: route.id,
+      routeName: route.name,
+      policyId: action.policyId,
+    });
+  }
   const row: SourceAlertRow = {
     ...base,
     outcome: "opened",
@@ -1484,16 +1554,15 @@ export function quietAlerts(store: Pick<MutationStore, "scan">): SourceAlertRow[
 }
 
 /**
- * The alert that opened `incidentId` and the route it went through, for the run's policy (RFC 0006 "Who is paged":
- * route, then monitor, then default). Undefined for an incident no alert source opened.
+ * The route an alert source opened `incidentId` through, kept with the incident (`incident_routes`), for the run's
+ * policy (RFC 0006 "Who is paged": route, then type, then monitor, then default). Undefined for an incident the
+ * default route opened, or no alert source did.
  */
-export function openingAlert(
-  store: Pick<MutationStore, "scan">,
+export function incidentRoute(
+  store: Pick<MutationStore, "get">,
   incidentId: string,
-): SourceAlertRow | undefined {
-  return store
-    .scan("source_alerts")
-    .find((row) => row.incidentId === incidentId && row.outcome === "opened");
+): IncidentRouteRow | undefined {
+  return store.get("incident_routes", incidentId);
 }
 
 // ---- Queries -----------------------------------------------------------------------------------------------------

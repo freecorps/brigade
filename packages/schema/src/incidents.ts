@@ -35,9 +35,13 @@ export type IncidentStatusChanged = DomainEvent<
   "incident.status_changed",
   { from: IncidentStatus; to: IncidentStatus }
 >;
+/**
+ * `reopening`: raised by the alerts' actor as a flapping alert reopens its incident (RFC 0005 "Alert sources"); the
+ * reopen right after it pages, at this severity, so this one asks for no page of its own.
+ */
 export type IncidentSeverityChanged = DomainEvent<
   "incident.severity_changed",
-  { from: Severity; to: Severity }
+  { from: Severity; to: Severity; reopening?: true }
 >;
 /** Someone acknowledged the page: escalation stops (RFC 0003, "Escalation run"). */
 export type IncidentAcknowledged = DomainEvent<"incident.acknowledged", { by: string }>;

@@ -7,7 +7,7 @@ import { dropPolicyFromCatalog } from "./catalog.ts";
 import { idTime } from "./id.ts";
 import { ID_CLOCK_SKEW_MS } from "./incidents.ts";
 import { dropPolicyFromMonitors } from "./monitors.ts";
-import { dropPolicyFromRoutes, openingAlert } from "./alert-sources.ts";
+import { dropPolicyFromRoutes, incidentRoute } from "./alert-sources.ts";
 import {
   defineMutation,
   fail,
@@ -104,11 +104,10 @@ export function incidentPolicy(
       route?: { id: string; name: string } | null;
     }
   | undefined {
-  const alert = openingAlert(store, incidentId);
-  const routed = alert?.policyId ? store.get("escalation_policies", alert.policyId) : undefined;
-  if (alert && routed) {
-    const route = alert.routeId ? { id: alert.routeId, name: alert.routeName ?? "" } : null;
-    return { policy: routed, monitor: null, route };
+  const opened = incidentRoute(store, incidentId);
+  const routed = opened?.policyId ? store.get("escalation_policies", opened.policyId) : undefined;
+  if (opened && routed) {
+    return { policy: routed, monitor: null, route: { id: opened.routeId, name: opened.routeName } };
   }
   const typeId = store.get("incidents", incidentId)?.typeId;
   const type = typeId ? store.get("incident_types", typeId) : undefined;

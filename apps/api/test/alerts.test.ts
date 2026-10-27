@@ -183,6 +183,31 @@ describe("POST /alerts/:token", () => {
     expect((await receiveAlerts(request(token), limited(true, true), token)).status).toBe(202);
   });
 
+  test("a flood of made-up secrets spends ALERT_WORKSPACE_LIMIT, and a source already sending flows past it", async () => {
+    const ws = await workspace();
+    const { id, token } = await source(ws, "grafana");
+    const woken: string[] = [];
+    let open = true;
+    const limits = {
+      ...env,
+      ALERT_WORKSPACE_LIMIT: { limit: async () => ({ success: open }) },
+      WORKSPACE: watched(woken),
+    } as unknown as Env;
+    expect((await receiveAlerts(request(token), limits, token)).status).toBe(202);
+    // The flood spends the workspace's bucket: made-up secrets get 503 without waking the shard.
+    open = false;
+    const made = alertSourceToken(ws.id, id, newHeartbeatSecret(random));
+    expect((await receiveAlerts(request(made), limits, made)).status).toBe(503);
+    expect(woken).toHaveLength(1);
+    // The real token was accepted lately: it skips the bucket, and the shard checks it again.
+    expect((await receiveAlerts(request(token), limits, token)).status).toBe(202);
+    expect(woken).toHaveLength(2);
+    // A source this isolate has not seen accepted waits for the bucket like any unknown token.
+    const { token: fresh } = await source(ws, "grafana");
+    expect((await receiveAlerts(request(fresh), limits, fresh)).status).toBe(503);
+    expect(woken).toHaveLength(2);
+  });
+
   test("wrong secrets are counted apart and never spend the source's budget", async () => {
     const ws = await workspace();
     const { id, token } = await source(ws, "grafana");

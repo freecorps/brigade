@@ -72,7 +72,8 @@
   // checked before a receipt wakes its shard. A page is one receipt per phone, so 120 covers a large team behind one
   // address. Each environment has its own namespace so their counts never mix; locally it is simulated.
   // Alert sources (RFC 0005 "Alert sources", src/index.ts `receiveAlerts`), each a minute: ALERT_WORKSPACE_LIMIT,
-  // payloads per workspace, checked before a payload wakes its shard; ALERT_LIMIT, payloads per source, checked by the
+  // payloads per workspace, checked before a payload wakes its shard, and only for a token the isolate has not seen
+  // accepted lately, so a flood of wrong secrets cannot hold a sending source back; ALERT_LIMIT, payloads per source, checked by the
   // shard once the secrets matched (src/workspace.ts `alertAllowed`), so wrong secrets never spend it;
   // ALERT_REFUSED_LIMIT, refused requests per workspace, past which a token refused lately wakes no shard. Repeats are
   // deduplicated anyway; these bound the shard's work.

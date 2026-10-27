@@ -335,13 +335,17 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   own header must be. Every refusal, in the Worker or the shard (a wrong secret, header or signature, a deleted
   source, a made-up workspace), is the same `404`. Accepted is `202`.
 - **Rate limits** (Workers Rate Limiting: approximate, per Cloudflare location, each failing open, since a lost alert is
-  worse than a busy shard). `ALERT_WORKSPACE_LIMIT`, 1,200 a minute per workspace, before the shard wakes.
+  worse than a busy shard). `ALERT_WORKSPACE_LIMIT`, 1,200 a minute per workspace, before the shard wakes,
+  spent only by a token the isolate has not seen the shard accept in the last hour (an LRU of at most 10,000 SHA-256s
+  of accepted tokens, per isolate; a token the shard refuses is taken out): a source already sending skips it, and
+  the shard still checks its secrets and spends its `ALERT_LIMIT`.
   `ALERT_LIMIT`, 300 a minute per source, spent by the shard only once the secrets matched, so requests with a wrong
   secret never use up the real source's budget. `ALERT_REFUSED_LIMIT`, 120 refused requests a minute per workspace,
   counted apart; past it, a token refused in the last minute is refused by the Worker without waking the shard. Over a
   limit is `503` with `Retry-After`, never `429`: Datadog retries a 5xx and gives up on a 429. A flood of random
-  secrets against one workspace can still spend its workspace budget and delay its real alerts; Cloudflare's own
-  rules in front are the outer layer.
+  secrets against one workspace spends its workspace budget and wakes its shard at most that often, but cannot hold
+  back a source an isolate has accepted lately; a source's first payload on an isolate that has not seen it during
+  such a flood still waits (`503`, retried by the sender). Cloudflare's own rules in front are the outer layer.
 - **Normalizing** (`normalizeAlerts`, pure, with fixtures from the providers' documented samples): each payload to
   alerts with a dedup key, a title, a severity (`critical`, `high`, `warning`, `info`), firing or resolved, an http(s)
   link and labels, all fitted to Brigade's text rules by UTF-16 length (what the shard's validators count), never
@@ -355,7 +359,9 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   (`$ID` is new on every notification). Datadog's transition (`$ALERT_TRANSITION`, else the title's bracket):
   Recovered resolves, a Warn is a warning whatever the monitor's priority, the rest fire. At most 50 alerts a payload.
 - **A payload Brigade cannot read still pages.** Not JSON, or no readable alert: it becomes one alert of its own
-  ("Unreadable alert from <source>", key `malformed`, high) that skips the routes, so a route cannot drop it, and
+  ("Unreadable alert from <source>", key `malformed`, high) that skips the routes. Brigade's own alerts (this one and
+  the capacity alert) are told apart from a sender's by why they exist, not by key: a sender's alert keyed `malformed`
+  or `capacity` is its own alert, and never merges into or resolves them. It cannot be dropped by a route, and
   opens an incident through the default route. A payload with some unreadable entries pages the readable ones and that
   alert too (a Grafana group with one bad alert still pages the others). An alert the shard would refuse is left out
   the same way, and a payload the shard refuses anyway (`invalid_args`, a declare it could not make) is logged and
@@ -375,15 +381,23 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   problem is gone and nobody is on it. One people worked on stays open for them, with an `alerts_resolved` timeline
   entry. **Flapping:** a key firing again within 10 minutes (`FLAP_WINDOW_MS`) of its incident resolving by itself
   reopens that incident (to investigating, as `sys_alerts`, which pages again: nobody acknowledged it) rather than
-  opening another, so a flapping alert is one incident and one page per flap. Reopened, it is no longer untouched, so
-  the next resolve leaves it open for people; past the window, or after people resolved it, the key opens a new
-  incident. A resolve that comes before its firing (out of order) is remembered for an hour
-  (`EARLY_RESOLVE_TTL_MS`, server-only `alert_resolve_markers`, at most 200), and the late firing opens nothing.
+  opening another, so a flapping alert is one incident and one page per flap. The flap goes through the routes as
+  they are now: a suppress or drop route added since keeps it quiet (the incident stays resolved, the alert is
+  recorded as that route has it); otherwise the incident reopens at the more urgent of its own severity and the one
+  the routes give the alert, with one page: the raise comes first, marked `reopening`, and only the reopen pages.
+  Reopened, it is no longer untouched, so the next resolve leaves it open for people; past the window, or after
+  people resolved it, the key opens a new incident. A resolve that comes before its firing (out of order: a key with
+  no row at all, and no capacity alert firing that it may have been folded into) is remembered for an hour
+  (`EARLY_RESOLVE_TTL_MS`, server-only `alert_resolve_markers`, at most 200), and the late firing opens nothing. A
+  resolve for a key that already fired (a sender resolving again, as Grafana does, or after people closed its
+  incident, or after it expired or was let go for room) is remembered by nothing, so the key's next firing pages.
+  Once `MAX_ALERT_ROWS` has pruned every row of a key, a repeated resolve of it counts as early again.
 - **Room.** Alerts that hold nothing are let go (`closed`): closing an incident (resolved or declined) releases the
   alerts on it (`incident.setStatus`), and a suppressed or dropped alert not sent for 24 hours expires
   (`ALERT_IDLE_TTL_MS`; an alert on an open incident never expires, its incident holds it). At most 200 alerts fire
   at once (`MAX_OPEN_ALERTS`, dropped ones aside), and a new alert is never refused for room: past it the oldest
-  suppressed alert is let go, else the new one pages as the workspace's single "Alert capacity reached" alert
+  suppressed alert is let go, else the oldest alert grouped onto an incident another firing alert still holds (the
+  incident stays open; that alert, sent again, groups onto it again), else the new one pages as the workspace's single "Alert capacity reached" alert
   (through the default route, as urgent as the most urgent alert it stands for), whose repeats count like any other.
   The last 300 rows are kept (`MAX_ALERT_ROWS`), oldest resolved or closed first.
 - **Routes** (`alertRoute.create`, `.update`, `.move`, `.delete`; at most 50): tried in order, the first that matches
@@ -402,7 +416,9 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   (`disabled: "takeover"`, skipped by routing, their quiet alerts routed again) besides revoking every source URL, and
   the takeover notice counts both. Saving a disabled route enables it.
 - **Paging** is the incident's: `incident.declare` as `sys_alerts`, through the same path as monitors, with the
-  route's policy first in the policy order (RFC 0006 "Who is paged"). Tests: `apps/api/test/alerts.test.ts`, a
+  route's policy first in the policy order (RFC 0006 "Who is paged"). The route an incident was opened through is kept
+  with it (server-only `incident_routes`, by incident id, written with the declaration), so its policy pages the
+  incident for as long as it lives, however many of its alert rows were pruned since. Tests: `apps/api/test/alerts.test.ts`, a
   paging path ("a dedup storm pages once", "a malformed payload still pages instead of being silently dropped", "an
   unmatched alert still pages through the default route", "a dropped alert records which route dropped it", "past the
   open-alert cap a new alert still pages", "a flapping alert reopens its incident and pages again"), and

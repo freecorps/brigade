@@ -912,6 +912,21 @@ export type SourceAlertStatus = "firing" | "resolved" | "closed";
  */
 export type AlertResolveMarkerRow = { id: string; at: number };
 
+/**
+ * Server-only: the alert route an alert source opened an incident through (its id is the incident's), written with
+ * the incident's declaration, so the route's policy pages it for as long as the incident lives (RFC 0006 "Who is
+ * paged"), however many of its alert rows `MAX_ALERT_ROWS` deleted since. None for an incident the default route
+ * opened, or a member declared.
+ */
+export type IncidentRouteRow = {
+  id: string;
+  routeId: string;
+  /** The route's name when it opened the incident. */
+  routeName: string;
+  /** Its escalation policy then; null: the default. */
+  policyId: string | null;
+};
+
 /** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only. */
 export type CounterRow = { id: string; value: number };
 
@@ -953,6 +968,7 @@ export type BrigadeTables = {
   alert_routes: AlertRouteRow;
   source_alerts: SourceAlertRow;
   alert_resolve_markers: AlertResolveMarkerRow;
+  incident_routes: IncidentRouteRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -996,6 +1012,7 @@ export const TABLES = {
   alert_routes: { serverOnly: false },
   source_alerts: { serverOnly: false },
   alert_resolve_markers: { serverOnly: true },
+  incident_routes: { serverOnly: true },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

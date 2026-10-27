@@ -19,6 +19,7 @@ import {
   type DevicePlatform,
   incidentPolicy,
   type IncidentRow,
+  type IncidentSeverityChanged,
   type IncidentStatus,
   type PageFailure,
   prefixRange,
@@ -157,7 +158,8 @@ export type DeviceOutcome =
  * the shard's alarm (the level a run starts with is sent on the event that started it). Monitors open incidents with
  * `incident.declared` as `sys_monitors` (SEV2), so they page through the same rule. An incident reopened by the
  * alerts' actor pages too: its alert fired again soon after it resolved by itself, unacknowledged (RFC 0005 "Alert
- * sources", flapping); a reopen by a member does not.
+ * sources", flapping); a reopen by a member does not. The severity that reopen raised it to first (`reopening`) is
+ * paged by the reopen, so it asks for nothing more.
  */
 export function asksForPage(event: BrigadeEvent): boolean {
   if (event.subject === undefined) return false;
@@ -176,8 +178,9 @@ export function asksForPage(event: BrigadeEvent): boolean {
     return (event.data as Partial<EscalationPaged["data"]> | null)?.started === false;
   }
   if (event.type !== "incident.severity_changed") return false;
-  const { from, to } = (event.data ?? {}) as { from?: Severity; to?: Severity };
+  const { from, to, reopening } = (event.data ?? {}) as Partial<IncidentSeverityChanged["data"]>;
   return (
+    reopening !== true &&
     to !== undefined &&
     from !== undefined &&
     PAGING_SEVERITIES.includes(to) &&

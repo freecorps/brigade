@@ -217,6 +217,8 @@ the email Slack confirmed for one of the connected team's own users (RFC 0011 "W
   a day, while anything is due or overdue. Should the hour be a member's choice, should reminders also go a day
   before the due date, and should an overdue follow-up stop reminding after a while?
 - Exports last 7 days and only owners and admins make them. Should responders export the incidents they ran?
+- A postmortem keeps the template sections it was made with, even when its incident's type changes later. Should a
+  postmortem that is still blank follow its incident's new type, or should the editor offer to switch sections?
 
 ## Q25 — API tokens to confirm (RFC 0014)
 

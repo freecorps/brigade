@@ -639,6 +639,8 @@ export const deleteIncidentType = defineMutation({
     const type = store.get("incident_types", args.id);
     if (!type) return fail("not_found", "Type not found");
     store.delete("incident_types", args.id);
+    // Its postmortem template goes with it: its incidents fall back to the default. Postmortems keep their sections.
+    if (store.get("postmortem_templates", args.id)) store.delete("postmortem_templates", args.id);
     retire(store, args.id, ctx);
     const event: IncidentTypeDeleted = {
       type: "incident_type.deleted",

@@ -2708,7 +2708,52 @@
         "part=ai_refused_other": "Não foi possível pedir um rascunho: {reason}",
         "part=chars": "Restam: {count}",
         "part=read_only": "Só responders, admins e owners editam o postmortem.",
+        "part=template_changed": "O modelo de postmortem deste incidente mudou enquanto você escrevia. Seu texto continua aqui: copie o que precisar e carregue as novas seções.",
+        "part=total": "{count} restantes no postmortem inteiro",
         "part=*": "Postmortem"
+      }
+    }
+  ],
+  "postmortem_template_text": [
+    {
+      "declarations": ["input part", "input name", "input count"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Modelos de postmortem",
+        "part=note": "As seções com que um novo postmortem começa, por tipo de incidente. Um postmortem mantém as seções com que foi criado: editar um modelo ou mudar o tipo do incidente depois não o altera.",
+        "part=default_name": "Padrão do workspace",
+        "part=default_note": "Para incidentes sem tipo, ou de um tipo sem modelo próprio.",
+        "part=builtin": "As sete seções padrão",
+        "part=uses_default": "Usa o padrão do workspace",
+        "part=sections": "Seções: {name}",
+        "part=edit": "Editar modelo",
+        "part=edit_on": "Editar o modelo de postmortem de {name}",
+        "part=form_title": "Modelo de postmortem: {name}",
+        "part=custom": "Personalizada",
+        "part=custom_name": "Seção personalizada {count}",
+        "part=field_title": "Título",
+        "part=field_title_builtin": "Deixe vazio para manter “{name}”.",
+        "part=field_title_invalid": "Uma seção personalizada precisa de um título.",
+        "part=field_hint": "Dica",
+        "part=field_hint_note": "Mostrada a quem escreve a seção e passada ao rascunho de IA.",
+        "part=field_starter": "Texto inicial",
+        "part=field_starter_note": "O editor de um novo postmortem começa com ele.",
+        "part=field_invalid": "Remova caracteres ocultos ou escreva algo visível.",
+        "part=add": "Adicionar seção",
+        "part=add_custom": "Seção personalizada",
+        "part=limit": "Um modelo tem todas as seções padrão e até três personalizadas.",
+        "part=move_up": "Mover {name} para cima",
+        "part=move_down": "Mover {name} para baixo",
+        "part=remove": "Remover {name}",
+        "part=preview": "Prévia",
+        "part=preview_note": "O que o editor de um novo postmortem mostra.",
+        "part=save": "Salvar modelo",
+        "part=cancel": "Cancelar",
+        "part=reset_type": "Usar o padrão do workspace",
+        "part=reset_default": "Usar as seções padrão",
+        "part=reset_confirm": "Deixar de usar este modelo? Novos postmortems passam a usar {name}. Postmortems já escritos mantêm suas seções.",
+        "part=reset_confirm_action": "Deixar de usar",
+        "part=*": "Modelos de postmortem"
       }
     }
   ],

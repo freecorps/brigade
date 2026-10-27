@@ -3,6 +3,7 @@ import type { SlackActOutcome } from "@freecorps/brigade-slack/bridge";
 import {
   ACCOUNT_ACTOR,
   AI_ACTOR,
+  BUILTIN_LAYOUT,
   allows,
   exportChunks,
   fitMemberName,
@@ -877,7 +878,9 @@ export class WorkspaceDO extends DurableObject<Env> {
     });
     if (!result.ok) return { ok: false, code: result.error.code };
     this.broadcast(result.version, changes, undefined);
-    return { ok: true, requestId, source };
+    // The sections the draft fills: the postmortem's own, which the mutation took from its template if it was new.
+    const layout = this.shard.store.get("postmortems", incidentId)?.layout ?? BUILTIN_LAYOUT;
+    return { ok: true, requestId, source, layout: layout.map((section) => ({ ...section })) };
   }
 
   /** Writes the model's draft, or why there is none, as `sys_ai` (RPC from the Worker's `waitUntil`). */

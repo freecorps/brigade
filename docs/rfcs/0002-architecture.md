@@ -83,22 +83,28 @@ Packages are MIT so third parties can build integrations without AGPL concerns; 
 
 ## Public HTTP API
 
-Most of Brigade is read and changed over Brigade Sync (RFC 0004): incidents, monitors, schedules, escalation
-policies and devices have no REST routes, and none are planned while sync covers them. The HTTP routes an integration
-may rely on are few, and they are the contract: [`docs/api/openapi.json`](../api/openapi.json), OpenAPI 3.1, served
-without auth at `GET /api/openapi.json` by the dashboard's Worker.
+Most of Brigade is read and changed over Brigade Sync (RFC 0004): monitors, schedules, escalation policies and
+devices have no REST routes, and none are planned while sync covers them. Incidents and the catalog have a few, for
+scripts and integrations that cannot hold a socket: each write runs the named mutation the apps send (RFC 0004), as
+the member or token, so it has the same RBAC, timeline entries and outbox events, and a declare pages exactly as one
+from the dashboard. The HTTP routes an integration may rely on are few, and they are the contract:
+[`docs/api/openapi.json`](../api/openapi.json), OpenAPI 3.1, served without auth at `GET /api/openapi.json` by the
+dashboard's Worker.
 
-| Public (in the reference)                                                            | Why an integration calls it                       |
-| ------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| `GET /health`, `GET /health/paging`                                                  | Uptime checks; whether pages are going out        |
-| `POST /heartbeat/:token`                                                             | Cron jobs and backups pinging a heartbeat         |
-| `POST /alerts/:token`                                                                | Grafana, Datadog, Sentry or a webhook alerting    |
-| `POST /workspaces`                                                                   | Provisioning                                      |
-| `PATCH`, `DELETE /workspaces/:id/members/:userId`                                    | Role changes, offboarding                         |
-| `GET`, `POST /workspaces/:id/invitations`, `DELETE …/:invitationId`, `POST …/resend` | Onboarding from a directory                       |
-| `GET /invitations/:id`, `POST …/accept`, `POST …/decline`                            | The invitee's side                                |
-| `POST /workspaces/:id/incidents/:incidentId/ack`                                     | Acknowledging from outside the apps               |
-| `GET /sync/:id`                                                                      | The sync WebSocket: described, frames not modeled |
+| Public (in the reference)                                                               | Why an integration calls it                        |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `GET /health`, `GET /health/paging`                                                     | Uptime checks; whether pages are going out         |
+| `POST /heartbeat/:token`                                                                | Cron jobs and backups pinging a heartbeat          |
+| `POST /alerts/:token`                                                                   | Grafana, Datadog, Sentry or a webhook alerting     |
+| `POST /workspaces`                                                                      | Provisioning                                       |
+| `PATCH`, `DELETE /workspaces/:id/members/:userId`                                       | Role changes, offboarding                          |
+| `GET`, `POST /workspaces/:id/invitations`, `DELETE …/:invitationId`, `POST …/resend`    | Onboarding from a directory                        |
+| `GET /invitations/:id`, `POST …/accept`, `POST …/decline`                               | The invitee's side                                 |
+| `POST /workspaces/:id/incidents/:incidentId/ack`                                        | Acknowledging from outside the apps                |
+| `GET`, `POST /workspaces/:id/incidents`; `GET`, `PATCH …/:incidentId`; `POST …/updates` | Declaring, reading and updating from scripts       |
+| `GET`, `POST /workspaces/:id/services`; `GET`, `PATCH`, `DELETE …/:serviceId`           | Keeping the service catalog from a source of truth |
+| `GET`, `POST /workspaces/:id/incident-types`, `…/custom-fields`; `GET`, `PATCH …/:id`   | The same for incident types and custom fields      |
+| `GET /sync/:id`                                                                         | The sync WebSocket: described, frames not modeled  |
 
 Internal, not part of the contract, may change without notice: `/auth/*` (Better Auth's; only sign-in, sign-out and
 the session are relied on, and the reference says how), `GET /workspaces/:id` (the dashboard's stack check),
@@ -113,6 +119,21 @@ and `GET /features` (the dashboard's AI drafts and exports, RFC 0013) and `/slac
 public status page itself (RFC 0012): HTML
 for people, not an API. A JSON read of a status page does not exist yet.
 
+**Incidents and the catalog** (`apps/api/src/rest-routes.ts`, the Worker's checks; `src/rest.ts`, the shard's
+side, as `WorkspaceDO.restRead` and `restWrite`). Bodies are the schema package's validators (`packages/schema`
+`rest.ts`), built from the arguments of the mutation each route runs: `incident.declare`; `incident.setType`,
+`setServices`, `setField` per field, `setSeverity` and `setStatus` for a `PATCH`, in that order, each its own change
+(one asking for what already is counts as done; the first refusal stops the rest, the ones before it stay made);
+`incident.postUpdate`; `service.create`, `update`, `delete`; `incidentType.create`, `update`; `customField.create`,
+`update` (a `PATCH` sends what changes, and the shard fills in the rest from the row). The server makes the ids. Every
+write needs an `Idempotency-Key` (the ack's pattern): each mutation's id is made from it and the id a create makes
+from it too (with the time the first run was stored), so a retry within the results' retention (a day) answers the
+first request and changes nothing. Reads come from the shard's rows, held to the permission (`incident:read`,
+`catalog:read`); incidents come newest first by id, 50 a page (at most 100), filtered by status and severity (lists),
+type and service, with a cursor (the last id). Catalog lists are whole (their caps: 100, 20, 25). Answers are
+projections (`publicIncident` and its siblings): deleted services, types, fields and options left out. Not here: the
+incident's title (no mutation changes it yet), roles, deleting types and fields, and role definitions.
+
 **Source of truth.** Request bodies are converted from the `v.*` validators the routes run (`toJsonSchema` in
 `packages/schema`), refusal codes from the status maps the routes answer with (`apps/api/src/http.ts`); the route
 list, auth and answers are written by hand in `apps/api/src/openapi.ts`. `vp run --filter @freecorps/brigade-api
@@ -123,7 +144,7 @@ for a basic case (and `401` without a session).
 **Auth.** The Better Auth session cookie, with cookie-authenticated writes refusing another site's `Origin`, or an
 **API token** (RFC 0014): per workspace, minted by owners and admins with scopes and an optional expiry, hashed at
 rest, sent as `Authorization: Bearer brg_…`, acting as a `token` actor with its creator's current role and never
-beyond its scopes. The members, invitations (the workspace's side), ack and sync routes above take one; `POST
+beyond its scopes. The members, invitations (the workspace's side), ack, incident, catalog and sync routes above take one; `POST
 /workspaces` and the invitee's routes do not. A bearer request skips the `Origin` check and ignores any cookie; the
 reference marks these operations `bearerAuth`, and its test runs each with a token.
 
@@ -133,7 +154,7 @@ registers (RFC 0005 "Outbound webhooks"): one entry per payload `type`, its body
 lists are an `anyOf` of the known values and any string, and objects are open) and the three
 Standard Webhooks headers. The same test checks it is current and that payloads the API signs match their type's schema.
 
-**SDK.** `packages/sdk` (`@freecorps/brigade-sdk`, MIT, 0.1.0, not on npm yet: publishing is the owner's call) is the
+**SDK.** `packages/sdk` (`@freecorps/brigade-sdk`, MIT, 0.2.0, not on npm yet: publishing is the owner's call) is the
 reference's client side: `verifyWebhook` (Standard Webhooks on Web Crypto, so Workers, Node 20+, Deno, Bun and
 browsers; the payload parsed by the schema package's validators into `WebhookPayload`), `createClient` (one method per
 operation above except `openSync`, an injectable `fetch`, the session cookie, an API token (`token`, sent as

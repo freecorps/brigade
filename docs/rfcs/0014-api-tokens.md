@@ -65,7 +65,11 @@ copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving
 - **Routes** (RFC 0002's public list): changing and removing members (`members:manage`; a token never changes or
   removes its own creator, see "Members" below), listing, sending, revoking and resending invitations (`members:manage`; sending also
   needs the creator's address verified, and the invitation is from the creator), acknowledging an incident
-  (`incident:ack`) and the sync WebSocket (each query and mutation checked against the scopes). Not: `POST
+  (`incident:ack`), incidents (`incident:read` to list and read them, `incident:declare` to declare,
+  `incident:update` to change their type, services, fields, severity and status and to post updates), the catalog
+  (`catalog:read` to list and read services, incident types and custom fields, `catalog:manage` to make, change and
+  remove them; RFC 0002 "Public HTTP API") and the sync WebSocket (each query and mutation checked against the
+  scopes). No scope was added for them: they are the permissions those mutations and queries already need. Not: `POST
   /workspaces` (a token belongs to a workspace that exists) and the invitee's routes (they are about one person's
   own address). The dashboard's internal routes (webhooks, the status page, exports, drafts) stay cookie-only.
 - **As an actor** (RFC 0004): `{ kind: "token", id: "tok_…", role, by: "usr_…", scopes }`, where `role` is the

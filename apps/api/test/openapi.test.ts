@@ -138,6 +138,46 @@ async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/** An incident declared in the team's workspace. */
+async function declared(t: Team): Promise<string> {
+  const id = newId("inc", Date.now(), random);
+  await t.run("incident.declare", { id, title: "Checkout down", severity: "sev2" });
+  return id;
+}
+
+/** A service, incident type or text custom field in the team's catalog. */
+async function catalogEntry(t: Team, prefix: "svc" | "typ" | "fld"): Promise<string> {
+  const id = newId(prefix, Date.now(), random);
+  if (prefix === "svc") {
+    await t.run("service.create", {
+      id,
+      name: "Checkout",
+      description: "",
+      tier: "tier1",
+      owners: [],
+      escalationPolicyId: null,
+    });
+  } else if (prefix === "typ") {
+    await t.run("incidentType.create", {
+      id,
+      name: "Security",
+      description: "",
+      defaultSeverity: null,
+      escalationPolicyId: null,
+      requiredFields: [],
+    });
+  } else {
+    await t.run("customField.create", {
+      id,
+      name: "Region",
+      description: "",
+      kind: "text",
+      options: [],
+    });
+  }
+  return id;
+}
+
 /** One request for an operation: its path filled in, and who sends it. */
 type Case = { path: string; init?: Init; cookie?: string; status: number };
 
@@ -291,6 +331,198 @@ const CASES: Record<string, () => Promise<Case>> = {
       status: 200,
     };
   },
+  listIncidents: async () => {
+    const t = await team();
+    await t.run("incident.declare", {
+      id: newId("inc", Date.now(), random),
+      title: "Checkout down",
+    });
+    return {
+      path: `/workspaces/${t.id}/incidents?status=triage&limit=10`,
+      cookie: t.caio.cookie,
+      status: 200,
+    };
+  },
+  declareIncident: async () => {
+    const t = await team();
+    return {
+      path: `/workspaces/${t.id}/incidents`,
+      init: {
+        method: "POST",
+        headers: { [IDEMPOTENCY_KEY_HEADER]: "declare-1" },
+        body: JSON.stringify({ title: "Checkout down", severity: "sev2" }),
+      },
+      cookie: t.caio.cookie,
+      status: 201,
+    };
+  },
+  getIncident: async () => {
+    const t = await team();
+    const incident = await declared(t);
+    return {
+      path: `/workspaces/${t.id}/incidents/${incident}`,
+      cookie: t.caio.cookie,
+      status: 200,
+    };
+  },
+  updateIncident: async () => {
+    const t = await team();
+    const incident = await declared(t);
+    const field = await catalogEntry(t, "fld");
+    return {
+      path: `/workspaces/${t.id}/incidents/${incident}`,
+      init: {
+        method: "PATCH",
+        headers: { [IDEMPOTENCY_KEY_HEADER]: "patch-1" },
+        body: JSON.stringify({
+          severity: "sev1",
+          status: "investigating",
+          fields: { [field]: "eu-west" },
+        }),
+      },
+      cookie: t.caio.cookie,
+      status: 200,
+    };
+  },
+  postIncidentUpdate: async () => {
+    const t = await team();
+    const incident = await declared(t);
+    return {
+      path: `/workspaces/${t.id}/incidents/${incident}/updates`,
+      init: {
+        method: "POST",
+        headers: { [IDEMPOTENCY_KEY_HEADER]: "update-1" },
+        body: JSON.stringify({ body: "Rolling back the deploy." }),
+      },
+      cookie: t.caio.cookie,
+      status: 201,
+    };
+  },
+  listServices: async () => {
+    const t = await team();
+    await catalogEntry(t, "svc");
+    return { path: `/workspaces/${t.id}/services`, cookie: t.caio.cookie, status: 200 };
+  },
+  createService: async () => {
+    const t = await team();
+    return {
+      path: `/workspaces/${t.id}/services`,
+      init: {
+        method: "POST",
+        headers: { [IDEMPOTENCY_KEY_HEADER]: "service-1" },
+        body: JSON.stringify({ name: "Checkout", tier: "tier1" }),
+      },
+      cookie: t.ana.cookie,
+      status: 201,
+    };
+  },
+  getService: async () => {
+    const t = await team();
+    const id = await catalogEntry(t, "svc");
+    return { path: `/workspaces/${t.id}/services/${id}`, cookie: t.caio.cookie, status: 200 };
+  },
+  updateService: async () => {
+    const t = await team();
+    const id = await catalogEntry(t, "svc");
+    return {
+      path: `/workspaces/${t.id}/services/${id}`,
+      init: {
+        method: "PATCH",
+        headers: { [IDEMPOTENCY_KEY_HEADER]: "service-2" },
+        body: JSON.stringify({ tier: "tier2" }),
+      },
+      cookie: t.ana.cookie,
+      status: 200,
+    };
+  },
+  deleteService: async () => {
+    const t = await team();
+    const id = await catalogEntry(t, "svc");
+    return {
+      path: `/workspaces/${t.id}/services/${id}`,
+      init: { method: "DELETE", headers: { [IDEMPOTENCY_KEY_HEADER]: "service-3" } },
+      cookie: t.ana.cookie,
+      status: 200,
+    };
+  },
+  listIncidentTypes: async () => {
+    const t = await team();
+    await catalogEntry(t, "typ");
+    return { path: `/workspaces/${t.id}/incident-types`, cookie: t.caio.cookie, status: 200 };
+  },
+  createIncidentType: async () => {
+    const t = await team();
+    return {
+      path: `/workspaces/${t.id}/incident-types`,
+      init: {
+        method: "POST",
+        headers: { [IDEMPOTENCY_KEY_HEADER]: "type-1" },
+        body: JSON.stringify({ name: "Security", defaultSeverity: "sev1" }),
+      },
+      cookie: t.ana.cookie,
+      status: 201,
+    };
+  },
+  getIncidentType: async () => {
+    const t = await team();
+    const id = await catalogEntry(t, "typ");
+    return { path: `/workspaces/${t.id}/incident-types/${id}`, cookie: t.caio.cookie, status: 200 };
+  },
+  updateIncidentType: async () => {
+    const t = await team();
+    const id = await catalogEntry(t, "typ");
+    return {
+      path: `/workspaces/${t.id}/incident-types/${id}`,
+      init: {
+        method: "PATCH",
+        headers: { [IDEMPOTENCY_KEY_HEADER]: "type-2" },
+        body: JSON.stringify({ description: "Anything a customer can see." }),
+      },
+      cookie: t.ana.cookie,
+      status: 200,
+    };
+  },
+  listCustomFields: async () => {
+    const t = await team();
+    await catalogEntry(t, "fld");
+    return { path: `/workspaces/${t.id}/custom-fields`, cookie: t.caio.cookie, status: 200 };
+  },
+  createCustomField: async () => {
+    const t = await team();
+    return {
+      path: `/workspaces/${t.id}/custom-fields`,
+      init: {
+        method: "POST",
+        headers: { [IDEMPOTENCY_KEY_HEADER]: "field-1" },
+        body: JSON.stringify({
+          name: "Customer impact",
+          kind: "single_select",
+          options: [{ label: "None" }, { label: "Some" }],
+        }),
+      },
+      cookie: t.ana.cookie,
+      status: 201,
+    };
+  },
+  getCustomField: async () => {
+    const t = await team();
+    const id = await catalogEntry(t, "fld");
+    return { path: `/workspaces/${t.id}/custom-fields/${id}`, cookie: t.caio.cookie, status: 200 };
+  },
+  updateCustomField: async () => {
+    const t = await team();
+    const id = await catalogEntry(t, "fld");
+    return {
+      path: `/workspaces/${t.id}/custom-fields/${id}`,
+      init: {
+        method: "PATCH",
+        headers: { [IDEMPOTENCY_KEY_HEADER]: "field-2" },
+        body: JSON.stringify({ name: "Region affected" }),
+      },
+      cookie: t.ana.cookie,
+      status: 200,
+    };
+  },
   openSync: async () => {
     const t = await team();
     return {
@@ -372,6 +604,9 @@ function samplePath(path: string): string {
     userId: newId("usr", Date.now(), random),
     invitationId: newId("inv", Date.now(), random),
     incidentId: newId("inc", Date.now(), random),
+    serviceId: newId("svc", Date.now(), random),
+    typeId: newId("typ", Date.now(), random),
+    fieldId: newId("fld", Date.now(), random),
     token: "token",
   };
   return path.replaceAll(/\{(\w+)\}/g, (_, name: string) => samples[name]!);

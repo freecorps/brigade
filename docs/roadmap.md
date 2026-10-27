@@ -339,8 +339,12 @@ Validate the risky assumptions before writing product code. Each spike produces 
     responsibilities, the built-ins renamed or described (the commander never removed, so paging is unchanged),
     incident types listing the roles to fill and the ones they require, assigned on the incident page through the same
     `incident.assignRole` by role id, shown read-only in the app when they are the workspace's own.
+  - Done: the catalog over the public HTTP API and the SDK (RFC 0002 "Public HTTP API"): services, incident types and
+    custom fields listed, read, made and changed (services removed), and incidents listed by status, severity, type
+    and service, through the same mutations, with a session or an API token (`catalog:read`, `catalog:manage`).
   - Left for later items: a monitor naming the service it watches; linking services to status page components;
-    filtering incidents by type, service or field; alert routes paging a service's policy; enforcing required fields
+    filtering incidents by field; deleting types and fields and editing role definitions over HTTP; alert routes
+    paging a service's policy; enforcing required fields
     at a chosen status (opt-in); editing details from the app.
 - [ ] Follow-ups; postmortem draft with Workers AI; exports to R2
   - Done (RFC 0013): follow-ups on incidents (title, owner, due date, open or done, optional issue link), changed by
@@ -393,7 +397,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     `GET /api/openapi.json` (RFC 0002 "Public HTTP API").
   - The reference's `webhooks` section: one entry per payload type, converted from the schema package's payload
     validators (`WEBHOOK_PAYLOADS`), checked against what the API signs.
-  - `packages/sdk` (`@freecorps/brigade-sdk` 0.1.0, MIT, ready to publish): `verifyWebhook` (Standard Webhooks on Web
+  - `packages/sdk` (`@freecorps/brigade-sdk`, MIT, ready to publish; 0.2.0 below): `verifyWebhook` (Standard Webhooks on Web
     Crypto, typed payloads and errors), a typed client for the reference's operations, and the payload types; no
     runtime dependencies (RFC 0002 "Public HTTP API").
   - Left: publish `@freecorps/brigade-sdk` to npm (owner); setting `WEBHOOK_SECRET_KEY` on the deployed environments
@@ -403,6 +407,13 @@ Validate the risky assumptions before writing product code. Each spike produces 
     members, invitations, ack and sync routes, acting with the creator's current role within their scopes, rate
     limited per token, revoked at once, `apiToken.created` / `apiToken.revoked` through the outbox; `bearerAuth` in
     the reference and `token` in the SDK.
+  - Done: incidents and the catalog in the reference and the SDK (`@freecorps/brigade-sdk` 0.2.0): incidents listed
+    (status, severity, type and service filters, cursor pages), read, declared (paged exactly as from the dashboard),
+    changed (type, services, custom field values, severity, status) and written to; services, incident types and
+    custom fields listed, read, made and changed (services removed). Each write is the named mutation the apps send,
+    as the member or API token (`incident:read`, `incident:declare`, `incident:update`, `catalog:read`,
+    `catalog:manage`), with an `Idempotency-Key`.
+  - Left: changing an incident's title or roles over HTTP (no title mutation yet); publishing 0.2.0 to npm (owner).
   - Left: tokens on the dashboard's internal routes (webhooks, status page, exports, drafts); GitHub secret scanning
     partner registration for `brg_` (owner); setting `API_TOKEN_KEY` on deployed environments (owner).
 

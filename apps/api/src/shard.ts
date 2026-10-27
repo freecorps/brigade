@@ -218,6 +218,24 @@ export class Shard {
   }
 
   /**
+   * When the stored result was saved (the mutation's `now`), within retention like `storedResult`: a retried create
+   * remakes the id it made from it (src/rest.ts).
+   */
+  storedAt(actorId: string, clientId: string, mutationId: string, now: number): number | undefined {
+    const [row] = this.sql
+      .exec<{ at: number }>(
+        `select at from mutation_results
+         where actor_id = ? and client_id = ? and mutation_id = ? and at >= ?`,
+        actorId,
+        clientId,
+        mutationId,
+        now - RESULT_RETENTION_MS,
+      )
+      .toArray();
+    return row?.at;
+  }
+
+  /**
    * Runs a mutation as `actor` (RFC 0004): its rows, the version bump, the change log, the outbox and its stored
    * result all commit in one transaction, or none do. The caller checks `storedResult` first.
    *

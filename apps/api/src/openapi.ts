@@ -8,10 +8,26 @@
 // Imports nothing that needs the Workers runtime, so the generator runs in Node.
 
 import {
+  customFieldCreateRequest,
+  customFieldPatchRequest,
+  declareRequest,
+  FIELD_KINDS,
   idPattern,
+  INCIDENT_PAGE_DEFAULT,
+  INCIDENT_PAGE_MAX,
+  INCIDENT_STATUSES,
+  incidentPatchFields,
+  incidentTypeCreateRequest,
+  incidentTypePatchRequest,
   INVITATION_EMAIL_MAX,
+  MAX_CUSTOM_FIELDS_PER_WORKSPACE,
   ROLES,
+  SERVICE_TIERS,
+  serviceCreateRequest,
+  servicePatchRequest,
+  SEVERITIES,
   toJsonSchema,
+  updateRequest,
   v,
   WEBHOOK_PAYLOADS,
   workspaceName,
@@ -19,7 +35,7 @@ import {
   type Permission,
   type WebhookPayloadType,
 } from "@freecorps/brigade-schema";
-import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, USER_ID } from "./http.ts";
+import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, REST_STATUS, USER_ID } from "./http.ts";
 
 /** The workspace id the D1-backed routes take (`ORGANIZATION_ID` in src/workspace.ts; the test checks they agree). */
 export const WORKSPACE_ID_PATTERN = "^ws_[0-9A-HJKMNP-TV-Z]{26}$";
@@ -30,9 +46,13 @@ type Method = "get" | "post" | "patch" | "delete";
 
 type Parameter = {
   name: string;
-  in: "path" | "header";
+  in: "path" | "header" | "query";
   description: string;
   schema: JsonSchema;
+  /** Default true; a query parameter is optional. */
+  required?: boolean;
+  /** A list in one query parameter, comma-separated (`style: form`, `explode: false`). */
+  explode?: false;
 };
 
 type Answer = {
@@ -55,6 +75,7 @@ export type Operation = {
     | "Members"
     | "Invitations"
     | "Incidents"
+    | "Catalog"
     | "Sync";
   summary: string;
   description?: string;
@@ -150,6 +171,32 @@ const userId: Parameter = {
   schema: { type: "string", pattern: USER_ID.source },
 };
 
+const incidentId: Parameter = {
+  name: "incidentId",
+  in: "path",
+  description: "The incident (`inc_<ULID>`).",
+  schema: { type: "string", pattern: idPattern("inc") },
+};
+const catalogId = (name: string, prefix: string, what: string): Parameter => ({
+  name,
+  in: "path",
+  description: `The ${what} (\`${prefix}_<ULID>\`).`,
+  schema: { type: "string", pattern: idPattern(prefix) },
+});
+const serviceId = catalogId("serviceId", "svc", "service");
+const typeId = catalogId("typeId", "typ", "incident type");
+const fieldId = catalogId("fieldId", "fld", "custom field");
+/** The key every write of the incident and catalog routes takes (src/rest-routes.ts). */
+const idempotencyKey: Parameter = {
+  name: "Idempotency-Key",
+  in: "header",
+  description:
+    "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it " +
+    "once: the same key again, within a day, answers what the first request did (a create, the same entry) and " +
+    "changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+  schema: { type: "string", pattern: IDEMPOTENCY_KEY_PATTERN },
+};
+
 const role = toJsonSchema(v.picklist(ROLES));
 const OK_200 = { 200: { description: "Done.", body: ref("Ok") } };
 
@@ -165,6 +212,41 @@ const MEMBER_REFUSALS = refusals(
   SHARD_FAILED,
 );
 const INVITATION_REFUSALS = codesBy(INVITATION_STATUS);
+
+/** What the incident and catalog reads answer besides success (src/rest-routes.ts). */
+const REST_READ = refusals(
+  SIGNED_IN,
+  {
+    400: ["invalid_workspace_id"],
+    403: ["not_a_member", "forbidden"],
+    404: ["not_found"],
+    503: ["unavailable"],
+  },
+  SHARD_FAILED,
+);
+
+/** What their writes answer besides success: `REST_READ`'s, a bad body or key, and `extra` of `REST_STATUS`. */
+function restWrite(...extra: (keyof typeof REST_STATUS)[]): Record<number, string[]> {
+  return refusals(
+    REST_READ,
+    { 400: ["invalid_args"], 401: ["unauthenticated"] },
+    codesBy(Object.fromEntries(extra.map((code) => [code, REST_STATUS[code]]))),
+  );
+}
+
+/** `{ <key>: <schema> }`, as a single entry answers. */
+const wrapped = (key: string, schema: string): JsonSchema => ({
+  type: "object",
+  properties: { [key]: ref(schema) },
+  required: [key],
+});
+
+/** `{ <key>: [<schema>] }`, as a list answers. */
+const list = (key: string, schema: string): JsonSchema => ({
+  type: "object",
+  properties: { [key]: { type: "array", items: ref(schema) } },
+  required: [key],
+});
 
 /** Every public operation, in the order the reference lists them, before what API tokens add to their answers. */
 const LISTED: readonly Operation[] = [
@@ -547,13 +629,381 @@ const LISTED: readonly Operation[] = [
   },
   {
     method: "get",
+    path: "/workspaces/{workspaceId}/incidents",
+    operationId: "listIncidents",
+    tag: "Incidents",
+    summary: "List incidents",
+    description:
+      `Newest first (by id: when the declaring client made it), ${INCIDENT_PAGE_DEFAULT} a page by default. Every ` +
+      "member may read them. Filters combine; `status` and `severity` take a comma-separated list. `nextCursor` is " +
+      "the next page's `cursor`, null on the last.",
+    auth: "session",
+    bearer: "incident:read",
+    parameters: [
+      workspaceId,
+      {
+        name: "status",
+        in: "query",
+        required: false,
+        explode: false,
+        description: "Only incidents in one of these statuses.",
+        schema: { type: "array", items: { type: "string", enum: [...INCIDENT_STATUSES] } },
+      },
+      {
+        name: "severity",
+        in: "query",
+        required: false,
+        explode: false,
+        description: "Only incidents of one of these severities.",
+        schema: { type: "array", items: { type: "string", enum: [...SEVERITIES] } },
+      },
+      { ...typeId, in: "query", required: false, description: "Only incidents of this type." },
+      {
+        ...serviceId,
+        in: "query",
+        required: false,
+        description: "Only incidents naming this service.",
+      },
+      {
+        name: "cursor",
+        in: "query",
+        required: false,
+        description: "The `nextCursor` of the page before.",
+        schema: { type: "string", pattern: idPattern("inc") },
+      },
+      {
+        name: "limit",
+        in: "query",
+        required: false,
+        description: `At most this many (default ${INCIDENT_PAGE_DEFAULT}).`,
+        schema: { type: "integer", minimum: 1, maximum: INCIDENT_PAGE_MAX },
+      },
+    ],
+    responses: answers(
+      {
+        200: {
+          description: "One page of incidents.",
+          body: {
+            type: "object",
+            properties: {
+              incidents: { type: "array", items: ref("Incident") },
+              nextCursor: { type: ["string", "null"] },
+            },
+            required: ["incidents", "nextCursor"],
+          },
+        },
+      },
+      refusals(REST_READ, { 400: ["invalid_args"] }),
+    ),
+  },
+  {
+    method: "post",
+    path: "/workspaces/{workspaceId}/incidents",
+    operationId: "declareIncident",
+    tag: "Incidents",
+    summary: "Declare an incident",
+    description:
+      "Runs `incident.declare` as the member (responders and up), as declaring in the app does: numbered, on the " +
+      "timeline, `incident.declared` through the outbox, and paged by the escalation policy exactly as a declare " +
+      "from the dashboard is. The severity defaults to the type's, else `sev3`; a type or service that does not " +
+      "exist is left out, as in the app.",
+    auth: "session",
+    bearer: "incident:declare",
+    parameters: [workspaceId, idempotencyKey],
+    body: toJsonSchema(declareRequest),
+    responses: answers(
+      { 201: { description: "The incident.", body: wrapped("incident", "Incident") } },
+      restWrite(),
+    ),
+  },
+  {
+    method: "get",
+    path: "/workspaces/{workspaceId}/incidents/{incidentId}",
+    operationId: "getIncident",
+    tag: "Incidents",
+    summary: "Get an incident",
+    auth: "session",
+    bearer: "incident:read",
+    parameters: [workspaceId, incidentId],
+    responses: answers(
+      { 200: { description: "The incident.", body: wrapped("incident", "Incident") } },
+      REST_READ,
+    ),
+  },
+  {
+    method: "patch",
+    path: "/workspaces/{workspaceId}/incidents/{incidentId}",
+    operationId: "updateIncident",
+    tag: "Incidents",
+    summary: "Change an incident's type, services, fields, severity or status",
+    description:
+      "Each change is its own named mutation, as in the app, in this order: `incident.setType`, " +
+      "`incident.setServices`, `incident.setField` per field, `incident.setSeverity`, `incident.setStatus` (each " +
+      "with its timeline entry and event). One that asks for what already is changes nothing. The first refusal " +
+      "stops the rest and is the answer; the changes before it stay made, and the same request with the same key " +
+      "runs only what is left. Responders and up. `409 invalid_transition`: the status cannot follow the current " +
+      "one. The title is not changed here.",
+    auth: "session",
+    bearer: "incident:update",
+    parameters: [workspaceId, incidentId, idempotencyKey],
+    body: {
+      ...toJsonSchema(incidentPatchFields),
+      properties: {
+        ...(toJsonSchema(incidentPatchFields).properties as Record<string, JsonSchema>),
+        fields: {
+          type: "object",
+          description:
+            `Custom field values by field id (\`fld_<ULID>\`, at most ${MAX_CUSTOM_FIELDS_PER_WORKSPACE}): text or ` +
+            "a link, a number, an option id (one choice) or a list of them (several); `null` clears one (not a " +
+            "field the incident's type requires).",
+          additionalProperties: { anyOf: [ref("FieldValue"), { type: "null" }] },
+        },
+      },
+    },
+    responses: answers(
+      { 200: { description: "The incident, changed.", body: wrapped("incident", "Incident") } },
+      restWrite("invalid_transition"),
+    ),
+  },
+  {
+    method: "post",
+    path: "/workspaces/{workspaceId}/incidents/{incidentId}/updates",
+    operationId: "postIncidentUpdate",
+    tag: "Incidents",
+    summary: "Post a written update to an incident",
+    description:
+      "Runs `incident.postUpdate`: an update on the incident's timeline (what responders know), in any status. " +
+      "Responders and up.",
+    auth: "session",
+    bearer: "incident:update",
+    parameters: [workspaceId, incidentId, idempotencyKey],
+    body: toJsonSchema(updateRequest),
+    responses: answers({ 201: { description: "Posted.", body: ref("Ok") } }, restWrite()),
+  },
+  {
+    method: "get",
+    path: "/workspaces/{workspaceId}/services",
+    operationId: "listServices",
+    tag: "Catalog",
+    summary: "List the service catalog",
+    description: "Every service (at most 100), the most critical tier first, then by name.",
+    auth: "session",
+    bearer: "catalog:read",
+    parameters: [workspaceId],
+    responses: answers(
+      { 200: { description: "The services.", body: list("services", "Service") } },
+      REST_READ,
+    ),
+  },
+  {
+    method: "post",
+    path: "/workspaces/{workspaceId}/services",
+    operationId: "createService",
+    tag: "Catalog",
+    summary: "Add a service",
+    description:
+      "Runs `service.create`. Owners and admins. Owners are schedules or members who can respond; " +
+      "`409 limit_reached` past 100 services.",
+    auth: "session",
+    bearer: "catalog:manage",
+    parameters: [workspaceId, idempotencyKey],
+    body: toJsonSchema(serviceCreateRequest),
+    responses: answers(
+      { 201: { description: "The service.", body: wrapped("service", "Service") } },
+      restWrite("limit_reached"),
+    ),
+  },
+  {
+    method: "get",
+    path: "/workspaces/{workspaceId}/services/{serviceId}",
+    operationId: "getService",
+    tag: "Catalog",
+    summary: "Get a service",
+    auth: "session",
+    bearer: "catalog:read",
+    parameters: [workspaceId, serviceId],
+    responses: answers(
+      { 200: { description: "The service.", body: wrapped("service", "Service") } },
+      REST_READ,
+    ),
+  },
+  {
+    method: "patch",
+    path: "/workspaces/{workspaceId}/services/{serviceId}",
+    operationId: "updateService",
+    tag: "Catalog",
+    summary: "Change a service",
+    description:
+      "Runs `service.update` with what is sent over what the service has. Owners and admins. Nothing to change " +
+      "answers the service as it is.",
+    auth: "session",
+    bearer: "catalog:manage",
+    parameters: [workspaceId, serviceId, idempotencyKey],
+    body: toJsonSchema(servicePatchRequest),
+    responses: answers(
+      { 200: { description: "The service.", body: wrapped("service", "Service") } },
+      restWrite(),
+    ),
+  },
+  {
+    method: "delete",
+    path: "/workspaces/{workspaceId}/services/{serviceId}",
+    operationId: "deleteService",
+    tag: "Catalog",
+    summary: "Remove a service from the catalog",
+    description:
+      "Runs `service.delete`. Owners and admins. Incidents that named it keep its id, which reads leave out; its id " +
+      "is never used again.",
+    auth: "session",
+    bearer: "catalog:manage",
+    parameters: [workspaceId, serviceId, idempotencyKey],
+    responses: answers(OK_200, restWrite()),
+  },
+  {
+    method: "get",
+    path: "/workspaces/{workspaceId}/incident-types",
+    operationId: "listIncidentTypes",
+    tag: "Catalog",
+    summary: "List incident types",
+    description: "Every incident type (at most 20), by name.",
+    auth: "session",
+    bearer: "catalog:read",
+    parameters: [workspaceId],
+    responses: answers(
+      { 200: { description: "The incident types.", body: list("incidentTypes", "IncidentType") } },
+      REST_READ,
+    ),
+  },
+  {
+    method: "post",
+    path: "/workspaces/{workspaceId}/incident-types",
+    operationId: "createIncidentType",
+    tag: "Catalog",
+    summary: "Add an incident type",
+    description:
+      "Runs `incidentType.create`. Owners and admins. `409 limit_reached` past 20 types.",
+    auth: "session",
+    bearer: "catalog:manage",
+    parameters: [workspaceId, idempotencyKey],
+    body: toJsonSchema(incidentTypeCreateRequest),
+    responses: answers(
+      {
+        201: { description: "The incident type.", body: wrapped("incidentType", "IncidentType") },
+      },
+      restWrite("limit_reached"),
+    ),
+  },
+  {
+    method: "get",
+    path: "/workspaces/{workspaceId}/incident-types/{typeId}",
+    operationId: "getIncidentType",
+    tag: "Catalog",
+    summary: "Get an incident type",
+    auth: "session",
+    bearer: "catalog:read",
+    parameters: [workspaceId, typeId],
+    responses: answers(
+      {
+        200: { description: "The incident type.", body: wrapped("incidentType", "IncidentType") },
+      },
+      REST_READ,
+    ),
+  },
+  {
+    method: "patch",
+    path: "/workspaces/{workspaceId}/incident-types/{typeId}",
+    operationId: "updateIncidentType",
+    tag: "Catalog",
+    summary: "Change an incident type",
+    description:
+      "Runs `incidentType.update` with what is sent over what the type has. Owners and admins. New `roles` without " +
+      "`requiredRoles` keep required those still listed. Incidents of the type keep their severity.",
+    auth: "session",
+    bearer: "catalog:manage",
+    parameters: [workspaceId, typeId, idempotencyKey],
+    body: toJsonSchema(incidentTypePatchRequest),
+    responses: answers(
+      {
+        200: { description: "The incident type.", body: wrapped("incidentType", "IncidentType") },
+      },
+      restWrite(),
+    ),
+  },
+  {
+    method: "get",
+    path: "/workspaces/{workspaceId}/custom-fields",
+    operationId: "listCustomFields",
+    tag: "Catalog",
+    summary: "List custom fields",
+    description: `Every custom field (at most ${MAX_CUSTOM_FIELDS_PER_WORKSPACE}), in the order they were made.`,
+    auth: "session",
+    bearer: "catalog:read",
+    parameters: [workspaceId],
+    responses: answers(
+      { 200: { description: "The custom fields.", body: list("customFields", "CustomField") } },
+      REST_READ,
+    ),
+  },
+  {
+    method: "post",
+    path: "/workspaces/{workspaceId}/custom-fields",
+    operationId: "createCustomField",
+    tag: "Catalog",
+    summary: "Add a custom field",
+    description:
+      "Runs `customField.create`. Owners and admins. Select fields need options; give each a label, and an id only " +
+      `to keep one (new ones get theirs). \`409 limit_reached\` past ${MAX_CUSTOM_FIELDS_PER_WORKSPACE} fields.`,
+    auth: "session",
+    bearer: "catalog:manage",
+    parameters: [workspaceId, idempotencyKey],
+    body: toJsonSchema(customFieldCreateRequest),
+    responses: answers(
+      { 201: { description: "The custom field.", body: wrapped("customField", "CustomField") } },
+      restWrite("limit_reached"),
+    ),
+  },
+  {
+    method: "get",
+    path: "/workspaces/{workspaceId}/custom-fields/{fieldId}",
+    operationId: "getCustomField",
+    tag: "Catalog",
+    summary: "Get a custom field",
+    auth: "session",
+    bearer: "catalog:read",
+    parameters: [workspaceId, fieldId],
+    responses: answers(
+      { 200: { description: "The custom field.", body: wrapped("customField", "CustomField") } },
+      REST_READ,
+    ),
+  },
+  {
+    method: "patch",
+    path: "/workspaces/{workspaceId}/custom-fields/{fieldId}",
+    operationId: "updateCustomField",
+    tag: "Catalog",
+    summary: "Change a custom field",
+    description:
+      "Runs `customField.update`: its name, description and options (the list sent replaces the old one: keep an " +
+      "option by its id). Its kind never changes. Owners and admins.",
+    auth: "session",
+    bearer: "catalog:manage",
+    parameters: [workspaceId, fieldId, idempotencyKey],
+    body: toJsonSchema(customFieldPatchRequest),
+    responses: answers(
+      { 200: { description: "The custom field.", body: wrapped("customField", "CustomField") } },
+      restWrite(),
+    ),
+  },
+  {
+    method: "get",
     path: "/sync/{workspaceId}",
     operationId: "openSync",
     tag: "Sync",
     summary: "Open a Brigade Sync WebSocket",
     description:
-      "Incidents, monitors, schedules and the rest are read and changed over Brigade Sync (RFC 0004), not REST: " +
-      "this upgrade opens it, as the signed-in member. The frames are not modeled here; see " +
+      "Monitors, schedules and the rest are read and changed over Brigade Sync (RFC 0004), not REST, and so are " +
+      "incidents and the catalog live: this upgrade opens it, as the signed-in member. The frames are not modeled " +
+      "here; see " +
       "`@freecorps/brigade-sync/protocol`.",
     auth: "session",
     bearer: "frames",
@@ -672,6 +1122,180 @@ const SCHEMAS: Record<string, JsonSchema> = {
     },
     required: ["id", "workspace", "invitedBy", "role", "status", "expiresAt", "forYou"],
   },
+  FieldValue: {
+    description:
+      "A custom field's value: text or a link, a number, an option id (one choice) or option ids (several).",
+    anyOf: [
+      { type: "string" },
+      { type: "number" },
+      { type: "array", items: { type: "string", pattern: idPattern("opt") } },
+    ],
+  },
+  Incident: {
+    type: "object",
+    properties: {
+      id: { type: "string", pattern: idPattern("inc") },
+      number: { type: ["integer", "null"], description: "`INC-<number>`'s number." },
+      title: { type: "string" },
+      severity: { type: "string", enum: [...SEVERITIES] },
+      status: { type: "string", enum: [...INCIDENT_STATUSES] },
+      declaredAt: { type: "integer", description: "Epoch milliseconds." },
+      declaredBy: {
+        type: "string",
+        description: "A user id, an API token's `tok_` id, or a system actor's.",
+      },
+      acknowledgedAt: { type: ["integer", "null"], description: "Epoch milliseconds." },
+      acknowledgedBy: { type: ["string", "null"] },
+      typeId: {
+        type: ["string", "null"],
+        description: "Its incident type; null for none, or one deleted since.",
+      },
+      serviceIds: {
+        type: "array",
+        description: "The services it affects, in the order picked; deleted ones left out.",
+        items: { type: "string", pattern: idPattern("svc") },
+      },
+      fields: {
+        type: "object",
+        description:
+          "Custom field values by field id; fields deleted since, and options taken out, are left out.",
+        additionalProperties: ref("FieldValue"),
+      },
+      roles: {
+        type: "object",
+        description: "Who holds each incident role (user ids), by role id.",
+        additionalProperties: { type: "string" },
+      },
+      updatedAt: { type: "integer", description: "Epoch milliseconds." },
+    },
+    required: [
+      "id",
+      "number",
+      "title",
+      "severity",
+      "status",
+      "declaredAt",
+      "declaredBy",
+      "acknowledgedAt",
+      "acknowledgedBy",
+      "typeId",
+      "serviceIds",
+      "fields",
+      "roles",
+      "updatedAt",
+    ],
+  },
+  Service: {
+    type: "object",
+    properties: {
+      id: { type: "string", pattern: idPattern("svc") },
+      name: { type: "string" },
+      description: { type: "string" },
+      tier: { type: "string", enum: [...SERVICE_TIERS], description: "`tier1` the most critical." },
+      owners: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["schedule", "member"] },
+            id: { type: "string", description: "A schedule id or a member's user id." },
+          },
+          required: ["kind", "id"],
+        },
+      },
+      escalationPolicyId: { type: ["string", "null"] },
+      createdAt: { type: "integer", description: "Epoch milliseconds." },
+      createdBy: { type: "string" },
+      updatedAt: { type: "integer", description: "Epoch milliseconds." },
+    },
+    required: [
+      "id",
+      "name",
+      "description",
+      "tier",
+      "owners",
+      "escalationPolicyId",
+      "createdAt",
+      "createdBy",
+      "updatedAt",
+    ],
+  },
+  IncidentType: {
+    type: "object",
+    properties: {
+      id: { type: "string", pattern: idPattern("typ") },
+      name: { type: "string" },
+      description: { type: "string" },
+      defaultSeverity: {
+        anyOf: [{ type: "string", enum: [...SEVERITIES] }, { type: "null" }],
+        description: "What a declare of this type takes when it names none.",
+      },
+      escalationPolicyId: {
+        type: ["string", "null"],
+        description: "The policy its pages use instead of the default one.",
+      },
+      requiredFields: {
+        type: "array",
+        items: { type: "string", pattern: idPattern("fld") },
+      },
+      roles: {
+        type: "array",
+        description: "The incident roles its incidents fill (role ids); empty: every role.",
+        items: { type: "string" },
+      },
+      requiredRoles: { type: "array", items: { type: "string" } },
+      createdAt: { type: "integer", description: "Epoch milliseconds." },
+      createdBy: { type: "string" },
+      updatedAt: { type: "integer", description: "Epoch milliseconds." },
+    },
+    required: [
+      "id",
+      "name",
+      "description",
+      "defaultSeverity",
+      "escalationPolicyId",
+      "requiredFields",
+      "roles",
+      "requiredRoles",
+      "createdAt",
+      "createdBy",
+      "updatedAt",
+    ],
+  },
+  CustomField: {
+    type: "object",
+    properties: {
+      id: { type: "string", pattern: idPattern("fld") },
+      name: { type: "string" },
+      description: { type: "string" },
+      kind: { type: "string", enum: [...FIELD_KINDS] },
+      options: {
+        type: "array",
+        description: "Select fields only, in the order shown.",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", pattern: idPattern("opt") },
+            label: { type: "string" },
+          },
+          required: ["id", "label"],
+        },
+      },
+      createdAt: { type: "integer", description: "Epoch milliseconds." },
+      createdBy: { type: "string" },
+      updatedAt: { type: "integer", description: "Epoch milliseconds." },
+    },
+    required: [
+      "id",
+      "name",
+      "description",
+      "kind",
+      "options",
+      "createdAt",
+      "createdBy",
+      "updatedAt",
+    ],
+  },
   PagingHealth: {
     type: "object",
     properties: {
@@ -768,9 +1392,11 @@ function webhooks(): Record<string, unknown> {
   );
 }
 
-const DESCRIPTION = `Brigade's public HTTP API: what an integration may call. Everything else (incidents, monitors,
-schedules, escalation policies, devices) is read and changed over Brigade Sync, the WebSocket \`openSync\` opens
-(RFC 0004). Routes not listed here are internal and may change without notice.
+const DESCRIPTION = `Brigade's public HTTP API: what an integration may call. Incidents and the catalog (services,
+incident types, custom fields) are read and changed here too, each write through the same named mutation the apps
+send, with the same rules, timeline entries and events. Everything else (monitors, schedules, escalation policies,
+devices) is read and changed over Brigade Sync, the WebSocket \`openSync\` opens (RFC 0004). Routes not listed here
+are internal and may change without notice.
 
 **Auth.** A Better Auth session: sign in with \`POST /api/auth/sign-in/email\` (\`{ "email", "password" }\`) and send
 the cookie it sets. Writes that carry a cookie refuse another site's \`Origin\` (\`403 forbidden_origin\`); a request
@@ -798,7 +1424,7 @@ export function openApiDocument(): JsonSchema {
     openapi: "3.1.0",
     info: {
       title: "Brigade API",
-      version: "0.1.0",
+      version: "0.2.0",
       description: DESCRIPTION,
       license: { name: "AGPL-3.0-only", identifier: "AGPL-3.0-only" },
     },
@@ -865,7 +1491,11 @@ function toOperation(operation: Operation): Record<string, unknown> {
           : [],
     ...(operation.parameters
       ? {
-          parameters: operation.parameters.map((parameter) => ({ ...parameter, required: true })),
+          parameters: operation.parameters.map(({ required = true, explode, ...parameter }) => ({
+            ...parameter,
+            required,
+            ...(explode === false ? { style: "form", explode } : {}),
+          })),
         }
       : {}),
     ...(operation.body

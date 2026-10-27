@@ -41,7 +41,7 @@ describe("package", () => {
   test("MIT, ESM, side-effect free, with types, publishing dist only", () => {
     expect(pkg).toMatchObject({
       name: "@freecorps/brigade-sdk",
-      version: "0.1.0",
+      version: "0.2.0",
       license: "MIT",
       type: "module",
       sideEffects: false,
@@ -52,7 +52,7 @@ describe("package", () => {
       },
     });
     expect(read("LICENSE")).toMatch(/^MIT License/);
-    expect(read("CHANGELOG.md")).toContain("## 0.1.0");
+    expect(read("CHANGELOG.md")).toContain("## 0.2.0");
   });
 
   test("no dependency at runtime: the schema package is bundled", () => {

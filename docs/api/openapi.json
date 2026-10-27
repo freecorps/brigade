@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Brigade API",
-    "version": "0.1.0",
-    "description": "Brigade's public HTTP API: what an integration may call. Everything else (incidents, monitors,\nschedules, escalation policies, devices) is read and changed over Brigade Sync, the WebSocket `openSync` opens\n(RFC 0004). Routes not listed here are internal and may change without notice.\n\n**Auth.** A Better Auth session: sign in with `POST /api/auth/sign-in/email` (`{ \"email\", \"password\" }`) and send\nthe cookie it sets. Writes that carry a cookie refuse another site's `Origin` (`403 forbidden_origin`); a request\nwithout `Origin` is not refused for it. Operations marked with `bearerAuth` also take an API token (RFC 0014): an\nowner or admin mints one in the dashboard for one workspace, with scopes, and sends it as `Authorization: Bearer\nbrg_…`. A token acts with its creator's role as it is now and only within its scopes (`403 forbidden` otherwise);\nevery refused token (wrong, revoked, expired, its creator gone) is the same `401 unauthenticated`; a token's requests\nare limited (`429 rate_limited`, `Retry-After`). A bearer request skips the `Origin` check and ignores any cookie.\n\n**Errors.** Every refusal is JSON, `{ \"error\": \"<code>\" }`, with the codes each operation lists. Any other method on\na listed path answers `405` with `Allow`; an unknown path `404 not_found`.\n\n**Webhooks.** What Brigade sends to the endpoints a workspace registers: a signed `POST` per event, as the Standard\nWebhooks specification has it (`@freecorps/brigade-sdk`'s `verifyWebhook`, or any of its libraries, verifies\nit). Each payload is `version: 1`; fields may be added to it, so ignore the ones you do not know. A change that\nis not purely additive is a new version. See RFC 0005 \"Outbound webhooks\".",
+    "version": "0.2.0",
+    "description": "Brigade's public HTTP API: what an integration may call. Incidents and the catalog (services,\nincident types, custom fields) are read and changed here too, each write through the same named mutation the apps\nsend, with the same rules, timeline entries and events. Everything else (monitors, schedules, escalation policies,\ndevices) is read and changed over Brigade Sync, the WebSocket `openSync` opens (RFC 0004). Routes not listed here\nare internal and may change without notice.\n\n**Auth.** A Better Auth session: sign in with `POST /api/auth/sign-in/email` (`{ \"email\", \"password\" }`) and send\nthe cookie it sets. Writes that carry a cookie refuse another site's `Origin` (`403 forbidden_origin`); a request\nwithout `Origin` is not refused for it. Operations marked with `bearerAuth` also take an API token (RFC 0014): an\nowner or admin mints one in the dashboard for one workspace, with scopes, and sends it as `Authorization: Bearer\nbrg_…`. A token acts with its creator's role as it is now and only within its scopes (`403 forbidden` otherwise);\nevery refused token (wrong, revoked, expired, its creator gone) is the same `401 unauthenticated`; a token's requests\nare limited (`429 rate_limited`, `Retry-After`). A bearer request skips the `Origin` check and ignores any cookie.\n\n**Errors.** Every refusal is JSON, `{ \"error\": \"<code>\" }`, with the codes each operation lists. Any other method on\na listed path answers `405` with `Allow`; an unknown path `404 not_found`.\n\n**Webhooks.** What Brigade sends to the endpoints a workspace registers: a signed `POST` per event, as the Standard\nWebhooks specification has it (`@freecorps/brigade-sdk`'s `verifyWebhook`, or any of its libraries, verifies\nit). Each payload is `version: 1`; fields may be added to it, so ignore the ones you do not know. A change that\nis not purely additive is a new version. See RFC 0005 \"Outbound webhooks\".",
     "license": {
       "name": "AGPL-3.0-only",
       "identifier": "AGPL-3.0-only"
@@ -36,6 +36,9 @@
     },
     {
       "name": "Incidents"
+    },
+    {
+      "name": "Catalog"
     },
     {
       "name": "Sync"
@@ -2727,6 +2730,4485 @@
         }
       }
     },
+    "/workspaces/{workspaceId}/incidents": {
+      "get": {
+        "operationId": "listIncidents",
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "List incidents",
+        "description": "Newest first (by id: when the declaring client made it), 50 a page by default. Every member may read them. Filters combine; `status` and `severity` take a comma-separated list. `nextCursor` is the next page's `cursor`, null on the last. With an API token: the `incident:read` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Only incidents in one of these statuses.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "triage",
+                  "investigating",
+                  "fixing",
+                  "monitoring",
+                  "resolved",
+                  "declined"
+                ]
+              }
+            },
+            "required": false,
+            "style": "form",
+            "explode": false
+          },
+          {
+            "name": "severity",
+            "in": "query",
+            "description": "Only incidents of one of these severities.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "sev1",
+                  "sev2",
+                  "sev3",
+                  "sev4"
+                ]
+              }
+            },
+            "required": false,
+            "style": "form",
+            "explode": false
+          },
+          {
+            "name": "typeId",
+            "in": "query",
+            "description": "Only incidents of this type.",
+            "schema": {
+              "type": "string",
+              "pattern": "^typ_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": false
+          },
+          {
+            "name": "serviceId",
+            "in": "query",
+            "description": "Only incidents naming this service.",
+            "schema": {
+              "type": "string",
+              "pattern": "^svc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": false
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "The `nextCursor` of the page before.",
+            "schema": {
+              "type": "string",
+              "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": false
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "At most this many (default 50).",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of incidents.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "incidents": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Incident"
+                      }
+                    },
+                    "nextCursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "incidents",
+                    "nextCursor"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id",
+                        "invalid_args"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "declareIncident",
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Declare an incident",
+        "description": "Runs `incident.declare` as the member (responders and up), as declaring in the app does: numbered, on the timeline, `incident.declared` through the outbox, and paged by the escalation policy exactly as a declare from the dashboard is. The severity defaults to the type's, else `sev3`; a type or service that does not exist is left out, as in the app. With an API token: the `incident:declare` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w:-]{1,64}$"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "sev1",
+                      "sev2",
+                      "sev3",
+                      "sev4"
+                    ]
+                  },
+                  "typeId": {
+                    "type": "string",
+                    "pattern": "^typ_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "serviceIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^svc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                    },
+                    "maxItems": 10,
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "title"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The incident.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "incident": {
+                      "$ref": "#/components/schemas/Incident"
+                    }
+                  },
+                  "required": [
+                    "incident"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id",
+                        "invalid_args"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/incidents/{incidentId}": {
+      "get": {
+        "operationId": "getIncident",
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Get an incident",
+        "description": "With an API token: the `incident:read` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "incidentId",
+            "in": "path",
+            "description": "The incident (`inc_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The incident.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "incident": {
+                      "$ref": "#/components/schemas/Incident"
+                    }
+                  },
+                  "required": [
+                    "incident"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateIncident",
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Change an incident's type, services, fields, severity or status",
+        "description": "Each change is its own named mutation, as in the app, in this order: `incident.setType`, `incident.setServices`, `incident.setField` per field, `incident.setSeverity`, `incident.setStatus` (each with its timeline entry and event). One that asks for what already is changes nothing. The first refusal stops the rest and is the answer; the changes before it stay made, and the same request with the same key runs only what is left. Responders and up. `409 invalid_transition`: the status cannot follow the current one. The title is not changed here. With an API token: the `incident:update` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "incidentId",
+            "in": "path",
+            "description": "The incident (`inc_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w:-]{1,64}$"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "typeId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^typ_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "serviceIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^svc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                    },
+                    "maxItems": 10,
+                    "uniqueItems": true
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "sev1",
+                      "sev2",
+                      "sev3",
+                      "sev4"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "triage",
+                      "investigating",
+                      "fixing",
+                      "monitoring",
+                      "resolved",
+                      "declined"
+                    ]
+                  },
+                  "fields": {
+                    "type": "object",
+                    "description": "Custom field values by field id (`fld_<ULID>`, at most 25): text or a link, a number, an option id (one choice) or a list of them (several); `null` clears one (not a field the incident's type requires).",
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/FieldValue"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The incident, changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "incident": {
+                      "$ref": "#/components/schemas/Incident"
+                    }
+                  },
+                  "required": [
+                    "incident"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id",
+                        "invalid_args"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_transition"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/incidents/{incidentId}/updates": {
+      "post": {
+        "operationId": "postIncidentUpdate",
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Post a written update to an incident",
+        "description": "Runs `incident.postUpdate`: an update on the incident's timeline (what responders know), in any status. Responders and up. With an API token: the `incident:update` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "incidentId",
+            "in": "path",
+            "description": "The incident (`inc_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w:-]{1,64}$"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "body": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  }
+                },
+                "required": [
+                  "body"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Posted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id",
+                        "invalid_args"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/services": {
+      "get": {
+        "operationId": "listServices",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "List the service catalog",
+        "description": "Every service (at most 100), the most critical tier first, then by name. With an API token: the `catalog:read` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The services.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "services": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Service"
+                      }
+                    }
+                  },
+                  "required": [
+                    "services"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createService",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Add a service",
+        "description": "Runs `service.create`. Owners and admins. Owners are schedules or members who can respond; `409 limit_reached` past 100 services. With an API token: the `catalog:manage` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w:-]{1,64}$"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "tier": {
+                    "type": "string",
+                    "enum": [
+                      "tier1",
+                      "tier2",
+                      "tier3"
+                    ]
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "owners": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "schedule",
+                            "member"
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 10
+                  },
+                  "escalationPolicyId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^esc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "tier"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The service.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "service": {
+                      "$ref": "#/components/schemas/Service"
+                    }
+                  },
+                  "required": [
+                    "service"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id",
+                        "invalid_args"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "limit_reached"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/services/{serviceId}": {
+      "get": {
+        "operationId": "getService",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Get a service",
+        "description": "With an API token: the `catalog:read` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "serviceId",
+            "in": "path",
+            "description": "The service (`svc_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^svc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The service.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "service": {
+                      "$ref": "#/components/schemas/Service"
+                    }
+                  },
+                  "required": [
+                    "service"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateService",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Change a service",
+        "description": "Runs `service.update` with what is sent over what the service has. Owners and admins. Nothing to change answers the service as it is. With an API token: the `catalog:manage` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "serviceId",
+            "in": "path",
+            "description": "The service (`svc_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^svc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w:-]{1,64}$"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "tier": {
+                    "type": "string",
+                    "enum": [
+                      "tier1",
+                      "tier2",
+                      "tier3"
+                    ]
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "owners": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "schedule",
+                            "member"
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 10
+                  },
+                  "escalationPolicyId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^esc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The service.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "service": {
+                      "$ref": "#/components/schemas/Service"
+                    }
+                  },
+                  "required": [
+                    "service"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id",
+                        "invalid_args"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteService",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Remove a service from the catalog",
+        "description": "Runs `service.delete`. Owners and admins. Incidents that named it keep its id, which reads leave out; its id is never used again. With an API token: the `catalog:manage` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "serviceId",
+            "in": "path",
+            "description": "The service (`svc_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^svc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w:-]{1,64}$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id",
+                        "invalid_args"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/incident-types": {
+      "get": {
+        "operationId": "listIncidentTypes",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "List incident types",
+        "description": "Every incident type (at most 20), by name. With an API token: the `catalog:read` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The incident types.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "incidentTypes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/IncidentType"
+                      }
+                    }
+                  },
+                  "required": [
+                    "incidentTypes"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createIncidentType",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Add an incident type",
+        "description": "Runs `incidentType.create`. Owners and admins. `409 limit_reached` past 20 types. With an API token: the `catalog:manage` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w:-]{1,64}$"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "defaultSeverity": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "sev1",
+                          "sev2",
+                          "sev3",
+                          "sev4"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "escalationPolicyId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^esc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "requiredFields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^fld_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                    },
+                    "maxItems": 25,
+                    "uniqueItems": true
+                  },
+                  "roles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 32
+                    },
+                    "maxItems": 15,
+                    "uniqueItems": true
+                  },
+                  "requiredRoles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 32
+                    },
+                    "maxItems": 15,
+                    "uniqueItems": true
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The incident type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "incidentType": {
+                      "$ref": "#/components/schemas/IncidentType"
+                    }
+                  },
+                  "required": [
+                    "incidentType"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id",
+                        "invalid_args"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "limit_reached"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/incident-types/{typeId}": {
+      "get": {
+        "operationId": "getIncidentType",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Get an incident type",
+        "description": "With an API token: the `catalog:read` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "typeId",
+            "in": "path",
+            "description": "The incident type (`typ_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^typ_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The incident type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "incidentType": {
+                      "$ref": "#/components/schemas/IncidentType"
+                    }
+                  },
+                  "required": [
+                    "incidentType"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateIncidentType",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Change an incident type",
+        "description": "Runs `incidentType.update` with what is sent over what the type has. Owners and admins. New `roles` without `requiredRoles` keep required those still listed. Incidents of the type keep their severity. With an API token: the `catalog:manage` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "typeId",
+            "in": "path",
+            "description": "The incident type (`typ_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^typ_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w:-]{1,64}$"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "defaultSeverity": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "sev1",
+                          "sev2",
+                          "sev3",
+                          "sev4"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "escalationPolicyId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^esc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "requiredFields": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^fld_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                    },
+                    "maxItems": 25,
+                    "uniqueItems": true
+                  },
+                  "roles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 32
+                    },
+                    "maxItems": 15,
+                    "uniqueItems": true
+                  },
+                  "requiredRoles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 32
+                    },
+                    "maxItems": 15,
+                    "uniqueItems": true
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The incident type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "incidentType": {
+                      "$ref": "#/components/schemas/IncidentType"
+                    }
+                  },
+                  "required": [
+                    "incidentType"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id",
+                        "invalid_args"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/custom-fields": {
+      "get": {
+        "operationId": "listCustomFields",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "List custom fields",
+        "description": "Every custom field (at most 25), in the order they were made. With an API token: the `catalog:read` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The custom fields.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "customFields": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CustomField"
+                      }
+                    }
+                  },
+                  "required": [
+                    "customFields"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createCustomField",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Add a custom field",
+        "description": "Runs `customField.create`. Owners and admins. Select fields need options; give each a label, and an id only to keep one (new ones get theirs). `409 limit_reached` past 25 fields. With an API token: the `catalog:manage` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w:-]{1,64}$"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "text",
+                      "single_select",
+                      "multi_select",
+                      "number",
+                      "link"
+                    ]
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "options": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^opt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 60
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 50
+                  }
+                },
+                "required": [
+                  "name",
+                  "kind"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The custom field.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "customField": {
+                      "$ref": "#/components/schemas/CustomField"
+                    }
+                  },
+                  "required": [
+                    "customField"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id",
+                        "invalid_args"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "limit_reached"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/custom-fields/{fieldId}": {
+      "get": {
+        "operationId": "getCustomField",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Get a custom field",
+        "description": "With an API token: the `catalog:read` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "fieldId",
+            "in": "path",
+            "description": "The custom field (`fld_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^fld_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The custom field.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "customField": {
+                      "$ref": "#/components/schemas/CustomField"
+                    }
+                  },
+                  "required": [
+                    "customField"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateCustomField",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Change a custom field",
+        "description": "Runs `customField.update`: its name, description and options (the list sent replaces the old one: keep an option by its id). Its kind never changes. Owners and admins. With an API token: the `catalog:manage` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "fieldId",
+            "in": "path",
+            "description": "The custom field (`fld_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^fld_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w:-]{1,64}$"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "options": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^opt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 60
+                        }
+                      },
+                      "required": [
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 50
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The custom field.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "customField": {
+                      "$ref": "#/components/schemas/CustomField"
+                    }
+                  },
+                  "required": [
+                    "customField"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id",
+                        "invalid_args"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/sync/{workspaceId}": {
       "get": {
         "operationId": "openSync",
@@ -2734,7 +7216,7 @@
           "Sync"
         ],
         "summary": "Open a Brigade Sync WebSocket",
-        "description": "Incidents, monitors, schedules and the rest are read and changed over Brigade Sync (RFC 0004), not REST: this upgrade opens it, as the signed-in member. The frames are not modeled here; see `@freecorps/brigade-sync/protocol`. With an API token, each query and mutation needs its permission among the token's scopes.",
+        "description": "Monitors, schedules and the rest are read and changed over Brigade Sync (RFC 0004), not REST, and so are incidents and the catalog live: this upgrade opens it, as the signed-in member. The frames are not modeled here; see `@freecorps/brigade-sync/protocol`. With an API token, each query and mutation needs its permission among the token's scopes.",
         "security": [
           {
             "session": []
@@ -5614,6 +10096,357 @@
           "status",
           "expiresAt",
           "forYou"
+        ]
+      },
+      "FieldValue": {
+        "description": "A custom field's value: text or a link, a number, an option id (one choice) or option ids (several).",
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^opt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            }
+          }
+        ]
+      },
+      "Incident": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+          },
+          "number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "`INC-<number>`'s number."
+          },
+          "title": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "sev1",
+              "sev2",
+              "sev3",
+              "sev4"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "triage",
+              "investigating",
+              "fixing",
+              "monitoring",
+              "resolved",
+              "declined"
+            ]
+          },
+          "declaredAt": {
+            "type": "integer",
+            "description": "Epoch milliseconds."
+          },
+          "declaredBy": {
+            "type": "string",
+            "description": "A user id, an API token's `tok_` id, or a system actor's."
+          },
+          "acknowledgedAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "acknowledgedBy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "typeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its incident type; null for none, or one deleted since."
+          },
+          "serviceIds": {
+            "type": "array",
+            "description": "The services it affects, in the order picked; deleted ones left out.",
+            "items": {
+              "type": "string",
+              "pattern": "^svc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            }
+          },
+          "fields": {
+            "type": "object",
+            "description": "Custom field values by field id; fields deleted since, and options taken out, are left out.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FieldValue"
+            }
+          },
+          "roles": {
+            "type": "object",
+            "description": "Who holds each incident role (user ids), by role id.",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "updatedAt": {
+            "type": "integer",
+            "description": "Epoch milliseconds."
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "title",
+          "severity",
+          "status",
+          "declaredAt",
+          "declaredBy",
+          "acknowledgedAt",
+          "acknowledgedBy",
+          "typeId",
+          "serviceIds",
+          "fields",
+          "roles",
+          "updatedAt"
+        ]
+      },
+      "Service": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^svc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "tier1",
+              "tier2",
+              "tier3"
+            ],
+            "description": "`tier1` the most critical."
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "schedule",
+                    "member"
+                  ]
+                },
+                "id": {
+                  "type": "string",
+                  "description": "A schedule id or a member's user id."
+                }
+              },
+              "required": [
+                "kind",
+                "id"
+              ]
+            }
+          },
+          "escalationPolicyId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "integer",
+            "description": "Epoch milliseconds."
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "integer",
+            "description": "Epoch milliseconds."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "tier",
+          "owners",
+          "escalationPolicyId",
+          "createdAt",
+          "createdBy",
+          "updatedAt"
+        ]
+      },
+      "IncidentType": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^typ_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "defaultSeverity": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "sev1",
+                  "sev2",
+                  "sev3",
+                  "sev4"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What a declare of this type takes when it names none."
+          },
+          "escalationPolicyId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The policy its pages use instead of the default one."
+          },
+          "requiredFields": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^fld_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            }
+          },
+          "roles": {
+            "type": "array",
+            "description": "The incident roles its incidents fill (role ids); empty: every role.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requiredRoles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "type": "integer",
+            "description": "Epoch milliseconds."
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "integer",
+            "description": "Epoch milliseconds."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "defaultSeverity",
+          "escalationPolicyId",
+          "requiredFields",
+          "roles",
+          "requiredRoles",
+          "createdAt",
+          "createdBy",
+          "updatedAt"
+        ]
+      },
+      "CustomField": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^fld_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "text",
+              "single_select",
+              "multi_select",
+              "number",
+              "link"
+            ]
+          },
+          "options": {
+            "type": "array",
+            "description": "Select fields only, in the order shown.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^opt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ]
+            }
+          },
+          "createdAt": {
+            "type": "integer",
+            "description": "Epoch milliseconds."
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "integer",
+            "description": "Epoch milliseconds."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "kind",
+          "options",
+          "createdAt",
+          "createdBy",
+          "updatedAt"
         ]
       },
       "PagingHealth": {

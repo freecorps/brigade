@@ -122,6 +122,56 @@ try {
 }
 ```
 
+## Declare and update incidents, and keep the catalog
+
+```ts
+import { createClient } from "@freecorps/brigade-sdk";
+
+const brigade = createClient({
+  baseUrl: "https://brigade.example.com/api",
+  // Scopes: `incident:declare`, `incident:update`, `incident:read`, `catalog:read`, `catalog:manage` as needed.
+  token: process.env.BRIGADE_TOKEN,
+});
+
+// Pages exactly as declaring in the app does. The same idempotencyKey again answers the same incident.
+const { incident } = await brigade.declareIncident(
+  workspaceId,
+  { title: "Checkout is down", severity: "sev1", serviceIds: [checkoutServiceId] },
+  { idempotencyKey: `deploy-check:${runId}` },
+);
+await brigade.updateIncident(workspaceId, incident.id, {
+  status: "investigating",
+  fields: { [regionFieldId]: "eu-west" },
+});
+await brigade.postIncidentUpdate(workspaceId, incident.id, { body: "Rolling back the deploy." });
+
+// Every open SEV1, a page at a time.
+for (let cursor: string | undefined; ;) {
+  const page = await brigade.listIncidents(workspaceId, {
+    severity: ["sev1"],
+    status: ["triage", "investigating"],
+    cursor,
+  });
+  for (const open of page.incidents) console.log(`INC-${open.number} ${open.title}`);
+  if (!page.nextCursor) break;
+  cursor = page.nextCursor;
+}
+
+// The catalog: services, incident types, custom fields (options as labels; Brigade gives each its id).
+const { service } = await brigade.createService(workspaceId, { name: "Payments", tier: "tier1" });
+await brigade.updateService(workspaceId, service.id, { description: "Card and Pix payments." });
+await brigade.createCustomField(workspaceId, {
+  name: "Customer impact",
+  kind: "single_select",
+  options: [{ label: "None" }, { label: "Some" }, { label: "All" }],
+});
+```
+
+Each write runs the named mutation the apps send, with the same rules, timeline entry and event, as the member or
+token; every write takes an `idempotencyKey` (a random one by default). `updateIncident` changes the type, services,
+fields, severity and status in that order, each its own change; the first refusal stops the rest, and the ones before
+it stay made.
+
 | Method                                                                                                       | Route                                             |
 | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
 | `getHealth()`, `getPagingHealth()`                                                                           | `GET /health`, `GET /health/paging`               |
@@ -132,6 +182,11 @@ try {
 | `listInvitations(ws)`, `invite(ws, { email, role })`, `revokeInvitation(ws, id)`, `resendInvitation(ws, id)` | `/workspaces/:id/invitations…`                    |
 | `getInvitation(id)`, `acceptInvitation(id)`, `declineInvitation(id)`                                         | `/invitations/:id…`                               |
 | `acknowledgeIncident(ws, incidentId, { idempotencyKey? })`                                                   | `POST /workspaces/:id/incidents/:incidentId/ack`  |
+| `listIncidents(ws, filter?)`, `declareIncident(ws, body)`                                                    | `GET`, `POST /workspaces/:id/incidents`           |
+| `getIncident(ws, id)`, `updateIncident(ws, id, body)`, `postIncidentUpdate(ws, id, { body })`                | `/workspaces/:id/incidents/:incidentId…`          |
+| `listServices`, `createService`, `getService`, `updateService`, `deleteService`                              | `/workspaces/:id/services…`                       |
+| `listIncidentTypes`, `createIncidentType`, `getIncidentType`, `updateIncidentType`                           | `/workspaces/:id/incident-types…`                 |
+| `listCustomFields`, `createCustomField`, `getCustomField`, `updateCustomField`                               | `/workspaces/:id/custom-fields…`                  |
 
 Every method resolves with the documented success and rejects with a `BrigadeApiError` (`operation`, `status`,
 `code`, `body`) for any other answer, `unexpected` for one outside the reference (a 2xx that is no JSON object, or a
@@ -140,7 +195,7 @@ redirect: never followed, so a cookie or token never goes elsewhere). An id that
 
 - **API tokens.** `token` is a workspace's API token (`brg_…`, RFC 0014), minted by an owner or admin in the
   dashboard with a name, an optional expiry and scopes, and shown once. The operations marked `bearerAuth` in the
-  reference take it: members, invitations and acknowledging (each with its scope), and the sync socket. It acts with
+  reference take it: members, invitations, incidents and the catalog (each with its scope), and the sync socket. It acts with
   its creator's role as it is now, never beyond its scopes; a wrong, revoked or expired token, or one whose creator
   left, is `401 unauthenticated`, and over its rate limit `429 rate_limited`. A server keeps it in a secret; GitHub
   secret scanning can find leaked ones with the pattern `brg_[A-Za-z0-9_-]{43}`. `cookie` (a Better Auth session
@@ -149,8 +204,8 @@ redirect: never followed, so a cookie or token never goes elsewhere). An id that
 - **Browsers.** The `cookie` option is for servers: a browser ignores a `Cookie` header a script sets, and sends its
   own cookies instead. On a page of the API's own origin it does so already; from another origin, pass
   `credentials: "include"` (and the API must allow that origin). `fetch` can be injected
-  (`createClient({ fetch })`), for tests or a Worker's service binding. Incidents, monitors and the rest are read and
-  changed over Brigade Sync (`@freecorps/brigade-sync`), not this API.
+  (`createClient({ fetch })`), for tests or a Worker's service binding. Monitors, schedules, escalation policies and
+  the rest are read and changed over Brigade Sync (`@freecorps/brigade-sync`), not this API.
 
 ## Development
 

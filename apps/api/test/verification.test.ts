@@ -332,10 +332,10 @@ describe("an address held by an account nobody verified", () => {
       body: JSON.stringify({ name: "Jo", email: first.email, password: PASSWORD }),
     });
     expect(again.status).toBe(200);
-    const holders = await env.DB.prepare(`select id from "user" where email = ?`)
+    const accounts = await env.DB.prepare(`select id from "user" where email = ?`)
       .bind(first.email)
       .all<{ id: string }>();
-    expect(holders.results.map((row) => row.id)).toEqual([first.id]);
+    expect(accounts.results.map((row) => row.id)).toEqual([first.id]);
     // Nor can the account be deleted or moved off the address, the other ways a newer account could get it.
     const deleted = await api("/auth/delete-user", {
       method: "POST",

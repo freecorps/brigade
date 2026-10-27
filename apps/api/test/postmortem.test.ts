@@ -245,7 +245,7 @@ describe("drafting a postmortem with Workers AI", () => {
     expect(parseDraft({ response: "{}" })).toBeUndefined();
   });
 
-  test("a timeline of 10,000 entries is cut to fit in linear time", () => {
+  test("a timeline of 10,000 entries is cut to fit, measuring the whole source at most twice", () => {
     const store = createMemoryStore<BrigadeTables>();
     const at = Date.UTC(2026, 9, 26, 12);
     const entries = 10_000;
@@ -271,15 +271,13 @@ describe("drafting a postmortem with Workers AI", () => {
       } as TimelineRow);
     }
     const stringify = vi.spyOn(JSON, "stringify");
-    const started = performance.now();
     const source = draftSource(store, INC, "en")!;
-    const elapsed = performance.now() - started;
     // The whole source is measured once (plus once for the room it leaves), not once per entry dropped.
     const wholes = stringify.mock.calls.filter(
       ([value]) => typeof value === "object" && value !== null && "omitted" in value,
     ).length;
     stringify.mockRestore();
-    expect(elapsed).toBeLessThan(50);
+    // No wall-clock bound: CI machines vary too much. Counting whole-source serializations is what proves it linear.
     expect(wholes).toBeLessThanOrEqual(2);
     expect(JSON.stringify(source).length).toBeLessThanOrEqual(MAX_SOURCE_CHARS);
     // The start, then the end, the middle left out.

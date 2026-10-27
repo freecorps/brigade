@@ -371,7 +371,8 @@ function EmailChoices() {
     void setEmail(next).then((outcome) => {
       // A conflict is no change: the synced row already says so.
       if (outcome.ok) return;
-      setPicked(null);
+      // Only this save's own pick goes back: a newer switch keeps showing.
+      setPicked((current) => (current === next ? null : current));
       if (outcome.error.code !== "conflict") setFailed(true);
     });
   };

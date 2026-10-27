@@ -53,6 +53,7 @@ import {
   statusPageConfig,
 } from "./status.ts";
 import { incidentTimeline } from "./timeline.ts";
+import { allMaintenance, maintenanceMutations, maintenanceServerMutations } from "./maintenance.ts";
 import {
   allWebhooks,
   createWebhook,
@@ -99,6 +100,7 @@ export const mutations = defineRegistry([
   configureSlack,
   disconnectSlack,
   ...statusMutations,
+  ...maintenanceMutations,
   ...webhookMutations,
   ...followUpMutations,
   ...postmortemMutations,
@@ -121,6 +123,7 @@ export const queries = defineRegistry([
   statusPageConfig,
   statusComponents,
   statusIncidentById,
+  allMaintenance,
   allWebhooks,
   ...catalogQueries,
   ...followUpQueries,
@@ -152,11 +155,13 @@ export const serverMutations = defineRegistry([
   configureSlack,
   disconnectSlack,
   ...statusMutations,
+  ...maintenanceMutations,
   ...webhookMutations,
   ...followUpMutations,
   ...postmortemMutations,
   ...alertSourceMutations,
   configureStatusPage,
+  ...maintenanceServerMutations,
   createWorkspace,
   syncMember,
   changeMemberRole,

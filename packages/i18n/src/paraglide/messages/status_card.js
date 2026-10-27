@@ -84,6 +84,11 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "withdrawn" | "Taken off the page. Visitors may still see it for about 2 minutes." |
 * | "corrected" | "Corrected. Visitors may still see the old version for about 2 minutes." |
 * | "correct_failed" | "Couldn't change the status page. Try again." |
+* | "uptime_label" | "Uptime bar from monitors" |
+* | "uptime_hint" | "The page shows 90 days of uptime from these monitors, from when they were created. Leave all unchecked for no bar." |
+* | "uptime_no_monitors" | "No monitors yet. Add one under Monitors to show an uptime bar." |
+* | "uptime_from" | "Uptime from {name}" |
+* | "uptime_limit" | "At most 5 monitors per component." |
 * | * | "Status page" |
 *
 * @param {Status_CardInputs} inputs
@@ -167,6 +172,11 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "withdrawn") return /** @type {LocalizedString} */ (`Tirado da página. Visitantes podem ainda vê-lo por cerca de 2 minutos.`);
 		if (i?.part === "corrected") return /** @type {LocalizedString} */ (`Corrigido. Visitantes podem ainda ver a versão anterior por cerca de 2 minutos.`);
 		if (i?.part === "correct_failed") return /** @type {LocalizedString} */ (`Não foi possível alterar a página de status. Tente de novo.`);
+		if (i?.part === "uptime_label") return /** @type {LocalizedString} */ (`Barra de disponibilidade a partir de monitores`);
+		if (i?.part === "uptime_hint") return /** @type {LocalizedString} */ (`A página mostra 90 dias de disponibilidade destes monitores, desde quando foram criados. Deixe todos desmarcados para não ter barra.`);
+		if (i?.part === "uptime_no_monitors") return /** @type {LocalizedString} */ (`Ainda não há monitores. Adicione um em Monitores para mostrar uma barra de disponibilidade.`);
+		if (i?.part === "uptime_from") return /** @type {LocalizedString} */ (`Disponibilidade de ${i?.name}`);
+		if (i?.part === "uptime_limit") return /** @type {LocalizedString} */ (`No máximo 5 monitores por componente.`);
 		return /** @type {LocalizedString} */ (`Página de status`)
 	}
 	{
@@ -244,6 +254,11 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "withdrawn") return /** @type {LocalizedString} */ (`Taken off the page. Visitors may still see it for about 2 minutes.`);
 		if (i?.part === "corrected") return /** @type {LocalizedString} */ (`Corrected. Visitors may still see the old version for about 2 minutes.`);
 		if (i?.part === "correct_failed") return /** @type {LocalizedString} */ (`Couldn't change the status page. Try again.`);
+		if (i?.part === "uptime_label") return /** @type {LocalizedString} */ (`Uptime bar from monitors`);
+		if (i?.part === "uptime_hint") return /** @type {LocalizedString} */ (`The page shows 90 days of uptime from these monitors, from when they were created. Leave all unchecked for no bar.`);
+		if (i?.part === "uptime_no_monitors") return /** @type {LocalizedString} */ (`No monitors yet. Add one under Monitors to show an uptime bar.`);
+		if (i?.part === "uptime_from") return /** @type {LocalizedString} */ (`Uptime from ${i?.name}`);
+		if (i?.part === "uptime_limit") return /** @type {LocalizedString} */ (`At most 5 monitors per component.`);
 		return /** @type {LocalizedString} */ (`Status page`)
 	}
 });

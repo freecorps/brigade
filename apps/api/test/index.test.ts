@@ -5,9 +5,9 @@ import worker, { WorkspaceDO } from "../src/index.ts";
 
 // store_rows, shard_meta, change_log, mutation_results, outbox, outbox_drain, page_deliveries, page_events, page_steps,
 // receipt_key, receipt_rate, email_sends, email_keys, probe_pushes, member_repair, invitation_sends,
-// invitation_repair, slack_states, slack_commands, slack_messages, slack_events, webhook_events, webhook_sends and
-// webhook_emails, created when the shard starts.
-const SYNC_TABLES = 24;
+// invitation_repair, slack_states, slack_commands, slack_messages, slack_events, webhook_events, webhook_sends,
+// webhook_emails, status_emails and status_email_days, created when the shard starts.
+const SYNC_TABLES = 26;
 
 const ORIGIN = "http://api.test";
 const api = (path: string, init?: RequestInit) => exports.default.fetch(`${ORIGIN}${path}`, init);

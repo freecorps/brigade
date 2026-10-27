@@ -160,6 +160,15 @@ the email Slack confirmed for one of the connected team's own users (RFC 0011 "W
 - Misses are not rate-limited: each made-up address costs one KV read per location a minute (the cached 404). A
   rate limit per IP on `/status/*` misses (Workers rate limiting binding) would bound a flood of distinct addresses;
   is that worth it before custom domains bring Cloudflare's own protection?
+- Subscribers and their emails (slice 2): 5 subscribes a minute per caller address and 30 per page, at most 3
+  confirmations per address and page a week and 5 per address a day across pages, 1000 subscribers per page and 5000
+  emails a page a day. A page past 1000 drops new subscribers silently (the answer cannot say so without telling who
+  is subscribed); should it be higher, per plan, or should owners be told? Should subscribers pick components?
+- Uptime counts an alert firing as downtime and anything else as up, including a paused monitor and a degraded
+  component the team set by hand. Should a pause be `none`, and should hand-set or incident impact count as degraded?
+  An hour of downtime makes a day `down`; is that the right line?
+- Maintenance never changes the page's overall status, and a component under maintenance shows it only while nothing
+  worse does. Should a window be able to say it takes a component down (planned outage)?
 - Slugs can be probed: `GET /status/<slug>` tells anyone which public pages exist, and saving a slug another
   workspace holds answers `slug_taken`, so any workspace admin can learn which addresses are in use, drafts
   included. Should a draft's slug be claimed only when it first goes public, or the 409 be rate-limited?

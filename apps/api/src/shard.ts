@@ -34,6 +34,7 @@ const STATUS_TABLES: ReadonlySet<string> = new Set([
   "status_page",
   "status_components",
   "status_incidents",
+  "status_maintenance",
 ]);
 
 /** How many versions the change log keeps. A resume from further back gets a snapshot instead of a patch. */
@@ -288,7 +289,14 @@ export class Shard {
     this.compact(version);
     // The public status page's snapshot is out of date (RFC 0012): set in the change's own transaction, so the
     // shard's alarm pushes a new one even if the object dies right after this commit.
-    if (changes.some((change) => STATUS_TABLES.has(change.table)))
+    // An alert firing or resolving moves an uptime bar, when a component is linked to monitors (RFC 0012 "Uptime").
+    if (
+      changes.some((change) => STATUS_TABLES.has(change.table)) ||
+      (changes.some((change) => change.table === "alerts") &&
+        this.store
+          .scan("status_components")
+          .some((component) => (component.monitorIds ?? []).length > 0))
+    )
       this.setMeta("status_dirty", version);
     writeOutbox(this.sql, events, {
       workspaceId,

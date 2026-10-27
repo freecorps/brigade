@@ -748,7 +748,23 @@ describe("the snapshot", () => {
       { ...good, locale: "fr" },
       { ...good, status: "on_fire" },
       { ...good, generatedAt: "yesterday" },
-      { ...good, v: 2 },
+      { ...good, v: 3 },
+      { ...good, v: 1 },
+      {
+        ...good,
+        groups: [
+          {
+            name: null,
+            components: [
+              { name: "API", status: "maintenance", uptime: { percent: 101, days: [] } },
+            ],
+          },
+        ],
+      },
+      {
+        ...good,
+        upcoming: [{ title: "Upgrade", body: "", components: [], startsAt: "soon", endsAt: 1 }],
+      },
       {
         ...good,
         active: [

@@ -84,6 +84,11 @@ export type Status_CardInputs = {
 * | "withdrawn" | "Taken off the page. Visitors may still see it for about 2 minutes." |
 * | "corrected" | "Corrected. Visitors may still see the old version for about 2 minutes." |
 * | "correct_failed" | "Couldn't change the status page. Try again." |
+* | "uptime_label" | "Uptime bar from monitors" |
+* | "uptime_hint" | "The page shows 90 days of uptime from these monitors, from when they were created. Leave all unchecked for no bar." |
+* | "uptime_no_monitors" | "No monitors yet. Add one under Monitors to show an uptime bar." |
+* | "uptime_from" | "Uptime from {name}" |
+* | "uptime_limit" | "At most 5 monitors per component." |
 * | * | "Status page" |
 *
 * @param {Status_CardInputs} inputs

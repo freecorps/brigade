@@ -3,10 +3,12 @@
 - Status: Draft
 
 A public page per workspace where customers see which parts of the service work and what the team chose to tell
-them about incidents (RFC 0001 goal 9, RFC 0003 `StatusPage`). This RFC covers the first slice: the page, its
-components, publishing an incident update to it, and the public read path. What is left is at the end ("Not in this
-slice"). The code: `packages/schema/src/status.ts`, `apps/api/src/status-page.ts` (the shard's side),
-`apps/api/src/status-route.ts` and `status-html.ts` (the routes and the page), and the dashboard's Status page card
+them about incidents (RFC 0001 goal 9, RFC 0003 `StatusPage`). The first slice: the page, its components, publishing an
+incident update to it, and the public read path. The second: email subscriptions, uptime bars from monitors and
+scheduled maintenance (their sections below). What is left is at the end ("Not yet"). The code:
+`packages/schema/src/status.ts`, `maintenance.ts` and `uptime.ts`, `apps/api/src/status-page.ts` (the shard's push),
+`status-route.ts` and `status-html.ts` (the routes and the page), `status-subscribers.ts` (subscribing),
+`status-mail.ts` and `notify-status.ts` (the emails), and the dashboard's Status page and Scheduled maintenance cards
 and the incident page's Status page panel.
 
 ## Shape
@@ -123,10 +125,12 @@ the same kind of decision as what monitors watch, so it is an admin's call.
 ## The snapshot
 
 `statusSnapshot` (packages/schema) builds the whole public page as JSON: the page's name and language, when it was
-built, the overall status, the groups with each component's name and derived status, the open incidents (most
-impact first) and the history, each incident with its public title, status, impact, the names of its components
-and its updates (newest first). It holds no ids, no members and nothing internal (tested: the snapshot never
-contains the internal title, any member, workspace, incident or component id).
+built, the overall status, the groups with each component's name, derived status and uptime bar, the open incidents
+(most impact first) and the history, each incident with its public title, status, impact, the names of its components
+and its updates (newest first), and the maintenance windows under way and upcoming. It holds no ids, no members and
+nothing internal (tested: the snapshot never contains the internal title, any member, workspace, incident, component,
+monitor or maintenance id). Version 2 added uptime, maintenance and the `maintenance` component status; the reader
+renders 1 and 2 and refuses anything else, and a 1 carrying the new fields.
 
 - **Where it lives: Workers KV** (binding `STATUS`, key `status:<slug>`). Chosen for the read path: KV is built for
   data read far more often than it is written and cached at the edge near readers (cacheTtl, default 60 s, at least
@@ -177,12 +181,106 @@ contains the internal title, any member, workspace, incident or component id).
   status one it has words for, and every time a real date (`isSnapshot`); anything else, or a render that throws,
   is the 503 page (not cached), so a Worker older or newer than the shard never shows half a page.
 - **Headers**: `Cache-Control: public, max-age=30` (404s 60 s), a Content-Security-Policy that allows nothing but
-  inline style (`default-src 'none'`, no frames), `nosniff`, `no-referrer`. Every piece of text is escaped.
+  inline style and a form posting to the page's own origin (`default-src 'none'`, `form-action 'self'`, no frames),
+  `nosniff`, `no-referrer`. Every piece of text is escaped.
 - **Caching and abuse.** The response is kept in the edge cache (the Cache API, keyed by slug alone, so headers and
   hosts never split it; a no-op on workers.dev) and the KV read uses `cacheTtl: 30`, so a busy page costs about one
-  KV read per location every 30 s, and a flood of made-up addresses one cached 404 per address. Nothing on the path
-  touches D1 or a shard, so there is nothing per request to rate-limit; a rate limit and Cloudflare's own DDoS
-  protection on the custom hostname are for the custom-domain slice.
+  KV read per location every 30 s, and a flood of made-up addresses one cached 404 per address. Nothing on the read
+  path touches D1 or a shard, so there is nothing per request to rate-limit; a rate limit and Cloudflare's own DDoS
+  protection on the custom hostname are for the custom-domain slice. Subscribing is the one write a visitor makes, and
+  it is rate-limited before it touches either ("Email subscriptions").
+
+## Uptime
+
+- **Optional per component**: `statusComponent.linkMonitors` (`status:manage`) links a component to up to 5 of the
+  workspace's monitors (`MAX_COMPONENT_MONITORS`); an empty list takes the bar off. Deleting a monitor takes it out of
+  every component in the same transaction.
+- **Computed in the shard**, in the snapshot (`uptime`, packages/schema): 90 UTC days (`UPTIME_DAYS`), today included.
+  A day's downtime is the time any linked monitor had an alert firing (the union, so two monitors down at once count
+  once); an alert is the monitor's own verdict after its consecutive checks (RFC 0007), so one failed check is not
+  downtime. A day is `up` with none, `degraded` under an hour (`UPTIME_DOWN_MS`), `down` from an hour, and `none`
+  before the first linked monitor existed. The percentage is the watched time that was up, two decimals, rounded down
+  so 99.999 never shows 100. Monitors keep no history of their checks, which is why alerts are the source; paused
+  time counts as up (Q23).
+- **Pushed when it moves**: an alert firing or resolving marks the snapshot dirty when any component is linked, and
+  the daily rebuild moves the bars on at midnight.
+- **On the page**: 90 thin bars under the component, coloured like the component scale, each with its day as a
+  tooltip, hidden from screen readers behind one text alternative (`role="img"`): the percentage and every day with
+  downtime and how long. No script.
+
+## Scheduled maintenance
+
+- **A window** (`status_maintenance`, synced, `mnt_` ids): a public title and text (the update rules), the components
+  it touches, when it starts and ends (at most 14 days long, at most a year ahead, not already over), and where it
+  stands: `scheduled`, `in_progress`, `completed`. At most 20 open at once; completed ones older than 90 days are
+  dropped when the next is planned.
+- **Who** (`status:publish`): owners, admins and responders, like publishing. `maintenance.schedule`, `.update` (not
+  once completed), `.end` (now, while under way) and `.cancel` (deletes one not completed), each with its event
+  (`maintenance.scheduled`, `.updated`, `.ended` with `early: true`, `.cancelled`; each carries the window's id,
+  title, components, times and phase).
+- **Moved on by the shard's alarm**: the alarm is set for the next start or end (`nextMaintenanceAt`, armed after
+  every mutation and on every wake) and runs the server-only `maintenance.advance`, which emits
+  `maintenance.started` or `maintenance.ended` (only the latter when both passed while the shard was away). The
+  change marks the snapshot dirty, so the push that follows shows it. Nobody needs to be signed in.
+- **On the page**: windows under way first (with the component chip "Under maintenance"), upcoming ones after the
+  components, at most 10, soonest first, in UTC. A component under maintenance shows it only while nothing worse (an
+  incident, its own status) does, and the banner says "Scheduled maintenance in progress" when everything else is
+  operational. The page's overall status is unchanged: maintenance is not an outage.
+- **The dashboard's Scheduled maintenance card** lists open and recent windows with their times in the viewer's time
+  zone, and plans, edits, ends and calls them off (asking first).
+
+## Email subscriptions
+
+Visitors subscribe on the page to hear of incidents and maintenance by email, in the page's language.
+
+- **Subscribers live in D1** (`status_subscriber`, migration 0009: id `ssb_…`, workspace, lower-cased address,
+  `pending` or `confirmed`, when, and how many confirmations were asked for), never in the shard: the shard keeps no
+  email addresses (RFC 0005 "Email"), and a refused or repeated subscribe never wakes it. Every change still emits an
+  event through the shard's outbox, with the subscriber's id and never the address: `status_subscriber.requested`
+  (`subscriberId`, `send`), `.confirmed`, `.removed` (`reason`: `unsubscribed` or `deleted`), from server-only
+  mutations run after the D1 write.
+- **The form**: a plain `POST /status/:slug/subscribe` form on the page (no script), shown only where email can be
+  sent. The answer is always "Check your inbox: if this address isn't subscribed yet, we've sent it a link", whether
+  the address was new, pending, confirmed, over its caps or the honeypot field (`website`, off-screen, never filled by
+  a person) was filled: the form tells nobody who is subscribed. A bad address is a 400, another origin a 403.
+- **Abuse.** Workers Rate Limiting before D1 or a shard: 5 a minute per caller address
+  (`STATUS_SUBSCRIBE_IP_LIMIT`) and 30 a minute per page (`STATUS_SUBSCRIBE_PAGE_LIMIT`), namespaces 411x and 412x
+  per environment; over either a 429 page. A pending address gets at most 3 confirmations from one page a week
+  (`STATUS_CONFIRM_SENDS`), and an address at most 5 a day from every page together, counted in D1 when sent
+  (`status_confirmation_send`), so many pages cannot add up to flood one inbox. A page holds at most 1000 subscribers
+  (`STATUS_SUBSCRIBERS_MAX`). Nothing but that one confirmation ever goes to an unconfirmed address. Q21 has the
+  numbers.
+- **Double opt-in.** The confirmation email links `/status/:slug/confirm?t=…`, signed (HMAC-SHA256 under a key
+  derived from `BETTER_AUTH_SECRET`; the token carries the kind, workspace, subscriber and expiry) and valid 48 hours.
+  A `GET` only shows a "Confirm subscription" button that posts, so a mail scanner opening links confirms nobody.
+- **Leaving.** Every notification carries a manage link (`/manage?t=…`, signed, no expiry, dead once the row is
+  gone) showing the masked address and an Unsubscribe button, and RFC 8058's `List-Unsubscribe` (https only, which
+  Email Sending requires) with `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, so a mail client unsubscribes in
+  one click with a `POST`. Unsubscribing deletes the row.
+- **Owners and admins** (`status:manage`, checked in D1): `GET /workspaces/:id/status-page/subscribers` (counts),
+  `…/export` (CSV of address, status and times; a value starting with a formula character is quoted), and `DELETE`
+  with `{ email }`. The dashboard's Status page card shows the counts, the export and removal by address; no other
+  member ever sees an address, and none reaches the page or the snapshot.
+- **What is sent.** `incident.update_published` (the first update of an incident is "created", a `resolved` one
+  "resolved", the rest "updated"; the text as it reads when the email goes out, so a correction made first goes out
+  corrected, and an update removed or an incident taken off the page sends nothing), and `maintenance.scheduled`,
+  `.started`, `.ended` and `.cancelled` (a window called off before its scheduled email went out sends nothing). Only
+  to `confirmed` subscribers, only while the page is public. Plain text and escaped HTML in the page's language
+  (`email_status`), with `Auto-Submitted: auto-generated` and `Content-Language`.
+- **From the queue, never the request path** (src/notify-status.ts): the consumer asks the shard for a plan
+  (src/status-mail.ts, a ledger keyed by event, held 60 s so two deliveries never send one batch), reads the next
+  confirmed subscribers from D1 after the ledger's cursor, at most 50 (`STATUS_EMAIL_BATCH`), sends each through a
+  side connection slot (shared with Slack and webhooks, so the relay always has its own) and reports back. Sends start
+  only within `STATUS_EMAIL_BUDGET_MS` (3 s); one under way past that finishes under `waitUntil`, and the delivery lets
+  go at most 2 s later, so the next batch's pages never wait on email. Subscribers left: the shard runs
+  `statusEmail.continue`, whose `status_email.continue` event brings the event back through the outbox, never riding
+  the original message's Queue retries. A refusal a retry may fix stops the batch there and is retried (30 s doubling
+  to 5 minutes, at most 5 failed batches, then given up and logged); one refused for good is skipped. A lost report
+  can send a batch twice (at least once, like every delivery here).
+- **Cap per page**: 5000 emails a UTC day (`STATUS_EMAIL_DAILY_CAP`); past it the rest of the day's are dropped and
+  logged.
+- **Links** use `DASHBOARD_URL` (the page is served on the dashboard's origin); without it nothing is sent, except by
+  the dev log sender, which uses the origin the visitor subscribed through.
 
 ## Language
 
@@ -211,12 +309,15 @@ cache purged by hand (custom domains, a later slice, can purge by URL).
 `.updated` (`id`, `name`, `group`, `status`), `status_component.deleted` (`id`, `incidents`: how many published
 incidents named it), `incident.update_published` (`entryId`, `title`, `status`, `impact`, `componentIds`,
 `body`), `incident.published_update_edited` (`entryId`, `updateId`, `body`), `incident.published_update_removed`
-(`entryId`, `updateId`) and `incident.unpublished` (`entryId`, `title`). No notifier acts on them yet; email subscriptions (slice 3) will.
+(`entryId`, `updateId`) and `incident.unpublished` (`entryId`, `title`); `status_component.monitors_linked` (`id`,
+`monitorIds`); the maintenance and subscriber events above, and `status_email.continue` (`eventId`). The status page
+email notifier acts on `incident.update_published`, the maintenance events, `status_subscriber.requested` and
+`status_email.continue`; none of them is in the webhook catalog yet.
 
-## Not in this slice
+## Not yet
 
-- Email subscriptions (RFC 0001 goal 9) with double opt-in, through the email notifier (slice 3).
-- Custom domains, uptime bars from monitors, scheduled maintenance, reordering components, local times on the page,
-  a JSON or RSS feed, embedding, pruning history past 90 days, showing who published (choice per page).
+- Custom domains, reordering components, local times on the page, a JSON or RSS feed, embedding, pruning history past
+  90 days, showing who published (choice per page), subscribing to some components only, maintenance and subscriber
+  events in the webhook catalog, the mobile app's publish and maintenance actions.
 - KV namespaces for staging and production: `STATUS` is bound for local runs and the tests and, in `dev`, to
   `brigade-status-dev` (apps/api README "Status page").

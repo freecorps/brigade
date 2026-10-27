@@ -614,7 +614,29 @@ export type StatusComponentRow = {
   group: string | null;
   /** Its status set by hand; what the page shows is the worse of this and its open incidents' impact. */
   status: ComponentStatus;
+  /**
+   * The monitors its uptime bar is computed from (RFC 0012 "Uptime"), at most `MAX_COMPONENT_MONITORS`; absent or
+   * empty: no bar.
+   */
+  monitorIds?: string[];
   createdAt: number;
+  updatedAt: number;
+};
+
+/** Where a maintenance window stands; moved on by the shard's alarm (`maintenance.advance`). */
+export type MaintenancePhase = "scheduled" | "in_progress" | "completed";
+
+/** A planned maintenance window on the status page (RFC 0012 "Scheduled maintenance"); written for the public. */
+export type MaintenanceRow = {
+  id: string; // mnt_<ULID>, made by the client
+  title: string;
+  body: string;
+  componentIds: string[];
+  startsAt: number;
+  endsAt: number;
+  phase: MaintenancePhase;
+  createdAt: number;
+  createdBy: string;
   updatedAt: number;
 };
 
@@ -954,6 +976,7 @@ export type BrigadeTables = {
   status_components: StatusComponentRow;
   status_incidents: StatusIncidentRow;
   status_retired: StatusRetiredRow;
+  status_maintenance: MaintenanceRow;
   webhooks: WebhookRow;
   webhook_secrets: WebhookSecretRow;
   services: ServiceRow;
@@ -998,6 +1021,7 @@ export const TABLES = {
   status_components: { serverOnly: false },
   status_incidents: { serverOnly: false },
   status_retired: { serverOnly: true },
+  status_maintenance: { serverOnly: false },
   webhooks: { serverOnly: false },
   webhook_secrets: { serverOnly: true },
   services: { serverOnly: false },

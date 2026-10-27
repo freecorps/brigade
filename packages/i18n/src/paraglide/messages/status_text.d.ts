@@ -36,6 +36,8 @@ export type Status_TextInputs = {
 * | "unavailable_title" | "Status page unavailable" |
 * | "unavailable_body" | "The status page can't be shown right now. Try again in a minute." |
 * | "powered" | "Status page by Brigade" |
+* | "component_maintenance" | "Under maintenance" |
+* | "overall_maintenance" | "Scheduled maintenance in progress" |
 * | * | "Status" |
 *
 * @param {Status_TextInputs} inputs

@@ -1000,6 +1000,14 @@ export const deleteMonitor = defineMutation({
     const resolved = resolveAlert(store, monitor, "deleted", ctx);
     store.delete("monitors", args.id);
     store.delete("heartbeats", args.id);
+    // No status page uptime bar keeps pointing at it (RFC 0012 "Uptime").
+    for (const component of store.scan("status_components")) {
+      if (!component.monitorIds?.includes(args.id)) continue;
+      store.update("status_components", component.id, {
+        monitorIds: component.monitorIds.filter((id) => id !== args.id),
+        updatedAt: ctx.now,
+      });
+    }
     const event: MonitorDeleted = {
       type: "monitor.deleted",
       subject: args.id,

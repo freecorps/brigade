@@ -480,7 +480,7 @@ describe("statusSnapshot", () => {
     );
     const snapshot = statusSnapshot(store, T + 5)!;
     expect(snapshot).toMatchObject({
-      v: 1,
+      v: 2,
       title: "Acme",
       locale: "pt-BR",
       generatedAt: T + 5,
@@ -497,6 +497,8 @@ describe("statusSnapshot", () => {
         },
       ],
       history: [],
+      maintenance: [],
+      upcoming: [],
     });
     const text = JSON.stringify(snapshot);
     for (const internal of ["db primary OOM", "usr_", incident, api, web, "inc_", "cmp_"]) {

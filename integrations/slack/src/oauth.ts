@@ -10,13 +10,23 @@ import { callSlack } from "./web-api.ts";
 export const STATE_COOKIE = "brigade_slack_oauth";
 /** `<workspace id>.<32 random bytes, base64url>`, as the API makes it. */
 export const STATE = /^ws_[0-9A-HJKMNP-TV-Z]{26}\.[A-Za-z0-9_-]{43}$/;
-/** What the bot needs (RFC 0011): `/inc`, posting (public channels without an invitation), and users by email. */
+/**
+ * What the bot needs (RFC 0011): `/inc` and the shortcut, posting (public channels without an invitation), users by
+ * email, the channel picker (`conversations.list`), incident channels (create, invite, archive: public and private),
+ * and `!update` messages in them (the Events API's `message.channels` and `message.groups`).
+ */
 export const BOT_SCOPES = [
   "commands",
   "chat:write",
   "chat:write.public",
   "users:read",
   "users:read.email",
+  "channels:read",
+  "groups:read",
+  "channels:manage",
+  "groups:write",
+  "channels:history",
+  "groups:history",
 ] as const;
 
 const AUTHORIZE = "https://slack.com/oauth/v2/authorize";

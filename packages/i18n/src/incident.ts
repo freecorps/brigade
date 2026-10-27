@@ -156,6 +156,7 @@ export function entryText(entry: TimelineRow, who: People): string {
         // A page made again because its event was lost: about the page, not why it went to everyone.
         if (entry.again) return say("escalated_everyone_again");
         if (entry.reason === "stalled") return say("escalated_everyone_stalled");
+        if (entry.reason === "manual") return say("escalated_everyone_manual");
         return say(entry.later ? "escalated_everyone_later" : "escalated_everyone");
       }
       const level = m.escalation_level_round({
@@ -177,7 +178,9 @@ export function entryText(entry: TimelineRow, who: People): string {
       }
       // A reason this client has no words for (a newer server's) reads as a plain page of the level, never as
       // "changed the incident".
-      const known = ["started", "timeout", "unreachable", "undelivered"].includes(entry.reason);
+      const known = ["started", "timeout", "unreachable", "undelivered", "manual"].includes(
+        entry.reason,
+      );
       return say(known ? `escalated_${entry.reason}` : "escalated_started", level, names);
     }
     case "escalation_exhausted":

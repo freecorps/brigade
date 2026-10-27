@@ -255,12 +255,21 @@ Validate the risky assumptions before writing product code. Each spike produces 
     shard (`incident.declare`, `incident.ack`: same RBAC, events and escalation stop as the dashboard); one message per
     incident in a configured channel, posted on declare and updated on ack, status and severity by the queue consumer,
     idempotent per event, retried (Slack's `Retry-After` on 429), and a `slack_failed` timeline entry when it gives up;
-    the dashboard's Slack card (Add to Slack, channel id, language, Disconnect). en and pt-BR.
+    the dashboard's Slack card (Add to Slack, channel id, language, Disconnect). en and pt-BR. Then: a channel per
+    incident, opt-in per workspace (all incidents or SEV1 and SEV2 only; `#inc-<n>-<slug>` with `conversations.create`,
+    the role holders and paged people invited by verified email, the incident message there and linked from the main
+    channel, archived on resolve after a delay or kept, public or private); the timeline mirrored both ways (status,
+    severity, role, update and ack entries into the channel, or as a thread under the message without one; `!update`
+    and the "Post to Brigade timeline" shortcut become updates as the member), one job at a time per event from the
+    queue consumer, idempotent, under the side-connection limiter with Slack's own share; the Events API
+    (`url_verification`, `app_uninstalled` and `tokens_revoked` mark the connection revoked); `auth.revoke` on
+    Disconnect; `/inc update`, `sev`, `resolve`, `role` and `escalate` (`escalation.now`, the next level now) as the
+    member through the shard, and a declare form (`views.open`) with severity, type and services; a channel picker on
+    the card from `conversations.list` through the API (RFC 0011).
   - Left: creating the Slack app and the secrets, applying migration 0006 and deploying (owner's call,
-    integrations/slack/README.md, Q22); a channel per incident; mirroring the
-    timeline both ways; `/inc` subcommands beyond declare and ack (update, severity, resolve), Escalate and modals;
-    App Home; the Events API (`app_uninstalled`, `tokens_revoked`); revoking the token on Disconnect; a channel
-    picker; Enterprise Grid and distribution beyond one app per instance; staging and production names.
+    integrations/slack/README.md, Q22); App Home; Enterprise Grid and distribution beyond one app per instance;
+    staging and production names.
+  - Left: test on a real Slack workspace (owner).
 - [ ] Email notifier; in-app VoIP call paging (RFC 0010); optional PSTN notifier (provider-agnostic)
   - Done: the email notifier (RFC 0005 "Email"): a provider-agnostic `EmailSender`, Cloudflare Email Sending through
     the `send_email` binding (every environment; the sender is the secret `EMAIL_FROM`, so no domain is in the repo),

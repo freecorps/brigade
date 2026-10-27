@@ -3,7 +3,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 
 /** @typedef {import('../runtime.js').LocalizedString} LocalizedString */
 
-/** @typedef {{ part: NonNullable<unknown>, incident: NonNullable<unknown>, title: NonNullable<unknown>, name: NonNullable<unknown>, workspace: NonNullable<unknown>, list: NonNullable<unknown> }} Slack_TextInputs */
+/** @typedef {{ part: NonNullable<unknown>, incident: NonNullable<unknown>, title: NonNullable<unknown>, name: NonNullable<unknown>, workspace: NonNullable<unknown>, list: NonNullable<unknown>, detail: NonNullable<unknown>, person: NonNullable<unknown> }} Slack_TextInputs */
 
 
 
@@ -33,7 +33,39 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "reply_invalid_title" | "An incident needs a title of 1 to 200 characters, with no invisible characters." |
 * | "reply_failed" | "Brigade couldn't do that right now. Try again in a moment." |
 * | "reply_unknown" | "Unknown command." |
-* | "usage" | "Declare an incident: /inc declare <title> [sev1, sev2, sev3 or sev4]. Acknowledge one: /inc ack [INC-12]." |
+* | "usage" | "Declare an incident: /inc declare [title] [sev1 to sev4], or /inc declare alone for a form. Then: /inc ack, /inc update <text>, /inc sev <1 to 4>, /inc resol..." |
+* | "message_channel" | "Incident channel: {detail}" |
+* | "mirror_status" | "{name} changed the status to *{detail}*" |
+* | "mirror_severity" | "{name} changed the severity to *{detail}*" |
+* | "mirror_ack" | "{name} acknowledged the incident. Paging has stopped." |
+* | "mirror_role" | "{name} made {person} the {detail}" |
+* | "mirror_role_cleared" | "{name} left the {detail} role empty" |
+* | "mirror_update" | "*Update from {name}* {detail}" |
+* | "reply_updated" | "Posted to {incident}'s timeline." |
+* | "reply_severity" | "{incident} is now {detail}." |
+* | "reply_resolved" | "Resolved {incident}: {title}" |
+* | "reply_role" | "{person} is now the {detail} of {incident}." |
+* | "reply_escalated" | "Paged the next level of {incident} now." |
+* | "reply_not_escalating" | "{incident} has no escalation under way, so there's no next level to page." |
+* | "reply_unchanged" | "{incident} is already like that." |
+* | "reply_which" | "More than one incident is active: {list}. Say which one, for example /inc {detail} {incident}." |
+* | "reply_no_active" | "No incident is active." |
+* | "reply_invalid_update" | "An update needs 1 to 4000 characters, with no invisible characters." |
+* | "reply_unknown_role" | "There's no role called {detail}. The roles are: {list}." |
+* | "reply_role_unmapped" | "Brigade can't tell which member {person} is: their Slack email isn't the confirmed email of a member of {workspace}." |
+* | "reply_role_viewer" | "{person} is a viewer in {workspace}, and viewers can't hold incident roles." |
+* | "reply_not_incident_channel" | "This isn't an incident's channel. To post to an incident's timeline, use /inc update INC-12 followed by the update." |
+* | "reply_modal_failed" | "Brigade couldn't open the form. Try /inc declare followed by the title instead." |
+* | "modal_title" | "Declare an incident" |
+* | "modal_submit" | "Declare" |
+* | "modal_close" | "Cancel" |
+* | "modal_title_label" | "Title" |
+* | "modal_title_placeholder" | "What's wrong, in a few words" |
+* | "modal_severity_label" | "Severity" |
+* | "modal_type_label" | "Type" |
+* | "modal_type_placeholder" | "Pick a type" |
+* | "modal_services_label" | "Affected services" |
+* | "modal_services_placeholder" | "Pick services" |
 * | * | "Brigade" |
 *
 * @param {Slack_TextInputs} inputs
@@ -66,7 +98,40 @@ export const slack_text = /** @type {((inputs: Slack_TextInputs, options?: { loc
 		if (i?.part === "reply_invalid_title") return /** @type {LocalizedString} */ (`Um incidente precisa de um título de 1 a 200 caracteres, sem caracteres invisíveis.`);
 		if (i?.part === "reply_failed") return /** @type {LocalizedString} */ (`O Brigade não conseguiu fazer isso agora. Tente de novo em instantes.`);
 		if (i?.part === "reply_unknown") return /** @type {LocalizedString} */ (`Comando desconhecido.`);
-		if (i?.part === "usage") return /** @type {LocalizedString} */ (`Declarar um incidente: /inc declare <título> [sev1, sev2, sev3 ou sev4]. Confirmar um: /inc ack [INC-12].`);
+		if (i?.part === "usage") return /** @type {LocalizedString} */ (`Declarar um incidente: /inc declare [título] [sev1 a sev4], ou só /inc declare para um formulário. Depois: /inc ack, /inc update <texto>, /inc sev <1 a 4>, /inc resolve, /inc role <papel> @alguém e /inc escalate, cada um com o número de um incidente como INC-12 antes do resto, ou sem ele no canal de um incidente.`);
+		if (i?.part === "message_channel") return /** @type {LocalizedString} */ (`Canal do incidente: ${i?.detail}`);
+		if (i?.part === "mirror_status") return /** @type {LocalizedString} */ (`${i?.name} mudou o status para *${i?.detail}*`);
+		if (i?.part === "mirror_severity") return /** @type {LocalizedString} */ (`${i?.name} mudou a gravidade para *${i?.detail}*`);
+		if (i?.part === "mirror_ack") return /** @type {LocalizedString} */ (`${i?.name} confirmou o incidente. As chamadas pararam.`);
+		if (i?.part === "mirror_role") return /** @type {LocalizedString} */ (`${i?.name} definiu ${i?.person} como ${i?.detail}`);
+		if (i?.part === "mirror_role_cleared") return /** @type {LocalizedString} */ (`${i?.name} deixou o papel de ${i?.detail} sem ninguém`);
+		if (i?.part === "mirror_update") return /** @type {LocalizedString} */ (`*Atualização de ${i?.name}*
+${i?.detail}`);
+		if (i?.part === "reply_updated") return /** @type {LocalizedString} */ (`Publicado na linha do tempo do ${i?.incident}.`);
+		if (i?.part === "reply_severity") return /** @type {LocalizedString} */ (`${i?.incident} agora é ${i?.detail}.`);
+		if (i?.part === "reply_resolved") return /** @type {LocalizedString} */ (`${i?.incident} resolvido: ${i?.title}`);
+		if (i?.part === "reply_role") return /** @type {LocalizedString} */ (`${i?.person} agora é ${i?.detail} do ${i?.incident}.`);
+		if (i?.part === "reply_escalated") return /** @type {LocalizedString} */ (`O próximo nível do ${i?.incident} foi chamado agora.`);
+		if (i?.part === "reply_not_escalating") return /** @type {LocalizedString} */ (`O ${i?.incident} não tem um escalonamento em andamento, então não há próximo nível para chamar.`);
+		if (i?.part === "reply_unchanged") return /** @type {LocalizedString} */ (`O ${i?.incident} já está assim.`);
+		if (i?.part === "reply_which") return /** @type {LocalizedString} */ (`Há mais de um incidente ativo: ${i?.list}. Diga qual, por exemplo /inc ${i?.detail} ${i?.incident}.`);
+		if (i?.part === "reply_no_active") return /** @type {LocalizedString} */ (`Nenhum incidente está ativo.`);
+		if (i?.part === "reply_invalid_update") return /** @type {LocalizedString} */ (`Uma atualização precisa de 1 a 4000 caracteres, sem caracteres invisíveis.`);
+		if (i?.part === "reply_unknown_role") return /** @type {LocalizedString} */ (`Não existe um papel chamado ${i?.detail}. Os papéis são: ${i?.list}.`);
+		if (i?.part === "reply_role_unmapped") return /** @type {LocalizedString} */ (`O Brigade não sabe qual membro é ${i?.person}: o email dessa pessoa no Slack não é o email confirmado de um membro de ${i?.workspace}.`);
+		if (i?.part === "reply_role_viewer") return /** @type {LocalizedString} */ (`${i?.person} é leitor em ${i?.workspace}, e leitores não podem ter papéis em incidentes.`);
+		if (i?.part === "reply_not_incident_channel") return /** @type {LocalizedString} */ (`Este não é o canal de um incidente. Para publicar na linha do tempo de um incidente, use /inc update INC-12 seguido da atualização.`);
+		if (i?.part === "reply_modal_failed") return /** @type {LocalizedString} */ (`O Brigade não conseguiu abrir o formulário. Tente /inc declare seguido do título.`);
+		if (i?.part === "modal_title") return /** @type {LocalizedString} */ (`Declarar incidente`);
+		if (i?.part === "modal_submit") return /** @type {LocalizedString} */ (`Declarar`);
+		if (i?.part === "modal_close") return /** @type {LocalizedString} */ (`Cancelar`);
+		if (i?.part === "modal_title_label") return /** @type {LocalizedString} */ (`Título`);
+		if (i?.part === "modal_title_placeholder") return /** @type {LocalizedString} */ (`O que está errado, em poucas palavras`);
+		if (i?.part === "modal_severity_label") return /** @type {LocalizedString} */ (`Gravidade`);
+		if (i?.part === "modal_type_label") return /** @type {LocalizedString} */ (`Tipo`);
+		if (i?.part === "modal_type_placeholder") return /** @type {LocalizedString} */ (`Escolha um tipo`);
+		if (i?.part === "modal_services_label") return /** @type {LocalizedString} */ (`Serviços afetados`);
+		if (i?.part === "modal_services_placeholder") return /** @type {LocalizedString} */ (`Escolha serviços`);
 		return /** @type {LocalizedString} */ (`Brigade`)
 	}
 	{
@@ -93,7 +158,40 @@ export const slack_text = /** @type {((inputs: Slack_TextInputs, options?: { loc
 		if (i?.part === "reply_invalid_title") return /** @type {LocalizedString} */ (`An incident needs a title of 1 to 200 characters, with no invisible characters.`);
 		if (i?.part === "reply_failed") return /** @type {LocalizedString} */ (`Brigade couldn't do that right now. Try again in a moment.`);
 		if (i?.part === "reply_unknown") return /** @type {LocalizedString} */ (`Unknown command.`);
-		if (i?.part === "usage") return /** @type {LocalizedString} */ (`Declare an incident: /inc declare <title> [sev1, sev2, sev3 or sev4]. Acknowledge one: /inc ack [INC-12].`);
+		if (i?.part === "usage") return /** @type {LocalizedString} */ (`Declare an incident: /inc declare [title] [sev1 to sev4], or /inc declare alone for a form. Then: /inc ack, /inc update <text>, /inc sev <1 to 4>, /inc resolve, /inc role <role> @someone and /inc escalate, each with an incident number such as INC-12 before the rest, or without one in an incident's channel.`);
+		if (i?.part === "message_channel") return /** @type {LocalizedString} */ (`Incident channel: ${i?.detail}`);
+		if (i?.part === "mirror_status") return /** @type {LocalizedString} */ (`${i?.name} changed the status to *${i?.detail}*`);
+		if (i?.part === "mirror_severity") return /** @type {LocalizedString} */ (`${i?.name} changed the severity to *${i?.detail}*`);
+		if (i?.part === "mirror_ack") return /** @type {LocalizedString} */ (`${i?.name} acknowledged the incident. Paging has stopped.`);
+		if (i?.part === "mirror_role") return /** @type {LocalizedString} */ (`${i?.name} made ${i?.person} the ${i?.detail}`);
+		if (i?.part === "mirror_role_cleared") return /** @type {LocalizedString} */ (`${i?.name} left the ${i?.detail} role empty`);
+		if (i?.part === "mirror_update") return /** @type {LocalizedString} */ (`*Update from ${i?.name}*
+${i?.detail}`);
+		if (i?.part === "reply_updated") return /** @type {LocalizedString} */ (`Posted to ${i?.incident}'s timeline.`);
+		if (i?.part === "reply_severity") return /** @type {LocalizedString} */ (`${i?.incident} is now ${i?.detail}.`);
+		if (i?.part === "reply_resolved") return /** @type {LocalizedString} */ (`Resolved ${i?.incident}: ${i?.title}`);
+		if (i?.part === "reply_role") return /** @type {LocalizedString} */ (`${i?.person} is now the ${i?.detail} of ${i?.incident}.`);
+		if (i?.part === "reply_escalated") return /** @type {LocalizedString} */ (`Paged the next level of ${i?.incident} now.`);
+		if (i?.part === "reply_not_escalating") return /** @type {LocalizedString} */ (`${i?.incident} has no escalation under way, so there's no next level to page.`);
+		if (i?.part === "reply_unchanged") return /** @type {LocalizedString} */ (`${i?.incident} is already like that.`);
+		if (i?.part === "reply_which") return /** @type {LocalizedString} */ (`More than one incident is active: ${i?.list}. Say which one, for example /inc ${i?.detail} ${i?.incident}.`);
+		if (i?.part === "reply_no_active") return /** @type {LocalizedString} */ (`No incident is active.`);
+		if (i?.part === "reply_invalid_update") return /** @type {LocalizedString} */ (`An update needs 1 to 4000 characters, with no invisible characters.`);
+		if (i?.part === "reply_unknown_role") return /** @type {LocalizedString} */ (`There's no role called ${i?.detail}. The roles are: ${i?.list}.`);
+		if (i?.part === "reply_role_unmapped") return /** @type {LocalizedString} */ (`Brigade can't tell which member ${i?.person} is: their Slack email isn't the confirmed email of a member of ${i?.workspace}.`);
+		if (i?.part === "reply_role_viewer") return /** @type {LocalizedString} */ (`${i?.person} is a viewer in ${i?.workspace}, and viewers can't hold incident roles.`);
+		if (i?.part === "reply_not_incident_channel") return /** @type {LocalizedString} */ (`This isn't an incident's channel. To post to an incident's timeline, use /inc update INC-12 followed by the update.`);
+		if (i?.part === "reply_modal_failed") return /** @type {LocalizedString} */ (`Brigade couldn't open the form. Try /inc declare followed by the title instead.`);
+		if (i?.part === "modal_title") return /** @type {LocalizedString} */ (`Declare an incident`);
+		if (i?.part === "modal_submit") return /** @type {LocalizedString} */ (`Declare`);
+		if (i?.part === "modal_close") return /** @type {LocalizedString} */ (`Cancel`);
+		if (i?.part === "modal_title_label") return /** @type {LocalizedString} */ (`Title`);
+		if (i?.part === "modal_title_placeholder") return /** @type {LocalizedString} */ (`What's wrong, in a few words`);
+		if (i?.part === "modal_severity_label") return /** @type {LocalizedString} */ (`Severity`);
+		if (i?.part === "modal_type_label") return /** @type {LocalizedString} */ (`Type`);
+		if (i?.part === "modal_type_placeholder") return /** @type {LocalizedString} */ (`Pick a type`);
+		if (i?.part === "modal_services_label") return /** @type {LocalizedString} */ (`Affected services`);
+		if (i?.part === "modal_services_placeholder") return /** @type {LocalizedString} */ (`Pick services`);
 		return /** @type {LocalizedString} */ (`Brigade`)
 	}
 });

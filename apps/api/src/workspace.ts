@@ -323,6 +323,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       randomBytes,
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
+      wake: (at) => this.wake(at, "slack archive"),
     });
     this.webhooks = new WebhookDesk({
       storage: ctx.storage,
@@ -1535,10 +1536,31 @@ export class WorkspaceDO extends DurableObject<Env> {
     return this.slack.plan(event, Date.now());
   }
 
-  /** What delivering `event`'s Slack message did (RPC from the queue consumer): see `SlackDesk.record`. */
-  recordSlack(event: BrigadeEvent, outcome: SlackPostOutcome): { retryAt: number | null } {
+  /** What doing one job of `event` in Slack did (RPC from the queue consumer): see `SlackDesk.record`. */
+  recordSlack(
+    event: BrigadeEvent,
+    job: string,
+    outcome: SlackPostOutcome & { name?: string },
+  ): { retryAt: number | null } {
     if (this.shard.workspace() !== event.workspaceId) return { retryAt: null };
-    return this.slack.record(event, outcome, Date.now());
+    return this.slack.record(event, job, outcome, Date.now());
+  }
+
+  /** The declare form's incident types and services (RPC from `SlackBridge.openDeclare`). */
+  slackCatalog(): ReturnType<SlackDesk["catalog"]> {
+    return this.slack.catalog();
+  }
+
+  /**
+   * Slack removed the app or revoked its bot token (RPC from `SlackBridge.revoked`, the Events API): the connection
+   * is marked revoked and its token forgotten. False when it was not this workspace's team or bot.
+   */
+  slackRevoked(
+    teamId: string,
+    reason: "uninstalled" | "tokens_revoked",
+    botUserIds: string[] | null,
+  ): boolean {
+    return this.slack.revoke(teamId, reason, botUserIds, Date.now());
   }
 
   /**
@@ -1600,7 +1622,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   /**
    * The shard's one alarm (RFC 0005, RFC 0007, RFC 0006 "Who is paged"): escalation levels that came due
    * (`Escalations.fireDue`, synchronous, drained at once when any fired), monitor upkeep (`Monitoring.tick`), webhook
-   * deliveries due again (`WebhookDesk.redrive`), draining the outbox to the Queue, then a due member repair (`Membership.repairDue`: a member change D1 has and the shard
+   * deliveries due again (`WebhookDesk.redrive`) and incident channels due to be archived (`SlackDesk.archiveDue`), draining the outbox to the Queue, then a due member repair (`Membership.repairDue`: a member change D1 has and the shard
    * missed), and the outbox again when the repair wrote events. The drain goes before the repair because the repair
    * waits on D1 (and on any member change ahead of it in the member lock): a page never waits on D1. A fallback a
    * tick from now is set first, so a failure never ends the chain; then the alarm moves to the earliest any of them
@@ -1632,6 +1654,12 @@ export class WorkspaceDO extends DurableObject<Env> {
       this.webhooks.redrive(Date.now());
     } catch (error) {
       this.log("webhook redrive failed", { error });
+    }
+    // Incident channels due to be archived: `slack.archive_due` events, out with the drain below (src/slack.ts).
+    try {
+      this.slack.archiveDue(Date.now());
+    } catch (error) {
+      this.log("slack archive failed", { error });
     }
     // Maintenance windows that started or ended (RFC 0012 "Scheduled maintenance"): their events go out with the drain
     // below, and the push after it shows them.
@@ -1726,6 +1754,14 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("reading the webhook retries failed", { error });
     }
+    let archiveAt: number | null = now + MONITOR_TICK_MS;
+    try {
+      const at = this.slack.nextArchiveAt();
+      // One that could not be asked for is tried again a tick later, not in a loop.
+      archiveAt = at === null ? null : Math.max(at, Date.now() + (at <= now ? MONITOR_TICK_MS : 0));
+    } catch (error) {
+      this.log("reading the slack archives failed", { error });
+    }
     let maintenanceAt: number | null = null;
     try {
       const at = nextMaintenanceAt(this.shard.store.scan("status_maintenance"));
@@ -1739,7 +1775,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       earliest(earliest(monitors, escalationAt), earliest(repair, earliest(armed, maintenanceAt))),
       earliest(
         earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
-        earliest(webhookAt, earliest(expiryAt, tokenAt)),
+        earliest(earliest(webhookAt, archiveAt), earliest(expiryAt, tokenAt)),
       ),
     );
     if (next === null) await this.ctx.storage.deleteAlarm();

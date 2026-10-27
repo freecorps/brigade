@@ -8,6 +8,11 @@
 
 /** Connections Slack and webhooks may hold at once in one invocation: half of six, so the relay never waits. */
 export const SIDE_CONNECTIONS = 3;
+/**
+ * Slack's own share of those (RFC 0011): an incident channel with its invitations, both messages and the timeline
+ * mirror is several calls per event, and they must not take every side slot from the webhooks either.
+ */
+export const SLACK_CONNECTIONS = 2;
 /** The most of a side call's answer read before its slot is freed; Slack's answers are a few KB. */
 export const SIDE_RESPONSE_BYTES = 256 * 1024;
 /** How long reading a side call's answer may take once it arrived, so a stalled body never keeps its slot. */

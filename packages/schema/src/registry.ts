@@ -40,6 +40,7 @@ import { allPolicies, policyMutations } from "./policies.ts";
 import { catalogMutations, catalogQueries } from "./catalog.ts";
 import {
   advanceEscalation,
+  escalateNow,
   fallbackEscalation,
   repageEscalation,
   startEscalation,
@@ -50,6 +51,9 @@ import {
   connectSlack,
   disconnectSlack,
   failSlack,
+  forgetSlackToken,
+  markSlackRevoked,
+  slackArchiveDue,
   slackConnection,
 } from "./slack.ts";
 import {
@@ -194,8 +198,12 @@ export const serverMutations = defineRegistry([
   fallbackEscalation,
   repageEscalation,
   unreachedEscalation,
+  escalateNow,
   connectSlack,
   failSlack,
+  markSlackRevoked,
+  forgetSlackToken,
+  slackArchiveDue,
   createWebhook,
   rotateWebhookSecret,
   recordWebhookAttempt,

@@ -620,9 +620,13 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
 
 ## Slack (first ChatProvider)
 
-The first slice is designed in RFC 0011: install, `/inc declare` and `ack`, an Acknowledge button and one message per
-incident. It emits `slack.connected` (`teamId`, `teamName`, `replaced`), `slack.configured` (`channelId`, `locale`)
-and `slack.disconnected` (`teamId`), never the token; a message the notifier gave up on is `notification.failed`
+Designed in RFC 0011: install, `/inc` (declare and its form, ack, update, sev, resolve, role, escalate), an
+Acknowledge button, one message per incident, a channel per incident (opt-in), the timeline mirrored both ways and
+the Events API. It emits `slack.connected` (`teamId`, `teamName`, `replaced`), `slack.configured` (the channel, its
+name, the language and the incident-channel settings), `slack.disconnected` (`teamId`), `slack.revoked` (`teamId`,
+`reason`), `slack.token_forgotten` (`teamId`) and `slack.archive_due` (`incidentId`), never the token; a Slack user's
+action is the dashboard's own mutation and event, and `/inc escalate` is `escalation.paged` with `reason: "manual"`.
+A job the notifier gave up on is `notification.failed`
 with `channel: "slack"` (`incidentId`, `eventId`, `userId: null`, `reason`: `no_channel`, `not_authorized`,
 `rate_limited`, `undelivered`) and a `slack_failed` timeline entry. The notifier runs in the API's consumer next to push
 (RFC 0011 "Shape": no binding cycle), so the notifier Worker has not split off yet.

@@ -488,6 +488,59 @@ describe("escalation runs", () => {
     });
   });
 
+  test("escalation.now pages the next level at once, as a member who may update incidents, once per step", () => {
+    const store = withPolicy({ repeat: 0 });
+    start(store);
+    const now = (role: Role, id = "usr_caio", step = run(store).paged, at = T + MINUTE) =>
+      runMutation(
+        serverMutations,
+        "escalation.now",
+        { incidentId: INC, step },
+        store,
+        ctx(id, role, at),
+      );
+    // A viewer may not; clients cannot send it at all.
+    expect(now("viewer", "usr_duda")).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(
+      runMutation(
+        mutations,
+        "escalation.now",
+        { incidentId: INC, step: 1 },
+        store,
+        ctx("usr_caio", "responder"),
+      ),
+    ).toMatchObject({ ok: false });
+    expect(now("responder")).toMatchObject({
+      ok: true,
+      events: [
+        {
+          type: "escalation.paged",
+          data: { level: 2, round: 0, reason: "manual", started: false },
+        },
+      ],
+    });
+    // The next level's own timeout starts from now.
+    expect(run(store).nextAt).toBe(T + MINUTE + 10 * MINUTE);
+    expect(timeline(store).at(-1)).toMatchObject({
+      kind: "escalated",
+      level: 2,
+      reason: "manual",
+      actor: "usr_caio",
+    });
+    // Asked twice with the same step: once.
+    expect(now("responder", "usr_caio", 1)).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    // Past the last level with no repeat left: everyone who can respond, and the run ends.
+    expect(now("admin", "usr_bia")).toMatchObject({
+      ok: true,
+      events: [{ type: "escalation.paged", data: { level: null, reason: "manual" } }],
+    });
+    expect(run(store).status).toBe("exhausted");
+    expect(now("admin", "usr_bia")).toMatchObject({ ok: false, error: { code: "not_found" } });
+  });
+
   test("a repeated alarm fires a level once", () => {
     const store = withPolicy();
     start(store);

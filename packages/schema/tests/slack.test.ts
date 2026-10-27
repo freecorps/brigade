@@ -50,7 +50,13 @@ describe("slack.connect", () => {
       teamId: "T0TEST0001",
       teamName: "Acme Slack",
       channelId: null,
+      channelName: null,
       locale: "pt-BR",
+      incidentChannels: "off",
+      privateChannels: false,
+      archiveAfterHours: null,
+      revokedAt: null,
+      revokedReason: null,
       connectedAt: T,
       connectedBy: "usr_ana",
       updatedAt: T,
@@ -169,9 +175,119 @@ describe("slack.configure and slack.disconnect", () => {
     });
     expect(store.get("slack", SLACK_ROW_ID)).toBeUndefined();
     expect(store.get("slack_tokens", SLACK_ROW_ID)).toBeUndefined();
+    // Kept sealed, server-only, until the notifier gives it back to Slack.
+    expect(TABLES.slack_revocations.serverOnly).toBe(true);
+    expect(store.get("slack_revocations", "T0TEST0001")).toEqual({
+      id: "T0TEST0001",
+      teamId: "T0TEST0001",
+      token: TOKEN,
+      at: T,
+    });
     expect(runMutation(mutations, "slack.disconnect", {}, store, ctx())).toMatchObject({
       ok: false,
       error: { code: "not_found" },
+    });
+    expect(
+      runMutation(
+        serverMutations,
+        "slack.forgetToken",
+        { teamId: "T0TEST0001", at: T - 1 },
+        store,
+        ctx(),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "not_found" } });
+    expect(
+      runMutation(
+        serverMutations,
+        "slack.forgetToken",
+        { teamId: "T0TEST0001", at: T },
+        store,
+        ctx(),
+      ),
+    ).toMatchObject({ ok: true, events: [{ type: "slack.token_forgotten" }] });
+    expect(store.get("slack_revocations", "T0TEST0001")).toBeUndefined();
+  });
+
+  test("connecting another team keeps the replaced team's token for revocation", () => {
+    const store = connected();
+    runMutation(
+      serverMutations,
+      "slack.connect",
+      { ...connect, teamId: "T0TEST0002" },
+      store,
+      ctx(),
+    );
+    expect(store.get("slack_revocations", "T0TEST0001")?.token).toBe(TOKEN);
+  });
+
+  test("incident channels: off unless set; settings left out keep what they were", () => {
+    const store = connected();
+    const configure = (args: Record<string, unknown>) =>
+      runMutation(
+        mutations,
+        "slack.configure",
+        { channelId: "C0CHAN0001", locale: "en", ...args },
+        store,
+        ctx(),
+      );
+    expect(
+      configure({
+        channelName: "incidents",
+        incidentChannels: "major",
+        privateChannels: true,
+        archiveAfterHours: 24,
+      }),
+    ).toMatchObject({ ok: true });
+    // An older client sends only the channel and the language.
+    expect(configure({ locale: "pt-BR" })).toMatchObject({ ok: true });
+    expect(store.get("slack", SLACK_ROW_ID)).toMatchObject({
+      channelName: "incidents",
+      incidentChannels: "major",
+      privateChannels: true,
+      archiveAfterHours: 24,
+      locale: "pt-BR",
+    });
+    // Another channel without a name has none.
+    expect(configure({ channelId: "C0CHAN0002", locale: "pt-BR" })).toMatchObject({ ok: true });
+    expect(store.get("slack", SLACK_ROW_ID)?.channelName).toBeNull();
+    for (const bad of [
+      { incidentChannels: "some" },
+      { archiveAfterHours: -1 },
+      { archiveAfterHours: 721 },
+    ]) {
+      expect(configure(bad), JSON.stringify(bad)).toMatchObject({
+        error: { code: "invalid_args" },
+      });
+    }
+  });
+
+  test("Slack revoking access marks the connection, forgets the token, and is server only", () => {
+    const store = connected();
+    const args = { teamId: "T0TEST0001", reason: "uninstalled" };
+    expect(Object.keys(mutations)).not.toContain("slack.markRevoked");
+    expect(
+      runMutation(
+        serverMutations,
+        "slack.markRevoked",
+        { ...args, teamId: "T0OTHER001" },
+        store,
+        ctx(),
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "not_found" },
+    });
+    expect(runMutation(serverMutations, "slack.markRevoked", args, store, ctx())).toMatchObject({
+      ok: true,
+      events: [{ type: "slack.revoked", data: args }],
+    });
+    expect(store.get("slack", SLACK_ROW_ID)).toMatchObject({
+      revokedAt: T,
+      revokedReason: "uninstalled",
+    });
+    expect(store.get("slack_tokens", SLACK_ROW_ID)).toBeUndefined();
+    expect(runMutation(serverMutations, "slack.markRevoked", args, store, ctx())).toMatchObject({
+      error: { code: "conflict" },
     });
   });
 

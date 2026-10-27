@@ -40,7 +40,8 @@ describe("GET /slack/install", () => {
     expect(url.origin + url.pathname).toBe("https://slack.com/oauth/v2/authorize");
     expect(url.searchParams.get("state")).toBe(STATE);
     expect(url.searchParams.get("scope")).toBe(
-      "commands,chat:write,chat:write.public,users:read,users:read.email",
+      "commands,chat:write,chat:write.public,users:read,users:read.email,channels:read,groups:read," +
+        "channels:manage,groups:write,channels:history,groups:history",
     );
     expect(url.searchParams.get("redirect_uri")).toBe("https://brigade.test/slack/oauth/callback");
     expect(url.searchParams.get("user_scope")).toBeNull();

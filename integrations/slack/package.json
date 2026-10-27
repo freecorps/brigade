@@ -2,7 +2,7 @@
   "name": "@freecorps/brigade-slack",
   "version": "0.0.0",
   "private": true,
-  "description": "Freecorps Brigade's Slack app: the Worker for /inc, the Acknowledge button and installation, and the incident message the API posts (RFC 0011).",
+  "description": "Freecorps Brigade's Slack app: the Worker for /inc, the Events API, the Acknowledge button and installation, and the incident messages, channels and timeline mirror the API sends (RFC 0011).",
   "license": "AGPL-3.0-only",
   "author": "Freecorps Tecnologia da Informação LTDA",
   "repository": {
@@ -20,9 +20,21 @@
       "@freecorps/source": "./src/notifier.ts",
       "default": "./src/notifier.ts"
     },
+    "./modal": {
+      "@freecorps/source": "./src/modal.ts",
+      "default": "./src/modal.ts"
+    },
     "./people": {
       "@freecorps/source": "./src/people.ts",
       "default": "./src/people.ts"
+    },
+    "./replies": {
+      "@freecorps/source": "./src/replies.ts",
+      "default": "./src/replies.ts"
+    },
+    "./web-api": {
+      "@freecorps/source": "./src/web-api.ts",
+      "default": "./src/web-api.ts"
     },
     "./package.json": "./package.json"
   },

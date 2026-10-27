@@ -25,7 +25,7 @@ import {
   type SendFailure,
   sendsCritical,
 } from "./paging.ts";
-import { SideConnections } from "./side-connections.ts";
+import { SideConnections, SLACK_CONNECTIONS } from "./side-connections.ts";
 import { asksForSlack } from "./slack.ts";
 import { asksForStatusEmail } from "./status-mail.ts";
 import { asksForWebhookEmail, asksForWebhooks } from "./webhooks.ts";
@@ -126,6 +126,8 @@ export async function consumeEvents(
   // them (src/side-connections.ts).
   const slots = new SideConnections();
   const sideSend = slots.wrap(send);
+  // Slack's calls (messages, channels, the timeline mirror) hold at most `SLACK_CONNECTIONS` of those side slots.
+  const slackSend = new SideConnections(SLACK_CONNECTIONS).wrap(sideSend);
   await Promise.all(
     batch.messages.map(async (message) => {
       // The dead-man switch's own events (src/watchdog.ts): never a shard's, never a page.
@@ -175,7 +177,7 @@ export async function consumeEvents(
               return undefined;
             })
           : Promise.resolve(undefined);
-      const slack = side("slack", asksForSlack(event), () => notifySlack(event, env, sideSend));
+      const slack = side("slack", asksForSlack(event), () => notifySlack(event, env, slackSend));
       const webhooks = side("webhooks", asksForWebhooks(event), async () => {
         await notifyWebhooks(event, env, send, slots, Date.now() + WEBHOOK_BUDGET_MS);
         return undefined;

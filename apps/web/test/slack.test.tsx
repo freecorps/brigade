@@ -7,7 +7,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { SlackPanel } from "../src/components/slack-card";
-import { checkChannel, slackResult, startSlackInstall } from "../src/lib/slack";
+import { checkChannel, listSlackChannels, slackResult, startSlackInstall } from "../src/lib/slack";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -31,7 +31,7 @@ const connection: SlackRow = {
 };
 
 function render(props: Partial<Parameters<typeof SlackPanel>[0]> = {}) {
-  const calls = { add: 0, saves: [] as unknown[], disconnects: 0, retries: 0 };
+  const calls = { add: 0, saves: [] as unknown[], disconnects: 0, retries: 0, reloads: 0 };
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -39,6 +39,16 @@ function render(props: Partial<Parameters<typeof SlackPanel>[0]> = {}) {
     root!.render(
       <SlackPanel
         connection={null}
+        channels={{
+          status: "ready",
+          channels: [
+            { id: "C0CHAN0001", name: "incidents", private: false },
+            { id: "G0PRIVATE1", name: "sre-oncall", private: true },
+          ],
+        }}
+        onReloadChannels={() => {
+          calls.reloads++;
+        }}
         loading={false}
         failed={false}
         manage
@@ -46,8 +56,8 @@ function render(props: Partial<Parameters<typeof SlackPanel>[0]> = {}) {
         onAdd={async () => {
           calls.add++;
         }}
-        onSave={async (channelId, locale) => {
-          calls.saves.push({ channelId, locale });
+        onSave={async (settings) => {
+          calls.saves.push(settings);
           return true;
         }}
         onDisconnect={async () => {
@@ -101,6 +111,28 @@ describe("startSlackInstall", () => {
   });
 });
 
+test("listSlackChannels reads the API's list, and anything else as failed", async () => {
+  const ok = vi.fn(async () =>
+    Response.json({
+      channels: [
+        { id: "C0CHAN0001", name: "incidents", private: false },
+        { id: "nope", name: "bad" },
+      ],
+    }),
+  );
+  expect(await listSlackChannels("ws_x", ok as typeof fetch)).toEqual({
+    status: "ready",
+    channels: [{ id: "C0CHAN0001", name: "incidents", private: false }],
+  });
+  expect(ok).toHaveBeenCalledWith("/api/workspaces/ws_x/slack/channels", expect.anything());
+  const refused = async () => Response.json({ error: "slack_failed" }, { status: 502 });
+  expect(await listSlackChannels("ws_x", refused as typeof fetch)).toEqual({ status: "failed" });
+  const offline = async () => {
+    throw new TypeError("offline");
+  };
+  expect(await listSlackChannels("ws_x", offline as typeof fetch)).toEqual({ status: "failed" });
+});
+
 test("slackResult and checkChannel", () => {
   expect(slackResult("?slack=connected")).toEqual({ ok: true, part: "result_connected" });
   expect(slackResult("?slack=team_taken")).toEqual({ ok: false, part: "result_team_taken" });
@@ -151,9 +183,51 @@ describe("SlackPanel", () => {
     expect(container.querySelector("input")).toBeNull();
   });
 
-  test("saves a channel id and the language; refuses what is not a channel id", async () => {
+  test("picks a channel from Slack's list and saves it with its name", async () => {
     const { container, calls } = render({ connection: { ...connection, channelId: null } });
     expect(container.textContent).toContain("No channel yet");
+    const select = container.querySelector("select")!;
+    expect([...select.options].map((one) => one.textContent)).toEqual([
+      "No channel",
+      "#incidents",
+      "#sre-oncall (private)",
+    ]);
+    act(() => {
+      select.value = "G0PRIVATE1";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => button(container, "Save")!.click());
+    expect(calls.saves).toEqual([
+      {
+        channelId: "G0PRIVATE1",
+        channelName: "sre-oncall",
+        locale: "en",
+        incidentChannels: "off",
+        privateChannels: false,
+        archiveAfterHours: null,
+      },
+    ]);
+    expect(container.textContent).toContain("Saved.");
+  });
+
+  test("a saved channel Slack no longer lists stays a choice", () => {
+    const { container } = render({
+      connection: { ...connection, channelId: "C0GONE0001", channelName: "old-incidents" },
+    });
+    expect(container.textContent).toContain("Incidents are posted in #old-incidents.");
+    const select = container.querySelector("select")!;
+    expect(select.value).toBe("C0GONE0001");
+    expect(select.selectedOptions[0]?.textContent).toBe("#old-incidents (not in the list)");
+  });
+
+  test("when Slack's list cannot be read, a channel id is typed and checked instead", async () => {
+    const { container, calls } = render({
+      connection: { ...connection, channelId: null },
+      channels: { status: "failed" },
+    });
+    expect(container.textContent).toContain("Couldn't load the channels from Slack");
+    act(() => button(container, "Reload channels")!.click());
+    expect(calls.reloads).toBe(1);
     const input = container.querySelector("input")!;
     const type = (value: string) =>
       act(() => {
@@ -166,8 +240,54 @@ describe("SlackPanel", () => {
     expect(calls.saves).toHaveLength(0);
     type("G0PRIVATE1");
     await act(async () => button(container, "Save")!.click());
-    expect(calls.saves).toEqual([{ channelId: "G0PRIVATE1", locale: "en" }]);
-    expect(container.textContent).toContain("Saved.");
+    expect(calls.saves).toEqual([
+      expect.objectContaining({ channelId: "G0PRIVATE1", channelName: null }),
+    ]);
+  });
+
+  test("while the channels load the form waits", () => {
+    const { container } = render({ connection, channels: { status: "loading" } });
+    const select = container.querySelector("select")!;
+    expect(select.disabled).toBe(true);
+    expect(select.textContent).toBe("Loading channels from Slack…");
+    expect(button(container, "Save")!.disabled).toBe(true);
+  });
+
+  test("a channel per incident: off until chosen, then private and archiving can be set", async () => {
+    const { container, calls } = render({ connection });
+    const [, , perIncident, archive] = [...container.querySelectorAll("select")];
+    const checkbox = container.querySelector<HTMLInputElement>("input[type=checkbox]")!;
+    expect(archive!.disabled).toBe(true);
+    expect(checkbox.disabled).toBe(true);
+    const pick = (element: HTMLSelectElement, value: string) =>
+      act(() => {
+        element.value = value;
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    pick(perIncident!, "major");
+    expect(archive!.disabled).toBe(false);
+    pick(archive!, "24");
+    act(() => checkbox.click());
+    await act(async () => button(container, "Save")!.click());
+    expect(calls.saves).toEqual([
+      expect.objectContaining({
+        incidentChannels: "major",
+        privateChannels: true,
+        archiveAfterHours: 24,
+      }),
+    ]);
+  });
+
+  test("a connection Slack revoked says so and offers to connect again, without the form", () => {
+    const { container, calls } = render({
+      connection: { ...connection, revokedAt: 1, revokedReason: "uninstalled" },
+    });
+    expect(container.textContent).toContain("Brigade was removed from Acme Slack in Slack");
+    expect(container.querySelector("select")).toBeNull();
+    act(() => button(container, "Connect again")!.click());
+    expect(calls.add).toBe(1);
+    // It can still be disconnected for good.
+    expect(button(container, "Disconnect")).toBeDefined();
   });
 
   test("disconnecting asks first", async () => {

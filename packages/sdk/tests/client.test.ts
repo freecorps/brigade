@@ -241,6 +241,7 @@ describe("refusals", () => {
       () => new Response(null, { status: 204 }),
       () => Response.json(null),
       () => Response.json("ok"),
+      () => Response.json([]),
     ]) {
       const { client } = recorder(answer);
       const error = await client.getPagingHealth().catch((caught: unknown) => caught);

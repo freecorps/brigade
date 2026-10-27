@@ -936,8 +936,10 @@ export const webhookPayloadValidator: Validator<WebhookPayload | UnknownWebhookP
   }
   const parsed = unknownPayload(input, path);
   if (!parsed.ok) return parsed;
-  return {
-    ok: true,
-    value: { ...parsed.value, data: field(input, "data") } as UnknownWebhookPayload,
-  };
+  // Every payload carries `data`, whatever its type: one without it is not a payload at all.
+  const data = field(input, "data");
+  if (data === undefined) {
+    return { ok: false, issues: [{ path: `${path}${path ? "." : ""}data`, message: "Required" }] };
+  }
+  return { ok: true, value: { ...parsed.value, data } as UnknownWebhookPayload };
 };

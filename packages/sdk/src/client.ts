@@ -266,7 +266,9 @@ export function createClient(options: ClientOptions) {
     }
     // Every success the API documents is a JSON object: anything else is not the API answering (a captive portal, a
     // proxy's page).
-    if (response.ok && json && typeof body === "object" && body !== null) return body as T;
+    if (response.ok && json && typeof body === "object" && body !== null && !Array.isArray(body)) {
+      return body as T;
+    }
     if (response.ok) {
       throw new BrigadeApiError(operation, response.status, "unexpected" as ApiErrorCode<Op>, body);
     }

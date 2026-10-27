@@ -357,6 +357,11 @@ describe("what a newer Brigade may send within version 1", () => {
     expectTypeOf(result.payload.data).toEqualTypeOf<unknown>();
   });
 
+  test("a payload of a type added since still needs its data", async () => {
+    const result = await deliver({ ...envelope, type: "incident.merged" });
+    expect(result).toMatchObject({ ok: false });
+  });
+
   test("a value added to a list, and a longer text, are kept as sent", async () => {
     const incident = {
       id: "inc_01M5W19VG0081040G2081040G2",

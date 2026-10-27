@@ -29,6 +29,8 @@ type Events = {
   /** iOS: 1 pressed on CallKit's keypad. */
   onAcknowledgeKey(event: { id: string }): void;
   onSpoken(): void;
+  /** iOS: PushKit gave a new token or withdrew it; the device is registered again. */
+  onVoipToken(): void;
 };
 
 interface BrigadeCallModule {
@@ -46,6 +48,7 @@ interface BrigadeCallModule {
   speak(text: string, language: string): void;
   stopSpeaking(): void;
   openFullScreenIntentSettings(): void;
+  /** iOS: PushKit's token, after up to 5 s waiting for it at launch; null without one, and always on Android. */
   getVoipToken(): Promise<string | null>;
   /**
    * iOS: leaves the folder at this `file://` URL out of device backups. Not on Android, whose backup rules do it

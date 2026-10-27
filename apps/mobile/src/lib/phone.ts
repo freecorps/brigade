@@ -1,4 +1,4 @@
-// This phone's side of device registration (src/lib/device.ts): its key, notification permission and APNs token,
+// This phone's side of device registration (src/lib/device.ts): its key, notification permission, APNs and PushKit tokens,
 // and the member's sync client to send `device.register` and `device.unregister` through; and finishing a sign-out
 // kept from offline (src/lib/sign-out.ts) with the kept session.
 import Constants from "expo-constants";
@@ -9,6 +9,7 @@ import { SESSION_LIFETIME_S } from "@freecorps/brigade-schema";
 import { leftovers, SIGNED_OUT_KEY, type FinishDeps } from "@/lib/sign-out";
 import { memberActor, neverOpened, type Server } from "@/lib/sync";
 import { createWorkspaceSync, type WorkspaceSync } from "@/lib/sync-client";
+import { BrigadeCall } from "../../modules/brigade-call";
 import { BrigadePush } from "../../modules/brigade-push";
 
 export function phoneDeps(sync: WorkspaceSync, server?: Server): DeviceDeps {
@@ -25,6 +26,8 @@ export function phoneDeps(sync: WorkspaceSync, server?: Server): DeviceDeps {
       return status === "granted";
     },
     pushToken: async () => String((await Notifications.getDevicePushTokenAsync()).data),
+    // Pages that ring as calls (RFC 0010): the module reports every VoIP push to CallKit, so its token is safe to give.
+    ...(BrigadeCall ? { voipToken: () => BrigadeCall!.getVoipToken() } : {}),
     mutate: (name, args) => sync.client.mutate(sync.shard, name, args as never),
     // Delivery receipts go only to the instance this phone registered with (RFC 0006 "Delivery receipts").
     ...(server && keys?.setReceiptOrigin

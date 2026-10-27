@@ -1,7 +1,7 @@
 # RFC 0010 — In-app voice paging (VoIP call screen)
 
 - Status: Draft — spike S6 done on the Android emulator and the iOS Simulator; devices left
-  ([write-up](../spikes/s6-voip-call-screen.md))
+  ([write-up](../spikes/s6-voip-call-screen.md)). iOS call pages are sent by the instance ("When a page rings").
 
 ## Goal
 
@@ -96,6 +96,39 @@ fast; seen on the Simulator), so its repeat rings. Whether such a call should al
 is Q14 in `docs/open-questions.md`. The step-1 alert push (RFC 0006) is always sent before the call, so a phone
 whose call cannot ring has already been notified.
 
+### When a page rings
+
+A page rings as a call (`ringsAsCall`, apps/api/src/paging.ts) when it is at `page` urgency and either:
+
+- the incident is **SEV1** (declared, raised into SEV1, or any escalation level of it), or
+- it is an **escalation level** the shard's alarm fired because nobody acknowledged (SEV1 or SEV2).
+  The rule reads the event type (`escalation.paged`), so a SEV2 first page the Queue dead-lettered and
+  `escalation.repage` made again also rings: a page that was lost once rings the second time.
+
+A SEV2's first page and anything SEV3 or lower stay an alert push only. There is no setting yet: the rule is the
+same for every workspace and member, and a per-member preference (or "calls off" on a phone) is left.
+
+For each device of a page that rings, the queue consumer (apps/api/src/notify.ts) sends:
+
+1. the **alert push**, as for every page (RFC 0006); then,
+2. only once the relay took the alert, and only for an **iOS device that registered a VoIP token**, the **call**:
+   `kind: "call"` on `POST /send`, to the device's PushKit token in its APNs environment, sealed to the device's key
+   like the alert, without a receipt token.
+
+The call is best effort and never changes the page: the page's retries, its delivery rows, the escalation and
+`notification.failed` follow the alert alone. A call the relay refuses or never answers is logged; an alert that
+failed is retried, and the attempt that delivers it rings. A device without a VoIP token, an Android device (no FCM
+yet) and any page that does not ring get the alert only.
+
+**The call id** is a UUID (version 8) derived from the page's event id: a redelivery of the event rings under the
+same id (CallKit and `knownCall` de-duplicate it), and the next page, another event, rings anew.
+
+**Never a VoIP push the app cannot report.** The app reports every VoIP push to CallKit, a malformed one included.
+The instance only sends calls to a token the app registered (`device.register`'s `voipToken`): the app gives it only
+from the call module, waiting up to 5 seconds for PushKit at launch, and registers again whenever PushKit gives a new
+token or withdraws it (`onVoipToken`), so a withdrawn token is cleared on the instance. A call to a token APNs refuses
+is only logged, and the device keeps its alert token.
+
 ### Payload: nothing the app could ignore
 
 The relay sends a call only as `{ call: { id }, brigade: <envelope> }` with `apns-push-type: voip` on the
@@ -112,6 +145,8 @@ broadcast calls. FCM is not set up yet.
 ### Left
 
 - Real phones (the write-up's list), the voice bot, and FCM.
+- Delivery rows for calls (today only the alert has one), clearing a VoIP token APNs says is gone, and a per-member
+  or per-phone choice of calls.
 - Any member with `incident:ack` can acknowledge, not only the page's targets; escalation runs decide whether the
   ack is limited to them.
 

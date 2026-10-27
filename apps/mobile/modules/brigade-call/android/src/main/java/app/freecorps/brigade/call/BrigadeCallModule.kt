@@ -18,7 +18,7 @@ class BrigadeCallModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("BrigadeCall")
 
-    Events("onAnswer", "onEnd", "onAcknowledgeKey", "onSpoken")
+    Events("onAnswer", "onEnd", "onAcknowledgeKey", "onSpoken", "onVoipToken")
 
     OnCreate {
       Calls.listener = object : Calls.Listener {

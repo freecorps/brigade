@@ -17,6 +17,7 @@ import {
   pushEnvironment,
   registerPhone,
   unregisterPhone,
+  VOIP_GRACE_MS,
   type DeviceDeps,
 } from "./device";
 import { neverOpened } from "./sync";
@@ -88,6 +89,34 @@ test("signing in registers the phone, and signing in again changes nothing", asy
   expect(await registerPhone(phone(as(ANA)))).toBe("on");
   expect(await registerPhone(phone(as(ANA)))).toBe("on");
   expect(store.scan("devices")).toMatchObject([{ id: deviceId(KEY), userId: ANA.id }]);
+});
+
+test("an iPhone registers its PushKit token so pages can ring; without one, or on Android, it registers none", async () => {
+  const store = createMemoryStore<BrigadeTables>();
+  const as = shard(store);
+  const voip = "cd".repeat(32);
+  expect(await registerPhone(phone(as(ANA), { voipToken: async () => voip }))).toBe("on");
+  expect(store.scan("devices")).toMatchObject([{ voipToken: voip }]);
+  expect(store.scan("member_devices")).toMatchObject([{ voip: true }]);
+
+  // PushKit withdrew the token: registering again clears it, so the instance stops sending calls to it.
+  expect(await registerPhone(phone(as(ANA), { voipToken: async () => null }))).toBe("on");
+  expect(store.scan("devices")).toMatchObject([{ voipToken: null }]);
+
+  // A module that fails, or none at all: the phone is still paged, with alerts only.
+  const failing = async (): Promise<string | null> => {
+    throw new Error("no PushKit");
+  };
+  expect(await registerPhone(phone(as(ANA), { voipToken: failing }))).toBe("on");
+  expect(store.scan("devices")).toMatchObject([{ voipToken: null }]);
+
+  const other = createMemoryStore<BrigadeTables>();
+  expect(
+    await registerPhone(
+      phone(shard(other)(ANA), { platform: "android", voipToken: async () => voip }),
+    ),
+  ).toBe("on");
+  expect(other.scan("devices")).toMatchObject([{ voipToken: null }]);
 });
 
 test("a registered phone keeps its instance's origin for the extension's receipts, and only then", async () => {
@@ -235,4 +264,13 @@ test("a socket that opens is not taken for a refusal", async () => {
   expect(gaveUp).toBe(false);
   refused.dispose();
   client.close();
+});
+
+test("a VoIP token that is slow to come never holds the alert token back", async () => {
+  const store = createMemoryStore<BrigadeTables>();
+  const started = Date.now();
+  const never = () => new Promise<string | null>(() => {});
+  expect(await registerPhone(phone(shard(store)(ANA), { voipToken: never }))).toBe("on");
+  expect(Date.now() - started).toBeLessThan(VOIP_GRACE_MS + 1000);
+  expect(store.scan("devices")).toMatchObject([{ voipToken: null }]);
 });

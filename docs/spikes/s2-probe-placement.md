@@ -139,8 +139,9 @@ Read at 2026-10-27 14:51 UTC with `scripts/report.ts --hours 48`: about 2,880 sa
 - **Egress follows the colo**, confirming the first samples: each probe is fastest to the AWS region nearest it
   (Frankfurt 13 ms, Singapore 16 ms, Paris to Frankfurt 49 ms), and the trace's `loc` said `US` for every probe, so
   it is useless for location.
-- **Timings are cold connections** (DNS, TCP and TLS each run) and stable: p95 is within about 10% of p50 for every
-  near target. Failures (5 s timeout) cluster on far, cross-ocean targets (up to 32 of about 2,880 for `apac-ne` to
+- **Timings are cold connections** (DNS, TCP and TLS each run) and stable: in the table, p95 is at most about 20%
+  above p50 for every target over 50 ms, and a few milliseconds above it for the nearest ones (13 / 21 ms from
+  Frankfurt). Failures (5 s timeout) cluster on far, cross-ocean targets (up to 32 of about 2,880 for `apac-ne` to
   Frankfurt, about 1%) and are near zero for near ones.
 
 ## Decision

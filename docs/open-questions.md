@@ -167,6 +167,15 @@ the email Slack confirmed for one of the connected team's own users (RFC 0011 "W
 - Without a `STATUS` KV namespace every address answers 404. Deployed environments need one each (apps/api README
   "Status page"); should self-host setup create it?
 
+## Q24 — Follow-ups, postmortems and exports to confirm (RFC 0013)
+
+- Postmortems keep no revision history: last writer wins with a conflict check. Is keeping the last N revisions (a
+  server-only table, restore from the dashboard) worth it, and how many?
+- AI drafts are 20 a day per workspace and read members by name. Should an instance operator be able to turn drafts
+  off per workspace, or pick another Workers AI model, without a deploy?
+- The draft's language is the status page's, else the asker's. Should workspaces get their own language setting?
+- Exports last 7 days and only owners and admins make them. Should responders export the incidents they ran?
+
 # Decided
 
 | #   | Question                       | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |

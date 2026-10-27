@@ -544,6 +544,33 @@ const CASES: Record<string, () => Promise<Case>> = {
       status: 201,
     };
   },
+  editIncidentUpdate: async () => {
+    const t = await team();
+    const incident = await declared(t);
+    // Posted by the owner (`t.run`), so edited by them: only the author edits.
+    await t.run("incident.postUpdate", { id: incident, body: "Rolling back." });
+    return {
+      path: `/workspaces/${t.id}/incidents/${incident}/updates/${incident}:2`,
+      init: {
+        method: "PATCH",
+        headers: { [IDEMPOTENCY_KEY_HEADER]: "edit-1" },
+        body: JSON.stringify({ body: "Rolled back." }),
+      },
+      cookie: t.ana.cookie,
+      status: 200,
+    };
+  },
+  deleteIncidentUpdate: async () => {
+    const t = await team();
+    const incident = await declared(t);
+    await t.run("incident.postUpdate", { id: incident, body: "Rolling back." });
+    return {
+      path: `/workspaces/${t.id}/incidents/${incident}/updates/${incident}:2`,
+      init: { method: "DELETE", headers: { [IDEMPOTENCY_KEY_HEADER]: "delete-1" } },
+      cookie: t.ana.cookie,
+      status: 200,
+    };
+  },
   listServices: async () => {
     const t = await team();
     await catalogEntry(t, "svc");

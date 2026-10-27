@@ -103,7 +103,8 @@ without auth at `GET /api/openapi.json` by the dashboard's Worker.
 Internal, not part of the contract, may change without notice: `/auth/*` (Better Auth's; only sign-in, sign-out and
 the session are relied on, and the reference says how), `GET /workspaces/:id` (the dashboard's stack check),
 `/account/takeover` (the dashboard's notice), `/workspaces/:id/slack/install` (a browser redirect, RFC 0011),
-`POST /receipts` (the iOS extension's delivery receipts, RFC 0006), `PUT /workspaces/:id/status-page` (the
+`POST /receipts` (the iOS extension's delivery receipts, RFC 0006), `POST /devices/register` (the app registering
+its phone in every workspace it was opened in, RFC 0006 "Device registration"), `PUT /workspaces/:id/status-page` (the
 dashboard's status page settings), `POST /workspaces/:id/webhooks` and `POST /workspaces/:id/webhooks/:webhookId/rotate`
 (the dashboard's Webhooks card: they answer a new signing secret once, RFC 0005 "Outbound webhooks"; public once API
 tokens exist), `POST /workspaces/:id/incidents/:incidentId/postmortem/draft`, `POST` and `GET /workspaces/:id/exports…`
@@ -164,7 +165,9 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
   IP from `cf-connecting-ip`: 30 per minute for sign-in (loose enough for a team behind one office or carrier NAT
   signing in at once during an incident; Better Auth's default of 3 per 10 s locked them out), 3 per 10 s for sign-up,
   3 per minute for asking for a password reset
-  and 10 for setting one, 100 per minute for the other routes, `/get-session` exempt. The organization plugin's routes are refused except the ones the dashboard reads
+  and 10 for setting one, 100 per minute for the other routes, `/get-session` exempt. The API Worker's cron deletes
+  counters past every window once an hour (`pruneRateLimits`: older than two days, the longest window being one), since
+  a counter is kept for any key a request names. The organization plugin's routes are refused except the ones the dashboard reads
   (`get-full-organization`, `get-active-member`, `list`) and `set-active`, since the others would change D1
   without the shard or an event (RFC 0005); member roles, removal and leaving go through the API's own
   `/workspaces/:id/members/:userId` instead (RFC 0003 "Members"), and invitations through
@@ -175,9 +178,16 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
   `apps/api/.dev.vars`.
   - **Sign-in per account (built):** on top of the per-IP rule, at most 5 tries a minute per address from anywhere
     (`SIGN_IN_ACCOUNT_LIMIT`, counted in D1's `rateLimit` table under the address as Better Auth looks it up, for any
-    address, account or not, so a 429 says nothing about whether it has one). That is what bounds guessing one
-    account's password from many addresses. The cost, accepted: whoever knows an address can keep its sign-in at the
-    limit a minute at a time; a signed-in phone or dashboard keeps its session, and a password reset still works.
+    address, account or not, so a 429 says nothing about whether it has one; only address-shaped input gets a
+    counter). That is what bounds guessing one account's password from many addresses. The cost, accepted: whoever
+    knows an address can keep its sign-in at the limit a minute at a time; a signed-in phone or dashboard keeps its
+    session. A password reset is no escape by itself: it ends every session of the account, the phone's included, and
+    with them its pages (the reset drops the member's devices in every workspace, below), so its owner must sign in
+    again. For 15 minutes after a successful reset, sign-ins for that address from the client IP that reset it skip
+    the per-address limit (`SIGN_IN_AFTER_RESET`, recorded in the `rateLimit` table; the per-IP rule still applies),
+    which whoever holds the address at the limit does not have. Signing the phone back in from another network
+    (cellular, while the reset was done on Wi-Fi) still waits for the per-address limit; until it does, the phone is
+    not paged for them.
   - **Uniform sign-up (built):** a sign-up answers the same whether or not the address has an account, so it cannot
     enumerate accounts. Better Auth does this itself once sign-up hands out no session (`autoSignIn: false`): for a
     taken address it hashes the password all the same and answers with a made-up user and no session, the shape a new
@@ -195,9 +205,18 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     (D1's `member`) to close the sockets opened with that session (`WorkspaceDO.endSession`, RFC 0004 "Session
     revocation"), tried 3 times each and logged after. The mobile app names its device on sign-out
     (`Brigade-Device`, `DEVICE_HEADER`), and the same call takes that phone off each of those workspaces
-    (`device.signOut` with `deviceId`, only ever the signing-out user's own device); that sign-out waits for it, so the
-    phone is free by the time it answers (RFC 0006 "Device registration"). An admin revoking another user's sessions
-    has no route yet (Better Auth's admin plugin is off); when it lands, it deletes rows through the same hook.
+    (`device.signOut` with `deviceId`, only ever the signing-out user's own device, and only if last registered
+    before the session ended); that sign-out waits for it, so the phone is free by the time it answers (RFC 0006
+    "Device registration"). It is durable: before the row goes, the hook's `before` half writes one row per workspace
+    of the user to D1's `session_end` (`migrations/0009_session_end.sql`, one statement), and each shard's success
+    deletes its row. A shard that failed every try keeps its row, acted on by whichever comes first: the shard itself
+    before a phone registers in it (`POST /devices/register`) and after every sync upgrade into it
+    (`WorkspaceDO.catchUpSessionEnds`), or the Worker's cron, every minute, for rows older than a minute
+    (`sweepSessionEnds`; rows still there after 30 days are dropped). When D1 cannot record it, a sign-out answers
+    `503 SIGN_OUT_FAILED` and keeps its session (Better Auth's own sign-out would answer 200 with the row still
+    there), so the app keeps the sign-out and finishes it later; another way a session ends goes on without the
+    record. An admin revoking another user's sessions has no route yet (Better Auth's admin plugin is off); when it
+    lands, it deletes rows through the same hook.
   - **Workspaces (built):** a user belongs to up to 10; the dashboard's header lists them (Better Auth's
     `organization/list`) and switches with `organization/set-active`, then opens the new workspace's shard; the
     header's New workspace (`/workspaces/new`) creates another with `POST /workspaces`. The mobile app does the same

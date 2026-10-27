@@ -70,6 +70,17 @@ export type Paging =
   | "taken"
   | "failed";
 
+/** Whether this phone gets pages, per workspace id: every workspace it was opened in for the member. */
+export type Registrations = Record<string, Paging>;
+
+/**
+ * `POST /devices/register`'s answer (apps/api src/device-route.ts): per workspace, `ok` or why not. `status` 0 is no
+ * answer (offline); 404 an instance from before the route.
+ */
+export type RegisterAnswer =
+  | { ok: true; workspaces: Record<string, string> }
+  | { ok: false; status: number };
+
 /** What registering needs from the phone and the sync client; injected so the flow is tested in Node. */
 export type DeviceDeps = {
   platform: "ios" | "android";
@@ -95,7 +106,12 @@ export type DeviceDeps = {
    * (RFC 0006 "Delivery receipts"). Absent where there is no extension.
    */
   receiptOrigin?: { origin: string; keep: (origin: string) => void };
-  /** Runs a mutation on the workspace's shard. */
+  /**
+   * `POST /devices/register` with the registration and the workspaces to register in, with the member's session.
+   * Absent: only the open workspace registers, over `mutate`.
+   */
+  registerAll?: (args: DeviceRegistration, workspaces: string[]) => Promise<RegisterAnswer>;
+  /** Runs a mutation on the open workspace's shard. */
   mutate: (
     name: "device.register" | "device.unregister",
     args: object,
@@ -111,22 +127,97 @@ export async function registerPhone(
   /** Asked right before `device.register` goes out; false sends nothing (the member is signing out). */
   proceed: () => boolean = () => true,
 ): Promise<Paging> {
-  if (!deps.publicKey) return "unsupported";
   try {
-    const publicKey = await deps.publicKey();
-    if (!(await deps.permission())) return "off";
-    // Asked for together: PushKit may take its time (or never answer), and the alert token must not wait for it.
-    // A VoIP token that is not there by the time the alert token is gets registered when it arrives (`onVoipToken`).
-    const voip = callToken(deps);
-    const pushToken = await deps.pushToken();
-    const args = deviceRegistration({
-      publicKey,
-      pushToken,
-      voipToken: await Promise.race([voip, later(VOIP_GRACE_MS, null)]),
-      criticalAlerts: await allowsCritical(deps),
-      platform: deps.platform,
-      apsEnvironment: deps.apsEnvironment,
-    });
+    const args = await registration(deps);
+    if (typeof args === "string") return args;
+    return await registerHere(deps, args, proceed);
+  } catch {
+    return "failed";
+  }
+}
+
+/** The registration to send, or why there is none. Throws when the key or a token fails. */
+async function registration(deps: DeviceDeps): Promise<DeviceRegistration | "unsupported" | "off"> {
+  if (!deps.publicKey) return "unsupported";
+  const publicKey = await deps.publicKey();
+  if (!(await deps.permission())) return "off";
+  // Asked for together: PushKit may take its time (or never answer), and the alert token must not wait for it.
+  // A VoIP token that is not there by the time the alert token is gets registered when it arrives (`onVoipToken`).
+  const voip = callToken(deps);
+  const pushToken = await deps.pushToken();
+  return deviceRegistration({
+    publicKey,
+    pushToken,
+    voipToken: await Promise.race([voip, later(VOIP_GRACE_MS, null)]),
+    criticalAlerts: await allowsCritical(deps),
+    platform: deps.platform,
+    apsEnvironment: deps.apsEnvironment,
+  });
+}
+
+/**
+ * Registers this phone in every workspace in `workspaces` (each one the member opened on it; `active`, the open one,
+ * among them) with one `POST /devices/register` (RFC 0006 "Device registration"), so a new push or VoIP token, a
+ * reinstall or Critical Alerts turned on reaches all of them, not only the one open: a workspace left with a dead
+ * token pages nobody on this phone (`no_devices`). Answers per workspace; a workspace the member is no longer in is
+ * left out (the caller forgets it). An instance from before the route (404) registers only `active`, over its socket.
+ */
+export async function registerEverywhere(
+  deps: DeviceDeps,
+  workspaces: readonly string[],
+  active: string,
+  proceed: () => boolean = () => true,
+  /** Told the workspaces the member is no longer in (left, removed), so the phone stops listing them. */
+  gone: (ids: string[]) => void = () => {},
+): Promise<Registrations> {
+  const all = [...new Set([active, ...workspaces])];
+  const every = (paging: Paging): Registrations =>
+    Object.fromEntries(all.map((id) => [id, paging]));
+  try {
+    const args = await registration(deps);
+    if (typeof args === "string") return every(args);
+    if (!deps.registerAll) return { [active]: await registerHere(deps, args, proceed) };
+    if (!proceed()) return every("pending");
+    let answer = await deps.registerAll(args, all);
+    // As over the socket: an instance from before Critical Alerts refuses the unknown key.
+    if (
+      answer.ok &&
+      "criticalAlerts" in args &&
+      Object.values(answer.workspaces).includes("invalid_args")
+    ) {
+      const { criticalAlerts: _, ...older } = args;
+      if (!proceed()) return every("pending");
+      answer = await deps.registerAll(older, all);
+    }
+    if (!answer.ok) {
+      if (answer.status === 404) return { [active]: await registerHere(deps, args, proceed) };
+      return every("failed");
+    }
+    const registered: Registrations = {};
+    const left: string[] = [];
+    for (const id of all) {
+      const code = answer.workspaces[id];
+      if (code === "not_a_member" && id !== active) {
+        left.push(id);
+        continue;
+      }
+      registered[id] = code === "ok" ? "on" : code === "forbidden" ? "taken" : "failed";
+    }
+    if (Object.values(registered).includes("on")) keepReceiptOrigin(deps);
+    if (left.length > 0) gone(left);
+    return registered;
+  } catch {
+    return every("failed");
+  }
+}
+
+/** `device.register` on the open workspace's socket. */
+async function registerHere(
+  deps: DeviceDeps,
+  args: DeviceRegistration,
+  proceed: () => boolean,
+): Promise<Paging> {
+  try {
     if (!proceed()) return "pending";
     let result = await deps.mutate("device.register", args);
     // An instance from before Critical Alerts refuses the unknown key: register without it, so the phone is still
@@ -145,6 +236,11 @@ export async function registerPhone(
   } catch {
     return "failed";
   }
+}
+
+/** Whether any workspace's registration is left undone (tried again on the backoff). */
+export function registrationsLeft(registrations: Registrations): boolean {
+  return Object.values(registrations).some((paging) => paging === "taken" || paging === "failed");
 }
 
 /**

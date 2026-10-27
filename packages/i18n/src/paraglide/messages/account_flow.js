@@ -22,8 +22,11 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "new_title" | "Create a workspace" |
 * | "new_description" | "You'll own it. Your other workspaces stay as they are, and you can switch between them any time." |
 * | "cancel" | "Cancel" |
-* | "mobile_paging" | "This phone stays paged for every workspace you open on it, until you sign out or leave the workspace." |
+* | "mobile_paging" | "Pages reach this phone from each workspace you've opened on it, as listed under each one. Brigade keeps all of them registered until you sign out or leave th..." |
 * | "no_workspace" | "Your account isn't in a workspace yet. Create one to get started, or ask an owner to invite you." |
+* | "paging_not_opened" | "Not paged on this phone: switch to it once to get its pages here." |
+* | "pages_notice_in" | "This phone isn't paging you in {name}" |
+* | "paged_here" | "Paged on this phone" |
 * | * | "Brigade" |
 *
 * @param {Account_FlowInputs} inputs
@@ -45,8 +48,11 @@ export const account_flow = /** @type {((inputs: Account_FlowInputs, options?: {
 		if (i?.part === "new_title") return /** @type {LocalizedString} */ (`Criar um espaço de trabalho`);
 		if (i?.part === "new_description") return /** @type {LocalizedString} */ (`Você será o proprietário. Seus outros espaços de trabalho continuam como estão, e você pode trocar entre eles quando quiser.`);
 		if (i?.part === "cancel") return /** @type {LocalizedString} */ (`Cancelar`);
-		if (i?.part === "mobile_paging") return /** @type {LocalizedString} */ (`Este celular continua recebendo chamados de todo espaço de trabalho que você abrir nele, até você sair da conta ou do espaço de trabalho.`);
+		if (i?.part === "mobile_paging") return /** @type {LocalizedString} */ (`Este telefone recebe chamados de cada espaço de trabalho que você abriu nele, como mostrado em cada um. O Brigade mantém todos registrados até você sair da conta ou do espaço de trabalho.`);
 		if (i?.part === "no_workspace") return /** @type {LocalizedString} */ (`Sua conta ainda não está em um espaço de trabalho. Crie um para começar ou peça a um proprietário para convidar você.`);
+		if (i?.part === "paging_not_opened") return /** @type {LocalizedString} */ (`Sem chamados neste telefone: troque para ele uma vez para recebê-los aqui.`);
+		if (i?.part === "pages_notice_in") return /** @type {LocalizedString} */ (`Este telefone não está chamando você em ${i?.name}`);
+		if (i?.part === "paged_here") return /** @type {LocalizedString} */ (`Recebe chamados neste telefone`);
 		return /** @type {LocalizedString} */ (`Brigade`)
 	}
 	{
@@ -62,8 +68,11 @@ export const account_flow = /** @type {((inputs: Account_FlowInputs, options?: {
 		if (i?.part === "new_title") return /** @type {LocalizedString} */ (`Create a workspace`);
 		if (i?.part === "new_description") return /** @type {LocalizedString} */ (`You'll own it. Your other workspaces stay as they are, and you can switch between them any time.`);
 		if (i?.part === "cancel") return /** @type {LocalizedString} */ (`Cancel`);
-		if (i?.part === "mobile_paging") return /** @type {LocalizedString} */ (`This phone stays paged for every workspace you open on it, until you sign out or leave the workspace.`);
+		if (i?.part === "mobile_paging") return /** @type {LocalizedString} */ (`Pages reach this phone from each workspace you've opened on it, as listed under each one. Brigade keeps all of them registered until you sign out or leave the workspace.`);
 		if (i?.part === "no_workspace") return /** @type {LocalizedString} */ (`Your account isn't in a workspace yet. Create one to get started, or ask an owner to invite you.`);
+		if (i?.part === "paging_not_opened") return /** @type {LocalizedString} */ (`Not paged on this phone: switch to it once to get its pages here.`);
+		if (i?.part === "pages_notice_in") return /** @type {LocalizedString} */ (`This phone isn't paging you in ${i?.name}`);
+		if (i?.part === "paged_here") return /** @type {LocalizedString} */ (`Paged on this phone`);
 		return /** @type {LocalizedString} */ (`Brigade`)
 	}
 });

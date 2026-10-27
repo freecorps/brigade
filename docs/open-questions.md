@@ -135,7 +135,12 @@ to confirm in production:
 - **Sign-up notices** (someone signed up with an address that has an account, RFC 0002 "Auth"): at most 3 a day per
   account. The sign-up itself answers as for a new account; whoever then signs in with a free address learns it was
   free (and holds it unverified until a reset). Requiring verification before sign-in would close that on instances
-  with email; should it be an instance setting?
+  with email; should it be an instance setting? Timing: both paths hash the password, and before answering a taken
+  address's sign-up makes two D1 writes in a row (the notice's counter, then touching it again) as a free one makes two
+  (the user, then its account), so their answers take about as long; the notice email goes after the response either
+  way. What is left is noise between those writes (a new row against an update of one), measurable only over many
+  tries, and those are bounded by the sign-up rate limit (3 per IP in 10 s). Is that enough, or should sign-up answer
+  after a fixed delay?
 - None of these counts the sender's own quota (Cloudflare Email Sending's limits answer `E_RATE_LIMIT_EXCEEDED`,
   retried); a Brigade-wide daily ceiling may be needed before open sign-up on a shared instance.
 

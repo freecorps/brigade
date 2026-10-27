@@ -301,6 +301,16 @@ curl -fsS -X POST -H 'Content-Type: application/json' \
   http://localhost:5173/api/alerts/<token>
 ```
 
+## Ended sessions
+
+RFC 0004 "Session revocation" (`src/session-end.ts`). Every session that ends is written to D1's `session_end`, one
+row per workspace of its user, before Better Auth deletes it (`migrations/0009_session_end.sql`: apply it before
+deploying, or every sign-out answers `503 SIGN_OUT_FAILED`). The session hook then has each shard close the session's
+sockets and take the phone that signed out off the member's devices, deleting the row of each that did. What is left
+(a shard unreachable for all 3 tries) is acted on by the shard before a phone registers in it and after its next sync
+upgrade, or by the cron (every minute, rows older than a minute; dropped after 30 days). The same cron deletes
+rate-limit counters past every window once an hour (minute 23).
+
 ## Dead-man switch
 
 RFC 0007 "Watching the watcher" (`src/watchdog.ts`). A Cron Trigger (`* * * * *`, `scheduled`) asks the one

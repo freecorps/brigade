@@ -371,7 +371,11 @@ describe("device.signOut", () => {
     run(store, ana, "device.register", args(phone));
     store.update("devices", phone, { updatedAt: T + 10 });
     expect(
-      run(store, ACCOUNT_ACTOR, "device.signOut", { userId: "usr_ana", deviceId: phone, before: T }),
+      run(store, ACCOUNT_ACTOR, "device.signOut", {
+        userId: "usr_ana",
+        deviceId: phone,
+        before: T,
+      }),
     ).toMatchObject({ ok: false, error: { code: "conflict" } });
     expect(store.get("devices", phone)).toBeDefined();
     expect(

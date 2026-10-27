@@ -29,6 +29,13 @@ const PAGING: Record<Paging, Parameters<typeof m.mobile_session>[0]["part"]> = {
   failed: "pages_failed",
 };
 
+/** Whether this phone gets a workspace's pages, under its name; undefined: it was never opened on the phone. */
+function workspacePaging(paging: Paging | undefined): string {
+  if (paging === undefined) return m.account_flow({ part: "paging_not_opened", name: "" });
+  if (paging === "on") return m.account_flow({ part: "paged_here", name: "" });
+  return pagingText(paging);
+}
+
 /** Whether this phone gets pages, in words. */
 export function pagingText(paging: Paging): string {
   return m.mobile_session({ part: PAGING[paging] });
@@ -43,15 +50,33 @@ function pagingProblem(paging: Paging): boolean {
 }
 
 /**
- * At the top of the incident list when this phone does not page the member and they should know: notifications
- * off (with a way to Settings), the phone still another member's, or registering failed. The app keeps trying the
- * last two on its own (src/lib/paging.ts); Try again does it now.
+ * The first workspace this phone should page the member for and does not: the open one first, then the others it
+ * was opened in. Undefined when none.
+ */
+function pagingTrouble(
+  member: Pick<ReturnType<typeof useMember>, "paging" | "pagedWorkspaces" | "workspaceId">,
+): { paging: Paging; name?: string } | undefined {
+  if (pagingProblem(member.paging)) return { paging: member.paging };
+  const other = member.pagedWorkspaces.find(
+    (workspace) => workspace.id !== member.workspaceId && pagingProblem(workspace.paging),
+  );
+  return other ? { paging: other.paging, name: other.name ?? "" } : undefined;
+}
+
+/**
+ * At the top of the incident list when this phone does not page the member and they should know, in the open
+ * workspace or another it was opened in: notifications off (with a way to Settings), the phone still another
+ * member's, or registering failed. The app keeps trying the last two on its own (src/lib/paging.ts); Try again does
+ * it now.
  */
 export function PagingNotice() {
-  const { paging, retryPaging } = useMember();
+  const member = useMember();
+  const { retryPaging } = member;
   const colors = useTheme();
   const [retrying, setRetrying] = useState(false);
-  if (!pagingProblem(paging)) return null;
+  const trouble = pagingTrouble(member);
+  if (!trouble) return null;
+  const { paging } = trouble;
   const retry = () => {
     setRetrying(true);
     void retryPaging().finally(() => setRetrying(false));
@@ -69,7 +94,9 @@ export function PagingNotice() {
       }}
     >
       <ThemedText variant="label" accessibilityRole="header" style={{ color: colors.destructive }}>
-        {m.mobile_session({ part: "pages_notice_title" })}
+        {trouble.name !== undefined
+          ? m.account_flow({ part: "pages_notice_in", name: trouble.name })
+          : m.mobile_session({ part: "pages_notice_title" })}
       </ThemedText>
       <ThemedText selectable>{pagingText(paging)}</ThemedText>
       {paging === "off" ? (
@@ -115,12 +142,21 @@ export function PagingNotice() {
 }
 
 /**
- * The member's workspaces (Better Auth's organization list), the active one checked, and New workspace. Tapping
- * another makes it active: the session moves to it, the incident list, on-call and the widget follow, and the phone
- * registers there too while staying registered in the others, so it keeps getting their pages (RFC 0006 "Device
- * registration"). Changes not sent yet stay with the workspace they were made in.
+ * The member's workspaces (Better Auth's organization list), the active one checked, each with whether this phone
+ * gets its pages, and New workspace. Tapping another makes it active: the session moves to it, the incident list,
+ * on-call and the widget follow, and the phone registers there too while staying registered in the others, so it
+ * keeps getting their pages (RFC 0006 "Device registration"). Changes not sent yet still go out from the workspace
+ * they were made in (src/lib/drain.ts).
  */
-function Workspaces({ current, currentName }: { current: string; currentName: string }) {
+function Workspaces({
+  current,
+  currentName,
+  paged,
+}: {
+  current: string;
+  currentName: string;
+  paged: ReturnType<typeof useMember>["pagedWorkspaces"];
+}) {
   const colors = useTheme();
   const list = authClient.useListOrganizations();
   const [switching, setSwitching] = useState<string | null>(null);
@@ -151,6 +187,7 @@ function Workspaces({ current, currentName }: { current: string; currentName: st
       </Row>
       {workspaces.map((workspace) => {
         const active = workspace.id === current;
+        const paging = paged.find((one) => one.id === workspace.id)?.paging;
         return (
           <Pressable
             key={workspace.id}
@@ -167,9 +204,19 @@ function Workspaces({ current, currentName }: { current: string; currentName: st
           >
             <Row>
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing[2] }}>
-                <ThemedText selectable={active} numberOfLines={2} style={{ flex: 1 }}>
-                  {workspace.name}
-                </ThemedText>
+                <View style={{ flex: 1, gap: spacing[0.5] }}>
+                  <ThemedText selectable={active} numberOfLines={2}>
+                    {workspace.name}
+                  </ThemedText>
+                  <ThemedText
+                    variant="caption"
+                    style={
+                      paging && pagingProblem(paging) ? { color: colors.destructive } : undefined
+                    }
+                  >
+                    {workspacePaging(paging)}
+                  </ThemedText>
+                </View>
                 {switching === workspace.id ? (
                   <ActivityIndicator color={colors.mutedForeground} />
                 ) : active ? (
@@ -286,7 +333,11 @@ export function Account() {
           {member.email}
         </ThemedText>
       </Row>
-      <Workspaces current={member.workspaceId} currentName={member.workspaceName} />
+      <Workspaces
+        current={member.workspaceId}
+        currentName={member.workspaceName}
+        paged={member.pagedWorkspaces}
+      />
       <Row>
         <ThemedText variant="label">{m.mobile_session({ part: "pages" })}</ThemedText>
         <ThemedText

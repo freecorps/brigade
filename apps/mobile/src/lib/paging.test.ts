@@ -1,5 +1,5 @@
 import { expect, test } from "vite-plus/test";
-import { registerPhone, type DeviceDeps, type Paging } from "./device";
+import { registerPhone, type DeviceDeps, type Paging, type Registrations } from "./device";
 import { pagingCycle, retryDelay, type PagingDeps } from "./paging";
 import type { FinishResult } from "./sign-out";
 
@@ -33,6 +33,11 @@ function clock() {
   };
 }
 
+/** The workspace the tests register in. */
+const W = "ws_one";
+/** The one workspace's paging of a registration. */
+const first = (registrations: Registrations): Paging => Object.values(registrations)[0]!;
+
 /** A phone whose kept sign-out finishes and whose registration answers as the test says; logs what ran. */
 function phone(answers: { finish: FinishResult[]; register: Paging[] }) {
   const log: string[] = [];
@@ -45,11 +50,11 @@ function phone(answers: { finish: FinishResult[]; register: Paging[] }) {
       log.push("finish");
       return next(answers.finish);
     },
-    register: async () => {
+    register: async (): Promise<Registrations> => {
       log.push("register");
-      return next(answers.register);
+      return { [W]: next(answers.register) };
     },
-    onPaging: (paging: Paging) => shown.push(paging),
+    onPaging: (registrations: Registrations) => shown.push(first(registrations)),
   };
 }
 
@@ -143,7 +148,7 @@ test("a retry asked for during a try runs once, right after it", async () => {
     },
     register: async () => {
       log.push("register");
-      return "on";
+      return { [W]: "on" as const };
     },
     onPaging: () => {},
     setTimer: time.setTimer,
@@ -190,8 +195,8 @@ test("signing out does not wait for a push token that never comes, and the token
   const shown: Paging[] = [];
   const cycle = pagingCycle({
     finish: async () => "none",
-    register: (proceed) => registerPhone(deps, proceed),
-    onPaging: (paging) => shown.push(paging),
+    register: async (proceed) => ({ [W]: await registerPhone(deps, proceed) }),
+    onPaging: (registrations) => shown.push(first(registrations)),
     setTimer: time.setTimer,
   });
   await time.settle();
@@ -211,10 +216,10 @@ test("a registration already sent stays ahead of the unregister sent after stopp
   const cycle = pagingCycle({
     finish: async () => "none",
     register: async (proceed) => {
-      if (!proceed()) return "pending";
+      if (!proceed()) return { [W]: "pending" };
       sent.push("device.register");
       // Offline: the shard never answers. The unregister sent after it on the same socket undoes it.
-      return new Promise<Paging>(() => {});
+      return new Promise<Registrations>(() => {});
     },
     onPaging: () => {},
     setTimer: time.setTimer,
@@ -231,10 +236,33 @@ test("a finish or registration that throws counts as not done, not as a crash", 
   pagingCycle({
     finish: () => Promise.reject(new Error("storage")),
     register: () => Promise.reject(new Error("socket")),
-    onPaging: (paging) => shown.push(paging),
+    onPaging: (registrations) => shown.push(first(registrations)),
     setTimer: time.setTimer,
   });
   await time.settle();
   expect(shown).toEqual(["failed"]);
   expect(time.pending()).toEqual([30_000]);
+});
+
+test("one workspace still failing is tried again even with the others on", async () => {
+  const time = clock();
+  const shown: Registrations[] = [];
+  const answers: Registrations[] = [
+    { ws_one: "on", ws_two: "failed" },
+    { ws_one: "on", ws_two: "on" },
+  ];
+  pagingCycle({
+    finish: async () => "none",
+    register: async () => answers.shift()!,
+    onPaging: (registrations) => shown.push(registrations),
+    setTimer: time.setTimer,
+  });
+  await time.settle();
+  expect(time.pending()).toEqual([30_000]);
+  await time.elapse(30_000);
+  expect(shown).toEqual([
+    { ws_one: "on", ws_two: "failed" },
+    { ws_one: "on", ws_two: "on" },
+  ]);
+  expect(time.pending()).toEqual([]);
 });

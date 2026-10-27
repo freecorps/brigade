@@ -20,6 +20,9 @@ export type Oncall_MineInputs = {
 * | "next_none" | "No shifts in the next 4 weeks" |
 * | "overrides" | "Your overrides" |
 * | "remove_mine" | "Remove your override on {name}?" |
+* | "workspace" | "In {name}" |
+* | "elsewhere" | "You're on call in {name} until {time}" |
+* | "elsewhere_open" | "You're on call in {name}" |
 * | * | "Schedules and rotations are edited on the dashboard." |
 *
 * @param {Oncall_MineInputs} inputs

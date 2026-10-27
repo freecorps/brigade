@@ -164,11 +164,12 @@ describe("signing up", () => {
       env.DB.prepare(`select count from "rateLimit" where key = ?`)
         .bind(`signup-notice:${caio.id}`)
         .first<{ count: number }>();
-    await vi.waitFor(async () =>
-      expect((await counted())?.count).toBe(SIGN_UP_NOTICE_LIMIT.max + 2),
-    );
-    expect(sent().filter((one) => one.to.email === caio.email)).toHaveLength(
-      SIGN_UP_NOTICE_LIMIT.max,
+    // Counted before each answer, as a free address's sign-up writes before its own: the two take about as long.
+    expect((await counted())?.count).toBe(SIGN_UP_NOTICE_LIMIT.max + 2);
+    await vi.waitFor(() =>
+      expect(sent().filter((one) => one.to.email === caio.email)).toHaveLength(
+        SIGN_UP_NOTICE_LIMIT.max,
+      ),
     );
   });
 

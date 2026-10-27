@@ -246,6 +246,7 @@
   "widget_name": "Plantão",
   "widget_description": "Se você está de plantão, até quando e seu próximo turno.",
   "widget_on_call": "De plantão",
+  "widget_on_call_in": "De plantão em {name}",
   "widget_off_call": "Fora do plantão",
   "widget_until": "Até {time}",
   "widget_next": "Próximo turno {time}",
@@ -1158,6 +1159,9 @@
         "part=next_none": "Nenhum turno nas próximas 4 semanas",
         "part=overrides": "Suas substituições",
         "part=remove_mine": "Remover sua substituição em {name}?",
+        "part=workspace": "Em {name}",
+        "part=elsewhere": "Você está de plantão em {name} até {time}",
+        "part=elsewhere_open": "Você está de plantão em {name}",
         "part=*": "Escalas e rodízios são editados no painel."
       }
     }
@@ -2841,8 +2845,11 @@
         "part=new_title": "Criar um espaço de trabalho",
         "part=new_description": "Você será o proprietário. Seus outros espaços de trabalho continuam como estão, e você pode trocar entre eles quando quiser.",
         "part=cancel": "Cancelar",
-        "part=mobile_paging": "Este celular continua recebendo chamados de todo espaço de trabalho que você abrir nele, até você sair da conta ou do espaço de trabalho.",
+        "part=mobile_paging": "Este telefone recebe chamados de cada espaço de trabalho que você abriu nele, como mostrado em cada um. O Brigade mantém todos registrados até você sair da conta ou do espaço de trabalho.",
         "part=no_workspace": "Sua conta ainda não está em um espaço de trabalho. Crie um para começar ou peça a um proprietário para convidar você.",
+        "part=paging_not_opened": "Sem chamados neste telefone: troque para ele uma vez para recebê-los aqui.",
+        "part=pages_notice_in": "Este telefone não está chamando você em {name}",
+        "part=paged_here": "Recebe chamados neste telefone",
         "part=*": "Brigade"
       }
     }

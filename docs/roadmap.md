@@ -100,15 +100,18 @@ Validate the risky assumptions before writing product code. Each spike produces 
     owner once on the dashboard (RFC 0002 "Auth"). `/workspaces/:id` (the stack check) requires membership, so
     `workers_dev` could be turned on (#52).
   - Done: switching workspaces (the dashboard's header lists the member's workspaces, switches and creates a new one;
-    the app does the same in its account section, registering the phone in each workspace opened on it and keeping
-    the others, RFC 0006 "Device registration"); sign-up in the app; a uniform sign-up answer with a capped notice to
-    the address's owner; sockets closed when their session ends (sign-out, a revoked session), and the phone that
-    signs out taken off every workspace of the member (RFC 0004 "Session revocation"); sign-in limited per account (5
-    a minute) as well as per IP (30 a minute); a rate limit on `PATCH`/`DELETE /workspaces/:id/members/:userId` (20 a
-    minute per member and workspace).
+    the app does the same in its account section, registering the phone in every workspace opened on it at once with
+    `POST /devices/register` and saying per workspace whether it is paged, RFC 0006 "Device registration"); sign-up in
+    the app; a uniform sign-up answer with a capped notice to the address's owner; sockets closed when their session
+    ends (sign-out, a revoked session) or expires, upgrades of an ended session refused, and the phone that signs out
+    taken off every workspace of the member, recorded in D1 so a shard that cannot be reached catches up (RFC 0004
+    "Session revocation"); sign-in limited per account (5 a minute, skipped for 15 minutes from where a password was
+    just reset) as well as per IP (30 a minute); a rate limit on `PATCH`/`DELETE /workspaces/:id/members/:userId` (20
+    a minute per member and workspace); rate-limit counters pruned hourly; the widget and the on-call screen name the
+    workspace and say "On call in" another one.
   - Left: mobile OAuth/OIDC with PKCE via the system browser and QR pairing (mobile email and password sign-in is
     done, see the Mobile item), and the production and staging secrets (owner approval); applying migrations 0003,
-    0004 and 0005 to the deployed databases; a `baseURL` per environment (`BETTER_AUTH_URL`, the dashboard's
+    0004, 0005 and 0009 to the deployed databases; a `baseURL` per environment (`BETTER_AUTH_URL`, the dashboard's
     `/api/auth` origin) once deployed hostnames exist, so email links point at the dashboard rather than the API
     Worker; repairing a workspace whose shard was never provisioned because the Worker died between the D1 write and
     the RPC, or whose undo failed, and a shard that committed `workspace.create` before its RPC failed and was undone

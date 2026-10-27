@@ -9,6 +9,8 @@ struct OnCallEntry: TimelineEntry {
   let date: Date
   let state: WidgetState
   let openIncidents: Int?
+  /// The open workspace's name, which the open incidents and "Not on call" are about.
+  let workspace: String?
   let strings: WidgetStrings
 }
 
@@ -19,6 +21,7 @@ struct OnCallProvider: TimelineProvider {
       date: now,
       state: .on(until: now.addingTimeInterval(6 * 60 * 60)),
       openIncidents: 0,
+      workspace: nil,
       strings: WidgetStrings(locale: nil)
     )
   }
@@ -42,6 +45,7 @@ struct OnCallProvider: TimelineProvider {
         date: date,
         state: WidgetState(stored.snapshot, at: date),
         openIncidents: stored.snapshot?.openIncidents,
+        workspace: stored.snapshot?.workspace,
         strings: strings
       )
     }
@@ -67,6 +71,12 @@ struct OnCallText {
     case .on(let until):
       self.init(
         title: s("widget_on_call"), detail: until.map { s("widget_until", time: time($0)) }, on: true)
+    case .onElsewhere(let workspace, let until):
+      self.init(
+        title: s("widget_on_call_in", name: workspace),
+        detail: until.map { s("widget_until", time: time($0)) },
+        on: true
+      )
     case .off(let next):
       self.init(
         title: s("widget_off_call"),
@@ -101,6 +111,9 @@ struct OnCallWidgetView: View {
           if let detail = text.detail {
             Text(detail).font(.subheadline).foregroundStyle(.secondary)
           }
+          if let workspace = shownWorkspace {
+            Text(workspace).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+          }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
       default:
@@ -109,6 +122,11 @@ struct OnCallWidgetView: View {
     }
     .widgetURL(URL(string: "brigade://oncall"))
     .widgetBackground()
+  }
+
+  /// The open workspace's name: what "Not on call" and the open incidents are about.
+  private var shownWorkspace: String? {
+    entry.state.isCurrent ? entry.workspace : nil
   }
 
   private func small(_ text: OnCallText) -> some View {
@@ -128,6 +146,12 @@ struct OnCallWidgetView: View {
           .foregroundStyle(.secondary)
           .lineLimit(2)
           .minimumScaleFactor(0.8)
+      }
+      if let workspace = shownWorkspace {
+        Text(workspace)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
       }
       if entry.state.isCurrent, let count = entry.openIncidents {
         HStack(alignment: .firstTextBaseline, spacing: 4) {

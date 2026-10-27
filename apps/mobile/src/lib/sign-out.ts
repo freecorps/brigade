@@ -128,6 +128,34 @@ export function leftovers(storage: LeftoverStorage): Leftovers {
   };
 }
 
+/**
+ * How long the phone waits for the server to answer a sign-out before it counts as unanswered (kept, and finished
+ * later): a sign-out must never hang the account screen. The server finishes what it was doing either way (RFC 0004
+ * "Session revocation": what it could not tell a shard it records and finishes on its own).
+ */
+export const SIGN_OUT_TIMEOUT_MS = 8_000;
+
+/** `work`'s answer, or `fallback` if it takes longer than `ms` or fails. */
+export async function inTime<T>(
+  work: () => Promise<T>,
+  ms: number,
+  fallback: T,
+  setTimer: (run: () => void, ms: number) => () => void = (run, wait) => {
+    const timer = setTimeout(run, wait);
+    return () => clearTimeout(timer);
+  },
+): Promise<T> {
+  let cancel = () => {};
+  const late = new Promise<T>((resolve) => {
+    cancel = setTimer(() => resolve(fallback), ms);
+  });
+  try {
+    return await Promise.race([work().catch(() => fallback), late]);
+  } finally {
+    cancel();
+  }
+}
+
 export type SignOutDeps = {
   /** The session's `Cookie` header, read before anything forgets it. */
   cookie: () => Promise<string>;

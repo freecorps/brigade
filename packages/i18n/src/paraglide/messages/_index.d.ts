@@ -374,6 +374,7 @@ export * from './widget_no_schedules.js';
 export * from './widget_no_shift.js';
 export * from './widget_off_call.js';
 export * from './widget_on_call.js';
+export * from './widget_on_call_in.js';
 export * from './widget_open_incidents.js';
 export * from './widget_signed_out.js';
 export * from './widget_stale.js';

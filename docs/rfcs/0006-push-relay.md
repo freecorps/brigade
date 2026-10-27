@@ -80,14 +80,30 @@ relay's bearer token):
   the earlier registrations when they switch: switching to look at another workspace must never stop the pages of
   the one they are on call in, since "Who is paged" resolves targets per workspace and a phone missing from one is
   `no_devices` there. So a member in two workspaces gets both's pages on the phone once they have opened each on it.
+  The app keeps the list of those workspaces per member in secure storage (`apps/mobile/src/lib/phone-workspaces.ts`,
+  forgotten on sign-out) and every registration goes to all of them at once with `POST /devices/register` (`{ device,
+  workspaces }`, `apps/api/src/device-route.ts`): the Worker checks the session and the member's role in each
+  workspace in D1 (one query), and each shard runs `device.register` as the member, with its RBAC and its outbox event
+  (`WorkspaceDO.registerDevice`), answering per workspace. So whatever registers again (launch, the foreground, a new
+  APNs or PushKit token, Critical Alerts or notifications turned on in Settings, which the foreground picks up, Try
+  again) reaches every workspace, not only the one open: a new token that reached only that one left the others with
+  a dead one (`BadDeviceToken`, the device dropped, `no_devices`). A workspace the member left answers
+  `not_a_member` and the app forgets it; a workspace still failing is tried again on the backoff. An instance from
+  before the route (404) registers the open workspace over its socket, as before. The account section lists, under
+  each workspace, whether this phone gets its pages (on, setting up, a failure, or not opened on the phone yet), and
+  the incident list's notice names a workspace whose registration failed.
   Sign-out takes the phone off all of them: the app unregisters it from the workspace it has open, as before, and
   names its device on Better Auth's `/sign-out` (`Brigade-Device`), whose session hook takes it off every other
   workspace of the member before answering (`device.signOut` with `deviceId`, a `device.unregistered`
-  `unregistered`; RFC 0002 "Auth"). A sign-out kept from offline sends the same header when it is finished. Leaving a
-  workspace or being removed drops the member's devices there (RFC 0003 "Members"). The account section says the
-  phone stays paged for every workspace opened on it. If the session hook cannot reach a shard (3 tries), the phone
-  stays registered there for the member who left until someone signs out on it online again, they leave that
-  workspace, or APNs drops the token: the same gap as an offline sign-out that could not be kept.
+  `unregistered`; RFC 0002 "Auth"). A sign-out kept from offline sends the same header when it is finished. The
+  phone gives the server 8 s to answer a sign-out (`SIGN_OUT_TIMEOUT_MS`); unanswered, it is kept and finished later.
+  If the session hook cannot reach a shard (3 tries), the end is recorded in D1 (`session_end`) and acted on later:
+  before whoever signs in on the phone next registers it there (so it is not `taken`), after the shard's next sync
+  upgrade, or by the Worker's cron within a minute or two. If D1 cannot record it, the sign-out answers 503 and the
+  app keeps it to finish later. Leaving a workspace or being removed drops the member's devices there (RFC 0003
+  "Members"). The "I'm on call" widget names the open workspace, and says "On call in <workspace>" when the member is
+  off call there but on call in another this phone pages them for, from their stretches there as the app last saw
+  them while it was open (kept with the list, each for 24 hours); the on-call screen says the same.
 - **The relay** takes the device's `environment` with each push and picks the APNs host from it (one provider token
   signs for both).
 

@@ -20,8 +20,11 @@ export type Account_FlowInputs = {
 * | "new_title" | "Create a workspace" |
 * | "new_description" | "You'll own it. Your other workspaces stay as they are, and you can switch between them any time." |
 * | "cancel" | "Cancel" |
-* | "mobile_paging" | "This phone stays paged for every workspace you open on it, until you sign out or leave the workspace." |
+* | "mobile_paging" | "Pages reach this phone from each workspace you've opened on it, as listed under each one. Brigade keeps all of them registered until you sign out or leave th..." |
 * | "no_workspace" | "Your account isn't in a workspace yet. Create one to get started, or ask an owner to invite you." |
+* | "paging_not_opened" | "Not paged on this phone: switch to it once to get its pages here." |
+* | "pages_notice_in" | "This phone isn't paging you in {name}" |
+* | "paged_here" | "Paged on this phone" |
 * | * | "Brigade" |
 *
 * @param {Account_FlowInputs} inputs

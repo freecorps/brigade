@@ -2,7 +2,9 @@
 // worked out here from the shard's schedules and overrides and kept in the App Group, where the widget reads it.
 // The widget never talks to the network or holds credentials: it only walks the stretches with the clock, so it
 // flips at each handoff without the app running, and says "Open Brigade to update" once the snapshot is older than
-// `WIDGET_STALE_MS` (an override added since would not be in it). Pure, so it is tested in Node.
+// `WIDGET_STALE_MS` (an override added since would not be in it). It names the workspace it is about, and when the
+// member is off call there but on call in another workspace this phone pages them for (its stretches as last seen
+// there, src/lib/phone-workspaces.ts), it says "On call in <workspace>". Pure, so it is tested in Node.
 import type { Locale } from "@freecorps/brigade-i18n";
 import { nextHandoffs, type OverrideRow, type ScheduleRow } from "@freecorps/brigade-schema";
 import { UPCOMING_MS } from "@/lib/oncall";
@@ -31,7 +33,17 @@ export type WidgetSnapshot = {
   shifts: [number, number | null][];
   /** Open (not resolved) incidents when the snapshot was written; null when not known. */
   openIncidents: number | null;
+  /** The open workspace's name. Absent in snapshots from before it. */
+  workspace?: string;
+  /**
+   * The member's other workspaces on this phone with their stretches there as last seen, each until its own `staleAt`
+   * (the app wrote it while that workspace was open). Absent in snapshots from before it.
+   */
+  others?: { name: string; shifts: [number, number | null][]; staleAt: number }[];
 };
+
+/** Workspaces of `others` the snapshot carries at most. */
+export const WIDGET_MAX_OTHERS = 9;
 
 export function widgetSnapshot(input: {
   schedules: readonly ScheduleRow[];
@@ -40,6 +52,8 @@ export function widgetSnapshot(input: {
   now: number;
   locale: Locale;
   openIncidents: number | null;
+  workspace?: string;
+  others?: WidgetSnapshot["others"];
 }): WidgetSnapshot {
   const { schedules, overrides, userId, now } = input;
   const horizon = now + UPCOMING_MS;
@@ -63,6 +77,12 @@ export function widgetSnapshot(input: {
     schedules: schedules.length > 0,
     shifts: merge(stretches).slice(0, WIDGET_MAX_SHIFTS),
     openIncidents: input.openIncidents,
+    ...(input.workspace !== undefined ? { workspace: input.workspace } : {}),
+    ...(input.others
+      ? {
+          others: input.others.filter((other) => other.staleAt > now).slice(0, WIDGET_MAX_OTHERS),
+        }
+      : {}),
   };
 }
 
@@ -90,17 +110,32 @@ export type WidgetState =
   | { kind: "stale" }
   | { kind: "no-schedules" }
   | { kind: "on"; until: number | null }
+  /** Off call (or no schedules) in the open workspace, on call in `workspace`, another this phone pages them for. */
+  | { kind: "on-elsewhere"; workspace: string; until: number | null }
   | { kind: "off"; next: number | null };
 
 export function widgetState(snapshot: WidgetSnapshot | null, at: number): WidgetState {
   if (!snapshot) return { kind: "signed-out" };
   if (at >= snapshot.staleAt) return { kind: "stale" };
-  if (!snapshot.schedules) return { kind: "no-schedules" };
-  for (const [start, end] of snapshot.shifts) {
-    if (start <= at && (end === null || at < end)) return { kind: "on", until: end };
-    if (start > at) return { kind: "off", next: start };
+  const here = ownState(snapshot, at);
+  if (here.kind === "on") return here;
+  for (const other of snapshot.others ?? []) {
+    if (at >= other.staleAt) continue;
+    const shift = onAt(other.shifts, at);
+    if (shift) return { kind: "on-elsewhere", workspace: other.name, until: shift[1] };
   }
-  return { kind: "off", next: null };
+  return here;
+}
+
+function ownState(snapshot: WidgetSnapshot, at: number): WidgetState {
+  if (!snapshot.schedules) return { kind: "no-schedules" };
+  const shift = onAt(snapshot.shifts, at);
+  if (shift) return { kind: "on", until: shift[1] };
+  return { kind: "off", next: snapshot.shifts.find(([start]) => start > at)?.[0] ?? null };
+}
+
+function onAt(shifts: [number, number | null][], at: number): [number, number | null] | undefined {
+  return shifts.find(([start, end]) => start <= at && (end === null || at < end));
 }
 
 /**
@@ -109,10 +144,19 @@ export function widgetState(snapshot: WidgetSnapshot | null, at: number): Widget
  */
 export function widgetTimeline(snapshot: WidgetSnapshot, from: number): number[] {
   const times = new Set<number>([from]);
+  const add = (at: number | null, until: number) => {
+    if (at !== null && at > from && at < Math.min(until, snapshot.staleAt)) times.add(at);
+  };
   for (const [start, end] of snapshot.shifts) {
-    for (const at of [start, end]) {
-      if (at !== null && at > from && at < snapshot.staleAt) times.add(at);
+    add(start, snapshot.staleAt);
+    add(end, snapshot.staleAt);
+  }
+  for (const other of snapshot.others ?? []) {
+    for (const [start, end] of other.shifts) {
+      add(start, other.staleAt);
+      add(end, other.staleAt);
     }
+    add(other.staleAt, Infinity);
   }
   if (snapshot.staleAt > from) times.add(snapshot.staleAt);
   return [...times].sort((a, b) => a - b);

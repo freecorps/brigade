@@ -414,9 +414,13 @@ SyncClient (web/mobile)┤
 - **Switching workspaces** (dashboard header, app account section) makes another workspace active in the session
   (`organization/set-active`) and opens its shard; nothing of the old one is shown in the new one (the dashboard
   remounts below the switch, the app makes a new `SyncClient`). Changes not answered yet stay with the workspace they
-  were made in: in the dashboard each shard's pending mutations live in the one `SyncClient` and are still sent and
-  answered on the old shard's socket, which closes idle once they are; in the app each member and workspace has its
-  own queue on disk (`pending-files`), restored when they switch back.
+  were made in, and are still sent: in the dashboard each shard's pending mutations live in the one `SyncClient` and
+  are sent and answered on the old shard's socket, which closes idle once they are; in the app the old workspace's
+  `SyncClient` stays open in the background until its queue is empty (checked every second, at most 10 minutes;
+  `apps/mobile/src/lib/drain.ts`), so an ack made while the socket was reconnecting still reaches the shard and stops
+  the escalation. Switching back takes that same client again. What is still unsent after 10 minutes stays in the
+  member and workspace's queue on disk (`pending-files`), sent when they switch back; signing out closes every
+  draining client and drops the queues.
 - For an entity shard, the Worker first checks that the entity belongs to the workspace (`inc_456` is in
   `WorkspaceDO(ws_123)`'s index) and names the shard from both ids (`ws_123:inc_456`), never from the client's id
   alone.
@@ -438,12 +442,22 @@ SyncClient (web/mobile)┤
   (RFC 0003 "Members"), so an open socket never keeps a role or a membership D1 took away for longer than until the
   next change or upgrade into the workspace. A password reset closes every socket of the account in each of its
   workspaces (`1012`; they reconnect without a session and are refused), since it ends every session (RFC 0002
-  "Auth"). A session that ends (sign-out, a revoked or expired session) closes its sockets in every workspace of the
-  account (`1012`): the Worker passes the upgrade's session id to the shard (`Brigade-Session`, the id, never the
-  token), which tags the socket with it (`acceptWebSocket(ws, ["session:<id>"])`), and Better Auth's session-delete
-  hook asks each of the user's shards (D1 lists them) to close the sockets with that tag (`WorkspaceDO.endSession`),
-  3 tries each. A shard that still fails leaves its socket open until it next reconnects, refused then for want of a
-  session. Not built yet: an edit made in D1 outside Brigade reaching sockets before the next upgrade.
+  "Auth"). A session that ends (sign-out, a revoked session, an expired one Better Auth finds) closes its sockets in
+  every workspace of the account (`1012`): the Worker passes the upgrade's session id to the shard (`Brigade-Session`,
+  the id, never the token), which tags the socket with it (`acceptWebSocket(ws, ["session:<id>"])`), and Better Auth's
+  session-delete hook asks each of the user's shards (D1 lists them) to close the sockets with that tag
+  (`WorkspaceDO.endSession`), 3 tries each. The end is recorded in D1 first (`session_end`, RFC 0002 "Auth"), so a
+  shard that still fails acts on it later: before a phone registers in it, after its next sync upgrade, or from the
+  Worker's cron within a minute or two. A shard remembers an ended session for 10 minutes (`ended_session`,
+  `ENDED_SESSION_MS`) and refuses an upgrade carrying it (`401`), so an upgrade the Worker authenticated just before
+  the session ended, reaching the shard after, never opens a socket nothing would close.
+  Better Auth deletes an expired session only when someone next presents it, so no hook fires when one expires: the
+  Worker also passes the session's expiry (`Brigade-Session-Expires`), the shard keeps it with the socket, refuses an
+  upgrade already past it, and closes the socket at it (`1012`): on its next frame, or by the alarm the upgrade arms
+  for it when it is idle (`WorkspaceDO.expireSockets`). The client reconnects with its cookie and gets the session
+  Better Auth refreshed meanwhile, if any. Sockets accepted before a deploy that adds a tag or an expiry carry neither;
+  a deploy restarts the shards and closes their sockets anyway, so none outlive it. Not built yet: an edit made in D1
+  outside Brigade reaching sockets before the next upgrade.
 
 **Upgrade path (only if spike S3 or production metrics show a need):** a `SessionDO` per client session holding the
 single client socket and fanning out to shards over DO RPC, with shards pushing patches back via RPC. It costs an

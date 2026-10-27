@@ -15,8 +15,10 @@ import {
   deviceRegistration,
   instanceOrigin,
   pushEnvironment,
+  registerEverywhere,
   registerPhone,
   unregisterPhone,
+  type RegisterAnswer,
   VOIP_GRACE_MS,
   type DeviceDeps,
 } from "./device";
@@ -318,4 +320,118 @@ test("an instance from before Critical Alerts still registers the phone, without
   expect(sent).toHaveLength(2);
   expect(sent[1]).not.toHaveProperty("criticalAlerts");
   expect(store.scan("devices")).toHaveLength(1);
+});
+
+/**
+ * `POST /devices/register` over one store per workspace, as the API runs it: `device.register` as the member in each
+ * workspace they are in; `not_a_member` elsewhere.
+ */
+function route(stores: Record<string, Store<BrigadeTables>>, actor: Actor, log: string[][] = []) {
+  return async (args: object, workspaces: string[]): Promise<RegisterAnswer> => {
+    log.push(workspaces);
+    const answers: Record<string, string> = {};
+    for (const id of workspaces) {
+      const store = stores[id];
+      if (!store) {
+        answers[id] = "not_a_member";
+        continue;
+      }
+      const result = await shard(store)(actor)("device.register", args);
+      answers[id] = result.ok || result.error.code === "conflict" ? "ok" : result.error.code;
+    }
+    return { ok: true, workspaces: answers };
+  };
+}
+
+// A paging path (AGENTS.md): a new push token (a reinstall, APNs rotating it) must reach every workspace the phone pages
+// for, or the others keep a dead token and page nobody on it.
+test("the phone registers in every workspace it was opened in at once, a new token reaching all of them", async () => {
+  const stores = {
+    ws_one: createMemoryStore<BrigadeTables>(),
+    ws_two: createMemoryStore<BrigadeTables>(),
+  };
+  const log: string[][] = [];
+  const deps = (token: string) =>
+    phone(shard(stores.ws_one)(ANA), {
+      pushToken: async () => token,
+      registerAll: route(stores, ANA, log),
+    });
+  expect(await registerEverywhere(deps("ab".repeat(32)), ["ws_two"], "ws_one")).toEqual({
+    ws_one: "on",
+    ws_two: "on",
+  });
+  expect(await registerEverywhere(deps("cd".repeat(32)), ["ws_one", "ws_two"], "ws_one")).toEqual({
+    ws_one: "on",
+    ws_two: "on",
+  });
+  for (const store of Object.values(stores)) {
+    expect(store.scan("devices")).toMatchObject([{ pushToken: "cd".repeat(32) }]);
+  }
+  expect(log).toEqual([
+    ["ws_one", "ws_two"],
+    ["ws_one", "ws_two"],
+  ]);
+});
+
+test("each workspace says how it went: another member's phone is taken, a workspace left is dropped", async () => {
+  const stores = {
+    ws_one: createMemoryStore<BrigadeTables>(),
+    ws_two: createMemoryStore<BrigadeTables>(),
+  };
+  // Bia never signed out on this phone in ws_two.
+  await registerPhone(phone(shard(stores.ws_two)(BIA)));
+  const gone: string[][] = [];
+  const registered = await registerEverywhere(
+    phone(shard(stores.ws_one)(ANA), { registerAll: route(stores, ANA) }),
+    ["ws_two", "ws_gone"],
+    "ws_one",
+    () => true,
+    (ids) => gone.push(ids),
+  );
+  expect(registered).toEqual({ ws_one: "on", ws_two: "taken" });
+  expect(gone).toEqual([["ws_gone"]]);
+});
+
+test("offline or a server error fails every workspace, so all are tried again; notifications off says so for all", async () => {
+  const offline = phone(async () => ({ ok: true }), {
+    registerAll: async () => ({ ok: false, status: 0 }),
+  });
+  expect(await registerEverywhere(offline, ["ws_two"], "ws_one")).toEqual({
+    ws_one: "failed",
+    ws_two: "failed",
+  });
+  const off = phone(async () => ({ ok: true }), {
+    permission: async () => false,
+    registerAll: async () => ({ ok: true, workspaces: {} }),
+  });
+  expect(await registerEverywhere(off, ["ws_two"], "ws_one")).toEqual({
+    ws_one: "off",
+    ws_two: "off",
+  });
+});
+
+test("an instance from before the route registers the open workspace over its socket", async () => {
+  const store = createMemoryStore<BrigadeTables>();
+  const older = phone(shard(store)(ANA), { registerAll: async () => ({ ok: false, status: 404 }) });
+  expect(await registerEverywhere(older, ["ws_two"], "ws_one")).toEqual({ ws_one: "on" });
+  expect(store.scan("devices")).toHaveLength(1);
+});
+
+test("a route that refuses Critical Alerts gets the registration again without them", async () => {
+  const sent: object[] = [];
+  const deps = phone(async () => ({ ok: true }), {
+    criticalAlerts: async () => true,
+    registerAll: async (args, workspaces) => {
+      sent.push(args);
+      return {
+        ok: true,
+        workspaces: Object.fromEntries(
+          workspaces.map((id) => [id, "criticalAlerts" in args ? "invalid_args" : "ok"]),
+        ),
+      };
+    },
+  });
+  expect(await registerEverywhere(deps, [], "ws_one")).toEqual({ ws_one: "on" });
+  expect(sent).toHaveLength(2);
+  expect(sent[1]).not.toHaveProperty("criticalAlerts");
 });

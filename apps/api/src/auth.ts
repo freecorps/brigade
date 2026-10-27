@@ -457,6 +457,68 @@ export function safeNext(value: string | null | undefined): string | undefined {
   return /^\/invitations\/inv_[0-9A-HJKMNP-TV-Z]{26}$/.test(value) ? value : undefined;
 }
 
+type TakenUser = { id: string; email: string; locale: unknown };
+
+/**
+ * A sign-up with an address that has an account (RFC 0002 "Auth"): its owner is told, at most `SIGN_UP_NOTICE_LIMIT`,
+ * the email sent after the response. Before answering, two D1 writes in a row (the notice's counter, then touching
+ * it again), as a sign-up of a free address makes two (the user, then the account), so the answer takes about as long
+ * either way; the password was hashed on both paths already. Never throws.
+ */
+async function signUpNotice(bindings: AuthBindings, user: TakenUser, request: Request | undefined) {
+  const key = `signup-notice:${user.id}`;
+  let count: number;
+  try {
+    const { window } = SIGN_UP_NOTICE_LIMIT;
+    count = await countRequest(bindings.database, key, window, Date.now());
+    await bindings.database
+      .prepare(`update "rateLimit" set count = count where key = ?`)
+      .bind(key)
+      .run();
+  } catch (error) {
+    console.error(JSON.stringify({ message: "sign-up notice count failed", error: String(error) }));
+    return;
+  }
+  const sender = bindings.email?.sender;
+  if (!sender || count > SIGN_UP_NOTICE_LIMIT.max) return;
+  const link = dashboardLink(
+    "/sign-in",
+    {},
+    bindings.email?.dashboardUrl,
+    linkFallback(sender, request ? new URL(request.url).origin : undefined),
+  );
+  if (!link) {
+    console.error(JSON.stringify({ message: "sign-up notice not sent: DASHBOARD_URL is not set" }));
+    return;
+  }
+  // Never the name, nor anything the person signing up typed but the address.
+  const send = sender
+    .send(
+      renderSignUpAttemptEmail(
+        { email: user.email },
+        link,
+        resolveLocale(typeof user.locale === "string" ? user.locale : undefined),
+      ),
+    )
+    .then(
+      (result) => {
+        if (!result.ok) {
+          console.error(
+            JSON.stringify({
+              message: "sign-up notice refused",
+              sender: sender.id,
+              code: result.code,
+            }),
+          );
+        }
+      },
+      (error: unknown) =>
+        console.error(JSON.stringify({ message: "sign-up notice failed", error: String(error) })),
+    );
+  if (bindings.waitUntil) bindings.waitUntil(send);
+  else await send;
+}
+
 /** The answer to a sign-out whose end could not be recorded (`onSessionEnding`): its session stays. */
 export const SIGN_OUT_FAILED_CODE = "SIGN_OUT_FAILED";
 
@@ -477,8 +539,9 @@ function endingSession(
 
 export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self: Self = noSelf) {
   const random = randomBytes;
-  // One instance per request (src/index.ts `workerAuth`), so this is the request's own.
+  // One instance per request (src/index.ts `workerAuth`), so these are the request's own.
   const unrecorded = { failed: false };
+  const taken: { user?: TakenUser; request?: Request } = {};
   return {
     appName: "Brigade",
     basePath: AUTH_BASE_PATH,
@@ -492,47 +555,12 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
       // address the same as one that created an account (a made-up user, no session, the password hashed all the
       // same), so the answer cannot tell whether an address has an account. The clients sign in right after.
       autoSignIn: false,
-      // Its owner is told instead, at most `SIGN_UP_NOTICE_LIMIT`; run after the response (`backgroundTasks`).
-      onExistingUserSignUp: async ({ user }, request) => {
-        const sender = bindings.email?.sender;
-        if (!sender) return;
-        const { window, max } = SIGN_UP_NOTICE_LIMIT;
-        if (
-          (await countRequest(bindings.database, `signup-notice:${user.id}`, window, Date.now())) >
-          max
-        ) {
-          return;
-        }
-        const link = dashboardLink(
-          "/sign-in",
-          {},
-          bindings.email?.dashboardUrl,
-          linkFallback(sender, request ? new URL(request.url).origin : undefined),
-        );
-        if (!link) {
-          console.error(
-            JSON.stringify({ message: "sign-up notice not sent: DASHBOARD_URL is not set" }),
-          );
-          return;
-        }
-        const locale = Reflect.get(user, "locale");
-        // Never the name, nor anything the person signing up typed but the address.
-        const result = await sender.send(
-          renderSignUpAttemptEmail(
-            { email: user.email },
-            link,
-            resolveLocale(typeof locale === "string" ? locale : undefined),
-          ),
-        );
-        if (!result.ok) {
-          console.error(
-            JSON.stringify({
-              message: "sign-up notice refused",
-              sender: sender.id,
-              code: result.code,
-            }),
-          );
-        }
+      // Its owner is told instead (`signUpNotice`, from the `after` hook, which also evens out the answer's timing).
+      // Called synchronously by Better Auth; only noted here.
+      onExistingUserSignUp: ({ user }, request) => {
+        taken.user = { id: user.id, email: user.email, locale: Reflect.get(user, "locale") };
+        taken.request = request;
+        return Promise.resolve();
       },
       // Password reset (RFC 0002 "Auth"): the link is the dashboard's `/reset-password#token=…`, and using it proves
       // control of the address, so it also marks the address verified and ends every session. That is how an
@@ -667,6 +695,11 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
       // A sign-out whose end could not be recorded kept its session (`onSessionEnding`): say so, so the client
       // tries again, instead of Better Auth's 200.
       after: createAuthMiddleware(async (ctx) => {
+        if (ctx.path === "/sign-up/email" && taken.user) {
+          const { user, request } = taken;
+          taken.user = undefined;
+          await signUpNotice(bindings, user, request);
+        }
         const failed = unrecorded.failed;
         unrecorded.failed = false;
         if (ctx.path === "/sign-out" && failed) {

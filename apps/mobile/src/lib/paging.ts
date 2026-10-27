@@ -1,9 +1,9 @@
 // Keeping this phone paged (RFC 0006 "A handed-over phone"): first finish any sign-out kept from offline, so the
-// phone is off the last member's shard, then register it for whoever is signed in; and while either is left undone
-// (a kept sign-out still pending, or registering `taken` or `failed`), try again on a backoff and whenever the app
-// asks (back online, back in the foreground, Try again). Pure, so it is tested in Node; src/components/session.tsx
-// runs it with the native pieces.
-import type { Paging } from "@/lib/device";
+// phone is off the last member's shard, then register it for whoever is signed in, in every workspace they opened on
+// it; and while either is left undone (a kept sign-out still pending, or registering `taken` or `failed` in any
+// workspace), try again on a backoff and whenever the app asks (back online, back in the foreground, a new push or
+// VoIP token, Try again). Pure, so it is tested in Node; src/components/session.tsx runs it with the native pieces.
+import { registrationsLeft, type Registrations } from "@/lib/device";
 import type { FinishResult } from "@/lib/sign-out";
 
 /** Waits between tries: 30 s, 2 min, 10 min, then every 10 min. */
@@ -20,9 +20,9 @@ export type PagingDeps = {
    * Registers the phone for the signed-in member; null when nobody is signed in. It calls `proceed` right before
    * sending `device.register` and sends nothing when that says false (the cycle was stopped meanwhile).
    */
-  register: ((proceed: () => boolean) => Promise<Paging>) | null;
-  /** Each registration's result. */
-  onPaging: (paging: Paging) => void;
+  register: ((proceed: () => boolean) => Promise<Registrations>) | null;
+  /** Each registration's result, per workspace. */
+  onPaging: (registrations: Registrations) => void;
   /** Runs `run` after `ms`; returns what cancels it. */
   setTimer: (run: () => void, ms: number) => () => void;
 };
@@ -41,8 +41,8 @@ export type PagingCycle = {
 };
 
 /** Whether a try left something to do again later. */
-export function needsRetry(finished: FinishResult, paging: Paging | null): boolean {
-  return finished === "pending" || paging === "taken" || paging === "failed";
+export function needsRetry(finished: FinishResult, registrations: Registrations | null): boolean {
+  return finished === "pending" || (registrations !== null && registrationsLeft(registrations));
 }
 
 /** Starts trying right away. One try runs at a time; a retry asked for during one runs right after it. */
@@ -61,9 +61,9 @@ export function pagingCycle(deps: PagingDeps): PagingCycle {
   const once = async () => {
     const finished = await deps.finish().catch(() => "pending" as const);
     if (stopped) return;
-    let paging: Paging | null = null;
+    let paging: Registrations | null = null;
     if (deps.register) {
-      paging = await deps.register(() => !stopped).catch(() => "failed" as const);
+      paging = await deps.register(() => !stopped).catch(() => ({ "": "failed" as const }));
       if (stopped) return;
       deps.onPaging(paging);
     }

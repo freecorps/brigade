@@ -254,6 +254,12 @@ describe("after a sign-up, a sign-in refused", () => {
       authErrorMessage({ status: 429 }, "sign-in"),
     );
   });
+
+  test("an unverified address on a server that requires verification is said as that, not as a taken address", () => {
+    const message = authErrorMessage({ status: 401, code: "EMAIL_NOT_VERIFIED" }, "after-sign-up");
+    expect(message).toBe(authErrorMessage({ status: 403, code: "EMAIL_NOT_VERIFIED" }, "sign-in"));
+    expect(message).not.toContain("we've emailed its owner");
+  });
 });
 
 describe("the language emails are written in", () => {

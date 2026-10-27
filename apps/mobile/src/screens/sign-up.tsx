@@ -124,7 +124,11 @@ export function SignUp() {
       }
     }
     // Signed in: the stack moves to the incidents, or to the sign-in screen's "create a workspace" if that failed.
+    // Opened with nothing behind it (a link straight to sign-up), it goes home, which shows either.
+    sending.current = false;
+    setBusy(false);
     if (router.canGoBack()) router.back();
+    else router.replace("/");
   };
 
   return (

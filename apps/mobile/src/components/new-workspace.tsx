@@ -61,6 +61,9 @@ export function NewWorkspaceForm({ onDone }: { onDone?: () => void }) {
             : m.auth_error_generic(),
       );
     }
+    // Created with a request of the app's own, which Better Auth's client does not see: its cached list of the
+    // member's workspaces (the account section's) is read again, so the new one shows there.
+    authClient.$store.notify("$listOrg");
     // The server made it active already; this tells the session hooks to read it again.
     try {
       await authClient.organization.setActive({ organizationId: created.id });

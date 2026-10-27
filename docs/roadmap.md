@@ -47,13 +47,16 @@ Validate the risky assumptions before writing product code. Each spike produces 
 - [ ] **S2 — Probe placement** (RFC 0007). Pass: observed colo per `locationHint` over 48h (deploy needs Heitor's approval).
   - Deployed as `brigade-probe-dev` and sampling every hint since 2026-10-25; first samples in the
     [write-up](spikes/s2-probe-placement.md). Left: read the 48-hour result and settle RFC 0007 "Placement".
-- [ ] **S1 — APNs from a Worker and payload encryption** (RFC 0006). Pass: push received on a real iPhone from a
+- [x] **S1 — APNs from a Worker and payload encryption** (RFC 0006). Pass: push received on a real iPhone from a
       Worker, decrypted in the Notification Service Extension (needs Apple credentials and a device).
   - Done on the iOS Simulator: a deployed Worker reaches APNs over HTTP/2 (local workerd cannot); HPKE (P-256,
     AES-128-GCM) chosen and shared in `packages/push`; a push sent by `brigade-relay-dev` through the APNs sandbox
     was decrypted by the Notification Service Extension and shown as a time-sensitive banner, and a push it could
     not decrypt showed the fallback ([write-up](spikes/s1-apns-encryption.md)).
-  - Left: verify on a real iPhone (locked, in the background, in `pt-BR`).
+  - Done on a real iPhone (EAS preview build, production APNs): a SEV2 page from a heartbeat monitor, sent by the
+    deployed `dev` API, arrived on the locked phone as a time-sensitive notification decrypted by the extension
+    ([write-up](spikes/s1-apns-encryption.md#real-iphone)).
+  - Follow-up: the `pt-BR` fallback with the phone in Portuguese (the device ran in English).
 - [ ] **S6 — VoIP call screen** (RFC 0010). Pass: locked iPhone and Android ring natively; answering plays the
       incident and accepts "ack" (needs Apple credentials and devices).
   - Done on the Android emulator (API 36, PIN-locked): a page rang through a self-managed `ConnectionService`, a
@@ -94,11 +97,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     of each workspace (`device.signOut`, with the member reconcile as its fallback) and marks the address verified,
     which is how the owner of an address someone else signed up with takes the account back; that takeover also
     pauses the monitors and revokes the heartbeat URLs of the workspaces the account is alone in, and tells the
-    owner once on the dashboard (RFC 0002 "Auth").
+    owner once on the dashboard (RFC 0002 "Auth"). `/workspaces/:id` (the stack check) requires membership, so
+    `workers_dev` could be turned on (#52).
   - Left: switching workspaces in the
     UI, closing open sockets on sign-out or a revoked session (RFC 0004 "Session revocation"), mobile OAuth/OIDC with PKCE
-    via the system browser and QR pairing (mobile email and password sign-in is done, see the Mobile item),
-    putting `/workspaces/:id` (the stack check) behind auth before `workers_dev` is turned on, and the production
+    via the system browser and QR pairing (mobile email and password sign-in is done, see the Mobile item), and the production
     and staging secrets (owner approval). Also: a uniform sign-up response (the same answer whether or not the email
     is taken, so sign-up cannot enumerate accounts; until then only rate limiting slows it); applying
     migrations 0003, 0004 and 0005 to the deployed databases; a `baseURL` per environment (`BETTER_AUTH_URL`, the dashboard's `/api/auth` origin)
@@ -165,8 +168,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     idempotent per tap, so it stops the escalation run like any ack) and answered with a quiet notification;
     offline, the answer is a page again with the action (RFC 0004 "Acknowledging from a notification", RFC 0006
     "Acting from the notification").
-  - Left: ack from the notification on an iPhone (the action, a locked phone, a cold background launch); the iOS end to end on
-    a phone (sign in, registered, a page received and opened on its incident); FCM for Android (until then Android
+  - Done on an iPhone (2026-10-27, `dev`): signed in and registered, a page received on the locked phone and
+    acknowledged from the notification ([write-up](spikes/s1-apns-encryption.md#real-iphone)).
+  - Left: the Acknowledge action from a cold background launch; FCM for Android (until then Android
     says it is not paged); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
     session's active one); creating an account or workspace from the app; editing and deleting updates; a tablet
     layout.
@@ -182,9 +186,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     with `device.register` (server-only, own devices only) and the app registers the phone on sign-in
     (RFC 0005 "Notifiers", RFC 0006 "Device registration", "Who is paged"). Queue `brigade-events-dev` and its
     dead-letter queue `brigade-events-dlq-dev` exist; the dead-letter consumer is created on the next deploy.
+  - Done on `dev` (2026-10-27): a real push end to end from the deployed API through the relay to an iPhone
+    ([write-up](spikes/s1-apns-encryption.md#real-iphone)).
   - Left: the production and staging queues (owner approval); `RELAY_SEND_TOKEN` on the deployed API (dev reaches
     its relay through the `RELAY` service binding; production and staging add theirs with their relay's first deploy);
-    a real push end to end from the deployed API to a device; VoIP call pages (`kind: "call"`, Phase 2 with RFC 0010); FCM for Android
+    VoIP call pages (`kind: "call"`, Phase 2 with RFC 0010); FCM for Android
     (Android devices are recorded as `unsupported`); replaying dead-lettered pages (today they are recorded, not
     re-sent); a member removed or demoted in D1 outside Brigade is still paged until the next sync upgrade
     reconciles the shard (RFC 0006 "Who is paged", Q18); holding back lower-urgency pushes while a page may be undelivered (RFC 0006

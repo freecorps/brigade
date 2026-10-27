@@ -24,6 +24,7 @@ import { Escalations, ESCALATION_RETRY_MS, MAX_LEVELS_PER_ALARM } from "../src/e
 import { consumeDeadLetters, consumeEvents, type Fetch } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
+import { StatusPublisher } from "../src/status-page.ts";
 import { WorkspaceDO } from "../src/workspace.ts";
 
 const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
@@ -444,6 +445,63 @@ describe("fallbacks (the paging path's)", () => {
     await vi.waitFor(async () =>
       expect((await ws.levels(incident)).map((one) => one.level)).toEqual([1, 2]),
     );
+  });
+
+  test("a status page push hung on KV never holds a level: it fires on time, alarm after alarm", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws, undefined, 3);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, relay().send);
+    // A public page with a change to push, and a KV that never answers.
+    await ws.run(ana, "statusPage.configure", {
+      slug: `esc-${Date.now().toString(36)}`,
+      title: "Acme",
+      locale: "en",
+      enabled: true,
+    });
+    const real = await ws.withShard((shard, state, instance) => {
+      const real: unknown = Reflect.get(instance, "status");
+      const hanging = {
+        put: () => new Promise(() => {}),
+        delete: () => new Promise(() => {}),
+      } as unknown as KVNamespace;
+      Reflect.set(
+        instance,
+        "status",
+        new StatusPublisher({
+          shard,
+          sql: state.storage.sql,
+          kv: hanging,
+          db: env.DB,
+          randomBytes: random,
+          log: () => {},
+          committed: () => {},
+          wake: () => {},
+        }),
+      );
+      Reflect.set(instance, "statusBudgetMs", 50);
+      return real;
+    });
+    try {
+      // The second level, then the first again (a second round): each the alarm after a timeout.
+      for (const level of [2, 3]) {
+        await ws.due(incident);
+        const took = await ws.withShard(async (_shard, state, instance) => {
+          const started = Date.now();
+          await instance.alarm();
+          const alarm = await state.storage.getAlarm();
+          // The alarm does not come straight back for the stuck push.
+          expect(alarm === null || alarm > Date.now() + 100).toBe(true);
+          return Date.now() - started;
+        });
+        // The first alarm waited its budget on the push; the next did not wait on it at all.
+        expect(took).toBeLessThan(level === 2 ? 2000 : 1000);
+        expect(await ws.levels(incident)).toHaveLength(level);
+      }
+    } finally {
+      await ws.withShard((_shard, _state, instance) => Reflect.set(instance, "status", real));
+    }
   });
 
   test("a dead-lettered level is recorded on the timeline", async () => {

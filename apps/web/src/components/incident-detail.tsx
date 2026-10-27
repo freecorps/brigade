@@ -22,6 +22,7 @@ import {
   BellRingIcon,
   ChevronDownIcon,
   CircleAlertIcon,
+  CircleDotIcon,
   CirclePlusIcon,
   GaugeIcon,
   GlobeIcon,
@@ -30,6 +31,7 @@ import {
   MessageSquareTextIcon,
   MailWarningIcon,
   MessageSquareWarningIcon,
+  PencilLineIcon,
   PhoneMissedIcon,
   SendIcon,
   TimerOffIcon,
@@ -699,6 +701,9 @@ function UpdateForm({
   );
 }
 
+/** An entry of a kind a newer shard wrote that this build does not know yet. */
+const UNKNOWN_ENTRY_ICON: LucideIcon = CircleDotIcon;
+
 const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, LucideIcon> = {
   declared: CirclePlusIcon,
   severity_changed: GaugeIcon,
@@ -710,6 +715,7 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
   email_failed: MailWarningIcon,
   slack_failed: MessageSquareWarningIcon,
   status_published: GlobeIcon,
+  status_corrected: PencilLineIcon,
   escalated: BellRingIcon,
   escalation_exhausted: TimerOffIcon,
 };
@@ -754,7 +760,10 @@ function Timeline({
         {items.map((item, index) => {
           const entry = item.kind === "entry" ? item.entry : item.entries[0];
           const Icon =
-            entry.kind === "status_changed" ? STATUS_ICONS[entry.to] : ENTRY_ICONS[entry.kind];
+            (entry.kind === "status_changed"
+              ? STATUS_ICONS[entry.to]
+              : (ENTRY_ICONS as Partial<Record<string, LucideIcon>>)[entry.kind]) ??
+            UNKNOWN_ENTRY_ICON;
           const last = index === items.length - 1;
           return (
             <li
@@ -766,7 +775,9 @@ function Timeline({
                 <span
                   className={cn(
                     "flex size-8 shrink-0 items-center justify-center rounded-full border bg-card",
-                    (entry.kind === "update" || entry.kind === "status_published") &&
+                    (entry.kind === "update" ||
+                      entry.kind === "status_published" ||
+                      entry.kind === "status_corrected") &&
                       "border-primary/40 text-primary",
                     (entry.kind === "page_failed" ||
                       entry.kind === "email_failed" ||
@@ -789,7 +800,9 @@ function Timeline({
                     {entryTime(entry.at, now, locale, TIME_ZONE)}
                   </time>
                 </p>
-                {entry.kind === "update" || entry.kind === "status_published" ? (
+                {entry.kind === "update" ||
+                entry.kind === "status_published" ||
+                entry.kind === "status_corrected" ? (
                   <UpdateBody body={entry.body} />
                 ) : null}
                 {item.kind === "pages_failed" ? <FailedNames item={item} who={who} /> : null}

@@ -155,6 +155,8 @@ export const STATUS_PUSH_BUDGET_MS = 5 * 1000;
 export class WorkspaceDO extends DurableObject<Env> {
   /** `REPAIR_BUDGET_MS`; a field so tests can shorten it. */
   private repairBudgetMs = REPAIR_BUDGET_MS;
+  /** `STATUS_PUSH_BUDGET_MS`; a field so tests can shorten it. */
+  private statusBudgetMs = STATUS_PUSH_BUDGET_MS;
   private readonly shard: Shard;
   private readonly monitoring: Monitoring;
   private readonly drain: OutboxDrain;
@@ -798,17 +800,19 @@ export class WorkspaceDO extends DurableObject<Env> {
     }
     await this.drainOutbox();
     // The status page after the outbox: a page never waits on KV. Never throws; KV calls have no deadline of their
-    // own, so past `STATUS_PUSH_BUDGET_MS` the push carries on in the background and the alarm goes on (the next
-    // escalation's time is set below).
+    // own, so past `STATUS_PUSH_BUDGET_MS` the push carries on in the background, the push backs off (the alarm does
+    // not come straight back for it) and the alarm goes on (the next escalation's time is set below).
     const workspace = this.shard.workspace();
     if (workspace !== undefined) {
       let timer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([
+      const late = new Promise<"late">((resolve) => {
+        timer = setTimeout(() => resolve("late"), this.statusBudgetMs);
+      });
+      const outcome = await Promise.race([
         this.status.publish(workspace, Date.now()),
-        new Promise((resolve) => {
-          timer = setTimeout(resolve, STATUS_PUSH_BUDGET_MS);
-        }),
+        late,
       ]).finally(() => clearTimeout(timer));
+      if (outcome === "late") this.status.late(Date.now());
     }
     const before = this.backlog();
     let repair: number | null = now + MONITOR_TICK_MS;

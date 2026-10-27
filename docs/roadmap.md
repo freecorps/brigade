@@ -290,13 +290,14 @@ Validate the risky assumptions before writing product code. Each spike produces 
     claimed in D1) and a language (en, pt-BR), public or a draft; components in optional groups with a status set by
     hand, shown as the worse of that and their open incidents' impact; publishing an update to the page from the
     incident page (public title, status, impact, components and text, never the internal timeline), with a
-    `status_published` timeline entry; owners and admins manage the page, responders publish, events through the
+    `status_published` timeline entry, and correcting or taking down what was published (`status_corrected`);
+    owners and admins manage the page, responders publish and correct, events through the
     outbox. The shard pushes a sanitized snapshot to KV on every change (marked in the change's transaction, retried
     with backoff), and `GET /status/:slug` renders it as HTML with no script or session from KV behind the edge
     cache, so no visitor wakes a shard; 90 days of history. The dashboard's Status page card and the incident
     page's Status page panel.
-  - Left: creating the `brigade-status-dev` KV namespace (and staging's and production's) and adding its binding,
-    applying migration 0008 to the deployed databases (owner's call, apps/api README "Status page"); email
+  - Left: staging's and production's KV namespaces (`dev` binds `brigade-status-dev`), applying migration 0008 to
+    staging's and production's databases (owner's call, apps/api README "Status page"); email
     subscriptions with double opt-in (slice 3); custom domains; uptime bars from monitors; scheduled maintenance;
     reordering components; local times on the page; a JSON or RSS feed; the mobile app's publish action; polish of
     the card (slice 2); Q23.

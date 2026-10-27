@@ -721,6 +721,9 @@
         "kind=slack_failed_rate_limited": "Não foi possível publicar no Slack: o Slack continuou pedindo ao Brigade para esperar",
         "kind=slack_failed_undelivered": "Não foi possível publicar no Slack",
         "kind=status_published": "{actor} publicou uma atualização na página de status: {a}",
+        "kind=status_corrected_edited": "{actor} corrigiu uma atualização na página de status",
+        "kind=status_corrected_removed": "{actor} removeu uma atualização da página de status",
+        "kind=status_corrected_withdrawn": "{actor} tirou o incidente da página de status",
         "kind=*": "{actor} alterou o incidente"
       }
     }
@@ -1899,6 +1902,7 @@
         "part=components_hint": "O que a página lista, por exemplo API ou Site. Um grupo junta componentes sob um mesmo título.",
         "part=components_empty": "Nenhum componente ainda.",
         "part=component_name": "Nome",
+        "part=component_name_required": "Um componente precisa de um nome.",
         "part=component_group": "Grupo (opcional)",
         "part=component_status": "Status definido à mão",
         "part=component_status_hint": "A página mostra o pior entre este e o impacto de qualquer incidente aberto publicado nele.",
@@ -1932,6 +1936,17 @@
         "part=published": "Publicado.",
         "part=public_title_required": "O público precisa de um título, sem caracteres invisíveis.",
         "part=public_body_required": "Escreva o que o público precisa saber.",
+        "part=cache_window": "Mudanças chegam aos visitantes em cerca de 2 minutos: até lá, caches podem ainda mostrar a página como estava.",
+        "part=published_updates": "Na página agora",
+        "part=update_edit_label": "Corrigir a atualização de {name}",
+        "part=update_remove_label": "Remover a atualização de {name}",
+        "part=remove": "Remover",
+        "part=update_remove_confirm": "Remover esta atualização da página de status? Visitantes podem ainda vê-la por cerca de 2 minutos, até os caches se atualizarem. A linha do tempo guarda um registro.",
+        "part=withdraw": "Tirar da página",
+        "part=withdraw_confirm": "Tirar este incidente e todas as atualizações dele da página de status? Visitantes podem ainda vê-lo por cerca de 2 minutos, até os caches se atualizarem. A linha do tempo guarda um registro.",
+        "part=withdrawn": "Tirado da página. Visitantes podem ainda vê-lo por cerca de 2 minutos.",
+        "part=corrected": "Corrigido. Visitantes podem ainda ver a versão anterior por cerca de 2 minutos.",
+        "part=correct_failed": "Não foi possível alterar a página de status. Tente de novo.",
         "part=*": "Página de status"
       }
     }

@@ -39,6 +39,7 @@ export type Status_CardInputs = {
 * | "components_hint" | "What the page lists, for example API or Website. A group puts components together under one heading." |
 * | "components_empty" | "No components yet." |
 * | "component_name" | "Name" |
+* | "component_name_required" | "A component needs a name." |
 * | "component_group" | "Group (optional)" |
 * | "component_status" | "Status set by hand" |
 * | "component_status_hint" | "The page shows the worse of this and the impact of any open incident published on it." |
@@ -72,6 +73,17 @@ export type Status_CardInputs = {
 * | "published" | "Published." |
 * | "public_title_required" | "The public needs a title, without invisible characters." |
 * | "public_body_required" | "Write what the public should know." |
+* | "cache_window" | "Changes reach visitors within about 2 minutes: until then, caches may still show the page as it was." |
+* | "published_updates" | "On the page now" |
+* | "update_edit_label" | "Correct the update from {name}" |
+* | "update_remove_label" | "Remove the update from {name}" |
+* | "remove" | "Remove" |
+* | "update_remove_confirm" | "Remove this update from the status page? Visitors may still see it for about 2 minutes, until caches catch up. The timeline keeps a record." |
+* | "withdraw" | "Take off the page" |
+* | "withdraw_confirm" | "Take this incident and all its updates off the status page? Visitors may still see it for about 2 minutes, until caches catch up. The timeline keeps a record." |
+* | "withdrawn" | "Taken off the page. Visitors may still see it for about 2 minutes." |
+* | "corrected" | "Corrected. Visitors may still see the old version for about 2 minutes." |
+* | "correct_failed" | "Couldn't change the status page. Try again." |
 * | * | "Status page" |
 *
 * @param {Status_CardInputs} inputs

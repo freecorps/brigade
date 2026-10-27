@@ -321,6 +321,148 @@ describe("incident.publishUpdate", () => {
   });
 });
 
+describe("corrections", () => {
+  /** An incident with two published updates, the second at T + 1. */
+  function twice() {
+    const ready_ = ready();
+    const { store, incident } = ready_;
+    run(store, "incident.publishUpdate", publish(incident), ctx("responder"));
+    run(
+      store,
+      "incident.publishUpdate",
+      publish(incident, { status: "identified", body: "Found it: a bad deploy." }),
+      ctx("responder", T + 1),
+    );
+    const [first, second] = store.get("status_incidents", incident)!.updates;
+    return { ...ready_, first: first!, second: second! };
+  }
+  const corrections = (store: Store, incident: string) =>
+    store
+      .scan("timeline")
+      .filter((row) => row.incidentId === incident && row.kind === "status_corrected");
+
+  test("an update's text is corrected in place, with an event and a timeline entry", () => {
+    const { store, incident, first } = twice();
+    const result = run(
+      store,
+      "incident.editPublishedUpdate",
+      { id: incident, updateId: first.id, body: "We're looking into slow responses on the API." },
+      ctx("responder", T + 2),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      events: [
+        {
+          type: "incident.published_update_edited",
+          subject: incident,
+          data: { updateId: first.id, body: "We're looking into slow responses on the API." },
+        },
+      ],
+    });
+    const row = store.get("status_incidents", incident)!;
+    expect(row.updates.map((update) => update.body)).toEqual([
+      "We're looking into slow responses on the API.",
+      "Found it: a bad deploy.",
+    ]);
+    // Its time and status stay; so does where the incident stands.
+    expect(row.updates[0]).toMatchObject({ at: first.at, status: "investigating" });
+    expect(row.status).toBe("identified");
+    expect(corrections(store, incident)).toMatchObject([
+      {
+        change: "edited",
+        body: "We're looking into slow responses on the API.",
+        actor: "usr_responder",
+      },
+    ]);
+    expect(statusSnapshot(store, T + 3)!.active[0]!.updates.map((update) => update.body)).toEqual([
+      "Found it: a bad deploy.",
+      "We're looking into slow responses on the API.",
+    ]);
+    // The same text again changes nothing.
+    expect(
+      run(store, "incident.editPublishedUpdate", {
+        id: incident,
+        updateId: first.id,
+        body: "We're looking into slow responses on the API.",
+      }),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+  });
+
+  test("an update is removed while another is left; the timeline keeps what came down", () => {
+    const { store, incident, first, second } = twice();
+    expect(
+      run(store, "incident.removePublishedUpdate", { id: incident, updateId: second.id }),
+    ).toMatchObject({
+      ok: true,
+      events: [{ type: "incident.published_update_removed", data: { updateId: second.id } }],
+    });
+    expect(store.get("status_incidents", incident)!.updates.map((update) => update.id)).toEqual([
+      first.id,
+    ]);
+    expect(corrections(store, incident)).toMatchObject([
+      { change: "removed", body: "Found it: a bad deploy." },
+    ]);
+    // The last one cannot go: the incident is taken off instead.
+    expect(
+      run(store, "incident.removePublishedUpdate", { id: incident, updateId: first.id }),
+    ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+    expect(
+      run(store, "incident.removePublishedUpdate", { id: incident, updateId: `${incident}:99` }),
+    ).toMatchObject({ ok: false, error: { code: "not_found" } });
+  });
+
+  test("an incident is taken off the page entirely, and can be published again afresh", () => {
+    const { store, incident } = twice();
+    expect(run(store, "incident.unpublish", { id: incident }, ctx("admin", T + 5))).toMatchObject({
+      ok: true,
+      events: [{ type: "incident.unpublished", data: { title: "Slow API responses" } }],
+    });
+    expect(store.get("status_incidents", incident)).toBeUndefined();
+    expect(statusSnapshot(store, T + 6)!.active).toEqual([]);
+    expect(corrections(store, incident)).toMatchObject([
+      { change: "withdrawn", body: "Slow API responses", actor: "usr_admin" },
+    ]);
+    expect(run(store, "incident.unpublish", { id: incident })).toMatchObject({
+      ok: false,
+      error: { code: "not_found" },
+    });
+    run(store, "incident.publishUpdate", publish(incident), ctx("owner", T + 7));
+    expect(store.get("status_incidents", incident)).toMatchObject({
+      publishedAt: T + 7,
+      updates: [expect.objectContaining({ at: T + 7 })],
+    });
+  });
+
+  test("whoever can publish can correct; viewers cannot; clients run them optimistically", () => {
+    const { store, incident, first } = twice();
+    const edit = { id: incident, updateId: first.id, body: "Corrected." };
+    expect(run(store, "incident.editPublishedUpdate", edit, ctx("viewer"))).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
+    expect(run(store, "incident.unpublish", { id: incident }, ctx("viewer"))).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
+    for (const name of [
+      "incident.editPublishedUpdate",
+      "incident.removePublishedUpdate",
+      "incident.unpublish",
+    ]) {
+      expect(Object.keys(mutations)).toContain(name);
+    }
+    expect(
+      runMutation(
+        mutations,
+        "incident.editPublishedUpdate",
+        edit,
+        store,
+        ctx("responder", T, false),
+      ),
+    ).toMatchObject({ ok: true });
+  });
+});
+
 describe("statusSnapshot", () => {
   test("none for a page that is missing or not public", () => {
     expect(statusSnapshot(createMemoryStore<BrigadeTables>(), T)).toBeNull();

@@ -53,6 +53,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "slack_failed_rate_limited" | "Couldn't post to Slack: Slack kept asking Brigade to slow down" |
 * | "slack_failed_undelivered" | "Couldn't post to Slack" |
 * | "status_published" | "{actor} published an update to the status page: {a}" |
+* | "status_corrected_edited" | "{actor} corrected an update on the status page" |
+* | "status_corrected_removed" | "{actor} removed an update from the status page" |
+* | "status_corrected_withdrawn" | "{actor} took the incident off the status page" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs
@@ -105,6 +108,9 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "slack_failed_rate_limited") return /** @type {LocalizedString} */ (`Não foi possível publicar no Slack: o Slack continuou pedindo ao Brigade para esperar`);
 		if (i?.kind === "slack_failed_undelivered") return /** @type {LocalizedString} */ (`Não foi possível publicar no Slack`);
 		if (i?.kind === "status_published") return /** @type {LocalizedString} */ (`${i?.actor} publicou uma atualização na página de status: ${i?.a}`);
+		if (i?.kind === "status_corrected_edited") return /** @type {LocalizedString} */ (`${i?.actor} corrigiu uma atualização na página de status`);
+		if (i?.kind === "status_corrected_removed") return /** @type {LocalizedString} */ (`${i?.actor} removeu uma atualização da página de status`);
+		if (i?.kind === "status_corrected_withdrawn") return /** @type {LocalizedString} */ (`${i?.actor} tirou o incidente da página de status`);
 		return /** @type {LocalizedString} */ (`${i?.actor} alterou o incidente`)
 	}
 	{
@@ -151,6 +157,9 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "slack_failed_rate_limited") return /** @type {LocalizedString} */ (`Couldn't post to Slack: Slack kept asking Brigade to slow down`);
 		if (i?.kind === "slack_failed_undelivered") return /** @type {LocalizedString} */ (`Couldn't post to Slack`);
 		if (i?.kind === "status_published") return /** @type {LocalizedString} */ (`${i?.actor} published an update to the status page: ${i?.a}`);
+		if (i?.kind === "status_corrected_edited") return /** @type {LocalizedString} */ (`${i?.actor} corrected an update on the status page`);
+		if (i?.kind === "status_corrected_removed") return /** @type {LocalizedString} */ (`${i?.actor} removed an update from the status page`);
+		if (i?.kind === "status_corrected_withdrawn") return /** @type {LocalizedString} */ (`${i?.actor} took the incident off the status page`);
 		return /** @type {LocalizedString} */ (`${i?.actor} changed the incident`)
 	}
 });

@@ -721,6 +721,9 @@
         "kind=slack_failed_rate_limited": "Couldn't post to Slack: Slack kept asking Brigade to slow down",
         "kind=slack_failed_undelivered": "Couldn't post to Slack",
         "kind=status_published": "{actor} published an update to the status page: {a}",
+        "kind=status_corrected_edited": "{actor} corrected an update on the status page",
+        "kind=status_corrected_removed": "{actor} removed an update from the status page",
+        "kind=status_corrected_withdrawn": "{actor} took the incident off the status page",
         "kind=*": "{actor} changed the incident"
       }
     }
@@ -1899,6 +1902,7 @@
         "part=components_hint": "What the page lists, for example API or Website. A group puts components together under one heading.",
         "part=components_empty": "No components yet.",
         "part=component_name": "Name",
+        "part=component_name_required": "A component needs a name.",
         "part=component_group": "Group (optional)",
         "part=component_status": "Status set by hand",
         "part=component_status_hint": "The page shows the worse of this and the impact of any open incident published on it.",
@@ -1932,6 +1936,17 @@
         "part=published": "Published.",
         "part=public_title_required": "The public needs a title, without invisible characters.",
         "part=public_body_required": "Write what the public should know.",
+        "part=cache_window": "Changes reach visitors within about 2 minutes: until then, caches may still show the page as it was.",
+        "part=published_updates": "On the page now",
+        "part=update_edit_label": "Correct the update from {name}",
+        "part=update_remove_label": "Remove the update from {name}",
+        "part=remove": "Remove",
+        "part=update_remove_confirm": "Remove this update from the status page? Visitors may still see it for about 2 minutes, until caches catch up. The timeline keeps a record.",
+        "part=withdraw": "Take off the page",
+        "part=withdraw_confirm": "Take this incident and all its updates off the status page? Visitors may still see it for about 2 minutes, until caches catch up. The timeline keeps a record.",
+        "part=withdrawn": "Taken off the page. Visitors may still see it for about 2 minutes.",
+        "part=corrected": "Corrected. Visitors may still see the old version for about 2 minutes.",
+        "part=correct_failed": "Couldn't change the status page. Try again.",
         "part=*": "Status page"
       }
     }

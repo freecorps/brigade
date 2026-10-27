@@ -3,9 +3,21 @@
 // (`statusSnapshot`, apps/api src/status-page.ts), never the shard itself. Nothing internal reaches the snapshot:
 // no member, no internal title, no timeline entry; only what was written for the public.
 
-import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
+import {
+  defineMutation,
+  fail,
+  ok,
+  type DomainEvent,
+  type MutationResult,
+  type MutationStore,
+} from "./mutation.ts";
 import { defineQuery } from "./query.ts";
-import type { StatusComponentRow, StatusIncidentRow, StatusPageRow } from "./tables.ts";
+import type {
+  IncidentRow,
+  StatusComponentRow,
+  StatusIncidentRow,
+  StatusPageRow,
+} from "./tables.ts";
 import { appendTimeline } from "./timeline.ts";
 import { UPDATE_BODY_MAX } from "./incidents.ts";
 import { v, type Validator } from "./validate.ts";
@@ -253,6 +265,10 @@ export const deleteStatusComponent = defineMutation({
   },
 });
 
+/** A published update, by its id (the incident's `status_published` entry, `<incident id>:<seq>`). */
+const updateId = v.string({ min: 1, max: 64 });
+const publicBody = v.string({ min: 1, max: UPDATE_BODY_MAX, multiline: true, joiners: true });
+
 export type IncidentUpdatePublished = DomainEvent<
   "incident.update_published",
   Pick<StatusIncidentRow, "title" | "status" | "impact" | "componentIds"> & {
@@ -277,7 +293,7 @@ export const publishIncidentUpdate = defineMutation({
     status: v.picklist(PUBLIC_STATUSES),
     impact: v.picklist(COMPONENT_STATUSES),
     componentIds: v.array(componentId, { max: MAX_COMPONENTS, unique: true }),
-    body: v.string({ min: 1, max: UPDATE_BODY_MAX, multiline: true, joiners: true }),
+    body: publicBody,
   }),
   permission: "status:publish",
   apply(store, args, ctx) {
@@ -338,6 +354,152 @@ export const publishIncidentUpdate = defineMutation({
         componentIds: args.componentIds,
         body: args.body,
       },
+    };
+    return ok(event);
+  },
+});
+
+/** How a published incident was corrected (`incident.editPublishedUpdate`, `.removePublishedUpdate`, `.unpublish`). */
+export const STATUS_CORRECTIONS = ["edited", "removed", "withdrawn"] as const;
+export type StatusCorrection = (typeof STATUS_CORRECTIONS)[number];
+
+export type PublishedUpdateEdited = DomainEvent<
+  "incident.published_update_edited",
+  { entryId: string; updateId: string; body: string }
+>;
+export type PublishedUpdateRemoved = DomainEvent<
+  "incident.published_update_removed",
+  { entryId: string; updateId: string }
+>;
+export type IncidentUnpublished = DomainEvent<
+  "incident.unpublished",
+  { entryId: string; title: string }
+>;
+
+/**
+ * What every correction checks first: the incident, what the page says about it and, given an update id, that update.
+ * A correction is a public act like a publish, so the same people make it (`status:publish`): whoever told the
+ * public something wrong at 3 a.m. can take it back without waiting for an admin, and the timeline says who did.
+ */
+function published(
+  store: MutationStore,
+  id: string,
+  update?: string,
+):
+  | { error: MutationResult }
+  | { error?: undefined; incident: IncidentRow; row: StatusIncidentRow; index: number } {
+  const incident = store.get("incidents", id);
+  if (!incident) return { error: fail("not_found", "Incident not found") };
+  const row = store.get("status_incidents", id);
+  if (!row) return { error: fail("not_found", "Nothing about this incident is published") };
+  if (update === undefined) return { incident, row, index: -1 };
+  const index = row.updates.findIndex((candidate) => candidate.id === update);
+  if (index < 0) {
+    const message = "No such published update";
+    return { error: fail("not_found", message, [{ path: "updateId", message }]) };
+  }
+  return { incident, row, index };
+}
+
+/**
+ * Corrects the text of an update already on the status page (RFC 0012 "Corrections"): a typo, a detail that should
+ * not have been public. Its time and status stay; the timeline gets a `status_corrected` entry with the new text, so
+ * the team sees what the public reads now. Unchanged text is a `conflict`.
+ */
+export const editPublishedUpdate = defineMutation({
+  name: "incident.editPublishedUpdate",
+  args: v.object({ id: v.id("inc"), updateId, body: publicBody }),
+  permission: "status:publish",
+  apply(store, args, ctx) {
+    const found = published(store, args.id, args.updateId);
+    if (found.error) return found.error;
+    const { incident, row, index } = found;
+    if (row.updates[index]!.body === args.body) return fail("conflict", "The update is unchanged");
+    store.update("incidents", args.id, { updatedAt: ctx.now });
+    const entry = appendTimeline(
+      store,
+      incident,
+      { kind: "status_corrected", change: "edited", body: args.body },
+      ctx,
+    );
+    store.update("status_incidents", args.id, {
+      updates: row.updates.map((update, at) =>
+        at === index ? { ...update, body: args.body } : update,
+      ),
+      updatedAt: ctx.now,
+    });
+    const event: PublishedUpdateEdited = {
+      type: "incident.published_update_edited",
+      subject: args.id,
+      data: { entryId: entry.id, updateId: args.updateId, body: args.body },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * Takes one update off the status page; the incident's public title, status and impact stay what the last publish
+ * set (publish again to change them). The timeline's `status_corrected` entry keeps the text that came down. The only
+ * update left cannot be removed (`invalid_args`): an incident on the page always says something, so the dashboard
+ * offers taking the whole incident off instead (`incident.unpublish`).
+ */
+export const removePublishedUpdate = defineMutation({
+  name: "incident.removePublishedUpdate",
+  args: v.object({ id: v.id("inc"), updateId }),
+  permission: "status:publish",
+  apply(store, args, ctx) {
+    const found = published(store, args.id, args.updateId);
+    if (found.error) return found.error;
+    const { incident, row, index } = found;
+    if (row.updates.length === 1) {
+      const message = "The only update left: take the incident off the page instead";
+      return fail("invalid_args", message, [{ path: "updateId", message }]);
+    }
+    store.update("incidents", args.id, { updatedAt: ctx.now });
+    const entry = appendTimeline(
+      store,
+      incident,
+      { kind: "status_corrected", change: "removed", body: row.updates[index]!.body },
+      ctx,
+    );
+    store.update("status_incidents", args.id, {
+      updates: row.updates.filter((_update, at) => at !== index),
+      updatedAt: ctx.now,
+    });
+    const event: PublishedUpdateRemoved = {
+      type: "incident.published_update_removed",
+      subject: args.id,
+      data: { entryId: entry.id, updateId: args.updateId },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * Takes the incident off the status page entirely, with every update: as if it had never been published (a page
+ * about the wrong incident, a false alarm). The timeline's `status_corrected` entry keeps the public title it had.
+ * Publishing again later starts it afresh.
+ */
+export const unpublishIncident = defineMutation({
+  name: "incident.unpublish",
+  args: v.object({ id: v.id("inc") }),
+  permission: "status:publish",
+  apply(store, args, ctx) {
+    const found = published(store, args.id);
+    if (found.error) return found.error;
+    const { incident, row } = found;
+    store.update("incidents", args.id, { updatedAt: ctx.now });
+    const entry = appendTimeline(
+      store,
+      incident,
+      { kind: "status_corrected", change: "withdrawn", body: row.title },
+      ctx,
+    );
+    store.delete("status_incidents", args.id);
+    const event: IncidentUnpublished = {
+      type: "incident.unpublished",
+      subject: args.id,
+      data: { entryId: entry.id, title: row.title },
     };
     return ok(event);
   },
@@ -474,4 +636,7 @@ export const statusMutations = [
   updateStatusComponent,
   deleteStatusComponent,
   publishIncidentUpdate,
+  editPublishedUpdate,
+  removePublishedUpdate,
+  unpublishIncident,
 ] as const;

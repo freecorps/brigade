@@ -6,7 +6,12 @@ import { newId, type Actor, type StatusSnapshot } from "@freecorps/brigade-schem
 import { describe, expect, test, vi } from "vite-plus/test";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
-import { statusKey, StatusPublisher } from "../src/status-page.ts";
+import {
+  STATUS_REFRESH_MS,
+  STATUS_SLUG_GRACE_MS,
+  statusKey,
+  StatusPublisher,
+} from "../src/status-page.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
 
 const ORIGIN = "http://api.test";
@@ -98,12 +103,14 @@ async function team() {
       });
       return result;
     });
-  /** The shard's push, as its alarm runs it; `later` steps past KV's one write a second. */
+  /** The shard's push, as its alarm runs it, each a little later (KV's one write a second), `ahead` later still. */
   let pushes = 0;
-  const push = () =>
+  let ahead = 0;
+  const push = (more = 0) =>
     runInDurableObject(stub, async (instance: WorkspaceDO) => {
+      ahead += more;
       const publisher = Reflect.get(instance, "status") as StatusPublisher;
-      await publisher.publish(id, Date.now() + ++pushes * 2000);
+      await publisher.publish(id, Date.now() + ahead + ++pushes * 2000);
     });
   return { id, stub, ana: ana!, caio: caio!, eva: eva!, withShard, run, push };
 }
@@ -287,7 +294,7 @@ describe("the snapshot", () => {
     expect(await owners(address)).toEqual([t.id]);
   });
 
-  test("a new slug deletes the old snapshot before D1 releases the old slug", async () => {
+  test("a new slug deletes the old snapshot, and D1 releases the old slug only after the caches' grace", async () => {
     const t = await team();
     const other = await team();
     const first = slug();
@@ -301,9 +308,103 @@ describe("the snapshot", () => {
     await t.push();
     expect(await snapshot(first)).toBeNull();
     expect(await snapshot(second)).toMatchObject({ title: "Acme" });
+    // Deleted from KV, but edge copies may still serve it for a while: still held.
+    expect(await owners(first)).toEqual([t.id]);
+    const retired = await t.withShard((shard) => shard.store.get("status_retired", first));
+    expect(retired?.cleared).toEqual(expect.any(Number));
+    const publisher = (instance: WorkspaceDO) => Reflect.get(instance, "status") as StatusPublisher;
+    const next = await runInDurableObject(t.stub, (instance: WorkspaceDO) =>
+      publisher(instance).nextAt(retired!.cleared! + 1),
+    );
+    expect(next).toBe(retired!.cleared! + STATUS_SLUG_GRACE_MS);
+    await t.push(STATUS_SLUG_GRACE_MS);
     expect(await owners(first)).toEqual([]);
     expect(await owners(second)).toEqual([t.id]);
+    expect(await t.withShard((shard) => shard.store.scan("status_retired"))).toEqual([]);
     expect((await configure(other, other.ana, settings(first))).status).toBe(200);
+  });
+
+  test("a slug taken back after it was given up stays the workspace's, even if a late release lands", async () => {
+    const t = await team();
+    const first = slug();
+    const second = slug();
+    await configure(t, t.ana, settings(first));
+    await configure(t, t.ana, settings(second));
+    const retired = await t.withShard((shard) => shard.store.get("status_retired", first));
+    expect((await configure(t, t.ana, settings(first))).status).toBe(200);
+    // The release of the first retirement, landing only now: the claim since is stamped later, so it stays.
+    await env.DB.prepare(
+      "delete from status_slug where slug = ? and workspace_id = ? and created_at <= ?",
+    )
+      .bind(first, t.id, retired!.at)
+      .run();
+    expect(await owners(first)).toEqual([t.id]);
+  });
+
+  test("without KV, a slug given up is released at once", async () => {
+    const t = await team();
+    const first = slug();
+    const second = slug();
+    const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {
+      const shard = new Shard(state.storage, {
+        shard: "workspace",
+        randomBytes: random,
+        log: () => {},
+      });
+      const publisher = new StatusPublisher({
+        shard,
+        sql: state.storage.sql,
+        kv: undefined,
+        db: env.DB,
+        randomBytes: random,
+        log: () => {},
+        committed: () => {},
+        wake: () => {},
+      });
+      expect(await publisher.configure(t.id, ana, settings(first))).toEqual({ ok: true });
+      // A page with nowhere to push it is nothing to do.
+      expect(publisher.nextAt(Date.now())).toBeNull();
+      expect(await publisher.configure(t.id, ana, settings(second))).toEqual({ ok: true });
+      const now = Date.now();
+      expect(publisher.nextAt(now)).toBe(now);
+      await publisher.publish(t.id, now);
+      expect(shard.store.scan("status_retired")).toEqual([]);
+      expect(publisher.nextAt(Date.now())).toBeNull();
+    });
+    expect(await owners(first)).toEqual([]);
+    expect(await owners(second)).toEqual([t.id]);
+  });
+
+  test("a quiet public page is rebuilt daily, so its history and its time stay true", async () => {
+    const t = await team();
+    const address = slug();
+    await configure(t, t.ana, settings(address));
+    await t.push();
+    const built = (await snapshot(address))!.generatedAt;
+    const pushed = await t.withShard((shard, state) => {
+      expect(shard.statusDirty()).toBeUndefined();
+      return state.storage.sql
+        .exec<{ value: number }>("select value from shard_meta where key = 'status_pushed_at'")
+        .one().value;
+    });
+    const next = await runInDurableObject(t.stub, (instance: WorkspaceDO) =>
+      (Reflect.get(instance, "status") as StatusPublisher).nextAt(pushed + 1),
+    );
+    expect(next).toBe(pushed + STATUS_REFRESH_MS);
+    await t.push(STATUS_REFRESH_MS);
+    expect((await snapshot(address))!.generatedAt).toBeGreaterThanOrEqual(
+      built + STATUS_REFRESH_MS,
+    );
+    // A draft is not rebuilt: there is nothing public to keep true.
+    await configure(t, t.ana, settings(address, { enabled: false }));
+    await t.push();
+    const draft = await runInDurableObject(t.stub, (instance: WorkspaceDO) =>
+      (Reflect.get(instance, "status") as StatusPublisher).nextAt(
+        Date.now() + 10 * STATUS_REFRESH_MS,
+      ),
+    );
+    expect(draft).toBeNull();
   });
 
   test("a failed push keeps the change pending and backs off", async () => {
@@ -347,6 +448,63 @@ describe("the snapshot", () => {
     expect(await snapshot(address)).toMatchObject({ title: "Acme" });
   });
 
+  test("a push hung on KV backs the alarm off, holds nothing else, and the page can still be configured", async () => {
+    const t = await team();
+    const address = slug();
+    await configure(t, t.ana, settings(address));
+    const logs: string[] = [];
+    const result = await runInDurableObject(t.stub, async (instance: WorkspaceDO, state) => {
+      const real: unknown = Reflect.get(instance, "status");
+      const shard = new Shard(state.storage, {
+        shard: "workspace",
+        randomBytes: random,
+        log: () => {},
+      });
+      const hanging = {
+        put: () => new Promise(() => {}),
+        delete: () => new Promise(() => {}),
+      } as unknown as KVNamespace;
+      const publisher = new StatusPublisher({
+        shard,
+        sql: state.storage.sql,
+        kv: hanging,
+        db: env.DB,
+        randomBytes: random,
+        log: (message) => logs.push(message),
+        committed: () => {},
+        wake: () => {},
+      });
+      Reflect.set(instance, "status", publisher);
+      Reflect.set(instance, "statusBudgetMs", 20);
+      Reflect.set(instance, "drainPaused", true);
+      try {
+        const first = Date.now();
+        await instance.alarm();
+        const afterFirst = await state.storage.getAlarm();
+        // The push is still out. The alarm comes back for it later, and then does not wait on it again.
+        const second = Date.now();
+        await instance.alarm();
+        const took = Date.now() - second;
+        const afterSecond = await state.storage.getAlarm();
+        // Configuring the page waits on D1 and the shard only, never on the push.
+        const configured = await instance.configureStatusPage(
+          t.id,
+          { kind: "user", id: t.ana.id, role: "owner" },
+          settings(address, { title: "Acme Status" }),
+        );
+        return { first, afterFirst, second, took, afterSecond, configured };
+      } finally {
+        Reflect.set(instance, "status", real);
+      }
+    });
+    expect(result.afterFirst).not.toBeNull();
+    expect(result.afterFirst!).toBeGreaterThanOrEqual(result.first + 400);
+    expect(result.took).toBeLessThan(1000);
+    expect(result.afterSecond!).toBeGreaterThan(result.second + 400);
+    expect(result.configured).toEqual({ ok: true });
+    expect(logs).toContain("publishing the status page failed");
+  });
+
   test("the shard's alarm pushes it", async () => {
     const t = await team();
     const address = slug();
@@ -359,11 +517,47 @@ describe("the snapshot", () => {
     );
   });
 
+  test("a snapshot this Worker cannot read is the 503 page, never half a page", async () => {
+    const t = await team();
+    const address = slug();
+    await configure(t, t.ana, settings(address));
+    await t.push();
+    const good = (await snapshot(address))!;
+    const broken = [
+      { ...good, locale: "fr" },
+      { ...good, status: "on_fire" },
+      { ...good, generatedAt: "yesterday" },
+      { ...good, v: 2 },
+      {
+        ...good,
+        active: [
+          {
+            title: "Slow",
+            status: "investigating",
+            impact: "degraded",
+            components: [],
+            publishedAt: 8.65e15,
+            resolvedAt: null,
+            updates: [],
+          },
+        ],
+      },
+    ];
+    for (const [index, value] of broken.entries()) {
+      const other = `${address}-${index}`;
+      await env.STATUS!.put(statusKey(other), JSON.stringify(value));
+      const response = await exports.default.fetch(`${ORIGIN}/status/${other}`);
+      expect(response.status, JSON.stringify(value).slice(0, 80)).toBe(503);
+      expect(await response.text()).toContain("Status page unavailable");
+    }
+  });
+
   test("an address with no page is a 404 with no shard involved", async () => {
-    for (const address of [slug(), "x", "Bad_Slug"]) {
+    for (const address of [slug(), "x", "Bad_Slug", ""]) {
       const response = await exports.default.fetch(`${ORIGIN}/status/${address}`);
       expect(response.status).toBe(404);
       expect(await response.text()).toContain("No status page here");
     }
+    expect((await exports.default.fetch(`${ORIGIN}/status`)).status).toBe(404);
   });
 });

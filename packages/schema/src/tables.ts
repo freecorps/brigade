@@ -6,7 +6,7 @@ import type { EmailAbout, EmailFailure, PageFailure } from "./notifications.ts";
 import type { EscalationTargetKind } from "./policies.ts";
 import type { RotationUnit } from "./schedules.ts";
 import type { SlackFailure, SlackLocale } from "./slack.ts";
-import type { ComponentStatus, PublicStatus, StatusLocale } from "./status.ts";
+import type { ComponentStatus, PublicStatus, StatusCorrection, StatusLocale } from "./status.ts";
 import type {
   AlertStatus,
   CheckSource,
@@ -198,7 +198,12 @@ export type TimelineEntry =
   /** The Slack notifier gave up on the incident's channel message (`notification.failSlack`, RFC 0011). */
   | { kind: "slack_failed"; reason: SlackFailure }
   /** An update published to the status page (`incident.publishUpdate`, RFC 0012): what the public was told. */
-  | { kind: "status_published"; status: PublicStatus; body: string };
+  | { kind: "status_published"; status: PublicStatus; body: string }
+  /**
+   * What the status page says was corrected (RFC 0012 "Corrections"): an update's text `edited` (`body`: the new
+   * text), an update `removed` (`body`: the text taken down) or the incident `withdrawn` (`body`: its public title).
+   */
+  | { kind: "status_corrected"; change: StatusCorrection; body: string };
 
 /**
  * One entry of an incident's timeline: append-only, written by the mutation that made the change, in its
@@ -508,10 +513,11 @@ export type StatusIncidentRow = {
 };
 
 /**
- * Server-only: a slug the page gave up (`id`), whose snapshot the shard still has to delete before D1 lets anyone
- * else claim it (RFC 0012 "Addresses").
+ * Server-only: a slug the page gave up (`id`) at `at`, whose snapshot the shard still has to delete before D1 lets
+ * anyone else claim it (RFC 0012 "Addresses"). `cleared`: when the snapshot was deleted from KV; the slug is released
+ * a grace period after that, once no cache can still serve the old page.
  */
-export type StatusRetiredRow = { id: string; at: number };
+export type StatusRetiredRow = { id: string; at: number; cleared?: number };
 
 /** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only. */
 export type CounterRow = { id: string; value: number };

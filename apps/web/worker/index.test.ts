@@ -100,10 +100,13 @@ describe("status page routing", () => {
     expect(assets.seen).toHaveLength(0);
   });
 
-  test("/status alone is the SPA's", async () => {
-    const { api, env } = bindings();
+  test("/status alone goes to the API too (its 404 page), and /statuses stays the SPA's", async () => {
+    const { api, assets, env } = bindings();
     await handle(new Request("http://web.test/status"), env);
-    expect(api.seen).toHaveLength(0);
+    expect(api.seen[0]?.url).toBe("http://web.test/status");
+    await handle(new Request("http://web.test/statuses"), env);
+    expect(api.seen).toHaveLength(1);
+    expect(assets.seen).toHaveLength(1);
   });
 });
 

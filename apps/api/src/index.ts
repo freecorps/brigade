@@ -35,6 +35,7 @@ import { consumeDeadLetters, consumeEvents, type NotifyEnv } from "./notify.ts";
 import { receiptWorkspace, type ReceiptResult } from "./receipts.ts";
 import { beginSlackInstall } from "./slack-bridge.ts";
 import { configureStatusPage, serveStatusPage } from "./status-route.ts";
+import { readBounded } from "./body.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
 import {
   IDEMPOTENCY_KEY_HEADER,
@@ -61,7 +62,8 @@ const SLACK_INSTALL_PATH = /^\/workspaces\/([^/]+)\/slack\/install$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
 const STATUS_PAGE_PATH = /^\/workspaces\/([^/]+)\/status-page$/;
-const PUBLIC_STATUS_PATH = /^\/status\/([^/]+)$/;
+/** `/status/<slug>`; `/status` and `/status/` alone are the page's 404 (no slug). */
+const PUBLIC_STATUS_PATH = /^\/status(?:\/([^/]*))?$/;
 const READ_METHODS = ["GET", "HEAD"];
 /** Largest `POST /workspaces` body read, in bytes. */
 const MAX_BODY_LENGTH = 4096;
@@ -147,8 +149,8 @@ export default {
     const statusPage = STATUS_PAGE_PATH.exec(pathname)?.[1];
     if (statusPage !== undefined) return configureStatusPage(request, env, auth, statusPage);
     // The public status page (RFC 0012): no session, read from KV, never from the shard.
-    const publicStatus = PUBLIC_STATUS_PATH.exec(pathname)?.[1];
-    if (publicStatus !== undefined) return serveStatusPage(request, env, ctx, publicStatus);
+    const publicStatus = PUBLIC_STATUS_PATH.exec(pathname);
+    if (publicStatus) return serveStatusPage(request, env, ctx, publicStatus[1] ?? "");
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
     if (pathname === "/receipts") return receiveReceipt(request, env);
@@ -1130,36 +1132,6 @@ export async function workspaceExists(
   knownWorkspaces.delete(id);
   knownWorkspaces.set(id, now + KNOWN_WORKSPACE_MS);
   return true;
-}
-
-/**
- * The body as text, or undefined once it passes `max` bytes: a declared `Content-Length` over the limit is refused
- * unread, and a stream (no length, or a wrong one) is read only up to the limit.
- */
-async function readBounded(request: Request, max: number): Promise<string | undefined> {
-  const declared = Number(request.headers.get("Content-Length") ?? "0");
-  if (!Number.isFinite(declared) || declared > max) return undefined;
-  if (!request.body) return "";
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    length += value.byteLength;
-    if (length > max) {
-      await reader.cancel();
-      return undefined;
-    }
-    chunks.push(value);
-  }
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(bytes);
 }
 
 function failed(message: string, workspace: string, error: unknown): Response {

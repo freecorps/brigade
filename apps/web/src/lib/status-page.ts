@@ -66,7 +66,9 @@ export async function saveStatusPage(
 /** What the card says for a refused save. */
 export function saveErrorPart(error: StatusSaveError): string {
   if (error === "slug_taken") return "slug_taken";
-  if (error === "invalid_args") return "slug_invalid";
+  // The form checks the address with the server's own pattern first, so what the server still refuses is the name
+  // (characters the form lets through and the server does not, such as invisible ones).
+  if (error === "invalid_args") return "title_required";
   if (error === "forbidden") return "manage_only";
   return "save_failed";
 }

@@ -66,6 +66,25 @@ Visitor ──GET /status/:slug──▶ web Worker (forwarded unchanged) ─▶
   later (role definitions, Phase 3). Viewers read.
 - **The page must be set up** (enabled or not): publishing to a draft lets a team prepare before going public.
 
+## Corrections
+
+What was published can be taken back, since a status page is read at the worst moment and a wrong word (a customer's
+name, an internal hostname, the wrong incident) must not stay up:
+
+- `incident.editPublishedUpdate` corrects an update's text in place (its time and status stay);
+  `incident.removePublishedUpdate` takes one update off, unless it is the last (`invalid_args`: an incident on the
+  page always says something); `incident.unpublish` takes the incident off with every update, as if it was never
+  published (publishing again starts it afresh). Removing an update leaves the incident's public title, status and
+  impact as the last publish set them; publishing again changes them.
+- **Who** (`status:publish`): the same people who publish. Whoever told the public something wrong at 3 a.m. must be
+  able to take it back without waiting for an admin; the timeline records who did.
+- **The timeline** gets a `status_corrected` entry in the same transaction (`change`: `edited` with the new text,
+  `removed` with the text taken down, `withdrawn` with the public title), so the team keeps what the public was
+  shown even after it is gone from the page. Events: `incident.published_update_edited`,
+  `incident.published_update_removed`, `incident.unpublished`.
+- The dashboard's Status page panel lists the updates on the page, newest first, each with Edit and Remove, and Take
+  off the page; removing asks first, and every correction says how long caches may still show the old version.
+
 ## Who manages the page
 
 `status:manage`, owners and admins: the page's settings and its components (`statusComponent.create`, `.update`,
@@ -86,12 +105,17 @@ the same kind of decision as what monitors watch, so it is an admin's call.
   synchronous and cannot wait on D1. A slug the shard then refuses (nothing changed) is released again if it was
   free before; a storage failure after the claim leaves it with the workspace, which is harmless (`503
   not_applied`; saving again with it succeeds).
-- **A slug given up stays claimed until its snapshot is gone.** Changing the slug records the old one
-  (`status_retired`, server only) in the same transaction; the shard's push deletes the old KV key and only then
-  deletes the D1 row. Otherwise another workspace could claim the slug and have its fresh snapshot deleted, or
-  served next to the old one. Taking a slug back before that ran just drops it from the list. Claims and releases
-  run one at a time in the shard (an in-memory lock; the object is single-threaded but both wait on D1), so a
-  release never undoes a claim made meanwhile.
+- **A slug given up stays claimed until no cache can serve its snapshot.** Changing the slug records the old one
+  (`status_retired`, server only) in the same transaction; the shard's push deletes the old KV key, records when
+  (`cleared`), and deletes the D1 row only `STATUS_SLUG_GRACE_MS` (5 minutes) later: a KV delete takes up to a
+  minute to reach every location, and KV's cache and the edge cache may each keep the old page 30 s after that.
+  Otherwise another workspace could claim the slug and have its fresh snapshot deleted, or served next to the old
+  one. Taking a slug back before that ran just drops it from the list. Without a `STATUS` binding nothing was ever
+  published under a slug, so one given up is released at once.
+- **Claims and releases need no lock.** Each claim stamps the D1 row with its time (`created_at`; claiming a slug the
+  workspace already holds rewrites it), and a release deletes only a row stamped no later than what it releases (the
+  claim it undoes, or when the slug was given up). A release that lands late, after the slug was taken back, finds
+  a newer stamp and leaves it. So `configure` never waits on a push, and a push stuck on KV never holds it.
 - **Custom domains are later**: a domain would map to a slug (Cloudflare for SaaS custom hostnames) and the same
   route would serve it.
 
@@ -114,11 +138,19 @@ contains the internal title, any member, workspace, incident or component id).
 - **The push.** Every commit that changes `status_page`, `status_components` or `status_incidents` marks the snapshot
   dirty (`status_dirty` in `shard_meta`, the version of the change) **in the change's own transaction**, so a change
   is never lost to the object dying before it is published. The mutation's outbox hook brings the shard's one alarm
-  forward; the alarm, after the outbox drain (a page never waits on KV; the push gets 5 s of the alarm, then
-  finishes in the background, so a slow KV never delays the next escalation level), builds the snapshot and puts it (or
-  deletes the key when the page is not public), then deletes retired slugs' keys and releases them in D1. It clears
+  forward; the alarm, after the escalations and the outbox drain, builds the snapshot and puts it (or deletes the key
+  when the page is not public), then deletes retired slugs' keys and releases them in D1 after their grace. It clears
   the dirty mark only up to the version it read, so a change committed during the write is pushed next. Pushes are
   spaced at least 1 s apart (KV's per-key limit).
+- **A slow KV never holds the paging path.** KV calls have no deadline of their own. The alarm waits on a push at most
+  `STATUS_PUSH_BUDGET_MS` (5 s); past that the push carries on in the background and backs off as if it had failed,
+  so the alarm comes back later, not at once. One push runs at a time (two could land in KV out of order): an alarm
+  that finds the last one still out does not wait on it and backs off again, doubling to 5 minutes. Escalation levels
+  fire before the push in every alarm and the alarm's next time includes theirs, so a level is never late because of
+  the page (tested with a KV that never answers).
+- **Rebuilt daily.** A public page is pushed again at least once a day (`STATUS_REFRESH_MS`) even when nothing changed,
+  under the same backoff, so the 90-day history drops what aged out and "Updated" stays true on a quiet page. One KV
+  write a day per page.
 - **Fallback.** A failed push keeps everything pending and is retried from the alarm with backoff (1 s doubling to
   5 minutes, jittered), logged on every failure. The page always says when its snapshot was built ("Updated … UTC"),
   so a visitor can tell how fresh it is; while KV or the shard is down, visitors keep reading the last snapshot,
@@ -135,6 +167,9 @@ contains the internal title, any member, workspace, incident or component id).
   and dark by `prefers-color-scheme`), readable on a phone: the viewport set, safe-area padding, 16 px text, rows at
   least 48 px tall, long names wrapping. Past incidents fold behind `<details>`. Times are in UTC and say so, since
   the Worker does not know the visitor's time zone and no script asks (local times are slice 2).
+- **Read defensively.** A snapshot is rendered only if it is the version the Worker knows, its language and every
+  status one it has words for, and every time a real date (`isSnapshot`); anything else, or a render that throws,
+  is the 503 page (not cached), so a Worker older or newer than the shard never shows half a page.
 - **Headers**: `Cache-Control: public, max-age=30` (404s 60 s), a Content-Security-Policy that allows nothing but
   inline style (`default-src 'none'`, no frames), `nosniff`, `no-referrer`. Every piece of text is escaped.
 - **Caching and abuse.** The response is kept in the edge cache (the Cache API, keyed by slug alone, so headers and
@@ -156,16 +191,26 @@ Nothing internal leaks: no member names (no "updated by"), no internal titles, s
 entries, no ids. Only what someone typed into the publish form or the components list reaches the public, and the
 form says so. Showing who published an update could become a per-page choice later.
 
+**Nothing is taken down at once.** A correction, a removed update, an incident taken off the page and a page turned
+private (or moved to another address) reach the shard at once but visitors only as caches expire: the push itself
+(seconds; longer while KV is slow), KV's propagation (up to about 60 s) and cache (`cacheTtl` 30 s), the edge cache
+(30 s) and the visitor's browser (`max-age` 30 s). In practice about 1 to 2 minutes, and a browser that already has
+the page keeps showing it until reloaded. The dashboard says so where the page is made public and wherever a
+correction is made. Anything truly sensitive that was published needs a correction now and, where it matters, the
+cache purged by hand (custom domains, a later slice, can purge by URL).
+
 ## Events
 
 `status_page.configured` (`slug`, `title`, `locale`, `enabled`, `previousSlug`), `status_component.created` and
 `.updated` (`id`, `name`, `group`, `status`), `status_component.deleted` (`id`, `incidents`: how many published
-incidents named it) and `incident.update_published` (`entryId`, `title`, `status`, `impact`, `componentIds`,
-`body`). No notifier acts on them yet; email subscriptions (slice 3) will.
+incidents named it), `incident.update_published` (`entryId`, `title`, `status`, `impact`, `componentIds`,
+`body`), `incident.published_update_edited` (`entryId`, `updateId`, `body`), `incident.published_update_removed`
+(`entryId`, `updateId`) and `incident.unpublished` (`entryId`, `title`). No notifier acts on them yet; email subscriptions (slice 3) will.
 
 ## Not in this slice
 
 - Email subscriptions (RFC 0001 goal 9) with double opt-in, through the email notifier (slice 3).
 - Custom domains, uptime bars from monitors, scheduled maintenance, reordering components, local times on the page,
   a JSON or RSS feed, embedding, pruning history past 90 days, showing who published (choice per page).
-- Deployed KV namespaces: `STATUS` is bound only for local runs and the tests (apps/api README "Status page").
+- KV namespaces for staging and production: `STATUS` is bound for local runs and the tests and, in `dev`, to
+  `brigade-status-dev` (apps/api README "Status page").

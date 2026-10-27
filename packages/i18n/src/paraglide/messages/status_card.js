@@ -39,6 +39,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "components_hint" | "What the page lists, for example API or Website. A group puts components together under one heading." |
 * | "components_empty" | "No components yet." |
 * | "component_name" | "Name" |
+* | "component_name_required" | "A component needs a name." |
 * | "component_group" | "Group (optional)" |
 * | "component_status" | "Status set by hand" |
 * | "component_status_hint" | "The page shows the worse of this and the impact of any open incident published on it." |
@@ -72,6 +73,17 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "published" | "Published." |
 * | "public_title_required" | "The public needs a title, without invisible characters." |
 * | "public_body_required" | "Write what the public should know." |
+* | "cache_window" | "Changes reach visitors within about 2 minutes: until then, caches may still show the page as it was." |
+* | "published_updates" | "On the page now" |
+* | "update_edit_label" | "Correct the update from {name}" |
+* | "update_remove_label" | "Remove the update from {name}" |
+* | "remove" | "Remove" |
+* | "update_remove_confirm" | "Remove this update from the status page? Visitors may still see it for about 2 minutes, until caches catch up. The timeline keeps a record." |
+* | "withdraw" | "Take off the page" |
+* | "withdraw_confirm" | "Take this incident and all its updates off the status page? Visitors may still see it for about 2 minutes, until caches catch up. The timeline keeps a record." |
+* | "withdrawn" | "Taken off the page. Visitors may still see it for about 2 minutes." |
+* | "corrected" | "Corrected. Visitors may still see the old version for about 2 minutes." |
+* | "correct_failed" | "Couldn't change the status page. Try again." |
 * | * | "Status page" |
 *
 * @param {Status_CardInputs} inputs
@@ -110,6 +122,7 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "components_hint") return /** @type {LocalizedString} */ (`O que a página lista, por exemplo API ou Site. Um grupo junta componentes sob um mesmo título.`);
 		if (i?.part === "components_empty") return /** @type {LocalizedString} */ (`Nenhum componente ainda.`);
 		if (i?.part === "component_name") return /** @type {LocalizedString} */ (`Nome`);
+		if (i?.part === "component_name_required") return /** @type {LocalizedString} */ (`Um componente precisa de um nome.`);
 		if (i?.part === "component_group") return /** @type {LocalizedString} */ (`Grupo (opcional)`);
 		if (i?.part === "component_status") return /** @type {LocalizedString} */ (`Status definido à mão`);
 		if (i?.part === "component_status_hint") return /** @type {LocalizedString} */ (`A página mostra o pior entre este e o impacto de qualquer incidente aberto publicado nele.`);
@@ -143,6 +156,17 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "published") return /** @type {LocalizedString} */ (`Publicado.`);
 		if (i?.part === "public_title_required") return /** @type {LocalizedString} */ (`O público precisa de um título, sem caracteres invisíveis.`);
 		if (i?.part === "public_body_required") return /** @type {LocalizedString} */ (`Escreva o que o público precisa saber.`);
+		if (i?.part === "cache_window") return /** @type {LocalizedString} */ (`Mudanças chegam aos visitantes em cerca de 2 minutos: até lá, caches podem ainda mostrar a página como estava.`);
+		if (i?.part === "published_updates") return /** @type {LocalizedString} */ (`Na página agora`);
+		if (i?.part === "update_edit_label") return /** @type {LocalizedString} */ (`Corrigir a atualização de ${i?.name}`);
+		if (i?.part === "update_remove_label") return /** @type {LocalizedString} */ (`Remover a atualização de ${i?.name}`);
+		if (i?.part === "remove") return /** @type {LocalizedString} */ (`Remover`);
+		if (i?.part === "update_remove_confirm") return /** @type {LocalizedString} */ (`Remover esta atualização da página de status? Visitantes podem ainda vê-la por cerca de 2 minutos, até os caches se atualizarem. A linha do tempo guarda um registro.`);
+		if (i?.part === "withdraw") return /** @type {LocalizedString} */ (`Tirar da página`);
+		if (i?.part === "withdraw_confirm") return /** @type {LocalizedString} */ (`Tirar este incidente e todas as atualizações dele da página de status? Visitantes podem ainda vê-lo por cerca de 2 minutos, até os caches se atualizarem. A linha do tempo guarda um registro.`);
+		if (i?.part === "withdrawn") return /** @type {LocalizedString} */ (`Tirado da página. Visitantes podem ainda vê-lo por cerca de 2 minutos.`);
+		if (i?.part === "corrected") return /** @type {LocalizedString} */ (`Corrigido. Visitantes podem ainda ver a versão anterior por cerca de 2 minutos.`);
+		if (i?.part === "correct_failed") return /** @type {LocalizedString} */ (`Não foi possível alterar a página de status. Tente de novo.`);
 		return /** @type {LocalizedString} */ (`Página de status`)
 	}
 	{
@@ -175,6 +199,7 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "components_hint") return /** @type {LocalizedString} */ (`What the page lists, for example API or Website. A group puts components together under one heading.`);
 		if (i?.part === "components_empty") return /** @type {LocalizedString} */ (`No components yet.`);
 		if (i?.part === "component_name") return /** @type {LocalizedString} */ (`Name`);
+		if (i?.part === "component_name_required") return /** @type {LocalizedString} */ (`A component needs a name.`);
 		if (i?.part === "component_group") return /** @type {LocalizedString} */ (`Group (optional)`);
 		if (i?.part === "component_status") return /** @type {LocalizedString} */ (`Status set by hand`);
 		if (i?.part === "component_status_hint") return /** @type {LocalizedString} */ (`The page shows the worse of this and the impact of any open incident published on it.`);
@@ -208,6 +233,17 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "published") return /** @type {LocalizedString} */ (`Published.`);
 		if (i?.part === "public_title_required") return /** @type {LocalizedString} */ (`The public needs a title, without invisible characters.`);
 		if (i?.part === "public_body_required") return /** @type {LocalizedString} */ (`Write what the public should know.`);
+		if (i?.part === "cache_window") return /** @type {LocalizedString} */ (`Changes reach visitors within about 2 minutes: until then, caches may still show the page as it was.`);
+		if (i?.part === "published_updates") return /** @type {LocalizedString} */ (`On the page now`);
+		if (i?.part === "update_edit_label") return /** @type {LocalizedString} */ (`Correct the update from ${i?.name}`);
+		if (i?.part === "update_remove_label") return /** @type {LocalizedString} */ (`Remove the update from ${i?.name}`);
+		if (i?.part === "remove") return /** @type {LocalizedString} */ (`Remove`);
+		if (i?.part === "update_remove_confirm") return /** @type {LocalizedString} */ (`Remove this update from the status page? Visitors may still see it for about 2 minutes, until caches catch up. The timeline keeps a record.`);
+		if (i?.part === "withdraw") return /** @type {LocalizedString} */ (`Take off the page`);
+		if (i?.part === "withdraw_confirm") return /** @type {LocalizedString} */ (`Take this incident and all its updates off the status page? Visitors may still see it for about 2 minutes, until caches catch up. The timeline keeps a record.`);
+		if (i?.part === "withdrawn") return /** @type {LocalizedString} */ (`Taken off the page. Visitors may still see it for about 2 minutes.`);
+		if (i?.part === "corrected") return /** @type {LocalizedString} */ (`Corrected. Visitors may still see the old version for about 2 minutes.`);
+		if (i?.part === "correct_failed") return /** @type {LocalizedString} */ (`Couldn't change the status page. Try again.`);
 		return /** @type {LocalizedString} */ (`Status page`)
 	}
 });

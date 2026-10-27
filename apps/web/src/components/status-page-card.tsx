@@ -277,6 +277,7 @@ function Settings({ page, onSave }: Pick<PanelProps, "page" | "onSave">) {
         <label htmlFor={enabledId} className="flex min-w-0 flex-col gap-0.5">
           <span className="text-sm font-medium">{say("enabled_label")}</span>
           <span className="text-sm text-muted-foreground">{say("enabled_hint")}</span>
+          <span className="text-sm text-muted-foreground">{say("cache_window")}</span>
         </label>
       </div>
       <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
@@ -348,13 +349,18 @@ function ComponentRow({
   const [status, setStatus] = useState<ComponentStatus>(component.status);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
+  const [nameInvalid, setNameInvalid] = useState(false);
   const statusId = useId();
+  const nameId = useId();
+  const editId = useId();
 
   if (mode === "view") {
     return (
       <li className="flex min-h-12 flex-wrap items-center justify-between gap-x-3 gap-y-2 px-3 py-2">
         <div className="flex min-w-0 flex-col">
-          <span className="text-sm font-medium [overflow-wrap:anywhere]">{component.name}</span>
+          <span id={nameId} className="text-sm font-medium [overflow-wrap:anywhere]">
+            {component.name}
+          </span>
           <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
             {component.group ?? say("ungrouped")}
           </span>
@@ -364,15 +370,18 @@ function ComponentRow({
           {manage ? (
             <Button
               variant="ghost"
+              // "Edit API", not one "Edit" per row, in a screen reader's list of buttons.
+              aria-labelledby={`${editId} ${nameId}`}
               onClick={() => {
                 setName(component.name);
                 setGroup(component.group ?? "");
                 setStatus(component.status);
                 setFailed(null);
+                setNameInvalid(false);
                 setMode("edit");
               }}
             >
-              {say("edit")}
+              <span id={editId}>{say("edit")}</span>
             </Button>
           ) : null}
         </div>
@@ -416,7 +425,10 @@ function ComponentRow({
         onSubmit={(event) => {
           event.preventDefault();
           const next = { id: component.id, name: name.trim(), group: group.trim() || null, status };
-          if (next.name === "") return;
+          if (next.name === "") {
+            setNameInvalid(true);
+            return;
+          }
           if (
             next.name === component.name &&
             next.group === component.group &&
@@ -437,7 +449,11 @@ function ComponentRow({
           label={say("component_name")}
           value={name}
           maxLength={COMPONENT_NAME_MAX}
-          onChange={(event) => setName(event.target.value)}
+          error={nameInvalid ? say("component_name_required") : undefined}
+          onChange={(event) => {
+            setName(event.target.value);
+            setNameInvalid(false);
+          }}
         />
         <Field
           label={say("component_group")}

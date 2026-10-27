@@ -11,7 +11,11 @@ import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { StatusPagePanel } from "../src/components/status-page-card";
-import { StatusPublishPanel, type PublishArgs } from "../src/components/status-publish";
+import {
+  StatusPublishPanel,
+  type Correction,
+  type PublishArgs,
+} from "../src/components/status-publish";
 import { saveStatusPage } from "../src/lib/status-page";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -189,6 +193,7 @@ describe("StatusPagePanel", () => {
 describe("StatusPublishPanel", () => {
   function panel(props: Partial<Parameters<typeof StatusPublishPanel>[0]> = {}) {
     const published: PublishArgs[] = [];
+    const corrected: Correction[] = [];
     const container = mount(
       <StatusPublishPanel
         incidentId="inc_1"
@@ -200,10 +205,14 @@ describe("StatusPublishPanel", () => {
           published.push(args);
           return true;
         }}
+        onCorrect={async (correction) => {
+          corrected.push(correction);
+          return true;
+        }}
         {...props}
       />,
     );
-    return { container, published };
+    return { container, published, corrected };
   }
 
   test("without a page, it says where to set one up", () => {
@@ -254,6 +263,79 @@ describe("StatusPublishPanel", () => {
     expect(container.textContent).toContain("Monitoring");
     act(() => button(container, "Publish an update").click());
     expect(input(container, "Public title").value).toBe("Slow API responses");
+  });
+
+  const onPage: StatusIncidentRow = {
+    id: "inc_1",
+    title: "Slow API responses",
+    status: "identified",
+    impact: "degraded",
+    componentIds: [],
+    updates: [
+      { id: "inc_1:2", at: Date.UTC(2026, 9, 27, 12), status: "investigating", body: "Looking." },
+      { id: "inc_1:4", at: Date.UTC(2026, 9, 27, 13), status: "identified", body: "Found it." },
+    ],
+    publishedAt: 0,
+    resolvedAt: null,
+    updatedAt: 0,
+  };
+
+  test("a published update is corrected in place, saying how long caches may show the old one", async () => {
+    const { container, corrected } = panel({ published: onPage });
+    const items = [...container.querySelectorAll("li")].map((node) => node.textContent);
+    // Newest first.
+    expect(items[0]).toContain("Found it.");
+    expect(items[1]).toContain("Looking.");
+    act(() => button(container, "Edit").click());
+    const area = container.querySelector<HTMLTextAreaElement>("li textarea")!;
+    expect(area.value).toBe("Found it.");
+    expect(container.textContent).toContain("about 2 minutes");
+    act(() => type(area, "  "));
+    await act(async () => button(container, "Save").click());
+    expect(container.textContent).toContain("Write what the public should know.");
+    act(() => type(area, "Found it: a bad deploy."));
+    await act(async () => button(container, "Save").click());
+    expect(corrected).toEqual([
+      { kind: "edit", updateId: "inc_1:4", body: "Found it: a bad deploy." },
+    ]);
+    expect(container.textContent).toContain("Corrected.");
+  });
+
+  test("an update is removed after a confirmation; the last one only goes with the incident", async () => {
+    const { container, corrected } = panel({ published: onPage });
+    act(() => button(container, "Remove").click());
+    expect(container.textContent).toContain("Remove this update from the status page?");
+    await act(async () => button(container, "Remove").click());
+    expect(corrected).toEqual([{ kind: "remove", updateId: "inc_1:4" }]);
+
+    act(() => root?.unmount());
+    const one = panel({ published: { ...onPage, updates: [onPage.updates[0]!] } });
+    expect(button(one.container, "Remove")).toBeUndefined();
+    act(() => button(one.container, "Take off the page").click());
+    expect(one.container.textContent).toContain("Take this incident and all its updates off");
+    await act(async () =>
+      [...one.container.querySelectorAll("button")]
+        .filter((node) => node.textContent === "Take off the page")
+        .at(-1)!
+        .click(),
+    );
+    expect(one.corrected).toEqual([{ kind: "withdraw" }]);
+    expect(one.container.textContent).toContain("Taken off the page.");
+  });
+
+  test("a correction the shard refuses says so and keeps the form", async () => {
+    const { container } = panel({ published: onPage, onCorrect: async () => false });
+    act(() => button(container, "Edit").click());
+    act(() => type(container.querySelector<HTMLTextAreaElement>("li textarea")!, "Changed."));
+    await act(async () => button(container, "Save").click());
+    expect(container.textContent).toContain("Couldn't change the status page.");
+    expect(container.querySelector("li textarea")).not.toBeNull();
+  });
+
+  test("viewers see what is published and cannot correct it", () => {
+    const { container } = panel({ published: onPage, allowed: false });
+    expect(container.textContent).toContain("Found it.");
+    expect(container.querySelector("button")).toBeNull();
   });
 
   test("viewers read it and cannot publish", () => {

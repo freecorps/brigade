@@ -41,7 +41,9 @@
 **Consistency rule:** a DO is the source of truth for what it owns. Anything copied elsewhere (D1 index,
 `WorkspaceDO` incident list) is a projection, updated through the transactional outbox described in RFC 0005,
 and may lag by milliseconds. Temporary exception: in spike S3 the `WorkspaceDO` incident index is authoritative
-for status and severity until `IncidentDO` exists (RFC 0004, "Shared core").
+for status and severity until `IncidentDO` exists (RFC 0004, "Shared core"). The public status page's snapshot (KV
+`STATUS`, RFC 0012) is not fed by the outbox either: the shard marks it out of date in the change's own transaction
+and pushes it from its alarm, so it lags by seconds, longer while a push fails and backs off.
 
 ## Repository layout (target)
 

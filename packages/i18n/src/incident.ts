@@ -152,6 +152,11 @@ export function entryText(entry: TimelineRow, who: People): string {
         "status_published",
         m.status_text({ part: `public_${entry.status}`, time: "", list: "" }),
       );
+    case "status_corrected":
+      return say(`status_corrected_${entry.change}`);
+    default:
+      // A kind a newer shard wrote that this build does not know: a line saying something changed, never a blank.
+      return say("unknown");
   }
 }
 

@@ -55,7 +55,9 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   kind `update` with a multi-line body of 1 to 4000 characters (the text rules of RFC 0004), allowed in every
   status so a resolved incident can get closing notes. Every update is internal: publishing to the status page is its own action
   (`incident.publishUpdate`, `status:publish`, event `incident.update_published`, a `status_published` timeline
-  entry) with text written for the public, never a copy of an update (RFC 0012 "Publishing").
+  entry) with text written for the public, never a copy of an update (RFC 0012 "Publishing"). What was published
+  can be corrected or taken off the page (`incident.editPublishedUpdate`, `.removePublishedUpdate`, `.unpublish`,
+  `status:publish`, a `status_corrected` timeline entry; RFC 0012 "Corrections").
 - **Roles** (`incident.assignRole`, `incident:update`, event `incident.role_assigned`): a fixed set until role
   definitions exist (Phase 3), `commander`, `communications` and `operations`, at most one member each, stored on
   the incident (`roles`). `userId: null` unassigns. The assignee must be in the shard's member list and not a

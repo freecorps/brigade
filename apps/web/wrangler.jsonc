@@ -36,7 +36,11 @@
       // No SLACK binding is committed: a service binding to a Worker that does not exist fails the deploy. Add
       // `{ "binding": "SLACK", "service": "brigade-slack-<env>" }` here with the Slack Worker's first deploy
       // (integrations/slack/README.md); without it /slack/* answers 404.
-      "services": [{ "binding": "API", "service": "brigade-api-dev" }],
+      "services": [
+        { "binding": "API", "service": "brigade-api-dev" },
+        // Slack's requests, forwarded to the Slack Worker (integrations/slack); deployed on dev.
+        { "binding": "SLACK", "service": "brigade-slack-dev" },
+      ],
     },
     "staging": {
       "services": [{ "binding": "API", "service": "brigade-api-staging" }],

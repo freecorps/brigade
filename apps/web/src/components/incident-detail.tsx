@@ -1047,7 +1047,7 @@ function IncidentTitle({ id, title, editable }: { id: string; title: string; edi
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-start gap-1">
-        <h1 className="min-w-0 flex-1 text-2xl font-semibold text-balance [overflow-wrap:anywhere]">
+        <h1 className="min-w-0 text-2xl font-semibold text-balance [overflow-wrap:anywhere]">
           {title}
         </h1>
         {editable ? (

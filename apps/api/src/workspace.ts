@@ -1881,12 +1881,12 @@ export class WorkspaceDO extends DurableObject<Env> {
         : await this.membership.standing(workspace, actor.id, Date.now());
     if (standing === "gone") return Response.json({ error: "not_a_member" }, { status: 403 });
     if (standing === "unknown") return Response.json({ error: "unavailable" }, { status: 503 });
-    // The same for a token whose creator was just removed: it acts for them, so it is refused with them.
-    if (
-      actor.kind === "token" &&
-      (await this.membership.refuses(workspace, actor.by ?? actor.id, Date.now()))
-    ) {
-      return Response.json({ error: "not_a_member" }, { status: 403 });
+    // The same for a token whose creator was just removed: it acts for them, so it is refused with them (and tried
+    // again when D1 could not say).
+    if (actor.kind === "token") {
+      const creator = await this.membership.standing(workspace, actor.by ?? actor.id, Date.now());
+      if (creator === "gone") return Response.json({ error: "not_a_member" }, { status: 403 });
+      if (creator === "unknown") return Response.json({ error: "unavailable" }, { status: 503 });
     }
     // Before the socket exists, so every `device.register` of this session comes after: the phone the member just
     // signed in on again is registered anew (or refreshed, `device.touch`), never dropped by a reconcile after it.

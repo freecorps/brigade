@@ -135,8 +135,10 @@ export function applyAppEntitlements(
   const groups = Array.isArray(entitlements["com.apple.security.application-groups"])
     ? (entitlements["com.apple.security.application-groups"] as unknown[])
     : [];
+  // Dropped when the flag is off, so a prebuild without `--clean` never keeps it from an earlier flagged one.
+  const { [CRITICAL_ALERTS_ENTITLEMENT]: _critical, ...rest } = entitlements;
   return {
-    ...entitlements,
+    ...rest,
     "aps-environment": apsEnvironment,
     "com.apple.security.application-groups": groups.includes(APP_GROUP)
       ? groups

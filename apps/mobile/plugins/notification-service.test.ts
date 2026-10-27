@@ -79,6 +79,13 @@ describe("applyAppEntitlements", () => {
       [CRITICAL_ALERTS_ENTITLEMENT]: true,
       "com.apple.developer.usernotifications.time-sensitive": true,
     });
+    // A prebuild without `--clean` after a flagged one: the flag off takes it away again.
+    expect(
+      applyAppEntitlements(
+        { [CRITICAL_ALERTS_ENTITLEMENT]: true },
+        { apsEnvironment: "production" },
+      ),
+    ).not.toHaveProperty(CRITICAL_ALERTS_ENTITLEMENT);
     expect(CRITICAL_ALERTS_ENTITLEMENT).toBe(
       "com.apple.developer.usernotifications.critical-alerts",
     );

@@ -161,8 +161,11 @@ function Workspaces({
   const list = authClient.useListOrganizations();
   const [switching, setSwitching] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
-  // The active one is always shown, even before (or without) the list: offline, it is all the app knows.
-  const workspaces = list.data ?? [{ id: current, name: currentName }];
+  // The active one is always shown, even before (or without) the list, or with a list read before it existed: offline,
+  // it is all the app knows.
+  const workspaces = list.data?.some((workspace) => workspace.id === current)
+    ? list.data
+    : [{ id: current, name: currentName }, ...(list.data ?? [])];
   const pick = async (id: string) => {
     if (id === current || switching) return;
     setSwitching(id);

@@ -247,7 +247,8 @@ export async function actAndAnswer(
 ): Promise<SlackActResult> {
   const result = await slackAct(env, request, send, now);
   const answer = request.answer;
-  if (!answer || !CHANNEL_ID.test(String(answer.channelId))) return result;
+  // Slack retries an event it thinks went unanswered: the first delivery ran it and answered, so a replay is quiet.
+  if (!answer || !CHANNEL_ID.test(String(answer.channelId)) || result.replayed) return result;
   try {
     const connection = await slackConnection(env, request.teamId);
     if (!connection.ok) return result;
@@ -700,19 +701,26 @@ function parseAction(
     if (typeof action.title !== "string" || action.title.length > MAX_TITLE_INPUT || !severity) {
       return undefined;
     }
+    // Whatever of the type and services cannot be read is left out, and the person is told (`dropped`): the
+    // incident is declared all the same, since that is what they asked for first.
     const typeId = isId("typ", action.typeId) ? action.typeId : undefined;
-    const serviceIds = Array.isArray(action.serviceIds)
-      ? [...new Set(action.serviceIds.filter((id): id is string => isId("svc", id)))].slice(
-          0,
-          MAX_INCIDENT_SERVICES,
-        )
-      : [];
+    const picked: unknown[] = Array.isArray(action.serviceIds) ? action.serviceIds : [];
+    const serviceIds = [...new Set(picked.filter((id): id is string => isId("svc", id)))].slice(
+      0,
+      MAX_INCIDENT_SERVICES,
+    );
+    const dropped =
+      (action.typeId !== undefined && !typeId) ||
+      (action.serviceIds !== undefined && !Array.isArray(action.serviceIds)) ||
+      picked.some((id) => !isId("svc", id)) ||
+      new Set(picked).size > MAX_INCIDENT_SERVICES;
     return {
       kind: "declare",
       title: action.title,
       severity,
       ...(typeId ? { typeId } : {}),
       ...(serviceIds.length > 0 ? { serviceIds } : {}),
+      ...(dropped ? { dropped: true } : {}),
     };
   }
   const target = parseTarget(action);
@@ -720,8 +728,11 @@ function parseAction(
   switch (action.kind) {
     case "ack":
     case "resolve":
-    case "escalate":
       return { kind: action.kind, ...target };
+    case "escalate":
+      if (action.step === undefined) return { kind: "escalate", ...target };
+      if (!Number.isSafeInteger(action.step) || (action.step as number) < 1) return undefined;
+      return { kind: "escalate", step: action.step as number, ...target };
     case "update":
       if (typeof action.body !== "string" || action.body.length > MAX_UPDATE_INPUT)
         return undefined;

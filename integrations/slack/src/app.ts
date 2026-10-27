@@ -162,7 +162,11 @@ async function button(
   return acknowledged();
 }
 
-/** "Post to Brigade timeline" on a message in an incident's channel (or its thread): the message as an update. */
+/**
+ * "Post to Brigade timeline" on a message in an incident's channel (or its thread): the message as an update, by
+ * whoever clicked. Only their own messages (RFC 0011 "Commands"): an update is in its poster's name, so someone else's
+ * words, or an app's or a bot's, are refused rather than put in the clicker's mouth.
+ */
 async function shortcut(
   payload: Record<string, unknown>,
   who: { teamId: string; userId: string },
@@ -176,6 +180,21 @@ async function shortcut(
   const threadTs = typeof message.thread_ts === "string" ? message.thread_ts : undefined;
   const text = typeof message.text === "string" ? plainText(message.text).trim() : "";
   if (!isResponseUrl(responseUrl) || !CHANNEL_ID.test(channelId) || !ts) return acknowledged();
+  const own =
+    message.user === who.userId &&
+    message.bot_id === undefined &&
+    message.app_id === undefined &&
+    message.subtype === undefined;
+  if (!own) {
+    deps.waitUntil(
+      (async () => {
+        const locale = await deps.bridge.locale({ teamId: who.teamId, slackUserId: who.userId });
+        const text = slack_text({ ...NO_ARGS, part: "reply_not_own_message" }, { locale });
+        await reply(deps, responseUrl, text);
+      })().catch((error: unknown) => log("slack shortcut failed", { error: String(error) })),
+    );
+    return acknowledged();
+  }
   deps.waitUntil(
     act(
       deps,
@@ -187,7 +206,7 @@ async function shortcut(
         channelId,
         ...(threadTs && threadTs !== ts ? { threadTs } : {}),
       },
-      // Per message: the same message posted twice, by anyone, is one update.
+      // Per message, as `!update` keys it: the same message posted twice, either way, is one update.
       await sha256Hex(`message:${channelId}:${ts}`),
       "update",
     ).catch((error: unknown) => log("slack shortcut failed", { error: String(error) })),

@@ -30,8 +30,12 @@ export type SlackAction =
   | ({ kind: "resolve" } & SlackTarget)
   /** `role` as typed (a role's id or name); `user` the Slack user (`U…`) it goes to, mapped like the requester. */
   | ({ kind: "role"; role: string; user: string } & SlackTarget)
-  /** Pages the escalation's next level now (`escalation.now`). */
-  | ({ kind: "escalate" } & SlackTarget);
+  /**
+   * Pages the escalation's next level now (`escalation.now`). `step`: the run's page count as the person saw it (a
+   * button or message that knew it), so a run that moved on since is not escalated again; without it, a run that paged
+   * a level within the last 30 seconds is not escalated (`just_paged`).
+   */
+  | ({ kind: "escalate"; step?: number } & SlackTarget);
 
 /** Who asked: a Slack user (`U…`/`W…`) of a Slack team (`T…`), as Slack's signed request named them. */
 export type SlackRequester = { teamId: string; slackUserId: string };
@@ -86,6 +90,8 @@ export type SlackActRefusal =
   | "unchanged"
   /** `/inc escalate` on an incident with no escalation under way. */
   | "not_escalating"
+  /** `/inc escalate` right after the run paged a level (`level`): someone escalated, or its timeout fired. */
+  | "just_paged"
   /** `/inc role` with a role the workspace does not have: `roles` lists the ones it does. */
   | "unknown_role"
   /** `/inc role` for a Slack user who maps to no member. */
@@ -94,6 +100,8 @@ export type SlackActRefusal =
   | "role_viewer"
   /** `!update` or the shortcut outside an incident's channel or message thread. */
   | "not_incident_channel"
+  /** The shortcut on someone else's message: only your own messages become your updates. */
+  | "not_own_message"
   /** Anything else: D1 or the shard down, a bug. Try again. */
   | "failed";
 
@@ -120,6 +128,10 @@ export type SlackActOutcome =
       severity?: Severity;
       /** `role`: the role given. */
       role?: SlackRoleName;
+      /** `declared`: a type or service picked in the form no longer exists, so it was declared without it. */
+      dropped?: true;
+      /** The request was done before (a retry, or the same message posted again): this is that answer. */
+      replayed?: true;
     }
   | {
       ok: false;
@@ -129,6 +141,9 @@ export type SlackActOutcome =
       choices?: number[];
       /** `unknown_role`: the roles the workspace has. */
       roles?: SlackRoleName[];
+      /** `just_paged`: the level the run paged last. */
+      level?: number;
+      replayed?: true;
     };
 
 /** What the bridge answers: the outcome, and what the reply needs to word it. */

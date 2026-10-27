@@ -12,6 +12,7 @@ import {
   type SlackFailure,
   type SlackLocale,
 } from "@freecorps/brigade-schema";
+import { vouchedFor } from "./people.ts";
 import { callSlack, failureReason, type Fetch } from "./web-api.ts";
 
 export { failureReason, type Fetch } from "./web-api.ts";
@@ -204,7 +205,7 @@ export async function deliverIncidentMessage(options: {
 
 function failed(
   call: Extract<Awaited<ReturnType<typeof callSlack>>, { ok: false }>,
-): SlackPostOutcome {
+): Extract<SlackPostOutcome, { ok: false }> {
   return {
     ok: false,
     error: call.error,
@@ -351,9 +352,12 @@ export async function createIncidentChannel(options: {
   return { ok: false, error: "name_taken", retryable: false, reason: "undelivered" };
 }
 
+/** People one `conversations.invite` takes at most (Slack's limit). */
+export const INVITE_BATCH = 1000;
+
 /**
- * Invites Slack users to `channel` (`conversations.invite`, up to 1000 at once). Someone already in it, or one Slack
- * will not invite (a deactivated user, the bot itself), is not a failure. Never throws.
+ * Invites Slack users to `channel` (`conversations.invite`, `INVITE_BATCH` at a time, every batch). Someone already
+ * in it, or one Slack will not invite (a deactivated user, the bot itself), is not a failure. Never throws.
  */
 export async function inviteToChannel(options: {
   token: string;
@@ -363,15 +367,16 @@ export async function inviteToChannel(options: {
   timeoutMs?: number;
 }): Promise<SlackPostOutcome> {
   const { token, channel, users, fetch, timeoutMs } = options;
-  if (users.length === 0) return { ok: true, channel, ts: "" };
-  const invited = await callSlack(
-    "conversations.invite",
-    // `force`: invite the ones Slack can, even when it refuses some.
-    { channel, users: users.slice(0, 1000).join(","), force: true },
-    { token, fetch, timeoutMs },
-  );
-  if (invited.ok || HARMLESS_INVITE.has(invited.error)) return { ok: true, channel, ts: "" };
-  return failed(invited);
+  for (let start = 0; start < users.length; start += INVITE_BATCH) {
+    const invited = await callSlack(
+      "conversations.invite",
+      // `force`: invite the ones Slack can, even when it refuses some.
+      { channel, users: users.slice(start, start + INVITE_BATCH).join(","), force: true },
+      { token, fetch, timeoutMs },
+    );
+    if (!invited.ok && !HARMLESS_INVITE.has(invited.error)) return failed(invited);
+  }
+  return { ok: true, channel, ts: "" };
 }
 
 /** Answers from `conversations.invite` that leave nothing to do. */
@@ -402,8 +407,18 @@ export async function archiveChannel(options: {
 }
 
 /**
+ * What looking a member up by email found: the Slack user (null for nobody Slack vouches for), or why Slack could not
+ * be asked (a 429 carries its `Retry-After`).
+ */
+export type SlackUserLookup =
+  | { ok: true; id: string | null }
+  | Extract<SlackPostOutcome, { ok: false }>;
+
+/**
  * The Slack user whose email is `email` (`users.lookupByEmail`), kept per isolate for a few minutes, so the people an
- * incident invites are not a burst of Tier 3 calls. Null for nobody or a failure (inviting is best effort).
+ * incident invites are not a burst of Tier 3 calls. Only a user Slack vouches for as the team's own, with that email
+ * confirmed (`vouchedFor`, the rule for who a Slack user is): anyone else is nobody. A failure is not cached. Never
+ * throws.
  */
 export async function slackUserByEmail(
   teamId: string,
@@ -412,27 +427,21 @@ export async function slackUserByEmail(
   fetch: Fetch,
   now: number,
   timeoutMs?: number,
-): Promise<string | null> {
+): Promise<SlackUserLookup> {
   const key = `${teamId}:${email.toLowerCase()}`;
   const hit = byEmail.get(key);
-  if (hit && hit.until > now) return hit.id;
+  if (hit && hit.until > now) return { ok: true, id: hit.id };
   const found = await callSlack(
     "users.lookupByEmail",
     { email },
     { token, fetch, timeoutMs, form: true },
   );
-  if (!found.ok && found.error !== "users_not_found") return null;
+  if (!found.ok && found.error !== "users_not_found") return failed(found);
   const user = found.ok ? (Object(found.data.user) as Record<string, unknown>) : {};
-  const id =
-    typeof user.id === "string" &&
-    user.team_id === teamId &&
-    user.deleted !== true &&
-    user.is_bot !== true
-      ? user.id
-      : null;
+  const id = typeof user.id === "string" && vouchedFor(user, teamId) ? user.id : null;
   if (byEmail.size >= 2000) byEmail.delete(byEmail.keys().next().value!);
   byEmail.set(key, { id, until: now + 5 * 60 * 1000 });
-  return id;
+  return { ok: true, id };
 }
 
 const byEmail = new Map<string, { id: string | null; until: number }>();

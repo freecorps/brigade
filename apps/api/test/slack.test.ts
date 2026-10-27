@@ -6,17 +6,29 @@ import {
   createExecutionContext,
   createMessageBatch,
   getQueueResult,
+  runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
 import { generateRecipient, toBase64url } from "@freecorps/brigade-push";
-import { newId, SLACK_ROW_ID, type Actor } from "@freecorps/brigade-schema";
+import {
+  ESCALATION_ACTOR,
+  MONITOR_ACTOR,
+  newId,
+  SLACK_ROW_ID,
+  type Actor,
+} from "@freecorps/brigade-schema";
 import type { SlackActResult } from "@freecorps/brigade-slack/bridge";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { clearPeople } from "@freecorps/brigade-slack/people";
 import { consumeEvents, QUEUE_MAX_RETRIES, SLACK_BUDGET_MS, type Fetch } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
-import { SLACK_MAX_ATTEMPTS, type SlackDesk } from "../src/slack.ts";
+import {
+  SLACK_ESCALATE_WINDOW_MS,
+  SLACK_LOOKUP_BATCH,
+  SLACK_MAX_ATTEMPTS,
+  type SlackDesk,
+} from "../src/slack.ts";
 import {
   actAndAnswer,
   beginSlackInstall,
@@ -391,7 +403,8 @@ describe("SlackBridge.act", () => {
     const k = key();
     const first = await declare(teamId, t.caio.email, k);
     const second = await declare(teamId, t.caio.email, k);
-    expect(second).toEqual(first);
+    // The same answer, marked a replay: an event retried is not answered twice.
+    expect(second).toEqual({ ...first, replayed: true });
     expect(await incidents(t)).toHaveLength(1);
   });
 
@@ -423,7 +436,7 @@ describe("SlackBridge.act", () => {
     );
     const first = await declare(teamId, t.caio.email, k);
     expect(first).toMatchObject({ ok: true, did: "declared", incident: { id: reserved } });
-    expect(await declare(teamId, t.caio.email, k)).toEqual(first);
+    expect(await declare(teamId, t.caio.email, k)).toEqual({ ...first, replayed: true });
     expect(await incidents(t)).toEqual([expect.objectContaining({ id: reserved })]);
   });
 
@@ -862,9 +875,7 @@ describe("the incident message", () => {
     expect(slack.calls.filter((call) => call.method === "chat.postMessage")).toHaveLength(1);
     expect(first.retryMessages).toEqual([{ msgId: "msg-1", delaySeconds: expect.any(Number) }]);
     // Once the claim ends, the retry updates the message the first posted.
-    await t.withShard((_shard, state) =>
-      state.storage.sql.exec("update slack_messages set claimed_until = 0"),
-    );
+    await t.withShard((_shard, state) => state.storage.sql.exec("delete from slack_claims"));
     await deliver([changed], slack.send, 2);
     expect(slack.calls.filter((call) => call.method === "chat.update")).toHaveLength(1);
   });
@@ -1089,9 +1100,7 @@ describe("the incident message", () => {
     );
     expect(recorded).toBe("1790000000.000042");
     // The Queue's retry, and the incident's next change: neither posts a second message.
-    await t.withShard((_shard, state) =>
-      state.storage.sql.exec("update slack_messages set claimed_until = 0"),
-    );
+    await t.withShard((_shard, state) => state.storage.sql.exec("delete from slack_claims"));
     await deliver([event], late.send, 2);
     const incident = (await incidents(t))[0]!;
     await t.run("incident.setSeverity", { id: incident.id, severity: "sev2" }, owner(t));
@@ -1399,6 +1408,382 @@ describe("a channel per incident, and the timeline mirror", () => {
         }),
       },
     ]);
+  });
+});
+
+describe("what must happen once: escalations, messages, retried events, the claim", () => {
+  /** Connected without a main channel, Ana and Caio synced with phones, a default policy paging Ana then Caio. */
+  async function escalating(t: Team) {
+    const teamId = await connect(t, newTeam(), null);
+    await phone(t, "a".repeat(64));
+    const caio: Actor = { kind: "user", id: t.caio.id, role: "responder" };
+    await t.run("member.sync", { id: t.caio.id, name: "Caio", role: "responder" }, caio, true);
+    const recipient = await generateRecipient();
+    await t.run(
+      "device.register",
+      {
+        id: newId("dev", Date.now(), random),
+        platform: "ios",
+        environment: "production",
+        pushToken: "c".repeat(64),
+        voipToken: null,
+        publicKey: toBase64url(recipient.publicKey),
+      },
+      caio,
+    );
+    await t.run(
+      "escalation.createPolicy",
+      {
+        id: newId("esc", Date.now(), random),
+        name: "Checkout",
+        levels: [t.ana.id, t.caio.id].map((id) => ({
+          id: newId("lvl", Date.now(), random),
+          targets: [{ kind: "member", id }],
+          timeoutMinutes: 5,
+        })),
+        repeat: 1,
+        isDefault: true,
+      },
+      owner(t),
+    );
+    const incidentId = newId("inc", Date.now(), random);
+    await t.run(
+      "incident.declare",
+      { id: incidentId, title: "Checkout down", severity: "sev1" },
+      MONITOR_ACTOR,
+    );
+    const declared = (await eventsOf(t, "incident.declared"))[0]!;
+    await t.run(
+      "escalation.start",
+      { incidentId, eventId: declared.id, causedBy: MONITOR_ACTOR.id },
+      ESCALATION_ACTOR,
+      true,
+    );
+    return { teamId, incidentId };
+  }
+
+  const run = (t: Team, incidentId: string) =>
+    t.withShard((shard) => shard.store.get("incidents", incidentId)!.escalation!);
+  /** The run's last page, as if it was paged `ago` ms back. */
+  const pagedAgo = (t: Team, incidentId: string, ago: number) =>
+    t.withShard((shard) => {
+      const row = shard.store.get("incidents", incidentId)!;
+      const pages = row.escalation!.pages.map((page, i, all) =>
+        i === all.length - 1 ? { ...page, at: Date.now() - ago } : page,
+      );
+      shard.store.update("incidents", incidentId, { escalation: { ...row.escalation!, pages } });
+    });
+  const escalate = (t: Team, teamId: string, email: string, more: { step?: number } = {}) =>
+    slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, email),
+        action: { kind: "escalate", number: 1, ...more },
+        key: key(),
+      },
+      usersInfo,
+    );
+
+  test("two people escalating at once page the next level once", async () => {
+    const t = await team();
+    const { teamId, incidentId } = await escalating(t);
+    await pagedAgo(t, incidentId, SLACK_ESCALATE_WINDOW_MS + 1000);
+    const results = await Promise.all([
+      escalate(t, teamId, t.ana.email),
+      escalate(t, teamId, t.caio.email),
+    ]);
+    expect(results.filter((one) => one.ok)).toEqual([
+      expect.objectContaining({ ok: true, did: "escalated" }),
+    ]);
+    // The other is told the level the first paged: nobody skips a level.
+    expect(results.find((one) => !one.ok)).toMatchObject({ code: "just_paged", level: 2 });
+    expect(await run(t, incidentId)).toMatchObject({ paged: 2, status: "running" });
+    expect((await eventsOf(t, "escalation.paged")).map((e) => e.data)).toEqual([
+      expect.objectContaining({ level: 1, reason: "started" }),
+      expect.objectContaining({ level: 2, reason: "manual" }),
+    ]);
+  });
+
+  test("escalating right after the level's timeout fired does not skip the level it paged", async () => {
+    const t = await team();
+    const { teamId, incidentId } = await escalating(t);
+    const seen = (await run(t, incidentId)).paged;
+    // Level 1 times out: the alarm pages level 2.
+    await t.withShard(async (shard, state) => {
+      const at = Date.now() - 1;
+      const row = shard.store.get("incidents", incidentId)!;
+      shard.store.update("incidents", incidentId, {
+        escalation: { ...row.escalation!, nextAt: at },
+      });
+      shard.store.update("escalation_timers", incidentId, { at });
+      await state.storage.setAlarm(at);
+    });
+    await runDurableObjectAlarm(t.stub);
+    expect(await run(t, incidentId)).toMatchObject({ paged: 2 });
+    // Typed, with no step: the page is too young to have been seen.
+    expect(await escalate(t, teamId, t.caio.email)).toMatchObject({
+      ok: false,
+      code: "just_paged",
+      level: 2,
+    });
+    // With the step the person saw (level 1's): the run moved past it.
+    expect(await escalate(t, teamId, t.caio.email, { step: seen })).toMatchObject({
+      ok: false,
+      code: "just_paged",
+      level: 2,
+    });
+    expect(await run(t, incidentId)).toMatchObject({ paged: 2 });
+    // With the step it is at now, or once the page is old enough: the next level.
+    expect(
+      await escalate(t, teamId, t.caio.email, { step: (await run(t, incidentId)).paged }),
+    ).toMatchObject({ ok: true, did: "escalated" });
+    expect(await run(t, incidentId)).toMatchObject({ paged: 3 });
+    await pagedAgo(t, incidentId, SLACK_ESCALATE_WINDOW_MS + 1000);
+    expect(await escalate(t, teamId, t.caio.email)).toMatchObject({ ok: true });
+    expect(await run(t, incidentId)).toMatchObject({ paged: 4 });
+  });
+
+  test("one Slack message is one update, whoever posts it and however often", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await t.run(
+      "slack.configure",
+      { channelId: "C0CHAN0001", locale: "en", incidentChannels: "all" },
+      owner(t),
+    );
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.ana.email),
+        action: { kind: "declare", title: "Checkout down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
+    await deliver(await eventsOf(t, "incident.declared"), slackApi().send);
+    const message = key();
+    const post = (email: string) =>
+      slackAct(
+        env,
+        {
+          teamId,
+          slackUserId: slackUser(teamId, email),
+          action: {
+            kind: "update",
+            body: "Rolled back",
+            fromMessage: true,
+            channelId: "C0INC00001",
+          },
+          key: message,
+        },
+        usersInfo,
+      );
+    expect(await post(t.caio.email)).toMatchObject({ ok: true, did: "updated" });
+    expect(await post(t.bia.email)).toMatchObject({ ok: true, did: "updated", replayed: true });
+    expect(await post(t.caio.email)).toMatchObject({ ok: true, did: "updated", replayed: true });
+    expect(await eventsOf(t, "incident.update_posted")).toHaveLength(1);
+  });
+
+  test("a retried Events API message is answered once", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await t.run(
+      "slack.configure",
+      { channelId: "C0CHAN0001", locale: "en", incidentChannels: "all" },
+      owner(t),
+    );
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.ana.email),
+        action: { kind: "declare", title: "Checkout down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
+    await deliver(await eventsOf(t, "incident.declared"), slackApi().send);
+    const slack = slackApi();
+    const send: Fetch = (request) =>
+      request.url.endsWith("/users.info") ? usersInfo(request) : slack.send(request);
+    const request = {
+      teamId,
+      slackUserId: slackUser(teamId, t.caio.email),
+      action: {
+        kind: "update" as const,
+        body: "Rolled back",
+        fromMessage: true,
+        channelId: "C0INC00001",
+      },
+      key: key(),
+      answer: { channelId: "C0INC00001" },
+    };
+    expect(await actAndAnswer(env, request, send)).toMatchObject({ ok: true });
+    expect(await actAndAnswer(env, request, send)).toMatchObject({ ok: true, replayed: true });
+    expect(slack.calls.filter((call) => call.method === "chat.postEphemeral")).toHaveLength(1);
+    expect(await eventsOf(t, "incident.update_posted")).toHaveLength(1);
+  });
+
+  test("a form's type or services that are gone or unreadable: declared without them, and the person told", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    const declare = (more: Record<string, unknown>) =>
+      slackAct(
+        env,
+        {
+          teamId,
+          slackUserId: slackUser(teamId, t.caio.email),
+          action: { kind: "declare", title: "Checkout down", severity: "sev2", ...more } as never,
+          key: key(),
+        },
+        usersInfo,
+      );
+    expect(await declare({ typeId: newId("typ", Date.now(), random) })).toMatchObject({
+      ok: true,
+      did: "declared",
+      dropped: true,
+    });
+    expect(await declare({ serviceIds: ["nope"] })).toMatchObject({ ok: true, dropped: true });
+    expect(await declare({ typeId: "typ_?" })).toMatchObject({ ok: true, dropped: true });
+    const plain = await declare({});
+    expect(plain).toMatchObject({ ok: true });
+    expect(plain).not.toHaveProperty("dropped");
+    expect(await incidents(t)).toHaveLength(4);
+    expect(
+      (await incidents(t)).every((one) => one.typeId === undefined || one.typeId === null),
+    ).toBe(true);
+  });
+
+  test("an event holds the incident across its jobs: another event of it waits until it is done", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await t.run("member.sync", { id: t.ana.id, name: "Ana", role: "owner" }, owner(t), true);
+    await t.run(
+      "slack.configure",
+      { channelId: "C0CHAN0001", locale: "en", incidentChannels: "all" },
+      owner(t),
+    );
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.ana.email),
+        action: { kind: "declare", title: "Checkout down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
+    const incident = (await incidents(t))[0]!;
+    await t.run("incident.setSeverity", { id: incident.id, severity: "sev2" }, owner(t));
+    const declared = (await eventsOf(t, "incident.declared"))[0]!;
+    const changed = (await eventsOf(t, "incident.severity_changed"))[0]!;
+    const desk = <R>(fn: (instance: WorkspaceDO) => R) =>
+      runInDurableObject(t.stub, (instance: WorkspaceDO) => fn(instance));
+    const plan = (event: BrigadeEvent) => desk((instance) => instance.planSlack(event));
+    const done = (job: string, more: Record<string, unknown> = {}) =>
+      desk((instance) =>
+        instance.recordSlack(declared, job, {
+          ok: true,
+          channel: "C0INC00001",
+          ts: "1790000000.000001",
+          ...more,
+        }),
+      );
+    const jobs: string[] = [];
+    for (;;) {
+      const next = await plan(declared);
+      if (!next.send) break;
+      jobs.push(next.job);
+      // Between every two jobs of the declaration, the severity change waits.
+      expect(await plan(changed)).toMatchObject({ send: false, reason: "held" });
+      await done(
+        next.job,
+        next.work.kind === "lookup" ? { people: { [t.ana.id]: "U0SLACKANA" } } : {},
+      );
+    }
+    expect(jobs).toEqual([
+      "channel",
+      `lookup:${t.ana.id}`,
+      "invite",
+      "message:incident",
+      "message:main",
+    ]);
+    // Done: the change goes on at once.
+    expect(await plan(changed)).toMatchObject({ send: true });
+  });
+
+  test("invites are looked up a few at a time, and a 429 waits for Retry-After without leaving anyone out", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await t.run("member.sync", { id: t.ana.id, name: "Ana", role: "owner" }, owner(t), true);
+    await t.run(
+      "slack.configure",
+      { channelId: null, locale: "en", incidentChannels: "all" },
+      owner(t),
+    );
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.ana.email),
+        action: { kind: "declare", title: "Checkout down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
+    const declared = (await eventsOf(t, "incident.declared"))[0]!;
+    let limited = true;
+    const slack = slackApi({
+      "users.lookupByEmail": () => {
+        if (limited) return new Response("", { status: 429, headers: { "Retry-After": "20" } });
+        const user = [...slackUsers.values()].find(
+          (one) => Object(one.profile).email === t.ana.email,
+        );
+        return Response.json({ ok: true, user });
+      },
+    });
+    const first = await deliver([declared], slack.send);
+    expect(first.retryMessages).toEqual([{ msgId: "msg-0", delaySeconds: 20 }]);
+    expect(slack.calls.map((call) => call.method)).toEqual([
+      "conversations.create",
+      "users.lookupByEmail",
+    ]);
+    limited = false;
+    await t.withShard((_shard, state) =>
+      state.storage.sql.exec("update slack_jobs set retry_at = 0"),
+    );
+    await deliver([declared], slack.send, 2);
+    const ana = [...slackUsers.values()].find((one) => Object(one.profile).email === t.ana.email)!;
+    expect(slack.calls.filter((call) => call.method === "conversations.invite")).toEqual([
+      { method: "conversations.invite", body: expect.objectContaining({ users: ana.id }) },
+    ]);
+    // Many people: a batch per job, each one's lookups started at once and bounded, so a job fits the claim.
+    const many = Array.from({ length: SLACK_LOOKUP_BATCH + 3 }, (_, i) => `usr_many${i}`);
+    for (const id of many) {
+      await t.run(
+        "member.sync",
+        { id, name: null, role: "responder" },
+        { kind: "user", id, role: "responder" },
+        true,
+      );
+    }
+    const incident = (await incidents(t))[0]!;
+    const paged: BrigadeEvent = {
+      ...declared,
+      id: newId("evt", Date.now(), random),
+      type: "escalation.paged",
+      data: { incidentId: incident.id, userIds: many },
+    };
+    const planned = await runInDurableObject(t.stub, (instance: WorkspaceDO) =>
+      instance.planSlack(paged),
+    );
+    expect(planned).toMatchObject({
+      send: true,
+      job: `lookup:${many[0]}`,
+      work: { kind: "lookup", userIds: many.slice(0, SLACK_LOOKUP_BATCH) },
+    });
   });
 });
 

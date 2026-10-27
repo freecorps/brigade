@@ -157,9 +157,11 @@ export const connectSlack = defineMutation({
     };
     if (current) store.update("slack", SLACK_ROW_ID, row);
     else store.insert("slack", row);
-    // Another team's token, replaced: given back to Slack by the notifier, like a disconnect's.
+    // The token replaced, another team's or this team's own: given back to Slack by the notifier, like a disconnect's.
+    // A reinstall Slack answered with the very same token keeps it: the notifier opens both and compares (sealed
+    // twice, the same token never reads the same here).
     const previous = store.get("slack_tokens", SLACK_ROW_ID);
-    if (previous && previous.teamId !== args.teamId) keepForRevocation(store, previous, ctx.now);
+    if (previous) keepForRevocation(store, previous, ctx.now);
     const token = {
       id: SLACK_ROW_ID,
       teamId: args.teamId,

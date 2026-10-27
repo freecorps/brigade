@@ -328,6 +328,36 @@ describe("the subcommands beyond declare and ack", () => {
     );
   });
 
+  test("an escalation someone just paged, and a form whose picks are gone, are worded so", async () => {
+    const slack = fakeSlack();
+    let call = 0;
+    const { bridge } = fakeBridge({
+      result: () =>
+        ++call === 1
+          ? refusal("just_paged", {
+              incident: { id: "inc_x", number: 12, title: "Checkout down" },
+              level: 2,
+            })
+          : {
+              ok: true,
+              did: "declared",
+              dropped: true,
+              incident: { id: "inc_x", number: 7, title: "Checkout down" },
+              workspaceName: "Acme",
+              locale: "en",
+            },
+    });
+    const run = deps(slack, bridge);
+    await handle(await slashCommand("escalate INC-12"), run.deps);
+    await run.settled();
+    await handle(await slashCommand("declare Checkout down", { trigger_id: "t.2" }), run.deps);
+    await run.settled();
+    expect(slack.replies().map((reply) => reply.text)).toEqual([
+      "Level 2 of INC-12 was paged just now, so Brigade didn't page the next one too. Wait a moment, or run /inc escalate again if nobody answers.",
+      "Declared INC-7: Checkout down\nThe incident type or a service you picked no longer exists, so it was declared without it. Set them from the dashboard.",
+    ]);
+  });
+
   test("/inc declare alone opens the form through the bridge, and says so when it cannot", async () => {
     const slack = fakeSlack();
     const { bridge, opens, acts } = fakeBridge({
@@ -416,7 +446,7 @@ describe("POST /slack/interactions: the form and the shortcut", () => {
     expect(slack.calls).toHaveLength(0);
   });
 
-  test("the message shortcut posts the message as an update from its channel, once per message", async () => {
+  test("the message shortcut posts the message as an update from its channel, keyed like `!update` on it", async () => {
     const slack = fakeSlack();
     const { bridge, acts } = fakeBridge({
       result: {
@@ -435,10 +465,28 @@ describe("POST /slack/interactions: the form and the shortcut", () => {
       user: { id: USER },
       channel: { id: "C0INC00012" },
       response_url: RESPONSE_URL,
-      message: { ts: "1790000000.000100", text: "DB failover done <@U0USER0002|bia>" },
+      message: {
+        ts: "1790000000.000100",
+        user: USER,
+        text: "DB failover done <@U0USER0002|bia>",
+      },
     };
     await handle(await interact(payload), run.deps);
-    await handle(await interact({ ...payload, user: { id: "U0USER0002" } }), run.deps);
+    // The same message as `!update`: the shard sees one key for both, so it is one update.
+    await handle(
+      await slackEvent({
+        type: "event_callback",
+        team_id: TEAM,
+        event: {
+          type: "message",
+          channel: "C0INC00012",
+          user: USER,
+          ts: "1790000000.000100",
+          text: "!update DB failover done",
+        },
+      }),
+      run.deps,
+    );
     await run.settled();
     expect(acts[0]?.action).toEqual({
       kind: "update",
@@ -448,6 +496,32 @@ describe("POST /slack/interactions: the form and the shortcut", () => {
     });
     expect(acts[0]?.key).toBe(acts[1]?.key);
     expect(slack.replies()[0]?.text).toBe("Posted to INC-12's timeline.");
+  });
+
+  test("the shortcut on someone else's message, an app's or a bot's posts nothing in the clicker's name", async () => {
+    const slack = fakeSlack();
+    const { bridge, acts } = fakeBridge({ locale: "pt-BR" });
+    const run = deps(slack, bridge);
+    const payload = (message: Record<string, unknown>) => ({
+      type: "message_action",
+      callback_id: "brigade_post_update",
+      team: { id: TEAM },
+      user: { id: USER },
+      channel: { id: "C0INC00012" },
+      response_url: RESPONSE_URL,
+      message: { ts: "1790000000.000100", text: "Rolled back", ...message },
+    });
+    await handle(await interact(payload({ user: "U0USER0002" })), run.deps);
+    await handle(await interact(payload({ bot_id: "B0BOT00001" })), run.deps);
+    await handle(await interact(payload({ user: USER, bot_id: "B0BOT00001" })), run.deps);
+    await handle(await interact(payload({ user: USER, app_id: "A0APP00001" })), run.deps);
+    await handle(await interact(payload({ user: USER, subtype: "bot_message" })), run.deps);
+    await run.settled();
+    expect(acts).toHaveLength(0);
+    const replies = slack.replies();
+    expect(replies).toHaveLength(5);
+    // Told why, in their language.
+    expect(replies[0]?.text).toContain("suas próprias mensagens");
   });
 });
 

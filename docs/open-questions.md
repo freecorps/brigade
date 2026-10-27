@@ -154,7 +154,7 @@ the email Slack confirmed for one of the connected team's own users (RFC 0011 "W
 - Revoking is decided: Disconnect gives the bot token back with `auth.revoke` (the shard keeps it sealed until the
   notifier has), and `app_uninstalled` / `tokens_revoked` (Events API) mark the connection revoked (RFC 0011
   "Disconnecting", "Events API").
-- Incident channels: created public unless the card says private, named `inc-<n>-<title>`, archived on resolve after
+- Incident channels: created public unless the card says private, named `inc-<n>-<slug>` (the title as a slug), archived on resolve after
   the card's delay or kept. Should a severity raised to SEV1 or SEV2 after declaring create one too (today only the
   declaration does)?
 - Channel messages are written in a language chosen on the card (default: the connecting member's), until workspaces

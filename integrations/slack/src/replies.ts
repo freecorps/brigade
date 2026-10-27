@@ -41,7 +41,9 @@ export function replyText(
   if (result.ok) {
     switch (result.did) {
       case "declared":
-        return say("reply_declared");
+        return result.dropped
+          ? `${say("reply_declared")}\n${say("reply_declared_without_picks")}`
+          : say("reply_declared");
       case "acknowledged":
         return say("reply_acknowledged");
       case "updated":
@@ -85,6 +87,8 @@ export function replyText(
       return say("reply_unchanged");
     case "not_escalating":
       return say("reply_not_escalating");
+    case "just_paged":
+      return say("reply_just_paged", { detail: String(result.level ?? "") });
     case "forbidden":
       return say("reply_forbidden");
     case "unmapped":
@@ -110,6 +114,8 @@ export function replyText(
       return say("reply_role_viewer");
     case "not_incident_channel":
       return say("reply_not_incident_channel");
+    case "not_own_message":
+      return say("reply_not_own_message");
     case "failed":
       return say("reply_failed");
   }

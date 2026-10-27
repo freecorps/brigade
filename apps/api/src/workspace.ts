@@ -1,6 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
 import type { SlackActOutcome } from "@freecorps/brigade-slack/bridge";
-import type { SlackPostOutcome } from "@freecorps/brigade-slack/notifier";
 import {
   ACCOUNT_ACTOR,
   AI_ACTOR,
@@ -76,7 +75,7 @@ import {
 import type { ProbeReport } from "./probe.ts";
 import { Receipts, type ReceiptResult } from "./receipts.ts";
 import { AlertIntake, type AlertIntakeResult } from "./alert-intake.ts";
-import { SlackDesk, type SlackPlan, type SlackShardAction } from "./slack.ts";
+import { SlackDesk, type SlackJobOutcome, type SlackPlan, type SlackShardAction } from "./slack.ts";
 import { StatusPublisher, type StatusConfigureResult } from "./status-page.ts";
 import { StatusMailer, type StatusEmailPlan, type StatusEmailReport } from "./status-mail.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
@@ -1540,7 +1539,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   recordSlack(
     event: BrigadeEvent,
     job: string,
-    outcome: SlackPostOutcome & { name?: string },
+    outcome: SlackJobOutcome,
   ): { retryAt: number | null } {
     if (this.shard.workspace() !== event.workspaceId) return { retryAt: null };
     return this.slack.record(event, job, outcome, Date.now());

@@ -220,6 +220,17 @@ describe("slack.configure and slack.disconnect", () => {
     expect(store.get("slack_revocations", "T0TEST0001")?.token).toBe(TOKEN);
   });
 
+  test("reconnecting the same team keeps its older token for revocation too", () => {
+    const store = connected();
+    const next = `v1.${"C".repeat(16)}.${"d".repeat(40)}`;
+    expect(
+      runMutation(serverMutations, "slack.connect", { ...connect, token: next }, store, ctx()),
+    ).toMatchObject({ ok: true, events: [{ data: { teamId: "T0TEST0001", replaced: null } }] });
+    expect(store.get("slack_tokens", SLACK_ROW_ID)?.token).toBe(next);
+    // The notifier compares the two opened: the same token Slack handed back stays, another is revoked.
+    expect(store.get("slack_revocations", "T0TEST0001")?.token).toBe(TOKEN);
+  });
+
   test("incident channels: off unless set; settings left out keep what they were", () => {
     const store = connected();
     const configure = (args: Record<string, unknown>) =>

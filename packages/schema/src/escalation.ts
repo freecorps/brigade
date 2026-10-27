@@ -448,9 +448,12 @@ export const unreachedEscalation = defineMutation({
 /**
  * Server only, as a member who may update incidents (`/inc escalate` in Slack, RFC 0011): pages the run's next level
  * now instead of at its timeout, as the alarm would (after the last level, level 1 of the next round while repeats
- * are left; past the last repeat everyone who can respond, and the run ends), with `reason: "manual"`. `step` is the
- * run's page count as the caller read it, so two members asking at once escalate once (`conflict`). `not_found`
- * without a run under way; `conflict` for an incident acknowledged or no longer active.
+ * are left; past the last repeat everyone who can respond, not the commander first, as after a run nobody
+ * acknowledged, and the run ends), with `reason: "manual"`. `step` is the run's page count the person saw: a run
+ * that moved past it since (another member escalated, or the level timed out) is `conflict`, never escalated past a
+ * level nobody saw. Slack sends the step its button or message carried; a typed command knows none, so Slack sends the
+ * run's own only once its last page is old enough to have been seen (`SLACK_ESCALATE_WINDOW_MS`). `not_found` without
+ * a run under way; `conflict` for an incident acknowledged or no longer active.
  */
 export const escalateNow = defineMutation({
   name: "escalation.now",

@@ -43,8 +43,22 @@ import type { RowChange } from "./store.ts";
 /** How long an install state lasts, and how many may be pending per workspace. */
 export const SLACK_STATE_MS = 10 * 60 * 1000;
 export const SLACK_MAX_PENDING_STATES = 20;
-/** How long a plan holds an incident's Slack work, so two events of one incident never both post or create. */
+/**
+ * How long a plan holds an incident's Slack work for one event, so two events of one incident never both post or
+ * create, nor interleave their jobs: the event that holds it keeps it from one job to the next, until it is done or a
+ * job of it must wait.
+ */
 export const SLACK_CLAIM_MS = 30_000;
+/**
+ * Members one lookup job finds in Slack by email, at once: a job of its own, before the invite, so the lookups of a
+ * big invite never outlast the claim, and a 429 waits for Slack's `Retry-After` instead of leaving people out.
+ */
+export const SLACK_LOOKUP_BATCH = 8;
+/**
+ * A typed `/inc escalate` (no step) right after the run paged a level is refused for this long: whoever typed it most
+ * likely saw the run before that page (someone else escalated, or the level timed out), so it would skip a level.
+ */
+export const SLACK_ESCALATE_WINDOW_MS = 30_000;
 /** Attempts at one job of an event before it is recorded as failed (`notification.failSlack`). */
 export const SLACK_MAX_ATTEMPTS = 5;
 /** Backoff between attempts: 5, 10, 20, 40 s, or Slack's `Retry-After` when longer. */
@@ -91,6 +105,7 @@ const SCHEMA = `
     incident_id text not null,
     at integer not null
   ) without rowid;
+  -- claimed_until: no longer read (the claim is slack_claims'); kept, always 0, for shards that made the table.
   create table if not exists slack_messages (
     incident_id text primary key,
     channel text,
@@ -129,6 +144,25 @@ const SCHEMA = `
     entry_id text primary key,
     at integer not null
   ) without rowid;
+  create table if not exists slack_claims (
+    incident_id text primary key,
+    event_id text not null,
+    until integer not null
+  ) without rowid;
+  create table if not exists slack_lookups (
+    event_id text not null,
+    user_id text not null,
+    slack_user_id text,
+    done integer not null,
+    at integer not null,
+    primary key (event_id, user_id)
+  ) without rowid;
+  create table if not exists slack_updates (
+    key text primary key,
+    incident_id text not null,
+    entry_id text not null,
+    at integer not null
+  ) without rowid;
 `;
 
 /** What a Slack user asked for, as the bridge passes it on (the assignee of `role` already mapped to a member). */
@@ -139,13 +173,21 @@ export type SlackShardTarget = {
   threadTs?: string;
 };
 export type SlackShardAction =
-  | { kind: "declare"; title: string; severity: Severity; typeId?: string; serviceIds?: string[] }
+  | {
+      kind: "declare";
+      title: string;
+      severity: Severity;
+      typeId?: string;
+      serviceIds?: string[];
+      /** The form sent a type or service the bridge could not read: declared without it, and the person told. */
+      dropped?: boolean;
+    }
   | ({ kind: "ack" } & SlackShardTarget)
   | ({ kind: "update"; body: string; fromMessage?: boolean } & SlackShardTarget)
   | ({ kind: "severity"; severity: Severity } & SlackShardTarget)
   | ({ kind: "resolve" } & SlackShardTarget)
   | ({ kind: "role"; role: string; userId: string } & SlackShardTarget)
-  | ({ kind: "escalate" } & SlackShardTarget);
+  | ({ kind: "escalate"; step?: number } & SlackShardTarget);
 
 /** One thing the notifier does in Slack for an event, in order (see `SlackDesk.plan`). */
 export type SlackWork =
@@ -159,8 +201,13 @@ export type SlackWork =
     }
   /** Create the incident's channel. */
   | { kind: "channel"; number: number | null; title: string; private: boolean }
-  /** Invite these members (by their verified email, mapped to Slack users) to the incident's channel. */
-  | { kind: "invite"; channel: string; userIds: string[] }
+  /**
+   * Find these members in Slack by their verified email (at most `SLACK_LOOKUP_BATCH`); the answer comes back as
+   * `people` and is kept for the invite.
+   */
+  | { kind: "lookup"; userIds: string[] }
+  /** Invite these Slack users (the members the lookups found) to the incident's channel. */
+  | { kind: "invite"; channel: string; users: string[] }
   /** Mirror a timeline entry: in the incident's channel, or under the main message (`threadTs`). */
   | { kind: "entry"; channel: string; threadTs: string | null; entry: SlackEntryView }
   | { kind: "archive"; channel: string }
@@ -190,6 +237,15 @@ export type SlackPlan =
    * event done, or nothing for it to change (an incident with no message and no channel).
    */
   | { send: false; reason: "not_slack" | "not_configured" | "not_found" | "done" | "no_message" };
+
+/**
+ * What doing a job did: `name` for a channel made, `people` for a lookup (each member's Slack user, null for nobody
+ * Slack vouches for).
+ */
+export type SlackJobOutcome = SlackPostOutcome & {
+  name?: string;
+  people?: Record<string, string | null>;
+};
 
 /** A job, before it is planned: its ledger key and what it does, with the token it uses. */
 type Job = {
@@ -327,12 +383,25 @@ export class SlackDesk {
     // A replay never runs the mutation again: it answers with what the first request did.
     if (reserved) {
       const incident = shard.store.get("incidents", reserved.incident_id);
-      if (incident) return declared(incident);
-      if (stored) return stored.ok ? refused("not_found") : refusedBy(stored.error.code);
+      if (incident) return { ...declared(incident), replayed: true };
+      if (stored) {
+        return {
+          ...(stored.ok ? refused("not_found") : refusedBy(stored.error.code)),
+          replayed: true,
+        };
+      }
     } else if (stored) {
       // Ran, but which incident it declared is unknown: refuse rather than declare a second one.
-      return stored.ok ? refused("failed") : refusedBy(stored.error.code);
+      return { ...(stored.ok ? refused("failed") : refusedBy(stored.error.code)), replayed: true };
     }
+    // A type or services picked in the form and deleted since: declared without them, and the person is told.
+    const type =
+      action.typeId === undefined ? undefined : shard.store.get("incident_types", action.typeId);
+    const serviceIds = (action.serviceIds ?? []).filter((one) => shard.store.get("services", one));
+    const dropped =
+      action.dropped === true ||
+      (action.typeId !== undefined && !type) ||
+      serviceIds.length < (action.serviceIds?.length ?? 0);
     // The incident's id is kept before the mutation runs, so a retry declares that same incident or none.
     const id = reserved?.incident_id ?? newId("inc", now, this.options.randomBytes);
     if (!reserved) {
@@ -352,14 +421,14 @@ export class SlackDesk {
         id,
         title: action.title,
         severity: action.severity,
-        ...(action.typeId === undefined ? {} : { typeId: action.typeId }),
-        ...(action.serviceIds === undefined ? {} : { serviceIds: action.serviceIds }),
+        ...(type ? { typeId: type.id } : {}),
+        ...(serviceIds.length > 0 ? { serviceIds } : {}),
       },
       now,
     });
     if (!result.ok) return refusedBy(result.error.code);
     this.options.committed(result.version, changes);
-    return declared(shard.store.get("incidents", id)!);
+    return { ...declared(shard.store.get("incidents", id)!), ...(dropped && { dropped: true }) };
   }
 
   private acknowledge(
@@ -372,9 +441,18 @@ export class SlackDesk {
     const found = this.target(action, { waiting: true });
     if (!found.ok) return found.refusal;
     const incident = found.incident;
-    const { result } = this.run(actor, "incident.ack", { id: incident.id }, `ack:${key}`, now);
-    if (!result.ok) return { ...refusedBy(result.error.code), incident: summary(incident) };
-    return { ok: true, did: "acknowledged", incident: summary(incident) };
+    const { result, replayed } = this.run(
+      actor,
+      "incident.ack",
+      { id: incident.id },
+      `ack:${key}`,
+      now,
+    );
+    const again = replayed ? { replayed: true as const } : {};
+    if (!result.ok) {
+      return { ...refusedBy(result.error.code), incident: summary(incident), ...again };
+    }
+    return { ok: true, did: "acknowledged", incident: summary(incident), ...again };
   }
 
   /** `/inc update`, `sev`, `resolve`, `role`, `escalate`, and `!update` / the shortcut. */
@@ -392,11 +470,20 @@ export class SlackDesk {
     const { incident } = found;
     const { store } = this.options.shard;
     const mutationId = `${action.kind}:${key}`;
+    // Whether the answer is a replay's (`run` found the result stored): the Events API's retries are not answered twice.
+    let replayed = false;
+    const again = () => (replayed ? { replayed: true as const } : {});
+    const run = (name: string, args: Record<string, unknown>, internal = false) => {
+      const ran = this.run(actor, name, args, mutationId, now, internal);
+      replayed = ran.replayed;
+      return ran;
+    };
     const done = (did: Extract<SlackActOutcome, { ok: true }>["did"], more = {}) => ({
       ok: true as const,
       did,
       incident: summary(store.get("incidents", incident.id) ?? incident),
       ...more,
+      ...again(),
     });
     const refuse = (
       code: MutationErrorCode,
@@ -404,16 +491,29 @@ export class SlackDesk {
     ) => ({
       ...(instead[code] ? refused(instead[code]) : refusedBy(code)),
       incident: summary(incident),
+      ...again(),
     });
     switch (action.kind) {
       case "update": {
-        const { result, changes } = this.run(
-          actor,
-          "incident.postUpdate",
-          { id: incident.id, body: action.body },
-          mutationId,
-          now,
-        );
+        // A Slack message is one update, whoever posts it (`!update`, then the shortcut on it): its key names the
+        // message, and the update it made is kept by that key.
+        if (action.fromMessage) {
+          const [posted] = this.sql
+            .exec<{ incident_id: string }>(
+              "select incident_id from slack_updates where key = ?",
+              key,
+            )
+            .toArray();
+          if (posted) {
+            replayed = true;
+            const target = store.get("incidents", posted.incident_id) ?? incident;
+            return { ok: true, did: "updated", incident: summary(target), replayed: true };
+          }
+        }
+        const { result, changes } = run("incident.postUpdate", {
+          id: incident.id,
+          body: action.body,
+        });
         if (!result.ok) return refuse(result.error.code, { invalid_args: "invalid_update" });
         // Already in the channel as a Slack message: the mirror does not post it again.
         const entry = changes.find((change) => change.table === "timeline" && change.after);
@@ -423,28 +523,29 @@ export class SlackDesk {
             entry.id,
             now,
           );
+          this.sql.exec(
+            "insert or ignore into slack_updates (key, incident_id, entry_id, at) values (?, ?, ?, ?)",
+            key,
+            incident.id,
+            entry.id,
+            now,
+          );
         }
         return done("updated");
       }
       case "severity": {
-        const { result } = this.run(
-          actor,
-          "incident.setSeverity",
-          { id: incident.id, severity: action.severity },
-          mutationId,
-          now,
-        );
+        const { result } = run("incident.setSeverity", {
+          id: incident.id,
+          severity: action.severity,
+        });
         if (!result.ok) return refuse(result.error.code, { conflict: "unchanged" });
         return done("severity", { severity: action.severity });
       }
       case "resolve": {
-        const { result } = this.run(
-          actor,
-          "incident.setStatus",
-          { id: incident.id, status: "resolved" satisfies IncidentStatus },
-          mutationId,
-          now,
-        );
+        const { result } = run("incident.setStatus", {
+          id: incident.id,
+          status: "resolved" satisfies IncidentStatus,
+        });
         if (!result.ok) return refuse(result.error.code, { conflict: "not_active" });
         return done("resolved");
       }
@@ -464,13 +565,11 @@ export class SlackDesk {
             roles: roles.map((one): SlackRoleName => ({ id: one.id, name: one.name })),
           };
         }
-        const { result } = this.run(
-          actor,
-          "incident.assignRole",
-          { id: incident.id, role: role.id, userId: action.userId },
-          mutationId,
-          now,
-        );
+        const { result } = run("incident.assignRole", {
+          id: incident.id,
+          role: role.id,
+          userId: action.userId,
+        });
         if (!result.ok) {
           // The member chosen is what is wrong: a viewer, or not in the shard's member list.
           if (result.error.code === "invalid_args") {
@@ -482,24 +581,48 @@ export class SlackDesk {
         return done("role", { role: { id: role.id, name: role.name } satisfies SlackRoleName });
       }
       case "escalate": {
-        const run = incident.escalation;
+        const escalation = incident.escalation;
+        const stored = this.options.shard.storedResult(actor.id, SLACK_CLIENT_ID, mutationId, now);
+        // A replay answers as the first request did, whatever the run did since.
+        if (stored) {
+          replayed = true;
+          return stored.ok
+            ? done("escalated")
+            : refuse(stored.error.code, { not_found: "not_escalating", conflict: "unchanged" });
+        }
         if (incident.acknowledgedAt != null && isActive(incident.status)) {
           return { ...refused("already"), incident: summary(incident) };
         }
         if (!isActive(incident.status))
           return { ...refused("not_active"), incident: summary(incident) };
-        if (!run || run.status !== "running") {
+        if (!escalation || escalation.status !== "running") {
           return { ...refused("not_escalating"), incident: summary(incident) };
         }
-        const { result } = this.run(
-          actor,
+        // What the person saw: the step the request carries (a button or message that knew it), else the run's last
+        // page, which must be older than `SLACK_ESCALATE_WINDOW_MS`: a page that young was most likely not on their
+        // screen (two people escalating at once, or the level's timeout just fired), and escalating again would skip
+        // a level. `escalation.now` refuses a step the run moved past.
+        const last = escalation.pages[escalation.pages.length - 1];
+        if (
+          action.step === undefined &&
+          last &&
+          last.level !== null &&
+          now - last.at < SLACK_ESCALATE_WINDOW_MS
+        ) {
+          return { ...refused("just_paged"), incident: summary(incident), level: last.level };
+        }
+        const { result } = run(
           "escalation.now",
-          { incidentId: incident.id, step: run.paged },
-          mutationId,
-          now,
+          { incidentId: incident.id, step: action.step ?? escalation.paged },
           true,
         );
         if (!result.ok) {
+          const moved = store.get("incidents", incident.id)?.escalation;
+          const level = moved?.pages[moved.pages.length - 1]?.level;
+          // The step the person saw is behind the run: the level after it was paged meanwhile.
+          if (result.error.code === "conflict" && moved?.status === "running" && level != null) {
+            return { ...refused("just_paged"), incident: summary(incident), level };
+          }
           return refuse(result.error.code, {
             not_found: "not_escalating",
             conflict: "unchanged",
@@ -518,10 +641,10 @@ export class SlackDesk {
     mutationId: string,
     now: number,
     internal = false,
-  ): { result: MutationResultMessage; changes: readonly RowChange[] } {
+  ): { result: MutationResultMessage; changes: readonly RowChange[]; replayed: boolean } {
     const { shard } = this.options;
     const stored = shard.storedResult(actor.id, SLACK_CLIENT_ID, mutationId, now);
-    if (stored) return { result: stored, changes: [] };
+    if (stored) return { result: stored, changes: [], replayed: true };
     const { result, changes } = shard.mutate({
       clientId: SLACK_CLIENT_ID,
       mutationId,
@@ -532,7 +655,7 @@ export class SlackDesk {
       ...(internal ? { internal: true } : {}),
     });
     if (result.ok) this.options.committed(result.version, changes);
-    return { result, changes };
+    return { result, changes, replayed: false };
   }
 
   /**
@@ -660,22 +783,34 @@ export class SlackDesk {
       return { send: false, reason: "not_configured" };
     }
     const incident = store.get("incidents", event.subject!);
-    if (!incident) return { send: false, reason: "not_found" };
-    const message = this.message(incident.id);
-    if (message && message.claimed_until > now) {
-      return { send: false, reason: "held", until: message.claimed_until };
+    if (!incident) {
+      this.release(event);
+      return { send: false, reason: "not_found" };
+    }
+    const [claim] = this.sql
+      .exec<{ event_id: string; until: number }>(
+        "select event_id, until from slack_claims where incident_id = ?",
+        incident.id,
+      )
+      .toArray();
+    // Another event's jobs are under way: this one waits, so the two never interleave.
+    if (claim && claim.event_id !== event.id && claim.until > now) {
+      return { send: false, reason: "held", until: claim.until };
     }
     const jobs = this.jobs(event, incident, connection, now);
     for (const job of jobs) {
       const row = this.job(event.id, job.key);
       if (row?.done) continue;
-      if (row && row.retry_at > now) return { send: false, reason: "held", until: row.retry_at };
+      if (row && row.retry_at > now) {
+        this.release(event);
+        return { send: false, reason: "held", until: row.retry_at };
+      }
       this.sql.exec(
-        `insert into slack_messages (incident_id, channel, ts, claimed_until, at) values (?, null, null, ?, ?)
-         on conflict (incident_id) do update set claimed_until = excluded.claimed_until, at = excluded.at`,
+        `insert into slack_claims (incident_id, event_id, until) values (?, ?, ?)
+         on conflict (incident_id) do update set event_id = excluded.event_id, until = excluded.until`,
         incident.id,
+        event.id,
         now + SLACK_CLAIM_MS,
-        now,
       );
       return {
         send: true,
@@ -687,9 +822,20 @@ export class SlackDesk {
       };
     }
     this.finish(event.id, now);
+    this.release(event);
     return jobs.length === 0
       ? { send: false, reason: "no_message" }
       : { send: false, reason: "done" };
+  }
+
+  /** Lets go of the incident's Slack work, if `event` holds it: the next event of the incident goes on at once. */
+  private release(event: BrigadeEvent): void {
+    if (!event.subject?.startsWith("inc_")) return;
+    this.sql.exec(
+      "delete from slack_claims where incident_id = ? and event_id = ?",
+      event.subject,
+      event.id,
+    );
   }
 
   /** The jobs `event` asks for, in the order they run, from the incident and its Slack state as they are now. */
@@ -750,13 +896,18 @@ export class SlackDesk {
         });
       }
     };
+    // The members are found in Slack first, a few per job (`SLACK_LOOKUP_BATCH`), then invited in one job.
     const invite = (userIds: string[]) => {
       const members = this.members(userIds);
-      if (open && members.length > 0) {
-        jobs.push({
-          key: "invite",
-          work: { kind: "invite", channel: open.channel_id, userIds: members },
-        });
+      if (!open || members.length === 0) return;
+      const batch = this.lookupBatch(event.id, members, now);
+      if (batch.length > 0) {
+        jobs.push({ key: `lookup:${batch[0]}`, work: { kind: "lookup", userIds: batch } });
+        return;
+      }
+      const users = this.found(event.id, members);
+      if (users.length > 0) {
+        jobs.push({ key: "invite", work: { kind: "invite", channel: open.channel_id, users } });
       }
     };
     switch (event.type) {
@@ -836,10 +987,14 @@ export class SlackDesk {
     return jobs;
   }
 
-  /** `slack.disconnected`, or `slack.connected` replacing another team: the token kept for that team, revoked. */
+  /**
+   * `slack.disconnected`, or `slack.connected` replacing a token (another team's, or the same team's older one): the
+   * token kept for that team, revoked, unless it is the one the workspace holds again.
+   */
   private planRevoke(event: BrigadeEvent, now: number): SlackPlan {
     const data = Object(event.data) as Record<string, unknown>;
-    const teamId = event.type === "slack.disconnected" ? data.teamId : data.replaced;
+    const teamId =
+      event.type === "slack.disconnected" ? data.teamId : (data.replaced ?? data.teamId);
     const { store } = this.options.shard;
     const kept = typeof teamId === "string" ? store.get("slack_revocations", teamId) : undefined;
     const key = kept ? `revoke:${kept.at}` : "";
@@ -873,23 +1028,20 @@ export class SlackDesk {
   record(
     event: BrigadeEvent,
     job: string,
-    outcome: SlackPostOutcome & { name?: string },
+    outcome: SlackJobOutcome,
     now: number,
   ): { retryAt: number | null } {
     if (!asksForSlack(event)) return { retryAt: null };
     const incidentId = event.subject?.startsWith("inc_") ? event.subject : null;
-    if (incidentId) {
-      this.sql.exec(
-        "update slack_messages set claimed_until = 0 where incident_id = ?",
-        incidentId,
-      );
-    }
     if (outcome.ok) {
-      this.kept(job, incidentId, outcome, now);
+      this.kept(job, incidentId, outcome, now, event.id);
       this.doneJob(event.id, job, now);
       return { retryAt: null };
     }
     const attempts = (this.job(event.id, job)?.attempts ?? 0) + 1;
+    // A job that failed lets go of the incident: the event waits for its retry (or moves on), and another event of
+    // the incident may go first meanwhile.
+    this.release(event);
     this.options.log("slack job failed", {
       event: event.id,
       job,
@@ -912,6 +1064,13 @@ export class SlackDesk {
       return { retryAt };
     }
     this.doneJob(event.id, job, now, attempts);
+    // Members a lookup could not find stay out of the invite; the rest of the event's lookups go on.
+    if (job.startsWith("lookup:")) {
+      this.sql.exec(
+        "update slack_lookups set done = 1, slack_user_id = null where event_id = ? and done = 0",
+        event.id,
+      );
+    }
     // A token that could not be given back is forgotten anyway: Brigade keeps nothing it does not use.
     if (job.startsWith("revoke:")) {
       this.kept(job, null, { ok: true, channel: "", ts: "" }, now);
@@ -942,10 +1101,28 @@ export class SlackDesk {
   private kept(
     job: string,
     incidentId: string | null,
-    outcome: Extract<SlackPostOutcome, { ok: true }> & { name?: string },
+    outcome: Extract<SlackPostOutcome, { ok: true }> &
+      Omit<SlackJobOutcome, keyof SlackPostOutcome>,
     now: number,
+    eventId?: string,
   ): void {
-    if (job === "message:main" && incidentId) {
+    if (job.startsWith("lookup:") && eventId) {
+      const people = outcome.people ?? {};
+      for (const { user_id: userId } of this.sql
+        .exec<{ user_id: string }>(
+          "select user_id from slack_lookups where event_id = ? and done = 0",
+          eventId,
+        )
+        .toArray()) {
+        const found = people[userId];
+        this.sql.exec(
+          "update slack_lookups set done = 1, slack_user_id = ? where event_id = ? and user_id = ?",
+          typeof found === "string" ? found : null,
+          eventId,
+          userId,
+        );
+      }
+    } else if (job === "message:main" && incidentId) {
       this.sql.exec(
         `insert into slack_messages (incident_id, channel, ts, claimed_until, at) values (?, ?, ?, 0, ?)
          on conflict (incident_id) do update set channel = excluded.channel, ts = excluded.ts, at = excluded.at`,
@@ -1123,6 +1300,47 @@ export class SlackDesk {
     ];
   }
 
+  /**
+   * The members of `event`'s invite to look up next: the batch a lookup job of it is doing (planned, not yet kept),
+   * else the next `SLACK_LOOKUP_BATCH` nobody looked up yet for it, held as that batch from now on. Empty when all
+   * were.
+   */
+  private lookupBatch(eventId: string, members: string[], now: number): string[] {
+    const rows = this.sql
+      .exec<{ user_id: string; done: number }>(
+        "select user_id, done from slack_lookups where event_id = ?",
+        eventId,
+      )
+      .toArray();
+    const doing = rows.filter((row) => !row.done).map((row) => row.user_id);
+    if (doing.length > 0) return doing;
+    const looked = new Set(rows.map((row) => row.user_id));
+    const batch = members.filter((id) => !looked.has(id)).slice(0, SLACK_LOOKUP_BATCH);
+    for (const userId of batch) {
+      this.sql.exec(
+        "insert into slack_lookups (event_id, user_id, slack_user_id, done, at) values (?, ?, null, 0, ?)",
+        eventId,
+        userId,
+        now,
+      );
+    }
+    return batch;
+  }
+
+  /** The Slack users `event`'s lookups found for `members`. */
+  private found(eventId: string, members: string[]): string[] {
+    const wanted = new Set(members);
+    return this.sql
+      .exec<{ user_id: string; slack_user_id: string | null }>(
+        "select user_id, slack_user_id from slack_lookups where event_id = ? and done = 1",
+        eventId,
+      )
+      .toArray()
+      .flatMap((row) =>
+        wanted.has(row.user_id) && row.slack_user_id !== null ? [row.slack_user_id] : [],
+      );
+  }
+
   /** `userIds` that are members, each once, at most `SLACK_MAX_INVITES`. */
   private members(userIds: string[]): string[] {
     const { store } = this.options.shard;
@@ -1171,8 +1389,8 @@ export class SlackDesk {
 
   private message(incidentId: string) {
     return this.sql
-      .exec<{ channel: string | null; ts: string | null; claimed_until: number }>(
-        "select channel, ts, claimed_until from slack_messages where incident_id = ?",
+      .exec<{ channel: string | null; ts: string | null }>(
+        "select channel, ts from slack_messages where incident_id = ?",
         incidentId,
       )
       .toArray()[0];
@@ -1213,6 +1431,9 @@ export class SlackDesk {
       this.sql.exec("delete from slack_events where at < ?", before);
       this.sql.exec("delete from slack_jobs where at < ?", before);
       this.sql.exec("delete from slack_inbound where at < ?", before);
+      this.sql.exec("delete from slack_lookups where at < ?", before);
+      this.sql.exec("delete from slack_updates where at < ?", before);
+      this.sql.exec("delete from slack_claims where until <= ?", now);
       // By last use, and never an active incident's: its next change still updates the message it has.
       const { store } = this.options.shard;
       for (const table of ["slack_messages", "slack_channels"] as const) {

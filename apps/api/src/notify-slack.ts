@@ -19,7 +19,7 @@ import {
 } from "@freecorps/brigade-slack/notifier";
 import { callSlack } from "@freecorps/brigade-slack/web-api";
 import type { BrigadeEvent } from "./outbox.ts";
-import { asksForSlack, type SlackPlan } from "./slack.ts";
+import { asksForSlack, type SlackJobOutcome, type SlackPlan } from "./slack.ts";
 import { isTokenKey, openToken, tokenBinding } from "./slack-token.ts";
 
 /**
@@ -56,7 +56,7 @@ export async function notifySlack(
   for (let step = 0; step < SLACK_MAX_JOBS; step++) {
     const plan = await shard.planSlack(event);
     if (!plan.send) return plan.reason === "held" ? secondsUntil(plan.until, now()) : undefined;
-    let outcome: SlackPostOutcome & { name?: string };
+    let outcome: SlackJobOutcome;
     try {
       const token = await openToken(
         env.SLACK_TOKEN_KEY,
@@ -89,7 +89,7 @@ async function perform(
   env: SlackNotifyEnv,
   send: Fetch,
   now: () => number,
-): Promise<SlackPostOutcome & { name?: string }> {
+): Promise<SlackJobOutcome> {
   const timeoutMs = SLACK_CALL_TIMEOUT_MS;
   const { work } = plan;
   switch (work.kind) {
@@ -111,10 +111,16 @@ async function perform(
         fetch: send,
         timeoutMs,
       });
-    case "invite": {
-      const users = await slackUsers(plan.teamId, work.userIds, token, env, send, now);
-      return inviteToChannel({ token, channel: work.channel, users, fetch: send, timeoutMs });
-    }
+    case "lookup":
+      return slackUsers(plan.teamId, work.userIds, token, env, send, now);
+    case "invite":
+      return inviteToChannel({
+        token,
+        channel: work.channel,
+        users: work.users,
+        fetch: send,
+        timeoutMs,
+      });
     case "entry":
       return postEntry({
         token,
@@ -157,8 +163,10 @@ async function perform(
 const DEAD_TOKEN = new Set(["invalid_auth", "token_revoked", "account_inactive", "not_authed"]);
 
 /**
- * The Slack users members are, by their verified Brigade email (the same rule as who a Slack user is, RFC 0011):
- * an unverified address invites nobody. Best effort: someone Slack does not know is left out.
+ * The Slack users members are, by their verified Brigade email (the same rule as who a Slack user is, RFC 0011): an
+ * unverified address, or one Slack does not vouch for, is nobody. A batch (`SLACK_LOOKUP_BATCH`) at once, each call
+ * bounded, so the job fits the claim; Slack failing for any of them (a 429 with its `Retry-After`) fails the job, which
+ * the ledger retries.
  */
 async function slackUsers(
   teamId: string,
@@ -167,19 +175,38 @@ async function slackUsers(
   env: SlackNotifyEnv,
   send: Fetch,
   now: () => number,
-): Promise<string[]> {
-  if (!env.DB || userIds.length === 0) return [];
+): Promise<SlackJobOutcome> {
+  const people: Record<string, string | null> = Object.fromEntries(userIds.map((id) => [id, null]));
+  if (!env.DB || userIds.length === 0) return { ok: true, channel: "", ts: "", people };
   const { results } = await env.DB.prepare(
-    `select email from "user" where "emailVerified" = 1 and id in (${userIds.map(() => "?").join(", ")})`,
+    `select id, email from "user" where "emailVerified" = 1 and id in (${userIds.map(() => "?").join(", ")})`,
   )
     .bind(...userIds)
-    .all<{ email: string }>();
+    .all<{ id: string; email: string }>();
   const found = await Promise.all(
-    results.map((row) =>
-      slackUserByEmail(teamId, row.email, token, send, now(), SLACK_CALL_TIMEOUT_MS),
-    ),
+    results.map(async (row) => ({
+      userId: row.id,
+      lookup: await slackUserByEmail(teamId, row.email, token, send, now(), SLACK_CALL_TIMEOUT_MS),
+    })),
   );
-  return found.filter((id): id is string => id !== null);
+  let failure: Extract<SlackPostOutcome, { ok: false }> | undefined;
+  for (const { userId, lookup } of found) {
+    if (lookup.ok) {
+      people[userId] = lookup.id;
+      continue;
+    }
+    // The failure that speaks for the job: one worth retrying, then the one that waits longest (a 429's
+    // `Retry-After` is never cut short).
+    if (
+      !failure ||
+      (lookup.retryable && !failure.retryable) ||
+      (lookup.retryable === failure.retryable &&
+        (lookup.retryAfterMs ?? 0) > (failure.retryAfterMs ?? 0))
+    ) {
+      failure = lookup;
+    }
+  }
+  return failure ?? { ok: true, channel: "", ts: "", people };
 }
 
 /** Whole seconds until `at`, at least 1: the Queue's `delaySeconds`. */

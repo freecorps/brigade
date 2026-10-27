@@ -111,8 +111,10 @@ lookup that finds the shard on another team, or none, ignores it and the next in
 `slack.disconnected` the Slack notifier opens the kept token and gives it back with `auth.revoke`, then
 `slack.forgetToken` deletes it (`slack.token_forgotten`). A token Slack no longer takes (`invalid_auth`,
 `token_revoked`) counts as revoked; one the workspace holds again for the same team (Slack can answer a reinstall
-with the same token) is kept, not revoked; after the retries it is forgotten anyway. `slack.connect` to another
-team keeps the replaced team's token the same way, revoked on that `slack.connected`.
+with the same token) is kept, not revoked; after the retries it is forgotten anyway. `slack.connect` keeps the token
+it replaces the same way, revoked on that `slack.connected`: another team's, or the same team's older one (a reinstall
+Slack answered with a new token). Sealed twice, the same token never reads the same, so the notifier opens both and
+keeps the one Slack handed back again.
 
 **Slack removing the app** ("Events API" below): `app_uninstalled`, or `tokens_revoked` naming the workspace's bot
 user, runs `slack.markRevoked` as the notifier: the token is deleted (it no longer works), the connection is marked
@@ -174,7 +176,8 @@ text (`should_escape: true`), so a user arrives as `<@U…|name>`; what people w
   each, by name). The API opens it: it holds the token and reads the shard's catalog, and it first checks that the
   person maps to a member who may declare, so a viewer is told why without a form. The submission (`view_submission`,
   `callback_id` `brigade_declare`) is answered with an empty 200, which closes the form, and declares in `waitUntil`
-  with the type and services (ids the shard no longer has are left out, as for the dashboard). The form carries the
+  with the type and services. A type or service the bridge cannot read, or the shard no longer has, is left out and
+  the incident is declared all the same; the answer says so, so the person can set them from the dashboard. The form carries the
   command's `response_url` in its `private_metadata`, signed back with the submission, so the answer goes there; a
   URL not on hooks.slack.com answers nobody. One form declares once: the key is the view's id.
 - `/inc ack [INC-12 | 12]`: `incident.ack`, which stops the escalation run.
@@ -189,8 +192,15 @@ text (`should_escape: true`), so a user arrives as `<@U…|name>`; what people w
 - `/inc escalate [INC-12]`: `escalation.now`, a server-only mutation run as the member (`incident:update`), which
   pages the escalation's next level at once instead of at its timeout (after the last level, level 1 of the next
   round while repeats are left; past the last repeat everyone who can respond, and the run ends), with
-  `reason: "manual"` on the page and the timeline. It takes the run's page count as the shard read it, so two people
-  asking at once escalate once. No run under way (no policy, acknowledged, resolved) is answered as such.
+  `reason: "manual"` on the page and the timeline. Past the last repeat that page goes to everyone who can respond,
+  as the timeline says, like a run nobody acknowledged (the commander is not paged first: tested). It never skips a
+  level someone did not see: the request carries the run's page count the person saw (`step`, when a button or
+  message knew it) and `escalation.now` refuses a run that moved past it; a typed `/inc escalate`, which knows none,
+  is refused while the run's last page is younger than 30 s (`SLACK_ESCALATE_WINDOW_MS`), since the person most
+  likely did not see it: two people escalating at once, or escalate racing the level's own timeout. Both are answered
+  "level N was paged just now", and running it again after that escalates. The shard runs one request at a time, so
+  of two at once the first escalates and the second sees its page (tested). No run under way (no policy,
+  acknowledged, resolved) is answered as such.
 - `/inc` or `/inc help`: the usage. Anything else: the usage with "Unknown command".
 
 **Which incident.** A number names one. Without one: the incident whose channel the command was typed in (an
@@ -202,7 +212,7 @@ same RBAC (a viewer gets `forbidden`), mutations, events and timeline entries as
 
 Answers are ephemeral, in the member's language: their Brigade `user.locale`, else Slack's locale for the user,
 else the connection's. They cover each action done; already so (acknowledged, the same severity or holder); no
-longer active; not found; which incident; nothing active; no escalation under way; an unknown role; a person who maps
+longer active; not found; which incident; nothing active; no escalation under way; a level paged just now; an unknown role; a person who maps
 to no member or is a viewer; not allowed (viewer); not a member; Slack not connected to a Brigade workspace; the form
 not opening; and a generic "try again" for anything else (`unavailable`, `internal`). The wording lives in
 `integrations/slack/src/replies.ts`, shared by this Worker and the API, which answers Events API messages itself.
@@ -230,8 +240,10 @@ private ones need the bot invited.
 - **Idempotent per event.** The shard keeps a Slack ledger: events handled (`slack_events`), each job of an event
   (`slack_jobs`, with attempts and the earliest retry; "Jobs" below) and each incident's message (`slack_messages`:
   channel, `ts`). A redelivered event that is done
-  does nothing. A plan claims the incident for 30 s, so two events of one incident in a batch never both post: the
-  second is `held` and retried after the claim, and then updates the message the first posted. A post whose result
+  does nothing. A plan claims the incident for the event (`slack_claims`, 30 s from each job), and the event keeps it
+  from one job to the next until it is done, or a job of it fails and must wait: so two events of one incident in a
+  batch never both post nor interleave their jobs (a mirror line before the message it belongs under). The second is
+  `held` and retried after the claim, and then updates the message the first posted. A post whose result
   could not be recorded (the shard unreachable right after Slack answered) is posted again on the retry: at least
   once, like every delivery here. The ledger lives 15 days, like the page ledger; an incident's message is kept 15
   days from its last use, and for as long as the incident is active.
@@ -251,7 +263,9 @@ private ones need the bot invited.
 Rate limits: `chat.postMessage` allows about one message per second per channel, `chat.update` is Tier 3 (50+ a
 minute), `users.info` Tier 4, `conversations.create` and `conversations.list` Tier 2 (20+ a minute),
 `users.lookupByEmail` and `conversations.invite` Tier 3. A handful of calls per incident change stays far inside
-them; the 429 path covers bursts.
+them; the 429 path covers bursts. An invite's lookups are jobs of their own, 8 members at a time
+(`SLACK_LOOKUP_BATCH`, each call 2.5 s at most, so a job fits the claim), and a 429 on one fails that job with
+Slack's `Retry-After`: retried like any job, nobody left out for it.
 
 ## Jobs
 
@@ -264,13 +278,13 @@ incident's claim covers every job, so two events of one incident never create a 
 
 | Event                              | Jobs                                                                          |
 | ---------------------------------- | ----------------------------------------------------------------------------- |
-| `incident.declared`                | create the channel (when asked for), invite, post in it, post in the main one |
+| `incident.declared`                | create the channel (when asked for), look up, invite, post in it, in the main |
 | `incident.acknowledged`            | update both messages, mirror                                                  |
 | `incident.status_changed`          | update both messages, mirror; a closed incident's channel comes due           |
 | `incident.severity_changed`        | update both messages, mirror                                                  |
 | `incident.update_posted`           | mirror (not an update that came from a Slack message)                         |
-| `incident.role_assigned`           | invite the new holder, mirror                                                 |
-| `escalation.paged`                 | invite whoever was paged                                                      |
+| `incident.role_assigned`           | look up and invite the new holder, mirror                                     |
+| `escalation.paged`                 | look up and invite whoever was paged                                          |
 | `slack.archive_due`                | archive the channel, if the incident is still closed                          |
 | `slack.disconnected`, `.connected` | give back the token let go of (`auth.revoke`)                                 |
 
@@ -292,9 +306,11 @@ null to keep it. A workspace without a main channel can still have incident chan
   bot that creates it is in it. The channel's id is kept in the shard (`slack_channels`), not in a synced row.
 - **Invited**: who declared it, its role holders and whoever its escalation paged so far (`conversations.invite` with
   `force`, at most 50), and later each new role holder (`incident.role_assigned`) and each person paged
-  (`escalation.paged`). A member maps to a Slack user by their **verified** Brigade email (`users.lookupByEmail`, the
-  connected team's own users, cached per isolate for 5 minutes): the same rule as who a Slack user is, the other way.
-  Someone Slack does not know is left out; someone already in the channel is fine.
+  (`escalation.paged`). A member maps to a Slack user by their **verified** Brigade email (`users.lookupByEmail`,
+  cached per isolate for 5 minutes) under the same rule as who a Slack user is, the other way: the connected team's
+  own user, not a Slack Connect stranger, not deleted, not a bot, with that email confirmed by Slack. Anyone else is
+  left out; someone already in the channel is fine. The lookups are jobs before the invite ("Rate limits" above), and
+  an invite takes Slack's 1000 people at a time, every batch.
 - **The incident message** is posted there too, and the main channel's message links to the channel ("Incident
   channel: #inc-12-…"). Both are updated on every change.
 - **Archived** after the delay: a status change that closes the incident sets when (`slack_channels.archive_at`) and
@@ -315,11 +331,16 @@ job).
 
 **Slack to Brigade.** A person's message in an incident's channel (or in the thread of an incident's message) that
 starts with `!update ` becomes `incident.postUpdate` as the member they map to; so does the message shortcut "Post to
-Brigade timeline" (`callback_id` `brigade_post_update`) on any message there. The key is the message (`channel` and
-`ts`), so the same message posted twice, by anyone or by a retried event, is one update. Anywhere else it is refused
-("This isn't an incident's channel"). Such an update is not mirrored back (the shard keeps its entry id in
-`slack_inbound`): it is in the channel already. An `!update` has no `response_url`, so the API answers the person
-with `chat.postEphemeral` in that channel and thread; the shortcut answers through its own `response_url`.
+Brigade timeline" (`callback_id` `brigade_post_update`) on the clicker's **own** message there. An update is in its
+poster's name, so the shortcut on someone else's message, an app's or a bot's (`bot_id`, `app_id`, a `subtype`) is
+refused ("You can only post your own messages"), never posted as the clicker's words: to share what someone said,
+`/inc update` in one's own words, or ask them. The key is the message (`channel` and `ts`), and the shard keeps the
+update each message made (`slack_updates`), so the same message posted twice (`!update`, then the shortcut on it, or
+a retried event) is one update, whoever runs it. Anywhere else it is refused ("This isn't an incident's channel").
+Such an update is not mirrored back (the shard keeps its entry id in `slack_inbound`): it is in the channel already.
+An `!update` has no `response_url`, so the API answers the person with `chat.postEphemeral` in that channel and
+thread, once: a request the shard had already run (Slack retrying an event it thinks went unanswered) is answered
+`replayed`, and the API posts nothing for it. The shortcut answers through its own `response_url`.
 
 ## Events API
 

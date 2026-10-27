@@ -51,6 +51,9 @@ export type Slack_TextInputs = {
 * | "reply_role" | "{person} is now the {detail} of {incident}." |
 * | "reply_escalated" | "Paged the next level of {incident} now." |
 * | "reply_not_escalating" | "{incident} has no escalation under way, so there's no next level to page." |
+* | "reply_just_paged" | "Level {detail} of {incident} was paged just now, so Brigade didn't page the next one too. Wait a moment, or run /inc escalate again if nobody answers." |
+* | "reply_declared_without_picks" | "The incident type or a service you picked no longer exists, so it was declared without it. Set them from the dashboard." |
+* | "reply_not_own_message" | "You can only post your own messages to an incident's timeline. To share what someone else said, use /inc update with your own words, or ask them to post it." |
 * | "reply_unchanged" | "{incident} is already like that." |
 * | "reply_which" | "More than one incident is active: {list}. Say which one, for example /inc {detail} {incident}." |
 * | "reply_no_active" | "No incident is active." |

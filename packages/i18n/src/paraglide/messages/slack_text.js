@@ -47,6 +47,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "reply_role" | "{person} is now the {detail} of {incident}." |
 * | "reply_escalated" | "Paged the next level of {incident} now." |
 * | "reply_not_escalating" | "{incident} has no escalation under way, so there's no next level to page." |
+* | "reply_just_paged" | "Level {detail} of {incident} was paged just now, so Brigade didn't page the next one too. Wait a moment, or run /inc escalate again if nobody answers." |
+* | "reply_declared_without_picks" | "The incident type or a service you picked no longer exists, so it was declared without it. Set them from the dashboard." |
+* | "reply_not_own_message" | "You can only post your own messages to an incident's timeline. To share what someone else said, use /inc update with your own words, or ask them to post it." |
 * | "reply_unchanged" | "{incident} is already like that." |
 * | "reply_which" | "More than one incident is active: {list}. Say which one, for example /inc {detail} {incident}." |
 * | "reply_no_active" | "No incident is active." |
@@ -113,6 +116,9 @@ ${i?.detail}`);
 		if (i?.part === "reply_role") return /** @type {LocalizedString} */ (`${i?.person} agora é ${i?.detail} do ${i?.incident}.`);
 		if (i?.part === "reply_escalated") return /** @type {LocalizedString} */ (`O próximo nível do ${i?.incident} foi chamado agora.`);
 		if (i?.part === "reply_not_escalating") return /** @type {LocalizedString} */ (`O ${i?.incident} não tem um escalonamento em andamento, então não há próximo nível para chamar.`);
+		if (i?.part === "reply_just_paged") return /** @type {LocalizedString} */ (`O nível ${i?.detail} do ${i?.incident} acabou de ser chamado, então o Brigade não chamou o próximo também. Aguarde um momento, ou rode /inc escalate de novo se ninguém responder.`);
+		if (i?.part === "reply_declared_without_picks") return /** @type {LocalizedString} */ (`O tipo de incidente ou um serviço que você escolheu não existe mais, então ele foi declarado sem isso. Defina-os pelo painel.`);
+		if (i?.part === "reply_not_own_message") return /** @type {LocalizedString} */ (`Você só pode publicar as suas próprias mensagens na linha do tempo de um incidente. Para compartilhar o que outra pessoa disse, use /inc update com as suas palavras, ou peça a quem escreveu para publicá-la.`);
 		if (i?.part === "reply_unchanged") return /** @type {LocalizedString} */ (`O ${i?.incident} já está assim.`);
 		if (i?.part === "reply_which") return /** @type {LocalizedString} */ (`Há mais de um incidente ativo: ${i?.list}. Diga qual, por exemplo /inc ${i?.detail} ${i?.incident}.`);
 		if (i?.part === "reply_no_active") return /** @type {LocalizedString} */ (`Nenhum incidente está ativo.`);
@@ -173,6 +179,9 @@ ${i?.detail}`);
 		if (i?.part === "reply_role") return /** @type {LocalizedString} */ (`${i?.person} is now the ${i?.detail} of ${i?.incident}.`);
 		if (i?.part === "reply_escalated") return /** @type {LocalizedString} */ (`Paged the next level of ${i?.incident} now.`);
 		if (i?.part === "reply_not_escalating") return /** @type {LocalizedString} */ (`${i?.incident} has no escalation under way, so there's no next level to page.`);
+		if (i?.part === "reply_just_paged") return /** @type {LocalizedString} */ (`Level ${i?.detail} of ${i?.incident} was paged just now, so Brigade didn't page the next one too. Wait a moment, or run /inc escalate again if nobody answers.`);
+		if (i?.part === "reply_declared_without_picks") return /** @type {LocalizedString} */ (`The incident type or a service you picked no longer exists, so it was declared without it. Set them from the dashboard.`);
+		if (i?.part === "reply_not_own_message") return /** @type {LocalizedString} */ (`You can only post your own messages to an incident's timeline. To share what someone else said, use /inc update with your own words, or ask them to post it.`);
 		if (i?.part === "reply_unchanged") return /** @type {LocalizedString} */ (`${i?.incident} is already like that.`);
 		if (i?.part === "reply_which") return /** @type {LocalizedString} */ (`More than one incident is active: ${i?.list}. Say which one, for example /inc ${i?.detail} ${i?.incident}.`);
 		if (i?.part === "reply_no_active") return /** @type {LocalizedString} */ (`No incident is active.`);

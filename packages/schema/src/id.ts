@@ -45,10 +45,15 @@ export function newId(prefix: string, now: number, random: RandomBytes): string 
   return `${prefix}_${time}${randomness}`;
 }
 
+/** The pattern `isId(prefix, …)` matches, anchored: for JSON Schema and the API reference. */
+export function idPattern(prefix: string): string {
+  checkPrefix(prefix);
+  return `^${prefix}_${ULID}$`;
+}
+
 /** True when `value` is a canonical (upper-case) `<prefix>_<ULID>` id. */
 export function isId(prefix: string, value: unknown): value is string {
-  checkPrefix(prefix);
-  return typeof value === "string" && new RegExp(`^${prefix}_${ULID}$`).test(value);
+  return typeof value === "string" && new RegExp(idPattern(prefix)).test(value);
 }
 
 /** Epoch milliseconds encoded in a prefixed ULID. Throws `RangeError` for anything else. */

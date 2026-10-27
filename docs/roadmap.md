@@ -322,6 +322,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     reordering components; local times on the page; a JSON or RSS feed; the mobile app's publish action; polish of
     the card (slice 2); Q23.
 - [ ] Outbound webhooks; OpenAPI reference; `packages/sdk` published
+  - The OpenAPI 3.1 reference of the public HTTP routes is in `docs/api/openapi.json`, generated from the route list
+    in `apps/api/src/openapi.ts` and the schema package's validators, kept honest by tests, and served at
+    `GET /api/openapi.json` (RFC 0002 "Public HTTP API").
+  - Left: outbound webhooks, then a `webhooks` section in the reference for their payloads; API tokens (their own
+    design first); `packages/sdk` published.
 
 ## Phase 4 — Open source launch (ongoing)
 

@@ -251,6 +251,60 @@ describe("paging through the default policy", () => {
     expect(await ws.escalation(incident)).toBeUndefined();
   });
 
+  test("an incident type's own policy pages its incidents, with or without a default", async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    const policy = newId("esc", Date.now(), random);
+    await ws.run(
+      ana,
+      "escalation.createPolicy",
+      {
+        id: policy,
+        name: "Payments",
+        levels: [
+          {
+            id: newId("lvl", Date.now(), random),
+            targets: [{ kind: "member", id: eva.id }],
+            timeoutMinutes: 5,
+          },
+        ],
+        repeat: 0,
+        isDefault: false,
+      },
+      false,
+    );
+    const type = newId("typ", Date.now(), random);
+    await ws.run(
+      ana,
+      "incidentType.create",
+      {
+        id: type,
+        name: "Payments outage",
+        description: "",
+        defaultSeverity: "sev1",
+        escalationPolicyId: policy,
+        requiredFields: [],
+      },
+      false,
+    );
+    const incident = newId("inc", Date.now(), random);
+    await ws.run(caio, "incident.declare", {
+      id: incident,
+      title: "Card payments fail",
+      typeId: type,
+    });
+    const event = (await ws.events(incident)).find((e) => e.type === "incident.declared")!;
+    const { tokens, send } = relay();
+    await deliver(event, send);
+    expect(await pagedMembers(ws, tokens)).toEqual([eva.id]);
+    expect(await ws.escalation(incident)).toMatchObject({ policyId: policy, status: "running" });
+    // Without a type, and with no default, the interim rule still pages everyone who can respond.
+    const { event: plain } = await ws.declare(MONITOR_ACTOR);
+    const other = relay();
+    await deliver(plain, other.send);
+    expect(await pagedMembers(ws, other.tokens)).toEqual([bia.id, caio.id, eva.id]);
+  });
+
   test("a declared incident pages only whoever is on call, and arms the alarm for the next level", async () => {
     const ws = await workspace();
     for (const member of [bia, caio, eva]) await ws.device(member);

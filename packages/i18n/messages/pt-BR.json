@@ -753,6 +753,16 @@
         "kind=status_corrected_edited": "{actor} corrigiu uma atualização na página de status",
         "kind=status_corrected_removed": "{actor} removeu uma atualização da página de status",
         "kind=status_corrected_withdrawn": "{actor} tirou o incidente da página de status",
+        "kind=type_set": "{actor} definiu o tipo como {a}",
+        "kind=type_changed": "{actor} mudou o tipo de {a} para {b}",
+        "kind=type_cleared": "{actor} tirou o tipo {a}",
+        "kind=type_cleared_deleted": "{actor} tirou o tipo",
+        "kind=services_added": "{actor} citou {a} como afetado",
+        "kind=services_removed": "{actor} tirou {a} dos serviços afetados",
+        "kind=services_changed": "{actor} citou {a} como afetado e tirou {b}",
+        "kind=services_updated": "{actor} mudou os serviços afetados",
+        "kind=field_set": "{actor} definiu {a} como {b}",
+        "kind=field_cleared": "{actor} limpou {a}",
         "kind=*": "{actor} alterou o incidente"
       }
     }
@@ -1981,6 +1991,175 @@
         "part=corrected": "Corrigido. Visitantes podem ainda ver a versão anterior por cerca de 2 minutos.",
         "part=correct_failed": "Não foi possível alterar a página de status. Tente de novo.",
         "part=*": "Página de status"
+      }
+    }
+  ],
+  "catalog_text": [
+    {
+      "declarations": ["input text", "input name", "input reason"],
+      "selectors": ["text"],
+      "match": {
+        "text=services_title": "Serviços",
+        "text=services_empty": "Nenhum serviço ainda. Liste o que vocês operam, quem é responsável e quão crítico é, para que os incidentes digam o que afetam.",
+        "text=unowned": "Sem responsável",
+        "text=policy_named": "Escalonamento: {name}",
+        "text=no_policy": "Sem política de escalonamento",
+        "text=policy_note": "Guardada para as rotas de alerta: os chamados ainda passam pela política do tipo de incidente, pela do monitor ou pela padrão.",
+        "text=back": "Visão geral",
+        "text=loading": "Carregando o serviço…",
+        "text=not_found_title": "Serviço não encontrado",
+        "text=not_found": "Não existe esse serviço neste espaço de trabalho. Talvez tenha sido excluído.",
+        "text=active_incidents": "Incidentes ativos",
+        "text=active_none": "Nenhum incidente ativo cita este serviço.",
+        "text=owners": "Responsáveis",
+        "text=description": "Descrição",
+        "text=no_description": "Sem descrição.",
+        "text=gone": "Não existe mais.",
+        "text=change_failed": "Não foi possível alterar {name}: {reason}",
+        "text=delete_service": "Excluir {name}? Os incidentes que o citam deixam de mostrá-lo.",
+        "text=delete_type": "Excluir {name}? Os incidentes dele mantêm os campos e mostram o tipo como excluído.",
+        "text=delete_field": "Excluir {name}? Os valores deixam de aparecer em todos os incidentes e os tipos deixam de exigi-lo.",
+        "text=settings_title": "Tipos e campos de incidente",
+        "text=types_title": "Tipos",
+        "text=types_empty": "Nenhum tipo de incidente ainda. Um tipo define a severidade com que uma declaração começa, a política de escalonamento dos chamados e os campos de que precisa.",
+        "text=fields_title": "Campos personalizados",
+        "text=fields_empty": "Nenhum campo personalizado ainda. Um campo acrescenta um detalhe tipado a cada incidente: texto, uma escolha, várias escolhas, um número ou um link.",
+        "text=no_default_severity": "Sem severidade padrão",
+        "text=pages_through": "Aciona por {name}",
+        "text=pages_default": "Sem política própria: aciona pela do monitor ou pela padrão",
+        "text=requires": "Exige {name}",
+        "text=requires_none": "Não exige campos",
+        "text=kind_text": "Texto",
+        "text=kind_single_select": "Uma escolha",
+        "text=kind_multi_select": "Várias escolhas",
+        "text=kind_number": "Número",
+        "text=kind_link": "Link",
+        "text=kind_fixed": "O tipo de um campo não muda depois que ele existe.",
+        "text=option_none": "Nenhuma",
+        "text=severity_none": "Sem padrão (o do formulário)",
+        "text=policy_default": "A política padrão",
+        "text=details_title": "Detalhes",
+        "text=type_label": "Tipo",
+        "text=no_type": "Sem tipo",
+        "text=deleted_type": "Tipo excluído",
+        "text=services_label": "Serviços afetados",
+        "text=no_services": "Nenhum citado ainda",
+        "text=add_service": "Adicionar um serviço",
+        "text=not_set": "Não preenchido",
+        "text=required": "Exigido pelo tipo",
+        "text=required_badge": "Obrigatório",
+        "text=required_note": "Campos obrigatórios nunca atrasam a declaração, os chamados ou a resolução; depois de preenchidos podem mudar, mas não ficar vazios.",
+        "text=catalog_link": "Edite tipos e campos na visão geral.",
+        "text=dropped": "Pessoas ou escalas que não existem mais foram tiradas dos responsáveis.",
+        "text=deleted_schedule": "Escala excluída",
+        "text=deleted_service": "Serviço excluído",
+        "text=group_schedules": "Escalas",
+        "text=group_people": "Pessoas",
+        "text=*": "Catálogo"
+      }
+    }
+  ],
+  "catalog_action": [
+    {
+      "declarations": ["input action"],
+      "selectors": ["action"],
+      "match": {
+        "action=add_service": "Novo serviço",
+        "action=add_type": "Novo tipo",
+        "action=add_field": "Novo campo",
+        "action=edit": "Editar",
+        "action=save": "Salvar",
+        "action=create_service": "Criar serviço",
+        "action=create_type": "Criar tipo",
+        "action=create_field": "Criar campo",
+        "action=cancel": "Cancelar",
+        "action=delete_service": "Excluir serviço",
+        "action=delete_type": "Excluir tipo",
+        "action=delete_field": "Excluir campo",
+        "action=delete": "Excluir",
+        "action=add_option": "Adicionar uma opção",
+        "action=clear": "Limpar",
+        "action=open": "Abrir",
+        "action=*": "Alterar"
+      }
+    }
+  ],
+  "catalog_action_on": [
+    {
+      "declarations": ["input action", "input name"],
+      "selectors": ["action"],
+      "match": {
+        "action=edit": "Editar {name}",
+        "action=remove": "Remover {name}",
+        "action=clear": "Limpar {name}",
+        "action=option": "Opção {name}",
+        "action=*": "{name}"
+      }
+    }
+  ],
+  "catalog_field": [
+    {
+      "declarations": ["input field", "input form"],
+      "selectors": ["field", "form"],
+      "match": {
+        "field=name, form=label": "Nome",
+        "field=description, form=label": "Descrição (opcional)",
+        "field=tier, form=label": "Criticidade",
+        "field=owners, form=label": "Responsáveis",
+        "field=add_owner, form=label": "Adicionar uma escala ou uma pessoa",
+        "field=policy, form=label": "Política de escalonamento",
+        "field=severity, form=label": "Severidade padrão",
+        "field=required, form=label": "Campos obrigatórios",
+        "field=kind, form=label": "Tipo de campo",
+        "field=options, form=label": "Opções",
+        "field=value, form=label": "Valor",
+        "field=name, form=invalid": "Informe um nome.",
+        "field=description, form=invalid": "Use no máximo 500 caracteres, sem caracteres ocultos.",
+        "field=options, form=invalid": "Dê um nome a cada opção, todos diferentes.",
+        "field=text, form=invalid": "Use de 1 a 500 caracteres, sem caracteres ocultos.",
+        "field=number, form=invalid": "Informe um número.",
+        "field=link, form=invalid": "Informe um link que comece com https:// ou http://.",
+        "field=choice, form=invalid": "Escolha ao menos uma opção.",
+        "field=*, form=invalid": "Confira este campo.",
+        "field=*, form=*": "Campo"
+      }
+    }
+  ],
+  "catalog_tier": [
+    {
+      "declarations": ["input tier"],
+      "selectors": ["tier"],
+      "match": {
+        "tier=tier1": "Nível 1 · Crítico",
+        "tier=tier2": "Nível 2 · Importante",
+        "tier=tier3": "Nível 3 · De apoio",
+        "tier=*": "Nível"
+      }
+    }
+  ],
+  "catalog_count": [
+    {
+      "declarations": [
+        "input kind",
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["kind", "count", "countPlural"],
+      "match": {
+        "kind=services, count=*, countPlural=one": "{countFormatted} serviço",
+        "kind=services, count=*, countPlural=*": "{countFormatted} serviços",
+        "kind=types, count=*, countPlural=one": "{countFormatted} tipo",
+        "kind=types, count=*, countPlural=*": "{countFormatted} tipos",
+        "kind=fields, count=*, countPlural=one": "{countFormatted} campo",
+        "kind=fields, count=*, countPlural=*": "{countFormatted} campos",
+        "kind=options, count=*, countPlural=one": "{countFormatted} opção",
+        "kind=options, count=*, countPlural=*": "{countFormatted} opções",
+        "kind=missing, count=*, countPlural=one": "{countFormatted} campo obrigatório a preencher",
+        "kind=missing, count=*, countPlural=*": "{countFormatted} campos obrigatórios a preencher",
+        "kind=active, count=*, countPlural=one": "{countFormatted} incidente ativo",
+        "kind=active, count=*, countPlural=*": "{countFormatted} incidentes ativos",
+        "kind=*, count=*, countPlural=*": "{countFormatted}"
       }
     }
   ]

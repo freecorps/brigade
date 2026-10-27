@@ -72,6 +72,7 @@ import {
 } from "react-native";
 import { useGlyphSize } from "@/components/badge";
 import { useChoiceSheet } from "@/components/choice-sheet";
+import { IncidentDetails } from "@/components/incident-details";
 import { STATUS_GLYPHS, type Glyph } from "@/components/glyphs";
 import {
   Choice,
@@ -446,6 +447,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
         <ThemedText variant="caption">{m.incident_page({ part: "no_members" })}</ThemedText>
       ) : null}
       {noticesFor(["role"])}
+      <IncidentDetails row={row} />
 
       <View style={{ gap: spacing[3] }}>
         <ThemedText variant="label" accessibilityRole="header">
@@ -703,6 +705,9 @@ const ENTRY_GLYPHS: Record<Exclude<TimelineRow["kind"], "status_changed">, Glyph
   status_corrected: { ios: "pencil.line", android: "edit", web: "edit" },
   escalated: { ios: "bell.and.waves.left.and.right", android: "campaign", web: "campaign" },
   escalation_exhausted: { ios: "hourglass", android: "hourglass_empty", web: "hourglass_empty" },
+  type_changed: { ios: "tag", android: "label", web: "label" },
+  services_changed: { ios: "square.stack.3d.up", android: "layers", web: "layers" },
+  field_changed: { ios: "square.and.pencil", android: "edit_note", web: "edit_note" },
 };
 
 /**

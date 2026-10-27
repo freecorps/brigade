@@ -12,10 +12,10 @@ import {
   type Severity,
   type TimelineRow,
 } from "@freecorps/brigade-schema";
-import { formatDateTime, formatRelativeTime } from "./format.ts";
+import { formatDateTime, formatNumber, formatRelativeTime } from "./format.ts";
 import { incidentStatusLabels, severityLabels } from "./labels.ts";
 import { m } from "./paraglide/messages.js";
-import type { Locale } from "./paraglide/runtime.js";
+import { getLocale, type Locale } from "./paraglide/runtime.js";
 
 /** "SEV2 High", as the badges say it. */
 export function severityName(severity: Severity): string {
@@ -154,6 +154,25 @@ export function entryText(entry: TimelineRow, who: People): string {
     case "slack_failed":
       // Written by the notifier: about the channel message, not who wrote it.
       return say(`slack_failed_${entry.reason}`);
+    // Catalog changes read by the names they had then (RFC 0003 "Incident types", "Custom fields").
+    case "type_changed":
+      if (entry.to === null) {
+        return entry.from === null ? say("type_cleared_deleted") : say("type_cleared", entry.from);
+      }
+      return entry.from === null
+        ? say("type_set", entry.to)
+        : say("type_changed", entry.from, entry.to);
+    case "services_changed": {
+      const added = entry.added.join(", ");
+      const removed = entry.removed.join(", ");
+      if (added && removed) return say("services_changed", added, removed);
+      if (added) return say("services_added", added);
+      return removed ? say("services_removed", removed) : say("services_updated");
+    }
+    case "field_changed":
+      return entry.value === null && !entry.labels?.length
+        ? say("field_cleared", entry.field)
+        : say("field_set", entry.field, fieldText(entry.value, entry.labels));
     case "status_published":
       return say(
         "status_published",
@@ -165,6 +184,17 @@ export function entryText(entry: TimelineRow, who: People): string {
       // A kind a newer shard wrote that this build does not know: a line saying something changed, never a blank.
       return say("unknown");
   }
+}
+
+/** A custom field's value in a sentence: a select's labels, a number in the reader's locale, or the text. */
+export function fieldText(
+  value: string | number | string[] | null,
+  labels?: readonly string[],
+): string {
+  if (labels?.length) return labels.join(", ");
+  if (typeof value === "number") return formatNumber(value, getLocale());
+  if (Array.isArray(value)) return value.join(", ");
+  return value ?? "";
 }
 
 /** Pages that failed together, as `timelineItems` groups them (only what the wording needs). */

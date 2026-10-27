@@ -1,12 +1,18 @@
 import { m } from "@freecorps/brigade-i18n";
 import { severityLabels } from "@freecorps/brigade-i18n/labels";
-import { INCIDENT_TITLE_MAX, SEVERITIES, type Severity } from "@freecorps/brigade-schema";
+import {
+  INCIDENT_TITLE_MAX,
+  SEVERITIES,
+  type IncidentTypeRow,
+  type Severity,
+} from "@freecorps/brigade-schema";
 import { useSyncClient } from "@freecorps/brigade-sync/react";
 import { cn } from "cn";
 import { CheckIcon, CircleAlertIcon, PlusIcon } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
 import { Button } from "@/components/ui/button";
+import { catalogText } from "@/lib/catalog";
 import { checkDeclare, titleRefused, type Notice } from "@/lib/incidents";
 
 /** The selected segment takes its severity's badge colours, plus a ring and a check so colour is not alone. */
@@ -21,24 +27,32 @@ const SEGMENT_TONES: Record<Severity, string> = {
 const WIDE = "(min-width: 48rem)";
 
 /**
- * Title and severity, then Declare. Below `md` it starts as one "Declare incident" button that opens the form in
+ * Title, the incident type (once the workspace has types: picking one takes its default severity) and severity,
+ * then Declare. Below `md` it starts as one "Declare incident" button that opens the form in
  * place, and closes again after a declare or Cancel. It works in every connection state: a declare made offline
  * waits in the client and is sent on reconnect.
  */
 export function DeclareForm({
+  types,
   onDeclare,
 }: {
+  /** The workspace's incident types (`incidentTypes.all`), read by the card so its own list subscribes first. */
+  types: readonly IncidentTypeRow[];
   /** Resolves with the notice the outcome left, if it was refused. */
   onDeclare: (args: {
     id: string;
     title: string;
     severity: Severity;
+    typeId?: string;
   }) => Promise<Notice | undefined>;
 }) {
   const client = useSyncClient();
   const [expanded, setExpanded] = useState(false);
   const [title, setTitle] = useState("");
   const [severity, setSeverity] = useState<Severity>("sev3");
+  const [typeId, setTypeId] = useState("");
+  const typed = types.length > 0;
+  const typeSelectId = useId();
   /** Why the title was refused locally, and on which submit (a repeat re-mounts the alert so it is read again). */
   const [invalid, setInvalid] = useState<{ empty: boolean; attempt: number } | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -71,12 +85,15 @@ export function DeclareForm({
       return;
     }
     setInvalid(null);
-    const typed = title;
+    const typedTitle = title;
     setTitle("");
     // Back to the default each time, so a SEV1 chosen once cannot page people again by accident.
     setSeverity("sev3");
+    setTypeId("");
     close();
-    void onDeclare(checked.args).then((notice) => {
+    // A type deleted meanwhile is left out by the shard: the declare still goes through.
+    const type = types.find((one) => one.id === typeId);
+    void onDeclare(type ? { ...checked.args, typeId: type.id } : checked.args).then((notice) => {
       // The shard found the title invalid after all: give the text back (opening the form again on a phone),
       // unless something new was typed. Not for a clock refusal: the title was fine, and the notice says why.
       if (titleRefused(notice)) {
@@ -86,7 +103,7 @@ export function DeclareForm({
           document.activeElement !== null && document.activeElement === openerRef.current;
         flushSync(() => {
           setExpanded(true);
-          setTitle((current) => (current === "" ? typed : current));
+          setTitle((current) => (current === "" ? typedTitle : current));
         });
         if (lost) titleRef.current?.focus({ preventScroll: true });
       }
@@ -107,7 +124,10 @@ export function DeclareForm({
         noValidate
         // From md: labels on the first row, controls on the second, the title's error under it.
         className={cn(
-          "grid gap-x-3 gap-y-1.5 md:grid-cols-[minmax(0,1fr)_auto_auto]",
+          "grid gap-x-3 gap-y-1.5",
+          typed
+            ? "md:grid-cols-[minmax(0,1fr)_minmax(0,11rem)_auto_auto]"
+            : "md:grid-cols-[minmax(0,1fr)_auto_auto]",
           !expanded && "max-md:hidden",
         )}
       >
@@ -145,9 +165,39 @@ export function DeclareForm({
             {invalid.empty ? m.declare_title_empty() : m.declare_title_invalid()}
           </p>
         ) : null}
+        {typed ? (
+          <>
+            <label
+              htmlFor={typeSelectId}
+              className="mt-3 text-xs font-medium text-muted-foreground md:col-start-2 md:row-start-1 md:mt-0"
+            >
+              {catalogText("type_label")}
+            </label>
+            <select
+              id={typeSelectId}
+              value={typeId}
+              onChange={(event) => {
+                setTypeId(event.target.value);
+                const type = types.find((one) => one.id === event.target.value);
+                if (type?.defaultSeverity) setSeverity(type.defaultSeverity);
+              }}
+              className="h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring md:col-start-2 md:row-start-2"
+            >
+              <option value="">{catalogText("no_type")}</option>
+              {types.map((one) => (
+                <option key={one.id} value={one.id}>
+                  {one.name}
+                </option>
+              ))}
+            </select>
+          </>
+        ) : null}
         <span
           id={severityId}
-          className="mt-3 text-xs font-medium text-muted-foreground md:col-start-2 md:row-start-1 md:mt-0"
+          className={cn(
+            "mt-3 text-xs font-medium text-muted-foreground md:row-start-1 md:mt-0",
+            typed ? "md:col-start-3" : "md:col-start-2",
+          )}
         >
           {m.declare_severity_label()}
         </span>
@@ -157,7 +207,10 @@ export function DeclareForm({
         <div
           role="radiogroup"
           aria-labelledby={severityId}
-          className="grid grid-cols-4 divide-x divide-border overflow-hidden rounded-md bg-card outline-1 -outline-offset-1 outline-input md:col-start-2 md:row-start-2"
+          className={cn(
+            "grid grid-cols-4 divide-x divide-border overflow-hidden rounded-md bg-card outline-1 -outline-offset-1 outline-input md:row-start-2",
+            typed ? "md:col-start-3" : "md:col-start-2",
+          )}
         >
           {SEVERITIES.map((option) => {
             const selected = option === severity;
@@ -196,7 +249,13 @@ export function DeclareForm({
           })}
         </div>
         <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] gap-2 md:contents">
-          <Button type="submit" className="tabular-nums md:col-start-3 md:row-start-2 md:mt-0">
+          <Button
+            type="submit"
+            className={cn(
+              "tabular-nums md:row-start-2 md:mt-0",
+              typed ? "md:col-start-4" : "md:col-start-3",
+            )}
+          >
             {/* Names what is about to page people. */}
             {m.declare_submit_severity({ severity: severity.toUpperCase() })}
           </Button>

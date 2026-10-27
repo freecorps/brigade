@@ -1,12 +1,14 @@
 import { m } from "@freecorps/brigade-i18n";
 import { createFileRoute } from "@tanstack/react-router";
 import { EscalationCard } from "@/components/escalation-card";
+import { IncidentSettingsCard } from "@/components/incident-settings-card";
 import { IncidentsCard } from "@/components/incidents-card";
 import { LegendCard } from "@/components/legend-card";
 import { MembersCard } from "@/components/members-card";
 import { MonitorsCard } from "@/components/monitors-card";
 import { OnCallCard } from "@/components/oncall-card";
 import { PagingHealthNotice } from "@/components/paging-health";
+import { ServicesCard } from "@/components/services-card";
 import { usePreferences } from "@/components/preferences";
 import { RequireWorkspace } from "@/components/session";
 import { SlackCard } from "@/components/slack-card";
@@ -51,6 +53,8 @@ function Overview() {
       <OnCallCard />
       <EscalationCard />
       <MonitorsCard />
+      <ServicesCard />
+      <IncidentSettingsCard />
       <MembersCard />
       <StatusPageCard />
       <SlackCard />

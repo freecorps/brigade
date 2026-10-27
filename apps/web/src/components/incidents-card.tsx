@@ -64,6 +64,7 @@ const MAX_NOTICES = 5;
 export function IncidentsCard() {
   const { locale } = usePreferences();
   const { rows, status, error } = useQuery("incidents.active", {});
+  const types = useQuery("incidentTypes.all", {}).rows;
   const connection = useConnectionState();
   // Viewers see the badges; without a session around the card (its tests) the menus stay.
   const member = useOptionalMember();
@@ -154,7 +155,7 @@ export function IncidentsCard() {
     );
   // With the list refused nothing shows the optimistic row, so say the declare went out.
   const [sent, setSent] = useState<{ id: string; title: string } | null>(null);
-  const onDeclare = (args: { id: string; title: string; severity: Severity }) => {
+  const onDeclare = (args: { id: string; title: string; severity: Severity; typeId?: string }) => {
     setSent(view === "refused" ? { id: args.id, title: args.title } : null);
     return track(declare(args), {
       kind: "declare",
@@ -305,7 +306,7 @@ export function IncidentsCard() {
       </div>
 
       <CardContent className="flex flex-col gap-5">
-        <DeclareForm onDeclare={onDeclare} />
+        <DeclareForm types={types} onDeclare={onDeclare} />
         {declareNotices}
 
         {/* Read out once per new notice, in the card's wording, wherever it is drawn. */}

@@ -200,6 +200,14 @@ test("a restored change names its incident and what it changed, as the screens t
   expect(
     restoredTarget({ name: "incident.assignRole", args: { id, role: "commander", userId: null } }),
   ).toEqual({ incidentId: id, key: "role/commander", notice: { kind: "role", role: "commander" } });
+  // A workspace's own role, by its id; anything else is no role.
+  const scribe = "rol_01JB0000000000000000000001";
+  expect(
+    restoredTarget({ name: "incident.assignRole", args: { id, role: scribe, userId: null } }),
+  ).toEqual({ incidentId: id, key: `role/${scribe}`, notice: { kind: "role", role: scribe } });
+  expect(
+    restoredTarget({ name: "incident.assignRole", args: { id, role: "chef", userId: null } }),
+  ).toBeNull();
   expect(
     restoredTarget({ name: "incident.declare", args: { id, title: "Down", severity: "sev2" } }),
   ).toEqual({ incidentId: id, key: "declare", notice: { kind: "declare", title: "Down" } });

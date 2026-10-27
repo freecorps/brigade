@@ -4275,13 +4275,31 @@
                             "enum": [
                               "commander",
                               "communications",
-                              "operations"
+                              "operations",
+                              "custom"
                             ]
                           },
                           {
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 64
+                          }
+                        ]
+                      },
+                      "roleId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      "roleName": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 65536
+                          },
+                          {
+                            "type": "null"
                           }
                         ]
                       },
@@ -4313,6 +4331,8 @@
                     "required": [
                       "incident",
                       "role",
+                      "roleId",
+                      "roleName",
                       "from",
                       "to"
                     ]

@@ -15,6 +15,7 @@ import {
   POSTMORTEM_SECTION_MAX,
   POSTMORTEM_SECTIONS,
   prefixRange,
+  roleDefinition,
   STATUS_LOCALES,
   type MutationStore,
   type PostmortemDraftFailure,
@@ -84,10 +85,13 @@ export function describeEntry(
       return `changed the severity from ${entry.from.toUpperCase()} to ${entry.to.toUpperCase()}`;
     case "acknowledged":
       return "acknowledged the page";
-    case "role_assigned":
+    case "role_assigned": {
+      // A workspace's own role, or a renamed built-in, by the name it had then.
+      const role = entry.roleName ?? entry.role;
       return entry.to === null
-        ? `removed ${name(entry.from)} as ${entry.role}`
-        : `made ${name(entry.to)} ${entry.role}`;
+        ? `removed ${name(entry.from)} as ${role}`
+        : `made ${name(entry.to)} ${role}`;
+    }
     case "update":
       return `posted an update: ${clipText(entry.body, UPDATE_CHARS)}`;
     case "alert_resolved":
@@ -160,6 +164,7 @@ export function draftSource(
     return what ? [{ at: iso(entry.at), who: name(entry.actor), what }] : [];
   });
   const type = incident.typeId ? store.get("incident_types", incident.typeId) : undefined;
+  const roles = store.scan("incident_roles");
   const fields: Record<string, unknown> = {};
   for (const [id, value] of Object.entries(incident.fields ?? {})) {
     const field = store.get("custom_fields", id);
@@ -181,8 +186,12 @@ export function draftSource(
         const service = store.get("services", id);
         return service ? [service.name] : [];
       }),
+      // By the workspace's name for each role (a built-in's id under its own); a deleted role is left out.
       roles: Object.fromEntries(
-        Object.entries(incident.roles ?? {}).map(([role, id]) => [role, name(id ?? null)]),
+        Object.entries(incident.roles ?? {}).flatMap(([id, holder]) => {
+          const role = roleDefinition(roles, id);
+          return role ? [[role.name ?? id, name(holder ?? null)]] : [];
+        }),
       ),
       fields,
     },

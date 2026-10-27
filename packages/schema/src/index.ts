@@ -18,6 +18,7 @@ export * from "./zoned.ts";
 export * from "./schedules.ts";
 export * from "./policies.ts";
 export * from "./catalog.ts";
+export * from "./roles.ts";
 export * from "./followups.ts";
 export * from "./postmortems.ts";
 export * from "./exports.ts";

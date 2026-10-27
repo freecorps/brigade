@@ -26,6 +26,12 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "add_option" | "Add an option" |
 * | "clear" | "Clear" |
 * | "open" | "Open" |
+* | "add_role" | "New role" |
+* | "create_role" | "Create role" |
+* | "delete_role" | "Delete role" |
+* | "remove_role" | "Remove role" |
+* | "restore" | "Restore" |
+* | "add_item" | "Add a responsibility" |
 * | * | "Change" |
 *
 * @param {Catalog_ActionInputs} inputs
@@ -51,6 +57,12 @@ export const catalog_action = /** @type {((inputs: Catalog_ActionInputs, options
 		if (i?.action === "add_option") return /** @type {LocalizedString} */ (`Adicionar uma opção`);
 		if (i?.action === "clear") return /** @type {LocalizedString} */ (`Limpar`);
 		if (i?.action === "open") return /** @type {LocalizedString} */ (`Abrir`);
+		if (i?.action === "add_role") return /** @type {LocalizedString} */ (`Novo papel`);
+		if (i?.action === "create_role") return /** @type {LocalizedString} */ (`Criar papel`);
+		if (i?.action === "delete_role") return /** @type {LocalizedString} */ (`Excluir papel`);
+		if (i?.action === "remove_role") return /** @type {LocalizedString} */ (`Remover papel`);
+		if (i?.action === "restore") return /** @type {LocalizedString} */ (`Restaurar`);
+		if (i?.action === "add_item") return /** @type {LocalizedString} */ (`Adicionar uma responsabilidade`);
 		return /** @type {LocalizedString} */ (`Alterar`)
 	}
 	{
@@ -70,6 +82,12 @@ export const catalog_action = /** @type {((inputs: Catalog_ActionInputs, options
 		if (i?.action === "add_option") return /** @type {LocalizedString} */ (`Add an option`);
 		if (i?.action === "clear") return /** @type {LocalizedString} */ (`Clear`);
 		if (i?.action === "open") return /** @type {LocalizedString} */ (`Open`);
+		if (i?.action === "add_role") return /** @type {LocalizedString} */ (`New role`);
+		if (i?.action === "create_role") return /** @type {LocalizedString} */ (`Create role`);
+		if (i?.action === "delete_role") return /** @type {LocalizedString} */ (`Delete role`);
+		if (i?.action === "remove_role") return /** @type {LocalizedString} */ (`Remove role`);
+		if (i?.action === "restore") return /** @type {LocalizedString} */ (`Restore`);
+		if (i?.action === "add_item") return /** @type {LocalizedString} */ (`Add a responsibility`);
 		return /** @type {LocalizedString} */ (`Change`)
 	}
 });

@@ -147,7 +147,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Timeline as its own synced table written by every incident mutation (and the monitor recovery note), written
     updates, three incident roles checked against the shard's member list, and an incident page in the dashboard
     (`/incidents/<number>`) to change status and severity, assign roles and post updates (RFC 0003).
-  - Left for later items: role definitions (Phase 3), editing an update. Publishing an update to the status page
+  - Left for later items: editing an update. Role definitions are done (Phase 3 item). Publishing an update to the status page
     is done (Phase 3 item). Members who join by invitation are in the shard's member list from the moment they accept. The mobile incident screen is done (Mobile item).
 - [ ] Brigade Sync in production for web + mobile
   - Done so far: D1 `brigade-db` and `brigade-db-staging` exist with the migrations applied. Left: production and
@@ -309,13 +309,17 @@ Validate the risky assumptions before writing product code. Each spike produces 
     setup per provider, a routes editor and the latest alerts.
   - Left: monitor alerts through the routes and `AlertGroupDO` (RFC 0007); whether a service's policy pages; title
     and severity mapping per source; Slack naming the alerts' actor; email ingest.
-- [ ] Service catalog; custom fields; incident types; role definitions
+- [x] Service catalog; custom fields; incident types; role definitions
   - Done: services per workspace (name, description, tier, owners: schedules or members, an optional escalation
     policy), listed on the dashboard with a page each (owners, who of them is on call, active incidents naming it);
     incident types (default severity, the escalation policy their pages use, required fields), picked when declaring;
     custom fields (text, one choice, several choices, number, link) set on the incident page and shown read-only in
-    the app; type, services and fields changed as named mutations with timeline entries (RFC 0003).
-  - Left: role definitions; a monitor naming the service it watches; linking services to status page components;
+    the app; type, services and fields changed as named mutations with timeline entries (RFC 0003); role definitions
+    (RFC 0003 "Role definitions"): up to 15 roles per workspace with a description and a checklist of
+    responsibilities, the built-ins renamed or described (the commander never removed, so paging is unchanged),
+    incident types listing the roles to fill and the ones they require, assigned on the incident page through the same
+    `incident.assignRole` by role id, shown read-only in the app when they are the workspace's own.
+  - Left for later items: a monitor naming the service it watches; linking services to status page components;
     filtering incidents by type, service or field; alert routes paging a service's policy; enforcing required fields
     at a chosen status (opt-in); editing details from the app.
 - [ ] Follow-ups; postmortem draft with Workers AI; exports to R2

@@ -10,7 +10,7 @@ import {
   type RestoredMutation,
 } from "@freecorps/brigade-sync";
 import type { NoticeTarget } from "@freecorps/brigade-i18n/incident";
-import { INCIDENT_ROLES, INCIDENT_STATUSES, SEVERITIES } from "@freecorps/brigade-schema";
+import { INCIDENT_STATUSES, isRoleId, SEVERITIES } from "@freecorps/brigade-schema";
 
 /** Files by name, in one directory of the app's own. */
 export type PendingFiles = {
@@ -305,7 +305,7 @@ export function restoredTarget(
     case "incident.postUpdate":
       return { incidentId, key: "update", notice: { kind: "update" } };
     case "incident.assignRole":
-      return oneOf(INCIDENT_ROLES, args.role)
+      return isRoleId(args.role)
         ? { incidentId, key: `role/${args.role}`, notice: { kind: "role", role: args.role } }
         : null;
     default:

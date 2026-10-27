@@ -1,5 +1,6 @@
-// The catalog on the dashboard (RFC 0003 "Service catalog", "Incident types", "Custom fields"): the editors' drafts,
-// their checks before a mutation is sent, and how a field's value is entered and read. String-free except labels.
+// The catalog on the dashboard (RFC 0003 "Service catalog", "Incident types", "Custom fields", "Role definitions"):
+// the editors' drafts, their checks before a mutation is sent, and how a field's value is entered and read.
+// String-free except labels.
 
 import { m } from "@freecorps/brigade-i18n";
 import { fieldText, mutationErrorReason } from "@freecorps/brigade-i18n/incident";
@@ -8,20 +9,29 @@ import {
   CATALOG_NAME_MAX,
   checkFieldValue,
   FIELD_TEXT_MAX,
+  INCIDENT_ROLES,
+  isBuiltinRole,
+  isLiveRole,
   liveValue,
   MAX_CUSTOM_FIELDS_PER_WORKSPACE,
   MAX_FIELD_OPTIONS,
+  MAX_INCIDENT_ROLES,
   MAX_INCIDENT_TYPES_PER_WORKSPACE,
+  MAX_ROLE_CHECKLIST,
   MAX_SERVICES_PER_WORKSPACE,
   newId,
+  ROLE_CHECKLIST_ITEM_MAX,
+  roleDefinition,
   SERVICE_NAME_MAX,
   textRules,
   type CustomFieldRow,
   type EscalationTarget,
   type FieldKind,
   type FieldValue,
+  type IncidentRoleRow,
   type IncidentTypeRow,
   type MemberRow,
+  type RoleDefinition,
   type ScheduleRow,
   type ServiceRow,
   type ServiceTier,
@@ -30,7 +40,14 @@ import {
 
 const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
 
-export { CATALOG_NAME_MAX, FIELD_TEXT_MAX, MAX_FIELD_OPTIONS, SERVICE_NAME_MAX };
+export {
+  CATALOG_NAME_MAX,
+  FIELD_TEXT_MAX,
+  MAX_FIELD_OPTIONS,
+  MAX_ROLE_CHECKLIST,
+  ROLE_CHECKLIST_ITEM_MAX,
+  SERVICE_NAME_MAX,
+};
 
 /** `catalog_text` without the inputs a part does not use. */
 export function catalogText(
@@ -49,9 +66,13 @@ export const newServiceId = (now: number) => newId("svc", now, random);
 export const newTypeId = (now: number) => newId("typ", now, random);
 export const newFieldId = (now: number) => newId("fld", now, random);
 export const newOptionId = (now: number) => newId("opt", now, random);
+export const newRoleId = (now: number) => newId("rol", now, random);
 export const canAddService = (count: number) => count < MAX_SERVICES_PER_WORKSPACE;
 export const canAddType = (count: number) => count < MAX_INCIDENT_TYPES_PER_WORKSPACE;
 export const canAddField = (count: number) => count < MAX_CUSTOM_FIELDS_PER_WORKSPACE;
+/** The built-ins count, removed or not: `rows` are the workspace's role rows. */
+export const canAddRole = (rows: readonly IncidentRoleRow[]) =>
+  rows.filter((row) => !isBuiltinRole(row.id)).length + INCIDENT_ROLES.length < MAX_INCIDENT_ROLES;
 
 /** What the text rules refuse (hidden characters, nothing visible) in a name or a description. */
 const textProblem = (value: string, multiline: boolean) =>
@@ -143,6 +164,9 @@ export type TypeDraft = {
   defaultSeverity: Severity | null;
   escalationPolicyId: string | null;
   requiredFields: string[];
+  /** The roles its incidents fill, in order, and which of them it requires. */
+  roles: string[];
+  requiredRoles: string[];
 };
 export type TypeArgs = TypeDraft & { id: string };
 export type CheckedType =
@@ -155,6 +179,8 @@ export const emptyType = (): TypeDraft => ({
   defaultSeverity: null,
   escalationPolicyId: null,
   requiredFields: [],
+  roles: [],
+  requiredRoles: [],
 });
 
 export const draftFromType = (row: IncidentTypeRow): TypeDraft => ({
@@ -163,21 +189,103 @@ export const draftFromType = (row: IncidentTypeRow): TypeDraft => ({
   defaultSeverity: row.defaultSeverity,
   escalationPolicyId: row.escalationPolicyId,
   requiredFields: [...row.requiredFields],
+  roles: [...(row.roles ?? [])],
+  requiredRoles: [...(row.requiredRoles ?? [])],
 });
+
+/** How a type takes a role: not at all, listed to fill, or required. */
+export type TypeRoleUse = "off" | "listed" | "required";
+
+export const typeRoleUse = (draft: TypeDraft, roleId: string): TypeRoleUse =>
+  draft.requiredRoles.includes(roleId)
+    ? "required"
+    : draft.roles.includes(roleId)
+      ? "listed"
+      : "off";
+
+/** The draft with `roleId` used as `use`; a role newly listed goes last. */
+export function setTypeRoleUse(draft: TypeDraft, roleId: string, use: TypeRoleUse): TypeDraft {
+  const roles =
+    use === "off"
+      ? draft.roles.filter((one) => one !== roleId)
+      : draft.roles.includes(roleId)
+        ? draft.roles
+        : [...draft.roles, roleId];
+  const requiredRoles =
+    use === "required"
+      ? draft.requiredRoles.includes(roleId)
+        ? draft.requiredRoles
+        : [...draft.requiredRoles, roleId]
+      : draft.requiredRoles.filter((one) => one !== roleId);
+  return { ...draft, roles, requiredRoles };
+}
 
 export function checkType(
   id: string,
   draft: TypeDraft,
   fields: readonly CustomFieldRow[],
+  roleRows: readonly IncidentRoleRow[],
 ): CheckedType {
   const { name, bad: badName } = checkName(draft.name, CATALOG_NAME_MAX);
   const { description, bad: badDescription } = checkDescription(draft.description);
   if (badName || badDescription) {
     return { ok: false, errors: { name: badName, description: badDescription } };
   }
-  // A field deleted while the form was open is left out rather than refused.
+  // A field or role deleted while the form was open is left out rather than refused.
   const requiredFields = draft.requiredFields.filter((one) => fields.some((row) => row.id === one));
-  return { ok: true, args: { id, ...draft, name, description, requiredFields } };
+  const live = (one: string) => isLiveRole(roleDefinition(roleRows, one));
+  const roles = draft.roles.filter(live);
+  const requiredRoles = draft.requiredRoles.filter((one) => roles.includes(one));
+  return {
+    ok: true,
+    args: { id, ...draft, name, description, requiredFields, roles, requiredRoles },
+  };
+}
+
+// ---- Role definitions ---------------------------------------------------------------------------------------------
+
+/** One responsibility as the editor holds it; `key` only keeps React's list steady while items move. */
+export type ChecklistItem = { key: string; text: string };
+export type RoleDraft = { name: string; description: string; checklist: ChecklistItem[] };
+export type RoleArgs = { id: string; name: string; description: string; checklist: string[] };
+export type CheckedRole =
+  | { ok: true; args: RoleArgs }
+  | { ok: false; errors: { name: boolean; description: boolean; checklist: boolean } };
+
+let itemKeys = 0;
+export const checklistItem = (text = ""): ChecklistItem => ({ key: `i${itemKeys++}`, text });
+
+export const emptyRole = (): RoleDraft => ({ name: "", description: "", checklist: [] });
+
+export const draftFromRole = (role: RoleDefinition): RoleDraft => ({
+  name: role.name ?? "",
+  description: role.description,
+  checklist: role.checklist.map((text) => checklistItem(text)),
+});
+
+/**
+ * The draft as `incidentRole.create` or `.update` takes it. A built-in may go without a name (its own, translated);
+ * empty responsibilities are left out, the rest must fit and differ (without case), as the shard checks.
+ */
+export function checkRole(id: string, draft: RoleDraft): CheckedRole {
+  const builtin = isBuiltinRole(id);
+  const trimmed = draft.name.trim();
+  const { name, bad } = checkName(draft.name, CATALOG_NAME_MAX);
+  const badName = builtin && trimmed === "" ? false : bad;
+  const { description, bad: badDescription } = checkDescription(draft.description);
+  const checklist = draft.checklist.map((item) => item.text.trim()).filter((text) => text !== "");
+  const keys = checklist.map((text) => text.toLowerCase());
+  const badChecklist =
+    checklist.length > MAX_ROLE_CHECKLIST ||
+    new Set(keys).size !== keys.length ||
+    checklist.some((text) => text.length > ROLE_CHECKLIST_ITEM_MAX || textProblem(text, false));
+  if (badName || badDescription || badChecklist) {
+    return {
+      ok: false,
+      errors: { name: badName, description: badDescription, checklist: badChecklist },
+    };
+  }
+  return { ok: true, args: { id, name: builtin ? trimmed : name, description, checklist } };
 }
 
 // ---- Custom fields ------------------------------------------------------------------------------------------------

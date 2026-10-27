@@ -5,9 +5,9 @@
 import {
   formatIncidentNumber,
   ALERTS_ACTOR,
+  isBuiltinRole,
   MONITOR_ACTOR,
   type ApiTokenRow,
-  type IncidentRole,
   type IncidentStatus,
   type MemberRow,
   type PageFailure,
@@ -22,6 +22,20 @@ import { getLocale, type Locale } from "./paraglide/runtime.js";
 /** "SEV2 High", as the badges say it. */
 export function severityName(severity: Severity): string {
   return m.severity_named({ code: severity.toUpperCase(), name: severityLabels[severity]() });
+}
+
+/**
+ * An incident role's name (RFC 0003 "Role definitions"): the workspace's (`name`), else a built-in's own in the
+ * reader's language, else "deleted role" for a workspace role that is gone. `sentence` is the lower-case form a
+ * sentence takes; a workspace's names read as written.
+ */
+export function roleLabel(
+  id: string,
+  name: string | null | undefined,
+  form: "sentence" | "title" = "title",
+): string {
+  if (name) return name;
+  return m.incident_role({ role: isBuiltinRole(id) ? id : "deleted", form });
 }
 
 /** "just now" under a minute, then the shared relative format; never a future time (the shard's clock may lead). */
@@ -111,7 +125,7 @@ export function entryText(entry: TimelineRow, who: People): string {
     case "acknowledged":
       return say("acknowledged");
     case "role_assigned": {
-      const role = m.incident_role({ role: entry.role, form: "sentence" });
+      const role = roleLabel(entry.role, entry.roleName, "sentence");
       // Taking or leaving a role yourself reads as that, not "You made you…".
       if (entry.to === entry.actor) return say("role_taken", role);
       if (entry.to === null && entry.from === entry.actor) return say("role_left", role);
@@ -314,8 +328,9 @@ export type Notice = {
   title: string;
   /** The status or severity it tried to set. */
   to?: IncidentStatus | Severity;
-  /** The incident role it tried to change. */
-  role?: IncidentRole;
+  /** The incident role it tried to change: its id, and the workspace's name for it when it has one. */
+  role?: string;
+  roleName?: string | null;
 };
 
 export type NoticeTarget = Omit<Notice, "key" | "reason">;
@@ -359,7 +374,7 @@ export function noticeText(notice: Notice, place: NoticePlace): string {
   }
   // Made on the incident's own page, which says which incident: only the change.
   if (notice.kind === "update" || notice.kind === "role") {
-    const role = notice.role ? m.incident_role({ role: notice.role, form: "sentence" }) : "";
+    const role = notice.role ? roleLabel(notice.role, notice.roleName, "sentence") : "";
     return m.incident_change_failed({ kind: notice.kind, role, reason });
   }
   // The order of number and title is the message's, not the code's.

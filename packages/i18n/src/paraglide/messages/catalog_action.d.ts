@@ -23,6 +23,12 @@ export type Catalog_ActionInputs = {
 * | "add_option" | "Add an option" |
 * | "clear" | "Clear" |
 * | "open" | "Open" |
+* | "add_role" | "New role" |
+* | "create_role" | "Create role" |
+* | "delete_role" | "Delete role" |
+* | "remove_role" | "Remove role" |
+* | "restore" | "Restore" |
+* | "add_item" | "Add a responsibility" |
 * | * | "Change" |
 *
 * @param {Catalog_ActionInputs} inputs

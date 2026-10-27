@@ -16,6 +16,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "commander" | * | "Incident commander" |
 * | "communications" | * | "Communications lead" |
 * | "operations" | * | "Operations lead" |
+* | "deleted" | "sentence" | "deleted role" |
+* | "deleted" | * | "Deleted role" |
 * | * | * | "Role" |
 *
 * @param {Incident_RoleInputs} inputs
@@ -28,18 +30,22 @@ export const incident_role = /** @type {((inputs: Incident_RoleInputs, options?:
 		if (i?.role === "commander" && i?.form === "sentence") return /** @type {LocalizedString} */ (`comandante do incidente`);
 		if (i?.role === "communications" && i?.form === "sentence") return /** @type {LocalizedString} */ (`responsável pela comunicação`);
 		if (i?.role === "operations" && i?.form === "sentence") return /** @type {LocalizedString} */ (`responsável pelas operações`);
+		if (i?.role === "deleted" && i?.form === "sentence") return /** @type {LocalizedString} */ (`papel excluído`);
 		if (i?.role === "commander") return /** @type {LocalizedString} */ (`Comandante do incidente`);
 		if (i?.role === "communications") return /** @type {LocalizedString} */ (`Responsável pela comunicação`);
 		if (i?.role === "operations") return /** @type {LocalizedString} */ (`Responsável pelas operações`);
+		if (i?.role === "deleted") return /** @type {LocalizedString} */ (`Papel excluído`);
 		return /** @type {LocalizedString} */ (`Papel`)
 	}
 	{
 		if (i?.role === "commander" && i?.form === "sentence") return /** @type {LocalizedString} */ (`incident commander`);
 		if (i?.role === "communications" && i?.form === "sentence") return /** @type {LocalizedString} */ (`communications lead`);
 		if (i?.role === "operations" && i?.form === "sentence") return /** @type {LocalizedString} */ (`operations lead`);
+		if (i?.role === "deleted" && i?.form === "sentence") return /** @type {LocalizedString} */ (`deleted role`);
 		if (i?.role === "commander") return /** @type {LocalizedString} */ (`Incident commander`);
 		if (i?.role === "communications") return /** @type {LocalizedString} */ (`Communications lead`);
 		if (i?.role === "operations") return /** @type {LocalizedString} */ (`Operations lead`);
+		if (i?.role === "deleted") return /** @type {LocalizedString} */ (`Deleted role`);
 		return /** @type {LocalizedString} */ (`Role`)
 	}
 });

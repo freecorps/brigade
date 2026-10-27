@@ -464,11 +464,14 @@ export function FormButtons({
   onAskDelete,
   onCloseConfirm,
   onDelete,
+  confirmAction = m.catalog_action({ action: "delete" }),
 }: {
   editing: boolean;
   create: string;
   remove?: string;
   confirm: string;
+  /** The confirming button's label: "Delete" unless the change can be undone (a role taken out). */
+  confirmAction?: string;
   confirming: boolean;
   deleteRef: React.RefObject<HTMLButtonElement | null>;
   onCancel: () => void;
@@ -519,7 +522,7 @@ export function FormButtons({
               autoFocus
               onClick={onDelete}
             >
-              {m.catalog_action({ action: "delete" })}
+              {confirmAction}
             </Button>
             <Button type="button" variant="outline" onClick={onCloseConfirm}>
               {m.catalog_action({ action: "cancel" })}

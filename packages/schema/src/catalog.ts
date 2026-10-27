@@ -1,10 +1,11 @@
-// The workspace's catalog (RFC 0003 "Service catalog", "Incident types", "Custom fields"): the services it runs,
-// the kinds of incident it declares, and the typed fields incidents carry. Owners and admins define them; responders
-// name an incident's type and services and fill its fields (`incident.setType`, `setServices`, `setField`, below).
+// The workspace's catalog (RFC 0003 "Service catalog", "Incident types", "Custom fields", "Role definitions"): the
+// services it runs, the kinds of incident it declares, the typed fields incidents carry and the roles people take on
+// them. Owners and admins define them; responders name an incident's type and services, fill its fields
+// (`incident.setType`, `setServices`, `setField`, below) and give its roles (`incident.assignRole`, incidents.ts).
 
 import { idTime } from "./id.ts";
 import { ID_CLOCK_SKEW_MS, MAX_INCIDENT_SERVICES } from "./incidents.ts";
-import { SEVERITIES } from "./lifecycle.ts";
+import { INCIDENT_ROLES, SEVERITIES } from "./lifecycle.ts";
 import {
   defineMutation,
   fail,
@@ -15,11 +16,22 @@ import {
   type MutationStore,
 } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
+import {
+  COMMANDER_ROLE,
+  isBuiltinRole,
+  isLiveRole,
+  MAX_INCIDENT_ROLES,
+  MAX_ROLE_CHECKLIST,
+  ROLE_CHECKLIST_ITEM_MAX,
+  ROLE_ID_MAX,
+  roleDefinition,
+} from "./roles.ts";
 import type {
   CustomFieldRow,
   EscalationTarget,
   FieldOption,
   FieldValue,
+  IncidentRoleRow,
   IncidentRow,
   IncidentTypeRow,
   ServiceRow,
@@ -77,11 +89,17 @@ type TypeSummary = {
   defaultSeverity: IncidentTypeRow["defaultSeverity"];
   escalationPolicyId: string | null;
   requiredFields: number;
+  /** How many roles it lists, and how many of them it requires. */
+  roles: number;
+  requiredRoles: number;
 };
 export type IncidentTypeCreated = DomainEvent<"incident_type.created", TypeSummary>;
 export type IncidentTypeUpdated = DomainEvent<
   "incident_type.updated",
-  TypeSummary & { reason: "edited" | "policy_deleted" | "field_deleted"; ref: string | null }
+  TypeSummary & {
+    reason: "edited" | "policy_deleted" | "field_deleted" | "role_deleted";
+    ref: string | null;
+  }
 >;
 export type IncidentTypeDeleted = DomainEvent<
   "incident_type.deleted",
@@ -92,6 +110,17 @@ type FieldSummary = { id: string; name: string; kind: FieldKind; options: number
 export type CustomFieldCreated = DomainEvent<"custom_field.created", FieldSummary>;
 export type CustomFieldUpdated = DomainEvent<"custom_field.updated", FieldSummary>;
 export type CustomFieldDeleted = DomainEvent<"custom_field.deleted", { id: string; name: string }>;
+
+/** `name` empty: a built-in under its own name. `checklist`: how many responsibilities. */
+type RoleSummary = { id: string; name: string; checklist: number };
+export type IncidentRoleCreated = DomainEvent<"incident_role.created", RoleSummary>;
+export type IncidentRoleUpdated = DomainEvent<"incident_role.updated", RoleSummary>;
+/** A workspace role deleted, or a built-in taken out (`builtin`); the commander never is. */
+export type IncidentRoleDeleted = DomainEvent<
+  "incident_role.deleted",
+  { id: string; name: string; builtin: boolean }
+>;
+export type IncidentRoleRestored = DomainEvent<"incident_role.restored", RoleSummary>;
 
 export type IncidentTypeChanged = DomainEvent<
   "incident.type_changed",
@@ -119,6 +148,13 @@ const typeSummary = (row: IncidentTypeRow): TypeSummary => ({
   defaultSeverity: row.defaultSeverity,
   escalationPolicyId: row.escalationPolicyId,
   requiredFields: row.requiredFields.length,
+  roles: row.roles?.length ?? 0,
+  requiredRoles: row.requiredRoles?.length ?? 0,
+});
+const roleSummary = (row: IncidentRoleRow): RoleSummary => ({
+  id: row.id,
+  name: row.name,
+  checklist: row.checklist.length,
 });
 const fieldSummary = (row: CustomFieldRow): FieldSummary => ({
   id: row.id,
@@ -168,12 +204,25 @@ const serviceFields = {
   escalationPolicyId: policyRef,
 };
 
+const roleRef = v.string({ min: 1, max: ROLE_ID_MAX });
+const roleRefs = v.array(roleRef, { max: MAX_INCIDENT_ROLES, unique: true });
+
 const typeFields = {
   name: v.string({ min: 1, max: CATALOG_NAME_MAX }),
   description,
   defaultSeverity: v.nullable(v.picklist(SEVERITIES)),
   escalationPolicyId: policyRef,
   requiredFields: v.array(fieldId, { max: MAX_CUSTOM_FIELDS_PER_WORKSPACE, unique: true }),
+  // Left out by clients from before role definitions: none when creating, unchanged when updating.
+  roles: v.optional(roleRefs),
+  requiredRoles: v.optional(roleRefs),
+};
+
+const roleFields = {
+  description,
+  checklist: v.array(v.string({ min: 1, max: ROLE_CHECKLIST_ITEM_MAX, joiners: true }), {
+    max: MAX_ROLE_CHECKLIST,
+  }),
 };
 
 const optionArgs = v.object({
@@ -457,7 +506,12 @@ export const deleteService = defineMutation({
 
 function checkType(
   store: MutationStore,
-  args: { escalationPolicyId: string | null; requiredFields: readonly string[] },
+  args: {
+    escalationPolicyId: string | null;
+    requiredFields: readonly string[];
+    roles: readonly string[];
+    requiredRoles: readonly string[];
+  },
 ): Issue[] {
   const issues = checkPolicyRef(store, args.escalationPolicyId);
   args.requiredFields.forEach((id, index) => {
@@ -465,8 +519,28 @@ function checkType(
       issues.push({ path: `requiredFields[${index}]`, message: "Field not found" });
     }
   });
+  const rows = store.scan("incident_roles");
+  args.roles.forEach((id, index) => {
+    if (!isLiveRole(roleDefinition(rows, id))) {
+      issues.push({ path: `roles[${index}]`, message: "Role not found" });
+    }
+  });
+  args.requiredRoles.forEach((id, index) => {
+    if (!args.roles.includes(id)) {
+      issues.push({ path: `requiredRoles[${index}]`, message: "Not one of the type's roles" });
+    }
+  });
   return issues;
 }
+
+/** The type's role lists as given, or as they are when an older client left them out. */
+const typeRoles = (
+  args: { roles?: readonly string[]; requiredRoles?: readonly string[] },
+  type?: IncidentTypeRow,
+) => ({
+  roles: [...(args.roles ?? type?.roles ?? [])],
+  requiredRoles: [...(args.requiredRoles ?? (args.roles ? [] : (type?.requiredRoles ?? [])))],
+});
 
 export const createIncidentType = defineMutation({
   name: "incidentType.create",
@@ -475,7 +549,8 @@ export const createIncidentType = defineMutation({
   apply(store, args, ctx) {
     const clock = checkNewId(store, args.id, ctx);
     if (clock) return clock;
-    const issues = checkType(store, args);
+    const roles = typeRoles(args);
+    const issues = checkType(store, { ...args, ...roles });
     if (issues.length) {
       return fail("invalid_args", "Invalid arguments for incidentType.create", issues);
     }
@@ -493,6 +568,7 @@ export const createIncidentType = defineMutation({
       defaultSeverity: args.defaultSeverity,
       escalationPolicyId: args.escalationPolicyId,
       requiredFields: [...args.requiredFields],
+      ...roles,
       createdAt: ctx.now,
       createdBy: ctx.actor.id,
       updatedAt: ctx.now,
@@ -515,7 +591,8 @@ export const updateIncidentType = defineMutation({
   apply(store, args, ctx) {
     const type = store.get("incident_types", args.id);
     if (!type) return fail("not_found", "Type not found");
-    const issues = checkType(store, args);
+    const roles = typeRoles(args, type);
+    const issues = checkType(store, { ...args, ...roles });
     if (issues.length) {
       return fail("invalid_args", "Invalid arguments for incidentType.update", issues);
     }
@@ -524,7 +601,9 @@ export const updateIncidentType = defineMutation({
       type.description === args.description &&
       type.defaultSeverity === args.defaultSeverity &&
       type.escalationPolicyId === args.escalationPolicyId &&
-      JSON.stringify(type.requiredFields) === JSON.stringify(args.requiredFields)
+      JSON.stringify(type.requiredFields) === JSON.stringify(args.requiredFields) &&
+      JSON.stringify(type.roles ?? []) === JSON.stringify(roles.roles) &&
+      JSON.stringify(type.requiredRoles ?? []) === JSON.stringify(roles.requiredRoles)
     ) {
       return fail("conflict", "Type is unchanged");
     }
@@ -534,6 +613,7 @@ export const updateIncidentType = defineMutation({
       defaultSeverity: args.defaultSeverity,
       escalationPolicyId: args.escalationPolicyId,
       requiredFields: [...args.requiredFields],
+      ...roles,
       updatedAt: ctx.now,
     });
     return ok(typeUpdated(row, "edited"));
@@ -666,6 +746,186 @@ export const deleteCustomField = defineMutation({
       events.push(typeUpdated(row, "field_deleted", args.id));
     }
     return ok(...events);
+  },
+});
+
+// ---- Role definitions ---------------------------------------------------------------------------------------------
+
+const roleId = v.id("rol");
+
+/**
+ * Checklist items once each (compared without case), so a list reads as distinct responsibilities. Returns the
+ * issues for `checklist[i]`.
+ */
+function checkChecklist(checklist: readonly string[]): Issue[] {
+  const seen = new Set<string>();
+  const issues: Issue[] = [];
+  checklist.forEach((item, index) => {
+    const key = item.toLowerCase();
+    if (seen.has(key)) issues.push({ path: `checklist[${index}]`, message: "Listed twice" });
+    seen.add(key);
+  });
+  return issues;
+}
+
+/**
+ * A role of the workspace's own (RFC 0003 "Role definitions"): a name, a description and what whoever holds it is
+ * responsible for. At most `MAX_INCIDENT_ROLES` roles, the built-ins counted.
+ */
+export const createIncidentRole = defineMutation({
+  name: "incidentRole.create",
+  args: v.object({ id: roleId, name: v.string({ min: 1, max: CATALOG_NAME_MAX }), ...roleFields }),
+  permission: "catalog:manage",
+  apply(store, args, ctx) {
+    const clock = checkNewId(store, args.id, ctx);
+    if (clock) return clock;
+    const issues = checkChecklist(args.checklist);
+    if (issues.length) {
+      return fail("invalid_args", "Invalid arguments for incidentRole.create", issues);
+    }
+    if (store.get("incident_roles", args.id)) return fail("conflict", "Role already exists");
+    const own = store.scan("incident_roles").filter((row) => !isBuiltinRole(row.id)).length;
+    if (own + INCIDENT_ROLES.length >= MAX_INCIDENT_ROLES) {
+      return fail("limit_reached", `At most ${MAX_INCIDENT_ROLES} incident roles per workspace`);
+    }
+    const row: IncidentRoleRow = {
+      id: args.id,
+      name: args.name,
+      description: args.description,
+      checklist: [...args.checklist],
+      createdAt: ctx.now,
+      createdBy: ctx.actor.id,
+      updatedAt: ctx.now,
+    };
+    store.insert("incident_roles", row);
+    const event: IncidentRoleCreated = {
+      type: "incident_role.created",
+      subject: row.id,
+      data: roleSummary(row),
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * Renames a role, or replaces its description and checklist. A built-in's id never changes, so renaming the commander
+ * changes nothing about who is paged; an empty name puts a built-in back under its own. Holders keep the role.
+ */
+export const updateIncidentRole = defineMutation({
+  name: "incidentRole.update",
+  args: v.object({ id: roleRef, name: v.string({ max: CATALOG_NAME_MAX }), ...roleFields }),
+  permission: "catalog:manage",
+  apply(store, args, ctx) {
+    const builtin = isBuiltinRole(args.id);
+    const row = store.get("incident_roles", args.id);
+    if (!builtin && !row) return fail("not_found", "Role not found");
+    const issues = checkChecklist(args.checklist);
+    if (!builtin && args.name === "") issues.push({ path: "name", message: "Enter a name" });
+    if (issues.length) {
+      return fail("invalid_args", "Invalid arguments for incidentRole.update", issues);
+    }
+    const before = row ?? { name: "", description: "", checklist: [] };
+    if (
+      before.name === args.name &&
+      before.description === args.description &&
+      JSON.stringify(before.checklist) === JSON.stringify(args.checklist)
+    ) {
+      return fail("conflict", "Role is unchanged");
+    }
+    const fields = {
+      name: args.name,
+      description: args.description,
+      checklist: [...args.checklist],
+      updatedAt: ctx.now,
+    };
+    const next = row
+      ? store.update("incident_roles", args.id, fields)
+      : store.insert("incident_roles", {
+          id: args.id,
+          ...fields,
+          createdAt: ctx.now,
+          createdBy: ctx.actor.id,
+        });
+    const event: IncidentRoleUpdated = {
+      type: "incident_role.updated",
+      subject: args.id,
+      data: roleSummary(next),
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * Deletes a workspace role, or takes a built-in out (`removed`, restorable), and drops it from every type. Never the
+ * commander: pages go to them first (RFC 0006 "Who is paged"). Incidents keep who held it, as for deleted types: a
+ * deleted role is not listed and a removed built-in only while someone holds it; either can still be taken away.
+ */
+export const deleteIncidentRole = defineMutation({
+  name: "incidentRole.delete",
+  args: v.object({ id: roleRef }),
+  permission: "catalog:manage",
+  apply(store, args, ctx) {
+    if (args.id === COMMANDER_ROLE) {
+      const message = "The commander role cannot be removed";
+      return fail("invalid_args", message, [{ path: "id", message }]);
+    }
+    const builtin = isBuiltinRole(args.id);
+    const row = store.get("incident_roles", args.id);
+    const role = roleDefinition(store.scan("incident_roles"), args.id);
+    if (!isLiveRole(role)) return fail("not_found", "Role not found");
+    if (builtin) {
+      if (row) store.update("incident_roles", args.id, { removed: true, updatedAt: ctx.now });
+      else {
+        store.insert("incident_roles", {
+          id: args.id,
+          name: "",
+          description: "",
+          checklist: [],
+          removed: true,
+          createdAt: ctx.now,
+          createdBy: ctx.actor.id,
+          updatedAt: ctx.now,
+        });
+      }
+    } else {
+      store.delete("incident_roles", args.id);
+      retire(store, args.id, ctx);
+    }
+    const events: DomainEvent[] = [
+      {
+        type: "incident_role.deleted",
+        subject: args.id,
+        data: { id: args.id, name: row?.name ?? "", builtin },
+      } satisfies IncidentRoleDeleted,
+    ];
+    for (const type of store.scan("incident_types")) {
+      if (!type.roles?.includes(args.id)) continue;
+      const next = store.update("incident_types", type.id, {
+        roles: type.roles.filter((id) => id !== args.id),
+        requiredRoles: (type.requiredRoles ?? []).filter((id) => id !== args.id),
+        updatedAt: ctx.now,
+      });
+      events.push(typeUpdated(next, "role_deleted", args.id));
+    }
+    return ok(...events);
+  },
+});
+
+/** Brings back a built-in that was taken out, as it was (name, description, checklist). */
+export const restoreIncidentRole = defineMutation({
+  name: "incidentRole.restore",
+  args: v.object({ id: v.picklist(INCIDENT_ROLES) }),
+  permission: "catalog:manage",
+  apply(store, args, ctx) {
+    const row = store.get("incident_roles", args.id);
+    if (!row?.removed) return fail("conflict", "Role is not removed");
+    const next = store.update("incident_roles", args.id, { removed: false, updatedAt: ctx.now });
+    const event: IncidentRoleRestored = {
+      type: "incident_role.restored",
+      subject: args.id,
+      data: roleSummary(next),
+    };
+    return ok(event);
   },
 });
 
@@ -937,6 +1197,16 @@ export const allCustomFields = defineQuery({
   sort: (a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
 });
 
+/** Every role row, built-in overrides included; `roleDefinitions` (roles.ts) reads them in order. */
+export const allIncidentRoles = defineQuery({
+  name: "incidentRoles.all",
+  args: v.object({}),
+  permission: "catalog:read",
+  table: "incident_roles",
+  filter: () => true,
+  sort: (a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+});
+
 /** What members may send. */
 export const catalogMutations = [
   createService,
@@ -948,9 +1218,18 @@ export const catalogMutations = [
   createCustomField,
   updateCustomField,
   deleteCustomField,
+  createIncidentRole,
+  updateIncidentRole,
+  deleteIncidentRole,
+  restoreIncidentRole,
   setIncidentType,
   setIncidentServices,
   setIncidentField,
 ] as const;
 
-export const catalogQueries = [allServices, allIncidentTypes, allCustomFields] as const;
+export const catalogQueries = [
+  allServices,
+  allIncidentTypes,
+  allCustomFields,
+  allIncidentRoles,
+] as const;

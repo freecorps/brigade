@@ -984,6 +984,35 @@ describe("when paging fails (the paging path's fallback)", () => {
     expect((await ws.timeline(incident)).filter((row) => row.kind === "page_failed")).toEqual([]);
   });
 
+  test("role definitions leave the commander's page as it was: renamed, it is still paged first; other roles never are", async () => {
+    const duda = user("usr_duda", "responder");
+    const ws = await workspace([ana, bia, caio, duda]);
+    await ws.device(ana);
+    const biaPhone = await ws.device(bia);
+    await ws.device(duda);
+    const scribe = "rol_01JB0000000000000000000001";
+    await ws.run(ana, "incidentRole.update", {
+      id: "commander",
+      name: "Incident lead",
+      description: "",
+      checklist: [],
+    });
+    await ws.run(ana, "incidentRole.create", {
+      id: scribe,
+      name: "Scribe",
+      description: "",
+      checklist: [],
+    });
+    // Taking out another built-in leaves the commander alone (the commander itself never can be: roles.test.ts).
+    await ws.run(ana, "incidentRole.delete", { id: "operations" });
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    await ws.run(ana, "incident.assignRole", { id: incident, role: scribe, userId: duda.id });
+    await ws.run(ana, "incident.assignRole", { id: incident, role: "commander", userId: bia.id });
+    const fake = relay();
+    await deliver(event, fake.send);
+    expect(fake.requests.map((r) => r.body.deviceToken)).toEqual([biaPhone.pushToken]);
+  });
+
   test(`past ${MAX_PAGE_DEVICES} devices, members none of whose devices were sent to are recorded (over_limit)`, async () => {
     const team = Array.from({ length: 21 }, (_, i) =>
       user(`usr_m${String(i).padStart(2, "0")}`, "responder"),

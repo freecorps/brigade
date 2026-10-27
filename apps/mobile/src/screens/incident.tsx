@@ -9,6 +9,7 @@ import {
   people,
   personName,
   queryErrorReason,
+  roleLabel,
   severityName,
   type Notice as Refusal,
   type NoticeTarget,
@@ -18,11 +19,11 @@ import { incidentStatusLabels } from "@freecorps/brigade-i18n/labels";
 import {
   can,
   formatIncidentNumber,
-  INCIDENT_ROLES,
+  roleDefinitions,
   SEVERITIES,
   UPDATE_BODY_MAX,
-  type IncidentRole,
   type IncidentRow,
+  type RoleDefinition,
   type TimelineRow,
 } from "@freecorps/brigade-schema";
 import {
@@ -277,6 +278,12 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
   const editable = can(member.role, "incident:update");
   const members = useQuery("members.all", {});
   const who = people(member.userId, members.rows);
+  // Built-ins under the workspace's names (RFC 0003 "Role definitions"); its own roles show read-only while held.
+  const roleRows = useQuery("incidentRoles.all", {});
+  const held = (role: RoleDefinition) => row.roles?.[role.id] !== undefined;
+  const roles = roleDefinitions(roleRows.rows).filter((role) =>
+    role.builtin && !role.removed ? true : held(role),
+  );
   const { choose, sheet } = useChoiceSheet();
 
   const setStatus = useMutation("incident.setStatus");
@@ -358,7 +365,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
           "severity",
         ),
     );
-  const changeRole = (role: IncidentRole, holder: string | null) => {
+  const changeRole = (role: RoleDefinition, holder: string | null) => {
     // The holder stays listed even if the shard no longer counts them as assignable (a viewer now).
     const options = assignable(members.rows);
     const listed =
@@ -366,7 +373,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
         ? options
         : [...options, { id: holder, name: null, role: "viewer" as const, updatedAt: 0 }];
     choose(
-      m.incident_role({ role, form: "title" }),
+      roleLabel(role.id, role.name),
       [
         ...(holder === null ? [] : [{ value: "", label: m.incident_page({ part: "unassign" }) }]),
         ...listed
@@ -375,9 +382,9 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
       ],
       (value: string) =>
         void track(
-          assignRole({ id: row.id, role, userId: value === "" ? null : value }),
-          { ...base, kind: "role", role },
-          `role/${role}`,
+          assignRole({ id: row.id, role: role.id, userId: value === "" ? null : value }),
+          { ...base, kind: "role", role: role.id, roleName: role.name },
+          `role/${role.id}`,
         ),
     );
   };
@@ -430,16 +437,17 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
 
       {/* Roles before the timeline: short, and what a responder looks for first. */}
       <Section title={m.incident_page({ part: "roles" })} inset={false}>
-        {INCIDENT_ROLES.map((role, index) => (
+        {roles.map((role, index) => (
           <RoleRow
-            key={role}
+            key={role.id}
             first={index === 0}
-            role={role}
-            holder={row.roles?.[role] ?? null}
+            label={roleLabel(role.id, role.name)}
+            holder={row.roles?.[role.id] ?? null}
             who={who}
-            pending={busy.has(`role/${role}`)}
-            editable={editable}
-            onPress={() => changeRole(role, row.roles?.[role] ?? null)}
+            pending={busy.has(`role/${role.id}`)}
+            // The workspace's own roles are given on the dashboard for now.
+            editable={editable && role.builtin !== null && !role.removed}
+            onPress={() => changeRole(role, row.roles?.[role.id] ?? null)}
           />
         ))}
       </Section>
@@ -485,7 +493,7 @@ const CHANGE_GLYPH: Glyph = {
 
 function RoleRow({
   first,
-  role,
+  label,
   holder,
   who,
   pending,
@@ -493,7 +501,7 @@ function RoleRow({
   onPress,
 }: {
   first: boolean;
-  role: IncidentRole;
+  label: string;
   holder: string | null;
   who: People;
   pending: boolean;
@@ -502,7 +510,6 @@ function RoleRow({
 }) {
   const colors = useTheme();
   const glyph = useGlyphSize(fontSize.sm.size);
-  const label = m.incident_role({ role, form: "title" });
   const name = holder === null ? m.incident_page({ part: "nobody" }) : personName(holder, who);
   const content = (
     <Row first={first}>

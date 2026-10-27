@@ -84,7 +84,9 @@ The payloads, by `type`: `incident.declared`, `incident.status_changed`, `incide
 `webhooks` section; `WebhookPayloadOf<"alert.fired">` is one of them as a type. Every payload's `actor` is
 `{ kind, id }`: `kind` is `user` (`usr_…`), `token` (an API token, `tok_…`, acting for the member who made it),
 `system` (`sys_…`) or `integration`, and like every list it may grow. An id that names who did something, like
-`incident.acknowledged`'s `data.by`, may be a `tok_…` too.
+`incident.acknowledged`'s `data.by`, may be a `tok_…` too. `incident.role_assigned` names the role by `roleId` (a
+built-in's name, `commander`, `communications` or `operations`, or a workspace role's `rol_…`); `role` is the
+built-in's name or `custom`, and `roleName` the workspace's name for it (null for a built-in under its own name).
 
 ## Ping a heartbeat
 

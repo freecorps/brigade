@@ -1,4 +1,5 @@
 import { setLocale } from "@freecorps/brigade-i18n";
+import { roleLabel } from "@freecorps/brigade-i18n/incident";
 import { UPDATE_BODY_MAX, type MemberRow, type TimelineRow } from "@freecorps/brigade-schema";
 import { afterEach, expect, test } from "vite-plus/test";
 import { parseIncidentNumber } from "../src/components/incident-detail";
@@ -156,6 +157,35 @@ test("an update is checked like the shard checks it before it is sent", () => {
   expect(checkUpdate(ID, "x".repeat(UPDATE_BODY_MAX)).ok).toBe(true);
 });
 
+test("a workspace's role, or a renamed built-in, reads by the name it had then", async () => {
+  const scribe = "rol_01JB0000000000000000000001";
+  expect(
+    entryText(
+      entry({ kind: "role_assigned", role: scribe, roleName: "Scribe", from: null, to: "usr_me" }),
+      who,
+    ),
+  ).toBe("Bia Lima made you Scribe");
+  expect(
+    entryText(
+      entry({
+        kind: "role_assigned",
+        role: "commander",
+        roleName: "Lead",
+        from: null,
+        to: "usr_me",
+      }),
+      who,
+    ),
+  ).toBe("Bia Lima made you Lead");
+  // Unassigned after it was deleted: no name was left to record.
+  const gone = entry({ kind: "role_assigned", role: scribe, from: "usr_me", to: null });
+  expect(entryText(gone, who)).toBe("Bia Lima removed you as deleted role");
+  await setLocale("pt-BR");
+  expect(roleLabel(scribe, null)).toBe("Papel excluído");
+  expect(roleLabel("commander", null)).toBe("Comandante do incidente");
+  expect(roleLabel("commander", "Líder")).toBe("Líder");
+});
+
 test("a refused update or role change says what failed", () => {
   const base = { key: "n1", reason: "forbidden", incidentId: ID, number: 3, title: "t" } as const;
   expect(noticeText({ ...base, kind: "update" } as Notice, "row")).toBe(
@@ -164,6 +194,12 @@ test("a refused update or role change says what failed", () => {
   expect(noticeText({ ...base, kind: "role", role: "operations" } as Notice, "row")).toMatch(
     /^Couldn't change the operations lead\. /,
   );
+  expect(
+    noticeText(
+      { ...base, kind: "role", role: "rol_01JB0000000000000000000001", roleName: "Scribe" },
+      "row",
+    ),
+  ).toMatch(/^Couldn't change the Scribe\. /);
 });
 
 test("an update over the limit is too long, counted as the shard counts it", () => {

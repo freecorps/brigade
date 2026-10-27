@@ -19,6 +19,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "fields" | * | * | "{countFormatted} fields" |
 * | "options" | * | "one" | "{countFormatted} option" |
 * | "options" | * | * | "{countFormatted} options" |
+* | "roles" | * | "one" | "{countFormatted} role" |
+* | "roles" | * | * | "{countFormatted} roles" |
 * | "missing" | * | "one" | "{countFormatted} required field to fill" |
 * | "missing" | * | * | "{countFormatted} required fields to fill" |
 * | "active" | * | "one" | "{countFormatted} active incident" |
@@ -38,12 +40,14 @@ export const catalog_count = /** @type {((inputs: Catalog_CountInputs, options?:
 		if (i?.kind === "types" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} tipo`);
 		if (i?.kind === "fields" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} campo`);
 		if (i?.kind === "options" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} opção`);
+		if (i?.kind === "roles" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} papel`);
 		if (i?.kind === "missing" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} campo obrigatório a preencher`);
 		if (i?.kind === "active" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} incidente ativo`);
 		if (i?.kind === "services") return /** @type {LocalizedString} */ (`${countFormatted} serviços`);
 		if (i?.kind === "types") return /** @type {LocalizedString} */ (`${countFormatted} tipos`);
 		if (i?.kind === "fields") return /** @type {LocalizedString} */ (`${countFormatted} campos`);
 		if (i?.kind === "options") return /** @type {LocalizedString} */ (`${countFormatted} opções`);
+		if (i?.kind === "roles") return /** @type {LocalizedString} */ (`${countFormatted} papéis`);
 		if (i?.kind === "missing") return /** @type {LocalizedString} */ (`${countFormatted} campos obrigatórios a preencher`);
 		if (i?.kind === "active") return /** @type {LocalizedString} */ (`${countFormatted} incidentes ativos`);
 		return /** @type {LocalizedString} */ (`${countFormatted}`)
@@ -55,12 +59,14 @@ export const catalog_count = /** @type {((inputs: Catalog_CountInputs, options?:
 		if (i?.kind === "types" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} type`);
 		if (i?.kind === "fields" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} field`);
 		if (i?.kind === "options" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} option`);
+		if (i?.kind === "roles" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} role`);
 		if (i?.kind === "missing" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} required field to fill`);
 		if (i?.kind === "active" && countPlural === "one") return /** @type {LocalizedString} */ (`${countFormatted} active incident`);
 		if (i?.kind === "services") return /** @type {LocalizedString} */ (`${countFormatted} services`);
 		if (i?.kind === "types") return /** @type {LocalizedString} */ (`${countFormatted} types`);
 		if (i?.kind === "fields") return /** @type {LocalizedString} */ (`${countFormatted} fields`);
 		if (i?.kind === "options") return /** @type {LocalizedString} */ (`${countFormatted} options`);
+		if (i?.kind === "roles") return /** @type {LocalizedString} */ (`${countFormatted} roles`);
 		if (i?.kind === "missing") return /** @type {LocalizedString} */ (`${countFormatted} required fields to fill`);
 		if (i?.kind === "active") return /** @type {LocalizedString} */ (`${countFormatted} active incidents`);
 		return /** @type {LocalizedString} */ (`${countFormatted}`)

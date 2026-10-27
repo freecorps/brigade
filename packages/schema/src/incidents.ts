@@ -2,16 +2,11 @@
 // status and severity; once IncidentDO exists it owns them and this becomes an outbox-fed projection (RFC 0004).
 
 import { idTime } from "./id.ts";
-import {
-  canTransition,
-  INCIDENT_ROLES,
-  INCIDENT_STATUSES,
-  isActive,
-  SEVERITIES,
-} from "./lifecycle.ts";
+import { canTransition, INCIDENT_STATUSES, isActive, SEVERITIES } from "./lifecycle.ts";
 import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
 import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
+import { isBuiltinRole, isLiveRole, isRoleId, roleDefinition, ROLE_ID_MAX } from "./roles.ts";
 import type { IncidentRow } from "./tables.ts";
 import type { MutationContext } from "./mutation.ts";
 import { appendTimeline } from "./timeline.ts";
@@ -50,10 +45,21 @@ export type IncidentUpdatePosted = DomainEvent<
   "incident.update_posted",
   { entryId: string; body: string }
 >;
-/** An incident role changed hands; `to` null: unassigned. */
+/**
+ * An incident role changed hands; `to` null: unassigned. `roleId` is the role's id (a built-in's name or a `rol_`
+ * id); `role` is the built-in's name, or `custom` for a workspace role, so readers from before role definitions keep
+ * reading the built-ins. `roleName`: the workspace's name for it, null for a built-in under its own name. Events from
+ * before have `role` only, the built-in's name, which is its id.
+ */
 export type IncidentRoleAssigned = DomainEvent<
   "incident.role_assigned",
-  { role: IncidentRole; from: string | null; to: string | null }
+  {
+    role: IncidentRole | "custom";
+    roleId: string;
+    roleName: string | null;
+    from: string | null;
+    to: string | null;
+  }
 >;
 export type IncidentEvent =
   | IncidentDeclared
@@ -313,15 +319,17 @@ export const postIncidentUpdate = defineMutation({
 });
 
 /**
- * Gives an incident role to a member, or takes it away (`userId: null`). The member must be in the shard's member
- * list (`members`, RFC 0003) and hold a role that may run incidents: viewers only read. On a client the check runs
- * over the members it holds, so the picker subscribes to them.
+ * Gives an incident role to a member, or takes it away (`userId: null`). `role` is a role id: a built-in's name, as
+ * clients from before role definitions send, or a workspace role's `rol_` id (RFC 0003 "Role definitions"). Giving
+ * it needs a role the workspace offers (not deleted, nor a removed built-in); taking it away works for any role
+ * someone holds. The member must be in the shard's member list (`members`, RFC 0003) and hold a role that may run
+ * incidents: viewers only read. On a client the checks run over the rows it holds, so the picker subscribes to them.
  */
 export const assignIncidentRole = defineMutation({
   name: "incident.assignRole",
   args: v.object({
     id: incidentId,
-    role: v.picklist(INCIDENT_ROLES),
+    role: v.string({ min: 1, max: ROLE_ID_MAX }),
     // Better Auth user ids (`usr_<ULID>`), or the local dev actor's; membership is the real check.
     userId: v.nullable(v.string({ min: 1, max: 64 })),
   }),
@@ -329,14 +337,22 @@ export const assignIncidentRole = defineMutation({
   apply(store, args, ctx) {
     const incident = store.get("incidents", args.id);
     if (!incident) return fail("not_found", "Incident not found");
-    const role: IncidentRole = args.role;
+    const role: string = args.role;
+    if (!isRoleId(role)) {
+      return fail("invalid_args", "Not a role id", [{ path: "role", message: "Not a role id" }]);
+    }
     const userId: string | null = args.userId;
     const roles = { ...incident.roles };
     const from = roles[role] ?? null;
     if (from === userId) {
       return fail("conflict", userId ? "Already holds the role" : "Nobody holds the role");
     }
+    const definition = roleDefinition(store.scan("incident_roles"), role);
     if (userId !== null) {
+      if (!isLiveRole(definition)) {
+        const message = "Role not found";
+        return fail("invalid_args", message, [{ path: "role", message }]);
+      }
       const member = store.get("members", userId);
       // `invalid_args`, not `not_found` or `forbidden`: the incident exists and the actor may assign; the
       // choice of member is what is wrong.
@@ -349,11 +365,24 @@ export const assignIncidentRole = defineMutation({
       delete roles[role];
     }
     store.update("incidents", args.id, { roles, updatedAt: ctx.now });
-    appendTimeline(store, incident, { kind: "role_assigned", role, from, to: userId }, ctx);
+    // By the name it has now, so the entry still reads once the role is renamed or deleted.
+    const roleName = definition?.name ?? null;
+    appendTimeline(
+      store,
+      incident,
+      { kind: "role_assigned", role, ...(roleName !== null && { roleName }), from, to: userId },
+      ctx,
+    );
     const event: IncidentRoleAssigned = {
       type: "incident.role_assigned",
       subject: args.id,
-      data: { role, from, to: userId },
+      data: {
+        role: isBuiltinRole(role) ? role : "custom",
+        roleId: role,
+        roleName,
+        from,
+        to: userId,
+      },
     };
     return ok(event);
   },

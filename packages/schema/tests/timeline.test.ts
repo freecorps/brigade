@@ -275,7 +275,13 @@ describe("incident.assignRole", () => {
         {
           type: "incident.role_assigned",
           subject: ID,
-          data: { role: "commander", from: null, to: "usr_ana" },
+          data: {
+            role: "commander",
+            roleId: "commander",
+            roleName: null,
+            from: null,
+            to: "usr_ana",
+          },
         },
       ],
     });

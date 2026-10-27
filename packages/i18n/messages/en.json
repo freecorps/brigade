@@ -700,6 +700,8 @@
         "role=commander, form=*": "Incident commander",
         "role=communications, form=*": "Communications lead",
         "role=operations, form=*": "Operations lead",
+        "role=deleted, form=sentence": "deleted role",
+        "role=deleted, form=*": "Deleted role",
         "role=*, form=*": "Role"
       }
     }
@@ -2043,7 +2045,7 @@
         "text=delete_service": "Delete {name}? Incidents that name it stop showing it.",
         "text=delete_type": "Delete {name}? Its incidents keep their fields and show the type as deleted.",
         "text=delete_field": "Delete {name}? Its values stop showing on every incident, and types stop requiring it.",
-        "text=settings_title": "Incident types and fields",
+        "text=settings_title": "Incident types, fields and roles",
         "text=types_title": "Types",
         "text=types_empty": "No incident types yet. A type sets the severity a declare starts with, the escalation policy its pages use and the fields it needs.",
         "text=fields_title": "Custom fields",
@@ -2073,12 +2075,31 @@
         "text=required": "Required by the type",
         "text=required_badge": "Required",
         "text=required_note": "Required fields never hold up declaring, paging or resolving; once filled they can change but not be cleared.",
-        "text=catalog_link": "Edit types and fields on the overview.",
+        "text=catalog_link": "Edit types, fields and roles on the overview.",
         "text=dropped": "People or schedules that are gone were taken out of the owners.",
         "text=deleted_schedule": "Deleted schedule",
         "text=deleted_service": "Deleted service",
         "text=group_schedules": "Schedules",
         "text=group_people": "People",
+        "text=roles_title": "Incident roles",
+        "text=roles_note": "Who does what on an incident. Pages go to the commander first when no escalation policy pages, so it can be renamed but never removed.",
+        "text=builtin": "Built-in",
+        "text=removed": "Removed",
+        "text=removed_note": "Not offered on incidents. Whoever already holds it keeps it.",
+        "text=checklist_none": "No responsibilities listed",
+        "text=builtin_name": "Leave empty to keep “{name}”, which every reader sees in their language.",
+        "text=commander_kept": "Pages go to the commander first, so this role can't be removed.",
+        "text=delete_role": "Delete {name}? It stops showing on incidents and leaves every type that lists it.",
+        "text=remove_role": "Remove {name}? It stops being offered on incidents and leaves every type that lists it. You can restore it later.",
+        "text=roles_limit": "At most 15 roles, the built-in ones included.",
+        "text=role_off": "Not listed",
+        "text=role_listed": "To fill",
+        "text=role_required": "Required",
+        "text=roles_type_note": "The incident page shows the commander, then the roles listed here. List none to show every role. Required roles are flagged until someone holds them; nothing waits on them.",
+        "text=fills_roles": "Roles: {name}",
+        "text=fills_every_role": "Shows every role",
+        "text=required_role": "{name} (required)",
+        "text=responsibilities": "Responsibilities",
         "text=*": "Catalog"
       }
     }
@@ -2104,6 +2125,12 @@
         "action=add_option": "Add an option",
         "action=clear": "Clear",
         "action=open": "Open",
+        "action=add_role": "New role",
+        "action=create_role": "Create role",
+        "action=delete_role": "Delete role",
+        "action=remove_role": "Remove role",
+        "action=restore": "Restore",
+        "action=add_item": "Add a responsibility",
         "action=*": "Change"
       }
     }
@@ -2117,6 +2144,8 @@
         "action=remove": "Remove {name}",
         "action=clear": "Clear {name}",
         "action=option": "Option {name}",
+        "action=restore": "Restore {name}",
+        "action=item": "Responsibility {name}",
         "action=*": "{name}"
       }
     }
@@ -2144,6 +2173,9 @@
         "field=number, form=invalid": "Enter a number.",
         "field=link, form=invalid": "Enter a link that starts with https:// or http://.",
         "field=choice, form=invalid": "Pick at least one option.",
+        "field=checklist, form=label": "Responsibilities",
+        "field=roles, form=label": "Roles",
+        "field=checklist, form=invalid": "Give every responsibility up to 200 characters, each one different.",
         "field=*, form=invalid": "Check this field.",
         "field=*, form=*": "Field"
       }
@@ -2179,6 +2211,8 @@
         "kind=fields, count=*, countPlural=*": "{countFormatted} fields",
         "kind=options, count=*, countPlural=one": "{countFormatted} option",
         "kind=options, count=*, countPlural=*": "{countFormatted} options",
+        "kind=roles, count=*, countPlural=one": "{countFormatted} role",
+        "kind=roles, count=*, countPlural=*": "{countFormatted} roles",
         "kind=missing, count=*, countPlural=one": "{countFormatted} required field to fill",
         "kind=missing, count=*, countPlural=*": "{countFormatted} required fields to fill",
         "kind=active, count=*, countPlural=one": "{countFormatted} active incident",

@@ -162,7 +162,8 @@ the email Slack confirmed for one of the connected team's own users (RFC 0011 "W
 ## Q23 — Status page choices to confirm (RFC 0012)
 
 - Responders may publish to the status page (`status:publish`), as they post updates. Should it be owners, admins
-  and the incident's communications role only, once role definitions exist?
+  and whoever holds the incident's communications role only? Role definitions exist now (RFC 0003), but a workspace
+  may take that role out, so the rule would need a fallback.
 - The page shows when its snapshot was built and nothing else about freshness. Should it also say "this page may be
   out of date" past a threshold? The shard now rebuilds a public page at least daily, so a snapshot older than a day
   or two means the shard or KV is stuck, which a visitor could be told.

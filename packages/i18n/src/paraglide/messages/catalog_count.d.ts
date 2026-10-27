@@ -16,6 +16,8 @@ export type Catalog_CountInputs = {
 * | "fields" | * | * | "{countFormatted} fields" |
 * | "options" | * | "one" | "{countFormatted} option" |
 * | "options" | * | * | "{countFormatted} options" |
+* | "roles" | * | "one" | "{countFormatted} role" |
+* | "roles" | * | * | "{countFormatted} roles" |
 * | "missing" | * | "one" | "{countFormatted} required field to fill" |
 * | "missing" | * | * | "{countFormatted} required fields to fill" |
 * | "active" | * | "one" | "{countFormatted} active incident" |

@@ -30,7 +30,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "delete_service" | "Delete {name}? Incidents that name it stop showing it." |
 * | "delete_type" | "Delete {name}? Its incidents keep their fields and show the type as deleted." |
 * | "delete_field" | "Delete {name}? Its values stop showing on every incident, and types stop requiring it." |
-* | "settings_title" | "Incident types and fields" |
+* | "settings_title" | "Incident types, fields and roles" |
 * | "types_title" | "Types" |
 * | "types_empty" | "No incident types yet. A type sets the severity a declare starts with, the escalation policy its pages use and the fields it needs." |
 * | "fields_title" | "Custom fields" |
@@ -60,12 +60,31 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "required" | "Required by the type" |
 * | "required_badge" | "Required" |
 * | "required_note" | "Required fields never hold up declaring, paging or resolving; once filled they can change but not be cleared." |
-* | "catalog_link" | "Edit types and fields on the overview." |
+* | "catalog_link" | "Edit types, fields and roles on the overview." |
 * | "dropped" | "People or schedules that are gone were taken out of the owners." |
 * | "deleted_schedule" | "Deleted schedule" |
 * | "deleted_service" | "Deleted service" |
 * | "group_schedules" | "Schedules" |
 * | "group_people" | "People" |
+* | "roles_title" | "Incident roles" |
+* | "roles_note" | "Who does what on an incident. Pages go to the commander first when no escalation policy pages, so it can be renamed but never removed." |
+* | "builtin" | "Built-in" |
+* | "removed" | "Removed" |
+* | "removed_note" | "Not offered on incidents. Whoever already holds it keeps it." |
+* | "checklist_none" | "No responsibilities listed" |
+* | "builtin_name" | "Leave empty to keep “{name}”, which every reader sees in their language." |
+* | "commander_kept" | "Pages go to the commander first, so this role can't be removed." |
+* | "delete_role" | "Delete {name}? It stops showing on incidents and leaves every type that lists it." |
+* | "remove_role" | "Remove {name}? It stops being offered on incidents and leaves every type that lists it. You can restore it later." |
+* | "roles_limit" | "At most 15 roles, the built-in ones included." |
+* | "role_off" | "Not listed" |
+* | "role_listed" | "To fill" |
+* | "role_required" | "Required" |
+* | "roles_type_note" | "The incident page shows the commander, then the roles listed here. List none to show every role. Required roles are flagged until someone holds them; nothing..." |
+* | "fills_roles" | "Roles: {name}" |
+* | "fills_every_role" | "Shows every role" |
+* | "required_role" | "{name} (required)" |
+* | "responsibilities" | "Responsibilities" |
 * | * | "Catalog" |
 *
 * @param {Catalog_TextInputs} inputs
@@ -95,7 +114,7 @@ export const catalog_text = /** @type {((inputs: Catalog_TextInputs, options?: {
 		if (i?.text === "delete_service") return /** @type {LocalizedString} */ (`Excluir ${i?.name}? Os incidentes que o citam deixam de mostrá-lo.`);
 		if (i?.text === "delete_type") return /** @type {LocalizedString} */ (`Excluir ${i?.name}? Os incidentes dele mantêm os campos e mostram o tipo como excluído.`);
 		if (i?.text === "delete_field") return /** @type {LocalizedString} */ (`Excluir ${i?.name}? Os valores deixam de aparecer em todos os incidentes e os tipos deixam de exigi-lo.`);
-		if (i?.text === "settings_title") return /** @type {LocalizedString} */ (`Tipos e campos de incidente`);
+		if (i?.text === "settings_title") return /** @type {LocalizedString} */ (`Tipos, campos e papéis de incidente`);
 		if (i?.text === "types_title") return /** @type {LocalizedString} */ (`Tipos`);
 		if (i?.text === "types_empty") return /** @type {LocalizedString} */ (`Nenhum tipo de incidente ainda. Um tipo define a severidade com que uma declaração começa, a política de escalonamento dos chamados e os campos de que precisa.`);
 		if (i?.text === "fields_title") return /** @type {LocalizedString} */ (`Campos personalizados`);
@@ -125,12 +144,31 @@ export const catalog_text = /** @type {((inputs: Catalog_TextInputs, options?: {
 		if (i?.text === "required") return /** @type {LocalizedString} */ (`Exigido pelo tipo`);
 		if (i?.text === "required_badge") return /** @type {LocalizedString} */ (`Obrigatório`);
 		if (i?.text === "required_note") return /** @type {LocalizedString} */ (`Campos obrigatórios nunca atrasam a declaração, os chamados ou a resolução; depois de preenchidos podem mudar, mas não ficar vazios.`);
-		if (i?.text === "catalog_link") return /** @type {LocalizedString} */ (`Edite tipos e campos na visão geral.`);
+		if (i?.text === "catalog_link") return /** @type {LocalizedString} */ (`Edite tipos, campos e papéis na visão geral.`);
 		if (i?.text === "dropped") return /** @type {LocalizedString} */ (`Pessoas ou escalas que não existem mais foram tiradas dos responsáveis.`);
 		if (i?.text === "deleted_schedule") return /** @type {LocalizedString} */ (`Escala excluída`);
 		if (i?.text === "deleted_service") return /** @type {LocalizedString} */ (`Serviço excluído`);
 		if (i?.text === "group_schedules") return /** @type {LocalizedString} */ (`Escalas`);
 		if (i?.text === "group_people") return /** @type {LocalizedString} */ (`Pessoas`);
+		if (i?.text === "roles_title") return /** @type {LocalizedString} */ (`Papéis no incidente`);
+		if (i?.text === "roles_note") return /** @type {LocalizedString} */ (`Quem faz o quê em um incidente. Os chamados vão primeiro para o comandante quando nenhuma política de escalonamento aciona, então esse papel pode ser renomeado, mas nunca removido.`);
+		if (i?.text === "builtin") return /** @type {LocalizedString} */ (`Padrão`);
+		if (i?.text === "removed") return /** @type {LocalizedString} */ (`Removido`);
+		if (i?.text === "removed_note") return /** @type {LocalizedString} */ (`Não é oferecido nos incidentes. Quem já o ocupa continua com ele.`);
+		if (i?.text === "checklist_none") return /** @type {LocalizedString} */ (`Nenhuma responsabilidade listada`);
+		if (i?.text === "builtin_name") return /** @type {LocalizedString} */ (`Deixe vazio para manter “${i?.name}”, que cada leitor vê no seu idioma.`);
+		if (i?.text === "commander_kept") return /** @type {LocalizedString} */ (`Os chamados vão primeiro para o comandante, então este papel não pode ser removido.`);
+		if (i?.text === "delete_role") return /** @type {LocalizedString} */ (`Excluir ${i?.name}? Ele deixa de aparecer nos incidentes e sai de todos os tipos que o listam.`);
+		if (i?.text === "remove_role") return /** @type {LocalizedString} */ (`Remover ${i?.name}? Ele deixa de ser oferecido nos incidentes e sai de todos os tipos que o listam. Você pode restaurá-lo depois.`);
+		if (i?.text === "roles_limit") return /** @type {LocalizedString} */ (`No máximo 15 papéis, contando os padrão.`);
+		if (i?.text === "role_off") return /** @type {LocalizedString} */ (`Não listado`);
+		if (i?.text === "role_listed") return /** @type {LocalizedString} */ (`A preencher`);
+		if (i?.text === "role_required") return /** @type {LocalizedString} */ (`Obrigatório`);
+		if (i?.text === "roles_type_note") return /** @type {LocalizedString} */ (`A página do incidente mostra o comandante e depois os papéis listados aqui. Não liste nenhum para mostrar todos. Papéis obrigatórios ficam sinalizados até alguém ocupá-los; nada espera por eles.`);
+		if (i?.text === "fills_roles") return /** @type {LocalizedString} */ (`Papéis: ${i?.name}`);
+		if (i?.text === "fills_every_role") return /** @type {LocalizedString} */ (`Mostra todos os papéis`);
+		if (i?.text === "required_role") return /** @type {LocalizedString} */ (`${i?.name} (obrigatório)`);
+		if (i?.text === "responsibilities") return /** @type {LocalizedString} */ (`Responsabilidades`);
 		return /** @type {LocalizedString} */ (`Catálogo`)
 	}
 	{
@@ -154,7 +192,7 @@ export const catalog_text = /** @type {((inputs: Catalog_TextInputs, options?: {
 		if (i?.text === "delete_service") return /** @type {LocalizedString} */ (`Delete ${i?.name}? Incidents that name it stop showing it.`);
 		if (i?.text === "delete_type") return /** @type {LocalizedString} */ (`Delete ${i?.name}? Its incidents keep their fields and show the type as deleted.`);
 		if (i?.text === "delete_field") return /** @type {LocalizedString} */ (`Delete ${i?.name}? Its values stop showing on every incident, and types stop requiring it.`);
-		if (i?.text === "settings_title") return /** @type {LocalizedString} */ (`Incident types and fields`);
+		if (i?.text === "settings_title") return /** @type {LocalizedString} */ (`Incident types, fields and roles`);
 		if (i?.text === "types_title") return /** @type {LocalizedString} */ (`Types`);
 		if (i?.text === "types_empty") return /** @type {LocalizedString} */ (`No incident types yet. A type sets the severity a declare starts with, the escalation policy its pages use and the fields it needs.`);
 		if (i?.text === "fields_title") return /** @type {LocalizedString} */ (`Custom fields`);
@@ -184,12 +222,31 @@ export const catalog_text = /** @type {((inputs: Catalog_TextInputs, options?: {
 		if (i?.text === "required") return /** @type {LocalizedString} */ (`Required by the type`);
 		if (i?.text === "required_badge") return /** @type {LocalizedString} */ (`Required`);
 		if (i?.text === "required_note") return /** @type {LocalizedString} */ (`Required fields never hold up declaring, paging or resolving; once filled they can change but not be cleared.`);
-		if (i?.text === "catalog_link") return /** @type {LocalizedString} */ (`Edit types and fields on the overview.`);
+		if (i?.text === "catalog_link") return /** @type {LocalizedString} */ (`Edit types, fields and roles on the overview.`);
 		if (i?.text === "dropped") return /** @type {LocalizedString} */ (`People or schedules that are gone were taken out of the owners.`);
 		if (i?.text === "deleted_schedule") return /** @type {LocalizedString} */ (`Deleted schedule`);
 		if (i?.text === "deleted_service") return /** @type {LocalizedString} */ (`Deleted service`);
 		if (i?.text === "group_schedules") return /** @type {LocalizedString} */ (`Schedules`);
 		if (i?.text === "group_people") return /** @type {LocalizedString} */ (`People`);
+		if (i?.text === "roles_title") return /** @type {LocalizedString} */ (`Incident roles`);
+		if (i?.text === "roles_note") return /** @type {LocalizedString} */ (`Who does what on an incident. Pages go to the commander first when no escalation policy pages, so it can be renamed but never removed.`);
+		if (i?.text === "builtin") return /** @type {LocalizedString} */ (`Built-in`);
+		if (i?.text === "removed") return /** @type {LocalizedString} */ (`Removed`);
+		if (i?.text === "removed_note") return /** @type {LocalizedString} */ (`Not offered on incidents. Whoever already holds it keeps it.`);
+		if (i?.text === "checklist_none") return /** @type {LocalizedString} */ (`No responsibilities listed`);
+		if (i?.text === "builtin_name") return /** @type {LocalizedString} */ (`Leave empty to keep “${i?.name}”, which every reader sees in their language.`);
+		if (i?.text === "commander_kept") return /** @type {LocalizedString} */ (`Pages go to the commander first, so this role can't be removed.`);
+		if (i?.text === "delete_role") return /** @type {LocalizedString} */ (`Delete ${i?.name}? It stops showing on incidents and leaves every type that lists it.`);
+		if (i?.text === "remove_role") return /** @type {LocalizedString} */ (`Remove ${i?.name}? It stops being offered on incidents and leaves every type that lists it. You can restore it later.`);
+		if (i?.text === "roles_limit") return /** @type {LocalizedString} */ (`At most 15 roles, the built-in ones included.`);
+		if (i?.text === "role_off") return /** @type {LocalizedString} */ (`Not listed`);
+		if (i?.text === "role_listed") return /** @type {LocalizedString} */ (`To fill`);
+		if (i?.text === "role_required") return /** @type {LocalizedString} */ (`Required`);
+		if (i?.text === "roles_type_note") return /** @type {LocalizedString} */ (`The incident page shows the commander, then the roles listed here. List none to show every role. Required roles are flagged until someone holds them; nothing waits on them.`);
+		if (i?.text === "fills_roles") return /** @type {LocalizedString} */ (`Roles: ${i?.name}`);
+		if (i?.text === "fills_every_role") return /** @type {LocalizedString} */ (`Shows every role`);
+		if (i?.text === "required_role") return /** @type {LocalizedString} */ (`${i?.name} (required)`);
+		if (i?.text === "responsibilities") return /** @type {LocalizedString} */ (`Responsibilities`);
 		return /** @type {LocalizedString} */ (`Catalog`)
 	}
 });

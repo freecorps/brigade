@@ -205,6 +205,57 @@ test("a long name in Roles wraps inside its trigger, named by the role once", as
   expect($(".sr-only", trigger)).toBeNull();
 });
 
+test("a type's roles: the commander, then its own, a required one flagged until held, responsibilities folded", async () => {
+  const view = await incidentPage();
+  const owner: Actor = { kind: "user", id: "usr_dev", role: "owner" };
+  const scribe = "rol_01JB0000000000000000000001";
+  const type = "typ_01JB0000000000000000000001";
+  for (const [name, args] of [
+    [
+      "incidentRole.update",
+      { id: "commander", name: "Incident lead", description: "", checklist: [] },
+    ],
+    [
+      "incidentRole.create",
+      {
+        id: scribe,
+        name: "Scribe",
+        description: "Keeps the record.",
+        checklist: ["Note every decision"],
+      },
+    ],
+    [
+      "incidentType.create",
+      {
+        id: type,
+        name: "Outage",
+        description: "",
+        defaultSeverity: null,
+        escalationPolicyId: null,
+        requiredFields: [],
+        roles: [scribe],
+        requiredRoles: [scribe],
+      },
+    ],
+    ["incident.setType", { id: view.id, typeId: type }],
+  ] as const) {
+    expect(view.shard.write(owner, name, args), name).toMatchObject({ ok: true });
+  }
+  await view.flush();
+  const roles = card("Roles")!;
+  const items = $$("li", roles).filter((li) => li.parentElement?.closest("li") === null);
+  expect(items.map((li) => li.firstElementChild?.textContent)).toEqual([
+    "Incident lead",
+    "ScribeRequired",
+  ]);
+  expect($("details summary", items[1])?.textContent).toBe("Responsibilities");
+  expect($("details", items[1])?.textContent).toContain("Note every decision");
+  view.shard.write(bia, "incident.assignRole", { id: view.id, role: scribe, userId: "usr_bia" });
+  await view.flush();
+  expect(items[1]?.isConnected && items[1].firstElementChild?.textContent).toBe("Scribe");
+  expect(card("Timeline")!.textContent).toContain(`${LONG_NAME} took the Scribe role`);
+});
+
 test("the timeline comes before the roles in the page, and roles show first on phones", async () => {
   await incidentPage();
   const timeline = card("Timeline")!;

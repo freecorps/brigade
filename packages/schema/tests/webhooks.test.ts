@@ -445,6 +445,37 @@ describe("payload", () => {
     ).toMatchObject({ role: "commander", from: null, to: "usr_ana" });
   });
 
+  test("a role assignment names the role by id, keeping the built-in's name in role", () => {
+    // Events from before role definitions carry only the built-in's name, which is its id.
+    expect(
+      webhookPayload(event("incident.role_assigned", { role: "operations", from: null, to: "u" }), {
+        incident,
+      })?.data,
+    ).toMatchObject({ role: "operations", roleId: "operations", roleName: null });
+    const custom = webhookPayload(
+      event("incident.role_assigned", {
+        role: "custom",
+        roleId: "rol_01JB0000000000000000000000",
+        roleName: "Scribe",
+        from: null,
+        to: "usr_ana",
+      }),
+      { incident },
+    );
+    expect(custom?.data).toMatchObject({
+      role: "custom",
+      roleId: "rol_01JB0000000000000000000000",
+      roleName: "Scribe",
+    });
+    expect(WEBHOOK_PAYLOADS["incident.role_assigned"](custom).ok).toBe(true);
+    // A custom role without its id has nothing to name it by.
+    expect(
+      webhookPayload(event("incident.role_assigned", { role: "custom", from: null, to: "u" }), {
+        incident,
+      }),
+    ).toBeUndefined();
+  });
+
   test("nothing outside the catalog", () => {
     for (const type of [
       "member.removed",

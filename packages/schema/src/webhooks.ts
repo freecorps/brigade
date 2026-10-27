@@ -537,11 +537,17 @@ export type WebhookPayload =
   /** `by`: the actor's id, a member's (`usr_…`) or an API token's (`tok_…`). */
   | Envelope<"incident.acknowledged", { incident: WebhookIncident; by: string }>
   | Envelope<"incident.update_posted", { incident: WebhookIncident; body: string }>
+  /**
+   * `roleId`: the role's id, a built-in's name or a workspace role's `rol_…` (RFC 0003 "Role definitions"); `role`:
+   * the built-in's name, or `custom`; `roleName`: the workspace's name for it, null for a built-in under its own.
+   */
   | Envelope<
       "incident.role_assigned",
       {
         incident: WebhookIncident;
-        role: Open<IncidentRole>;
+        role: Open<IncidentRole | "custom">;
+        roleId: string;
+        roleName: string | null;
         from: string | null;
         to: string | null;
       }
@@ -599,6 +605,8 @@ export const ESCALATION_REASONS = [
   "exhausted",
   "stalled",
 ] as const satisfies readonly EscalationReason[];
+/** `incident.role_assigned`'s `role`: a built-in's name, or `custom` for a role the workspace defined. */
+const ROLE_KINDS = [...INCIDENT_ROLES, "custom"] as const;
 /** Why an alert resolves (`alert.resolved`). */
 export const ALERT_RESOLVED_REASONS = ["recovered", "paused", "deleted"] as const;
 export type AlertResolvedReason = (typeof ALERT_RESOLVED_REASONS)[number];
@@ -724,11 +732,19 @@ export function webhookPayload(
         : undefined;
     }
     case "incident.role_assigned": {
-      const role = oneOf("role", INCIDENT_ROLES);
+      const role = oneOf("role", ROLE_KINDS);
+      // Events from before role definitions name a built-in only, whose name is its id.
+      const roleId = text("roleId") ?? (role !== "custom" ? role : undefined);
+      const roleName = textOrNull("roleName");
       const from = textOrNull("from");
       const to = textOrNull("to");
-      return incident && role && from !== undefined && to !== undefined
-        ? { ...base, type, data: { incident, role, from, to } }
+      return incident &&
+        role &&
+        roleId !== undefined &&
+        roleName !== undefined &&
+        from !== undefined &&
+        to !== undefined
+        ? { ...base, type, data: { incident, role, roleId, roleName, from, to } }
         : undefined;
     }
     case "escalation.paged": {
@@ -882,7 +898,9 @@ export const WEBHOOK_PAYLOADS = {
   }),
   "incident.role_assigned": envelope("incident.role_assigned", {
     incident: payloadIncident,
-    role: known(INCIDENT_ROLES),
+    role: known(ROLE_KINDS),
+    roleId: v.string({ min: 1, max: OPEN_VALUE_MAX }),
+    roleName: v.nullable(payloadText),
     from: v.nullable(actorId),
     to: v.nullable(actorId),
   }),

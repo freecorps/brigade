@@ -29,7 +29,7 @@ export type Catalog_TextInputs = {
 * | "delete_service" | "Delete {name}? Incidents that name it stop showing it." |
 * | "delete_type" | "Delete {name}? Its incidents keep their fields and show the type as deleted." |
 * | "delete_field" | "Delete {name}? Its values stop showing on every incident, and types stop requiring it." |
-* | "settings_title" | "Incident types and fields" |
+* | "settings_title" | "Incident types, fields and roles" |
 * | "types_title" | "Types" |
 * | "types_empty" | "No incident types yet. A type sets the severity a declare starts with, the escalation policy its pages use and the fields it needs." |
 * | "fields_title" | "Custom fields" |
@@ -59,12 +59,31 @@ export type Catalog_TextInputs = {
 * | "required" | "Required by the type" |
 * | "required_badge" | "Required" |
 * | "required_note" | "Required fields never hold up declaring, paging or resolving; once filled they can change but not be cleared." |
-* | "catalog_link" | "Edit types and fields on the overview." |
+* | "catalog_link" | "Edit types, fields and roles on the overview." |
 * | "dropped" | "People or schedules that are gone were taken out of the owners." |
 * | "deleted_schedule" | "Deleted schedule" |
 * | "deleted_service" | "Deleted service" |
 * | "group_schedules" | "Schedules" |
 * | "group_people" | "People" |
+* | "roles_title" | "Incident roles" |
+* | "roles_note" | "Who does what on an incident. Pages go to the commander first when no escalation policy pages, so it can be renamed but never removed." |
+* | "builtin" | "Built-in" |
+* | "removed" | "Removed" |
+* | "removed_note" | "Not offered on incidents. Whoever already holds it keeps it." |
+* | "checklist_none" | "No responsibilities listed" |
+* | "builtin_name" | "Leave empty to keep “{name}”, which every reader sees in their language." |
+* | "commander_kept" | "Pages go to the commander first, so this role can't be removed." |
+* | "delete_role" | "Delete {name}? It stops showing on incidents and leaves every type that lists it." |
+* | "remove_role" | "Remove {name}? It stops being offered on incidents and leaves every type that lists it. You can restore it later." |
+* | "roles_limit" | "At most 15 roles, the built-in ones included." |
+* | "role_off" | "Not listed" |
+* | "role_listed" | "To fill" |
+* | "role_required" | "Required" |
+* | "roles_type_note" | "The incident page shows the commander, then the roles listed here. List none to show every role. Required roles are flagged until someone holds them; nothing..." |
+* | "fills_roles" | "Roles: {name}" |
+* | "fills_every_role" | "Shows every role" |
+* | "required_role" | "{name} (required)" |
+* | "responsibilities" | "Responsibilities" |
 * | * | "Catalog" |
 *
 * @param {Catalog_TextInputs} inputs

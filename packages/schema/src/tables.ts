@@ -3,7 +3,7 @@ import type { AlertOutcome, AlertRouteReason } from "./alert-sources.ts";
 import type { AlertSeverity, AlertSourceKind } from "./alert-normalize.ts";
 import type { DeliveryError } from "./deliveries.ts";
 import type { DevicePlatform, PushEnvironment } from "./devices.ts";
-import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
+import type { IncidentStatus, Severity } from "./lifecycle.ts";
 import type { EmailAbout, EmailFailure, PageFailure } from "./notifications.ts";
 import type { FieldKind, ServiceTier } from "./catalog.ts";
 import type { FollowUpStatus } from "./followups.ts";
@@ -37,8 +37,12 @@ export type IncidentRow = {
   /** The first acknowledgement, which stops paging (RFC 0003); null until someone acknowledges. */
   acknowledgedAt: number | null;
   acknowledgedBy: string | null;
-  /** Who holds each incident role (member ids); a role nobody holds is absent. Absent on rows from before roles. */
-  roles?: { [R in IncidentRole]?: string };
+  /**
+   * Who holds each incident role (member ids), by role id: a built-in's name (`commander`, `communications`,
+   * `operations`) or a workspace role's `rol_` id (RFC 0003 "Role definitions"). A role nobody holds is absent; one
+   * deleted since may still be listed, and readers skip it. Absent on rows from before roles.
+   */
+  roles?: { [roleId: string]: string };
   /** How many timeline entries the incident has: the last entry's `seq`. Absent on rows from before timelines. */
   timelineSeq?: number;
   /** The last escalation run of the incident's pages (RFC 0003 "Escalation run"); absent when none ran. */
@@ -83,6 +87,32 @@ export type IncidentTypeRow = {
   escalationPolicyId: string | null;
   /** Custom field ids incidents of the type should fill, in the order shown. */
   requiredFields: string[];
+  /**
+   * The roles its incidents fill, in the order the incident page lists them (after the commander); absent or empty:
+   * every role the workspace offers. `requiredRoles` is a part of them, flagged until someone holds each.
+   */
+  roles?: string[];
+  requiredRoles?: string[];
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+};
+
+/**
+ * An incident role's definition (RFC 0003 "Role definitions"): a workspace role (`rol_<ULID>`, made by the client),
+ * or a built-in's (`commander`, `communications`, `operations`) once the workspace renamed, described or removed it.
+ * A built-in without a row reads under its own translated name.
+ */
+export type IncidentRoleRow = {
+  id: string;
+  /** Empty for a built-in under its own name. */
+  name: string;
+  /** Empty when none. */
+  description: string;
+  /** What whoever holds it is responsible for, in order. */
+  checklist: string[];
+  /** A built-in other than the commander the workspace took out (`incidentRole.delete`); absent otherwise. */
+  removed?: boolean;
   createdAt: number;
   createdBy: string;
   updatedAt: number;
@@ -224,8 +254,18 @@ export type TimelineEntry =
   | { kind: "status_changed"; from: IncidentStatus; to: IncidentStatus }
   | { kind: "severity_changed"; from: Severity; to: Severity }
   | { kind: "acknowledged" }
-  /** `from` and `to` are member ids; null: nobody (assigned from nobody, or unassigned). */
-  | { kind: "role_assigned"; role: IncidentRole; from: string | null; to: string | null }
+  /**
+   * `role`: the role's id, a built-in's name or a workspace role's `rol_` id. `roleName`: the workspace's name for it
+   * then (absent for a built-in under its own name), so the entry still reads once it is renamed or deleted. `from`
+   * and `to` are member ids; null: nobody (assigned from nobody, or unassigned).
+   */
+  | {
+      kind: "role_assigned";
+      role: string;
+      roleName?: string;
+      from: string | null;
+      to: string | null;
+    }
   /** A written update (`incident.postUpdate`). */
   | { kind: "update"; body: string }
   /** The alert of the monitor that opened the incident resolved; the monitor's name as it was then. */
@@ -1006,6 +1046,7 @@ export type BrigadeTables = {
   services: ServiceRow;
   incident_types: IncidentTypeRow;
   custom_fields: CustomFieldRow;
+  incident_roles: IncidentRoleRow;
   catalog_deleted: CatalogDeletedRow;
   follow_ups: FollowUpRow;
   postmortems: PostmortemRow;
@@ -1052,6 +1093,7 @@ export const TABLES = {
   services: { serverOnly: false },
   incident_types: { serverOnly: false },
   custom_fields: { serverOnly: false },
+  incident_roles: { serverOnly: false },
   catalog_deleted: { serverOnly: true },
   follow_ups: { serverOnly: false },
   postmortems: { serverOnly: false },

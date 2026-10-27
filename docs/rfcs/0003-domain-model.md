@@ -15,7 +15,7 @@ Workspace ─┬─ Member (User + role: owner | admin | responder | viewer)
            ├─ AlertRoute (match rules → create/attach Incident, page EscalationPolicy)
            ├─ Schedule ── Rotation(s) ── Layer(s), Override(s)
            ├─ EscalationPolicy ── Level(s): targets (users | schedules | teams), timeout
-           ├─ IncidentType, Severity config, CustomField definitions, Role definitions
+           ├─ IncidentType (roles to fill), Severity config, CustomField definitions, Role definitions
            ├─ StatusPage ── components (mapped to Services)
            └─ Incident ─┬─ status, severity, type, summary, custom field values
                         ├─ RoleAssignment (role → user)
@@ -59,10 +59,10 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   entry) with text written for the public, never a copy of an update (RFC 0012 "Publishing"). What was published
   can be corrected or taken off the page (`incident.editPublishedUpdate`, `.removePublishedUpdate`, `.unpublish`,
   `status:publish`, a `status_corrected` timeline entry; RFC 0012 "Corrections").
-- **Roles** (`incident.assignRole`, `incident:update`, event `incident.role_assigned`): a fixed set until role
-  definitions exist (Phase 3, after the catalog above), `commander`, `communications` and `operations`, at most one member each, stored on
-  the incident (`roles`). `userId: null` unassigns. The assignee must be in the shard's member list and not a
-  viewer (`invalid_args` on `userId` otherwise).
+- **Roles** (`incident.assignRole`, `incident:update`, event `incident.role_assigned`): the built-ins `commander`,
+  `communications` and `operations` plus the workspace's own ("Role definitions" below), at most one member each,
+  stored on the incident by role id (`roles`). `userId: null` unassigns. The assignee must be in the shard's member
+  list and not a viewer (`invalid_args` on `userId` otherwise).
 - **Members in the shard** (`members` table, query `members.all`, `workspace:read` for every role): a copy of
   D1's membership, so a shard can check an assignee without leaving its synchronous mutation and the dashboard can
   show names. The Worker already reads the member in D1 when it authenticates a sync upgrade; it passes their
@@ -368,6 +368,36 @@ First slice of Phase 3, in `packages/schema` (`catalog.ts`), stored in `Workspac
   `services_changed` with nobody added or removed).
 - Not yet: a monitor naming the service it watches, status page components mapped to services (RFC 0012; a
   component has no service yet), dependencies and links.
+
+## Role definitions
+
+Owners and admins (`catalog:manage`) define who does what on an incident; it is part of the catalog, so it is stored
+in `WorkspaceDO` and synced like types and fields (`incident_roles` table, query `incidentRoles.all`, `catalog:read`).
+
+- **Built-ins keep their names as ids.** `commander`, `communications` and `operations` exist in every workspace
+  without a row. `incidentRole.update` renames one, describes it or gives it a checklist (writing its row); an empty
+  name puts it back under its own, translated name. Paging reads `roles.commander` (RFC 0006 "Who is paged"), so a
+  renamed commander is still paged first, exactly as before. **The commander can never be removed**
+  (`incidentRole.delete` answers `invalid_args`); the other two can be taken out (`removed` on their row: not offered
+  on incidents, kept on the incidents that hold them) and brought back as they were (`incidentRole.restore`).
+- **A workspace's own roles** (`incidentRole.create`, `rol_<ULID>` made by the client): a name (1 to 60), a
+  description (up to 500, multi-line) and a **checklist** of responsibilities (up to 20, each 1 to 200 characters on
+  one line, distinct without case). At most 15 roles per workspace, the three built-ins counted, removed or not.
+  Deleting one retires its id (`catalog_deleted`) and takes it out of every type; incidents keep who held it, like a
+  deleted type: readers skip it, and the holder can still be taken off.
+- **Incident types list roles to fill** (`roles`, in order, and `requiredRoles`, a part of them; both optional
+  arguments, so a client from before them leaves a type's roles as they were). The incident page lists the
+  commander, then the type's roles, then any other role someone holds; an incident without a type, or of one that
+  lists none, lists every role offered. A required role nobody holds is flagged (`missingRoles`); like required fields,
+  nothing waits on it. Each role's description and checklist fold out under it.
+- **Assigning** stays `incident.assignRole`, with `role` now a role id: a built-in's name, as clients from before
+  role definitions send, or a `rol_` id. Giving a role needs one the workspace offers (not deleted, not removed);
+  taking it away works for any role someone holds. Timeline entries keep `role` (the id) and add `roleName`, the
+  workspace's name for it then (absent for a built-in under its own name), so an entry still reads once the role is
+  renamed or deleted; older entries read as before. The event keeps `role` (the built-in's name, or `custom`) and adds
+  `roleId` and `roleName` (RFC 0005); webhook payloads do the same.
+- The mobile app shows the built-ins under the workspace's names and assigns them as before; the workspace's own
+  roles show read-only while someone holds them.
 
 ## Incident types
 

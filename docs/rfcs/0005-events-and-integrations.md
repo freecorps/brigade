@@ -36,17 +36,21 @@ address takes back an account someone else signed up with (RFC 0002 "Auth"), `mo
 
 Incidents emit `incident.declared`, `incident.status_changed`, `incident.severity_changed`,
 `incident.acknowledged`, `incident.update_posted` (`entryId`, `body`) and `incident.role_assigned` (`role`,
-`from`, `to`; `to` null when unassigned). Each of those mutations also appends the incident's timeline entry in
+`roleId`, `roleName`, `from`, `to`; `to` null when unassigned; `roleId` the role's id, a built-in's name or a
+workspace role's `rol_…`; `role` the built-in's name, or `custom`; `roleName` the workspace's name for it, null for a
+built-in under its own; events from before role definitions have `role` only, which is the id). Each of those mutations also appends the incident's timeline entry in
 the same transaction (RFC 0003 "Timeline, updates and roles"); the monitor recovery note rides with
 `alert.resolved`.
 
 The catalog (RFC 0003 "Service catalog", "Incident types", "Custom fields") emits `service.created` (`id`, `name`,
 `tier`, `owners`: how many, `escalationPolicyId`), `service.updated` (the same, plus `reason`: `edited`, or
 `policy_deleted`, `schedule_deleted` or `member_removed` with the `ref` taken out), `service.deleted` (`id`, `name`),
-`incident_type.created` (`id`, `name`, `defaultSeverity`, `escalationPolicyId`, `requiredFields`: how many),
-`incident_type.updated` (the same, plus `reason`: `edited`, `policy_deleted` or `field_deleted`, and `ref`),
-`incident_type.deleted`, `custom_field.created` and `custom_field.updated` (`id`, `name`, `kind`, `options`: how many)
-and `custom_field.deleted`. On incidents: `incident.type_changed` (`from`, `to`: type ids or null),
+`incident_type.created` (`id`, `name`, `defaultSeverity`, `escalationPolicyId`, and `requiredFields`, `roles` and
+`requiredRoles`: how many), `incident_type.updated` (the same, plus `reason`: `edited`,
+`policy_deleted`, `field_deleted` or `role_deleted`, and `ref`), `incident_type.deleted`, `custom_field.created` and
+`custom_field.updated` (`id`, `name`, `kind`, `options`: how many), `custom_field.deleted`, `incident_role.created`,
+`incident_role.updated` and `incident_role.restored` (`id`, `name`: empty for a built-in under its own, `checklist`:
+how many) and `incident_role.deleted` (`id`, `name`, `builtin`: a built-in taken out rather than deleted). On incidents: `incident.type_changed` (`from`, `to`: type ids or null),
 `incident.services_changed` (`serviceIds`, `added`, `removed`) and `incident.field_changed` (`fieldId`, `kind`,
 `value`: the text, number or option ids, null when cleared).
 
@@ -547,7 +551,9 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   (`WEBHOOK_EVENT_TYPES`) and each `data`:
   - `incident.declared` (`incident`), `incident.status_changed` and `incident.severity_changed` (`incident`, `from`,
     `to`), `incident.acknowledged` (`incident`, `by`), `incident.update_posted` (`incident`, `body`: what the member
-    wrote, which every member already reads) and `incident.role_assigned` (`incident`, `role`, `from`, `to`), where
+    wrote, which every member already reads) and `incident.role_assigned` (`incident`, `role`, `roleId`, `roleName`,
+    `from`, `to`, as the event has them; `roleId` added with role definitions, taken from `role` for events from
+    before), where
     `incident` is `{ id, number, title, severity, status, declaredAt, acknowledgedAt }`;
   - `alert.fired` (`alertId`, `monitor`, `incidentId`), `alert.resolved` (`alertId`, `monitor`, `reason`) and
     `monitor.status_changed` (`monitor`, `from`, `to`), where `monitor` is `{ id, name, kind, status }` (never its URL,

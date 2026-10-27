@@ -700,6 +700,8 @@
         "role=commander, form=*": "Comandante do incidente",
         "role=communications, form=*": "Responsável pela comunicação",
         "role=operations, form=*": "Responsável pelas operações",
+        "role=deleted, form=sentence": "papel excluído",
+        "role=deleted, form=*": "Papel excluído",
         "role=*, form=*": "Papel"
       }
     }
@@ -2043,7 +2045,7 @@
         "text=delete_service": "Excluir {name}? Os incidentes que o citam deixam de mostrá-lo.",
         "text=delete_type": "Excluir {name}? Os incidentes dele mantêm os campos e mostram o tipo como excluído.",
         "text=delete_field": "Excluir {name}? Os valores deixam de aparecer em todos os incidentes e os tipos deixam de exigi-lo.",
-        "text=settings_title": "Tipos e campos de incidente",
+        "text=settings_title": "Tipos, campos e papéis de incidente",
         "text=types_title": "Tipos",
         "text=types_empty": "Nenhum tipo de incidente ainda. Um tipo define a severidade com que uma declaração começa, a política de escalonamento dos chamados e os campos de que precisa.",
         "text=fields_title": "Campos personalizados",
@@ -2073,12 +2075,31 @@
         "text=required": "Exigido pelo tipo",
         "text=required_badge": "Obrigatório",
         "text=required_note": "Campos obrigatórios nunca atrasam a declaração, os chamados ou a resolução; depois de preenchidos podem mudar, mas não ficar vazios.",
-        "text=catalog_link": "Edite tipos e campos na visão geral.",
+        "text=catalog_link": "Edite tipos, campos e papéis na visão geral.",
         "text=dropped": "Pessoas ou escalas que não existem mais foram tiradas dos responsáveis.",
         "text=deleted_schedule": "Escala excluída",
         "text=deleted_service": "Serviço excluído",
         "text=group_schedules": "Escalas",
         "text=group_people": "Pessoas",
+        "text=roles_title": "Papéis no incidente",
+        "text=roles_note": "Quem faz o quê em um incidente. Os chamados vão primeiro para o comandante quando nenhuma política de escalonamento aciona, então esse papel pode ser renomeado, mas nunca removido.",
+        "text=builtin": "Padrão",
+        "text=removed": "Removido",
+        "text=removed_note": "Não é oferecido nos incidentes. Quem já o ocupa continua com ele.",
+        "text=checklist_none": "Nenhuma responsabilidade listada",
+        "text=builtin_name": "Deixe vazio para manter “{name}”, que cada leitor vê no seu idioma.",
+        "text=commander_kept": "Os chamados vão primeiro para o comandante, então este papel não pode ser removido.",
+        "text=delete_role": "Excluir {name}? Ele deixa de aparecer nos incidentes e sai de todos os tipos que o listam.",
+        "text=remove_role": "Remover {name}? Ele deixa de ser oferecido nos incidentes e sai de todos os tipos que o listam. Você pode restaurá-lo depois.",
+        "text=roles_limit": "No máximo 15 papéis, contando os padrão.",
+        "text=role_off": "Não listado",
+        "text=role_listed": "A preencher",
+        "text=role_required": "Obrigatório",
+        "text=roles_type_note": "A página do incidente mostra o comandante e depois os papéis listados aqui. Não liste nenhum para mostrar todos. Papéis obrigatórios ficam sinalizados até alguém ocupá-los; nada espera por eles.",
+        "text=fills_roles": "Papéis: {name}",
+        "text=fills_every_role": "Mostra todos os papéis",
+        "text=required_role": "{name} (obrigatório)",
+        "text=responsibilities": "Responsabilidades",
         "text=*": "Catálogo"
       }
     }
@@ -2104,6 +2125,12 @@
         "action=add_option": "Adicionar uma opção",
         "action=clear": "Limpar",
         "action=open": "Abrir",
+        "action=add_role": "Novo papel",
+        "action=create_role": "Criar papel",
+        "action=delete_role": "Excluir papel",
+        "action=remove_role": "Remover papel",
+        "action=restore": "Restaurar",
+        "action=add_item": "Adicionar uma responsabilidade",
         "action=*": "Alterar"
       }
     }
@@ -2117,6 +2144,8 @@
         "action=remove": "Remover {name}",
         "action=clear": "Limpar {name}",
         "action=option": "Opção {name}",
+        "action=restore": "Restaurar {name}",
+        "action=item": "Responsabilidade {name}",
         "action=*": "{name}"
       }
     }
@@ -2144,6 +2173,9 @@
         "field=number, form=invalid": "Informe um número.",
         "field=link, form=invalid": "Informe um link que comece com https:// ou http://.",
         "field=choice, form=invalid": "Escolha ao menos uma opção.",
+        "field=checklist, form=label": "Responsabilidades",
+        "field=roles, form=label": "Papéis",
+        "field=checklist, form=invalid": "Dê a cada responsabilidade até 200 caracteres, todas diferentes.",
         "field=*, form=invalid": "Confira este campo.",
         "field=*, form=*": "Campo"
       }
@@ -2179,6 +2211,8 @@
         "kind=fields, count=*, countPlural=*": "{countFormatted} campos",
         "kind=options, count=*, countPlural=one": "{countFormatted} opção",
         "kind=options, count=*, countPlural=*": "{countFormatted} opções",
+        "kind=roles, count=*, countPlural=one": "{countFormatted} papel",
+        "kind=roles, count=*, countPlural=*": "{countFormatted} papéis",
         "kind=missing, count=*, countPlural=one": "{countFormatted} campo obrigatório a preencher",
         "kind=missing, count=*, countPlural=*": "{countFormatted} campos obrigatórios a preencher",
         "kind=active, count=*, countPlural=one": "{countFormatted} incidente ativo",

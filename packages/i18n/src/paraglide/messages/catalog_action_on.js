@@ -14,6 +14,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "remove" | "Remove {name}" |
 * | "clear" | "Clear {name}" |
 * | "option" | "Option {name}" |
+* | "restore" | "Restore {name}" |
+* | "item" | "Responsibility {name}" |
 * | * | "{name}" |
 *
 * @param {Catalog_Action_OnInputs} inputs
@@ -27,6 +29,8 @@ export const catalog_action_on = /** @type {((inputs: Catalog_Action_OnInputs, o
 		if (i?.action === "remove") return /** @type {LocalizedString} */ (`Remover ${i?.name}`);
 		if (i?.action === "clear") return /** @type {LocalizedString} */ (`Limpar ${i?.name}`);
 		if (i?.action === "option") return /** @type {LocalizedString} */ (`Opção ${i?.name}`);
+		if (i?.action === "restore") return /** @type {LocalizedString} */ (`Restaurar ${i?.name}`);
+		if (i?.action === "item") return /** @type {LocalizedString} */ (`Responsabilidade ${i?.name}`);
 		return /** @type {LocalizedString} */ (`${i?.name}`)
 	}
 	{
@@ -34,6 +38,8 @@ export const catalog_action_on = /** @type {((inputs: Catalog_Action_OnInputs, o
 		if (i?.action === "remove") return /** @type {LocalizedString} */ (`Remove ${i?.name}`);
 		if (i?.action === "clear") return /** @type {LocalizedString} */ (`Clear ${i?.name}`);
 		if (i?.action === "option") return /** @type {LocalizedString} */ (`Option ${i?.name}`);
+		if (i?.action === "restore") return /** @type {LocalizedString} */ (`Restore ${i?.name}`);
+		if (i?.action === "item") return /** @type {LocalizedString} */ (`Responsibility ${i?.name}`);
 		return /** @type {LocalizedString} */ (`${i?.name}`)
 	}
 });

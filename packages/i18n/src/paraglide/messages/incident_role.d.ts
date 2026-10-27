@@ -14,6 +14,8 @@ export type Incident_RoleInputs = {
 * | "commander" | * | "Incident commander" |
 * | "communications" | * | "Communications lead" |
 * | "operations" | * | "Operations lead" |
+* | "deleted" | "sentence" | "deleted role" |
+* | "deleted" | * | "Deleted role" |
 * | * | * | "Role" |
 *
 * @param {Incident_RoleInputs} inputs

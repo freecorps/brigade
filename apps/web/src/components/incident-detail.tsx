@@ -1,14 +1,16 @@
 import { formatDateTime, formatNumber, m, type Locale } from "@freecorps/brigade-i18n";
+import { roleLabel } from "@freecorps/brigade-i18n/incident";
 import {
   can,
   formatIncidentNumber,
-  INCIDENT_ROLES,
+  incidentRoleList,
   isActive,
+  missingRoles,
   UPDATE_BODY_MAX,
-  type IncidentRole,
   type IncidentRow,
   type IncidentStatus,
   type MemberRow,
+  type RoleDefinition,
   type Severity,
   type TimelineRow,
 } from "@freecorps/brigade-schema";
@@ -41,6 +43,7 @@ import {
   SquarePenIcon,
   TagIcon,
   TimerOffIcon,
+  TriangleAlertIcon,
   UserRoundIcon,
   XIcon,
   type LucideIcon,
@@ -89,6 +92,7 @@ import {
   type Notice,
   type NoticeTarget,
 } from "@/lib/incidents";
+import { catalogText } from "@/lib/catalog";
 import { usePageTitle } from "@/lib/page-title";
 import {
   assignable,
@@ -220,6 +224,11 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
   // What each page did on each phone, and the phones members have (RFC 0006 "Delivery receipts").
   const deliveries = useQuery("incident.deliveries", { id: row.id });
   const devices = useQuery("devices.all", {});
+  // Which roles it lists, by its type (RFC 0003 "Role definitions"); `incident.assignRole` checks them on this client.
+  const roleRows = useQuery("incidentRoles.all", {});
+  const types = useQuery("incidentTypes.all", {});
+  const roles = incidentRoleList(row, types.rows, roleRows.rows);
+  const missing = new Set(missingRoles(row, types.rows, roleRows.rows).map((role) => role.id));
 
   const setStatus = useMutation("incident.setStatus");
   const setSeverity = useMutation("incident.setSeverity");
@@ -255,11 +264,11 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
       { ...base, kind: "severity", to: next },
       "severity",
     );
-  const onAssign = (role: IncidentRole, userId: string | null) =>
+  const onAssign = (role: RoleDefinition, userId: string | null) =>
     void track(
-      assignRole({ id: row.id, role, userId }),
-      { ...base, kind: "role", role },
-      `role/${role}`,
+      assignRole({ id: row.id, role: role.id, userId }),
+      { ...base, kind: "role", role: role.id, roleName: role.name },
+      `role/${role.id}`,
     );
   const [ackRefused, setAckRefused] = useState<string | null>(null);
   // Optimistic like every change here: the row says who acknowledged at once; a refusal puts it back and says why.
@@ -439,14 +448,15 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
             </CardTitle>
             <CardContent className="flex flex-col gap-4">
               <ul className="flex flex-col gap-3">
-                {INCIDENT_ROLES.map((role) => (
+                {roles.map((role) => (
                   <RoleRow
-                    key={role}
+                    key={role.id}
                     role={role}
-                    holder={row.roles?.[role] ?? null}
+                    holder={row.roles?.[role.id] ?? null}
+                    required={missing.has(role.id)}
                     who={who}
                     members={assignable(members.rows)}
-                    pending={busy.has(`role/${role}`)}
+                    pending={busy.has(`role/${role.id}`)}
                     editable={editable}
                     onAssign={onAssign}
                   />
@@ -494,55 +504,103 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
 
 /**
  * A role, who holds it, and (for those who may change it) a menu of the members who may hold it. Viewers get the
- * name as text. The trigger is named by the role's label and the holder, so the role is read once.
+ * name as text. The trigger is named by the role's label and the holder, so the role is read once. A role the type
+ * requires is flagged while nobody holds it; what the role is responsible for folds out under it.
  */
 function RoleRow({
   role,
   holder,
+  required,
   who,
   members,
   pending,
   editable,
   onAssign,
 }: {
-  role: IncidentRole;
+  role: RoleDefinition;
   holder: string | null;
+  required: boolean;
   who: People;
   members: readonly MemberRow[];
   pending: boolean;
   editable: boolean;
-  onAssign: (role: IncidentRole, userId: string | null) => void;
+  onAssign: (role: RoleDefinition, userId: string | null) => void;
 }) {
   const labelId = useId();
   const nameId = useId();
-  const label = m.incident_role({ role, form: "title" });
+  const label = roleLabel(role.id, role.name);
   const name = holder === null ? m.incident_page({ part: "nobody" }) : personName(holder, who);
   const nameClass = cn(
     "min-w-0 [overflow-wrap:anywhere]",
     holder === null ? "text-muted-foreground" : "font-medium",
   );
+  const heading = (id?: string) => (
+    <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+      <span
+        id={id}
+        className="min-w-0 text-xs font-medium text-muted-foreground [overflow-wrap:anywhere]"
+      >
+        {label}
+      </span>
+      {required ? (
+        <span className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+          <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+          {catalogText("required_badge")}
+        </span>
+      ) : null}
+    </span>
+  );
+  const about =
+    role.description || role.checklist.length ? (
+      <details className="group text-sm">
+        <summary className="flex min-h-8 w-fit cursor-pointer items-center gap-1 text-xs text-muted-foreground select-none hover:text-foreground">
+          <ChevronDownIcon
+            aria-hidden
+            className="size-3.5 -rotate-90 transition-transform duration-150 ease-out group-open:rotate-0 motion-reduce:transition-none"
+          />
+          {catalogText("responsibilities")}
+        </summary>
+        <div className="flex flex-col gap-1.5 pt-1 pb-1 pl-4.5">
+          {role.description ? (
+            <p className="whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+              {role.description}
+            </p>
+          ) : null}
+          {role.checklist.length ? (
+            <ul className="flex list-disc flex-col gap-1 pl-4 marker:text-muted-foreground">
+              {role.checklist.map((item, index) => (
+                <li key={index} className="[overflow-wrap:anywhere]">
+                  {item}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      </details>
+    ) : null;
   if (!editable) {
     return (
       <li className="flex flex-col gap-0.5">
-        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        {heading()}
         <span className="flex items-start gap-2 py-1.5 text-sm">
           <UserRoundIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <span className={nameClass}>{name}</span>
         </span>
+        {about}
       </li>
     );
   }
-  // The holder stays listed even if the shard no longer counts them as assignable (a viewer now).
+  // The holder stays listed even if the shard no longer counts them as assignable (a viewer now). A role taken out
+  // of the workspace can only be taken off whoever holds it.
+  const offered = role.removed ? [] : members;
   const options =
-    holder === null || members.some((option) => option.id === holder)
-      ? members
-      : [...members, { id: holder, name, role: "viewer" as const, updatedAt: 0 }];
+    holder === null || offered.some((option) => option.id === holder)
+      ? offered
+      : [...offered, { id: holder, name, role: "viewer" as const, updatedAt: 0 }];
   return (
     // gap-2: the trigger's focus ring (3px past a 2px offset) clears the label.
     <li className="flex flex-col gap-2">
-      <span id={labelId} className="text-xs font-medium text-muted-foreground">
-        {label}
-      </span>
+      {heading(labelId)}
       <DropdownMenu>
         <DropdownMenuTrigger
           aria-labelledby={`${labelId} ${nameId}`}
@@ -590,6 +648,7 @@ function RoleRow({
           </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
+      {about}
     </li>
   );
 }

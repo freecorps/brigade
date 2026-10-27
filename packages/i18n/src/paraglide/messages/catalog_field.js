@@ -28,6 +28,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "number" | "invalid" | "Enter a number." |
 * | "link" | "invalid" | "Enter a link that starts with https:// or http://." |
 * | "choice" | "invalid" | "Pick at least one option." |
+* | "checklist" | "label" | "Responsibilities" |
+* | "roles" | "label" | "Roles" |
+* | "checklist" | "invalid" | "Give every responsibility up to 200 characters, each one different." |
 * | * | "invalid" | "Check this field." |
 * | * | * | "Field" |
 *
@@ -56,6 +59,9 @@ export const catalog_field = /** @type {((inputs: Catalog_FieldInputs, options?:
 		if (i?.field === "number" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Informe um número.`);
 		if (i?.field === "link" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Informe um link que comece com https:// ou http://.`);
 		if (i?.field === "choice" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Escolha ao menos uma opção.`);
+		if (i?.field === "checklist" && i?.form === "label") return /** @type {LocalizedString} */ (`Responsabilidades`);
+		if (i?.field === "roles" && i?.form === "label") return /** @type {LocalizedString} */ (`Papéis`);
+		if (i?.field === "checklist" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Dê a cada responsabilidade até 200 caracteres, todas diferentes.`);
 		if (i?.form === "invalid") return /** @type {LocalizedString} */ (`Confira este campo.`);
 		return /** @type {LocalizedString} */ (`Campo`)
 	}
@@ -78,6 +84,9 @@ export const catalog_field = /** @type {((inputs: Catalog_FieldInputs, options?:
 		if (i?.field === "number" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Enter a number.`);
 		if (i?.field === "link" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Enter a link that starts with https:// or http://.`);
 		if (i?.field === "choice" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Pick at least one option.`);
+		if (i?.field === "checklist" && i?.form === "label") return /** @type {LocalizedString} */ (`Responsibilities`);
+		if (i?.field === "roles" && i?.form === "label") return /** @type {LocalizedString} */ (`Roles`);
+		if (i?.field === "checklist" && i?.form === "invalid") return /** @type {LocalizedString} */ (`Give every responsibility up to 200 characters, each one different.`);
 		if (i?.form === "invalid") return /** @type {LocalizedString} */ (`Check this field.`);
 		return /** @type {LocalizedString} */ (`Field`)
 	}

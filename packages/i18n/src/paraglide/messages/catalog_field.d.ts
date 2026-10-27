@@ -26,6 +26,9 @@ export type Catalog_FieldInputs = {
 * | "number" | "invalid" | "Enter a number." |
 * | "link" | "invalid" | "Enter a link that starts with https:// or http://." |
 * | "choice" | "invalid" | "Pick at least one option." |
+* | "checklist" | "label" | "Responsibilities" |
+* | "roles" | "label" | "Roles" |
+* | "checklist" | "invalid" | "Give every responsibility up to 200 characters, each one different." |
 * | * | "invalid" | "Check this field." |
 * | * | * | "Field" |
 *

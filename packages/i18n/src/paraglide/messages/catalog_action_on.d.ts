@@ -12,6 +12,8 @@ export type Catalog_Action_OnInputs = {
 * | "remove" | "Remove {name}" |
 * | "clear" | "Clear {name}" |
 * | "option" | "Option {name}" |
+* | "restore" | "Restore {name}" |
+* | "item" | "Responsibility {name}" |
 * | * | "{name}" |
 *
 * @param {Catalog_Action_OnInputs} inputs

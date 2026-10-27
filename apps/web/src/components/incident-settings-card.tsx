@@ -1,18 +1,22 @@
 import { m } from "@freecorps/brigade-i18n";
-import { severityName } from "@freecorps/brigade-i18n/incident";
+import { roleLabel, severityName } from "@freecorps/brigade-i18n/incident";
 import {
   can,
+  COMMANDER_ROLE,
   FIELD_KINDS,
+  isLiveRole,
+  roleDefinitions,
   SEVERITIES,
   type CustomFieldRow,
   type EscalationPolicyRow,
   type FieldKind,
   type IncidentTypeRow,
+  type RoleDefinition,
   type Severity,
 } from "@freecorps/brigade-schema";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
 import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
-import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { CheckIcon, PencilIcon, PlusIcon, RotateCcwIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { SeverityBadge } from "@/components/incident-badges";
 import { Description, FORM, FormButtons, LABEL, Refusal, SELECT } from "@/components/services-card";
@@ -23,40 +27,55 @@ import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Field, FormError } from "@/components/ui/field";
 import {
   canAddField,
+  canAddRole,
   canAddType,
   CATALOG_NAME_MAX,
   catalogRefusal,
   catalogText,
   checkField,
+  checklistItem,
+  checkRole,
   checkType,
   draftFromField,
+  draftFromRole,
   draftFromType,
   emptyField,
+  emptyRole,
   emptyType,
   isSelect,
   MAX_FIELD_OPTIONS,
+  MAX_ROLE_CHECKLIST,
   newFieldId,
   newOptionId,
+  newRoleId,
   newTypeId,
+  ROLE_CHECKLIST_ITEM_MAX,
+  setTypeRoleUse,
+  typeRoleUse,
   type CheckedField,
+  type CheckedRole,
   type CheckedType,
   type FieldDraft,
+  type RoleDraft,
   type TypeDraft,
+  type TypeRoleUse,
 } from "@/lib/catalog";
 import { queryErrorReason } from "@/lib/incidents";
 
-type Editing = { kind: "type" | "field"; id: string | null } | null;
+type Editing = { kind: "type" | "field" | "role"; id: string | null } | null;
 
 /**
- * The workspace's incident types and custom fields (RFC 0003 "Incident types", "Custom fields"), live from its
- * shard. A type sets the severity a declare starts with, the policy its pages use and the fields it requires; a
- * field is a typed detail every incident can carry. Owners and admins edit both; everyone else reads.
+ * The workspace's incident types, custom fields and incident roles (RFC 0003 "Incident types", "Custom fields",
+ * "Role definitions"), live from its shard. A type sets the severity a declare starts with, the policy its pages use,
+ * the fields it requires and the roles it fills; a field is a typed detail every incident can carry; a role is who
+ * does what, with the responsibilities that come with it. Owners and admins edit them; everyone else reads.
  */
 export function IncidentSettingsCard() {
   const { role } = useMember();
   const manage = can(role, "catalog:manage");
   const types = useQuery("incidentTypes.all", {});
   const fields = useQuery("customFields.all", {});
+  const roleRows = useQuery("incidentRoles.all", {});
   const policies = useQuery("escalationPolicies.all", {});
   const createType = useMutation("incidentType.create");
   const updateType = useMutation("incidentType.update");
@@ -64,6 +83,12 @@ export function IncidentSettingsCard() {
   const createField = useMutation("customField.create");
   const updateField = useMutation("customField.update");
   const deleteField = useMutation("customField.delete");
+  const createRole = useMutation("incidentRole.create");
+  const updateRole = useMutation("incidentRole.update");
+  const deleteRole = useMutation("incidentRole.delete");
+  const restoreRole = useMutation("incidentRole.restore");
+  const roles = roleDefinitions(roleRows.rows);
+  const liveRoles = roles.filter(isLiveRole);
   const [editing, setEditing] = useState<Editing>(null);
   const [refused, setRefused] = useState<string | null>(null);
   const report = (name: string) => (outcome: MutationOutcome) => {
@@ -71,7 +96,7 @@ export function IncidentSettingsCard() {
   };
   const focus = (selector: string) =>
     requestAnimationFrame(() => document.querySelector<HTMLElement>(selector)?.focus());
-  const close = (kind: "type" | "field", id: string | null) => {
+  const close = (kind: "type" | "field" | "role", id: string | null) => {
     setEditing(null);
     focus(id ? `[data-catalog="${id}"] [data-action="edit"]` : `[data-add="${kind}"]`);
   };
@@ -80,7 +105,7 @@ export function IncidentSettingsCard() {
     setEditing(next);
   };
   const loading = (status: string) => status !== "ready" && status !== "error";
-  const failed = types.status === "error" ? types : fields.status === "error" ? fields : null;
+  const failed = [types, fields, roleRows].find((query) => query.status === "error") ?? null;
 
   return (
     <Card aria-labelledby="incident-settings-title">
@@ -117,10 +142,11 @@ export function IncidentSettingsCard() {
             <TypeForm
               initial={emptyType()}
               fields={fields.rows}
+              roles={liveRoles}
               policies={policies.rows}
               onCancel={() => close("type", null)}
               onSubmit={(draft) => {
-                const checked = checkType(newTypeId(Date.now()), draft, fields.rows);
+                const checked = checkType(newTypeId(Date.now()), draft, fields.rows, roleRows.rows);
                 if (!checked.ok) return checked;
                 void createType(checked.args).then(report(checked.args.name));
                 close("type", null);
@@ -137,6 +163,7 @@ export function IncidentSettingsCard() {
                       initial={draftFromType(row)}
                       editing={row}
                       fields={fields.rows}
+                      roles={liveRoles}
                       policies={policies.rows}
                       onCancel={() => close("type", row.id)}
                       onDelete={() => {
@@ -144,7 +171,7 @@ export function IncidentSettingsCard() {
                         close("type", null);
                       }}
                       onSubmit={(draft) => {
-                        const checked = checkType(row.id, draft, fields.rows);
+                        const checked = checkType(row.id, draft, fields.rows, roleRows.rows);
                         if (!checked.ok) return checked;
                         void updateType(checked.args).then(report(checked.args.name));
                         close("type", row.id);
@@ -155,6 +182,7 @@ export function IncidentSettingsCard() {
                     <TypeItem
                       row={row}
                       fields={fields.rows}
+                      roles={roles}
                       policies={policies.rows}
                       manage={manage}
                       onEdit={() => open({ kind: "type", id: row.id })}
@@ -244,6 +272,91 @@ export function IncidentSettingsCard() {
             </p>
           ) : null}
         </Section>
+
+        <Section
+          id="roles"
+          title={catalogText("roles_title")}
+          count={
+            loading(roleRows.status)
+              ? null
+              : m.catalog_count({ kind: "roles", count: liveRoles.length })
+          }
+          add={
+            manage && editing?.kind !== "role" ? (
+              <Button
+                variant="outline"
+                data-add="role"
+                disabled={!canAddRole(roleRows.rows)}
+                aria-describedby={canAddRole(roleRows.rows) ? undefined : "roles-limit"}
+                onClick={() => open({ kind: "role", id: null })}
+              >
+                <PlusIcon aria-hidden />
+                {m.catalog_action({ action: "add_role" })}
+              </Button>
+            ) : null
+          }
+        >
+          <p className="text-sm text-muted-foreground">{catalogText("roles_note")}</p>
+          {manage && !canAddRole(roleRows.rows) ? (
+            <p id="roles-limit" className="text-sm text-muted-foreground">
+              {catalogText("roles_limit")}
+            </p>
+          ) : null}
+          {editing?.kind === "role" && editing.id === null ? (
+            <RoleForm
+              initial={emptyRole()}
+              onCancel={() => close("role", null)}
+              onSubmit={(draft) => {
+                const checked = checkRole(newRoleId(Date.now()), draft);
+                if (!checked.ok) return checked;
+                void createRole(checked.args).then(report(checked.args.name));
+                close("role", null);
+                return checked;
+              }}
+            />
+          ) : null}
+          <ul className="flex flex-col divide-y rounded-md border">
+            {roles.map((one) => {
+              const label = roleLabel(one.id, one.name);
+              return (
+                <li key={one.id} data-catalog={one.id} className="flex flex-col gap-3 p-3 sm:p-4">
+                  {editing?.kind === "role" && editing.id === one.id ? (
+                    <RoleForm
+                      initial={draftFromRole(one)}
+                      editing={one}
+                      onCancel={() => close("role", one.id)}
+                      onDelete={
+                        one.id === COMMANDER_ROLE
+                          ? undefined
+                          : () => {
+                              void deleteRole({ id: one.id }).then(report(label));
+                              close("role", null);
+                            }
+                      }
+                      onSubmit={(draft) => {
+                        const checked = checkRole(one.id, draft);
+                        if (!checked.ok) return checked;
+                        void updateRole(checked.args).then(report(label));
+                        close("role", one.id);
+                        return checked;
+                      }}
+                    />
+                  ) : (
+                    <RoleItem
+                      role={one}
+                      manage={manage}
+                      onEdit={() => open({ kind: "role", id: one.id })}
+                      onRestore={() => {
+                        setRefused(null);
+                        if (one.builtin) void restoreRole({ id: one.builtin }).then(report(label));
+                      }}
+                    />
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </Section>
       </CardContent>
     </Card>
   );
@@ -300,12 +413,14 @@ function EditButton({ name, onEdit }: { name: string; onEdit: () => void }) {
 function TypeItem({
   row,
   fields,
+  roles,
   policies,
   manage,
   onEdit,
 }: {
   row: IncidentTypeRow;
   fields: readonly CustomFieldRow[];
+  roles: readonly RoleDefinition[];
   policies: readonly EscalationPolicyRow[];
   manage: boolean;
   onEdit: () => void;
@@ -316,6 +431,12 @@ function TypeItem({
   const required = row.requiredFields.flatMap((id) => {
     const field = fields.find((one) => one.id === id);
     return field ? [field.name] : [];
+  });
+  const filled = (row.roles ?? []).flatMap((id) => {
+    const role = roles.find((one) => one.id === id);
+    if (!role) return [];
+    const name = roleLabel(role.id, role.name);
+    return [row.requiredRoles?.includes(id) ? catalogText("required_role", { name }) : name];
   });
   return (
     <>
@@ -343,6 +464,11 @@ function TypeItem({
           {required.length
             ? catalogText("requires", { name: required.join(", ") })
             : catalogText("requires_none")}
+        </li>
+        <li>
+          {filled.length
+            ? catalogText("fills_roles", { name: filled.join(", ") })
+            : catalogText("fills_every_role")}
         </li>
       </ul>
     </>
@@ -412,6 +538,7 @@ function TypeForm({
   initial,
   editing,
   fields,
+  roles,
   policies,
   onCancel,
   onSubmit,
@@ -420,6 +547,8 @@ function TypeForm({
   initial: TypeDraft;
   editing?: IncidentTypeRow;
   fields: readonly CustomFieldRow[];
+  /** The roles the workspace offers. */
+  roles: readonly RoleDefinition[];
   policies: readonly EscalationPolicyRow[];
   onCancel: () => void;
   onSubmit: (draft: TypeDraft) => CheckedType;
@@ -434,6 +563,7 @@ function TypeForm({
   const severityId = useId();
   const policyId = useId();
   const requiredId = useId();
+  const rolesId = useId();
   const nameRef = useFocusOnOpen();
   const deleteRef = useRef<HTMLButtonElement>(null);
   const focusInvalid = useFormFocus(titleId);
@@ -554,6 +684,43 @@ function TypeForm({
           </p>
         </fieldset>
       ) : null}
+      <fieldset aria-describedby={`${rolesId}-note`} className="flex min-w-0 flex-col gap-1.5">
+        <legend className={`${LABEL} mb-1.5`}>
+          {m.catalog_field({ field: "roles", form: "label" })}
+        </legend>
+        <ul className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+          {roles.map((role) => {
+            const selectId = `${rolesId}-${role.id}`;
+            return (
+              <li
+                key={role.id}
+                className="flex min-h-11 min-w-0 items-center justify-between gap-3 text-sm"
+              >
+                <label htmlFor={selectId} className="min-w-0 [overflow-wrap:anywhere]">
+                  {roleLabel(role.id, role.name)}
+                </label>
+                <select
+                  id={selectId}
+                  className={`${SELECT} w-36 shrink-0`}
+                  value={typeRoleUse(draft, role.id)}
+                  onChange={(event) =>
+                    setDraft((current) =>
+                      setTypeRoleUse(current, role.id, event.target.value as TypeRoleUse),
+                    )
+                  }
+                >
+                  <option value="off">{catalogText("role_off")}</option>
+                  <option value="listed">{catalogText("role_listed")}</option>
+                  <option value="required">{catalogText("role_required")}</option>
+                </select>
+              </li>
+            );
+          })}
+        </ul>
+        <p id={`${rolesId}-note`} className="text-sm text-muted-foreground">
+          {catalogText("roles_type_note")}
+        </p>
+      </fieldset>
       <FormButtons
         editing={editing !== undefined}
         create={m.catalog_action({ action: "create_type" })}
@@ -776,6 +943,266 @@ function FieldForm({
         create={m.catalog_action({ action: "create_field" })}
         remove={onDelete ? m.catalog_action({ action: "delete_field" }) : undefined}
         confirm={editing ? catalogText("delete_field", { name: editing.name }) : ""}
+        confirming={confirming}
+        deleteRef={deleteRef}
+        onCancel={onCancel}
+        onAskDelete={() => setConfirming(true)}
+        onCloseConfirm={() => {
+          setConfirming(false);
+          requestAnimationFrame(() => deleteRef.current?.focus());
+        }}
+        onDelete={onDelete}
+      />
+    </form>
+  );
+}
+
+function RoleItem({
+  role,
+  manage,
+  onEdit,
+  onRestore,
+}: {
+  role: RoleDefinition;
+  manage: boolean;
+  onEdit: () => void;
+  onRestore: () => void;
+}) {
+  const name = roleLabel(role.id, role.name);
+  return (
+    <>
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="flex min-w-0 flex-1 basis-56 flex-wrap items-center gap-2">
+          <h4
+            className={`min-w-0 font-medium [overflow-wrap:anywhere] ${role.removed ? "text-muted-foreground" : ""}`}
+          >
+            {name}
+          </h4>
+          {role.builtin ? <Badge variant="outline">{catalogText("builtin")}</Badge> : null}
+          {role.removed ? <Badge variant="secondary">{catalogText("removed")}</Badge> : null}
+        </div>
+        {manage && role.removed ? (
+          <Button
+            variant="outline"
+            data-action="edit"
+            aria-label={m.catalog_action_on({ action: "restore", name })}
+            onClick={onRestore}
+          >
+            <RotateCcwIcon aria-hidden />
+            {m.catalog_action({ action: "restore" })}
+          </Button>
+        ) : manage ? (
+          <EditButton name={name} onEdit={onEdit} />
+        ) : null}
+      </div>
+      {role.removed ? (
+        <p className="text-sm text-muted-foreground">{catalogText("removed_note")}</p>
+      ) : (
+        <>
+          {role.description ? (
+            <p className="text-sm whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+              {role.description}
+            </p>
+          ) : null}
+          {role.checklist.length ? (
+            <ul
+              aria-label={catalogText("responsibilities")}
+              className="flex flex-col gap-1.5 text-sm"
+            >
+              {role.checklist.map((item, index) => (
+                <li key={index} className="flex items-start gap-2">
+                  <CheckIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{item}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">{catalogText("checklist_none")}</p>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+function RoleForm({
+  initial,
+  editing,
+  onCancel,
+  onSubmit,
+  onDelete,
+}: {
+  initial: RoleDraft;
+  editing?: RoleDefinition;
+  onCancel: () => void;
+  onSubmit: (draft: RoleDraft) => CheckedRole;
+  /** Absent for the commander, who can never be removed. */
+  onDelete?: () => void;
+}) {
+  const [draft, setDraft] = useState(initial);
+  const [errors, setErrors] = useState<{
+    name: boolean;
+    description: boolean;
+    checklist: boolean;
+  } | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const titleId = useId();
+  const descriptionId = useId();
+  const descriptionErrorId = useId();
+  const checklistErrorId = useId();
+  const nameRef = useFocusOnOpen();
+  const deleteRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLOListElement>(null);
+  const addRef = useRef<HTMLButtonElement>(null);
+  const focusInvalid = useFormFocus(titleId);
+  const builtin = editing?.builtin ?? null;
+  const ownName = builtin ? roleLabel(builtin, null) : "";
+  const shown = editing ? roleLabel(editing.id, editing.name) : "";
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const checked = onSubmit(draft);
+    if (!checked.ok) {
+      setErrors(checked.errors);
+      focusInvalid();
+    }
+  };
+  const focusItem = (index: number) =>
+    requestAnimationFrame(() =>
+      (
+        listRef.current?.querySelectorAll<HTMLInputElement>("input")[index] ?? addRef.current
+      )?.focus(),
+    );
+  const insertAt = (index: number) => {
+    setDraft((current) => ({
+      ...current,
+      checklist: [
+        ...current.checklist.slice(0, index),
+        checklistItem(),
+        ...current.checklist.slice(index),
+      ],
+    }));
+    focusItem(index);
+  };
+  return (
+    <form
+      aria-labelledby={titleId}
+      noValidate
+      onSubmit={submit}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") onCancel();
+      }}
+      className={FORM}
+    >
+      <h4 id={titleId} className="font-medium [overflow-wrap:anywhere]">
+        {editing
+          ? m.catalog_action_on({ action: "edit", name: shown })
+          : m.catalog_action({ action: "add_role" })}
+      </h4>
+      <Field
+        ref={nameRef}
+        label={m.catalog_field({ field: "name", form: "label" })}
+        value={draft.name}
+        maxLength={CATALOG_NAME_MAX}
+        autoComplete="off"
+        placeholder={ownName || undefined}
+        hint={builtin ? catalogText("builtin_name", { name: ownName }) : undefined}
+        error={errors?.name ? m.catalog_field({ field: "name", form: "invalid" }) : undefined}
+        onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+      />
+      <Description
+        id={descriptionId}
+        errorId={descriptionErrorId}
+        value={draft.description}
+        invalid={errors?.description ?? false}
+        onChange={(description) => setDraft({ ...draft, description })}
+      />
+      <fieldset className="flex min-w-0 flex-col gap-2">
+        <legend className={`${LABEL} mb-1.5`}>
+          {m.catalog_field({ field: "checklist", form: "label" })}
+        </legend>
+        {draft.checklist.length ? (
+          <ol ref={listRef} className="flex flex-col gap-2">
+            {draft.checklist.map((item, index) => (
+              <li key={item.key} className="flex min-w-0 items-center gap-1">
+                <input
+                  value={item.text}
+                  maxLength={ROLE_CHECKLIST_ITEM_MAX}
+                  autoComplete="off"
+                  aria-label={m.catalog_action_on({ action: "item", name: String(index + 1) })}
+                  aria-invalid={errors?.checklist || undefined}
+                  aria-describedby={errors?.checklist ? checklistErrorId : undefined}
+                  className={SELECT}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      checklist: current.checklist.map((one) =>
+                        one.key === item.key ? { ...one, text: event.target.value } : one,
+                      ),
+                    }))
+                  }
+                  onKeyDown={(event) => {
+                    // Enter adds the next responsibility, as a list editor does, instead of saving half a list.
+                    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                    event.preventDefault();
+                    if (draft.checklist.length < MAX_ROLE_CHECKLIST) insertAt(index + 1);
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0"
+                  aria-label={m.catalog_action_on({
+                    action: "remove",
+                    name: item.text.trim() || String(index + 1),
+                  })}
+                  onClick={() => {
+                    setDraft((current) => ({
+                      ...current,
+                      checklist: current.checklist.filter((one) => one.key !== item.key),
+                    }));
+                    focusItem(Math.min(index, draft.checklist.length - 2));
+                  }}
+                >
+                  <Trash2Icon aria-hidden />
+                </Button>
+              </li>
+            ))}
+          </ol>
+        ) : null}
+        {errors?.checklist ? (
+          <p id={checklistErrorId} className="text-sm text-destructive">
+            {m.catalog_field({ field: "checklist", form: "invalid" })}
+          </p>
+        ) : null}
+        {draft.checklist.length < MAX_ROLE_CHECKLIST ? (
+          <Button
+            ref={addRef}
+            type="button"
+            variant="outline"
+            className="self-start"
+            onClick={() => insertAt(draft.checklist.length)}
+          >
+            <PlusIcon aria-hidden />
+            {m.catalog_action({ action: "add_item" })}
+          </Button>
+        ) : null}
+      </fieldset>
+      {editing?.id === COMMANDER_ROLE ? (
+        <p className="text-sm text-muted-foreground">{catalogText("commander_kept")}</p>
+      ) : null}
+      <FormButtons
+        editing={editing !== undefined}
+        create={m.catalog_action({ action: "create_role" })}
+        remove={
+          onDelete
+            ? m.catalog_action({ action: builtin ? "remove_role" : "delete_role" })
+            : undefined
+        }
+        confirm={
+          editing ? catalogText(builtin ? "remove_role" : "delete_role", { name: shown }) : ""
+        }
+        confirmAction={builtin ? m.catalog_action({ action: "remove_role" }) : undefined}
         confirming={confirming}
         deleteRef={deleteRef}
         onCancel={onCancel}

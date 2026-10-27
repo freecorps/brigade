@@ -10,6 +10,8 @@
 export const SIDE_CONNECTIONS = 3;
 /** The most of a side call's answer read before its slot is freed; Slack's answers are a few KB. */
 export const SIDE_RESPONSE_BYTES = 256 * 1024;
+/** How long reading a side call's answer may take once it arrived, so a stalled body never keeps its slot. */
+export const SIDE_READ_MS = 5000;
 
 export type Fetch = (request: Request) => Promise<Response>;
 
@@ -46,13 +48,13 @@ export class SideConnections {
   /**
    * `send` within a slot: the answer's body is read (at most `SIDE_RESPONSE_BYTES`, the rest cancelled) before the
    * slot is freed, so the connection is closed when the caller gets the response. The request's own signal bounds
-   * the wait for the answer and the read.
+   * the wait for the answer; `SIDE_READ_MS` bounds the read.
    */
   wrap(send: Fetch): Fetch {
     return (request) =>
       this.run(async () => {
         const response = await send(request);
-        const body = await readBounded(response, SIDE_RESPONSE_BYTES, request.signal);
+        const body = await readBounded(response, SIDE_RESPONSE_BYTES, SIDE_READ_MS);
         return new Response(NULL_BODY.includes(response.status) ? null : body, {
           status: response.status,
           statusText: response.statusText,
@@ -97,19 +99,15 @@ export class SideConnections {
 /** Statuses whose response has no body (`new Response` refuses one). */
 const NULL_BODY = [101, 204, 205, 304];
 
-/** Up to `max` bytes of `response`'s body; the rest is cancelled unread. Aborting `signal` cancels the read. */
-async function readBounded(
-  response: Response,
-  max: number,
-  signal: AbortSignal,
-): Promise<Uint8Array> {
+/** Up to `max` bytes of `response`'s body; the rest is cancelled unread. Past `ms` the read is cancelled. */
+async function readBounded(response: Response, max: number, ms: number): Promise<Uint8Array> {
   if (!response.body) return new Uint8Array();
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const aborted = new Promise<never>((_, reject) => {
-    if (signal.aborted) reject(signal.reason);
-    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    timer = setTimeout(() => reject(new Error("the answer took too long to read")), ms);
   });
   aborted.catch(() => undefined);
   try {
@@ -121,6 +119,7 @@ async function readBounded(
       length += chunk.byteLength;
     }
   } finally {
+    clearTimeout(timer);
     await reader.cancel().catch(() => undefined);
   }
   const bytes = new Uint8Array(length);

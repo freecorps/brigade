@@ -22,3 +22,6 @@ export const STATUS_GLYPHS: Record<IncidentStatus, Glyph> = {
   resolved: { ios: "checkmark.circle", android: "check_circle", web: "check_circle" },
   declined: { ios: "nosign", android: "block", web: "block" },
 };
+
+/** The active choice in a list (the account section's workspaces), like lucide's Check. */
+export const CHECK_GLYPH: Glyph = { ios: "checkmark", android: "check", web: "check" };

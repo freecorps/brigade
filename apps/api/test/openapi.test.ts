@@ -33,6 +33,7 @@ import { forgetAllTokens, newApiToken, tokenDigest } from "../src/api-tokens.ts"
 import { Shard } from "../src/shard.ts";
 import { serverSignedFixture } from "./sdk-fixture.ts";
 import { IDEMPOTENCY_KEY_HEADER, ORGANIZATION_ID, type WorkspaceDO } from "../src/workspace.ts";
+import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
 const PASSWORD = "correct horse battery staple";
@@ -73,10 +74,7 @@ async function signUp(name: string, email = address(name)): Promise<Person> {
   });
   expect(response.status).toBe(200);
   const body = (await response.json()) as { user: { id: string } };
-  const cookie = response.headers
-    .getSetCookie()
-    .map((value) => value.split(";")[0])
-    .join("; ");
+  const cookie = await sessionCookie(email, PASSWORD);
   await env.DB.prepare(`update "user" set "emailVerified" = 1 where id = ?`)
     .bind(body.user.id)
     .run();

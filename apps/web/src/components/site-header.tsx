@@ -1,15 +1,19 @@
 import { isLocale, locales, m, type Locale } from "@freecorps/brigade-i18n";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ChevronDownIcon,
+  ChevronsUpDownIcon,
   CircleUserRoundIcon,
   LanguagesIcon,
+  LoaderCircleIcon,
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
+  PlusIcon,
   SunIcon,
   type LucideIcon,
 } from "lucide-react";
+import { useState } from "react";
 import { usePreferences } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,9 +24,10 @@ import {
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { authClient, saveLocale } from "@/lib/auth";
+import { authClient, saveLocale, signOutDashboard, switchWorkspace } from "@/lib/auth";
 import { ENVIRONMENT } from "@/lib/environment";
 import { isThemePreference, themePreferences, type ThemePreference } from "@/lib/theme";
 
@@ -55,7 +60,7 @@ export function SiteHeader() {
             {m.app_name()}
           </span>
         </Link>
-        {session.data ? <WorkspaceName /> : null}
+        {session.data ? <WorkspaceSwitcher /> : null}
         {/* Production is what Brigade is: only the other environments say which they are. */}
         {ENVIRONMENT === "production" ? null : (
           <span className="hidden h-6 shrink-0 items-center rounded-sm bg-muted px-2 text-xs font-medium text-muted-foreground lg:inline-flex">
@@ -75,38 +80,155 @@ export function SiteHeader() {
 }
 
 /**
- * The active workspace, after a slash, as in a breadcrumb. Truncated; the full name is in its title and in the
- * account menu, which is where a phone shows it.
+ * The active workspace, after a slash, as in a breadcrumb, and the switcher: the member's workspaces (Better Auth's
+ * organization list) and New workspace. Switching makes the chosen one active in the session; the dashboard then opens
+ * its shard (components/session), and changes still waiting for the old one's shard are sent there all the same.
+ * Truncated; the full name is in its title and in the account menu.
  */
-function WorkspaceName() {
+function WorkspaceSwitcher() {
   const workspace = authClient.useActiveOrganization();
+  const list = authClient.useListOrganizations();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [switching, setSwitching] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const name = workspace.data?.name;
   if (!name) return null;
+  const pick = async (id: string) => {
+    if (id === workspace.data?.id || switching) return;
+    setSwitching(id);
+    setFailed(false);
+    const switched = await switchWorkspace(id);
+    setSwitching(null);
+    if (!switched) {
+      setFailed(true);
+      return;
+    }
+    setOpen(false);
+    // Another workspace's incident or service numbers mean nothing here.
+    await navigate({ to: "/" });
+  };
   return (
-    <p className="flex min-w-0 items-center gap-3 text-sm font-medium">
+    <div className="flex min-w-0 items-center gap-3 text-sm font-medium">
       <span aria-hidden className="text-lg font-light text-border max-sm:hidden">
         /
       </span>
-      <span className="sr-only">{m.workspace_label()}: </span>
-      <span className="truncate" title={name}>
-        {name}
-      </span>
-    </p>
+      <DropdownMenu
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (next) {
+            setFailed(false);
+            void list.refetch();
+          }
+        }}
+      >
+        <DropdownMenuTrigger
+          render={
+            <Button variant="ghost" className="-mx-2 h-11 max-w-full min-w-0 shrink gap-1.5 px-2" />
+          }
+        >
+          <span className="sr-only">{m.workspace_label()}: </span>
+          <span className="truncate" title={name}>
+            {name}
+          </span>
+          <ChevronsUpDownIcon aria-hidden className="text-muted-foreground" />
+          <span className="sr-only">{m.account_flow({ part: "switcher", name: "" })}</span>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-72 max-w-[calc(100vw-2rem)]">
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>
+              {m.account_flow({ part: "workspaces", name: "" })}
+            </DropdownMenuLabel>
+            {list.data ? (
+              <DropdownMenuRadioGroup
+                value={workspace.data?.id ?? ""}
+                onValueChange={(value) => void pick(String(value))}
+              >
+                {list.data.map((option) => (
+                  <DropdownMenuRadioItem
+                    key={option.id}
+                    value={option.id}
+                    closeOnClick={false}
+                    disabled={switching !== null}
+                    aria-label={
+                      option.id === workspace.data?.id
+                        ? undefined
+                        : m.account_flow({ part: "switch_to", name: option.name })
+                    }
+                  >
+                    <span className="min-w-0 truncate" title={option.name}>
+                      {option.name}
+                    </span>
+                    {switching === option.id ? (
+                      <LoaderCircleIcon
+                        aria-hidden
+                        className="ml-auto animate-spin text-muted-foreground motion-reduce:animate-none"
+                      />
+                    ) : null}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            ) : list.error ? (
+              <p className="px-3 py-2 text-sm text-destructive">
+                {m.account_flow({ part: "list_failed", name: "" })}
+              </p>
+            ) : (
+              <p
+                role="status"
+                className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
+              >
+                <LoaderCircleIcon
+                  aria-hidden
+                  className="size-4 animate-spin motion-reduce:animate-none"
+                />
+                {m.session_loading()}
+              </p>
+            )}
+            {failed ? (
+              <p role="alert" className="px-3 py-2 text-sm text-destructive">
+                {m.account_flow({ part: "switch_failed", name: "" })}
+              </p>
+            ) : null}
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => void navigate({ to: "/workspaces/new" })}>
+            <PlusIcon aria-hidden className="text-muted-foreground" />
+            {m.account_flow({ part: "new_workspace", name: "" })}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 
+/**
+ * The member's name, email and workspace, and Sign out. A sign-out the API could not finish (503 `SIGN_OUT_FAILED`, or
+ * no answer) keeps the session: the menu stays open and says so, and the item tries again.
+ */
 function AccountMenu({ name, email }: { name: string; email: string }) {
   const workspace = authClient.useActiveOrganization().data?.name;
+  const [signingOut, setSigningOut] = useState(false);
+  const [failed, setFailed] = useState(false);
   const signOut = async () => {
-    try {
-      await authClient.signOut();
-    } finally {
+    if (signingOut) return;
+    setSigningOut(true);
+    setFailed(false);
+    const done = await signOutDashboard();
+    if (done) {
       // A full load: it drops the tab's sync client, its socket and every row it held for this member.
       window.location.assign("/sign-in");
+      return;
     }
+    setSigningOut(false);
+    setFailed(true);
   };
   return (
-    <DropdownMenu>
+    <DropdownMenu
+      onOpenChange={(next) => {
+        if (next) setFailed(false);
+      }}
+    >
       <DropdownMenuTrigger render={<Button variant="outline" size="icon" />}>
         <CircleUserRoundIcon aria-hidden />
         <span className="sr-only">{m.account_menu_label({ name })}</span>
@@ -124,9 +246,25 @@ function AccountMenu({ name, email }: { name: string; email: string }) {
               </span>
             ) : null}
           </DropdownMenuLabel>
-          <DropdownMenuItem onClick={() => void signOut()}>
-            <LogOutIcon aria-hidden className="text-muted-foreground" />
-            {m.sign_out()}
+          {failed ? (
+            <p role="alert" className="px-3 py-2 text-sm text-destructive">
+              {m.account_flow({ part: "sign_out_failed", name: "" })}
+            </p>
+          ) : null}
+          <DropdownMenuItem
+            closeOnClick={false}
+            disabled={signingOut}
+            onClick={() => void signOut()}
+          >
+            {signingOut ? (
+              <LoaderCircleIcon
+                aria-hidden
+                className="animate-spin text-muted-foreground motion-reduce:animate-none"
+              />
+            ) : (
+              <LogOutIcon aria-hidden className="text-muted-foreground" />
+            )}
+            {failed ? m.account_flow({ part: "sign_out_retry", name: "" }) : m.sign_out()}
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>

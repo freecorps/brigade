@@ -126,3 +126,34 @@ test("timeline entries: now, every handoff before it goes stale, and the moment 
   expect(widgetTimeline(later, NOW)).toEqual([NOW, nine(28), nine(29), nine(30), NOW + 3 * DAY]);
   expect(widgetTimeline(snapshot, snapshot.staleAt + 1)).toEqual([snapshot.staleAt + 1]);
 });
+
+test("it names the open workspace, and says on call in another the phone pages the member for", () => {
+  const off = snap({
+    schedules: [schedule({ layers: [layer({ members: ["usr_bia"] })] })],
+    workspace: "Acme",
+    others: [
+      { name: "Globex", shifts: [[NOW - HOUR, NOW + 2 * HOUR]], staleAt: NOW + DAY },
+      // Gone stale: never shown, nor carried.
+      { name: "Initech", shifts: [[NOW - HOUR, null]], staleAt: NOW - 1 },
+    ],
+  });
+  expect(off.workspace).toBe("Acme");
+  expect(off.others?.map((other) => other.name)).toEqual(["Globex"]);
+  expect(widgetState(off, NOW)).toEqual({
+    kind: "on-elsewhere",
+    workspace: "Globex",
+    until: NOW + 2 * HOUR,
+  });
+  expect(widgetState(off, NOW + 2 * HOUR)).toEqual({ kind: "off", next: null });
+  // Its handoff is in the timeline, so the widget flips back on time.
+  expect(widgetTimeline(off, NOW)).toContain(NOW + 2 * HOUR);
+  // On call in the open one wins.
+  const both = snap({ workspace: "Acme", others: off.others });
+  expect(widgetState(both, NOW)).toEqual({ kind: "on", until: nine(28) });
+  // No schedules here, on call there.
+  const none = snap({ schedules: [], others: off.others });
+  expect(widgetState(none, NOW)).toMatchObject({ kind: "on-elsewhere", workspace: "Globex" });
+  // A snapshot from before workspaces still reads.
+  const { workspace: _w, others: _o, ...older } = off;
+  expect(widgetState(older, NOW)).toEqual({ kind: "off", next: null });
+});

@@ -45,6 +45,7 @@ import {
   verifyLink,
 } from "../src/status-subscribers.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
+import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
 const DASHBOARD = "https://brigade.test";
@@ -80,21 +81,15 @@ const api = (
 type Person = { id: string; cookie: string };
 
 async function signUp(name: string): Promise<Person> {
+  const email = `${name.toLowerCase()}-sub${++people}@example.com`;
   const response = await api("/auth/sign-up/email", {
     method: "POST",
-    body: JSON.stringify({
-      name,
-      email: `${name.toLowerCase()}-sub${++people}@example.com`,
-      password: PASSWORD,
-    }),
+    body: JSON.stringify({ name, email, password: PASSWORD }),
   });
   expect(response.status).toBe(200);
   const body = (await response.json()) as { user: { id: string } };
-  const cookie = response.headers
-    .getSetCookie()
-    .map((value) => value.split(";")[0])
-    .join("; ");
-  return { id: body.user.id, cookie };
+  // Sign-up hands out no session (RFC 0002 "Auth"): signed in right after, as the clients do.
+  return { id: body.user.id, cookie: await sessionCookie(email, PASSWORD) };
 }
 
 /** Ana owns a workspace with a public page; Caio is a responder there. */

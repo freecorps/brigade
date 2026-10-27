@@ -29,6 +29,7 @@ import { consumeEvents, type NotifyEnv } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
+import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
 const PASSWORD = "correct horse battery staple";
@@ -63,10 +64,7 @@ async function signUp(name: string, { verified = true, email = "" } = {}): Promi
   });
   expect(response.status).toBe(200);
   const body = (await response.json()) as { user: { id: string } };
-  const cookie = response.headers
-    .getSetCookie()
-    .map((value) => value.split(";")[0])
-    .join("; ");
+  const cookie = await sessionCookie(address, PASSWORD);
   if (verified) await verify(body.user.id);
   return { id: body.user.id, cookie, email: address };
 }

@@ -13,6 +13,8 @@ import {
   PASSWORD_MAX,
   PASSWORD_MIN,
   saveLocale,
+  signOutDashboard,
+  switchWorkspace,
 } from "../src/lib/auth";
 import { pageTitle } from "../src/lib/page-title";
 
@@ -218,6 +220,70 @@ describe("opening a new workspace when set-active fails", () => {
       });
       expect(reloaded).toBe(true);
     }
+  });
+});
+
+describe("signing out", () => {
+  test("a session ended or already gone is signed out; a 503 or no answer keeps the session", async () => {
+    const answers = [
+      async () => Response.json({ success: true }),
+      async () => Response.json({ message: "Unauthorized" }, { status: 401 }),
+    ];
+    for (const answer of answers) {
+      expect(await signOutDashboard(makeAuthClient(answer as typeof fetch))).toBe(true);
+    }
+    for (const fail of [
+      async () =>
+        Response.json(
+          { code: "SIGN_OUT_FAILED", message: "Signing out failed; try again" },
+          { status: 503 },
+        ),
+      async () => {
+        throw new TypeError("Failed to fetch");
+      },
+    ]) {
+      expect(await signOutDashboard(makeAuthClient(fail as typeof fetch))).toBe(false);
+    }
+  });
+});
+
+describe("switching workspaces", () => {
+  test("set-active with the chosen workspace; an error or no answer is a failed switch", async () => {
+    const bodies: unknown[] = [];
+    const client = makeAuthClient(async (input, init) => {
+      const request = input instanceof Request ? input : new Request(String(input), init);
+      bodies.push(await request.json());
+      return Response.json({ id: "ws_2" });
+    });
+    expect(await switchWorkspace("ws_2", client)).toBe(true);
+    expect(bodies).toEqual([{ organizationId: "ws_2" }]);
+    for (const fail of [
+      async () => Response.json({ message: "Forbidden" }, { status: 403 }),
+      async () => {
+        throw new TypeError("Failed to fetch");
+      },
+    ]) {
+      expect(await switchWorkspace("ws_2", makeAuthClient(fail as typeof fetch))).toBe(false);
+    }
+  });
+});
+
+describe("after a sign-up, a sign-in refused", () => {
+  test("says the address may have an account, whose owner was emailed", () => {
+    const message = authErrorMessage(
+      { status: 401, code: "INVALID_EMAIL_OR_PASSWORD" },
+      "after-sign-up",
+    );
+    expect(message).toContain("we've emailed its owner");
+    expect(authErrorMessage({ status: 429 }, "after-sign-up")).toBe(
+      authErrorMessage({ status: 429 }, "sign-in"),
+    );
+  });
+
+  test("an unverified address on a server that requires verification is said as that, not as a taken address", () => {
+    const message = authErrorMessage({ status: 401, code: "EMAIL_NOT_VERIFIED" }, "after-sign-up");
+    expect(message).toBe(authErrorMessage({ status: 403, code: "EMAIL_NOT_VERIFIED" }, "sign-in"));
+    expect(message).not.toContain("we've emailed its owner");
   });
 });
 

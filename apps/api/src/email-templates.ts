@@ -8,6 +8,7 @@ import {
   email_invite,
   email_reset,
   email_status,
+  email_signup_attempt,
   email_text,
   email_verify,
   email_webhook_disabled,
@@ -250,6 +251,30 @@ export function renderPasswordResetEmail(
       lines: [text("intro")],
       link: { label: text("open"), url },
       after: [text("expires")],
+      footer: text("footer"),
+    },
+    to,
+    locale,
+  );
+}
+
+/**
+ * The "someone tried to sign up with your address" notice (RFC 0002 "Auth"): a sign-up with a taken address answers
+ * as for a new one, and the address's owner is told instead. `url` is the dashboard's sign-in page, whose "Forgot your
+ * password?" link is the way back for an owner who lost the password. Nothing in it but the address.
+ */
+export function renderSignUpAttemptEmail(
+  to: { email: string },
+  url: string,
+  locale: Locale,
+): OutgoingEmail {
+  const text = (part: string) => email_signup_attempt({ part, email: to.email }, { locale });
+  return renderMessage(
+    {
+      subject: text("subject"),
+      lines: [text("intro")],
+      link: { label: text("open"), url },
+      after: [text("reset")],
       footer: text("footer"),
     },
     to,

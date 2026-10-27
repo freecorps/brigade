@@ -69,6 +69,7 @@ const MEMBER = [
   "last_owner",
   "conflict",
   "not_applied",
+  "rate_limited",
   ...SHARD_FAILED,
   ...BEARER,
 ] as const;

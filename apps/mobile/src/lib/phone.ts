@@ -4,9 +4,16 @@
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
-import { unregisterPhone, type DeviceDeps } from "@/lib/device";
-import { SESSION_LIFETIME_S } from "@freecorps/brigade-schema";
-import { leftovers, SIGNED_OUT_KEY, type FinishDeps } from "@/lib/sign-out";
+import { deviceId, unregisterPhone, type DeviceDeps, type RegisterAnswer } from "@/lib/device";
+import { DEVICE_HEADER, SESSION_LIFETIME_S } from "@freecorps/brigade-schema";
+import { PHONE_WORKSPACES_KEY, phoneWorkspacesStore } from "@/lib/phone-workspaces";
+import {
+  inTime,
+  leftovers,
+  SIGN_OUT_TIMEOUT_MS,
+  SIGNED_OUT_KEY,
+  type FinishDeps,
+} from "@/lib/sign-out";
 import { memberActor, neverOpened, type Server } from "@/lib/sync";
 import { createWorkspaceSync, type WorkspaceSync } from "@/lib/sync-client";
 import { BrigadeCall } from "../../modules/brigade-call";
@@ -18,7 +25,53 @@ import { BrigadePush } from "../../modules/brigade-push";
  */
 const CRITICAL_ALERTS = Constants.expoConfig?.extra?.criticalAlerts === true;
 
-export function phoneDeps(sync: WorkspaceSync, server?: Server): DeviceDeps {
+/**
+ * `server`'s `POST /devices/register` with the member's session: the phone registered in every workspace it was opened
+ * in at once (RFC 0006 "Device registration").
+ */
+export function registerAllWith(
+  server: Server,
+  cookie: () => Promise<string>,
+): NonNullable<DeviceDeps["registerAll"]> {
+  return async (args, workspaces) => {
+    let response: Response;
+    try {
+      response = await fetch(server.devices, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          cookie: await cookie(),
+        },
+        body: JSON.stringify({ device: args, workspaces }),
+      });
+    } catch {
+      return { ok: false, status: 0 };
+    }
+    const body: unknown = await response.json().catch(() => null);
+    const answers =
+      typeof body === "object" && body !== null ? Reflect.get(body, "workspaces") : undefined;
+    if (!response.ok || typeof answers !== "object" || answers === null) {
+      return { ok: false, status: response.ok ? 502 : response.status };
+    }
+    return { ok: true, workspaces: answers as Record<string, string> } satisfies RegisterAnswer;
+  };
+}
+
+/** The workspaces this phone pages the signed-in member for, in secure storage (src/lib/phone-workspaces.ts). */
+export const phoneWorkspaces = phoneWorkspacesStore({
+  read: () => SecureStore.getItemAsync(PHONE_WORKSPACES_KEY),
+  write: (raw) =>
+    raw === null
+      ? SecureStore.deleteItemAsync(PHONE_WORKSPACES_KEY)
+      : SecureStore.setItemAsync(PHONE_WORKSPACES_KEY, raw),
+});
+
+export function phoneDeps(
+  sync: WorkspaceSync,
+  server?: Server,
+  registerAll?: DeviceDeps["registerAll"],
+): DeviceDeps {
   const keys = BrigadePush;
   return {
     platform: process.env.EXPO_OS === "ios" ? "ios" : "android",
@@ -47,6 +100,7 @@ export function phoneDeps(sync: WorkspaceSync, server?: Server): DeviceDeps {
     // Pages that ring as calls (RFC 0010): the module reports every VoIP push to CallKit, so its token is safe to give.
     ...(BrigadeCall ? { voipToken: () => BrigadeCall!.getVoipToken() } : {}),
     mutate: (name, args) => sync.client.mutate(sync.shard, name, args as never),
+    ...(registerAll ? { registerAll } : {}),
     // Delivery receipts go only to the instance this phone registered with (RFC 0006 "Delivery receipts").
     ...(server && keys?.setReceiptOrigin
       ? {
@@ -54,6 +108,18 @@ export function phoneDeps(sync: WorkspaceSync, server?: Server): DeviceDeps {
         }
       : {}),
   };
+}
+
+/**
+ * This phone's device id, sent on sign-out (`DEVICE_HEADER`) so the server takes it off every workspace of the member,
+ * not only the one the app has open. Undefined without a device key (Android until FCM), which registers nowhere.
+ */
+export async function phoneDeviceId(): Promise<string | undefined> {
+  try {
+    return BrigadePush ? deviceId(await BrigadePush.getPublicKey()) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The sign-outs kept from offline, in secure storage: one list for the app, so its changes run in turn. */
@@ -119,17 +185,24 @@ export function finishDeps(server: Server): FinishDeps {
         sync.client.close();
       }
     },
-    signOut: async (cookie) => {
-      try {
-        const response = await fetch(`${server.auth}/sign-out`, {
-          method: "POST",
-          headers: { ...headers(cookie), "content-type": "application/json" },
-          body: "{}",
-        });
-        return response.ok;
-      } catch {
-        return false;
-      }
-    },
+    signOut: (cookie) =>
+      inTime(
+        async () => {
+          const device = await phoneDeviceId();
+          const response = await fetch(`${server.auth}/sign-out`, {
+            method: "POST",
+            headers: {
+              ...headers(cookie),
+              "content-type": "application/json",
+              // The member's other workspaces: the shard of the kept one was told already.
+              ...(device ? { [DEVICE_HEADER]: device } : {}),
+            },
+            body: "{}",
+          });
+          return response.ok;
+        },
+        SIGN_OUT_TIMEOUT_MS,
+        false,
+      ),
   };
 }

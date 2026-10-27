@@ -26,6 +26,12 @@ export type DevicePlatform = (typeof DEVICE_PLATFORMS)[number];
 export const PUSH_ENVIRONMENTS = ["sandbox", "production"] as const;
 export type PushEnvironment = (typeof PUSH_ENVIRONMENTS)[number];
 
+/**
+ * Sent by the mobile app on Better Auth's `/sign-out`: the phone's device id (`dev_…`), so the session's end takes the
+ * phone off every workspace of the member, not only the one the app had open (RFC 0006 "Device registration").
+ */
+export const DEVICE_HEADER = "Brigade-Device";
+
 /** Devices one member may register in one workspace; a page fans out to all of them. */
 export const MAX_DEVICES_PER_MEMBER = 10;
 
@@ -92,10 +98,12 @@ export function dropDevices(
   userId: string,
   reason: DeviceRemoval,
   before = Infinity,
+  only?: string,
 ): DeviceUnregistered[] {
   const events: DeviceUnregistered[] = [];
   for (const device of store.scan("devices")) {
     if (device.userId !== userId || device.updatedAt >= before) continue;
+    if (only !== undefined && device.id !== only) continue;
     forgetDevice(store, device.id);
     events.push({
       type: "device.unregistered",
@@ -163,6 +171,7 @@ export const registerDevice = defineMutation({
         userId,
         registeredAt: current?.registeredAt ?? ctx.now,
         updatedAt: ctx.now,
+        ...(current?.sessionId !== undefined ? { sessionId: current.sessionId } : {}),
       };
       const summary = store.get("member_devices", args.id);
       if (
@@ -227,6 +236,33 @@ export const registerDevice = defineMutation({
   },
 });
 
+/**
+ * Server only, as the member, right after their `device.register` went through or changed nothing (`conflict`):
+ * records that they registered it now (`updatedAt`), so a sign-out acted on late (`device.signOut` with `before`)
+ * never drops the phone they just registered again, and with `sessionId` the session they registered it with. Not a
+ * change to the workspace: `silent`, no event (RFC 0005). Another member's device, or none, is `not_found`.
+ */
+export const touchDevice = defineMutation({
+  name: "device.touch",
+  args: v.object({
+    id: v.id("dev"),
+    sessionId: v.omittable(v.string({ min: 1, max: 128 })),
+  }),
+  permission: "device:register",
+  silent: true,
+  apply(store, args, ctx) {
+    if (ctx.actor.kind !== "user") return fail("forbidden", "Only members register devices");
+    const current = store.get("devices", args.id);
+    if (!current || current.userId !== ctx.actor.id) return fail("not_found", "Device not found");
+    store.update("devices", args.id, {
+      ...current,
+      updatedAt: Math.max(ctx.now, current.updatedAt),
+      ...(args.sessionId !== undefined ? { sessionId: args.sessionId } : {}),
+    });
+    return ok();
+  },
+});
+
 /** Stops paging one of the actor's devices (signing out, turning paging off). Another member's is `not_found`. */
 export const unregisterDevice = defineMutation({
   name: "device.unregister",
@@ -280,20 +316,27 @@ export const expireDevice = defineMutation({
  * account's pages without one: the phone of whoever held the account before (someone who signed up with another
  * person's address, or took over the password). The app registers again when its member next signs in. `before`:
  * only the devices last registered before then (the reset's time, when the shard catches up on a sign-out that
- * failed: `WorkspaceDO.fetch`). Nothing to drop is a `conflict`.
+ * failed: `WorkspaceDO.fetch`). `deviceId`: only that device, as `unregistered`, when its member signed out on it (the
+ * phone names itself on sign-out, so a phone registered in several of the member's workspaces comes off all of them,
+ * RFC 0006 "Device registration"); with `before` the sign-out's time, so a sign-out acted on late never drops the
+ * phone its member signed in on again since. Nothing to drop is a `conflict`.
  */
 export const signOutDevices = defineMutation({
   name: "device.signOut",
   args: v.object({
     userId: v.string({ min: 1, max: 64 }),
     before: v.optional(v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER })),
+    deviceId: v.omittable(v.string({ min: 1, max: 64 })),
   }),
   permission: "incident:update",
   apply(store, args, ctx) {
     if (ctx.actor.kind !== ACCOUNT_ACTOR.kind || ctx.actor.id !== ACCOUNT_ACTOR.id) {
       return fail("forbidden", "Only the server signs devices out");
     }
-    const events = dropDevices(store, args.userId, "password_reset", args.before ?? Infinity);
+    const events =
+      args.deviceId === undefined
+        ? dropDevices(store, args.userId, "password_reset", args.before ?? Infinity)
+        : dropDevices(store, args.userId, "unregistered", args.before ?? Infinity, args.deviceId);
     if (events.length === 0) return fail("conflict", "No devices to sign out");
     return ok(...events);
   },

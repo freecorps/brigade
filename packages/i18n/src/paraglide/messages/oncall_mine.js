@@ -21,6 +21,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "next_none" | "No shifts in the next 4 weeks" |
 * | "overrides" | "Your overrides" |
 * | "remove_mine" | "Remove your override on {name}?" |
+* | "workspace" | "In {name}" |
+* | "elsewhere" | "You're on call in {name} until {time}" |
+* | "elsewhere_open" | "You're on call in {name}" |
 * | * | "Schedules and rotations are edited on the dashboard." |
 *
 * @param {Oncall_MineInputs} inputs
@@ -41,6 +44,9 @@ export const oncall_mine = /** @type {((inputs: Oncall_MineInputs, options?: { l
 		if (i?.part === "next_none") return /** @type {LocalizedString} */ (`Nenhum turno nas próximas 4 semanas`);
 		if (i?.part === "overrides") return /** @type {LocalizedString} */ (`Suas substituições`);
 		if (i?.part === "remove_mine") return /** @type {LocalizedString} */ (`Remover sua substituição em ${i?.name}?`);
+		if (i?.part === "workspace") return /** @type {LocalizedString} */ (`Em ${i?.name}`);
+		if (i?.part === "elsewhere") return /** @type {LocalizedString} */ (`Você está de plantão em ${i?.name} até ${i?.time}`);
+		if (i?.part === "elsewhere_open") return /** @type {LocalizedString} */ (`Você está de plantão em ${i?.name}`);
 		return /** @type {LocalizedString} */ (`Escalas e rodízios são editados no painel.`)
 	}
 	{
@@ -55,6 +61,9 @@ export const oncall_mine = /** @type {((inputs: Oncall_MineInputs, options?: { l
 		if (i?.part === "next_none") return /** @type {LocalizedString} */ (`No shifts in the next 4 weeks`);
 		if (i?.part === "overrides") return /** @type {LocalizedString} */ (`Your overrides`);
 		if (i?.part === "remove_mine") return /** @type {LocalizedString} */ (`Remove your override on ${i?.name}?`);
+		if (i?.part === "workspace") return /** @type {LocalizedString} */ (`In ${i?.name}`);
+		if (i?.part === "elsewhere") return /** @type {LocalizedString} */ (`You're on call in ${i?.name} until ${i?.time}`);
+		if (i?.part === "elsewhere_open") return /** @type {LocalizedString} */ (`You're on call in ${i?.name}`);
 		return /** @type {LocalizedString} */ (`Schedules and rotations are edited on the dashboard.`)
 	}
 });

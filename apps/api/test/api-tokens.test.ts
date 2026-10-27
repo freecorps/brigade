@@ -14,9 +14,11 @@ import {
   tokenDigest,
   type ApiTokenEnv,
 } from "../src/api-tokens.ts";
+import { MEMBER_CHANGE_LIMIT } from "../src/index.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import { IDEMPOTENCY_KEY_HEADER, type WorkspaceDO } from "../src/workspace.ts";
+import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
 const PASSWORD = "correct horse battery staple";
@@ -67,24 +69,17 @@ const bearer = (path: string, token: string, init: Init = {}) =>
 type Person = { id: string; cookie: string };
 
 async function signUp(name: string): Promise<Person> {
+  const email = `${name.toLowerCase()}-t${++people}@example.com`;
   const response = await api("/auth/sign-up/email", {
     method: "POST",
-    body: JSON.stringify({
-      name,
-      email: `${name.toLowerCase()}-t${++people}@example.com`,
-      password: PASSWORD,
-    }),
+    body: JSON.stringify({ name, email, password: PASSWORD }),
   });
   expect(response.status).toBe(200);
   const body = (await response.json()) as { user: { id: string } };
   await env.DB.prepare(`update "user" set "emailVerified" = 1 where id = ?`)
     .bind(body.user.id)
     .run();
-  const cookie = response.headers
-    .getSetCookie()
-    .map((value) => value.split(";")[0])
-    .join("; ");
-  return { id: body.user.id, cookie };
+  return { id: body.user.id, cookie: await sessionCookie(email, PASSWORD) };
 }
 
 async function addMember(workspaceId: string, userId: string, role: string, at = Date.now()) {
@@ -602,6 +597,54 @@ describe("the sync socket", () => {
     });
     expect(await closed).toBe(1012);
   });
+
+  // RFC 0004 "Session revocation" closes the sockets of a session that ends; a token's socket has no session, so its
+  // creator signing out leaves it open (RFC 0014: only a revoke, its expiry or a member change ends it).
+  test("its creator signing out closes their session's socket, not the token's", async () => {
+    const t = await team();
+    const minted = await mint(t, t.ana, ["incident:read"]);
+    const tokenSocket = await openSocket(t, minted.token);
+    const frames = collect(tokenSocket);
+    let tokenClosed: number | undefined;
+    tokenSocket.addEventListener("close", (event) => (tokenClosed = event.code));
+    const upgrade = await exports.default.fetch(`${ORIGIN}/sync/${t.id}`, {
+      headers: { Upgrade: "websocket", Cookie: t.ana.cookie, Origin: ORIGIN },
+    });
+    expect(upgrade.status).toBe(101);
+    const sessionSocket = upgrade.webSocket!;
+    sessionSocket.accept();
+    open.push(sessionSocket);
+    const sessionClosed = new Promise<number>((resolve) =>
+      sessionSocket.addEventListener("close", (event) => resolve(event.code)),
+    );
+    // Only the session's socket carries a session tag.
+    const tagged = await t.withShard((_shard, state) =>
+      state.getWebSockets().map((ws) => state.getTags(ws).length),
+    );
+    expect(tagged.sort((a, b) => a - b)).toEqual([0, 1]);
+
+    const out = await api("/auth/sign-out", {
+      method: "POST",
+      headers: { Cookie: t.ana.cookie },
+      body: "{}",
+    });
+    expect(out.status).toBe(200);
+    expect(await sessionClosed).toBe(1012);
+    // Neither the alarm's session expiry nor the next frame's checks close the token's.
+    await runDurableObjectAlarm(t.stub);
+    tokenSocket.send(
+      JSON.stringify({ type: "hello", protocol: PROTOCOL_VERSION, clientId: "script" }),
+    );
+    tokenSocket.send(
+      JSON.stringify({ type: "subscribe", subId: "a", query: "incidents.active", args: {} }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        frames.find((frame) => frame.type === "snapshot" && frame.subId === "a"),
+      ).toBeDefined(),
+    );
+    expect(tokenClosed).toBeUndefined();
+  });
 });
 
 describe("an open sync socket", () => {
@@ -787,6 +830,28 @@ describe("the token itself", () => {
 });
 
 describe("the rate limit", () => {
+  test("member changes count against the creator's own limit, shared with their sessions", async () => {
+    const t = await team();
+    const minted = await mint(t, t.bea, ["members:manage"]);
+    const path = `/workspaces/${t.id}/members/${t.caio.id}`;
+    const byToken = (role: string) =>
+      bearer(path, minted.token, { method: "PATCH", body: JSON.stringify({ role }) });
+    const bySession = (role: string) =>
+      api(path, {
+        method: "PATCH",
+        headers: { Cookie: t.bea.cookie },
+        body: JSON.stringify({ role }),
+      });
+    for (let i = 0; i < MEMBER_CHANGE_LIMIT.max; i++) {
+      const response = i % 2 === 0 ? await byToken("viewer") : await bySession("responder");
+      expect(response.status).toBe(200);
+    }
+    const limited = await byToken("viewer");
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: "rate_limited" });
+    expect((await bySession("viewer")).status).toBe(429);
+  });
+
   test("over it answers 429 with Retry-After, counted only for valid tokens; a failing limiter lets it through", async () => {
     const t = await team();
     const minted = await mint(t, t.ana, ["incident:ack"]);

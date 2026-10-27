@@ -1,0 +1,111 @@
+import { m } from "@freecorps/brigade-i18n";
+import { WORKSPACE_NAME_MAX, workspaceName } from "@freecorps/brigade-schema";
+import { spacing } from "@freecorps/brigade-ui";
+import { useRef, useState } from "react";
+import { AccessibilityInfo, View } from "react-native";
+import { Field, PrimaryButton } from "@/components/form";
+import { ThemedText } from "@/components/themed-text";
+import { useTheme } from "@/hooks/use-theme";
+import { authClient, server } from "@/lib/auth-client";
+import { createWorkspace } from "@/lib/workspaces";
+
+/** Why a workspace name would be refused, in the words the dashboard uses; undefined when it is fine. */
+export function workspaceNameError(name: string): string | undefined {
+  if (name.trim() === "") return m.auth_error_required();
+  if (workspaceName(name).ok) return undefined;
+  if (name.trim().length > WORKSPACE_NAME_MAX)
+    return m.auth_error_too_long({ max: WORKSPACE_NAME_MAX });
+  return m.workspace_name_invalid();
+}
+
+/**
+ * Names and creates a workspace the member owns (`POST /api/workspaces`), then makes it active, which opens it: the
+ * session moves to it and the phone registers there too, keeping its other workspaces' registrations (RFC 0006
+ * "Device registration"). `onDone`: after it is active.
+ */
+export function NewWorkspaceForm({ onDone }: { onDone?: () => void }) {
+  const colors = useTheme();
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | undefined>();
+  const [failure, setFailure] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // State lags a render behind, so two quick taps would both pass a `busy` check.
+  const sending = useRef(false);
+
+  const fail = (message: string) => {
+    setFailure(message);
+    sending.current = false;
+    setBusy(false);
+    if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(message);
+  };
+
+  const submit = async () => {
+    if (sending.current || !server) return;
+    const found = workspaceNameError(name);
+    setError(found);
+    if (found) {
+      if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(found);
+      return;
+    }
+    sending.current = true;
+    setBusy(true);
+    setFailure(null);
+    const cookie = await authClient.getCookie().catch(() => "");
+    const created = await createWorkspace(server.workspaces, name.trim(), cookie);
+    if (!created.ok) {
+      return fail(
+        created.status === 0
+          ? m.auth_error_network()
+          : created.error === "workspace_limit"
+            ? m.workspace_error_limit()
+            : m.auth_error_generic(),
+      );
+    }
+    // Created with a request of the app's own, which Better Auth's client does not see: its cached list of the
+    // member's workspaces (the account section's) is read again, so the new one shows there.
+    authClient.$store.notify("$listOrg");
+    // The server made it active already; this tells the session hooks to read it again.
+    try {
+      await authClient.organization.setActive({ organizationId: created.id });
+    } catch {
+      // Offline right after creating it: the session reads the new workspace once back.
+    }
+    sending.current = false;
+    setBusy(false);
+    onDone?.();
+  };
+
+  return (
+    <View style={{ gap: spacing[5] }}>
+      <Field
+        label={m.workspace_name_label()}
+        value={name}
+        error={error}
+        onChangeText={(text) => {
+          setName(text);
+          setError(undefined);
+          setFailure(null);
+        }}
+        placeholder={m.workspace_name_hint()}
+        autoComplete="organization"
+        textContentType="organizationName"
+        returnKeyType="go"
+        onSubmitEditing={() => void submit()}
+      />
+      {failure ? (
+        <ThemedText
+          selectable
+          accessibilityLiveRegion="polite"
+          style={{ color: colors.destructive }}
+        >
+          {failure}
+        </ThemedText>
+      ) : null}
+      <PrimaryButton
+        busy={busy}
+        label={busy ? m.workspace_creating() : m.workspace_create_submit()}
+        onPress={() => void submit()}
+      />
+    </View>
+  );
+}

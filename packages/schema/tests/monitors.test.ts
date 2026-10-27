@@ -916,12 +916,14 @@ describe("monitor.report: quorum → alert → incident", () => {
     // keeps an endpoint's delivery log: an attempt is no domain event, and turning the endpoint off emits one.
     // `export.reserve` takes a slot of the server-only export rate limit; the export itself is `workspace.exported`.
     // `alert.ingest`'s repeats of a firing alert refresh it without being a new event (RFC 0005 "Alert sources").
+    // `device.touch` records when an unchanged device was registered again; a change is `device.registered` (RFC 0006).
     const silent = Object.values(serverMutations)
       .filter((def) => (def as { silent?: boolean }).silent)
       .map((def) => def.name);
     expect(silent).toEqual([
       "member.sync",
       "monitor.report",
+      "device.touch",
       "webhook.record",
       "export.reserve",
       "alert.ingest",

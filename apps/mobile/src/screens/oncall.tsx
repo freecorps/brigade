@@ -26,7 +26,8 @@ import { ThemedText } from "@/components/themed-text";
 import { useLocale } from "@/hooks/use-locale";
 import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
-import { COVER_HOURS, coverArgs, queriesStatus, type Shift } from "@/lib/oncall";
+import { useOtherWorkspaces } from "@/components/widget";
+import { COVER_HOURS, coverArgs, queriesStatus, statusTime, type Shift } from "@/lib/oncall";
 
 const GAP_GLYPH: Glyph = {
   ios: "exclamationmark.triangle.fill",
@@ -44,21 +45,26 @@ const mine = (
     | "next_none"
     | "overrides"
     | "remove_mine"
-    | "on_dashboard",
+    | "on_dashboard"
+    | "workspace"
+    | "elsewhere"
+    | "elsewhere_open",
   inputs: { name?: string; time?: string } = {},
 ) => m.oncall_mine({ part, name: "", time: "", ...inputs });
 
 /**
- * The member's on call (RFC 0003 "Schedules"): whether they are on call now and until when, their next shifts and
- * overrides, and who every schedule has now, each time in the schedule's zone and, when it reads differently, the
- * phone's. Responders add an override for themselves (covering from now) and remove their own, as on the dashboard;
- * schedules and rotations are edited there.
+ * The member's on call (RFC 0003 "Schedules"): in which workspace, whether they are on call now and until when, their
+ * next shifts and overrides, and who every schedule has now, each time in the schedule's zone and, when it reads
+ * differently, the phone's. Responders add an override for themselves (covering from now) and remove their own, as on
+ * the dashboard; schedules and rotations are edited there. On call in another workspace this phone pages them for (as
+ * last seen there, src/lib/phone-workspaces.ts) is said too, since this screen is only the open one's.
  */
 export function OnCall() {
   const colors = useTheme();
   const padding = useScreenPadding();
   const { locale, timeZone } = useLocale();
-  const { userId, role } = useMember();
+  const { userId, role, workspaceId, workspaceName } = useMember();
+  const others = useOtherWorkspaces(userId, workspaceId);
   const client = useSyncClient();
   const picture = useOnCall();
   const { view, now } = picture;
@@ -104,6 +110,10 @@ export function OnCall() {
 
   const loading = status !== "ready" && status !== "error";
   const onCall = view.current.length > 0;
+  const elsewhere = others.flatMap((other) => {
+    const shift = other.shifts.find(([start, end]) => start <= now && (end === null || now < end));
+    return shift ? [{ name: other.name, until: shift[1] }] : [];
+  });
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
@@ -126,6 +136,22 @@ export function OnCall() {
         </ThemedText>
       ) : null}
       {loading ? <ActivityIndicator color={colors.primary} /> : null}
+
+      <View style={{ gap: spacing[1] }}>
+        <ThemedText variant="caption" selectable numberOfLines={2}>
+          {mine("workspace", { name: workspaceName })}
+        </ThemedText>
+        {elsewhere.map((other) => (
+          <ThemedText key={other.name} selectable style={{ fontWeight: fontWeight.medium }}>
+            {other.until === null
+              ? mine("elsewhere_open", { name: other.name })
+              : mine("elsewhere", {
+                  name: other.name,
+                  time: statusTime(other.until, now, locale, timeZone),
+                })}
+          </ThemedText>
+        ))}
+      </View>
 
       {status === "ready" && view.schedules.length === 0 ? (
         <Section title={m.oncall_title()}>

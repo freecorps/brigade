@@ -99,19 +99,25 @@ Validate the risky assumptions before writing product code. Each spike produces 
     pauses the monitors and revokes the heartbeat URLs of the workspaces the account is alone in, and tells the
     owner once on the dashboard (RFC 0002 "Auth"). `/workspaces/:id` (the stack check) requires membership, so
     `workers_dev` could be turned on (#52).
-  - Left: switching workspaces in the
-    UI, closing open sockets on sign-out or a revoked session (RFC 0004 "Session revocation"), mobile OAuth/OIDC with PKCE
-    via the system browser and QR pairing (mobile email and password sign-in is done, see the Mobile item), and the production
-    and staging secrets (owner approval). Also: a uniform sign-up response (the same answer whether or not the email
-    is taken, so sign-up cannot enumerate accounts; until then only rate limiting slows it); applying
-    migrations 0003, 0004 and 0005 to the deployed databases; a `baseURL` per environment (`BETTER_AUTH_URL`, the dashboard's `/api/auth` origin)
-    once deployed hostnames exist, so email links point at the dashboard rather than the API Worker; repairing a
-    workspace whose shard was never provisioned because the Worker died between the D1 write and the RPC, or whose
-    undo failed, and a shard that committed `workspace.create` before its RPC failed and was undone (it would
-    announce a workspace D1 no longer has: tombstone it with a compensating event); and sign-in limits keyed by
-    account as well as IP, since 3 tries per 10 s per IP can briefly lock out a team behind one NAT; and a rate limit
-    on `PATCH`/`DELETE /workspaces/:id/members/:userId` (per member and workspace), since each call reads D1 and
-    wakes the shard.
+  - Done: switching workspaces (the dashboard's header lists the member's workspaces, switches and creates a new one;
+    the app does the same in its account section, registering the phone in every workspace opened on it at once with
+    `POST /devices/register` and saying per workspace whether it is paged, RFC 0006 "Device registration"); sign-up in
+    the app; a uniform sign-up answer with a capped notice to the address's owner; sockets closed when their session
+    ends (sign-out, a revoked session) or expires, upgrades of an ended session refused, and the phone that signs out
+    taken off every workspace of the member, recorded in D1 so a shard that cannot be reached catches up (RFC 0004
+    "Session revocation"); sign-in limited per account (5 a minute, skipped for 15 minutes from where a password was
+    just reset) as well as per IP (30 a minute); a rate limit on `PATCH`/`DELETE /workspaces/:id/members/:userId` (20
+    a minute per member and workspace); rate-limit counters pruned hourly; the widget and the on-call screen name the
+    workspace and say "On call in" another one.
+  - Left: mobile OAuth/OIDC with PKCE via the system browser and QR pairing (mobile email and password sign-in is
+    done, see the Mobile item), and the production and staging secrets (owner approval); applying migrations 0003,
+    0004, 0005, 0011 and 0012 to the deployed databases; a `baseURL` per environment (`BETTER_AUTH_URL`, the dashboard's
+    `/api/auth` origin) once deployed hostnames exist, so email links point at the dashboard rather than the API
+    Worker; repairing a workspace whose shard was never provisioned because the Worker died between the D1 write and
+    the RPC, or whose undo failed, and a shard that committed `workspace.create` before its RPC failed and was undone
+    (it would announce a workspace D1 no longer has: tombstone it with a compensating event); an admin route to
+    revoke another user's sessions (the session hook already closes their sockets once it exists); and whether
+    sign-in should require a verified address where email is set up (Q21).
 - [ ] Monitors (HTTP/TCP/heartbeat) with quorum → alerts → incidents
   - Done: HTTP, TCP and heartbeat monitors as mutations in `packages/schema` (owners and admins manage, everyone reads),
     one `ProbeDO` per workspace and region with `locationHint` (only the six regions where objects spawn, S2), each

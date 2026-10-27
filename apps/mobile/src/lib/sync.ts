@@ -33,7 +33,11 @@ export type Server = {
    */
   forgotPassword: string;
   sync: (workspaceId: string) => string;
+  /** `POST` here creates a workspace (the dashboard's `/api/workspaces`, apps/api `createWorkspace`). */
+  workspaces: string;
   ack: (workspaceId: string, incidentId: string) => string;
+  /** `POST` here registers the phone in every workspace it was opened in (apps/api src/device-route.ts). */
+  devices: string;
 };
 
 /**
@@ -58,6 +62,8 @@ export function brigadeServer({
     auth: `${origin}/api/auth`,
     forgotPassword: `${origin}/forgot-password`,
     sync: (workspaceId) => `${socket}/api/sync/${encodeURIComponent(workspaceId)}`,
+    workspaces: `${origin}/api/workspaces`,
+    devices: `${origin}/api/devices/register`,
     ack: (workspaceId, incidentId) =>
       `${origin}/api/workspaces/${encodeURIComponent(workspaceId)}/incidents/${encodeURIComponent(incidentId)}/ack`,
   };

@@ -19,6 +19,7 @@ import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as IncidentsNumberRouteImport } from './routes/incidents.$number'
 import { Route as InvitationsIdRouteImport } from './routes/invitations.$id'
 import { Route as ServicesIdRouteImport } from './routes/services.$id'
+import { Route as WorkspacesNewRouteImport } from './routes/workspaces.new'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -70,6 +71,11 @@ const ServicesIdRoute = ServicesIdRouteImport.update({
   path: '/services/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WorkspacesNewRoute = WorkspacesNewRouteImport.update({
+  id: '/workspaces/new',
+  path: '/workspaces/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -82,6 +88,7 @@ export interface FileRoutesByFullPath {
   '/incidents/$number': typeof IncidentsNumberRoute
   '/invitations/$id': typeof InvitationsIdRoute
   '/services/$id': typeof ServicesIdRoute
+  '/workspaces/new': typeof WorkspacesNewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -94,6 +101,7 @@ export interface FileRoutesByTo {
   '/incidents/$number': typeof IncidentsNumberRoute
   '/invitations/$id': typeof InvitationsIdRoute
   '/services/$id': typeof ServicesIdRoute
+  '/workspaces/new': typeof WorkspacesNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -107,6 +115,7 @@ export interface FileRoutesById {
   '/incidents/$number': typeof IncidentsNumberRoute
   '/invitations/$id': typeof InvitationsIdRoute
   '/services/$id': typeof ServicesIdRoute
+  '/workspaces/new': typeof WorkspacesNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -121,6 +130,7 @@ export interface FileRouteTypes {
     | '/incidents/$number'
     | '/invitations/$id'
     | '/services/$id'
+    | '/workspaces/new'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -133,6 +143,7 @@ export interface FileRouteTypes {
     | '/incidents/$number'
     | '/invitations/$id'
     | '/services/$id'
+    | '/workspaces/new'
   id:
     | '__root__'
     | '/'
@@ -145,6 +156,7 @@ export interface FileRouteTypes {
     | '/incidents/$number'
     | '/invitations/$id'
     | '/services/$id'
+    | '/workspaces/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -158,6 +170,7 @@ export interface RootRouteChildren {
   IncidentsNumberRoute: typeof IncidentsNumberRoute
   InvitationsIdRoute: typeof InvitationsIdRoute
   ServicesIdRoute: typeof ServicesIdRoute
+  WorkspacesNewRoute: typeof WorkspacesNewRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -232,6 +245,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ServicesIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/workspaces/new': {
+      id: '/workspaces/new'
+      path: '/workspaces/new'
+      fullPath: '/workspaces/new'
+      preLoaderRoute: typeof WorkspacesNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -246,6 +266,7 @@ const rootRouteChildren: RootRouteChildren = {
   IncidentsNumberRoute: IncidentsNumberRoute,
   InvitationsIdRoute: InvitationsIdRoute,
   ServicesIdRoute: ServicesIdRoute,
+  WorkspacesNewRoute: WorkspacesNewRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

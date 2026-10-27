@@ -29,6 +29,7 @@ test("development builds sign in and sync through the dashboard's dev server on 
   expect(server?.auth).toBe("http://localhost:5173/api/auth");
   expect(server?.forgotPassword).toBe("http://localhost:5173/forgot-password");
   expect(server?.sync("ws_1")).toBe("ws://localhost:5173/api/sync/ws_1");
+  expect(server?.workspaces).toBe("http://localhost:5173/api/workspaces");
   expect(server?.ack("ws_1", "inc_1")).toBe(
     "http://localhost:5173/api/workspaces/ws_1/incidents/inc_1/ack",
   );

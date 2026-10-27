@@ -25,6 +25,7 @@ import {
   WATCHDOG_NAME,
   type WatchdogDO,
 } from "../src/watchdog.ts";
+import { sessionCookie } from "./session.ts";
 
 const NOW = Date.UTC(2026, 9, 25, 12, 0, 0);
 const MINUTE = 60_000;
@@ -482,20 +483,18 @@ describe("GET /health/paging", () => {
       },
     });
   async function signUp(name: string) {
+    const email = `${name}-${people}@example.com`;
     const response = await api("/auth/sign-up/email", {
       method: "POST",
       body: JSON.stringify({
         name,
-        email: `${name}-${people}@example.com`,
+        email,
         password: "correct horse battery staple",
       }),
     });
     expect(response.status).toBe(200);
     const { user } = (await response.json()) as { user: { id: string } };
-    const cookie = response.headers
-      .getSetCookie()
-      .map((value) => value.split(";")[0])
-      .join("; ");
+    const cookie = await sessionCookie(email, "correct horse battery staple");
     return { id: user.id, cookie };
   }
   async function paging(cookie?: string) {

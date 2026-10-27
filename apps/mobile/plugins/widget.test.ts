@@ -24,6 +24,7 @@ describe("widgetStrings", () => {
       const strings = widgetStrings(messages(locale));
       for (const key of WIDGET_STRING_KEYS) expect(strings).toContain(`"${key}" = "`);
       expect(strings).not.toContain("{time}");
+      expect(strings).not.toContain("{name}");
     }
     expect(widgetStrings(messages("en"))).toContain('"widget_until" = "Until %@";');
     expect(widgetStrings(messages("pt-BR"))).toContain('"widget_until" = "Até %@";');
@@ -35,7 +36,14 @@ describe("widgetStrings", () => {
     const strings = widgetStrings({ ...all, widget_name: 'Say "100%"', widget_next: "At {time}" });
     expect(strings).toContain('"widget_name" = "Say \\"100%%\\"";');
     expect(strings).toContain('"widget_next" = "At %@";');
-    expect(() => widgetStrings({ ...all, widget_until: "Until {when}" })).toThrow(/only \{time\}/);
+    expect(strings).not.toContain("{name}");
+    expect(() => widgetStrings({ ...all, widget_until: "Until {when}" })).toThrow(/one \{time\}/);
+    expect(() => widgetStrings({ ...all, widget_until: "{name} until {time}" })).toThrow(
+      /one \{time\}/,
+    );
+    expect(widgetStrings({ ...all, widget_on_call_in: "On call in {name}" })).toContain(
+      '"widget_on_call_in" = "On call in %@";',
+    );
     const { widget_stale: _, ...missing } = all;
     expect(() => widgetStrings(missing)).toThrow(/widget_stale/);
   });

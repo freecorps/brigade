@@ -26,11 +26,12 @@ import {
 // the system's. Run after withNotificationService (app.config.ts), whose App Group entitlement the app shares.
 
 export const WIDGET_TARGET = "BrigadeWidget";
-/** The widget's strings; `{time}` becomes `%@`, filled in by the widget. */
+/** The widget's strings; `{time}` or `{name}` (one per string) becomes `%@`, filled in by the widget. */
 export const WIDGET_STRING_KEYS = [
   "widget_name",
   "widget_description",
   "widget_on_call",
+  "widget_on_call_in",
   "widget_off_call",
   "widget_until",
   "widget_next",
@@ -47,20 +48,20 @@ export const WIDGET_SOURCES = ["widget/BrigadeWidget.swift", "widget/WidgetState
 
 /**
  * `Localizable.strings` text for the widget. Throws if a locale lacks a key, or a message has a parameter other
- * than `{time}` (the widget fills only that one).
+ * than `{time}` or `{name}`, or more than one (the widget fills one).
  */
 export function widgetStrings(messages: Record<string, unknown>): string {
   const lines = WIDGET_STRING_KEYS.map((key) => {
     const value = messages[key];
     if (typeof value !== "string") throw new Error(`packages/i18n has no plain string ${key}`);
     const params = [...value.matchAll(/\{(\w+)\}/g)].map((match) => match[1]);
-    if (params.some((param) => param !== "time")) {
-      throw new Error(`${key}: the widget fills only {time}`);
+    if (params.length > 1 || params.some((param) => param !== "time" && param !== "name")) {
+      throw new Error(`${key}: the widget fills one {time} or {name}`);
     }
     // `%` is literal in a format string only doubled.
     const text = escapeStrings(value)
       .replace(/%/g, "%%")
-      .replace(/\{time\}/g, "%@");
+      .replace(/\{(time|name)\}/g, "%@");
     return `"${key}" = "${text}";`;
   });
   return `/* Generated from packages/i18n by plugins/widget.ts. */\n${lines.join("\n")}\n`;

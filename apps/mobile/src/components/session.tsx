@@ -1,7 +1,8 @@
-import { newId, type Role } from "@freecorps/brigade-schema";
+import { DEVICE_HEADER, newId, type Role } from "@freecorps/brigade-schema";
 import { SyncProvider } from "@freecorps/brigade-sync/react";
 import { getRandomBytes } from "expo-crypto";
 import { useNetworkState } from "expo-network";
+import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import { AppState } from "react-native";
 import {
@@ -12,15 +13,32 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { authClient, forgetSession, server } from "@/lib/auth-client";
-import { registerPhone, unregisterPhone, type Paging } from "@/lib/device";
+import { registerEverywhere, unregisterPhone, type Paging, type Registrations } from "@/lib/device";
+import { drainer, type Drainable } from "@/lib/drain";
 import { pagingCycle } from "@/lib/paging";
 import { dropQueues, openQueue } from "@/lib/pending";
 import { pendingFiles } from "@/lib/pending-files";
-import { finishDeps, keptSignOuts, phoneDeps, SESSION_LIFETIME_MS } from "@/lib/phone";
-import { finishSignOut, signOutPhone, type FinishResult } from "@/lib/sign-out";
+import {
+  finishDeps,
+  keptSignOuts,
+  phoneDeps,
+  phoneDeviceId,
+  phoneWorkspaces,
+  registerAllWith,
+  SESSION_LIFETIME_MS,
+} from "@/lib/phone";
+import { withoutWorkspaces, withWorkspace, type PhoneWorkspace } from "@/lib/phone-workspaces";
+import {
+  finishSignOut,
+  inTime,
+  SIGN_OUT_TIMEOUT_MS,
+  signOutPhone,
+  type FinishResult,
+} from "@/lib/sign-out";
 import { knownWorkspace, memberActor, settledRole, WORKSPACE_KEY, type Server } from "@/lib/sync";
 import { createWorkspaceSync, setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
 import { clearWidget, WidgetSnapshot } from "@/components/widget";
@@ -34,8 +52,13 @@ export type Member = {
   workspaceId: string;
   workspaceName: string;
   role: Role;
-  /** Whether this phone gets pages (registered on sign-in). */
+  /** Whether this phone gets pages for the open workspace (registered on sign-in). */
   paging: Paging;
+  /**
+   * Every workspace this phone pages the member for (each one they opened on it, the open one first) and whether it
+   * does, as the last registration said (RFC 0006 "Device registration").
+   */
+  pagedWorkspaces: (PhoneWorkspace & { paging: Paging })[];
   /** Finishes a kept sign-out and registers again now, instead of at the next try; resolves when done. */
   retryPaging: () => Promise<void>;
   /**
@@ -105,14 +128,14 @@ function finishLeftover(target: Server): Promise<FinishResult> {
 function usePaging(
   enabled: boolean,
   online: boolean,
-  register: ((proceed: () => boolean) => Promise<Paging>) | null,
-): { paging: Paging; retry: () => Promise<void>; stop: () => Promise<void> } {
-  const [paging, setPaging] = useState<Paging>("pending");
+  register: ((proceed: () => boolean) => Promise<Registrations>) | null,
+): { paging: Registrations; retry: () => Promise<void>; stop: () => Promise<void> } {
+  const [paging, setPaging] = useState<Registrations>({});
   const cycle = useRef<ReturnType<typeof pagingCycle> | null>(null);
   useEffect(() => {
     const target = server;
     if (!enabled || !target) return;
-    setPaging("pending");
+    setPaging({});
     const made = pagingCycle({
       finish: () => finishLeftover(target),
       register,
@@ -126,11 +149,15 @@ function usePaging(
     const foreground = AppState.addEventListener("change", (state) => {
       if (state === "active") void made.retry();
     });
-    // iOS: a new or withdrawn PushKit token is registered at once, so calls only go to a token the app holds.
+    // iOS: a new or withdrawn PushKit token is registered at once, so calls only go to a token the app holds; and a new
+    // APNs token likewise, in every workspace, or the others page a dead one. Critical Alerts or notifications turned
+    // on or off happen in Settings, so coming back to the foreground registers them.
     const voipToken = BrigadeCall?.addListener("onVoipToken", () => void made.retry());
+    const pushToken = Notifications.addPushTokenListener(() => void made.retry());
     return () => {
       foreground.remove();
       voipToken?.remove();
+      pushToken.remove();
       void made.stop();
       if (cycle.current === made) cycle.current = null;
     };
@@ -172,7 +199,10 @@ export function Session({ children }: { children: (ready: boolean) => ReactNode 
   if (!server) view = { kind: "no-server" };
   else if (data && workspaceId) {
     return (
+      // Keyed: switching workspaces opens the new one from scratch (its own socket, queue of unsent changes and
+      // registration), while the old one's registration stays, so its pages still arrive (RFC 0006).
       <ActiveWorkspace
+        key={`${data.user.id}:${workspaceId}`}
         userId={data.user.id}
         name={data.user.name}
         email={data.user.email}
@@ -212,20 +242,63 @@ function ClearWidgetWhen({ signedOut }: { signedOut: boolean }) {
  * expires. True when the server answered.
  */
 async function signOutHere(): Promise<boolean> {
-  try {
-    return !(await authClient.signOut()).error;
-  } catch {
-    // A network failure.
-    return false;
-  }
+  // Never longer than `SIGN_OUT_TIMEOUT_MS`: unanswered by then, it is kept and finished later (src/lib/sign-out.ts),
+  // and the server finishes what it started on its own.
+  return inTime(
+    async () => {
+      // Named, so the server takes this phone off the member's other workspaces too (RFC 0006 "Device
+      // registration").
+      const device = await phoneDeviceId();
+      return !(
+        await authClient.signOut(
+          device ? { fetchOptions: { headers: { [DEVICE_HEADER]: device } } } : undefined,
+        )
+      ).error;
+    },
+    SIGN_OUT_TIMEOUT_MS,
+    false,
+  );
+}
+
+/**
+ * The sync clients of workspaces switched away from with changes not sent yet, kept open until the shard confirmed
+ * them (src/lib/drain.ts), by member and workspace.
+ */
+const draining = drainer<Drainable & { sync: WorkspaceSync }>({
+  setTimer: (run, ms) => {
+    const timer = setTimeout(run, ms);
+    return () => clearTimeout(timer);
+  },
+  now: Date.now,
+});
+
+/** Nothing of the member who leaves is sent or registered again: their draining clients and their workspaces. */
+async function forgetMember(): Promise<void> {
+  draining.closeAll();
+  await phoneWorkspaces.clear();
 }
 
 /** Signing out without a workspace: nothing pages this phone for it. */
 async function signOut(): Promise<void> {
   await signOutHere();
+  await forgetMember();
   clearWidget();
   await SecureStore.deleteItemAsync(WORKSPACE_KEY).catch(() => {});
   await dropQueues(pendingFiles).catch(() => {});
+}
+
+/**
+ * A workspace switched away from: its client stays open until the shard confirmed what it still has to send (an ack
+ * made while reconnecting must still stop the escalation), then closes, dropping the socket and every row it
+ * brought (src/lib/drain.ts). With nothing left it closes at once.
+ */
+function leaveBehind(key: string, sync: WorkspaceSync): void {
+  draining.keep(key, {
+    sync,
+    // Without a kept queue (it could not be opened) nothing says what is left: closed at once, as before.
+    unsent: () => sync.queue?.unsent() ?? false,
+    close: () => sync.client.close(),
+  });
 }
 
 function ActiveWorkspace({
@@ -306,8 +379,22 @@ function ActiveWorkspace({
   useEffect(() => {
     const target = server;
     if (!target) return;
+    const key = `${userId}:${workspaceId}`;
     let made: WorkspaceSync | null = null;
     let live = true;
+    // Switched back while its changes were still going out: the same client, with them.
+    const kept = draining.take(key);
+    if (kept) {
+      made = kept.sync;
+      setCurrentSync(made);
+      setSync(made);
+      return () => {
+        live = false;
+        setCurrentSync(null);
+        setSync(null);
+        if (made) leaveBehind(key, made);
+      };
+    }
     // A cookie that cannot be read still opens the workspace: the upgrade then refuses it and the screen says so,
     // instead of loading forever. A queue that cannot be read opens it too, without keeping changes.
     void Promise.all([
@@ -337,10 +424,9 @@ function ActiveWorkspace({
     });
     return () => {
       live = false;
-      // Closing drops the socket and every row it brought: nothing of this session outlives it.
-      made?.client.close();
       setCurrentSync(null);
       setSync(null);
+      if (made) leaveBehind(key, made);
     };
   }, [userId, workspaceId]);
 
@@ -356,17 +442,46 @@ function ActiveWorkspace({
     setRestored(sync);
   }, [sync, roleNow]);
 
-  // Someone who signed out offline first: their device has to come off the shard before this one can take it.
-  const register = useMemo(
-    () =>
-      sync ? (proceed: () => boolean) => registerPhone(phoneDeps(sync, server), proceed) : null,
-    [sync, server],
+  // The workspaces this phone pages the member for: this one joins them as it opens (RFC 0006).
+  const listed = useSyncExternalStore(phoneWorkspaces.subscribe, () =>
+    phoneWorkspaces.current(userId),
   );
+  useEffect(() => {
+    void phoneWorkspaces.update(userId, (list) => withWorkspace(list, workspaceId, liveName));
+  }, [userId, workspaceId, liveName]);
+  const ids = listed?.workspaces.some((workspace) => workspace.id === workspaceId)
+    ? listed.workspaces.map((workspace) => workspace.id).join(",")
+    : null;
+
+  // Someone who signed out offline first: their device has to come off the shard before this one can take it.
+  // Then the phone registers in every workspace it was opened in, so a new token reaches all of them.
+  const register = useMemo(() => {
+    const target = server;
+    if (!sync || !target || ids === null) return null;
+    const deps = phoneDeps(
+      sync,
+      target,
+      registerAllWith(target, () => authClient.getCookie()),
+    );
+    return (proceed: () => boolean) =>
+      registerEverywhere(deps, ids.split(","), workspaceId, proceed, (gone) => {
+        void phoneWorkspaces.update(userId, (list) => withoutWorkspaces(list, gone));
+      });
+  }, [sync, ids, workspaceId, userId]);
   const {
-    paging,
+    paging: registrations,
     retry: retryPaging,
     stop: stopPaging,
   } = usePaging(register !== null, online, register);
+  const paging = registrations[workspaceId] ?? "pending";
+  const pagedWorkspaces = useMemo(
+    () =>
+      (listed?.workspaces ?? []).map((workspace) => ({
+        ...workspace,
+        paging: registrations[workspace.id] ?? "pending",
+      })),
+    [listed, registrations],
+  );
 
   const leave = useCallback(async () => {
     // No registration the cycle started may reach the shard after the phone comes off it below.
@@ -388,8 +503,9 @@ function ActiveWorkspace({
     await SecureStore.deleteItemAsync(WORKSPACE_KEY).catch(() => {});
     // Their shifts leave the home and lock screens with them.
     clearWidget();
-    // Nothing they queued is sent or shown after they leave, whoever signs in next.
+    // Nothing they queued is sent or shown after they leave, whoever signs in next, nor registered for them again.
     await sync?.queue?.drop().catch(() => {});
+    await forgetMember();
     await dropQueues(pendingFiles).catch(() => {});
     return result;
   }, [sync, userId, workspaceId, stopPaging]);
@@ -407,6 +523,7 @@ function ActiveWorkspace({
           workspaceName: workspaceName!,
           role: actor.role,
           paging,
+          pagedWorkspaces,
           retryPaging,
           signOut: leave,
           unsent: () => sync?.queue?.unsent() ?? false,
@@ -436,6 +553,7 @@ function ActiveWorkspace({
     member,
     actor.role,
     paging,
+    pagedWorkspaces,
     retryPaging,
     leave,
   ]);
@@ -443,7 +561,7 @@ function ActiveWorkspace({
   if (!ready || !sync) return <SessionContext value={value}>{children(false)}</SessionContext>;
   return (
     <SyncProvider client={sync.client} shard={sync.shard}>
-      <WidgetSnapshot userId={userId} />
+      <WidgetSnapshot userId={userId} workspaceId={workspaceId} workspaceName={workspaceName!} />
       <SessionContext value={value}>{children(true)}</SessionContext>
     </SyncProvider>
   );

@@ -15,6 +15,7 @@ import {
 } from "../src/auth.ts";
 import worker, { createWorkspace as postWorkspace, workerAuth } from "../src/index.ts";
 import type { SocketState } from "../src/workspace.ts";
+import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
 const PASSWORD = "correct horse battery staple";
@@ -65,7 +66,7 @@ async function signUp(name: string, address = email(name)) {
   });
   expect(response.status).toBe(200);
   const body = (await response.json()) as { user: { id: string; email: string } };
-  return { email: address, user: body.user, cookie: cookies(response) };
+  return { email: address, user: body.user, cookie: await sessionCookie(address, PASSWORD) };
 }
 
 async function createWorkspace(cookie: string, name = "Acme") {
@@ -162,11 +163,20 @@ const declare = (title: string) => ({
 });
 
 describe("Better Auth routes", () => {
-  test("sign-up creates a user with a usr_ id and a session cookie", async () => {
-    const ana = await signUp("Ana");
-    expect(isId("usr", ana.user.id)).toBe(true);
-    expect(ana.cookie).toContain("better-auth.session_token=");
-    expect((await session(ana.cookie))?.user).toMatchObject({ id: ana.user.id, email: ana.email });
+  test("sign-up creates a user with a usr_ id and hands out no session; signing in does", async () => {
+    const address = email("ana");
+    const response = await api("/auth/sign-up/email", {
+      method: "POST",
+      body: JSON.stringify({ name: "Ana", email: address, password: PASSWORD }),
+    });
+    expect(response.status).toBe(200);
+    // The same answer as for a taken address (test/sessions.test.ts): no session either way.
+    expect(response.headers.getSetCookie()).toEqual([]);
+    const { user } = (await response.json()) as { user: { id: string } };
+    expect(isId("usr", user.id)).toBe(true);
+    const cookie = await sessionCookie(address, PASSWORD);
+    expect(cookie).toContain("better-auth.session_token=");
+    expect((await session(cookie))?.user).toMatchObject({ id: user.id, email: address });
   });
 
   test("sign-in with the password gives a new session; a wrong password does not", async () => {
@@ -197,22 +207,24 @@ describe("Better Auth routes", () => {
     expect(await session(ana.cookie)).toBeNull();
   });
 
-  test("an email can only sign up once", async () => {
+  test("an email belongs to one account: signing up with it again creates nothing", async () => {
     const ana = await signUp("Ana");
     const again = await api("/auth/sign-up/email", {
       method: "POST",
       body: JSON.stringify({ name: "Ana", email: ana.email, password: PASSWORD }),
     });
-    expect(again.status).toBe(422);
+    expect(again.status).toBe(200);
+    const users = await env.DB.prepare(`select id from "user" where email = ?`)
+      .bind(ana.email)
+      .all<{ id: string }>();
+    expect(users.results.map((row) => row.id)).toEqual([ana.user.id]);
   });
 
   test("over HTTPS the cookie is Secure and __Secure- prefixed; over HTTP it is neither", async () => {
+    const ana = await signUp("Ana");
     const secure = await api(
-      "/auth/sign-up/email",
-      {
-        method: "POST",
-        body: JSON.stringify({ name: "Ana", email: email("ana"), password: PASSWORD }),
-      },
+      "/auth/sign-in/email",
+      { method: "POST", body: JSON.stringify({ email: ana.email, password: PASSWORD }) },
       "https://api.test",
     );
     expect(secure.status).toBe(200);
@@ -231,33 +243,22 @@ describe("Better Auth routes", () => {
     expect(plain.cookie).toMatch(/^better-auth\.session_token=/);
   });
 
-  test("sign-in is rate-limited per client IP: 429 after 3 tries in 10 s", async () => {
+  test("sign-in is counted per client IP in D1, so every isolate shares the count", async () => {
     const ana = await signUp("Ana");
     const ip = "203.0.113.7";
-    const attempt = (headers: Record<string, string> = { "cf-connecting-ip": ip }) =>
-      api("/auth/sign-in/email", {
+    for (let i = 0; i < 2; i++) {
+      const response = await api("/auth/sign-in/email", {
         method: "POST",
-        headers,
+        headers: { "cf-connecting-ip": ip },
         body: JSON.stringify({ email: ana.email, password: "not the password" }),
       });
-    for (let i = 0; i < 3; i++) expect((await attempt()).status).toBe(401);
-    const limited = await attempt();
-    expect(limited.status).toBe(429);
-    expect(Number(limited.headers.get("X-Retry-After"))).toBeGreaterThan(0);
-    // Even the right password waits.
-    const right = await api("/auth/sign-in/email", {
-      method: "POST",
-      headers: { "cf-connecting-ip": ip },
-      body: JSON.stringify({ email: ana.email, password: PASSWORD }),
-    });
-    expect(right.status).toBe(429);
-    // Counted per IP: another client is not affected.
-    expect((await attempt({ "cf-connecting-ip": "203.0.113.8" })).status).toBe(401);
-    // The counts live in D1, so every isolate shares them.
+      expect(response.status).toBe(401);
+    }
     const row = await env.DB.prepare(`select count from "rateLimit" where key = ?`)
       .bind(`${ip}|/sign-in/email`)
       .first<{ count: number }>();
-    expect(row?.count).toBe(3);
+    expect(row?.count).toBe(2);
+    // The limits themselves: test/sessions.test.ts.
   });
 
   test("sign-up is rate-limited too, so it cannot probe many emails quickly", async () => {
@@ -365,12 +366,14 @@ describe("Better Auth routes", () => {
       return row?.locale;
     };
     const given = async (body: Record<string, unknown>, headers: Record<string, string> = {}) => {
+      const address = email("lang");
       const response = await api("/auth/sign-up/email", {
         method: "POST",
         headers,
-        body: JSON.stringify({ email: email("lang"), password: PASSWORD, name: "Lu", ...body }),
+        body: JSON.stringify({ email: address, password: PASSWORD, name: "Lu", ...body }),
       });
-      return { response, cookie: cookies(response) };
+      const cookie = response.status === 200 ? await sessionCookie(address, PASSWORD) : "";
+      return { response, cookie };
     };
     const portuguese = await given({ locale: "pt-BR" });
     expect(portuguese.response.status).toBe(200);

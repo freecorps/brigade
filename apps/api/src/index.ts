@@ -17,10 +17,14 @@ import {
   memberRole,
   RESET_AT_HEADER,
   resolveActor,
+  SESSION_EXPIRES_HEADER,
+  SESSION_HEADER,
 } from "./actor.ts";
 import {
   AUTH_BASE_PATH,
+  countRequest,
   createAuth,
+  pruneRateLimits,
   WORKSPACE_LIMIT_CODE,
   type Auth,
   type AuthBindings,
@@ -52,6 +56,8 @@ import { MAX_ALERT_BODY } from "./alert-intake.ts";
 import { apiTokenRoute, callerOf, unauthenticated } from "./api-tokens.ts";
 import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, RECEIPT_STATUS, USER_ID } from "./http.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
+import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
+import { DEVICES_REGISTER_PATH, registerDevices } from "./device-route.ts";
 import {
   IDEMPOTENCY_KEY_HEADER,
   ORGANIZATION_ID,
@@ -89,6 +95,8 @@ const API_TOKENS_PATH = /^\/workspaces\/([^/]+)\/api-tokens(?:\/([^/]+))?$/;
 const EXPORT_SWEEP_MINUTE = 17;
 /** Minute of the hour the cron deletes status page subscribers who never confirmed (src/status-subscribers.ts). */
 const SUBSCRIBER_SWEEP_MINUTE = 37;
+/** Minute of the hour the cron deletes rate-limit counters past every window (`pruneRateLimits`). */
+const RATE_LIMIT_PRUNE_MINUTE = 23;
 /** `/status/<slug>`; `/status` and `/status/` alone are the page's 404 (no slug). */
 const PUBLIC_STATUS_PATH = /^\/status(?:\/([^/]*))?$/;
 const READ_METHODS = ["GET", "HEAD"];
@@ -216,6 +224,7 @@ export default {
     if (webhooks) return webhookRequest(request, env, auth, webhooks[1]!, webhooks[2]);
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
+    if (pathname === DEVICES_REGISTER_PATH) return registerDevices(request, env, auth);
     if (pathname === "/receipts") return receiveReceipt(request, env);
     const alerts = ALERTS_PATH.exec(pathname)?.[1];
     if (alerts !== undefined) return receiveAlerts(request, env, alerts);
@@ -261,6 +270,18 @@ export default {
         console.error(JSON.stringify({ message: "subscriber sweep failed", error: String(error) })),
       );
       ctx?.waitUntil(sweep);
+    }
+    // Ended sessions a shard has yet to act on (src/session-end.ts), every run; and the rate-limit counters past
+    // every window, once an hour. Never in the heartbeat's way.
+    ctx?.waitUntil(sweepSessionEnds(env, Date.now()));
+    if (new Date(controller.scheduledTime).getUTCMinutes() === RATE_LIMIT_PRUNE_MINUTE) {
+      ctx?.waitUntil(
+        pruneRateLimits(env.DB, Date.now()).catch((error: unknown) =>
+          console.error(
+            JSON.stringify({ message: "rate limit prune failed", error: String(error) }),
+          ),
+        ),
+      );
     }
     await env.WATCHDOG.getByName(WATCHDOG_NAME).beat();
   },
@@ -385,11 +406,69 @@ export function workerAuth(
     secureCookies: new URL(request.url).protocol === "https:",
     onWorkspaceCreated: onWorkspaceCreated ?? provisionWith(env),
     onPasswordReset: signOutWith(env),
+    onSessionEnding: (session) => recordSessionEnd(env.DB, session),
+    onSessionEnded: endSessionWith(env),
     // Made only when a verification email goes out, so other requests never read the email settings.
     get email() {
       return { sender: emailSender(env), dashboardUrl: (env as NotifyEnv).DASHBOARD_URL };
     },
   });
+}
+
+/**
+ * When a Better Auth session ends (RFC 0004 "Session revocation"): asks the shard of every workspace the user is in
+ * (D1's `member`) to close the sockets opened with it, and with `deviceId` to take that phone off too
+ * (`WorkspaceDO.endSession`), each tried `SIGN_OUT_ATTEMPTS` times, then deletes that workspace's row in D1's
+ * `session_end` (written before the session went, `recordSessionEnd`). Never throws. A shard that still fails (or
+ * D1, reading the workspaces) is logged and keeps its row, which the shard acts on before a phone next registers in
+ * it or after its next sync upgrade, or the cron within a minute or two (src/session-end.ts).
+ */
+export function endSessionWith(
+  env: Env,
+  retryMs = SIGN_OUT_RETRY_MS,
+): NonNullable<AuthBindings["onSessionEnded"]> {
+  return async (session) => {
+    let workspaces: string[];
+    try {
+      const { results } = await env.DB.prepare(
+        `select "organizationId" as id from member where "userId" = ?`,
+      )
+        .bind(session.userId)
+        .all<{ id: string }>();
+      workspaces = results.map((row) => row.id).filter((id) => WORKSPACE_ID.test(id));
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          message: "reading an ended session's workspaces failed",
+          error: String(error),
+        }),
+      );
+      return;
+    }
+    await Promise.all(
+      workspaces.map(async (workspaceId) => {
+        let failure: unknown;
+        for (let attempt = 1; attempt <= SIGN_OUT_ATTEMPTS; attempt++) {
+          if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, retryMs * attempt));
+          try {
+            // `not_found`: a shard never provisioned has no sockets or devices; nothing to retry.
+            await env.WORKSPACE.getByName(workspaceId).endSession(workspaceId, session);
+            await forgetSessionEnd(env.DB, workspaceId, session.sessionId);
+            return;
+          } catch (error) {
+            failure = error;
+          }
+        }
+        console.error(
+          JSON.stringify({
+            message: "closing an ended session's sockets failed",
+            workspace: workspaceId,
+            error: String(failure),
+          }),
+        );
+      }),
+    );
+  };
 }
 
 /** Tries per workspace at signing a reset account out (`signOutWith`), and the wait before each retry. */
@@ -667,6 +746,13 @@ export async function createWorkspace(request: Request, lazyAuth: () => Auth): P
 }
 
 /**
+ * Member changes (`PATCH`/`DELETE /workspaces/:id/members/:userId`) one member may make in one workspace per window,
+ * counted in D1's `rateLimit` table: far more than a person managing a team clicks, few enough that a script cannot
+ * keep the shard and D1 busy.
+ */
+export const MEMBER_CHANGE_LIMIT = { window: 60, max: 20 };
+
+/**
  * `PATCH /workspaces/:id/members/:userId` `{ role }` changes a member's role; `DELETE` removes them, or, for one's
  * own id, leaves the workspace (RFC 0003 "Members"). The Worker checks the origin, the session and that the caller
  * is a member; the workspace's shard checks the rules against D1, writes D1, then its own copy and the outbox, and
@@ -726,6 +812,20 @@ export async function changeMember(
     }
   } catch (error) {
     console.error(JSON.stringify({ message: "member lookup failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
+  // Each change wakes the shard (and it reads D1): bounded per member and workspace. Counted only once the workspace
+  // is known to be theirs (or to exist, for a leave sent again), so made-up ids leave no counter behind. An API token
+  // counts against its creator (`caller.userId`): their sessions and tokens share one budget, so minting more tokens
+  // buys no more changes.
+  try {
+    const { window, max } = MEMBER_CHANGE_LIMIT;
+    const key = `member-change:${workspaceId}:${caller.userId}`;
+    if ((await countRequest(env.DB, key, window, Date.now())) > max) {
+      return json({ error: "rate_limited" }, 429, { "Retry-After": String(window) });
+    }
+  } catch (error) {
+    console.error(JSON.stringify({ message: "member change count failed", error: String(error) }));
     return json({ error: "unavailable" }, 503);
   }
   let result: MemberChangeResult | TokenRefused;
@@ -1009,9 +1109,10 @@ export async function acknowledgeIncident(
  * `GET /sync/:workspaceId` with `Upgrade: websocket`: hands the socket to the workspace's shard (RFC 0004
  * "Socket topology"). The Worker authenticates the upgrade (`resolveActor`: 401 without a session, 403 for a
  * non-member or another site's page) and forwards a request it builds itself, carrying only the upgrade, the
- * workspace id and the verified actor (with the member's name and when their password was last reset), so no client
- * header reaches the shard. With `Authorization: Bearer` (RFC 0014), the socket acts as the API token, its queries and
- * mutations held to its scopes.
+ * workspace id and the verified actor (with the member's name, when their password was last reset, and the session's
+ * id, which tags the socket, and expiry, when the shard closes it), so no client header reaches the shard. With
+ * `Authorization: Bearer` (RFC 0014), the socket acts as the API token, its queries and mutations held to its scopes;
+ * it carries no session, so ending one of its creator's sessions never closes it.
  */
 async function openSync(
   request: Request,
@@ -1037,6 +1138,10 @@ async function openSync(
     headers.set(MEMBER_NAME_HEADER, encodeURIComponent(resolved.name));
   }
   if (resolved.resetAt !== undefined) headers.set(RESET_AT_HEADER, String(resolved.resetAt));
+  if (resolved.sessionId !== undefined) headers.set(SESSION_HEADER, resolved.sessionId);
+  if (resolved.sessionExpiresAt !== undefined) {
+    headers.set(SESSION_EXPIRES_HEADER, String(resolved.sessionExpiresAt));
+  }
   try {
     return await env.WORKSPACE.getByName(workspace).fetch(request.url, { headers });
   } catch (error) {

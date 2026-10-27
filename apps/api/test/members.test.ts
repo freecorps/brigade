@@ -22,7 +22,9 @@ import {
 import { OutboxDrain, type BrigadeEvent } from "../src/outbox.ts";
 import { pageTargets } from "../src/paging.ts";
 import { Shard } from "../src/shard.ts";
+import { MEMBER_CHANGE_LIMIT } from "../src/index.ts";
 import { WORKSPACE_HEADER, type SocketState, type WorkspaceDO } from "../src/workspace.ts";
+import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
 const PASSWORD = "correct horse battery staple";
@@ -61,20 +63,18 @@ const api = (
 type Person = { id: string; cookie: string };
 
 async function signUp(name: string): Promise<Person> {
+  const email = `${name.toLowerCase()}-m${++people}@example.com`;
   const response = await api("/auth/sign-up/email", {
     method: "POST",
     body: JSON.stringify({
       name,
-      email: `${name.toLowerCase()}-m${++people}@example.com`,
+      email,
       password: PASSWORD,
     }),
   });
   expect(response.status).toBe(200);
   const body = (await response.json()) as { user: { id: string } };
-  const cookie = response.headers
-    .getSetCookie()
-    .map((value) => value.split(";")[0])
-    .join("; ");
+  const cookie = await sessionCookie(email, PASSWORD);
   return { id: body.user.id, cookie };
 }
 
@@ -159,6 +159,16 @@ const events = (t: Team, type: string) =>
       .map((row) => JSON.parse(row.event) as BrigadeEvent)
       .filter((event) => event.type === type),
   );
+
+/** A phone's `device.register` args under `id`. */
+const phoneArgs = (id: string) => ({
+  id,
+  platform: "ios",
+  environment: "sandbox",
+  pushToken: "f".repeat(64),
+  voipToken: null,
+  publicKey: `B${"b".repeat(86)}`,
+});
 
 /** Registers a device for `actor` straight in the shard, as `device.register` from their phone would. */
 const device = (t: Team, actor: Actor) =>
@@ -407,6 +417,23 @@ describe("PATCH /workspaces/:id/members/:userId: changing a role", () => {
         .status,
     ).toBe(405);
     expect(await roleIn(t.id, t.caio.id)).toBe("responder");
+  });
+});
+
+describe("how often members may be changed", () => {
+  test(`at most ${MEMBER_CHANGE_LIMIT.max} changes a minute per member and workspace, before the shard`, async () => {
+    const t = await team();
+    for (let i = 0; i < MEMBER_CHANGE_LIMIT.max; i++) {
+      const role = i % 2 === 0 ? "viewer" : "responder";
+      expect((await patchRole(t, t.ana, t.caio, role)).status).toBe(200);
+    }
+    const limited = await remove(t, t.ana, t.caio);
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: "rate_limited" });
+    expect(Number(limited.headers.get("Retry-After"))).toBe(MEMBER_CHANGE_LIMIT.window);
+    expect(await roleIn(t.id, t.caio.id)).toBe("responder");
+    // Another member of the same workspace has a count of their own.
+    expect((await patchRole(t, t.bia, t.duda, "responder")).status).toBe(200);
   });
 });
 
@@ -932,7 +959,9 @@ describe("a sync upgrade the Worker let through before a removal", () => {
     ).toEqual([]);
   });
 
-  test("a tombstone D1 cannot be checked against still refuses", async () => {
+  // A paging path (AGENTS.md): the app forgets a workspace it is told it is not in, and never registers its phone there
+  // again. A D1 failure is no leaving: the upgrade and the phone's registration are refused as a retry instead.
+  test("a tombstone D1 cannot be checked against still refuses, as a retry and not as a leaving", async () => {
     const t = await team();
     expect((await remove(t, t.ana, t.caio)).status).toBe(200);
     await addMember(t.id, t.caio.id, "viewer");
@@ -942,11 +971,30 @@ describe("a sync upgrade the Worker let through before a removal", () => {
       return original;
     });
     const response = await staleUpgrade(t, t.caio, "viewer");
+    const phone = newId("dev", Date.now(), random);
+    const registered = await t.stub.registerDevice(t.id, user(t.caio, "viewer"), phoneArgs(phone));
     await runInDurableObject(t.stub, (instance: WorkspaceDO) => {
       Reflect.set(instance, "membership", real);
     });
-    expect(response.status).toBe(403);
-    expect(await response.json()).toEqual({ error: "not_a_member" });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "unavailable" });
+    expect(registered).toEqual({ ok: false, code: "unavailable" });
+    // Once D1 answers, the member D1 has again registers.
+    expect(await t.stub.registerDevice(t.id, user(t.caio, "viewer"), phoneArgs(phone))).toEqual({
+      ok: true,
+    });
+  });
+
+  test("a removed member's phone is told `not_a_member` only once D1 confirmed it", async () => {
+    const t = await team();
+    expect((await remove(t, t.ana, t.caio)).status).toBe(200);
+    expect(
+      await t.stub.registerDevice(
+        t.id,
+        user(t.caio, "responder"),
+        phoneArgs(newId("dev", Date.now(), random)),
+      ),
+    ).toEqual({ ok: false, code: "not_a_member" });
   });
 
   test("whose reconcile then fails arms the repair alarm, which removes the copy it restored", async () => {

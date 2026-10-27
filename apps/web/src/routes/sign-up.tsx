@@ -32,7 +32,7 @@ export const Route = createFileRoute("/sign-up")({
 const FIELDS = ["name", "email", "password", "workspace"] as const;
 
 /**
- * Creates the account, then the user's first workspace. If the second step fails the account still exists and is
+ * Creates the account, signs in, then creates the user's first workspace. If the last step fails the account still exists and is
  * signed in, so the dashboard's gate asks for the workspace again instead of this form (whose email would now be
  * taken).
  */
@@ -99,6 +99,23 @@ function SignUp() {
       }
     } catch {
       setFailure(authErrorMessage(null, "sign-up"));
+      setBusy(false);
+      return;
+    }
+    // A sign-up answers the same for a taken address and hands out no session (RFC 0002 "Auth"): sign in with what
+    // was typed. Refused here means the address already had an account, whose owner was just emailed.
+    try {
+      const { error } = await authClient.signIn.email({
+        email: values.email.trim(),
+        password: values.password,
+      });
+      if (error) {
+        setFailure(authErrorMessage(error, "after-sign-up"));
+        setBusy(false);
+        return;
+      }
+    } catch {
+      setFailure(authErrorMessage(null, "after-sign-up"));
       setBusy(false);
       return;
     }

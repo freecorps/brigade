@@ -1,0 +1,230 @@
+import { getLocale, m } from "@freecorps/brigade-i18n";
+import {
+  authErrorMessage,
+  checkEmail,
+  checkPassword,
+  PASSWORD_MAX,
+  type FieldErrors,
+} from "@freecorps/brigade-i18n/auth";
+import { memberName } from "@freecorps/brigade-schema";
+import { spacing } from "@freecorps/brigade-ui";
+import { router } from "expo-router";
+import { useRef, useState, type ComponentRef } from "react";
+import { AccessibilityInfo, ScrollView, TextInput, View } from "react-native";
+import { Field, PrimaryButton, TextButton } from "@/components/form";
+import { workspaceNameError } from "@/components/new-workspace";
+import { ThemedText } from "@/components/themed-text";
+import { useScreenPadding } from "@/hooks/use-screen-padding";
+import { useTheme } from "@/hooks/use-theme";
+import { authClient, server } from "@/lib/auth-client";
+import { createWorkspace } from "@/lib/workspaces";
+
+type SignUpField = "name" | "email" | "password" | "workspace";
+const FIELDS: readonly SignUpField[] = ["name", "email", "password", "workspace"];
+/** What a user may type as their name (the dashboard's `NAME_MAX`). */
+const NAME_MAX = 80;
+
+function checkSignUp(values: Record<SignUpField, string>): FieldErrors<SignUpField> {
+  const errors: FieldErrors<SignUpField> = {};
+  if (values.name.trim() === "") errors.name = m.auth_error_required();
+  else if (values.name.trim().length > NAME_MAX)
+    errors.name = m.auth_error_too_long({ max: NAME_MAX });
+  else if (!memberName(values.name).ok) errors.name = m.auth_name_invalid();
+  const email = checkEmail(values.email);
+  if (email) errors.email = email;
+  const password = checkPassword(values.password);
+  if (password) errors.password = password;
+  const workspace = workspaceNameError(values.workspace);
+  if (workspace) errors.workspace = workspace;
+  return errors;
+}
+
+/**
+ * Creating an account from the app, as on the dashboard: the account, then signing in with it (a sign-up answers the
+ * same whether or not the address was taken, RFC 0002 "Auth"), then the member's first workspace. If that last step
+ * fails, the account is signed in without a workspace and the sign-in screen offers to create one.
+ */
+export function SignUp() {
+  const colors = useTheme();
+  const padding = useScreenPadding();
+  const [values, setValues] = useState<Record<SignUpField, string>>({
+    name: "",
+    email: "",
+    password: "",
+    workspace: "",
+  });
+  const [errors, setErrors] = useState<FieldErrors<SignUpField>>({});
+  const [failure, setFailure] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const refs = {
+    name: useRef<ComponentRef<typeof TextInput>>(null),
+    email: useRef<ComponentRef<typeof TextInput>>(null),
+    password: useRef<ComponentRef<typeof TextInput>>(null),
+    workspace: useRef<ComponentRef<typeof TextInput>>(null),
+  };
+  const sending = useRef(false);
+
+  const change = (field: SignUpField) => (text: string) => {
+    setValues((current) => ({ ...current, [field]: text }));
+    setErrors((current) => ({ ...current, [field]: undefined }));
+    setFailure(null);
+  };
+
+  const fail = (message: string) => {
+    setFailure(message);
+    sending.current = false;
+    setBusy(false);
+    // VoiceOver has no live regions (accessibilityLiveRegion is Android's), so say it once.
+    if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(message);
+  };
+
+  const submit = async () => {
+    if (sending.current) return;
+    const found = checkSignUp(values);
+    setErrors(found);
+    const first = FIELDS.find((field) => found[field]);
+    if (first) {
+      refs[first].current?.focus();
+      const message = found[first];
+      if (process.env.EXPO_OS === "ios" && message)
+        AccessibilityInfo.announceForAccessibility(message);
+      return;
+    }
+    sending.current = true;
+    setBusy(true);
+    setFailure(null);
+    const email = values.email.trim();
+    try {
+      const { error } = await authClient.signUp.email({
+        name: values.name.trim(),
+        email,
+        password: values.password,
+        // Emails to them come in the app's language (RFC 0008).
+        locale: getLocale(),
+      });
+      if (error) return fail(authErrorMessage(error, "sign-up"));
+    } catch {
+      return fail(authErrorMessage(null, "sign-up"));
+    }
+    try {
+      const { error } = await authClient.signIn.email({ email, password: values.password });
+      if (error) return fail(authErrorMessage(error, "after-sign-up"));
+    } catch {
+      return fail(authErrorMessage(null, "after-sign-up"));
+    }
+    const cookie = await authClient.getCookie().catch(() => "");
+    const created = server
+      ? await createWorkspace(server.workspaces, values.workspace.trim(), cookie)
+      : undefined;
+    if (created?.ok) {
+      try {
+        await authClient.organization.setActive({ organizationId: created.id });
+      } catch {
+        // The server made it active already; the session reads it once back online.
+      }
+    }
+    // Signed in: the stack moves to the incidents, or to the sign-in screen's "create a workspace" if that failed.
+    // Opened with nothing behind it (a link straight to sign-up), it goes home, which shows either.
+    sending.current = false;
+    setBusy(false);
+    if (router.canGoBack()) router.back();
+    else router.replace("/");
+  };
+
+  return (
+    <ScrollView
+      contentInsetAdjustmentBehavior="automatic"
+      keyboardShouldPersistTaps="handled"
+      style={{ backgroundColor: colors.background }}
+      contentContainerStyle={[padding, { gap: spacing[5] }]}
+    >
+      <ThemedText>{m.auth_sign_up_description()}</ThemedText>
+      <Field
+        ref={refs.name}
+        label={m.auth_name_label()}
+        value={values.name}
+        error={errors.name}
+        onChangeText={change("name")}
+        autoComplete="name"
+        textContentType="name"
+        returnKeyType="next"
+        submitBehavior="submit"
+        onSubmitEditing={() => refs.email.current?.focus()}
+      />
+      <Field
+        ref={refs.email}
+        label={m.auth_email_label()}
+        value={values.email}
+        error={errors.email}
+        onChangeText={change("email")}
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="email"
+        keyboardType="email-address"
+        textContentType="username"
+        returnKeyType="next"
+        submitBehavior="submit"
+        onSubmitEditing={() => refs.password.current?.focus()}
+      />
+      <Field
+        ref={refs.password}
+        label={m.auth_password_label()}
+        value={values.password}
+        error={errors.password}
+        onChangeText={change("password")}
+        secret
+        autoComplete="new-password"
+        textContentType="newPassword"
+        maxLength={PASSWORD_MAX}
+        returnKeyType="next"
+        submitBehavior="submit"
+        onSubmitEditing={() => refs.workspace.current?.focus()}
+      />
+      {errors.password ? null : (
+        <ThemedText variant="caption" style={{ marginTop: -spacing[3] }}>
+          {m.auth_password_hint()}
+        </ThemedText>
+      )}
+      <Field
+        ref={refs.workspace}
+        label={m.workspace_name_label()}
+        value={values.workspace}
+        error={errors.workspace}
+        onChangeText={change("workspace")}
+        placeholder={m.workspace_name_hint()}
+        autoComplete="organization"
+        textContentType="organizationName"
+        returnKeyType="go"
+        onSubmitEditing={() => void submit()}
+      />
+      {failure ? (
+        <ThemedText
+          selectable
+          accessibilityLiveRegion="polite"
+          style={{ color: colors.destructive }}
+        >
+          {failure}
+        </ThemedText>
+      ) : null}
+      <PrimaryButton
+        busy={busy}
+        label={busy ? m.auth_signing_up() : m.auth_sign_up_submit()}
+        onPress={() => void submit()}
+      />
+      <View
+        style={{
+          flexDirection: "row",
+          flexWrap: "wrap",
+          alignItems: "center",
+          columnGap: spacing[2],
+        }}
+      >
+        <ThemedText variant="caption">{m.auth_have_account()}</ThemedText>
+        <TextButton
+          label={m.auth_to_sign_in()}
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/sign-in"))}
+        />
+      </View>
+    </ScrollView>
+  );
+}

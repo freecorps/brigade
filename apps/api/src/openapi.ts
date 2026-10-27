@@ -155,7 +155,12 @@ const OK_200 = { 200: { description: "Done.", body: ref("Ok") } };
 
 const MEMBER_REFUSALS = refusals(
   SIGNED_IN,
-  { 400: ["invalid_workspace_id"], 403: ["not_a_member"], 404: ["not_found"] },
+  {
+    400: ["invalid_workspace_id"],
+    403: ["not_a_member"],
+    404: ["not_found"],
+    429: ["rate_limited"],
+  },
   codesBy(MEMBER_STATUS),
   SHARD_FAILED,
 );

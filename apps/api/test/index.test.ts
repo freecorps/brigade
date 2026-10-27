@@ -2,13 +2,14 @@ import { env, exports } from "cloudflare:workers";
 import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import worker, { WorkspaceDO } from "../src/index.ts";
+import { sessionCookie } from "./session.ts";
 
 // store_rows, shard_meta, change_log, mutation_results, outbox, outbox_drain, page_deliveries, page_events, page_steps,
 // receipt_key, receipt_rate, email_sends, email_keys, probe_pushes, member_repair, invitation_sends,
 // invitation_repair, slack_states, slack_commands, slack_messages, slack_events, webhook_events, webhook_sends,
-// webhook_emails, status_emails, status_email_days, status_confirm_days and status_subscriber_events, created when the
-// shard starts.
-const SYNC_TABLES = 28;
+// webhook_emails, status_emails, status_email_days, status_confirm_days, status_subscriber_events and ended_session,
+// created when the shard starts.
+const SYNC_TABLES = 29;
 
 const ORIGIN = "http://api.test";
 const api = (path: string, init?: RequestInit) => exports.default.fetch(`${ORIGIN}${path}`, init);
@@ -20,21 +21,19 @@ const clientIp = () => `198.51.100.${(++people % 250) + 1}`;
 type Person = { id: string; cookie: string };
 
 async function signUp(name: string): Promise<Person> {
+  const email = `${name.toLowerCase()}-i${people + 1}@example.com`;
   const response = await api("/auth/sign-up/email", {
     method: "POST",
     headers: { Origin: ORIGIN, "Content-Type": "application/json", "cf-connecting-ip": clientIp() },
     body: JSON.stringify({
       name,
-      email: `${name.toLowerCase()}-i${people}@example.com`,
+      email,
       password: "correct horse battery staple",
     }),
   });
   expect(response.status).toBe(200);
   const body = (await response.json()) as { user: { id: string } };
-  const cookie = response.headers
-    .getSetCookie()
-    .map((value) => value.split(";")[0])
-    .join("; ");
+  const cookie = await sessionCookie(email, "correct horse battery staple");
   return { id: body.user.id, cookie };
 }
 

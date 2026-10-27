@@ -83,6 +83,39 @@ export async function openWorkspace(
   reload();
 }
 
+/**
+ * Signs the dashboard out (`/sign-out`). True when the session is gone: signed out, or already gone (401). False when
+ * the API could not end it (503 `SIGN_OUT_FAILED`: its end could not be recorded, RFC 0004 "Session revocation") or
+ * gave no answer: the session and its cookie are kept, and the member signs out again.
+ */
+export async function signOutDashboard(
+  client: Pick<typeof authClient, "signOut"> = authClient,
+): Promise<boolean> {
+  try {
+    const { error } = await client.signOut();
+    return !error || error.status === 401;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Makes another of the member's workspaces active in the session (`set-active`, which also tells the session,
+ * active-organization and active-member hooks to fetch again): the dashboard then opens that workspace's shard. True
+ * once the server answered.
+ */
+export async function switchWorkspace(
+  id: string,
+  client: Pick<typeof authClient, "organization"> = authClient,
+): Promise<boolean> {
+  try {
+    const { error } = await client.organization.setActive({ organizationId: id });
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
 export type SignUpField = "name" | "email" | "password" | "workspace";
 
 /** The workspace name as the API will store it, or why it would refuse it. */

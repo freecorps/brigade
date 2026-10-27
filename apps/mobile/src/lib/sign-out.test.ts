@@ -11,10 +11,12 @@ import { registerPhone, unregisterPhone, type DeviceDeps } from "./device";
 import { needsRetry } from "./paging";
 import {
   finishSignOut,
+  inTime,
   leftovers,
   MAX_KEPT,
   parseLeftovers,
   signOutPhone,
+  SIGN_OUT_TIMEOUT_MS,
   type FinishDeps,
   type Leftover,
   type SignOutDeps,
@@ -363,7 +365,7 @@ test("a sign-out kept against another server does not hold up registering for th
   // Not this server's to finish: nothing to retry for it, so Bia's registration result alone decides.
   const finished = await finishSignOut(w.finishDeps);
   expect(finished).toBe("none");
-  expect(needsRetry(finished, "on")).toBe(false);
+  expect(needsRetry(finished, { [WORKSPACE]: "on" })).toBe(false);
   expect(parseLeftovers(w.phoneState.kept)).toHaveLength(1);
 });
 
@@ -491,4 +493,42 @@ test("a kept sign-out that is not one is ignored", () => {
   ]) {
     expect(parseLeftovers(raw)).toEqual([]);
   }
+});
+
+test("a sign-out the server never answers is unanswered after the timeout, and kept to finish later", async () => {
+  let fire = () => {};
+  const timer = (run: () => void) => {
+    fire = run;
+    return () => {};
+  };
+  const hanging = inTime(() => new Promise<boolean>(() => {}), SIGN_OUT_TIMEOUT_MS, false, timer);
+  fire();
+  expect(await hanging).toBe(false);
+  expect(await inTime(async () => true, SIGN_OUT_TIMEOUT_MS, false, timer)).toBe(true);
+  expect(
+    await inTime(() => Promise.reject(new Error("offline")), SIGN_OUT_TIMEOUT_MS, false, timer),
+  ).toBe(false);
+
+  const w = world();
+  await registerPhone(phone(w.as(ANA)));
+  const deps = w.signOutDeps(ANA);
+  const result = await signOutPhone(
+    { userId: ANA.id, workspaceId: WORKSPACE },
+    {
+      ...deps,
+      signOut: () => {
+        const answer = inTime(
+          () => new Promise<boolean>(() => {}),
+          SIGN_OUT_TIMEOUT_MS,
+          false,
+          timer,
+        );
+        fire();
+        return answer;
+      },
+    },
+  );
+  expect(result).toBe("released");
+  // Kept with the session to sign out again later (the device is off the shard already).
+  expect(parseLeftovers(w.phoneState.kept)).toMatchObject([{ workspaceId: null }]);
 });

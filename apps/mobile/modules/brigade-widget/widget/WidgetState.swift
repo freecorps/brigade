@@ -34,6 +34,16 @@ struct WidgetSnapshot: Equatable {
   let schedules: Bool
   let shifts: [Shift]
   let openIncidents: Int?
+  /// The open workspace's name; nil in snapshots from before it.
+  let workspace: String?
+  /// The member's other workspaces on this phone, their shifts as last seen there, each until its own `staleAt`.
+  let others: [Other]
+
+  struct Other: Equatable {
+    let name: String
+    let shifts: [Shift]
+    let staleAt: Date
+  }
 
   private struct Raw: Decodable {
     let v: Int
@@ -43,23 +53,43 @@ struct WidgetSnapshot: Equatable {
     let schedules: Bool
     let shifts: [[Double?]]
     let openIncidents: Int?
+    let workspace: String?
+    let others: [RawOther]?
+  }
+
+  private struct RawOther: Decodable {
+    let name: String
+    let shifts: [[Double?]]
+    let staleAt: Double
+  }
+
+  private static func shifts(_ pairs: [[Double?]]) -> [Shift]? {
+    var shifts: [Shift] = []
+    for pair in pairs {
+      guard pair.count == 2, let start = pair[0] else { return nil }
+      shifts.append(Shift(start: date(start), end: pair[1].map(date)))
+    }
+    return shifts
   }
 
   /// Nil for anything but a well-formed version 1 snapshot: the widget then asks to open the app.
   static func decode(_ data: Data) -> WidgetSnapshot? {
-    guard let raw = try? JSONDecoder().decode(Raw.self, from: data), raw.v == 1 else { return nil }
-    var shifts: [Shift] = []
-    for pair in raw.shifts {
-      guard pair.count == 2, let start = pair[0] else { return nil }
-      shifts.append(Shift(start: date(start), end: pair[1].map(date)))
+    guard let raw = try? JSONDecoder().decode(Raw.self, from: data), raw.v == 1,
+      let own = shifts(raw.shifts)
+    else { return nil }
+    // An other workspace that does not read is left out, never the whole snapshot.
+    let others = (raw.others ?? []).compactMap { other in
+      shifts(other.shifts).map { Other(name: other.name, shifts: $0, staleAt: date(other.staleAt)) }
     }
     return WidgetSnapshot(
       writtenAt: date(raw.writtenAt),
       staleAt: date(raw.staleAt),
       locale: raw.locale,
       schedules: raw.schedules,
-      shifts: shifts,
-      openIncidents: raw.openIncidents
+      shifts: own,
+      openIncidents: raw.openIncidents,
+      workspace: raw.workspace,
+      others: others
     )
   }
 
@@ -71,6 +101,8 @@ enum WidgetState: Equatable {
   case stale
   case noSchedules
   case on(until: Date?)
+  /// Off call (or no schedules) in the open workspace, on call in `workspace`, another this phone pages them for.
+  case onElsewhere(workspace: String, until: Date?)
   case off(next: Date?)
 
   /// What the widget shows at `date` (`widgetState` in src/lib/widget.ts).
@@ -83,28 +115,36 @@ enum WidgetState: Equatable {
       self = .stale
       return
     }
-    if !snapshot.schedules {
-      self = .noSchedules
+    let here = WidgetState.own(snapshot, at: date)
+    if case .on = here {
+      self = here
       return
     }
-    for shift in snapshot.shifts {
-      if shift.start <= date, shift.end.map({ date < $0 }) ?? true {
-        self = .on(until: shift.end)
-        return
-      }
-      if shift.start > date {
-        self = .off(next: shift.start)
+    for other in snapshot.others where date < other.staleAt {
+      if let current = WidgetState.shift(other.shifts, at: date) {
+        self = .onElsewhere(workspace: other.name, until: current.end)
         return
       }
     }
-    self = .off(next: nil)
+    self = here
+  }
+
+  private static func own(_ snapshot: WidgetSnapshot, at date: Date) -> WidgetState {
+    if !snapshot.schedules { return .noSchedules }
+    if let current = shift(snapshot.shifts, at: date) { return .on(until: current.end) }
+    return .off(next: snapshot.shifts.first(where: { $0.start > date })?.start)
+  }
+
+  /// The shift under way at `date`, if any.
+  private static func shift(_ shifts: [WidgetSnapshot.Shift], at date: Date) -> WidgetSnapshot.Shift? {
+    shifts.first { $0.start <= date && ($0.end.map { date < $0 } ?? true) }
   }
 
   /// Whether the snapshot's numbers still hold (its open incidents count is only shown then).
   var isCurrent: Bool {
     switch self {
     case .signedOut, .stale: false
-    case .noSchedules, .on, .off: true
+    case .noSchedules, .on, .onElsewhere, .off: true
     }
   }
 }
@@ -113,10 +153,19 @@ enum WidgetState: Equatable {
 /// the snapshot goes stale, and the moment it does.
 func widgetTimeline(_ snapshot: WidgetSnapshot, from: Date) -> [Date] {
   var times: Set<Date> = [from]
+  func add(_ at: Date?, until: Date) {
+    if let at, at > from, at < min(until, snapshot.staleAt) { times.insert(at) }
+  }
   for shift in snapshot.shifts {
-    for at in [shift.start, shift.end].compactMap({ $0 }) where at > from && at < snapshot.staleAt {
-      times.insert(at)
+    add(shift.start, until: snapshot.staleAt)
+    add(shift.end, until: snapshot.staleAt)
+  }
+  for other in snapshot.others {
+    for shift in other.shifts {
+      add(shift.start, until: other.staleAt)
+      add(shift.end, until: other.staleAt)
     }
+    add(other.staleAt, until: .distantFuture)
   }
   if snapshot.staleAt > from { times.insert(snapshot.staleAt) }
   return times.sorted()
@@ -148,6 +197,11 @@ struct WidgetStrings {
   /// `key`'s text with `{time}` (`%@` in the strings file) filled in.
   func callAsFunction(_ key: String, time: String) -> String {
     String(format: self(key), locale: locale, time)
+  }
+
+  /// `key`'s text with `{name}` (`%@` in the strings file) filled in.
+  func callAsFunction(_ key: String, name: String) -> String {
+    String(format: self(key), locale: locale, name)
   }
 
   /// A time on the phone's clock, as short as still clear (`statusTime` in src/lib/oncall.ts): "9:00 AM" on the day,

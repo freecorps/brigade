@@ -246,6 +246,7 @@
   "widget_name": "On call",
   "widget_description": "Whether you're on call, until when, and your next shift.",
   "widget_on_call": "On call",
+  "widget_on_call_in": "On call in {name}",
   "widget_off_call": "Not on call",
   "widget_until": "Until {time}",
   "widget_next": "Next shift {time}",
@@ -884,6 +885,7 @@
         "reason=conflict": "Someone else changed this member meanwhile. Check the list and try again.",
         "reason=not_applied": "Saved. Paging catches up on its own within a minute.",
         "reason=unavailable": "Brigade couldn't reach its database. Nothing changed; try again.",
+        "reason=rate_limited": "Too many changes in a minute. Wait a moment and try again.",
         "reason=network": "Couldn't confirm the change; check the list.",
         "reason=*": "Something went wrong. Try again."
       }
@@ -1158,6 +1160,9 @@
         "part=next_none": "No shifts in the next 4 weeks",
         "part=overrides": "Your overrides",
         "part=remove_mine": "Remove your override on {name}?",
+        "part=workspace": "In {name}",
+        "part=elsewhere": "You're on call in {name} until {time}",
+        "part=elsewhere_open": "You're on call in {name}",
         "part=*": "Schedules and rotations are edited on the dashboard."
       }
     }
@@ -2807,6 +2812,48 @@
         "part=viewer": "Owners, admins and responders can schedule maintenance.",
         "part=past_title": "Completed",
         "part=*": "Maintenance"
+      }
+    }
+  ],
+  "email_signup_attempt": [
+    {
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "Someone tried to sign up with your email",
+        "part=intro": "Someone tried to create a Brigade account with {email}, which already has one. Nothing changed: no account was created and your password is the same.",
+        "part=open": "Sign in to Brigade",
+        "part=reset": "If it was you, sign in instead. Forgot your password? Choose a new one from \"Forgot your password?\" on the sign-in page.",
+        "part=footer": "If it wasn't you, ignore this email.",
+        "part=*": "Brigade"
+      }
+    }
+  ],
+  "account_flow": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=sign_up_taken": "Couldn't sign you in. If this email already has an account, we've emailed its owner: sign in instead, or reset the password if it's yours.",
+        "part=switcher": "Switch workspace",
+        "part=workspaces": "Workspaces",
+        "part=current": "Current workspace",
+        "part=switch_to": "Switch to {name}",
+        "part=new_workspace": "New workspace",
+        "part=switching": "Switching…",
+        "part=switch_failed": "Couldn't switch workspaces. Check your connection and try again.",
+        "part=list_failed": "Couldn't load your workspaces.",
+        "part=new_title": "Create a workspace",
+        "part=new_description": "You'll own it. Your other workspaces stay as they are, and you can switch between them any time.",
+        "part=cancel": "Cancel",
+        "part=mobile_paging": "Pages reach this phone from each workspace you've opened on it, as listed under each one. Brigade keeps all of them registered until you sign out or leave the workspace.",
+        "part=no_workspace": "Your account isn't in a workspace yet. Create one to get started, or ask an owner to invite you.",
+        "part=paging_not_opened": "Not paged on this phone: switch to it once to get its pages here.",
+        "part=pages_notice_in": "This phone isn't paging you in {name}",
+        "part=paged_here": "Paged on this phone",
+        "part=sign_out_failed": "Couldn't sign you out, so you're still signed in. Check your connection and try again.",
+        "part=sign_out_retry": "Try signing out again",
+        "part=*": "Brigade"
       }
     }
   ],

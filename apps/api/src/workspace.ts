@@ -35,7 +35,14 @@ import {
   type ServerMessage,
   type SubscriptionChanges,
 } from "@freecorps/brigade-sync/protocol";
-import { readActor, readMemberName, readResetAt } from "./actor.ts";
+import {
+  readActor,
+  readMemberName,
+  readResetAt,
+  readSessionExpiresAt,
+  readSessionId,
+  sessionTag,
+} from "./actor.ts";
 import {
   MEMBER_REPAIR_RETRY_MS,
   Membership,
@@ -164,6 +171,39 @@ export type SocketState = {
    * on sockets accepted before it was recorded, which count as older than any reset.
    */
   openedAt?: number;
+  /**
+   * When the session it was opened with expires: the shard closes it then (`expireSockets`), since Better Auth
+   * deletes an expired session, and so fires its session hook, only when someone next presents it. Absent on sockets
+   * accepted before it was recorded and on the dev actor's.
+   */
+  expiresAt?: number;
+};
+
+/**
+ * How long a shard remembers a session that ended (`endSession`): longer than an upgrade the Worker authenticated
+ * before the session ended can take to reach the shard, so that upgrade is refused rather than accepted with a
+ * session that no longer exists (RFC 0004 "Session revocation").
+ */
+export const ENDED_SESSION_MS = 10 * 60 * 1000;
+
+/**
+ * What `registerDevice` answers: the code is `device.register`'s, `not_a_member`/`not_found` as for an ack, or
+ * `unavailable` (D1 could not be read: tried again).
+ */
+export type DeviceRegisterResult =
+  | { ok: true }
+  | { ok: false; code: MutationErrorCode | "not_a_member" | "not_found" | "unavailable" };
+
+/** The client id the phone's registrations over HTTP run under (`WorkspaceDO.registerDevice`). */
+export const DEVICES_CLIENT_ID = "devices";
+
+/** A session that ended and that this shard has yet to act on, as D1's `session_end` keeps it (src/session-end.ts). */
+export type EndedSession = {
+  userId: string;
+  sessionId: string;
+  deviceId?: string;
+  /** When it ended: a device registered after it (the member signed in again) is not dropped. */
+  endedAt?: number;
 };
 
 /**
@@ -224,6 +264,10 @@ export class WorkspaceDO extends DurableObject<Env> {
     // without waking the object or running `webSocketMessage`. Set on every wake; it is cheap.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING_FRAME, PONG_FRAME));
     const randomBytes = (length: number) => crypto.getRandomValues(new Uint8Array(length));
+    // Sessions that ended lately (`endSession`), so an upgrade with one is refused.
+    ctx.storage.sql.exec(
+      "create table if not exists ended_session (id text primary key, until integer not null) without rowid",
+    );
     // Runs on every wake from hibernation: only `create … if not exists`.
     this.shard = new Shard(ctx.storage, {
       shard: "workspace",
@@ -900,6 +944,255 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
+   * After a Better Auth session of `userId` ended (sign-out, a revoked or expired session; RPC from the API Worker's
+   * session hook or its sweep of D1's `session_end`, RFC 0004 "Session revocation"): remembers it for
+   * `ENDED_SESSION_MS`, so an upgrade the Worker authenticated with it just before is refused, and closes the sockets
+   * opened with it (`1012`; they reconnect without a session and are refused). `deviceId`: the phone signed out on
+   * names itself, and comes off this workspace too (`device.signOut`, only if last registered before `endedAt`, so a
+   * member who signed in again on it since keeps it), since the app takes it off only the workspace it has open (RFC
+   * 0006 "Device registration"). The sockets close whatever happens; a storage failure throws, and the Worker tries
+   * again. A shard that serves another workspace, or none yet, answers `not_found`.
+   */
+  endSession(
+    workspaceId: string,
+    session: EndedSession,
+  ): { ok: true } | { ok: false; code: "not_found" } {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    try {
+      this.endedSession(session);
+      return { ok: true };
+    } finally {
+      this.closeSession(session.sessionId);
+    }
+  }
+
+  /** `endSession`'s storage half. Throws on a storage failure. */
+  private endedSession(session: EndedSession): void {
+    const now = Date.now();
+    const { sql } = this.ctx.storage;
+    sql.exec("delete from ended_session where until <= ?", now);
+    sql.exec(
+      "insert into ended_session (id, until) values (?, ?) on conflict (id) do update set until = excluded.until",
+      session.sessionId,
+      now + ENDED_SESSION_MS,
+    );
+    if (session.deviceId !== undefined) {
+      this.serverMutation("device.signOut", {
+        userId: session.userId,
+        deviceId: session.deviceId,
+        before: session.endedAt ?? now,
+      });
+    }
+  }
+
+  private closeSession(sessionId: string): void {
+    for (const ws of this.ctx.getWebSockets(sessionTag(sessionId))) {
+      const state = ws.deserializeAttachment() as SocketState | null;
+      if (state?.closed) continue;
+      close(ws, CLOSE_SERVICE_RESTART, "signed out");
+    }
+  }
+
+  /** Whether `sessionId` ended within `ENDED_SESSION_MS`. A storage failure reads as no: the Worker's check stands. */
+  private sessionEnded(sessionId: string): boolean {
+    try {
+      return (
+        this.ctx.storage.sql
+          .exec("select 1 from ended_session where id = ? and until > ?", sessionId, Date.now())
+          .toArray().length > 0
+      );
+    } catch (error) {
+      this.log("reading the ended sessions failed", { error });
+      return false;
+    }
+  }
+
+  /**
+   * Acts on the sessions D1's `session_end` still lists for this workspace (src/session-end.ts): ended sessions whose
+   * own `endSession` call never got through (the shard was unreachable for every try). Run before a phone registers
+   * here, after every sync upgrade, and by the Worker's sweep. Deletes each row it acted on. A shard that serves
+   * another workspace, or none, has nothing to act on: it deletes the rows, so the sweep never comes back to them.
+   * False when D1 or the shard failed (logged); never throws.
+   */
+  async catchUpSessionEnds(workspaceId: string): Promise<boolean> {
+    if (this.shard.workspace() !== workspaceId) {
+      try {
+        await this.env.DB.prepare(`delete from session_end where "workspaceId" = ?`)
+          .bind(workspaceId)
+          .run();
+        return true;
+      } catch (error) {
+        this.log("deleting the sessions to end of no workspace failed", { error });
+        return false;
+      }
+    }
+    let rows: { sessionId: string; userId: string; deviceId: string | null; endedAt: number }[];
+    try {
+      ({ results: rows } = await this.env.DB.prepare(
+        `select "sessionId", "userId", "deviceId", "endedAt" from session_end where "workspaceId" = ?
+         order by "endedAt" limit 100`,
+      )
+        .bind(workspaceId)
+        .all());
+    } catch (error) {
+      this.log("reading the sessions to end failed", { error });
+      return false;
+    }
+    let done = true;
+    for (const row of rows) {
+      try {
+        this.endedSession({
+          userId: row.userId,
+          sessionId: row.sessionId,
+          endedAt: row.endedAt,
+          ...(row.deviceId !== null ? { deviceId: row.deviceId } : {}),
+        });
+      } catch (error) {
+        this.log("ending a session failed", { error });
+        done = false;
+        continue;
+      } finally {
+        this.closeSession(row.sessionId);
+      }
+      try {
+        await this.env.DB.prepare(
+          `delete from session_end where "workspaceId" = ? and "sessionId" = ?`,
+        )
+          .bind(workspaceId, row.sessionId)
+          .run();
+      } catch (error) {
+        // Acted on again next time: every step is a no-op the second time.
+        this.log("deleting an ended session failed", { error });
+        done = false;
+      }
+    }
+    return done;
+  }
+
+  /**
+   * `device.register` as the member (RPC from `POST /devices/register`, which checked the session and read the
+   * member's role in D1; RFC 0006 "Device registration"): the phone registers in every workspace it was opened in
+   * with one request, not only the one it has a socket to. The same named mutation, RBAC and outbox event as over
+   * Brigade Sync, run as a client mutation from client id `devices`. Before it: the sessions D1 still lists as
+   * ended here (`catchUpSessionEnds`, so the phone a member signed out of is free for whoever signs in on it next),
+   * and with `resetAt` the member's devices from before their password reset, as an upgrade does. Registered, or
+   * unchanged (`conflict`), it records the time and `sessionId`, the session it was registered with (`device.touch`).
+   * Another member's device (`forbidden`) is freed and tried once more when that member's session is gone
+   * (`freeDevice`). A member removed within the tombstone is `not_a_member`; `unavailable` when D1 could not be read
+   * (a catch-up that failed, a tombstone it could not check: the Worker saw the member in D1, so it is no leaving),
+   * and the app tries again. A shard that serves another workspace, or none yet, answers `not_found`.
+   */
+  async registerDevice(
+    workspaceId: string,
+    actor: Actor,
+    args: Record<string, unknown>,
+    resetAt?: number,
+    sessionId?: string,
+  ): Promise<DeviceRegisterResult> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    const standing = await this.membership.standing(workspaceId, actor.id, Date.now());
+    if (standing === "gone") return { ok: false, code: "not_a_member" };
+    if (standing === "unknown") return { ok: false, code: "unavailable" };
+    // A phone left registered to a member who signed out on it must be free before anyone else registers it.
+    if (!(await this.catchUpSessionEnds(workspaceId))) return { ok: false, code: "unavailable" };
+    if (resetAt !== undefined && !this.signOutStale(actor.id, resetAt)) {
+      return { ok: false, code: "internal" };
+    }
+    let result = this.runRegister(actor, args, sessionId);
+    if (!result.ok && result.code === "forbidden" && typeof args.id === "string") {
+      const freed = await this.freeDevice(workspaceId, args.id);
+      if (freed === "unavailable") return { ok: false, code: "unavailable" };
+      if (freed) result = this.runRegister(actor, args, sessionId);
+    }
+    return result;
+  }
+
+  /** `device.register` as the member over HTTP, then `device.touch` when it went through or changed nothing. */
+  private runRegister(
+    actor: Actor,
+    args: Record<string, unknown>,
+    sessionId: string | undefined,
+  ): DeviceRegisterResult {
+    const now = Date.now();
+    const { result, changes } = this.shard.mutate({
+      clientId: DEVICES_CLIENT_ID,
+      mutationId: newId("mut", now, (length) => crypto.getRandomValues(new Uint8Array(length))),
+      actor,
+      name: "device.register",
+      args,
+      now,
+    });
+    if (result.ok) this.broadcast(result.version, changes, undefined);
+    else if (result.error.code !== "conflict") return { ok: false, code: result.error.code };
+    // Not done, a later sweep acting on a sign-out from before now could drop the phone just registered again.
+    if (!this.touchDevice(actor, args.id, sessionId)) return { ok: false, code: "unavailable" };
+    return result.ok ? { ok: true } : { ok: false, code: "conflict" };
+  }
+
+  /**
+   * `device.touch` as the member, after their `device.register` (over HTTP or a socket) went through or changed
+   * nothing. False when it failed (logged).
+   */
+  private touchDevice(actor: Actor, id: unknown, sessionId: string | undefined): boolean {
+    if (typeof id !== "string") return true;
+    const now = Date.now();
+    const { result } = this.shard.mutate({
+      clientId: DEVICES_CLIENT_ID,
+      mutationId: newId("mut", now, (length) => crypto.getRandomValues(new Uint8Array(length))),
+      actor,
+      name: "device.touch",
+      args: { id, ...(sessionId !== undefined ? { sessionId } : {}) },
+      now,
+      internal: true,
+    });
+    if (!result.ok) this.log("refreshing a registered device failed", { code: result.error.code });
+    return result.ok;
+  }
+
+  /**
+   * A phone another member registered, that someone else is registering now (RFC 0006 "Device registration"): free
+   * when that member signed out on it (D1's `session_end`, caught up again here: the sign-out may have landed since)
+   * or the session they last registered it with no longer exists or expired (`DeviceRow.sessionId`), in which case
+   * it comes off them (`device.signOut`, only if not registered again since). True when the device is free now,
+   * false when it is still theirs (or has no session to check), `unavailable` when D1 could not say.
+   */
+  private async freeDevice(workspaceId: string, id: string): Promise<boolean | "unavailable"> {
+    if (!(await this.catchUpSessionEnds(workspaceId))) return "unavailable";
+    const device = this.shard.store.get("devices", id);
+    if (!device) return true;
+    if (device.sessionId === undefined) return false;
+    const checkedAt = Date.now();
+    let session: { expiresAt: string | number } | null;
+    try {
+      session = await this.env.DB.prepare(`select "expiresAt" from "session" where id = ?`)
+        .bind(device.sessionId)
+        .first<{ expiresAt: string | number }>();
+    } catch (error) {
+      this.log("checking a device's session failed", { error });
+      return "unavailable";
+    }
+    // However the adapter stored it (ISO text or ms); a value that cannot be read keeps the device its member's.
+    const expiresAt =
+      session === null
+        ? 0
+        : typeof session.expiresAt === "number"
+          ? session.expiresAt
+          : Date.parse(session.expiresAt);
+    if (!(expiresAt <= checkedAt)) return false;
+    try {
+      this.serverMutation("device.signOut", {
+        userId: device.userId,
+        deviceId: id,
+        before: checkedAt,
+      });
+    } catch (error) {
+      this.log("freeing a device whose session ended failed", { error });
+      return "unavailable";
+    }
+    return !this.shard.store.get("devices", id);
+  }
+
+  /**
    * `apiToken.create` or `apiToken.revoke` as the member (RPC from `POST` and `DELETE /workspaces/:id/api-tokens…`,
    * which checked the session, read the role in D1 and wrote D1 first: RFC 0014). The same RBAC as every mutation. A
    * revoke, or one already made, closes the token's sockets.
@@ -1412,6 +1705,12 @@ export class WorkspaceDO extends DurableObject<Env> {
       this.log("reading the status page push failed", { error });
     }
     // Never before now plus a beat: a redrive that could not run is tried again then, not in a loop.
+    let expiryAt: number | null = now + MONITOR_TICK_MS;
+    try {
+      expiryAt = this.expireSockets(Date.now());
+    } catch (error) {
+      this.log("closing expired sockets failed", { error });
+    }
     const tokenAt = this.closeEndedTokens();
     let webhookAt: number | null = now + MONITOR_TICK_MS;
     try {
@@ -1433,11 +1732,26 @@ export class WorkspaceDO extends DurableObject<Env> {
       earliest(earliest(monitors, escalationAt), earliest(repair, earliest(armed, maintenanceAt))),
       earliest(
         earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
-        earliest(webhookAt, tokenAt),
+        earliest(webhookAt, earliest(expiryAt, tokenAt)),
       ),
     );
     if (next === null) await this.ctx.storage.deleteAlarm();
     else await this.ctx.storage.setAlarm(next);
+  }
+
+  /**
+   * Closes the sockets whose session expired by `now` (`1012`; they reconnect and the Worker refuses the expired
+   * session, or takes the one Better Auth refreshed meanwhile) and answers when the next open one expires, or null.
+   */
+  private expireSockets(now: number): number | null {
+    let next: number | null = null;
+    for (const ws of this.ctx.getWebSockets()) {
+      const state = ws.deserializeAttachment() as SocketState | null;
+      if (!state || state.closed || state.expiresAt === undefined) continue;
+      if (state.expiresAt <= now) close(ws, CLOSE_SERVICE_RESTART, "session expired");
+      else next = earliest(next, state.expiresAt);
+    }
+    return next;
   }
 
   /** The outbox's row count, or null when storage failed reading it (logged). */
@@ -1560,33 +1874,60 @@ export class WorkspaceDO extends DurableObject<Env> {
     const name = readMemberName(request.headers);
     // A member just removed here whose upgrade the Worker let through before the removal: refused, as the Worker
     // would now, rather than have `member.sync` restore their copy. A member D1 has again (re-added) is not.
-    if (name !== undefined && (await this.membership.refuses(workspace, actor.id, Date.now()))) {
-      return Response.json({ error: "not_a_member" }, { status: 403 });
+    // A tombstone D1 could not be checked against is no leaving (the Worker found them in D1): tried again.
+    const standing =
+      name === undefined
+        ? "member"
+        : await this.membership.standing(workspace, actor.id, Date.now());
+    if (standing === "gone") return Response.json({ error: "not_a_member" }, { status: 403 });
+    if (standing === "unknown") return Response.json({ error: "unavailable" }, { status: 503 });
+    // The same for a token whose creator was just removed: it acts for them, so it is refused with them (and tried
+    // again when D1 could not say).
+    if (actor.kind === "token") {
+      const creator = await this.membership.standing(workspace, actor.by ?? actor.id, Date.now());
+      if (creator === "gone") return Response.json({ error: "not_a_member" }, { status: 403 });
+      if (creator === "unknown") return Response.json({ error: "unavailable" }, { status: 503 });
     }
-    // The same for a token whose creator was just removed: it acts for them, so it is refused with them.
-    if (
-      actor.kind === "token" &&
-      (await this.membership.refuses(workspace, actor.by ?? actor.id, Date.now()))
-    ) {
-      return Response.json({ error: "not_a_member" }, { status: 403 });
-    }
-    // Before the socket exists, so no `device.register` of this session can come first: a register that changes
-    // nothing is a `conflict` that leaves `updatedAt` alone, and the reconcile would then drop the phone the member
-    // just signed in on again.
+    // Before the socket exists, so every `device.register` of this session comes after: the phone the member just
+    // signed in on again is registered anew (or refreshed, `device.touch`), never dropped by a reconcile after it.
     const resetAt = readResetAt(request.headers);
     if (name !== undefined && resetAt !== undefined && !this.signOutStale(actor.id, resetAt)) {
       return Response.json({ error: "unavailable" }, { status: 503 });
     }
+    // A session that ended (or expired) after the Worker authenticated the upgrade with it: refused as the Worker
+    // would refuse it now, rather than leave a socket nothing would ever close.
+    const sessionId = readSessionId(request.headers);
+    const expiresAt = readSessionExpiresAt(request.headers);
+    if (
+      (sessionId !== undefined && this.sessionEnded(sessionId)) ||
+      (expiresAt !== undefined && expiresAt <= Date.now())
+    ) {
+      return Response.json({ error: "unauthenticated" }, { status: 401 });
+    }
     if (name !== undefined) this.syncMember(actor, name);
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
-    this.ctx.acceptWebSocket(server);
-    const state: SocketState = { workspace, actor, clientId: null, subs: [], openedAt: Date.now() };
+    // Tagged with the session it came with, so ending that session closes it (`endSession`).
+    this.ctx.acceptWebSocket(server, sessionId ? [sessionTag(sessionId)] : []);
+    const state: SocketState = {
+      workspace,
+      actor,
+      clientId: null,
+      subs: [],
+      openedAt: Date.now(),
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+    };
     server.serializeAttachment(state);
+    // Closed at the session's expiry even if it never sends another frame (`expireSockets`).
+    if (expiresAt !== undefined) this.wake(expiresAt, "session expiry");
     // The Worker read the member's role before this request arrived, and a member change may have landed in
     // between (or D1 was edited outside Brigade): check D1 again without holding up the socket. A socket D1 no
     // longer backs is closed, and the member list's copy follows D1 (src/members.ts); if that fails, the repair
     // alarm does it. Only a signed-in member's upgrade (the dev actor has no name and no D1 row).
-    if (name !== undefined) void this.membership.upgraded(workspace);
+    if (name !== undefined) {
+      void this.membership.upgraded(workspace);
+      // Sessions whose end never reached this shard (src/session-end.ts): caught up without holding up the socket.
+      void this.catchUpSessionEnds(workspace);
+    }
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -1693,6 +2034,10 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (ws.readyState !== WebSocket.OPEN) return;
     const state = ws.deserializeAttachment() as SocketState | null;
     if (state?.closed) return;
+    if (state?.expiresAt !== undefined && state.expiresAt <= Date.now()) {
+      close(ws, CLOSE_SERVICE_RESTART, "session expired");
+      return;
+    }
     if (!state) {
       close(ws, CLOSE_INTERNAL_ERROR, "no socket state");
       return;
@@ -1782,6 +2127,15 @@ export class WorkspaceDO extends DurableObject<Env> {
       now,
     });
     this.send(ws, result);
+    // As over HTTP (`runRegister`): registered or unchanged, the time and the socket's session are recorded.
+    if (name === "device.register" && (result.ok || result.error.code === "conflict")) {
+      const tag = this.ctx.getTags(ws).find((tag) => tag.startsWith(sessionTag("")));
+      this.touchDevice(
+        state.actor,
+        Reflect.get(Object(args), "id"),
+        tag?.slice(sessionTag("").length),
+      );
+    }
     if (result.ok) {
       this.broadcast(result.version, changes, ws);
       // The routes changed: what they kept quiet is routed again now (RFC 0005 "Alert sources"). Never throws.

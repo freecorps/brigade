@@ -78,6 +78,9 @@ copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving
   (1008 `token ended`, or 1012 to reconnect with the new role) instead of answering. The upgrade brings the shard's
   alarm to the token's expiry, and the alarm closes the token's sockets then, so an idle one stops receiving patches
   too.
+  A token's socket has no Better Auth session, so the session checks (RFC 0004 "Session revocation": an ended
+  session refused at the upgrade, the session's sockets closed when it ends or expires) skip it: its creator signing
+  out, or revoking their sessions, leaves it open. Only the token's own end, or a member change, closes it.
 - **Members:** `members:manage` lets a token do less than its creator. It never grants `owner` or `admin` (an
   invitation to either, or a role change to either), never changes, removes, or revokes or resends an invitation for,
   someone who is an `owner` or `admin` (or invited as one), and never targets its creator: making or unmaking the
@@ -87,6 +90,9 @@ copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving
   `members:manage` (`tokenPermission`) rather than the `workspace:read` a member's own leave needs, so a token holding
   only `members:manage` removes as well as it changes roles. A removal D1 has whose shard step still fails is caught
   up by the repair alarm (`member.reconcile`, RFC 0006 "Who is paged"), so the removed member stops being paged.
+- **Member changes:** a token's `PATCH`/`DELETE …/members/:userId` counts against its creator's per-member and
+  workspace limit (`MEMBER_CHANGE_LIMIT`, keyed by `caller.userId`), shared with their own sessions, so minting more
+  tokens buys no more changes. It is on top of the token's own rate limit below.
 - **Rate limit:** 300 requests a minute per token (Workers Rate Limiting, `API_TOKEN_LIMIT`, namespace ids 4141,
   4142 for `staging` and 4143 for `dev`, after 41X1 to 41X3 for the receipt and alert limits), counted once the
   token itself is valid (its digest found, its workspace and expiry checked) and before its creator is read, so wrong

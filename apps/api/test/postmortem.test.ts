@@ -26,6 +26,7 @@ import {
   type AiBinding,
 } from "../src/postmortem.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
+import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
 const PASSWORD = "correct horse battery staple";
@@ -53,20 +54,18 @@ const api = (
 type Person = { id: string; cookie: string };
 
 async function signUp(name: string): Promise<Person> {
+  const email = `${name.toLowerCase()}-p${++people}@example.com`;
   const response = await api("/auth/sign-up/email", {
     method: "POST",
     body: JSON.stringify({
       name,
-      email: `${name.toLowerCase()}-p${++people}@example.com`,
+      email,
       password: PASSWORD,
     }),
   });
   expect(response.status).toBe(200);
   const body = (await response.json()) as { user: { id: string } };
-  const cookie = response.headers
-    .getSetCookie()
-    .map((value) => value.split(";")[0])
-    .join("; ");
+  const cookie = await sessionCookie(email, PASSWORD);
   return { id: body.user.id, cookie };
 }
 

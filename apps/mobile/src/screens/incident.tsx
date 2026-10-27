@@ -3,6 +3,7 @@ import {
   entryTime,
   formatAge,
   itemText,
+  mutationErrorReason,
   noticeFor,
   noticeText,
   pagesFailedNames,
@@ -19,6 +20,7 @@ import { incidentStatusLabels } from "@freecorps/brigade-i18n/labels";
 import {
   can,
   formatIncidentNumber,
+  PAGE_AGAIN_CONFLICTS,
   roleDefinitions,
   SEVERITIES,
   UPDATE_BODY_MAX,
@@ -33,6 +35,7 @@ import {
   checkUpdate,
   nextFailed,
   nextStatuses,
+  pageAgainEntries,
   syncView,
   timelineItems,
   UPDATE_COUNT_FROM,
@@ -44,6 +47,7 @@ import {
 } from "@freecorps/brigade-sync";
 import { useConnectionState, useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { fontSize, radius, spacing } from "@freecorps/brigade-ui";
+import * as Haptics from "expo-haptics";
 import { Stack } from "expo-router";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import { SymbolView } from "expo-symbols";
@@ -61,6 +65,7 @@ import {
 import {
   AccessibilityInfo,
   ActivityIndicator,
+  Alert,
   Keyboard,
   KeyboardAvoidingView,
   Linking,
@@ -84,6 +89,7 @@ import {
   StatusBadge,
   useNow,
 } from "@/components/incident-parts";
+import { PagingSection, usePagingData } from "@/components/paging";
 import { Row, Section } from "@/components/section";
 import { useMember } from "@/components/session";
 import { ThemedText } from "@/components/themed-text";
@@ -92,8 +98,11 @@ import { useScreenPadding } from "@/hooks/use-screen-padding";
 import { useTheme } from "@/hooks/use-theme";
 import { restoredTarget } from "@/lib/pending";
 import { currentSync } from "@/lib/sync-client";
+import { canPageAgain } from "@/lib/why";
 
 const MAX_NOTICES = 5;
+/** How wide the page reads on a tablet: a line of text, not the whole screen. */
+const READABLE_WIDTH = 720;
 /** Lines of an update shown before Show more. */
 const UPDATE_LINES = 12;
 
@@ -223,10 +232,14 @@ function Screen({ title, children }: { title: string; children: ReactNode }) {
       automaticallyAdjustKeyboardInsets
       keyboardShouldPersistTaps="handled"
       style={{ backgroundColor: colors.background }}
-      contentContainerStyle={[padding, { gap: spacing[6] }]}
+      contentContainerStyle={padding}
     >
       <Stack.Screen options={{ title }} />
-      <RevealContext value={reveal}>{children}</RevealContext>
+      <View
+        style={{ width: "100%", maxWidth: READABLE_WIDTH, alignSelf: "center", gap: spacing[6] }}
+      >
+        <RevealContext value={reveal}>{children}</RevealContext>
+      </View>
     </ScrollView>
   );
   if (process.env.EXPO_OS !== "android") return page;
@@ -391,6 +404,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
   };
 
   const now = useNow(20_000);
+  const paging = usePagingData(row, now);
   const number = formatIncidentNumber(row.number) ?? "";
   const saving = busy.has("status") || busy.has("severity");
 
@@ -462,6 +476,9 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
       ) : null}
       {noticesFor(["role"])}
       <IncidentDetails row={row} />
+      {paging.data && row.number !== null ? (
+        <PagingSection data={paging.data} number={row.number} who={who} />
+      ) : null}
 
       <View style={{ gap: spacing[3] }}>
         <ThemedText variant="label" accessibilityRole="header">
@@ -483,6 +500,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
           now={now}
           unsent={busy.get("update") ?? 0}
           online={online}
+          pageAgain={canPageAgain(member.role, row) ? row.id : undefined}
         />
       </View>
       {sheet}
@@ -738,12 +756,15 @@ function Timeline({
   now,
   unsent,
   online,
+  pageAgain,
 }: {
   incidentId: string;
   who: People;
   now: number;
   unsent: number;
   online: boolean;
+  /** The incident's id when the member may page a failed page again; undefined offers nothing. */
+  pageAgain?: string;
 }) {
   const colors = useTheme();
   const glyphSize = useGlyphSize(fontSize.base.size);
@@ -819,11 +840,110 @@ function Timeline({
                   <UpdateBody body={entry.body} />
                 ) : null}
                 {item.kind === "pages_failed" ? <FailedNames item={item} who={who} /> : null}
+                {pageAgain === undefined ? null : (
+                  <PageAgain incidentId={pageAgain} entries={pageAgainEntries(item, rows)} />
+                )}
               </View>
             </View>
           </Row>
         );
       })}
+    </View>
+  );
+}
+
+/** What each of `incident.pageAgain`'s refusals says (`PAGE_AGAIN_CONFLICTS`, its error messages). */
+const CONFLICT_PARTS: Partial<Record<string, "already" | "acked" | "resolved">> = {
+  [PAGE_AGAIN_CONFLICTS.answered]: "already",
+  [PAGE_AGAIN_CONFLICTS.acknowledged]: "acked",
+  [PAGE_AGAIN_CONFLICTS.inactive]: "resolved",
+};
+
+const PAGE_AGAIN_GLYPH: Glyph = {
+  ios: "phone.arrow.up.right",
+  android: "phone_forwarded",
+  web: "phone_forwarded",
+};
+
+/**
+ * "Page again" under a failed page (`incident.pageAgain`), as on the dashboard: a new page to the members it missed,
+ * or to whoever the lost page was for. It pages people, so the phone asks first (a stray tap in a pocket is likelier
+ * than a stray click). Gone once the shard's `paged_again` entry lands; a refusal says why, under the button.
+ */
+function PageAgain({ incidentId, entries }: { incidentId: string; entries: string[] }) {
+  const colors = useTheme();
+  const glyph = useGlyphSize(fontSize.base.size);
+  const pageAgain = useMutation("incident.pageAgain");
+  const [pending, setPending] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
+  if (entries.length === 0) return null;
+  const say = (part: "action" | "pending" | "confirm_title" | "confirm_body" | "done") =>
+    m.incident_page_again({ part, reason: "" });
+  const send = () => {
+    setPending(true);
+    setRefused(null);
+    void pageAgain({ id: incidentId, entries }).then((outcome) => {
+      setPending(false);
+      if (outcome.ok) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(say("done"));
+        return;
+      }
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      const conflict =
+        outcome.error.code === "conflict" ? CONFLICT_PARTS[outcome.error.message] : undefined;
+      const text =
+        conflict !== undefined
+          ? m.incident_page_again({ part: conflict, reason: "" })
+          : m.incident_page_again({
+              part: "failed",
+              reason: mutationErrorReason(outcome.error.code),
+            });
+      setRefused(text);
+      if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(text);
+    });
+  };
+  const confirm = () =>
+    Alert.alert(say("confirm_title"), say("confirm_body"), [
+      { text: m.declare_cancel(), style: "cancel" },
+      { text: say("action"), onPress: send },
+    ]);
+  return (
+    <View style={{ alignItems: "flex-start", gap: spacing[1], paddingTop: spacing[1] }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ busy: pending, disabled: pending }}
+        disabled={pending}
+        onPress={confirm}
+        style={({ pressed }) => ({
+          minHeight: spacing[12],
+          flexDirection: "row",
+          alignItems: "center",
+          gap: spacing[2],
+          paddingHorizontal: spacing[4],
+          borderRadius: radius.md,
+          borderCurve: "continuous",
+          borderWidth: 1,
+          borderColor: colors.input,
+          backgroundColor: pressed ? colors.accent : "transparent",
+        })}
+      >
+        {pending ? (
+          <ActivityIndicator color={colors.foreground} />
+        ) : (
+          <SymbolView name={PAGE_AGAIN_GLYPH} tintColor={colors.foreground} size={glyph} />
+        )}
+        <ThemedText>{say(pending ? "pending" : "action")}</ThemedText>
+      </Pressable>
+      {refused ? (
+        <ThemedText
+          selectable
+          accessibilityLiveRegion="polite"
+          style={{ color: colors.destructive }}
+        >
+          {refused}
+        </ThemedText>
+      ) : null}
     </View>
   );
 }

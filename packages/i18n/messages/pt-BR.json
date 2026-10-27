@@ -1493,6 +1493,9 @@
         "part=acked": "Alguém confirmou o incidente, então não há o que chamar de novo.",
         "part=resolved": "O incidente não está mais ativo, então não há o que chamar de novo.",
         "part=failed": "Não foi possível chamar de novo. {reason}",
+        "part=confirm_title": "Chamar de novo?",
+        "part=confirm_body": "O Brigade envia agora um novo acionamento para todos que este não alcançou.",
+        "part=done": "Chamado de novo",
         "part=*": "Chamar de novo"
       }
     }
@@ -1624,6 +1627,7 @@
         "text=email_off": "Os emails sobre acionamentos perdidos estão desligados neste espaço de trabalho.",
         "text=acknowledged": "{name} reconheceu {time}, o que parou os acionamentos.",
         "text=why_link_label": "Ver acionamentos de {name}",
+        "text=open_hint": "Abre a explicação passo a passo",
         "text=verdict_missed_reason": "O Brigade não conseguiu acionar {name}: {detail}",
         "text=verdict_stuck": "Um acionamento para {name} foi planejado, mas nunca enviado",
         "text=short_stuck": "Planejado, nunca enviado",

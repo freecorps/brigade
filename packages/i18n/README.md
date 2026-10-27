@@ -44,6 +44,10 @@ Entry points:
 - `./oncall`: how on-call schedules read, shared by the dashboard's On-call card and the app's on-call screen:
   `memberLabel`, `handoffTime` (in the schedule's zone), `viewerTime` (the viewer's, when it reads differently),
   `fromNow`, `zoneLabel`, `offsetLabel`, `text` and `scheduleRefusal`. Like `./incident`, it reads schema's rows.
+- `./why-paged`: "Why wasn't I paged?" worded, shared by the dashboard's paging card and `?why=` view and the app's
+  paging list and screen: `verdictText`, `shortVerdict`, `pageLabel`, `targetedText`, `stageTimes`, `deliveryError`,
+  `pagingMembers`, `byUrgency` and the rest. It words `whyPaged`'s result from `@freecorps/brigade-sync`, which makes
+  sync a dependency of this package (types only).
 - `./auth`: the sign-in form's checks (`checkSignIn`, `checkEmail`, `checkPassword`) and `authErrorMessage`.
 
 Messages are shipped one module per message and `m` is a real ESM namespace. Vite (Rolldown) tree-shakes

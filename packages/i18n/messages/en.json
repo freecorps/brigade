@@ -1493,6 +1493,9 @@
         "part=acked": "Someone acknowledged the incident, so there's nothing to page again.",
         "part=resolved": "The incident is no longer active, so there's nothing to page again.",
         "part=failed": "Couldn't page again. {reason}",
+        "part=confirm_title": "Page again?",
+        "part=confirm_body": "Brigade sends a new page to everyone this one missed, right now.",
+        "part=done": "Paged again",
         "part=*": "Page again"
       }
     }
@@ -1624,6 +1627,7 @@
         "text=email_off": "Emails about missed pages are off in this workspace.",
         "text=acknowledged": "{name} acknowledged it {time}, which stopped paging.",
         "text=why_link_label": "Was {name} paged?",
+        "text=open_hint": "Opens the step-by-step explanation",
         "text=verdict_missed_reason": "Brigade couldn't page {name}: {detail}",
         "text=verdict_stuck": "A page to {name} was planned but never sent",
         "text=short_stuck": "Planned but never sent",

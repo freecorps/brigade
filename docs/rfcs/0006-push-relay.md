@@ -540,7 +540,9 @@ with times and errors, each call that rang a device after its alert as a line of
 rung" when its alert never got through; never the page's outcome), the phones they have now and when each was last
 heard from, which pages ring them as a call (their choice, RFC 0010), the email about a missed page (expected,
 failed, capped, off) and who acknowledged. The list adds the calls in a word next to the outcome ("Call sent", "Call
-failed", "Call not sent"). The mobile app's own view of it comes later.
+failed", "Call not sent"). The mobile app has the same list on its incident screen ("Who was paged", the member's
+own "My paging" first) and the same explanation as a screen of its own (`/incidents/<n>/why?member=<member>`, another
+member picked from a sheet), from the same `whyPaged` and the same wording (`@freecorps/brigade-i18n/why-paged`).
 
 ## Driver abstraction
 

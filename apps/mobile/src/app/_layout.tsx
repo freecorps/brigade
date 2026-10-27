@@ -53,7 +53,8 @@ export default function RootLayout() {
             {/* The member's workspace: only with a session, an active workspace and its socket. */}
             <Stack.Protected guard={signedIn}>
               <Stack.Screen name="index" options={{ title: m.incidents_title() }} />
-              <Stack.Screen name="incidents/[number]" options={{ title: "" }} />
+              <Stack.Screen name="incidents/[number]/index" options={{ title: "" }} />
+              <Stack.Screen name="incidents/[number]/why" options={{ title: "" }} />
               <Stack.Screen name="oncall" options={{ title: m.oncall_title() }} />
               <Stack.Screen name="push" options={{ title: m.push_title() }} />
               <Stack.Screen name="call-test" options={{ title: m.call_test_title() }} />

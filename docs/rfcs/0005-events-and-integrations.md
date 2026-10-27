@@ -260,7 +260,8 @@ or dependencies should not share the API's.
   on its own (`escalation.repage`, `escalation.fallback`: the `escalated` entry's `repaged`), and only while the
   incident is active and unacknowledged; each refusal is `conflict` with its own message (`PAGE_AGAIN_CONFLICTS`), so
   the dashboard says whether it was acknowledged, resolved or already paged again, and offers nothing already
-  answered. A member named who left or became a viewer since is recorded as not paged (`not_a_member`), and a page
+  answered. The mobile app offers it under the same lines to the same members, and asks first (an alert with
+  Cancel and Page again), since a stray tap on a phone is likelier than a stray click. A member named who left or became a viewer since is recorded as not paged (`not_a_member`), and a page
   to everyone that finds only whoever caused it as `nobody_else`, so the `paged_again` line never stands alone. Tests: `apps/api/test/notify.test.ts` ("paging a failed page again",
   "paging a lost declaration again on its own"), `packages/schema/tests/escalation.test.ts` ("incident.pageAgain").
 - **The outbox.** A row the drain cannot read (not JSON) or too large for the Queue is logged and dropped, so it

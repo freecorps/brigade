@@ -1,14 +1,8 @@
-import { setLocale } from "@freecorps/brigade-i18n";
+import { setLocale } from "../src/index.ts";
 import type { DeliveryRow } from "@freecorps/brigade-schema";
 import { beforeEach, describe, expect, test } from "vite-plus/test";
-import {
-  byUrgency,
-  pageGroups,
-  stageTimes,
-  verdictText,
-  type WhyPage,
-  type WhyVerdict,
-} from "../src/lib/why-paged";
+import type { WhyPage, WhyVerdict } from "@freecorps/brigade-sync";
+import { byUrgency, pageGroups, stageTimes, verdictText } from "../src/why-paged.ts";
 
 beforeEach(() => {
   void setLocale("en");

@@ -43,6 +43,10 @@
       "@freecorps/source": "./src/oncall.ts",
       "default": "./dist/oncall.mjs"
     },
+    "./why-paged": {
+      "@freecorps/source": "./src/why-paged.ts",
+      "default": "./dist/why-paged.mjs"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -53,6 +57,7 @@
       "./labels": "./dist/labels.mjs",
       "./messages": "./dist/messages.mjs",
       "./oncall": "./dist/oncall.mjs",
+      "./why-paged": "./dist/why-paged.mjs",
       "./package.json": "./package.json"
     },
     "access": "public"
@@ -65,7 +70,8 @@
     "check": "vp check"
   },
   "dependencies": {
-    "@freecorps/brigade-schema": "workspace:*"
+    "@freecorps/brigade-schema": "workspace:*",
+    "@freecorps/brigade-sync": "workspace:*"
   },
   "devDependencies": {
     "@inlang/paraglide-js": "2.29.1",

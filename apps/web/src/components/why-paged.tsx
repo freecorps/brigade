@@ -29,6 +29,14 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useId, useState } from "react";
+import {
+  whyPaged,
+  type WhyCall,
+  type WhyDelivery,
+  type WhyPage,
+  type WhyPaged,
+  type WhyVerdict,
+} from "@freecorps/brigade-sync";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import {
   byUrgency,
@@ -53,14 +61,8 @@ import {
   targetedText,
   verdictText,
   verdictTone,
-  whyPaged,
   whyText,
-  type WhyCall,
-  type WhyDelivery,
-  type WhyPage,
-  type WhyPaged,
-  type WhyVerdict,
-} from "@/lib/why-paged";
+} from "@freecorps/brigade-i18n/why-paged";
 
 /** Members listed before "Show all": enough for a small team, short enough to keep the roles in view. */
 const LIST_LIMIT = 8;

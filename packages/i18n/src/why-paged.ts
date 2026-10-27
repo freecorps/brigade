@@ -1,7 +1,6 @@
-// "Why wasn't I paged?" worded (RFC 0006 "Delivery receipts"): the explanation itself is `whyPaged` in
-// packages/sync, pure and string-free; this turns its parts into sentences in the current locale.
-import { m } from "@freecorps/brigade-i18n";
-import { personName, type People } from "@freecorps/brigade-i18n/incident";
+// "Why wasn't I paged?" worded (RFC 0006 "Delivery receipts"), shared by the dashboard and the mobile app: the
+// explanation itself is `whyPaged` in packages/sync, pure and string-free; this turns its parts into sentences in
+// the current locale.
 import type {
   CallChoice,
   DeliveryRow,
@@ -18,15 +17,8 @@ import type {
   WhyPaged,
   WhyVerdict,
 } from "@freecorps/brigade-sync";
-
-export {
-  whyPaged,
-  type WhyCall,
-  type WhyDelivery,
-  type WhyPaged,
-  type WhyPage,
-  type WhyVerdict,
-} from "@freecorps/brigade-sync";
+import { personName, type People } from "./incident.ts";
+import { m } from "./paraglide/messages.js";
 
 const say = (text: string, fields: { name?: string; time?: string; detail?: string } = {}) =>
   m.page_why({

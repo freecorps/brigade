@@ -475,6 +475,19 @@ const phoneArgs = (id: string) => ({
   publicKey: `B${"b".repeat(86)}`,
 });
 
+/** `/sign-out` with `cookie` through a Worker whose D1 is `db`. */
+async function signOutWith(db: D1Database, cookie: string) {
+  const request = new Request(`${ORIGIN}/auth/sign-out`, {
+    method: "POST",
+    headers: { Origin: ORIGIN, "Content-Type": "application/json", Cookie: cookie },
+    body: "{}",
+  });
+  const ctx = createExecutionContext();
+  const out = await workerAuth({ ...env, DB: db }, ctx, request).handler(request);
+  await waitOnExecutionContext(ctx);
+  return out;
+}
+
 const registerOver = (cookie: string, workspaces: string[], device: object) =>
   api(DEVICES_REGISTER_PATH, {
     method: "POST",
@@ -501,6 +514,8 @@ describe("a sign-out the shards could not hear of at once", () => {
     await waitOnExecutionContext(ctx);
     expect(out.status).toBe(503);
     expect(((await out.json()) as { code: string }).code).toBe(SIGN_OUT_FAILED_CODE);
+    // Answered before Better Auth ran: the cookie is not cleared, so the dashboard keeps its session too.
+    expect(out.headers.getSetCookie()).toEqual([]);
     expect(errors.mock.calls.flat().join("\n")).toContain("recording a session's end failed");
     // Still signed in: the kept sign-out is tried again with this cookie.
     const session = await api("/auth/get-session", { headers: { Cookie: hana.cookie } });
@@ -512,6 +527,43 @@ describe("a sign-out the shards could not hear of at once", () => {
       body: "{}",
     });
     expect(again.status).toBe(200);
+  });
+
+  // Better Auth's own sign-out ignores a failed lookup: it would run no session hook, delete nothing and answer 200.
+  test("D1 cannot read the session: 503 before Better Auth runs, the cookie and the session kept", async () => {
+    const hugo = await signUp("Hugo");
+    await workspaceOf(hugo);
+    const id = await sessionId(hugo.cookie);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const out = await signOutWith(failing(`"session" where`), hugo.cookie);
+    expect(out.status).toBe(503);
+    expect(((await out.json()) as { code: string }).code).toBe(SIGN_OUT_FAILED_CODE);
+    expect(out.headers.getSetCookie()).toEqual([]);
+    expect(await pendingEnds(id)).toEqual([]);
+    const session = await api("/auth/get-session", { headers: { Cookie: hugo.cookie } });
+    expect(await session.json()).toMatchObject({ user: { id: hugo.id } });
+  });
+
+  test("Better Auth fails to delete the session: 503 with the cookie kept, and the next sign-out goes through", async () => {
+    const iris = await signUp("Iris");
+    const w = await workspaceOf(iris);
+    const id = await sessionId(iris.cookie);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const out = await signOutWith(failing(`delete from "session"`), iris.cookie);
+    expect(out.status).toBe(503);
+    expect(((await out.json()) as { code: string }).code).toBe(SIGN_OUT_FAILED_CODE);
+    expect(out.headers.getSetCookie()).toEqual([]);
+    // Its end is on record all the same: a shard catching up acts on it.
+    expect(await pendingEnds(id)).toEqual([w.id]);
+    const again = await api("/auth/sign-out", {
+      method: "POST",
+      headers: { Cookie: iris.cookie },
+      body: "{}",
+    });
+    expect(again.status).toBe(200);
+    expect(again.headers.getSetCookie().join("\n")).toContain("session_token=;");
+    const session = await api("/auth/get-session", { headers: { Cookie: iris.cookie } });
+    expect(await session.json()).toBeNull();
   });
 
   test("one shard fails every try: its row stays, and the sweep takes the phone off and closes the socket later", async () => {
@@ -574,6 +626,90 @@ describe("a sign-out the shards could not hear of at once", () => {
       shard.store.scan("devices").map((device) => device.userId),
     );
     expect(owners).toEqual([kai.id]);
+  });
+
+  // A paging path (AGENTS.md): a phone left `taken` by a member whose session is gone would never page whoever signed
+  // in on it next.
+  test("a phone whose member's session is gone, with no sign-out on record, is free for whoever signs in on it next", async () => {
+    const joao = await signUp("Joao");
+    const kira = await signUp("Kira");
+    const w = await workspaceOf(joao);
+    await addMember(w.id, kira.id, "responder");
+    const phone = newId("dev", Date.now(), random);
+    expect(await (await registerOver(joao.cookie, [w.id], phoneArgs(phone))).json()).toEqual({
+      workspaces: { [w.id]: "ok" },
+    });
+    // Joao's session still exists: the phone is still his.
+    expect(await (await registerOver(kira.cookie, [w.id], phoneArgs(phone))).json()).toEqual({
+      workspaces: { [w.id]: "forbidden" },
+    });
+    // It ended without its end on record (a sign-out from before `recordSignOut`, an expired session cleaned up).
+    await env.DB.prepare(`delete from "session" where id = ?`)
+      .bind(await sessionId(joao.cookie))
+      .run();
+    expect(await (await registerOver(kira.cookie, [w.id], phoneArgs(phone))).json()).toEqual({
+      workspaces: { [w.id]: "ok" },
+    });
+    const owners = await w.withShard((shard) =>
+      shard.store.scan("devices").map((device) => device.userId),
+    );
+    expect(owners).toEqual([kira.id]);
+  });
+
+  test("a catch-up D1 cannot do answers `unavailable`, so the phone tries again instead of being refused for good", async () => {
+    const leo = await signUp("Leo");
+    const w = await workspaceOf(leo);
+    const phone = newId("dev", Date.now(), random);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const answer = await runInDurableObject(w.stub, async (instance: WorkspaceDO) => {
+      const real: unknown = Reflect.get(instance, "env");
+      Reflect.set(instance, "env", { ...env, DB: failing("session_end") });
+      try {
+        return await instance.registerDevice(
+          w.id,
+          { kind: "user", id: leo.id, role: "owner" },
+          phoneArgs(phone),
+        );
+      } finally {
+        Reflect.set(instance, "env", real);
+      }
+    });
+    expect(answer).toEqual({ ok: false, code: "unavailable" });
+    expect(await devices(w)).toEqual([]);
+  });
+
+  test("a phone registered again unchanged is not dropped by a sign-out from before it, acted on late", async () => {
+    const lua = await signUp("Lua");
+    const w = await workspaceOf(lua);
+    const phone = newId("dev", Date.now(), random);
+    expect((await registerOver(lua.cookie, [w.id], phoneArgs(phone))).status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const endedAt = Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    // Nothing changed: `device.register` is a `conflict`, and `device.touch` still records the time.
+    expect(await (await registerOver(lua.cookie, [w.id], phoneArgs(phone))).json()).toEqual({
+      workspaces: { [w.id]: "ok" },
+    });
+    // An older session of hers that signed out on the phone, heard of only now.
+    await recordSessionEnd(env.DB, {
+      userId: lua.id,
+      sessionId: "ses_older",
+      deviceId: phone,
+      endedAt,
+    });
+    expect(await w.stub.catchUpSessionEnds(w.id)).toBe(true);
+    expect(await devices(w)).toEqual([phone]);
+  });
+
+  test("the sweep deletes the rows of a workspace whose shard serves none, instead of coming back to them", async () => {
+    const nobody = newId("ws", Date.now(), random);
+    await env.DB.prepare(
+      `insert into session_end ("workspaceId", "sessionId", "userId", "deviceId", "endedAt") values (?, ?, ?, null, ?)`,
+    )
+      .bind(nobody, "ses_gone", "usr_gone", Date.now())
+      .run();
+    await sweepSessionEnds(env, Date.now() + SESSION_END_SWEEP_AFTER_MS + 1000);
+    expect(await pendingEnds("ses_gone")).toEqual([]);
   });
 
   test("a sign-out acted on late never drops the phone its member signed in on again since", async () => {

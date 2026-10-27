@@ -186,10 +186,13 @@ export type SocketState = {
  */
 export const ENDED_SESSION_MS = 10 * 60 * 1000;
 
-/** What `registerDevice` answers: the code is `device.register`'s, or `not_a_member`/`not_found` as for an ack. */
+/**
+ * What `registerDevice` answers: the code is `device.register`'s, `not_a_member`/`not_found` as for an ack, or
+ * `unavailable` (D1 could not be read: tried again).
+ */
 export type DeviceRegisterResult =
   | { ok: true }
-  | { ok: false; code: MutationErrorCode | "not_a_member" | "not_found" };
+  | { ok: false; code: MutationErrorCode | "not_a_member" | "not_found" | "unavailable" };
 
 /** The client id the phone's registrations over HTTP run under (`WorkspaceDO.registerDevice`). */
 export const DEVICES_CLIENT_ID = "devices";
@@ -1007,15 +1010,27 @@ export class WorkspaceDO extends DurableObject<Env> {
   /**
    * Acts on the sessions D1's `session_end` still lists for this workspace (src/session-end.ts): ended sessions whose
    * own `endSession` call never got through (the shard was unreachable for every try). Run before a phone registers
-   * here, after every sync upgrade, and by the Worker's sweep. Deletes each row it acted on. False when D1 or the
-   * shard failed (logged); never throws.
+   * here, after every sync upgrade, and by the Worker's sweep. Deletes each row it acted on. A shard that serves
+   * another workspace, or none, has nothing to act on: it deletes the rows, so the sweep never comes back to them.
+   * False when D1 or the shard failed (logged); never throws.
    */
   async catchUpSessionEnds(workspaceId: string): Promise<boolean> {
-    if (this.shard.workspace() !== workspaceId) return true;
+    if (this.shard.workspace() !== workspaceId) {
+      try {
+        await this.env.DB.prepare(`delete from session_end where "workspaceId" = ?`)
+          .bind(workspaceId)
+          .run();
+        return true;
+      } catch (error) {
+        this.log("deleting the sessions to end of no workspace failed", { error });
+        return false;
+      }
+    }
     let rows: { sessionId: string; userId: string; deviceId: string | null; endedAt: number }[];
     try {
       ({ results: rows } = await this.env.DB.prepare(
-        `select "sessionId", "userId", "deviceId", "endedAt" from session_end where "workspaceId" = ? limit 100`,
+        `select "sessionId", "userId", "deviceId", "endedAt" from session_end where "workspaceId" = ?
+         order by "endedAt" limit 100`,
       )
         .bind(workspaceId)
         .all());
@@ -1060,23 +1075,44 @@ export class WorkspaceDO extends DurableObject<Env> {
    * with one request, not only the one it has a socket to. The same named mutation, RBAC and outbox event as over
    * Brigade Sync, run as a client mutation from client id `devices`. Before it: the sessions D1 still lists as
    * ended here (`catchUpSessionEnds`, so the phone a member signed out of is free for whoever signs in on it next),
-   * and with `resetAt` the member's devices from before their password reset, as an upgrade does. A member removed
-   * within the tombstone is `not_a_member`; a shard that serves another workspace, or none yet, answers `not_found`.
+   * and with `resetAt` the member's devices from before their password reset, as an upgrade does. Registered, or
+   * unchanged (`conflict`), it records the time and `sessionId`, the session it was registered with (`device.touch`).
+   * Another member's device (`forbidden`) is freed and tried once more when that member's session is gone
+   * (`freeDevice`). A member removed within the tombstone is `not_a_member`; `unavailable` when D1 could not be read
+   * (a catch-up that failed, a tombstone it could not check: the Worker saw the member in D1, so it is no leaving),
+   * and the app tries again. A shard that serves another workspace, or none yet, answers `not_found`.
    */
   async registerDevice(
     workspaceId: string,
     actor: Actor,
     args: Record<string, unknown>,
     resetAt?: number,
+    sessionId?: string,
   ): Promise<DeviceRegisterResult> {
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
-    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
-      return { ok: false, code: "not_a_member" };
-    }
-    await this.catchUpSessionEnds(workspaceId);
+    const standing = await this.membership.standing(workspaceId, actor.id, Date.now());
+    if (standing === "gone") return { ok: false, code: "not_a_member" };
+    if (standing === "unknown") return { ok: false, code: "unavailable" };
+    // A phone left registered to a member who signed out on it must be free before anyone else registers it.
+    if (!(await this.catchUpSessionEnds(workspaceId))) return { ok: false, code: "unavailable" };
     if (resetAt !== undefined && !this.signOutStale(actor.id, resetAt)) {
       return { ok: false, code: "internal" };
     }
+    let result = this.runRegister(actor, args, sessionId);
+    if (!result.ok && result.code === "forbidden" && typeof args.id === "string") {
+      const freed = await this.freeDevice(workspaceId, args.id);
+      if (freed === "unavailable") return { ok: false, code: "unavailable" };
+      if (freed) result = this.runRegister(actor, args, sessionId);
+    }
+    return result;
+  }
+
+  /** `device.register` as the member over HTTP, then `device.touch` when it went through or changed nothing. */
+  private runRegister(
+    actor: Actor,
+    args: Record<string, unknown>,
+    sessionId: string | undefined,
+  ): DeviceRegisterResult {
     const now = Date.now();
     const { result, changes } = this.shard.mutate({
       clientId: DEVICES_CLIENT_ID,
@@ -1086,9 +1122,74 @@ export class WorkspaceDO extends DurableObject<Env> {
       args,
       now,
     });
-    if (!result.ok) return { ok: false, code: result.error.code };
-    this.broadcast(result.version, changes, undefined);
-    return { ok: true };
+    if (result.ok) this.broadcast(result.version, changes, undefined);
+    else if (result.error.code !== "conflict") return { ok: false, code: result.error.code };
+    // Not done, a later sweep acting on a sign-out from before now could drop the phone just registered again.
+    if (!this.touchDevice(actor, args.id, sessionId)) return { ok: false, code: "unavailable" };
+    return result.ok ? { ok: true } : { ok: false, code: "conflict" };
+  }
+
+  /**
+   * `device.touch` as the member, after their `device.register` (over HTTP or a socket) went through or changed
+   * nothing. False when it failed (logged).
+   */
+  private touchDevice(actor: Actor, id: unknown, sessionId: string | undefined): boolean {
+    if (typeof id !== "string") return true;
+    const now = Date.now();
+    const { result } = this.shard.mutate({
+      clientId: DEVICES_CLIENT_ID,
+      mutationId: newId("mut", now, (length) => crypto.getRandomValues(new Uint8Array(length))),
+      actor,
+      name: "device.touch",
+      args: { id, ...(sessionId !== undefined ? { sessionId } : {}) },
+      now,
+      internal: true,
+    });
+    if (!result.ok) this.log("refreshing a registered device failed", { code: result.error.code });
+    return result.ok;
+  }
+
+  /**
+   * A phone another member registered, that someone else is registering now (RFC 0006 "Device registration"): free
+   * when that member signed out on it (D1's `session_end`, caught up again here: the sign-out may have landed since)
+   * or the session they last registered it with no longer exists or expired (`DeviceRow.sessionId`), in which case
+   * it comes off them (`device.signOut`, only if not registered again since). True when the device is free now,
+   * false when it is still theirs (or has no session to check), `unavailable` when D1 could not say.
+   */
+  private async freeDevice(workspaceId: string, id: string): Promise<boolean | "unavailable"> {
+    if (!(await this.catchUpSessionEnds(workspaceId))) return "unavailable";
+    const device = this.shard.store.get("devices", id);
+    if (!device) return true;
+    if (device.sessionId === undefined) return false;
+    const checkedAt = Date.now();
+    let session: { expiresAt: string | number } | null;
+    try {
+      session = await this.env.DB.prepare(`select "expiresAt" from "session" where id = ?`)
+        .bind(device.sessionId)
+        .first<{ expiresAt: string | number }>();
+    } catch (error) {
+      this.log("checking a device's session failed", { error });
+      return "unavailable";
+    }
+    // However the adapter stored it (ISO text or ms); a value that cannot be read keeps the device its member's.
+    const expiresAt =
+      session === null
+        ? 0
+        : typeof session.expiresAt === "number"
+          ? session.expiresAt
+          : Date.parse(session.expiresAt);
+    if (!(expiresAt <= checkedAt)) return false;
+    try {
+      this.serverMutation("device.signOut", {
+        userId: device.userId,
+        deviceId: id,
+        before: checkedAt,
+      });
+    } catch (error) {
+      this.log("freeing a device whose session ended failed", { error });
+      return "unavailable";
+    }
+    return !this.shard.store.get("devices", id);
   }
 
   /**
@@ -1773,9 +1874,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     const name = readMemberName(request.headers);
     // A member just removed here whose upgrade the Worker let through before the removal: refused, as the Worker
     // would now, rather than have `member.sync` restore their copy. A member D1 has again (re-added) is not.
-    if (name !== undefined && (await this.membership.refuses(workspace, actor.id, Date.now()))) {
-      return Response.json({ error: "not_a_member" }, { status: 403 });
-    }
+    // A tombstone D1 could not be checked against is no leaving (the Worker found them in D1): tried again.
+    const standing =
+      name === undefined
+        ? "member"
+        : await this.membership.standing(workspace, actor.id, Date.now());
+    if (standing === "gone") return Response.json({ error: "not_a_member" }, { status: 403 });
+    if (standing === "unknown") return Response.json({ error: "unavailable" }, { status: 503 });
     // The same for a token whose creator was just removed: it acts for them, so it is refused with them.
     if (
       actor.kind === "token" &&
@@ -1783,9 +1888,8 @@ export class WorkspaceDO extends DurableObject<Env> {
     ) {
       return Response.json({ error: "not_a_member" }, { status: 403 });
     }
-    // Before the socket exists, so no `device.register` of this session can come first: a register that changes
-    // nothing is a `conflict` that leaves `updatedAt` alone, and the reconcile would then drop the phone the member
-    // just signed in on again.
+    // Before the socket exists, so every `device.register` of this session comes after: the phone the member just
+    // signed in on again is registered anew (or refreshed, `device.touch`), never dropped by a reconcile after it.
     const resetAt = readResetAt(request.headers);
     if (name !== undefined && resetAt !== undefined && !this.signOutStale(actor.id, resetAt)) {
       return Response.json({ error: "unavailable" }, { status: 503 });
@@ -2023,6 +2127,15 @@ export class WorkspaceDO extends DurableObject<Env> {
       now,
     });
     this.send(ws, result);
+    // As over HTTP (`runRegister`): registered or unchanged, the time and the socket's session are recorded.
+    if (name === "device.register" && (result.ok || result.error.code === "conflict")) {
+      const tag = this.ctx.getTags(ws).find((tag) => tag.startsWith(sessionTag("")));
+      this.touchDevice(
+        state.actor,
+        Reflect.get(Object(args), "id"),
+        tag?.slice(sessionTag("").length),
+      );
+    }
     if (result.ok) {
       this.broadcast(result.version, changes, ws);
       // The routes changed: what they kept quiet is routed again now (RFC 0005 "Alert sources"). Never throws.

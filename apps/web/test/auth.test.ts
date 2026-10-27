@@ -13,6 +13,7 @@ import {
   PASSWORD_MAX,
   PASSWORD_MIN,
   saveLocale,
+  signOutDashboard,
   switchWorkspace,
 } from "../src/lib/auth";
 import { pageTitle } from "../src/lib/page-title";
@@ -218,6 +219,30 @@ describe("opening a new workspace when set-active fails", () => {
         reloaded = true;
       });
       expect(reloaded).toBe(true);
+    }
+  });
+});
+
+describe("signing out", () => {
+  test("a session ended or already gone is signed out; a 503 or no answer keeps the session", async () => {
+    const answers = [
+      async () => Response.json({ success: true }),
+      async () => Response.json({ message: "Unauthorized" }, { status: 401 }),
+    ];
+    for (const answer of answers) {
+      expect(await signOutDashboard(makeAuthClient(answer as typeof fetch))).toBe(true);
+    }
+    for (const fail of [
+      async () =>
+        Response.json(
+          { code: "SIGN_OUT_FAILED", message: "Signing out failed; try again" },
+          { status: 503 },
+        ),
+      async () => {
+        throw new TypeError("Failed to fetch");
+      },
+    ]) {
+      expect(await signOutDashboard(makeAuthClient(fail as typeof fetch))).toBe(false);
     }
   });
 });

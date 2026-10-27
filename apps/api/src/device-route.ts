@@ -15,8 +15,9 @@ export const DEVICE_REGISTER_LIMIT = { window: 60, max: 30 };
 
 /**
  * Per workspace: `ok` (registered, or already up to date), a `device.register` code (`forbidden`: another member's
- * device has this id, `limit_reached`, `invalid_args`, `internal`), `not_a_member` (the member left or was removed:
- * the app forgets the workspace) or `unavailable` (the shard or D1 could not be reached: tried again later).
+ * device has this id and its member's session still exists, `limit_reached`, `invalid_args`, `internal`),
+ * `not_a_member` (the member left or was removed: the app forgets the workspace) or `unavailable` (the shard or D1
+ * could not be reached: tried again later).
  */
 export type DeviceRegistrationAnswer = Record<
   string,
@@ -63,10 +64,12 @@ export async function registerDevices(
 
   let memberships: Map<string, { role: Role; resetAt: number | null }>;
   let userId: string;
+  let sessionId: string;
   try {
     const session = await lazyAuth().api.getSession({ headers: request.headers });
     if (!session) return json({ error: "unauthenticated" }, 401);
     userId = session.user.id;
+    sessionId = session.session.id;
     const { window, max } = DEVICE_REGISTER_LIMIT;
     if ((await countRequest(env.DB, `devices:${userId}`, window, Date.now())) > max) {
       return json({ error: "rate_limited" }, 429, { "Retry-After": String(window) });
@@ -105,6 +108,7 @@ export async function registerDevices(
           actor,
           device as Record<string, unknown>,
           member.resetAt ?? undefined,
+          sessionId,
         );
         // `conflict`: registered already with these values.
         answers[workspaceId] = result.ok || result.code === "conflict" ? "ok" : result.code;

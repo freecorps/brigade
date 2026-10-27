@@ -27,6 +27,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "paging_not_opened" | "Not paged on this phone: switch to it once to get its pages here." |
 * | "pages_notice_in" | "This phone isn't paging you in {name}" |
 * | "paged_here" | "Paged on this phone" |
+* | "sign_out_failed" | "Couldn't sign you out, so you're still signed in. Check your connection and try again." |
+* | "sign_out_retry" | "Try signing out again" |
 * | * | "Brigade" |
 *
 * @param {Account_FlowInputs} inputs
@@ -53,6 +55,8 @@ export const account_flow = /** @type {((inputs: Account_FlowInputs, options?: {
 		if (i?.part === "paging_not_opened") return /** @type {LocalizedString} */ (`Sem chamados neste telefone: troque para ele uma vez para recebê-los aqui.`);
 		if (i?.part === "pages_notice_in") return /** @type {LocalizedString} */ (`Este telefone não está chamando você em ${i?.name}`);
 		if (i?.part === "paged_here") return /** @type {LocalizedString} */ (`Recebe chamados neste telefone`);
+		if (i?.part === "sign_out_failed") return /** @type {LocalizedString} */ (`Não foi possível sair da conta, então você continua conectado. Confira sua conexão e tente de novo.`);
+		if (i?.part === "sign_out_retry") return /** @type {LocalizedString} */ (`Tentar sair de novo`);
 		return /** @type {LocalizedString} */ (`Brigade`)
 	}
 	{
@@ -73,6 +77,8 @@ export const account_flow = /** @type {((inputs: Account_FlowInputs, options?: {
 		if (i?.part === "paging_not_opened") return /** @type {LocalizedString} */ (`Not paged on this phone: switch to it once to get its pages here.`);
 		if (i?.part === "pages_notice_in") return /** @type {LocalizedString} */ (`This phone isn't paging you in ${i?.name}`);
 		if (i?.part === "paged_here") return /** @type {LocalizedString} */ (`Paged on this phone`);
+		if (i?.part === "sign_out_failed") return /** @type {LocalizedString} */ (`Couldn't sign you out, so you're still signed in. Check your connection and try again.`);
+		if (i?.part === "sign_out_retry") return /** @type {LocalizedString} */ (`Try signing out again`);
 		return /** @type {LocalizedString} */ (`Brigade`)
 	}
 });

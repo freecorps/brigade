@@ -171,6 +171,7 @@ export const registerDevice = defineMutation({
         userId,
         registeredAt: current?.registeredAt ?? ctx.now,
         updatedAt: ctx.now,
+        ...(current?.sessionId !== undefined ? { sessionId: current.sessionId } : {}),
       };
       const summary = store.get("member_devices", args.id);
       if (
@@ -232,6 +233,33 @@ export const registerDevice = defineMutation({
       },
     });
     return ok(...events);
+  },
+});
+
+/**
+ * Server only, as the member, right after their `device.register` went through or changed nothing (`conflict`):
+ * records that they registered it now (`updatedAt`), so a sign-out acted on late (`device.signOut` with `before`)
+ * never drops the phone they just registered again, and with `sessionId` the session they registered it with. Not a
+ * change to the workspace: `silent`, no event (RFC 0005). Another member's device, or none, is `not_found`.
+ */
+export const touchDevice = defineMutation({
+  name: "device.touch",
+  args: v.object({
+    id: v.id("dev"),
+    sessionId: v.omittable(v.string({ min: 1, max: 128 })),
+  }),
+  permission: "device:register",
+  silent: true,
+  apply(store, args, ctx) {
+    if (ctx.actor.kind !== "user") return fail("forbidden", "Only members register devices");
+    const current = store.get("devices", args.id);
+    if (!current || current.userId !== ctx.actor.id) return fail("not_found", "Device not found");
+    store.update("devices", args.id, {
+      ...current,
+      updatedAt: Math.max(ctx.now, current.updatedAt),
+      ...(args.sessionId !== undefined ? { sessionId: args.sessionId } : {}),
+    });
+    return ok();
   },
 });
 

@@ -388,3 +388,59 @@ describe("device.signOut", () => {
     expect(store.get("devices", phone)).toBeUndefined();
   });
 });
+
+describe("device.touch", () => {
+  const touch = (store: MemoryStore<BrigadeTables>, actor: Actor, input: unknown, now: number) =>
+    runMutation(serverMutations, "device.touch", input, store, { actor, now, server: true });
+
+  test("server only: an unchanged device registered again is refreshed, with no event, so a late sign-out keeps it", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const id = deviceId();
+    run(store, ana, "device.register", args(id));
+    expect(Object.keys(mutations)).not.toContain("device.touch");
+    // Registered again with nothing changed: still a conflict, and `touch` is what moves `updatedAt`.
+    expect(run(store, ana, "device.register", args(id))).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(touch(store, ana, { id, sessionId: "ses_one" }, T + 10)).toEqual({
+      ok: true,
+      events: [],
+    });
+    expect(store.get("devices", id)).toMatchObject({ updatedAt: T + 10, sessionId: "ses_one" });
+    // A sign-out from before it, acted on only now, leaves the phone.
+    expect(
+      runMutation(
+        serverMutations,
+        "device.signOut",
+        { userId: "usr_ana", deviceId: id, before: T + 5 },
+        store,
+        {
+          actor: ACCOUNT_ACTOR,
+          now: T + 20,
+          server: true,
+        },
+      ),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(store.get("devices", id)).toBeDefined();
+    // A change keeps the session it was registered with.
+    run(store, ana, "device.register", args(id, { publicKey: OTHER_KEY }));
+    expect(store.get("devices", id)?.sessionId).toBe("ses_one");
+  });
+
+  test("another member's device, or none, is `not_found`; never moves `updatedAt` back", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const id = deviceId();
+    run(store, ana, "device.register", args(id));
+    expect(touch(store, bia, { id }, T + 10)).toMatchObject({
+      ok: false,
+      error: { code: "not_found" },
+    });
+    expect(touch(store, ana, { id: deviceId() }, T + 10)).toMatchObject({
+      ok: false,
+      error: { code: "not_found" },
+    });
+    expect(touch(store, ana, { id }, T - 10).ok).toBe(true);
+    expect(store.get("devices", id)?.updatedAt).toBe(T);
+  });
+});

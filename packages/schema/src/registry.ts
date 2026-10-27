@@ -18,7 +18,13 @@ import {
   planDeliveries,
   reportDeliveries,
 } from "./deliveries.ts";
-import { expireDevice, registerDevice, signOutDevices, unregisterDevice } from "./devices.ts";
+import {
+  expireDevice,
+  registerDevice,
+  signOutDevices,
+  touchDevice,
+  unregisterDevice,
+} from "./devices.ts";
 import { failEmail, failNotification } from "./notifications.ts";
 import {
   allMonitors,
@@ -174,6 +180,7 @@ export const serverMutations = defineRegistry([
   evaluateMonitor,
   expireDevice,
   signOutDevices,
+  touchDevice,
   takeOverMonitors,
   failNotification,
   failEmail,

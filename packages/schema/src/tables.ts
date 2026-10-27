@@ -471,7 +471,13 @@ export type DeviceRow = {
   /** HPKE public key, uncompressed P-256, base64url (`packages/push`). */
   publicKey: string;
   registeredAt: number;
+  /** When its member last registered it, changed or not (`device.touch` refreshes it). */
   updatedAt: number;
+  /**
+   * The Better Auth session it was last registered with (`device.touch`): once that session is gone, the phone is
+   * free for whoever signs in on it next (RFC 0006 "Device registration"). Absent on devices registered before it.
+   */
+  sessionId?: string;
 };
 
 /**

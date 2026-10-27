@@ -190,7 +190,9 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     the per-address limit (`SIGN_IN_AFTER_RESET`, recorded in the `rateLimit` table; the per-IP rule still applies),
     which whoever holds the address at the limit does not have. Signing the phone back in from another network
     (cellular, while the reset was done on Wi-Fi) still waits for the per-address limit; until it does, the phone is
-    not paged for them.
+    not paged for them. The cost, accepted: the exemption is per IP, not per person, so anyone sharing that IP (the
+    same office or carrier NAT) also skips the per-address limit for that address for those 15 minutes, held only to
+    the per-IP rule (30 a minute) while guessing a password its owner just set.
   - **Uniform sign-up (built):** a sign-up answers the same whether or not the address has an account, so it cannot
     enumerate accounts. Better Auth does this itself once sign-up hands out no session (`autoSignIn: false`): for a
     taken address it hashes the password all the same and answers with a made-up user and no session, the shape a new
@@ -212,13 +214,18 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     before the session ended); that sign-out waits for it, so the phone is free by the time it answers (RFC 0006
     "Device registration"). It is durable: before the row goes, the hook's `before` half writes one row per workspace
     of the user to D1's `session_end` (`migrations/0012_session_end.sql`, one statement), and each shard's success
-    deletes its row. A shard that failed every try keeps its row, acted on by whichever comes first: the shard itself
+    deletes its row. A sign-out records it before Better Auth runs at all (`recordSignOut`, a `before` hook on
+    `/sign-out` that looks the session up in D1 itself): Better Auth 1.7's sign-out ignores a failed lookup or delete
+    (it then runs no session hook and deletes nothing) and clears the cookie anyway, answering 200. So a session D1
+    cannot read, or an end it cannot record, answers `503 SIGN_OUT_FAILED` before the cookie is touched, and after
+    Better Auth ran the `after` hook checks the session's row is gone, answering the same 503 (with Better Auth's
+    cleared cookie dropped) when it is not. The client keeps its session and signs out again: the app keeps the
+    sign-out, the dashboard's account menu says so and tries again. A shard that failed every try keeps its row, acted on by whichever comes first: the shard itself
     before a phone registers in it (`POST /devices/register`) and after every sync upgrade into it
     (`WorkspaceDO.catchUpSessionEnds`), or the Worker's cron, every minute, for rows older than a minute
-    (`sweepSessionEnds`; rows still there after 30 days are dropped). When D1 cannot record it, a sign-out answers
-    `503 SIGN_OUT_FAILED` and keeps its session (Better Auth's own sign-out would answer 200 with the row still
-    there), so the app keeps the sign-out and finishes it later; another way a session ends goes on without the
-    record. An admin revoking another user's sessions has no route yet (Better Auth's admin plugin is off); when it
+    (`sweepSessionEnds`, oldest first; rows still there after 30 days are dropped, and the rows of a workspace whose
+    shard serves none are deleted, as there is nothing to act on). Any other way a session ends goes on without the
+    record when D1 cannot write it. An admin revoking another user's sessions has no route yet (Better Auth's admin plugin is off); when it
     lands, it deletes rows through the same hook.
   - **Workspaces (built):** a user belongs to up to 10; the dashboard's header lists them (Better Auth's
     `organization/list`) and switches with `organization/set-active`, then opens the new workspace's shard; the

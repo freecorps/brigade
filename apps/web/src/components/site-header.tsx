@@ -27,7 +27,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { authClient, saveLocale, switchWorkspace } from "@/lib/auth";
+import { authClient, saveLocale, signOutDashboard, switchWorkspace } from "@/lib/auth";
 import { ENVIRONMENT } from "@/lib/environment";
 import { isThemePreference, themePreferences, type ThemePreference } from "@/lib/theme";
 
@@ -202,18 +202,33 @@ function WorkspaceSwitcher() {
   );
 }
 
+/**
+ * The member's name, email and workspace, and Sign out. A sign-out the API could not finish (503 `SIGN_OUT_FAILED`, or
+ * no answer) keeps the session: the menu stays open and says so, and the item tries again.
+ */
 function AccountMenu({ name, email }: { name: string; email: string }) {
   const workspace = authClient.useActiveOrganization().data?.name;
+  const [signingOut, setSigningOut] = useState(false);
+  const [failed, setFailed] = useState(false);
   const signOut = async () => {
-    try {
-      await authClient.signOut();
-    } finally {
+    if (signingOut) return;
+    setSigningOut(true);
+    setFailed(false);
+    const done = await signOutDashboard();
+    if (done) {
       // A full load: it drops the tab's sync client, its socket and every row it held for this member.
       window.location.assign("/sign-in");
+      return;
     }
+    setSigningOut(false);
+    setFailed(true);
   };
   return (
-    <DropdownMenu>
+    <DropdownMenu
+      onOpenChange={(next) => {
+        if (next) setFailed(false);
+      }}
+    >
       <DropdownMenuTrigger render={<Button variant="outline" size="icon" />}>
         <CircleUserRoundIcon aria-hidden />
         <span className="sr-only">{m.account_menu_label({ name })}</span>
@@ -231,9 +246,25 @@ function AccountMenu({ name, email }: { name: string; email: string }) {
               </span>
             ) : null}
           </DropdownMenuLabel>
-          <DropdownMenuItem onClick={() => void signOut()}>
-            <LogOutIcon aria-hidden className="text-muted-foreground" />
-            {m.sign_out()}
+          {failed ? (
+            <p role="alert" className="px-3 py-2 text-sm text-destructive">
+              {m.account_flow({ part: "sign_out_failed", name: "" })}
+            </p>
+          ) : null}
+          <DropdownMenuItem
+            closeOnClick={false}
+            disabled={signingOut}
+            onClick={() => void signOut()}
+          >
+            {signingOut ? (
+              <LoaderCircleIcon
+                aria-hidden
+                className="animate-spin text-muted-foreground motion-reduce:animate-none"
+              />
+            ) : (
+              <LogOutIcon aria-hidden className="text-muted-foreground" />
+            )}
+            {failed ? m.account_flow({ part: "sign_out_retry", name: "" }) : m.sign_out()}
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>

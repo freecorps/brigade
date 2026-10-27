@@ -159,8 +159,9 @@ async function registration(deps: DeviceDeps): Promise<DeviceRegistration | "uns
  * Registers this phone in every workspace in `workspaces` (each one the member opened on it; `active`, the open one,
  * among them) with one `POST /devices/register` (RFC 0006 "Device registration"), so a new push or VoIP token, a
  * reinstall or Critical Alerts turned on reaches all of them, not only the one open: a workspace left with a dead
- * token pages nobody on this phone (`no_devices`). Answers per workspace; a workspace the member is no longer in is
- * left out (the caller forgets it). An instance from before the route (404) registers only `active`, over its socket.
+ * token pages nobody on this phone (`no_devices`). Answers per workspace; a workspace the member is no longer in
+ * (`not_a_member`, which the API answers only once D1 confirmed it) is left out (the caller forgets it), and one it
+ * could not check (`unavailable`) is `failed`, tried again. An instance from before the route (404) registers only `active`, over its socket.
  */
 export async function registerEverywhere(
   deps: DeviceDeps,

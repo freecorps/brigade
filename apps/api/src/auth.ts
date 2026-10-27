@@ -230,11 +230,16 @@ export const INVALID_LOCALE_CODE = "INVALID_LOCALE";
  * RFC 0008): one of Brigade's locales exactly, or null on `/update-user` to unset it; a sign-up without one takes
  * the closest to the request's first `Accept-Language`, if any.
  */
-const beforeHook = (bindings: AuthBindings, background?: BackgroundReset) => {
+const beforeHook = (
+  bindings: AuthBindings,
+  signingOut: SigningOut,
+  background?: BackgroundReset,
+) => {
   // Requests whose limits `checkResetRequest` already counted and that it handed to this instance again in the
   // background: let through as they are. Per instance, so per request.
   const admitted = new WeakSet<Request>();
   return createAuthMiddleware(async (ctx) => {
+    if (ctx.path === "/sign-out") return recordSignOut(bindings, ctx, signingOut);
     if (ctx.path === "/send-verification-email") {
       // Only for oneself: Better Auth would otherwise email any unverified address it is given, signed in or not.
       const session = await getSessionFromCtx(ctx);
@@ -522,6 +527,69 @@ async function signUpNotice(bindings: AuthBindings, user: TakenUser, request: Re
 /** The answer to a sign-out whose end could not be recorded (`onSessionEnding`): its session stays. */
 export const SIGN_OUT_FAILED_CODE = "SIGN_OUT_FAILED";
 
+const signOutFailed = () =>
+  APIError.from("SERVICE_UNAVAILABLE", {
+    code: SIGN_OUT_FAILED_CODE,
+    message: "Signing out failed; try again",
+  });
+
+/** The request's `/sign-out`: the session `recordSignOut` recorded the end of, for the hooks after it. */
+type SigningOut = { sessionId?: string };
+
+/**
+ * `/sign-out`, before Better Auth runs it: finds the session in D1 itself and records its end (`onSessionEnding`). Better
+ * Auth's own sign-out ignores a failed lookup or delete (it then runs no session hook and deletes nothing) and clears
+ * the cookie all the same, answering 200: the session would live on with no `session_end` row, and the phone would
+ * stay its member's. So a D1 that cannot be read or written answers 503 `SIGN_OUT_FAILED` here, before the cookie is
+ * touched, and the `after` hook checks the row is gone. No session: Better Auth's answer, as for a signed-out client.
+ */
+async function recordSignOut(
+  bindings: AuthBindings,
+  ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0],
+  signingOut: SigningOut,
+) {
+  const ending = bindings.onSessionEnding;
+  if (!ending) return;
+  const token = await ctx.getSignedCookie(
+    ctx.context.authCookies.sessionToken.name,
+    ctx.context.secret,
+  );
+  if (!token) return;
+  try {
+    const session = await bindings.database
+      .prepare(`select id, "userId" from "session" where token = ?`)
+      .bind(token)
+      .first<{ id: string; userId: string }>();
+    if (!session) return;
+    await ending(endingSession(session, ctx));
+    signingOut.sessionId = session.id;
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "recording a session's end failed", error: String(error) }),
+    );
+    throw signOutFailed();
+  }
+}
+
+/**
+ * After Better Auth's `/sign-out`: whether the session `recordSignOut` recorded is gone from D1. False when it is
+ * still there or D1 cannot say: the sign-out then answers 503 with the cookie kept, and the client signs out again.
+ */
+async function signedOut(bindings: AuthBindings, sessionId: string): Promise<boolean> {
+  try {
+    const row = await bindings.database
+      .prepare(`select 1 as found from "session" where id = ?`)
+      .bind(sessionId)
+      .first();
+    return row === null;
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: "checking a signed-out session failed", error: String(error) }),
+    );
+    return false;
+  }
+}
+
 /** The session ending, with the device the mobile app names on `/sign-out` (`DEVICE_HEADER`), if any. */
 function endingSession(
   session: { id: string; userId: string },
@@ -540,7 +608,7 @@ function endingSession(
 export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self: Self = noSelf) {
   const random = randomBytes;
   // One instance per request (src/index.ts `workerAuth`), so these are the request's own.
-  const unrecorded = { failed: false };
+  const signingOut: SigningOut = {};
   const taken: { user?: TakenUser; request?: Request } = {};
   return {
     appName: "Brigade",
@@ -691,22 +759,20 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
     // The dashboard is same-origin (Better Auth trusts its own base URL); the mobile app is `APP_ORIGIN`.
     trustedOrigins: [APP_ORIGIN],
     hooks: {
-      before: beforeHook(bindings, self.requestReset),
-      // A sign-out whose end could not be recorded kept its session (`onSessionEnding`): say so, so the client
-      // tries again, instead of Better Auth's 200.
+      before: beforeHook(bindings, signingOut, self.requestReset),
       after: createAuthMiddleware(async (ctx) => {
         if (ctx.path === "/sign-up/email" && taken.user) {
           const { user, request } = taken;
           taken.user = undefined;
           await signUpNotice(bindings, user, request);
         }
-        const failed = unrecorded.failed;
-        unrecorded.failed = false;
-        if (ctx.path === "/sign-out" && failed) {
-          throw APIError.from("SERVICE_UNAVAILABLE", {
-            code: SIGN_OUT_FAILED_CODE,
-            message: "Signing out failed; try again",
-          });
+        const sessionId = signingOut.sessionId;
+        signingOut.sessionId = undefined;
+        // A sign-out whose session Better Auth did not delete (it logs and answers 200): say so, so the client tries
+        // again, and drop the cookie Better Auth cleared anyway, so the client keeps the session it still has.
+        if (ctx.path === "/sign-out" && sessionId && !(await signedOut(bindings, sessionId))) {
+          ctx.context.responseHeaders?.delete("set-cookie");
+          throw signOutFailed();
         }
       }),
     },
@@ -744,10 +810,12 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
         // Every way a session ends (sign-out, revoking one or all, a password reset, an expired one found) deletes
         // its row through here: its sockets close in every workspace (RFC 0004 "Session revocation").
         delete: {
-          // Recorded first, so a shard the hook below cannot reach still hears of it (src/session-end.ts).
+          // Recorded first, so a shard the hook below cannot reach still hears of it (src/session-end.ts). A
+          // sign-out's was recorded before Better Auth ran (`recordSignOut`); any other way a session ends goes on
+          // when it cannot be, with `onSessionEnded` alone.
           before: async (session, ctx) => {
             const ending = bindings.onSessionEnding;
-            if (!ending) return;
+            if (!ending || session.id === signingOut.sessionId) return;
             try {
               await ending(endingSession(session, ctx));
             } catch (error) {
@@ -757,11 +825,6 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
                   error: String(error),
                 }),
               );
-              // A sign-out keeps its session and answers 503 (the `after` hook): the client signs out again.
-              if (ctx?.path === "/sign-out") {
-                unrecorded.failed = true;
-                throw error;
-              }
             }
           },
           after: async (session, ctx) => {

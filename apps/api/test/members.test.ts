@@ -160,6 +160,16 @@ const events = (t: Team, type: string) =>
       .filter((event) => event.type === type),
   );
 
+/** A phone's `device.register` args under `id`. */
+const phoneArgs = (id: string) => ({
+  id,
+  platform: "ios",
+  environment: "sandbox",
+  pushToken: "f".repeat(64),
+  voipToken: null,
+  publicKey: `B${"b".repeat(86)}`,
+});
+
 /** Registers a device for `actor` straight in the shard, as `device.register` from their phone would. */
 const device = (t: Team, actor: Actor) =>
   t.withShard((shard) => {
@@ -949,7 +959,9 @@ describe("a sync upgrade the Worker let through before a removal", () => {
     ).toEqual([]);
   });
 
-  test("a tombstone D1 cannot be checked against still refuses", async () => {
+  // A paging path (AGENTS.md): the app forgets a workspace it is told it is not in, and never registers its phone there
+  // again. A D1 failure is no leaving: the upgrade and the phone's registration are refused as a retry instead.
+  test("a tombstone D1 cannot be checked against still refuses, as a retry and not as a leaving", async () => {
     const t = await team();
     expect((await remove(t, t.ana, t.caio)).status).toBe(200);
     await addMember(t.id, t.caio.id, "viewer");
@@ -959,11 +971,30 @@ describe("a sync upgrade the Worker let through before a removal", () => {
       return original;
     });
     const response = await staleUpgrade(t, t.caio, "viewer");
+    const phone = newId("dev", Date.now(), random);
+    const registered = await t.stub.registerDevice(t.id, user(t.caio, "viewer"), phoneArgs(phone));
     await runInDurableObject(t.stub, (instance: WorkspaceDO) => {
       Reflect.set(instance, "membership", real);
     });
-    expect(response.status).toBe(403);
-    expect(await response.json()).toEqual({ error: "not_a_member" });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "unavailable" });
+    expect(registered).toEqual({ ok: false, code: "unavailable" });
+    // Once D1 answers, the member D1 has again registers.
+    expect(await t.stub.registerDevice(t.id, user(t.caio, "viewer"), phoneArgs(phone))).toEqual({
+      ok: true,
+    });
+  });
+
+  test("a removed member's phone is told `not_a_member` only once D1 confirmed it", async () => {
+    const t = await team();
+    expect((await remove(t, t.ana, t.caio)).status).toBe(200);
+    expect(
+      await t.stub.registerDevice(
+        t.id,
+        user(t.caio, "responder"),
+        phoneArgs(newId("dev", Date.now(), random)),
+      ),
+    ).toEqual({ ok: false, code: "not_a_member" });
   });
 
   test("whose reconcile then fails arms the repair alarm, which removes the copy it restored", async () => {

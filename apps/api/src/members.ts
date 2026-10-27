@@ -564,24 +564,37 @@ export class Membership {
    * arrive). When D1 fails the tombstone stands. Never throws.
    */
   async refuses(workspaceId: string, userId: string, now: number): Promise<boolean> {
-    if (!this.gone(userId, now)) return false;
+    return (await this.standing(workspaceId, userId, now)) !== "member";
+  }
+
+  /**
+   * `refuses`, saying why: `gone` when D1 confirmed the tombstone (they are not in it), `unknown` when D1 failed and
+   * the tombstone stands alone. A caller that saw them in D1 itself in the same request answers `unknown` as a retry,
+   * not as their leaving: the app forgets a workspace it is told it is no longer in.
+   */
+  async standing(
+    workspaceId: string,
+    userId: string,
+    now: number,
+  ): Promise<"member" | "gone" | "unknown"> {
+    if (!this.gone(userId, now)) return "member";
     return this.exclusive(async () => {
-      if (!this.gone(userId, Date.now())) return false;
+      if (!this.gone(userId, Date.now())) return "member";
       const { db, sql, log } = this.options;
       let role: string | undefined;
       try {
         role = await readRole(db, workspaceId, userId);
       } catch (error) {
         log("checking a member tombstone against D1 failed", { error });
-        return true;
+        return "unknown";
       }
-      if (role === undefined || !isRole(role)) return true;
+      if (role === undefined || !isRole(role)) return "gone";
       try {
         sql.exec("delete from member_repair where key = ?", `gone:${userId}`);
       } catch (error) {
         log("dropping a member tombstone failed", { error });
       }
-      return false;
+      return "member";
     });
   }
 

@@ -2851,6 +2851,8 @@
         "part=paging_not_opened": "Sem chamados neste telefone: troque para ele uma vez para recebê-los aqui.",
         "part=pages_notice_in": "Este telefone não está chamando você em {name}",
         "part=paged_here": "Recebe chamados neste telefone",
+        "part=sign_out_failed": "Não foi possível sair da conta, então você continua conectado. Confira sua conexão e tente de novo.",
+        "part=sign_out_retry": "Tentar sair de novo",
         "part=*": "Brigade"
       }
     }

@@ -68,8 +68,11 @@ export async function sweepSessionEnds(
     await env.DB.prepare(`delete from session_end where "endedAt" < ?`)
       .bind(now - SESSION_END_TTL_MS)
       .run();
+    // Oldest first: the phone waiting longest to be freed is freed first. A workspace whose shard serves none has its
+    // rows deleted by the catch-up, so it never holds a place here.
     const { results } = await env.DB.prepare(
-      `select distinct "workspaceId" as id from session_end where "endedAt" < ? limit ?`,
+      `select "workspaceId" as id from session_end where "endedAt" < ?
+       group by "workspaceId" order by min("endedAt") limit ?`,
     )
       .bind(now - SESSION_END_SWEEP_AFTER_MS, SWEEP_WORKSPACES)
       .all<{ id: string }>();

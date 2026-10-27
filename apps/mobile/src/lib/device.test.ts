@@ -17,6 +17,7 @@ import {
   pushEnvironment,
   registerEverywhere,
   registerPhone,
+  registrationsLeft,
   unregisterPhone,
   type RegisterAnswer,
   VOIP_GRACE_MS,
@@ -390,6 +391,26 @@ test("each workspace says how it went: another member's phone is taken, a worksp
   );
   expect(registered).toEqual({ ws_one: "on", ws_two: "taken" });
   expect(gone).toEqual([["ws_gone"]]);
+});
+
+// A paging path (AGENTS.md): a workspace forgotten here is never registered on this phone again.
+test("a workspace whose membership the API could not check is kept and tried again, never forgotten", async () => {
+  const gone: string[][] = [];
+  const registered = await registerEverywhere(
+    phone(async () => ({ ok: true }), {
+      registerAll: async () => ({
+        ok: true,
+        workspaces: { ws_one: "ok", ws_two: "unavailable" },
+      }),
+    }),
+    ["ws_two"],
+    "ws_one",
+    () => true,
+    (ids) => gone.push(ids),
+  );
+  expect(registered).toEqual({ ws_one: "on", ws_two: "failed" });
+  expect(registrationsLeft(registered)).toBe(true);
+  expect(gone).toEqual([]);
 });
 
 test("offline or a server error fails every workspace, so all are tried again; notifications off says so for all", async () => {

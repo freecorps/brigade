@@ -25,6 +25,8 @@ export type Account_FlowInputs = {
 * | "paging_not_opened" | "Not paged on this phone: switch to it once to get its pages here." |
 * | "pages_notice_in" | "This phone isn't paging you in {name}" |
 * | "paged_here" | "Paged on this phone" |
+* | "sign_out_failed" | "Couldn't sign you out, so you're still signed in. Check your connection and try again." |
+* | "sign_out_retry" | "Try signing out again" |
 * | * | "Brigade" |
 *
 * @param {Account_FlowInputs} inputs

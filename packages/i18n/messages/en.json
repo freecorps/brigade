@@ -2851,6 +2851,8 @@
         "part=paging_not_opened": "Not paged on this phone: switch to it once to get its pages here.",
         "part=pages_notice_in": "This phone isn't paging you in {name}",
         "part=paged_here": "Paged on this phone",
+        "part=sign_out_failed": "Couldn't sign you out, so you're still signed in. Check your connection and try again.",
+        "part=sign_out_retry": "Try signing out again",
         "part=*": "Brigade"
       }
     }

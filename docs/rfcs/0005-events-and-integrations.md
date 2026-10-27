@@ -8,7 +8,8 @@ Every successful mutation emits one or more events with a CloudEvents-style enve
 mutation declared `silent`: today `monitor.report`'s routine refreshes, `member.sync`, the shard's cache of the
 members in D1, `webhook.record`, an outbound webhook's delivery log, which emits only when it turns the endpoint
 off, `export.reserve`, an export's slot in the hourly limit, whose export emits `workspace.exported` once recorded,
-and `alert.ingest`, an alert source's payload, whose repeats change rows but are no domain event; RFC 0004):
+`alert.ingest`, an alert source's payload, whose repeats change rows but are no domain event, and `device.touch`,
+which records when a member last registered a device that did not change (RFC 0006); RFC 0004):
 
 ```ts
 interface BrigadeEvent<T = unknown> {

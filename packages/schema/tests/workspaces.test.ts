@@ -37,6 +37,7 @@ describe("workspace.create", () => {
       "statusEmail.continue",
       "workspace.create",
       "member.sync",
+      "followUp.remind",
       "member.changeRole",
       "member.remove",
       "member.reconcile",

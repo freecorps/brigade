@@ -499,17 +499,20 @@ deploy that includes it, since the subscribe, manage and notification queries re
 ## Webhooks
 
 RFC 0005 "Outbound webhooks". Owners and admins register endpoints on the dashboard's Webhooks card (at most 20 per
-workspace). `POST /workspaces/:id/webhooks` and `POST /workspaces/:id/webhooks/:webhookId/rotate`
-(`src/webhook-routes.ts`) make the signing secret (`whsec_…`), seal it with AES-256-GCM under `WEBHOOK_SECRET_KEY`
-(optional secret, 32 bytes base64url; the same sealing as Slack's tokens, bound to the workspace and the endpoint)
-and run `webhook.create` / `webhook.rotateSecret` in the shard as the member; the answer is the only time the secret
-is shown. Edits, on and off, delete and "Send test event" are mutations over sync. Without the key, creating answers
-503 `not_configured` and nothing is delivered.
+workspace), or a script with an API token (`webhook:manage`). `POST /workspaces/:id/webhooks` and `POST
+/workspaces/:id/webhooks/:webhookId/rotate` (`src/webhook-routes.ts`) make the signing secret (`whsec_…`), seal it
+with AES-256-GCM under `WEBHOOK_SECRET_KEY` (optional secret, 32 bytes base64url; the same sealing as Slack's tokens,
+bound to the workspace and the endpoint) and run `webhook.create` / `webhook.rotateSecret` in the shard as the member
+or token; the answer is the only time the secret is shown. Custom headers (up to 5, given on create or with `PUT
+…/webhooks/:webhookId/headers`) are sealed the same way, bound to their name too, and never shown back. Edits, on and
+off, delete, "Send test event" and "Replay" are mutations over sync. Without the key, creating answers 503
+`not_configured` and nothing is delivered.
 
 The queue consumer delivers (`src/notify-webhooks.ts`): the shard's ledger (`src/webhooks.ts`) plans each event's
 endpoints and keeps the payload, the consumer signs it (Standard Webhooks, `src/webhook-sign.ts`), POSTs it under the
 monitors' target rules plus https only (no redirects followed, 5 s, at most 1 KB of the answer read) and reports back.
-Retries: 30 s, 2 min, 10 min, 1 h, 4 h, then given up. A page never waits on it: webhooks get at most
+Retries: 30 s, 2 min, 10 min, 1 h, 4 h, then given up; a given-up delivery can be replayed from the card (one
+attempt, the same `webhook-id`, at most 10 an hour per endpoint). A page never waits on it: webhooks get at most
 `WEBHOOK_BUDGET_MS` (3 s) per event in a batch, like Slack. An endpoint failing for a day (10 attempts or more) is
 turned off, and its owners are emailed. Locally, an endpoint must be a public https URL (a tunnel to a local
 receiver works); pass `WEBHOOK_SECRET_KEY` from the shell to try it under `vp run dev`

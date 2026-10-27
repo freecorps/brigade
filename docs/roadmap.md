@@ -422,8 +422,13 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - `packages/sdk` (`@freecorps/brigade-sdk`, MIT, ready to publish; 0.2.0 below): `verifyWebhook` (Standard Webhooks on Web
     Crypto, typed payloads and errors), a typed client for the reference's operations, and the payload types; no
     runtime dependencies (RFC 0002 "Public HTTP API").
+  - Done: replaying a delivery from the endpoint's log on the Webhooks card (`webhook.replay`: any of the last 10,
+    given up or not, as one more attempt with the same `webhook-id`, signed afresh; its own ledger row; one per 10 s
+    and 10 an hour per endpoint; refused while the endpoint is off), and up to 5 custom headers per endpoint (set on
+    create and with `PUT …/webhooks/:id/headers`, reserved and hop-by-hop names refused, `Authorization` allowed,
+    values sealed under `WEBHOOK_SECRET_KEY` and never shown back) (RFC 0005 "Outbound webhooks").
   - Left: publish `@freecorps/brigade-sdk` to npm (owner); setting `WEBHOOK_SECRET_KEY` on the deployed environments
-    (owner's call, apps/api/README.md); replaying a given-up delivery; custom headers per endpoint.
+    (owner's call, apps/api/README.md).
   - Done (RFC 0014): API tokens. Per workspace, minted by owners and admins in the dashboard's API tokens card (name,
     scopes, expiry; shown once), hashed in D1 (`API_TOKEN_KEY` optional), sent as `Authorization: Bearer` on the
     members, invitations, ack and sync routes, acting with the creator's current role within their scopes, rate
@@ -436,8 +441,12 @@ Validate the risky assumptions before writing product code. Each spike produces 
     as the member or API token (`incident:read`, `incident:declare`, `incident:update`, `catalog:read`,
     `catalog:manage`), with an `Idempotency-Key`.
   - Left: changing an incident's title or roles over HTTP (no title mutation yet); publishing 0.2.0 to npm (owner).
-  - Left: tokens on the dashboard's internal routes (webhooks, status page, exports, drafts); GitHub secret scanning
-    partner registration for `brg_` (owner); setting `API_TOKEN_KEY` on deployed environments (owner).
+  - Done: API tokens on the dashboard's routes that need the server, now in the reference and the SDK: creating a
+    webhook, rotating its secret and setting its headers (`webhook:manage`), the status page's settings
+    (`status:manage`), making and downloading exports (`data:export`) and AI postmortem drafts (`incident:update`),
+    each as the creator's current role, re-checked in the shard (RFC 0014 "Using one").
+  - Left: GitHub secret scanning partner registration for `brg_` (owner); setting `API_TOKEN_KEY` on deployed
+    environments (owner); tokens on the status page's subscriber list (the public's addresses: a person's call).
 
 ## Phase 4 — Open source launch (ongoing)
 

@@ -31,19 +31,40 @@ import {
   updateRequest,
   v,
   WEBHOOK_PAYLOADS,
+  MAX_EXPORT_RANGE_DAYS,
+  MONITOR_URL_MAX,
+  STATUS_LOCALES,
+  STATUS_PAGE_TITLE_MAX,
+  STATUS_SLUG,
+  WEBHOOK_DESCRIPTION_MAX,
+  WEBHOOK_EVENT_TYPES,
+  webhookHeadersInput,
+  webhookHeadersUpdate,
   workspaceName,
   type JsonSchema,
   type Permission,
   type WebhookPayloadType,
 } from "@freecorps/brigade-schema";
-import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, REST_STATUS, USER_ID } from "./http.ts";
+import {
+  ACK_STATUS,
+  DRAFT_STATUS,
+  EXPORT_STATUS,
+  INVITATION_STATUS,
+  MEMBER_STATUS,
+  REST_STATUS,
+  STATUS_PAGE_STATUS,
+  USER_ID,
+  WEBHOOK_STATUS,
+} from "./http.ts";
 
 /** The workspace id the D1-backed routes take (`ORGANIZATION_ID` in src/workspace.ts; the test checks they agree). */
 export const WORKSPACE_ID_PATTERN = "^ws_[0-9A-HJKMNP-TV-Z]{26}$";
 /** The idempotency key an ack takes (`TOKEN` in packages/sync's protocol; the test checks they agree). */
 export const IDEMPOTENCY_KEY_PATTERN = "^[\\w:-]{1,64}$";
+/** The idempotency key the webhook routes take (`WEBHOOK_IDEMPOTENCY_KEY` in src/webhook-routes.ts; the test checks). */
+export const WEBHOOK_IDEMPOTENCY_KEY_PATTERN = "^[A-Za-z0-9_-]{16,64}$";
 
-type Method = "get" | "post" | "patch" | "delete";
+type Method = "get" | "post" | "put" | "patch" | "delete";
 
 type Parameter = {
   name: string;
@@ -77,6 +98,10 @@ export type Operation = {
     | "Invitations"
     | "Incidents"
     | "Catalog"
+    | "Webhooks"
+    | "Status page"
+    | "Exports"
+    | "Postmortems"
     | "Sync";
   summary: string;
   description?: string;
@@ -187,6 +212,34 @@ const catalogId = (name: string, prefix: string, what: string): Parameter => ({
 const serviceId = catalogId("serviceId", "svc", "service");
 const typeId = catalogId("typeId", "typ", "incident type");
 const fieldId = catalogId("fieldId", "fld", "custom field");
+const webhookId = catalogId("webhookId", "whk", "webhook endpoint");
+const exportId = catalogId("exportId", "exp", "export");
+/** The key the webhook routes take (src/webhook-routes.ts `WEBHOOK_IDEMPOTENCY_KEY`): optional. */
+const webhookIdempotencyKey: Parameter = {
+  name: "Idempotency-Key",
+  in: "header",
+  description:
+    "Your id for this request (16 to 64 letters, digits, `_` or `-`; a UUID fits), so a retry after a lost answer is " +
+    "the same request: it answers what the first one did, the same secret included. Without one, each request is new.",
+  schema: { type: "string", pattern: WEBHOOK_IDEMPOTENCY_KEY_PATTERN },
+  required: false,
+};
+/** What a route that checks the member (or token) itself answers before the shard (src/member-route.ts). */
+const MEMBER_CHECK = refusals(SIGNED_IN, {
+  400: ["invalid_workspace_id"],
+  403: ["not_a_member"],
+  503: ["unavailable"],
+});
+const WEBHOOK_REFUSALS = refusals(
+  MEMBER_CHECK,
+  {
+    400: ["invalid_args", "invalid_idempotency_key"],
+    404: ["not_found"],
+    503: ["not_configured"],
+  },
+  codesBy(WEBHOOK_STATUS),
+  SHARD_FAILED,
+);
 /** The key every write of the incident and catalog routes takes (src/rest-routes.ts). */
 const idempotencyKey: Parameter = {
   name: "Idempotency-Key",
@@ -1004,6 +1057,266 @@ const LISTED: readonly Operation[] = [
     ),
   },
   {
+    method: "post",
+    path: "/workspaces/{workspaceId}/webhooks",
+    operationId: "createWebhook",
+    tag: "Webhooks",
+    summary: "Add an outbound webhook endpoint",
+    description:
+      'Owners and admins. Runs `webhook.create` (RFC 0005 "Outbound webhooks"): the endpoint takes the listed ' +
+      "events from now on, signed per Standard Webhooks with a secret the server makes and answers here once, never " +
+      "again. `headers` (at most 5) are sent on every delivery; their values are sealed at rest and never shown back " +
+      "(the dashboard shows each name and the last 4 characters of a long value). Names Brigade sets itself, " +
+      "hop-by-hop ones and the `webhook-*` signature headers are refused; `Authorization` is allowed. " +
+      "`503 not_configured`: the server has no `WEBHOOK_SECRET_KEY`. With an `Idempotency-Key`, a retry answers the " +
+      "same secret.",
+    auth: "session",
+    bearer: "webhook:manage",
+    parameters: [workspaceId, webhookIdempotencyKey],
+    body: {
+      type: "object",
+      properties: {
+        id: { type: "string", pattern: idPattern("whk"), description: "Made by the caller." },
+        url: {
+          type: "string",
+          format: "uri",
+          maxLength: MONITOR_URL_MAX,
+          description: "https only, on a public host; redirects are never followed.",
+        },
+        description: toJsonSchema(v.string({ max: WEBHOOK_DESCRIPTION_MAX })),
+        events: toJsonSchema(
+          v.array(v.picklist(WEBHOOK_EVENT_TYPES), {
+            min: 1,
+            max: WEBHOOK_EVENT_TYPES.length,
+            unique: true,
+          }),
+        ),
+        headers: toJsonSchema(webhookHeadersInput),
+      },
+      required: ["id", "url", "description", "events"],
+      additionalProperties: false,
+    },
+    responses: answers(
+      {
+        201: { description: "Added; its signing secret, shown once.", body: ref("WebhookSecret") },
+      },
+      WEBHOOK_REFUSALS,
+    ),
+  },
+  {
+    method: "post",
+    path: "/workspaces/{workspaceId}/webhooks/{webhookId}/rotate",
+    operationId: "rotateWebhookSecret",
+    tag: "Webhooks",
+    summary: "Give a webhook endpoint a new signing secret",
+    description:
+      "Owners and admins. Runs `webhook.rotateSecret`: deliveries are signed with the new secret and, for 24 hours, " +
+      "the previous one too. The new secret is answered here once. With an `Idempotency-Key`, a retry answers the " +
+      "same secret and never rotates again.",
+    auth: "session",
+    bearer: "webhook:manage",
+    parameters: [workspaceId, webhookId, webhookIdempotencyKey],
+    responses: answers(
+      { 200: { description: "The new signing secret, shown once.", body: ref("WebhookSecret") } },
+      WEBHOOK_REFUSALS,
+    ),
+  },
+  {
+    method: "put",
+    path: "/workspaces/{workspaceId}/webhooks/{webhookId}/headers",
+    operationId: "setWebhookHeaders",
+    tag: "Webhooks",
+    summary: "Set a webhook endpoint's custom headers",
+    description:
+      "Owners and admins. Runs `webhook.setHeaders` with the whole list (an empty one removes them): a header sent " +
+      "without `value` keeps the value it has (by name, whatever its case), so the others can change without the " +
+      "caller knowing it. Values are sealed and never answered; the event (`webhook.headers_changed`) names them only.",
+    auth: "session",
+    bearer: "webhook:manage",
+    parameters: [workspaceId, webhookId, webhookIdempotencyKey],
+    body: {
+      type: "object",
+      properties: { headers: toJsonSchema(webhookHeadersUpdate) },
+      required: ["headers"],
+      additionalProperties: false,
+    },
+    responses: answers(
+      {
+        200: {
+          description: "The endpoint's headers now: names and hints, never values.",
+          body: {
+            type: "object",
+            properties: {
+              id: { type: "string", pattern: idPattern("whk") },
+              headers: { type: "array", items: ref("WebhookHeader") },
+            },
+            required: ["id", "headers"],
+          },
+        },
+      },
+      WEBHOOK_REFUSALS,
+    ),
+  },
+  {
+    method: "put",
+    path: "/workspaces/{workspaceId}/status-page",
+    operationId: "configureStatusPage",
+    tag: "Status page",
+    summary: "Set up or change the public status page",
+    description:
+      "Owners and admins. Claims `slug` (`/status/<slug>`) for the workspace and runs `statusPage.configure` (RFC " +
+      "0012): its title, language and whether it is published. `409 slug_taken`: another workspace has it.",
+    auth: "session",
+    bearer: "status:manage",
+    parameters: [workspaceId],
+    body: {
+      type: "object",
+      properties: {
+        slug: { type: "string", pattern: STATUS_SLUG.source },
+        title: toJsonSchema(v.string({ min: 1, max: STATUS_PAGE_TITLE_MAX })),
+        locale: toJsonSchema(v.picklist(STATUS_LOCALES)),
+        enabled: { type: "boolean" },
+      },
+      required: ["slug", "title", "locale", "enabled"],
+      additionalProperties: false,
+    },
+    responses: answers(
+      OK_200,
+      refusals(
+        MEMBER_CHECK,
+        { 400: ["invalid_args"], 401: ["unauthenticated"] },
+        codesBy(STATUS_PAGE_STATUS),
+        SHARD_FAILED,
+      ),
+    ),
+  },
+  {
+    method: "post",
+    path: "/workspaces/{workspaceId}/exports",
+    operationId: "createExport",
+    tag: "Exports",
+    summary: "Export incidents as a JSON file",
+    description:
+      "Owners and admins (`data:export`). Writes one incident, or every incident declared in a range of days (at " +
+      `most ${MAX_EXPORT_RANGE_DAYS}), with their timelines, follow-ups and postmortems, to a file kept 24 hours, ` +
+      "listed in the workspace and recorded as `workspace.exported` (RFC 0013). A few an hour per workspace " +
+      "(`429 rate_limited`); `413`: too many incidents or too large. `503 exports_unavailable`: the server has no " +
+      "bucket.",
+    auth: "session",
+    bearer: "data:export",
+    parameters: [workspaceId],
+    body: {
+      type: "object",
+      properties: {
+        scope: {
+          oneOf: [
+            {
+              type: "object",
+              properties: {
+                kind: { const: "incident" },
+                incidentId: { type: "string", pattern: idPattern("inc") },
+              },
+              required: ["kind", "incidentId"],
+              additionalProperties: false,
+            },
+            {
+              type: "object",
+              description: "Incidents declared from `from` to `to`, both days included (UTC).",
+              properties: {
+                kind: { const: "range" },
+                from: { type: "string", format: "date" },
+                to: { type: "string", format: "date" },
+              },
+              required: ["kind", "from", "to"],
+              additionalProperties: false,
+            },
+          ],
+        },
+      },
+      required: ["scope"],
+    },
+    responses: answers(
+      {
+        201: {
+          description: "Written; download it with `downloadExport` before `expiresAt`.",
+          body: {
+            type: "object",
+            properties: {
+              id: { type: "string", pattern: idPattern("exp") },
+              expiresAt: { type: "integer", description: "Epoch milliseconds." },
+              incidents: { type: "integer", minimum: 0 },
+              bytes: { type: "integer", minimum: 0 },
+            },
+            required: ["id", "expiresAt", "incidents", "bytes"],
+          },
+        },
+      },
+      refusals(
+        MEMBER_CHECK,
+        { 400: ["invalid_args"], 401: ["unauthenticated"], 503: ["exports_unavailable"] },
+        codesBy(EXPORT_STATUS),
+        SHARD_FAILED,
+      ),
+    ),
+  },
+  {
+    method: "get",
+    path: "/workspaces/{workspaceId}/exports/{exportId}",
+    operationId: "downloadExport",
+    tag: "Exports",
+    summary: "Download an export",
+    description:
+      "Owners and admins (`data:export`): the file, as an attachment (`application/json`, the `brigade.export` " +
+      "format). `410 expired`: past its 24 hours, and deleted now.",
+    auth: "session",
+    bearer: "data:export",
+    parameters: [workspaceId, exportId],
+    responses: answers(
+      { 200: { description: "The export file (`Content-Disposition: attachment`)." } },
+      refusals(MEMBER_CHECK, {
+        404: ["not_found"],
+        410: ["expired"],
+        503: ["exports_unavailable", "unavailable"],
+      }),
+    ),
+  },
+  {
+    method: "post",
+    path: "/workspaces/{workspaceId}/incidents/{incidentId}/postmortem/draft",
+    operationId: "requestPostmortemDraft",
+    tag: "Postmortems",
+    summary: "Ask Workers AI to draft an incident's postmortem",
+    description:
+      "Responders and up (`incident:update`). Runs `postmortem.requestDraft` (RFC 0013): the draft is written by the " +
+      "model in the background and arrives over Brigade Sync, in the status page's language when there is one, else " +
+      "`locale`. `409 conflict`: a draft is being written, or the postmortem has text a member wrote; `429 " +
+      "limit_reached`: too many drafts lately. `503 ai_unavailable`: the server has no Workers AI.",
+    auth: "session",
+    bearer: "incident:update",
+    parameters: [workspaceId, incidentId],
+    body: {
+      type: "object",
+      properties: { locale: toJsonSchema(v.picklist(STATUS_LOCALES)) },
+    },
+    responses: answers(
+      {
+        202: {
+          description: "Asked; the draft follows over sync.",
+          body: {
+            type: "object",
+            properties: { requestId: { type: "string", pattern: idPattern("drf") } },
+            required: ["requestId"],
+          },
+        },
+      },
+      refusals(
+        MEMBER_CHECK,
+        { 401: ["unauthenticated"], 404: ["not_found"], 503: ["ai_unavailable", "unavailable"] },
+        codesBy(DRAFT_STATUS),
+      ),
+    ),
+  },
+  {
     method: "get",
     path: "/sync/{workspaceId}",
     operationId: "openSync",
@@ -1072,6 +1385,30 @@ function withRefusals(
 }
 
 const SCHEMAS: Record<string, JsonSchema> = {
+  WebhookSecret: {
+    type: "object",
+    properties: {
+      id: { type: "string", pattern: idPattern("whk") },
+      secret: {
+        type: "string",
+        pattern: "^whsec_[A-Za-z0-9+/]{43}=$",
+        description: "Standard Webhooks' format; shown this once.",
+      },
+    },
+    required: ["id", "secret"],
+  },
+  WebhookHeader: {
+    type: "object",
+    description: "A custom header as Brigade shows it: never its value.",
+    properties: {
+      name: { type: "string" },
+      hint: {
+        type: ["string", "null"],
+        description: "The value's last 4 characters, for a value of at least 16; else null.",
+      },
+    },
+    required: ["name", "hint"],
+  },
   Ok: {
     type: "object",
     properties: { ok: { const: true } },

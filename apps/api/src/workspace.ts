@@ -3,7 +3,7 @@ import type { SlackActOutcome } from "@freecorps/brigade-slack/bridge";
 import {
   ACCOUNT_ACTOR,
   AI_ACTOR,
-  can,
+  allows,
   exportChunks,
   fitMemberName,
   isRole,
@@ -87,6 +87,7 @@ import {
   type WebhookEventRef,
   type WebhookOutcome,
   type WebhookPlan,
+  type WebhookRunName,
   type WebhookRunResult,
 } from "./webhooks.ts";
 import type { BuiltExport } from "./exports.ts";
@@ -615,20 +616,23 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
-   * Sets up or changes the status page (RPC from `PUT /workspaces/:id/status-page`, which checked the session and read
-   * the member's role in D1): see `StatusPublisher.configure`. A member removed within the tombstone is refused as
-   * their sync upgrade would be; a shard that serves another workspace, or none yet, answers `not_found`.
+   * Sets up or changes the status page (RPC from `PUT /workspaces/:id/status-page`, which checked the session or API
+   * token and read the role in D1): see `StatusPublisher.configure`. An API token the shard no longer backs is refused
+   * like one the Worker refused; a member removed within the tombstone as their sync upgrade would be; a shard that
+   * serves another workspace, or none yet, answers `not_found`.
    */
   async configureStatusPage(
     workspaceId: string,
     actor: Actor,
     args: unknown,
-  ): Promise<StatusConfigureResult | { ok: false; code: "not_a_member" }> {
+  ): Promise<StatusConfigureResult | { ok: false; code: "not_a_member" } | TokenRefused> {
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
-    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+    const acting = this.tokenActor(actor);
+    if (!acting) return TOKEN_REFUSED;
+    if (await this.membership.refuses(workspaceId, acting.by ?? acting.id, Date.now())) {
       return { ok: false, code: "not_a_member" };
     }
-    return this.status.configure(workspaceId, actor, args);
+    return this.status.configure(workspaceId, acting, args);
   }
 
   /**
@@ -816,8 +820,8 @@ export class WorkspaceDO extends DurableObject<Env> {
 
   /**
    * Asks for an AI draft of the incident's postmortem (RPC from `POST
-   * /workspaces/:id/incidents/:incidentId/postmortem/draft`, which checked the session, the member's role and that
-   * the deployment has the `AI` binding): runs the server-only `postmortem.requestDraft` as the member (RBAC, the
+   * /workspaces/:id/incidents/:incidentId/postmortem/draft`, which checked the session or API token, the role and
+   * that the deployment has the `AI` binding): runs the server-only `postmortem.requestDraft` as the member (RBAC, the
    * rate limit, its event) and hands back what the model may read (src/postmortem.ts). The language is the status
    * page's when the workspace has one, else `locale`, the asker's.
    */
@@ -828,7 +832,10 @@ export class WorkspaceDO extends DurableObject<Env> {
     locale: StatusLocale,
   ): Promise<DraftRequestResult> {
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
-    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+    const acting = this.tokenActor(actor);
+    if (!acting) return TOKEN_REFUSED;
+    actor = acting;
+    if (await this.membership.refuses(workspaceId, actor.by ?? actor.id, Date.now())) {
       return { ok: false, code: "not_a_member" };
     }
     // What the model reads comes first: an incident it cannot read is refused before the draft is pending and the
@@ -895,8 +902,8 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
-   * The export file for `scope` (RPC from `POST /workspaces/:id/exports`, which checked the session and that the
-   * member may export): takes a slot of the hourly limit (`export.reserve`), then writes the file from this shard's
+   * The export file for `scope` (RPC from `POST /workspaces/:id/exports`, which checked the session or API token and
+   * that the caller may export): takes a slot of the hourly limit (`export.reserve`), then writes the file from this shard's
    * rows as UTF-8 parts, one incident at a time, counting the bytes and stopping at `MAX_EXPORT_BYTES` (`too_large`)
    * without ever holding the whole text. It yields between parts, so a large export never holds the shard: alarms
    * (escalations) and other requests run in between. The Worker streams the parts into R2; nothing else is written
@@ -904,10 +911,13 @@ export class WorkspaceDO extends DurableObject<Env> {
    */
   async buildExport(workspaceId: string, actor: Actor, scope: ExportScope): Promise<BuiltExport> {
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
-    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+    const acting = this.tokenActor(actor);
+    if (!acting) return TOKEN_REFUSED;
+    actor = acting;
+    if (await this.membership.refuses(workspaceId, actor.by ?? actor.id, Date.now())) {
       return { ok: false, code: "not_a_member" };
     }
-    if (!isRole(actor.role) || !can(actor.role, "data:export"))
+    if (!isRole(actor.role) || !allows(actor, "data:export"))
       return { ok: false, code: "forbidden" };
     // One build at a time: each holds up to MAX_EXPORT_BYTES of parts in this isolate, and yields, so several at once
     // could outgrow its memory and reset the shard that pages. A second one is told to try again shortly.
@@ -1675,23 +1685,30 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
-   * `webhook.create` or `webhook.rotateSecret` as `actor` (RPC from `POST /workspaces/:id/webhooks` and
-   * `…/webhooks/:id/rotate`, which checked the session, read the role in D1, made the secret and sealed it). The same
-   * RBAC as every mutation; a member removed within the tombstone is refused as their sync upgrade would be.
+   * `webhook.create`, `webhook.rotateSecret` or `webhook.setHeaders` as `actor` (RPC from src/webhook-routes.ts, which
+   * checked the session or API token, read the role in D1 and sealed what it was given or made). The same RBAC as
+   * every mutation; an API token the shard no longer backs is refused like one the Worker refused, and a member removed
+   * within the tombstone as their sync upgrade would be.
    */
   async webhookRun(
     workspaceId: string,
     actor: Actor,
-    name: "webhook.create" | "webhook.rotateSecret",
+    name: WebhookRunName,
     args: Record<string, unknown>,
     key: string,
   ): Promise<WebhookRunResult> {
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
-    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+    const acting = this.tokenActor(actor);
+    if (!acting) return TOKEN_REFUSED;
+    if (await this.membership.refuses(workspaceId, acting.by ?? acting.id, Date.now())) {
       return { ok: false, code: "not_a_member" };
     }
-    const result = this.webhooks.run(actor, name, args, key, Date.now());
-    if (result.ok) return { ok: true };
+    const result = this.webhooks.run(acting, name, args, key, Date.now());
+    if (result.ok) {
+      if (name !== "webhook.setHeaders") return { ok: true };
+      const id = typeof args.id === "string" ? args.id : "";
+      return { ok: true, headers: this.shard.store.get("webhooks", id)?.headers ?? [] };
+    }
     const { code, issues } = result.error;
     return issues ? { ok: false, code, issues } : { ok: false, code };
   }

@@ -848,6 +848,15 @@ export type WebhookAttempt = {
   error: WebhookError | null;
   /** At most `WEBHOOK_SNIPPET_MAX` characters of the response, printable text only; null for none. */
   snippet: string | null;
+  /** A member's replay of this event from the log (`webhook.replay`), not one of its own attempts. */
+  replay?: boolean;
+};
+
+/** A custom header an endpoint sends (RFC 0005 "Outbound webhooks"), as its row shows it: never the value. */
+export type WebhookHeader = {
+  name: string;
+  /** The value's last 4 characters, for a value of at least 16; null otherwise. */
+  hint: string | null;
 };
 
 /**
@@ -871,6 +880,10 @@ export type WebhookRow = {
   failingSince: number | null;
   /** The last "Send test event". */
   lastTestAt: number | null;
+  /** When it was replayed from its log within the last `WEBHOOK_REPLAY_WINDOW_MS` (or before: pruned on the next). */
+  replays?: number[];
+  /** Its custom headers, in the order given; the values are sealed in `webhook_secrets`. Absent on older rows. */
+  headers?: WebhookHeader[];
   secretRotatedAt: number;
   /** The last `WEBHOOK_LOG_SIZE` attempts, newest first. */
   recent: WebhookAttempt[];
@@ -895,6 +908,8 @@ export type WebhookSecretRow = {
   secret: string;
   previous: string | null;
   previousUntil: number | null;
+  /** The custom headers' values, sealed like the secret (bound to the endpoint and the header's name). */
+  headers?: { name: string; value: string }[];
 };
 
 /**

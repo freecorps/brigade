@@ -81,6 +81,37 @@ export type Webhooks_CardInputs = {
 * | "recent_title" | "Recent deliveries" |
 * | "recent_empty" | "Nothing delivered yet. Send a test event to try the endpoint." |
 * | "attempt" | "Try {when}" |
+* | "headers_label" | "Custom headers" |
+* | "headers_hint" | "Optional, up to 5. Sent with every delivery, for example Authorization for your receiver. Brigade keeps the values sealed and never shows them again." |
+* | "headers_none" | "No custom headers." |
+* | "headers_edit" | "Edit headers" |
+* | "headers_save" | "Save headers" |
+* | "headers_saving" | "Saving…" |
+* | "headers_saved" | "Headers saved." |
+* | "headers_failed" | "Couldn't save the headers. Try again." |
+* | "headers_refused" | "Brigade refused this header. Check its name and value." |
+* | "headers_limit" | "Use at most 5 headers." |
+* | "header_add" | "Add header" |
+* | "header_remove" | "Remove header" |
+* | "header_name" | "Header name" |
+* | "header_value" | "Value" |
+* | "header_keep" | "Unchanged" |
+* | "header_name_invalid" | "Use letters, digits and hyphens, like X-Team." |
+* | "header_reserved" | "Brigade sets this header itself." |
+* | "header_duplicate" | "This header is listed twice." |
+* | "header_value_required" | "Enter a value." |
+* | "header_value_invalid" | "Use up to 1024 plain ASCII characters, without line breaks." |
+* | "header_hidden" | "value hidden" |
+* | "header_hint" | "ends in {when}" |
+* | "replay" | "Replay" |
+* | "replaying" | "Replaying…" |
+* | "replay_sent" | "Replay on its way, with the same webhook-id. It shows at the top of Recent deliveries." |
+* | "replay_too_soon" | "A delivery was replayed moments ago, or this endpoint or the workspace reached its replays for the hour. Wait a little." |
+* | "headers_dropped" | "Saving with an address on another host removes this endpoint's custom headers. Enter them again afterwards." |
+* | "replay_off" | "Turn this endpoint on to replay a delivery." |
+* | "replay_gone" | "Brigade no longer keeps this delivery, so it can't be replayed." |
+* | "replay_failed" | "Couldn't replay it. Try again." |
+* | "replayed" | "Replay" |
 * | * | "Webhooks" |
 *
 * @param {Webhooks_CardInputs} inputs

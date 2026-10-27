@@ -82,7 +82,7 @@ const INVITEE_PATH = /^\/invitations\/([^/]+?)(?:\/(accept|decline))?$/;
 const ACK_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/ack$/;
 const SLACK_INSTALL_PATH = /^\/workspaces\/([^/]+)\/slack\/install$/;
 const SLACK_CHANNELS_PATH = /^\/workspaces\/([^/]+)\/slack\/channels$/;
-const WEBHOOKS_PATH = /^\/workspaces\/([^/]+)\/webhooks(?:\/([^/]+)\/rotate)?$/;
+const WEBHOOKS_PATH = /^\/workspaces\/([^/]+)\/webhooks(?:\/([^/]+)\/(rotate|headers))?$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
 const ALERTS_PATH = /^\/alerts\/([^/]+)$/;
@@ -207,12 +207,13 @@ export default {
     const draft = DRAFT_PATH.exec(pathname);
     if (draft) return requestDraftRoute(request, env, ctx, auth, draft[1]!, draft[2]!);
     const exports = EXPORTS_PATH.exec(pathname)?.[1];
-    if (exports !== undefined) return createExport(request, env, auth, exports);
+    if (exports !== undefined) return createExport(request, env, auth, exports, waitUntil);
     const download = EXPORT_PATH.exec(pathname);
     if (download) return downloadExport(request, env, ctx, auth, download[1]!, download[2]!);
     if (pathname === "/features") return features(request, env, auth);
     const statusPage = STATUS_PAGE_PATH.exec(pathname)?.[1];
-    if (statusPage !== undefined) return configureStatusPage(request, env, auth, statusPage);
+    if (statusPage !== undefined)
+      return configureStatusPage(request, env, auth, statusPage, waitUntil);
     const subscribers = SUBSCRIBERS_PATH.exec(pathname);
     if (subscribers)
       return serveSubscribers(request, env, auth, subscribers[1]!, subscribers[2] ?? "");
@@ -233,7 +234,17 @@ export default {
     const publicStatus = PUBLIC_STATUS_PATH.exec(pathname);
     if (publicStatus) return serveStatusPage(request, env, ctx, publicStatus[1] ?? "");
     const webhooks = WEBHOOKS_PATH.exec(pathname);
-    if (webhooks) return webhookRequest(request, env, auth, webhooks[1]!, webhooks[2]);
+    if (webhooks) {
+      return webhookRequest(
+        request,
+        env,
+        auth,
+        webhooks[1]!,
+        webhooks[2],
+        (webhooks[3] as "rotate" | "headers" | undefined) ?? "create",
+        waitUntil,
+      );
+    }
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
     if (pathname === DEVICES_REGISTER_PATH) return registerDevices(request, env, auth);

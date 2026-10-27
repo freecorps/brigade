@@ -82,6 +82,37 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "recent_title" | "Recent deliveries" |
 * | "recent_empty" | "Nothing delivered yet. Send a test event to try the endpoint." |
 * | "attempt" | "Try {when}" |
+* | "headers_label" | "Custom headers" |
+* | "headers_hint" | "Optional, up to 5. Sent with every delivery, for example Authorization for your receiver. Brigade keeps the values sealed and never shows them again." |
+* | "headers_none" | "No custom headers." |
+* | "headers_edit" | "Edit headers" |
+* | "headers_save" | "Save headers" |
+* | "headers_saving" | "Saving…" |
+* | "headers_saved" | "Headers saved." |
+* | "headers_failed" | "Couldn't save the headers. Try again." |
+* | "headers_refused" | "Brigade refused this header. Check its name and value." |
+* | "headers_limit" | "Use at most 5 headers." |
+* | "header_add" | "Add header" |
+* | "header_remove" | "Remove header" |
+* | "header_name" | "Header name" |
+* | "header_value" | "Value" |
+* | "header_keep" | "Unchanged" |
+* | "header_name_invalid" | "Use letters, digits and hyphens, like X-Team." |
+* | "header_reserved" | "Brigade sets this header itself." |
+* | "header_duplicate" | "This header is listed twice." |
+* | "header_value_required" | "Enter a value." |
+* | "header_value_invalid" | "Use up to 1024 plain ASCII characters, without line breaks." |
+* | "header_hidden" | "value hidden" |
+* | "header_hint" | "ends in {when}" |
+* | "replay" | "Replay" |
+* | "replaying" | "Replaying…" |
+* | "replay_sent" | "Replay on its way, with the same webhook-id. It shows at the top of Recent deliveries." |
+* | "replay_too_soon" | "A delivery was replayed moments ago, or this endpoint or the workspace reached its replays for the hour. Wait a little." |
+* | "headers_dropped" | "Saving with an address on another host removes this endpoint's custom headers. Enter them again afterwards." |
+* | "replay_off" | "Turn this endpoint on to replay a delivery." |
+* | "replay_gone" | "Brigade no longer keeps this delivery, so it can't be replayed." |
+* | "replay_failed" | "Couldn't replay it. Try again." |
+* | "replayed" | "Replay" |
 * | * | "Webhooks" |
 *
 * @param {Webhooks_CardInputs} inputs
@@ -163,6 +194,37 @@ export const webhooks_card = /** @type {((inputs: Webhooks_CardInputs, options?:
 		if (i?.part === "recent_title") return /** @type {LocalizedString} */ (`Entregas recentes`);
 		if (i?.part === "recent_empty") return /** @type {LocalizedString} */ (`Nada entregue ainda. Envie um evento de teste para experimentar o endpoint.`);
 		if (i?.part === "attempt") return /** @type {LocalizedString} */ (`Tentativa ${i?.when}`);
+		if (i?.part === "headers_label") return /** @type {LocalizedString} */ (`Cabeçalhos personalizados`);
+		if (i?.part === "headers_hint") return /** @type {LocalizedString} */ (`Opcional, até 5. Enviados em cada entrega, por exemplo Authorization para o seu receptor. O Brigade guarda os valores selados e nunca os mostra de novo.`);
+		if (i?.part === "headers_none") return /** @type {LocalizedString} */ (`Nenhum cabeçalho personalizado.`);
+		if (i?.part === "headers_edit") return /** @type {LocalizedString} */ (`Editar cabeçalhos`);
+		if (i?.part === "headers_save") return /** @type {LocalizedString} */ (`Salvar cabeçalhos`);
+		if (i?.part === "headers_saving") return /** @type {LocalizedString} */ (`Salvando…`);
+		if (i?.part === "headers_saved") return /** @type {LocalizedString} */ (`Cabeçalhos salvos.`);
+		if (i?.part === "headers_failed") return /** @type {LocalizedString} */ (`Não foi possível salvar os cabeçalhos. Tente de novo.`);
+		if (i?.part === "headers_refused") return /** @type {LocalizedString} */ (`O Brigade recusou este cabeçalho. Confira o nome e o valor.`);
+		if (i?.part === "headers_limit") return /** @type {LocalizedString} */ (`Use no máximo 5 cabeçalhos.`);
+		if (i?.part === "header_add") return /** @type {LocalizedString} */ (`Adicionar cabeçalho`);
+		if (i?.part === "header_remove") return /** @type {LocalizedString} */ (`Remover cabeçalho`);
+		if (i?.part === "header_name") return /** @type {LocalizedString} */ (`Nome do cabeçalho`);
+		if (i?.part === "header_value") return /** @type {LocalizedString} */ (`Valor`);
+		if (i?.part === "header_keep") return /** @type {LocalizedString} */ (`Sem alteração`);
+		if (i?.part === "header_name_invalid") return /** @type {LocalizedString} */ (`Use letras, dígitos e hifens, como X-Team.`);
+		if (i?.part === "header_reserved") return /** @type {LocalizedString} */ (`O Brigade define este cabeçalho por conta própria.`);
+		if (i?.part === "header_duplicate") return /** @type {LocalizedString} */ (`Este cabeçalho aparece duas vezes.`);
+		if (i?.part === "header_value_required") return /** @type {LocalizedString} */ (`Informe um valor.`);
+		if (i?.part === "header_value_invalid") return /** @type {LocalizedString} */ (`Use até 1024 caracteres ASCII simples, sem quebras de linha.`);
+		if (i?.part === "header_hidden") return /** @type {LocalizedString} */ (`valor oculto`);
+		if (i?.part === "header_hint") return /** @type {LocalizedString} */ (`termina em ${i?.when}`);
+		if (i?.part === "replay") return /** @type {LocalizedString} */ (`Reenviar`);
+		if (i?.part === "replaying") return /** @type {LocalizedString} */ (`Reenviando…`);
+		if (i?.part === "replay_sent") return /** @type {LocalizedString} */ (`Reenvio a caminho, com o mesmo webhook-id. Ele aparece no topo de Entregas recentes.`);
+		if (i?.part === "replay_too_soon") return /** @type {LocalizedString} */ (`Uma entrega foi reenviada há pouco, ou este endpoint ou o workspace atingiu o limite de reenvios da hora. Aguarde um pouco.`);
+		if (i?.part === "headers_dropped") return /** @type {LocalizedString} */ (`Salvar com um endereço em outro host remove os cabeçalhos personalizados deste endpoint. Informe-os de novo depois.`);
+		if (i?.part === "replay_off") return /** @type {LocalizedString} */ (`Ligue este endpoint para reenviar uma entrega.`);
+		if (i?.part === "replay_gone") return /** @type {LocalizedString} */ (`O Brigade não guarda mais esta entrega, então ela não pode ser reenviada.`);
+		if (i?.part === "replay_failed") return /** @type {LocalizedString} */ (`Não foi possível reenviar. Tente de novo.`);
+		if (i?.part === "replayed") return /** @type {LocalizedString} */ (`Reenvio`);
 		return /** @type {LocalizedString} */ (`Webhooks`)
 	}
 	{
@@ -238,6 +300,37 @@ export const webhooks_card = /** @type {((inputs: Webhooks_CardInputs, options?:
 		if (i?.part === "recent_title") return /** @type {LocalizedString} */ (`Recent deliveries`);
 		if (i?.part === "recent_empty") return /** @type {LocalizedString} */ (`Nothing delivered yet. Send a test event to try the endpoint.`);
 		if (i?.part === "attempt") return /** @type {LocalizedString} */ (`Try ${i?.when}`);
+		if (i?.part === "headers_label") return /** @type {LocalizedString} */ (`Custom headers`);
+		if (i?.part === "headers_hint") return /** @type {LocalizedString} */ (`Optional, up to 5. Sent with every delivery, for example Authorization for your receiver. Brigade keeps the values sealed and never shows them again.`);
+		if (i?.part === "headers_none") return /** @type {LocalizedString} */ (`No custom headers.`);
+		if (i?.part === "headers_edit") return /** @type {LocalizedString} */ (`Edit headers`);
+		if (i?.part === "headers_save") return /** @type {LocalizedString} */ (`Save headers`);
+		if (i?.part === "headers_saving") return /** @type {LocalizedString} */ (`Saving…`);
+		if (i?.part === "headers_saved") return /** @type {LocalizedString} */ (`Headers saved.`);
+		if (i?.part === "headers_failed") return /** @type {LocalizedString} */ (`Couldn't save the headers. Try again.`);
+		if (i?.part === "headers_refused") return /** @type {LocalizedString} */ (`Brigade refused this header. Check its name and value.`);
+		if (i?.part === "headers_limit") return /** @type {LocalizedString} */ (`Use at most 5 headers.`);
+		if (i?.part === "header_add") return /** @type {LocalizedString} */ (`Add header`);
+		if (i?.part === "header_remove") return /** @type {LocalizedString} */ (`Remove header`);
+		if (i?.part === "header_name") return /** @type {LocalizedString} */ (`Header name`);
+		if (i?.part === "header_value") return /** @type {LocalizedString} */ (`Value`);
+		if (i?.part === "header_keep") return /** @type {LocalizedString} */ (`Unchanged`);
+		if (i?.part === "header_name_invalid") return /** @type {LocalizedString} */ (`Use letters, digits and hyphens, like X-Team.`);
+		if (i?.part === "header_reserved") return /** @type {LocalizedString} */ (`Brigade sets this header itself.`);
+		if (i?.part === "header_duplicate") return /** @type {LocalizedString} */ (`This header is listed twice.`);
+		if (i?.part === "header_value_required") return /** @type {LocalizedString} */ (`Enter a value.`);
+		if (i?.part === "header_value_invalid") return /** @type {LocalizedString} */ (`Use up to 1024 plain ASCII characters, without line breaks.`);
+		if (i?.part === "header_hidden") return /** @type {LocalizedString} */ (`value hidden`);
+		if (i?.part === "header_hint") return /** @type {LocalizedString} */ (`ends in ${i?.when}`);
+		if (i?.part === "replay") return /** @type {LocalizedString} */ (`Replay`);
+		if (i?.part === "replaying") return /** @type {LocalizedString} */ (`Replaying…`);
+		if (i?.part === "replay_sent") return /** @type {LocalizedString} */ (`Replay on its way, with the same webhook-id. It shows at the top of Recent deliveries.`);
+		if (i?.part === "replay_too_soon") return /** @type {LocalizedString} */ (`A delivery was replayed moments ago, or this endpoint or the workspace reached its replays for the hour. Wait a little.`);
+		if (i?.part === "headers_dropped") return /** @type {LocalizedString} */ (`Saving with an address on another host removes this endpoint's custom headers. Enter them again afterwards.`);
+		if (i?.part === "replay_off") return /** @type {LocalizedString} */ (`Turn this endpoint on to replay a delivery.`);
+		if (i?.part === "replay_gone") return /** @type {LocalizedString} */ (`Brigade no longer keeps this delivery, so it can't be replayed.`);
+		if (i?.part === "replay_failed") return /** @type {LocalizedString} */ (`Couldn't replay it. Try again.`);
+		if (i?.part === "replayed") return /** @type {LocalizedString} */ (`Replay`);
 		return /** @type {LocalizedString} */ (`Webhooks`)
 	}
 });

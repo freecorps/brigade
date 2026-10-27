@@ -2487,6 +2487,37 @@
         "part=recent_title": "Recent deliveries",
         "part=recent_empty": "Nothing delivered yet. Send a test event to try the endpoint.",
         "part=attempt": "Try {when}",
+        "part=headers_label": "Custom headers",
+        "part=headers_hint": "Optional, up to 5. Sent with every delivery, for example Authorization for your receiver. Brigade keeps the values sealed and never shows them again.",
+        "part=headers_none": "No custom headers.",
+        "part=headers_edit": "Edit headers",
+        "part=headers_save": "Save headers",
+        "part=headers_saving": "Saving…",
+        "part=headers_saved": "Headers saved.",
+        "part=headers_failed": "Couldn't save the headers. Try again.",
+        "part=headers_refused": "Brigade refused this header. Check its name and value.",
+        "part=headers_limit": "Use at most 5 headers.",
+        "part=header_add": "Add header",
+        "part=header_remove": "Remove header",
+        "part=header_name": "Header name",
+        "part=header_value": "Value",
+        "part=header_keep": "Unchanged",
+        "part=header_name_invalid": "Use letters, digits and hyphens, like X-Team.",
+        "part=header_reserved": "Brigade sets this header itself.",
+        "part=header_duplicate": "This header is listed twice.",
+        "part=header_value_required": "Enter a value.",
+        "part=header_value_invalid": "Use up to 1024 plain ASCII characters, without line breaks.",
+        "part=header_hidden": "value hidden",
+        "part=header_hint": "ends in {when}",
+        "part=replay": "Replay",
+        "part=replaying": "Replaying…",
+        "part=replay_sent": "Replay on its way, with the same webhook-id. It shows at the top of Recent deliveries.",
+        "part=replay_too_soon": "A delivery was replayed moments ago, or this endpoint or the workspace reached its replays for the hour. Wait a little.",
+        "part=headers_dropped": "Saving with an address on another host removes this endpoint's custom headers. Enter them again afterwards.",
+        "part=replay_off": "Turn this endpoint on to replay a delivery.",
+        "part=replay_gone": "Brigade no longer keeps this delivery, so it can't be replayed.",
+        "part=replay_failed": "Couldn't replay it. Try again.",
+        "part=replayed": "Replay",
         "part=*": "Webhooks"
       }
     }
@@ -2522,6 +2553,7 @@
         "error=redirect": "Redirect {status}, not followed",
         "error=blocked": "Blocked: not a public https URL",
         "error=secret": "Secret unreadable on the server",
+        "error=expired": "Not sent: payload no longer kept",
         "error=*": "Timed out"
       }
     }
@@ -2537,6 +2569,20 @@
       "match": {
         "countPlural=one": "{countFormatted} event",
         "countPlural=*": "{countFormatted} events"
+      }
+    }
+  ],
+  "webhook_headers_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} custom header",
+        "countPlural=*": "{countFormatted} custom headers"
       }
     }
   ],

@@ -1,6 +1,7 @@
 import { m, type Locale } from "@freecorps/brigade-i18n";
 import {
   can,
+  MAX_WEBHOOK_HEADERS,
   MAX_WEBHOOKS_PER_WORKSPACE,
   type WebhookAttempt,
   type WebhookEventType,
@@ -16,6 +17,7 @@ import {
   OctagonAlertIcon,
   PencilIcon,
   PlusIcon,
+  RedoIcon,
   RotateCwIcon,
   SendIcon,
   XIcon,
@@ -32,7 +34,14 @@ import { Field, FormError } from "@/components/ui/field";
 import { formatAge } from "@/lib/incidents";
 import {
   attemptResult,
+  canReplay,
   checkDraft,
+  checkHeaders,
+  dropsHeaders,
+  headerDrafts,
+  headerValueShown,
+  replayOutcome,
+  requestHeaders,
   draftOf,
   emptyDraft,
   EVENT_GROUPS,
@@ -47,6 +56,10 @@ import {
   webhookState,
   webhookText,
   type DraftIssues,
+  type HeaderDraft,
+  type HeaderIssue,
+  type HeadersResult,
+  type ReplayOutcome,
   type SecretResult,
   type WebhookDraft,
   type WebhookState,
@@ -64,8 +77,9 @@ const STATES: Record<
 
 /**
  * The workspace's outbound webhooks (RFC 0005 "Outbound webhooks"), live from its shard (`webhook.all`, owners and
- * admins only: a URL may carry the receiver's token). Add an endpoint (its signing secret shown once), edit it, turn it
- * on or off, send a test event, give it a new secret, delete it, and read its last deliveries.
+ * admins only: a URL may carry the receiver's token). Add an endpoint (its signing secret shown once), edit it and its
+ * custom headers (values sealed by the server, never shown back), turn it on or off, send a test event, give it a new
+ * secret, delete it, read its last deliveries and replay one of them.
  */
 export function WebhooksCard() {
   const { role } = useMember();
@@ -82,6 +96,7 @@ function ManagedWebhooks() {
   const setEnabled = useMutation("webhook.setEnabled");
   const remove = useMutation("webhook.delete");
   const sendTest = useMutation("webhook.sendTest");
+  const replay = useMutation("webhook.replay");
   const now = useNow(20_000);
   return (
     <WebhooksPanel
@@ -91,8 +106,15 @@ function ManagedWebhooks() {
       failed={status === "error"}
       locale={locale}
       now={now}
-      onCreate={(draft) => requestSecret(workspaceId, newWebhookId(), draft)}
+      onCreate={(draft, headers) =>
+        requestSecret(workspaceId, newWebhookId(), headers.length ? { ...draft, headers } : draft)
+      }
       onRotate={(id) => requestSecret(workspaceId, id, null)}
+      onSetHeaders={(id, headers) => requestHeaders(workspaceId, id, headers)}
+      onReplay={async (id, eventId) => {
+        const outcome = await replay({ id, eventId });
+        return replayOutcome(outcome.ok ? undefined : outcome.error.code);
+      }}
       onUpdate={async (id, draft) => (await update({ id, ...draft })).ok}
       onSetEnabled={async (id, enabled) => (await setEnabled({ id, enabled })).ok}
       onDelete={async (id) => (await remove({ id })).ok}
@@ -112,8 +134,16 @@ type PanelProps = {
   failed: boolean;
   locale: Locale;
   now: number;
-  onCreate: (draft: WebhookDraft) => Promise<SecretResult>;
+  onCreate: (
+    draft: WebhookDraft,
+    headers: { name: string; value: string }[],
+  ) => Promise<SecretResult>;
   onRotate: (id: string) => Promise<SecretResult>;
+  onSetHeaders?: (
+    id: string,
+    headers: { name: string; value?: string }[],
+  ) => Promise<HeadersResult>;
+  onReplay?: (id: string, eventId: string) => Promise<ReplayOutcome>;
   onUpdate: (id: string, draft: WebhookDraft) => Promise<boolean>;
   onSetEnabled: (id: string, enabled: boolean) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
@@ -151,6 +181,8 @@ export function WebhooksPanel({
   onSetEnabled,
   onDelete,
   onTest,
+  onSetHeaders = async () => ({ ok: false, error: "internal" }),
+  onReplay = async () => "failed",
   onRetry,
 }: PanelProps) {
   const [adding, setAdding] = useState(false);
@@ -186,9 +218,10 @@ export function WebhooksPanel({
             initial={emptyDraft()}
             submitPart="create"
             busyPart="creating"
+            withHeaders
             onCancel={() => setAdding(false)}
-            onSubmit={async (draft) => {
-              const result = await onCreate(draft);
+            onSubmit={async (draft, headers) => {
+              const result = await onCreate(draft, headers);
               if (result.ok) {
                 setAdding(false);
                 setShown({ secret: result.secret, host: hostOf(draft.url), rotated: false });
@@ -198,6 +231,7 @@ export function WebhooksPanel({
               if (result.field === "description")
                 return { description: webhookText("description_invalid") };
               if (result.field === "events") return { events: webhookText("events_none") };
+              if (result.field === "headers") return { form: webhookText("headers_refused") };
               return { form: webhookText(secretErrorPart(result.error)) };
             }}
           />
@@ -223,6 +257,8 @@ export function WebhooksPanel({
                     onUpdate={onUpdate}
                     onSetEnabled={onSetEnabled}
                     onTest={onTest}
+                    onSetHeaders={onSetHeaders}
+                    onReplay={onReplay}
                     onDelete={async (id) => {
                       const ok = await onDelete(id);
                       if (ok) setEditing(null);
@@ -317,7 +353,12 @@ function EndpointItem({
             {shownUrl(row.url)}
           </p>
           <p className="text-sm text-muted-foreground tabular-nums">
-            {m.webhook_events_count({ count: row.events.length })} · {lastLine(row, now, locale)}
+            {m.webhook_events_count({ count: row.events.length })}
+            {row.headers?.length
+              ? ` · ${m.webhook_headers_count({ count: row.headers.length })}`
+              : ""}
+            {" · "}
+            {lastLine(row, now, locale)}
           </p>
         </div>
         <Button
@@ -357,16 +398,27 @@ function EndpointForm({
   onSubmit,
   onCancel,
   unchanged,
+  dropsHeaders: drops,
+  withHeaders = false,
 }: {
   initial: WebhookDraft;
   submitPart: string;
   busyPart: string;
-  onSubmit: (draft: WebhookDraft) => Promise<SubmitProblem>;
+  onSubmit: (
+    draft: WebhookDraft,
+    headers: { name: string; value: string }[],
+  ) => Promise<SubmitProblem>;
   onCancel: () => void;
   /** For an edit: whether the draft says what the endpoint already does (nothing to send). */
   unchanged?: (draft: WebhookDraft) => boolean;
+  /** For an edit: whether saving `draft` removes the endpoint's custom headers (its URL moves to another origin). */
+  dropsHeaders?: (draft: WebhookDraft) => boolean;
+  /** For a new endpoint: its custom headers, sent with the create (an edit changes them on their own). */
+  withHeaders?: boolean;
 }) {
   const [draft, setDraft] = useState(initial);
+  const [headers, setHeaders] = useState<HeaderDraft[]>([]);
+  const [headerIssues, setHeaderIssues] = useState<Record<number, HeaderIssue>>({});
   const [issues, setIssues] = useState<DraftIssues>({});
   const [problem, setProblem] = useState<string | null>(null);
   const [state, setState] = useState<"idle" | "busy" | "saved">("idle");
@@ -383,9 +435,11 @@ function EndpointForm({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const checked = checkDraft(draft);
-    if (!checked.ok) {
-      setIssues(checked.issues);
-      if (checked.issues.url) urlRef.current?.focus();
+    const checkedHeaders = checkHeaders(headers);
+    if (!checked.ok || !checkedHeaders.ok) {
+      if (!checked.ok) setIssues(checked.issues);
+      if (!checkedHeaders.ok) setHeaderIssues(checkedHeaders.issues);
+      if (!checked.ok && checked.issues.url) urlRef.current?.focus();
       return;
     }
     if (unchanged?.(checked.value)) {
@@ -393,7 +447,9 @@ function EndpointForm({
       return;
     }
     setState("busy");
-    void onSubmit(checked.value).then(
+    // A new endpoint has no header to keep: every one checked has its value.
+    const sent = checkedHeaders.value.map(({ name, value }) => ({ name, value: value ?? "" }));
+    void onSubmit(checked.value, sent).then(
       (result) => {
         if (!result) {
           setState("saved");
@@ -441,6 +497,9 @@ function EndpointForm({
           maxLength={400}
         />
       </div>
+      <p aria-live="polite" className="text-sm text-amber-700 empty:hidden dark:text-amber-400">
+        {drops?.(draft) ? webhookText("headers_dropped") : ""}
+      </p>
       <fieldset
         className="flex min-w-0 flex-col gap-3"
         aria-describedby={issues.events ? eventsErrorId : undefined}
@@ -474,6 +533,18 @@ function EndpointForm({
           </p>
         ) : null}
       </fieldset>
+      {withHeaders ? (
+        <HeaderRows
+          rows={headers}
+          issues={headerIssues}
+          onChange={(next) => {
+            setHeaders(next);
+            setHeaderIssues({});
+            setProblem(null);
+            setState("idle");
+          }}
+        />
+      ) : null}
       {problem ? <FormError>{problem}</FormError> : null}
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" disabled={state === "busy"}>
@@ -487,6 +558,209 @@ function EndpointForm({
         </span>
       </div>
     </form>
+  );
+}
+
+/**
+ * The custom header rows of a form: a name and a value each, at most `MAX_WEBHOOK_HEADERS`. A header the endpoint has
+ * keeps its name, and its value while the field is left empty (the server never sends it back).
+ */
+function HeaderRows({
+  rows,
+  issues,
+  onChange,
+}: {
+  rows: HeaderDraft[];
+  issues: Record<number, HeaderIssue>;
+  onChange: (rows: HeaderDraft[]) => void;
+}) {
+  const legendId = useId();
+  const hintId = useId();
+  const set = (index: number, next: Partial<HeaderDraft>) =>
+    onChange(rows.map((row, at) => (at === index ? { ...row, ...next } : row)));
+  return (
+    <fieldset className="flex min-w-0 flex-col gap-3" aria-describedby={hintId}>
+      <legend id={legendId} className="mb-1 text-sm font-medium">
+        {webhookText("headers_label")}
+      </legend>
+      <p id={hintId} className="-mt-2 max-w-prose text-sm text-muted-foreground">
+        {webhookText("headers_hint")}
+      </p>
+      {rows.map((row, index) => (
+        <div
+          // Rows are only added at the end and removed by position; the index is their identity here.
+          // oxlint-disable-next-line react/no-array-index-key
+          key={index}
+          className="grid min-w-0 items-start gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto]"
+        >
+          <Field
+            label={webhookText("header_name")}
+            error={issues[index]?.name}
+            value={row.name}
+            readOnly={row.kept}
+            onChange={(event) => set(index, { name: event.target.value })}
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder="X-Team"
+            maxLength={64}
+          />
+          <Field
+            label={webhookText("header_value")}
+            error={issues[index]?.value}
+            value={row.value}
+            onChange={(event) => set(index, { value: event.target.value })}
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder={row.kept ? webhookText("header_keep") : undefined}
+            maxLength={1024}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="sm:mt-6"
+            aria-label={`${webhookText("header_remove")}: ${row.name || index + 1}`}
+            onClick={() => onChange(rows.filter((_, at) => at !== index))}
+          >
+            <XIcon aria-hidden />
+          </Button>
+        </div>
+      ))}
+      {issues[MAX_WEBHOOK_HEADERS]?.name ? (
+        <p className="text-sm text-destructive">{issues[MAX_WEBHOOK_HEADERS]!.name}</p>
+      ) : null}
+      {rows.length < MAX_WEBHOOK_HEADERS ? (
+        <div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onChange([...rows, { name: "", value: "" }])}
+          >
+            <PlusIcon aria-hidden />
+            {webhookText("header_add")}
+          </Button>
+        </div>
+      ) : null}
+    </fieldset>
+  );
+}
+
+/** The endpoint's custom headers in the editor: names and what is shown of each value, and changing them. */
+function HeadersSection({
+  row,
+  onSetHeaders,
+}: {
+  row: WebhookRow;
+  onSetHeaders: NonNullable<PanelProps["onSetHeaders"]>;
+}) {
+  const titleId = useId();
+  const [editing, setEditing] = useState<HeaderDraft[] | null>(null);
+  const [issues, setIssues] = useState<Record<number, HeaderIssue>>({});
+  const [state, setState] = useState<"idle" | "busy" | "saved">("idle");
+  const [problem, setProblem] = useState<string | null>(null);
+  const headers = row.headers ?? [];
+  const save = async (rows: HeaderDraft[]) => {
+    const checked = checkHeaders(rows);
+    if (!checked.ok) {
+      setIssues(checked.issues);
+      return;
+    }
+    setState("busy");
+    setProblem(null);
+    try {
+      const result = await onSetHeaders(row.id, checked.value);
+      if (result.ok) {
+        setEditing(null);
+        setState("saved");
+        return;
+      }
+      setState("idle");
+      if (result.index !== undefined) {
+        setIssues({ [result.index]: { name: webhookText("headers_refused") } });
+      } else {
+        setProblem(
+          webhookText(
+            result.error === "invalid_args" ? "headers_refused" : secretErrorPart(result.error),
+          ),
+        );
+      }
+    } catch {
+      setState("idle");
+      setProblem(webhookText("headers_failed"));
+    }
+  };
+  return (
+    <section aria-labelledby={titleId} className="flex min-w-0 flex-col gap-3 border-t pt-4">
+      {editing ? (
+        <form
+          noValidate
+          className="flex min-w-0 flex-col gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save(editing);
+          }}
+        >
+          <span id={titleId} className="sr-only">
+            {webhookText("headers_label")}
+          </span>
+          <HeaderRows
+            rows={editing}
+            issues={issues}
+            onChange={(next) => {
+              setEditing(next);
+              setIssues({});
+              setProblem(null);
+            }}
+          />
+          {problem ? <FormError>{problem}</FormError> : null}
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" disabled={state === "busy"}>
+              {webhookText(state === "busy" ? "headers_saving" : "headers_save")}
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setEditing(null)}>
+              {webhookText("cancel")}
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <>
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+            <h3 id={titleId} className="text-sm font-medium">
+              {webhookText("headers_label")}
+            </h3>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditing(headerDrafts(headers));
+                setIssues({});
+                setProblem(null);
+                setState("idle");
+              }}
+            >
+              <PencilIcon aria-hidden />
+              {webhookText("headers_edit")}
+            </Button>
+          </div>
+          {headers.length ? (
+            <ul className="flex min-w-0 flex-col gap-1 text-sm">
+              {headers.map((header) => (
+                <li key={header.name} className="flex min-w-0 flex-wrap gap-x-2">
+                  <span className="font-mono [overflow-wrap:anywhere]">{header.name}</span>
+                  <span className="text-muted-foreground">{headerValueShown(header)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">{webhookText("headers_none")}</p>
+          )}
+          <span role="status" className="text-sm text-muted-foreground">
+            {state === "saved" ? webhookText("headers_saved") : ""}
+          </span>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -510,6 +784,8 @@ function EndpointEditor({
   onTest,
   onDelete,
   onRotate,
+  onSetHeaders,
+  onReplay,
 }: {
   row: WebhookRow;
   locale: Locale;
@@ -520,6 +796,8 @@ function EndpointEditor({
   onTest: PanelProps["onTest"];
   onDelete: PanelProps["onDelete"];
   onRotate: (id: string) => Promise<boolean>;
+  onSetHeaders: NonNullable<PanelProps["onSetHeaders"]>;
+  onReplay: NonNullable<PanelProps["onReplay"]>;
 }) {
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [busy, setBusy] = useState<"toggle" | "test" | "rotate" | "delete" | null>(null);
@@ -552,6 +830,7 @@ function EndpointEditor({
         submitPart="save"
         busyPart="saving"
         unchanged={(draft) => sameDraft(draft, row)}
+        dropsHeaders={(draft) => dropsHeaders(draft, row)}
         onCancel={onClose}
         onSubmit={async (draft) =>
           (await onUpdate(row.id, draft)) ? null : { form: webhookText("save_failed") }
@@ -641,34 +920,75 @@ function EndpointEditor({
           </div>
         ) : null}
       </div>
-      <Deliveries attempts={row.recent} locale={locale} now={now} />
+      <HeadersSection row={row} onSetHeaders={onSetHeaders} />
+      <Deliveries
+        attempts={row.recent}
+        enabled={row.enabled}
+        locale={locale}
+        now={now}
+        onReplay={(eventId) => onReplay(row.id, eventId)}
+      />
     </div>
   );
 }
 
+/**
+ * The endpoint's last deliveries, newest first, each event with a Replay button on its newest attempt (the shard
+ * refuses one for an endpoint that is off, and past its rate limit).
+ */
 function Deliveries({
   attempts,
+  enabled,
   locale,
   now,
+  onReplay,
 }: {
   attempts: WebhookAttempt[];
+  enabled: boolean;
   locale: Locale;
   now: number;
+  onReplay: (eventId: string) => Promise<ReplayOutcome>;
 }) {
   const titleId = useId();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<ReplayOutcome | null>(null);
+  const replay = async (eventId: string) => {
+    setBusy(eventId);
+    setNote(null);
+    try {
+      setNote(await onReplay(eventId));
+    } catch {
+      setNote("failed");
+    } finally {
+      setBusy(null);
+    }
+  };
   return (
     <section aria-labelledby={titleId} className="flex min-w-0 flex-col gap-2 border-t pt-4">
       <h3 id={titleId} className="text-sm font-medium">
         {webhookText("recent_title")}
       </h3>
+      {attempts.length > 0 && !enabled ? (
+        <p className="text-sm text-muted-foreground">{webhookText("replay_off")}</p>
+      ) : null}
+      {note ? (
+        note === "sent" ? (
+          <p role="status" className="flex items-start gap-2 text-sm text-muted-foreground">
+            <CircleCheckIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+            <span className="min-w-0">{webhookText("replay_sent")}</span>
+          </p>
+        ) : (
+          <FormError>{webhookText(`replay_${note}`)}</FormError>
+        )
+      ) : null}
       {attempts.length === 0 ? (
         <p className="text-sm text-muted-foreground">{webhookText("recent_empty")}</p>
       ) : (
         <ol className="flex min-w-0 flex-col divide-y rounded-md border">
-          {attempts.map((attempt) => (
+          {attempts.map((attempt, index) => (
             <li
-              key={`${attempt.eventId}:${attempt.attempt}:${attempt.at}`}
-              className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-1 px-3 py-2 text-sm"
+              key={`${attempt.eventId}:${attempt.attempt}:${attempt.at}:${attempt.replay ? "r" : ""}`}
+              className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 px-3 py-2 text-sm"
             >
               <span
                 className={cn(
@@ -686,9 +1006,11 @@ function Deliveries({
                   <span className="text-muted-foreground tabular-nums">
                     {formatAge(Math.min(attempt.at, now), now, locale)}
                     {attempt.ms !== null ? ` · ${attempt.ms} ms` : ""}
-                    {attempt.attempt > 1
-                      ? ` · ${webhookText("attempt", { when: String(attempt.attempt) })}`
-                      : ""}
+                    {attempt.replay
+                      ? ` · ${webhookText("replayed")}`
+                      : attempt.attempt > 1
+                        ? ` · ${webhookText("attempt", { when: String(attempt.attempt) })}`
+                        : ""}
                   </span>
                 </p>
                 {!attempt.ok ? (
@@ -702,6 +1024,20 @@ function Deliveries({
                   </p>
                 ) : null}
               </div>
+              {canReplay(attempts, index, now) ? (
+                <Button
+                  variant="ghost"
+                  className="-my-2 -mr-2 px-3"
+                  disabled={!enabled || busy !== null}
+                  aria-label={`${webhookText("replay")}: ${eventLabel(attempt.type)}, ${formatAge(Math.min(attempt.at, now), now, locale)}`}
+                  onClick={() => void replay(attempt.eventId)}
+                >
+                  <RedoIcon aria-hidden />
+                  {webhookText(busy === attempt.eventId ? "replaying" : "replay")}
+                </Button>
+              ) : (
+                <span />
+              )}
             </li>
           ))}
         </ol>

@@ -10,14 +10,16 @@ import {
   type StatusSnapshot,
 } from "@freecorps/brigade-schema";
 import type { Auth } from "./auth.ts";
-import { memberRole } from "./actor.ts";
+import { unauthenticated } from "./api-tokens.ts";
 import { readBounded } from "./body.ts";
 import { emailSender } from "./email.ts";
 import { dashboardLink } from "./email-templates.ts";
 import { feedUrls, renderAtomFeed, renderJsonFeed, type FeedFormat } from "./status-feed.ts";
 import { LOCAL_TIMES_SCRIPT_HASH, renderStatusMessage, renderStatusPage } from "./status-html.ts";
-import { statusKey, type StatusConfigureCode, type StatusConfigureResult } from "./status-page.ts";
-import { ORGANIZATION_ID } from "./workspace.ts";
+import { statusKey, type StatusConfigureResult } from "./status-page.ts";
+import { STATUS_PAGE_STATUS } from "./http.ts";
+import { checkMember } from "./member-route.ts";
+import type { TokenRefused } from "./workspace.ts";
 
 /** How long a visitor's browser, the edge cache and KV's own cache may keep a page: a status page may lag this much. */
 export const STATUS_MAX_AGE_S = 30;
@@ -263,50 +265,35 @@ function page(html: string, status: number, maxAge?: number): Response {
   return new Response(html, { status, headers: statusPageHeaders(maxAge ?? "no-store") });
 }
 
-const CONFIGURE_STATUS: Record<StatusConfigureCode | "not_a_member", number> = {
-  forbidden: 403,
-  not_a_member: 403,
-  invalid_args: 400,
-  slug_taken: 409,
-  not_found: 404,
-  unavailable: 503,
-  not_applied: 503,
-};
-
 /**
- * `PUT /workspaces/:id/status-page` `{ slug, title, locale, enabled }`: sets the page up (owners and admins). The
- * Worker checks the origin, the session and the member's role in D1, so an outsider never wakes a shard; the shard
- * claims the slug in D1 and runs `statusPage.configure` (RFC 0012 "Addresses").
+ * `PUT /workspaces/:id/status-page` `{ slug, title, locale, enabled }`: sets the page up (owners and admins, or an API
+ * token with `status:manage`). The Worker checks the origin, the session and the member's role in D1 (or the token,
+ * RFC 0014), so an outsider never wakes a shard; the shard claims the slug in D1 and runs `statusPage.configure` (RFC 0012 "Addresses").
  */
 export async function configureStatusPage(
   request: Request,
   env: Env,
   lazyAuth: () => Auth,
   workspaceId: string,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<Response> {
-  if (request.method !== "PUT") return json({ error: "method_not_allowed" }, 405, { Allow: "PUT" });
-  if (!ORGANIZATION_ID.test(workspaceId)) return json({ error: "invalid_workspace_id" }, 400);
-  const origin = request.headers.get("Origin");
-  if (origin !== null && origin !== new URL(request.url).origin) {
-    return json({ error: "forbidden_origin" }, 403);
-  }
-  const session = await lazyAuth().api.getSession({ headers: request.headers });
-  if (!session) return json({ error: "unauthenticated" }, 401);
-  let role;
-  try {
-    role = await memberRole(env.DB, workspaceId, session.user.id);
-  } catch (error) {
-    console.error(JSON.stringify({ message: "member lookup failed", error: String(error) }));
-    return json({ error: "unavailable" }, 503);
-  }
-  if (role === undefined) return json({ error: "not_a_member" }, 403);
+  const member = await checkMember(
+    request,
+    env,
+    lazyAuth,
+    workspaceId,
+    ["PUT"],
+    "status:manage",
+    waitUntil,
+  );
+  if (!member.ok) return member.response;
   const body = await readBody(request);
   if (body === undefined) return json({ error: "invalid_args" }, 400);
-  let result: StatusConfigureResult | { ok: false; code: "not_a_member" };
+  let result: StatusConfigureResult | { ok: false; code: "not_a_member" } | TokenRefused;
   try {
     result = await env.WORKSPACE.getByName(workspaceId).configureStatusPage(
       workspaceId,
-      { kind: "user", id: session.user.id, role },
+      member.actor,
       body,
     );
   } catch (error) {
@@ -320,7 +307,8 @@ export async function configureStatusPage(
     return json({ error: "unavailable" }, 503);
   }
   if (result.ok) return json({ ok: true });
-  return json({ error: result.code }, CONFIGURE_STATUS[result.code]);
+  if (result.code === "unauthenticated") return unauthenticated();
+  return json({ error: result.code }, STATUS_PAGE_STATUS[result.code]);
 }
 
 async function readBody(request: Request): Promise<unknown> {

@@ -70,6 +70,7 @@ describe("workspace.create", () => {
       "slack.archiveDue",
       "webhook.create",
       "webhook.rotateSecret",
+      "webhook.setHeaders",
       "webhook.record",
       "webhook.redeliver",
       "postmortem.requestDraft",

@@ -248,6 +248,25 @@ function object<const S extends Record<string, Validator<unknown>>>(
   );
 }
 
+/**
+ * What `inner` accepts, then held to `check` (an issue's message, or null when it passes): for rules a `v.*` validator
+ * cannot say, keeping `inner`'s shape for `toJsonSchema`.
+ */
+function refine<T>(
+  inner: Validator<T>,
+  check: (value: T, path: string) => Issue | null,
+): Validator<T> {
+  const shape = shapeOf(inner as Validator<unknown>);
+  const refined: Validator<T> = (input, path = "") => {
+    const result = inner(input, path);
+    if (!result.ok) return result;
+    const issue = check(result.value, path);
+    return issue ? { ok: false, issues: [issue] } : result;
+  };
+  if (shape) shapes.set(refined as Validator<unknown>, shape);
+  return refined;
+}
+
 export const v = {
   string,
   picklist,
@@ -261,4 +280,5 @@ export const v = {
   optional,
   omittable,
   array,
+  refine,
 };

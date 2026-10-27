@@ -21,7 +21,13 @@ import {
   type MonitorKind,
   type MonitorStatus,
 } from "./monitors.ts";
-import type { EscalationReason, IncidentRow, MonitorRow, WebhookRow } from "./tables.ts";
+import type {
+  EscalationReason,
+  IncidentRow,
+  MonitorRow,
+  WebhookHeader,
+  WebhookRow,
+} from "./tables.ts";
 import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
 import { idTime } from "./id.ts";
@@ -45,6 +51,21 @@ export const WEBHOOK_DISABLE_FAILURES = 10;
 export const WEBHOOK_DISABLE_AFTER_MS = 24 * 60 * 60 * 1000;
 /** After a rotation, deliveries are signed with the previous secret too for this long, so receivers can switch. */
 export const WEBHOOK_ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
+/**
+ * Replaying a delivery from the endpoint's log (`webhook.replay`): at most once per endpoint in `WEBHOOK_REPLAY_EVERY_MS`,
+ * `WEBHOOK_REPLAYS_PER_HOUR` times an hour per endpoint and `WEBHOOK_WORKSPACE_REPLAYS_PER_HOUR` across the workspace's
+ * endpoints, so the button cannot flood a receiver, even one every endpoint points at; and only while the shard still
+ * keeps the payload (`WEBHOOK_REPLAY_MAX_AGE_MS` after the event, a day under the ledger's 15 days).
+ */
+export const WEBHOOK_REPLAY_EVERY_MS = 10_000;
+export const WEBHOOK_REPLAYS_PER_HOUR = 10;
+export const WEBHOOK_WORKSPACE_REPLAYS_PER_HOUR = 30;
+export const WEBHOOK_REPLAY_WINDOW_MS = 60 * 60 * 1000;
+export const WEBHOOK_REPLAY_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+/** Custom headers per endpoint (RFC 0005 "Outbound webhooks"), sent on every delivery; their values sealed. */
+export const MAX_WEBHOOK_HEADERS = 5;
+export const WEBHOOK_HEADER_NAME_MAX = 64;
+export const WEBHOOK_HEADER_VALUE_MAX = 1024;
 /** The payload's version: a change that is not purely additive is a new version, never an edit of this one. */
 export const WEBHOOK_PAYLOAD_VERSION = 1 as const;
 
@@ -69,6 +90,11 @@ export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
 export const WEBHOOK_TEST_EVENT = "webhook.test";
 /** The notifier's own event that brings deliveries the ledger has due back to the queue (`webhook.redeliver`). */
 export const WEBHOOK_REDELIVER_EVENT = "webhook.redeliver";
+/**
+ * "Replay" from an endpoint's log (`webhook.replay`): the logged event sent again to that one endpoint, the same body
+ * and `webhook-id`, signed afresh. One attempt, never retried by itself.
+ */
+export const WEBHOOK_REPLAY_EVENT = "webhook.replay";
 
 /** Whether `type` is in the public catalog. */
 export function isWebhookEventType(type: unknown): type is WebhookEventType {
@@ -78,7 +104,8 @@ export function isWebhookEventType(type: unknown): type is WebhookEventType {
 /**
  * Why a delivery attempt failed: `timeout` (no answer in time), `network` (no connection), `status` (an answer other
  * than 2xx), `redirect` (a 3xx: never followed), `blocked` (the URL breaks the target rules now), `secret` (the
- * signing secret could not be opened: `WEBHOOK_SECRET_KEY` changed).
+ * signing secret could not be opened: `WEBHOOK_SECRET_KEY` changed), `expired` (a replay whose payload the shard no
+ * longer keeps: nothing was sent).
  */
 export const WEBHOOK_ERRORS = [
   "timeout",
@@ -87,6 +114,7 @@ export const WEBHOOK_ERRORS = [
   "redirect",
   "blocked",
   "secret",
+  "expired",
 ] as const;
 export type WebhookError = (typeof WEBHOOK_ERRORS)[number];
 
@@ -98,7 +126,12 @@ export type WebhookDisabledReason = "manual" | "failing";
 /** The WHATWG URL parser, as far as it is used here (src has no DOM or Node types). */
 const URL_PARSER = (
   globalThis as unknown as {
-    URL: new (input: string) => { protocol: string; hostname: string; href: string };
+    URL: new (input: string) => {
+      protocol: string;
+      hostname: string;
+      href: string;
+      origin: string;
+    };
   }
 ).URL;
 
@@ -115,6 +148,23 @@ export function webhookTargetProblem(input: string): string | null {
   const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
   if (isCloudflareAddress(host)) return "Expected an address outside Cloudflare";
   return null;
+}
+
+/**
+ * Whether an endpoint moving from `from` to `to` changes its origin (scheme, host or port): the custom headers were
+ * meant for the old receiver, so `webhook.update` removes them (RFC 0005 "Custom headers"). A URL that does not parse
+ * counts as another origin.
+ */
+export function webhookOriginChanged(from: string, to: string): boolean {
+  const origin = (url: string) => {
+    try {
+      return new URL_PARSER(url).origin;
+    } catch {
+      return null;
+    }
+  };
+  const before = origin(from);
+  return before === null || before !== origin(to);
 }
 
 /** An endpoint URL, normalised (`new URL(…).href`). */
@@ -135,6 +185,157 @@ const sealedSecret: Validator<string> = (input, path = "") =>
     ? { ok: true, value: input }
     : { ok: false, issues: [{ path, message: "Expected a sealed secret" }] };
 
+// ---- Custom headers ----------------------------------------------------------------------------------------------
+
+/**
+ * Header names an endpoint may not set, lowercase: the request's own framing and hop-by-hop headers, what Brigade sets
+ * itself (`Content-Type`, `User-Agent`), and what proxies and Cloudflare own. `Authorization` is allowed: many receivers
+ * want a bearer token, and every value is sealed like the signing secret.
+ */
+export const WEBHOOK_RESERVED_HEADERS = [
+  "host",
+  "content-length",
+  "content-type",
+  "content-encoding",
+  "transfer-encoding",
+  "connection",
+  "keep-alive",
+  "te",
+  "trailer",
+  "upgrade",
+  "expect",
+  "user-agent",
+  "forwarded",
+  "via",
+  "x-real-ip",
+  "true-client-ip",
+  "x-client-ip",
+  "client-ip",
+  "x-cluster-client-ip",
+] as const;
+/** Name prefixes an endpoint may not use: the Standard Webhooks signature headers, proxies', browsers' and Cloudflare's. */
+export const WEBHOOK_RESERVED_HEADER_PREFIXES = [
+  "webhook-",
+  "proxy-",
+  "sec-",
+  "cf-",
+  "x-forwarded-",
+] as const;
+
+/** An HTTP field name (RFC 9110 `token`). */
+const HEADER_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
+/** A value of visible ASCII and inner spaces: never CR, LF, NUL or another control, so it cannot split the request. */
+const HEADER_VALUE = /^[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?$/;
+
+/** Whether `name` is one an endpoint may not set (`WEBHOOK_RESERVED_HEADERS` and their prefixes), whatever its case. */
+export function isReservedWebhookHeader(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    (WEBHOOK_RESERVED_HEADERS as readonly string[]).includes(lower) ||
+    WEBHOOK_RESERVED_HEADER_PREFIXES.some((prefix) => lower.startsWith(prefix))
+  );
+}
+
+/** Why `name` may not be a custom header's, or null if it may. */
+export function webhookHeaderNameProblem(name: string): string | null {
+  if (name.length === 0 || name.length > WEBHOOK_HEADER_NAME_MAX || !HEADER_NAME.test(name)) {
+    return "Expected a header name: letters, digits and - (at most 64)";
+  }
+  return isReservedWebhookHeader(name) ? "Brigade sets this header itself" : null;
+}
+
+/** Why `value` may not be a custom header's, or null if it may. */
+export function webhookHeaderValueProblem(value: string): string | null {
+  return value.length > 0 && value.length <= WEBHOOK_HEADER_VALUE_MAX && HEADER_VALUE.test(value)
+    ? null
+    : "Expected 1 to 1024 visible ASCII characters, no line breaks";
+}
+
+/**
+ * What the dashboard shows of a value it never shows back: its last 4 characters, for a value of at least 16 (so a
+ * short one gives nothing away); null otherwise.
+ */
+export function webhookHeaderHint(value: string): string | null {
+  return value.length >= 16 ? value.slice(-4) : null;
+}
+
+const headerName: Validator<string> = v.refine(
+  v.string({ min: 1, max: WEBHOOK_HEADER_NAME_MAX }),
+  (name, path) => {
+    const problem = webhookHeaderNameProblem(name);
+    return problem ? { path, message: problem } : null;
+  },
+);
+
+const headerValue: Validator<string> = v.refine(
+  v.string({ min: 1, max: WEBHOOK_HEADER_VALUE_MAX }),
+  (value, path) => {
+    const problem = webhookHeaderValueProblem(value);
+    return problem ? { path, message: problem } : null;
+  },
+);
+
+/** A list of headers with each name once, whatever its case (HTTP names are case-insensitive). */
+function headerList<T extends { name: string }>(item: Validator<T>): Validator<T[]> {
+  return v.refine(v.array(item, { max: MAX_WEBHOOK_HEADERS }), (headers, path) => {
+    const seen = new Set<string>();
+    for (const [index, header] of headers.entries()) {
+      const lower = header.name.toLowerCase();
+      if (seen.has(lower)) return { path: `${path}[${index}].name`, message: "Listed twice" };
+      seen.add(lower);
+    }
+    return null;
+  });
+}
+
+/**
+ * Custom headers as a request sends them (`POST /workspaces/:id/webhooks`, `PUT …/webhooks/:id/headers`), values in
+ * the clear: the API seals each before the shard sees it. On a `PUT`, a header without `value` keeps the one it has.
+ */
+export const webhookHeadersInput: Validator<{ name: string; value: string }[]> = headerList(
+  v.object({ name: headerName, value: headerValue }),
+);
+export const webhookHeadersUpdate: Validator<{ name: string; value: string | undefined }[]> =
+  headerList(v.object({ name: headerName, value: v.omittable(headerValue) }));
+
+/** A header value as the API seals it, like the signing secret; larger, since a value may be 1024 characters. */
+const sealedValue: Validator<string> = (input, path = "") =>
+  typeof input === "string" &&
+  input.length <= 2048 &&
+  /^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{20,}$/.test(input)
+    ? { ok: true, value: input }
+    : { ok: false, issues: [{ path, message: "Expected a sealed value" }] };
+
+/**
+ * A value's hint as `webhookHeaderHint` makes it: exactly 4 characters of the value, never trimmed, since a value's
+ * last 4 may start with one of its inner spaces.
+ */
+const headerHint: Validator<string> = (input, path = "") =>
+  typeof input === "string" && /^[\x20-\x7e]{3}[\x21-\x7e]$/.test(input)
+    ? { ok: true, value: input }
+    : { ok: false, issues: [{ path, message: "Expected a 4 character hint" }] };
+
+/** Headers as the server-only mutations take them: each value sealed, with the hint the row shows. */
+type SealedHeader = { name: string; value: string; hint: string | null };
+
+const sealedHeaders: Validator<SealedHeader[]> = headerList(
+  v.object({
+    name: headerName,
+    value: sealedValue,
+    hint: v.nullable(headerHint),
+  }),
+);
+
+/** What the row shows of `headers`: names and hints. */
+const shownHeaders = (headers: readonly SealedHeader[]): WebhookHeader[] =>
+  headers.map(({ name, hint }) => ({ name, hint }));
+/** What the secrets row keeps of `headers`: names and sealed values. */
+const keptHeaders = (headers: readonly SealedHeader[]): { name: string; value: string }[] =>
+  headers.map(({ name, value }) => ({ name, value }));
+const sameHeaders = (a: readonly { name: string; value: string }[], b: readonly SealedHeader[]) =>
+  a.length === b.length &&
+  a.every((one, index) => one.name === b[index]!.name && one.value === b[index]!.value);
+
 const webhookId = v.id("whk");
 const description = v.string({ max: WEBHOOK_DESCRIPTION_MAX });
 const eventFilter = v.array(v.picklist(WEBHOOK_EVENT_TYPES), {
@@ -149,9 +350,10 @@ export type WebhookCreated = DomainEvent<
   "webhook.created",
   { id: string; events: WebhookEventType[]; enabled: boolean }
 >;
+/** `headersCleared`: the URL moved to another origin, so its custom headers were removed (`webhook.headers_changed`). */
 export type WebhookUpdated = DomainEvent<
   "webhook.updated",
-  { id: string; events: WebhookEventType[]; urlChanged: boolean }
+  { id: string; events: WebhookEventType[]; urlChanged: boolean; headersCleared: boolean }
 >;
 export type WebhookEnabled = DomainEvent<"webhook.enabled", { id: string }>;
 export type WebhookDisabled = DomainEvent<
@@ -162,6 +364,15 @@ export type WebhookSecretRotated = DomainEvent<"webhook.secret_rotated", { id: s
 export type WebhookDeleted = DomainEvent<"webhook.deleted", { id: string }>;
 export type WebhookTestRequested = DomainEvent<"webhook.test", { id: string }>;
 export type WebhookRedeliver = DomainEvent<"webhook.redeliver", { eventId: string }>;
+export type WebhookReplayRequested = DomainEvent<
+  "webhook.replay",
+  { id: string; eventId: string; type: string }
+>;
+/** The endpoint's custom headers changed: their names only, never a value. */
+export type WebhookHeadersChanged = DomainEvent<
+  "webhook.headers_changed",
+  { id: string; names: string[] }
+>;
 
 // ---- Mutations ---------------------------------------------------------------------------------------------------
 
@@ -175,7 +386,8 @@ function endpoint(store: MutationStore, id: string): WebhookRow | undefined {
 
 /**
  * Server only: run by the API (`POST /workspaces/:id/webhooks`) as the member who asked, so `webhook:manage` is checked
- * here too. The API made the secret, showed it once and sends it sealed. Enabled from the start.
+ * here too. The API made the secret, showed it once and sends it sealed, with each custom header's value sealed too.
+ * Enabled from the start.
  */
 export const createWebhook = defineMutation({
   name: "webhook.create",
@@ -185,6 +397,7 @@ export const createWebhook = defineMutation({
     description,
     events: eventFilter,
     secret: sealedSecret,
+    headers: v.omittable(sealedHeaders),
   }),
   permission: "webhook:manage",
   apply(store, args, ctx) {
@@ -198,6 +411,7 @@ export const createWebhook = defineMutation({
       return fail("limit_reached", `At most ${MAX_WEBHOOKS_PER_WORKSPACE} webhooks per workspace`);
     }
     const events = sorted(args.events);
+    const headers = args.headers ?? [];
     const row: WebhookRow = {
       id: args.id,
       url: args.url,
@@ -209,6 +423,7 @@ export const createWebhook = defineMutation({
       failures: 0,
       failingSince: null,
       lastTestAt: null,
+      headers: shownHeaders(headers),
       secretRotatedAt: ctx.now,
       recent: [],
       createdAt: ctx.now,
@@ -221,6 +436,7 @@ export const createWebhook = defineMutation({
       secret: args.secret,
       previous: null,
       previousUntil: null,
+      headers: keptHeaders(headers),
     });
     const event: WebhookCreated = {
       type: "webhook.created",
@@ -231,7 +447,12 @@ export const createWebhook = defineMutation({
   },
 });
 
-/** The URL, description and event filter; owners and admins. A changed URL keeps the secret. */
+/**
+ * The URL, description and event filter; owners and admins. A changed URL keeps the secret; a URL on another origin
+ * removes the custom headers in the same change (their values were for the old receiver: a member who can edit the URL
+ * could otherwise point it at their own host and replay a delivery to read a stored `Authorization`), with
+ * `webhook.headers_changed` naming none.
+ */
 export const updateWebhook = defineMutation({
   name: "webhook.update",
   args: v.object({ id: webhookId, url: webhookUrl, description, events: eventFilter }),
@@ -248,18 +469,32 @@ export const updateWebhook = defineMutation({
     ) {
       return fail("conflict", "Nothing to change");
     }
+    const secrets = store.get("webhook_secrets", args.id);
+    const headersCleared =
+      urlChanged &&
+      ((current.headers?.length ?? 0) > 0 || (secrets?.headers?.length ?? 0) > 0) &&
+      webhookOriginChanged(current.url, args.url);
     store.update("webhooks", args.id, {
       url: args.url,
       description: args.description,
       events,
+      ...(headersCleared ? { headers: [] } : {}),
       updatedAt: ctx.now,
     });
+    // The client never has the secrets row: its optimistic update clears the names, the server the values.
+    if (headersCleared && secrets) store.update("webhook_secrets", args.id, { headers: [] });
     const event: WebhookUpdated = {
       type: "webhook.updated",
       subject: args.id,
-      data: { id: args.id, events, urlChanged },
+      data: { id: args.id, events, urlChanged, headersCleared },
     };
-    return ok(event);
+    if (!headersCleared) return ok(event);
+    const cleared: WebhookHeadersChanged = {
+      type: "webhook.headers_changed",
+      subject: args.id,
+      data: { id: args.id, names: [] },
+    };
+    return ok(event, cleared);
   },
 });
 
@@ -357,6 +592,102 @@ export const deleteWebhook = defineMutation({
 });
 
 /**
+ * Server only, from the API (`PUT /workspaces/:id/webhooks/:id/headers`) as the member who asked: the endpoint's custom
+ * headers, all of them (an empty list removes them), each value sealed by the API, which kept a sealed value as it was
+ * for a header sent without one. The row shows each name and its hint; the event names them, never a value.
+ */
+export const setWebhookHeaders = defineMutation({
+  name: "webhook.setHeaders",
+  args: v.object({ id: webhookId, headers: sealedHeaders }),
+  permission: "webhook:manage",
+  apply(store, args, ctx) {
+    const current = endpoint(store, args.id);
+    if (!current) return fail("not_found", "Webhook not found");
+    const secrets = store.get("webhook_secrets", args.id);
+    if (!secrets) return fail("not_found", "Webhook not found");
+    if (sameHeaders(secrets.headers ?? [], args.headers))
+      return fail("conflict", "Nothing to change");
+    store.update("webhook_secrets", args.id, { headers: keptHeaders(args.headers) });
+    store.update("webhooks", args.id, { headers: shownHeaders(args.headers), updatedAt: ctx.now });
+    const event: WebhookHeadersChanged = {
+      type: "webhook.headers_changed",
+      subject: args.id,
+      data: { id: args.id, names: shownHeaders(args.headers).map((header) => header.name) },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * When the shard stops keeping the payload of event `eventId` for a replay: `WEBHOOK_REPLAY_MAX_AGE_MS` after the event
+ * itself (its id's time), which is never after its first attempt. Measured from the event, not from the log, so a
+ * replay's own entry never makes an older payload look kept.
+ */
+export function webhookReplayableUntil(eventId: string): number {
+  return idTime(eventId) + WEBHOOK_REPLAY_MAX_AGE_MS;
+}
+
+/** The server-only counters that hold the workspace's last replays (`webhook.replay`), one time each. */
+const replaySlot = (index: number) => `webhook_replay.${index}`;
+
+/**
+ * "Replay" a delivery from the endpoint's log: a `webhook.replay` event through the outbox, which the consumer delivers
+ * to this endpoint once, with the event's kept body and its own id as `webhook-id` (so a receiver that has it already
+ * de-duplicates), signed afresh. Any event in the log (`recent`), given up or not, while its payload is kept
+ * (`webhookReplayableUntil`). Only an endpoint that is on: turn it back on first. At most one replay per endpoint per
+ * `WEBHOOK_REPLAY_EVERY_MS`, `WEBHOOK_REPLAYS_PER_HOUR` an hour per endpoint and `WEBHOOK_WORKSPACE_REPLAYS_PER_HOUR` an
+ * hour across the workspace (counted on the server, in `counters`, so deleting an endpoint does not reset it).
+ */
+export const replayWebhook = defineMutation({
+  name: "webhook.replay",
+  args: v.object({ id: webhookId, eventId: v.id("evt") }),
+  permission: "webhook:manage",
+  apply(store, args, ctx) {
+    const current = endpoint(store, args.id);
+    if (!current) return fail("not_found", "Webhook not found");
+    if (!current.enabled) {
+      return fail("invalid_transition", "Turn the endpoint on before replaying a delivery");
+    }
+    const logged = current.recent.filter((attempt) => attempt.eventId === args.eventId);
+    if (logged.length === 0) return fail("not_found", "That delivery is not in the endpoint's log");
+    if (ctx.now > webhookReplayableUntil(args.eventId)) {
+      return fail("not_found", "That delivery's payload is no longer kept");
+    }
+    const replays = (current.replays ?? []).filter((at) => ctx.now - at < WEBHOOK_REPLAY_WINDOW_MS);
+    const last = replays.length ? Math.max(...replays) : null;
+    if (last !== null && ctx.now - last < WEBHOOK_REPLAY_EVERY_MS) {
+      return fail("limit_reached", "A delivery was replayed moments ago");
+    }
+    if (replays.length >= WEBHOOK_REPLAYS_PER_HOUR) {
+      return fail("limit_reached", `At most ${WEBHOOK_REPLAYS_PER_HOUR} replays an hour`);
+    }
+    if (ctx.server) {
+      // A slot whose replay is out of the window (or never used) takes this one; none free: the workspace is at its cap.
+      let free: string | null = null;
+      for (let index = 0; index < WEBHOOK_WORKSPACE_REPLAYS_PER_HOUR && free === null; index++) {
+        const slot = store.get("counters", replaySlot(index));
+        if (!slot || ctx.now - slot.value >= WEBHOOK_REPLAY_WINDOW_MS) free = replaySlot(index);
+      }
+      if (free === null) {
+        return fail(
+          "limit_reached",
+          `At most ${WEBHOOK_WORKSPACE_REPLAYS_PER_HOUR} replays an hour across the workspace`,
+        );
+      }
+      if (store.get("counters", free)) store.update("counters", free, { value: ctx.now });
+      else store.insert("counters", { id: free, value: ctx.now });
+    }
+    store.update("webhooks", args.id, { replays: [...replays, ctx.now] });
+    const event: WebhookReplayRequested = {
+      type: WEBHOOK_REPLAY_EVENT,
+      subject: args.id,
+      data: { id: args.id, eventId: args.eventId, type: logged[0]!.type },
+    };
+    return ok(event);
+  },
+});
+
+/**
  * "Send test event": a `webhook.test` event through the outbox like any other, which the consumer delivers to this
  * endpoint only, on or off, whatever its filter. At most once per `WEBHOOK_TEST_EVERY_MS`.
  */
@@ -391,6 +722,7 @@ const attemptArgs = v.object({
   ms: v.nullable(v.integer({ min: 0, max: 600_000 })),
   error: v.nullable(v.picklist(WEBHOOK_ERRORS)),
   snippet: v.nullable(v.string({ max: WEBHOOK_SNIPPET_MAX })),
+  replay: v.omittable(v.boolean()),
 });
 
 /**
@@ -407,9 +739,18 @@ export const recordWebhookAttempt = defineMutation({
   apply(store, args, ctx) {
     const current = endpoint(store, args.id);
     if (!current) return fail("not_found", "Webhook not found");
-    const recent = [args.attempt, ...current.recent].slice(0, WEBHOOK_LOG_SIZE);
+    const { replay, ...attempt } = args.attempt;
+    const recent = [replay ? { ...attempt, replay } : attempt, ...current.recent].slice(
+      0,
+      WEBHOOK_LOG_SIZE,
+    );
     if (args.attempt.ok) {
       store.update("webhooks", args.id, { recent, failures: 0, failingSince: null });
+      return ok();
+    }
+    // A replay whose payload was gone never reached the receiver: shown in the log, not counted against it.
+    if (args.attempt.error === "expired") {
+      store.update("webhooks", args.id, { recent });
       return ok();
     }
     const failures = current.failures + 1;
@@ -464,6 +805,7 @@ export const webhookMutations = [
   setWebhookEnabled,
   deleteWebhook,
   sendWebhookTest,
+  replayWebhook,
 ] as const;
 
 /** The workspace's endpoints, oldest first; owners and admins only (a URL may carry the receiver's token). */

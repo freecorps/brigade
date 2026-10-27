@@ -1,8 +1,8 @@
 # Spike S2 — Probe placement
 
-- Status: Running. Deployed and sampling since 2026-10-25 14:51 UTC; the 48-hour result is pending (see the end)
+- Status: Done. Sampled every hint from 2026-10-25 14:51 to 2026-10-27 14:51 UTC; result and decision below
 - Roadmap: Phase 0, S2
-- Settles (once the 48 hours are read): RFC 0007 "Placement" (one `ProbeDO` per workspace and region, created with
+- Settles: RFC 0007 "Placement" (one `ProbeDO` per workspace and region, created with
   a `locationHint`, reporting the colo it really ran from)
 
 ## Question
@@ -18,7 +18,8 @@ observed per `locationHint` over 48 hours. In detail:
 
 ## What was built
 
-`spikes/s2-probe-placement` (`@freecorps/brigade-spike-s2`, private, AGPL-3.0-only): one Worker, deployed as
+`spikes/s2-probe-placement` (`@freecorps/brigade-spike-s2`, private, AGPL-3.0-only; removed with this result, see
+the history of this file for the code): one Worker, deployed as
 `brigade-probe-dev`, with one SQLite-backed `ProbeDO`. It is spike code, outside `apps/` and `packages/`, and is
 not meant to become product code; it sits in the workspace (`spikes/*`) only so CI checks and tests it.
 
@@ -106,38 +107,59 @@ What these first samples already show:
   alarms a minute apart and construct it again in the same colo. If that holds over 48 hours, a new instance is
   not a migration signal (only a colo change is), and a probe pays the object's cold start on every run.
 
-## What remains to observe (pending)
-
-The 48-hour window ends 2026-10-27 14:51 UTC (samples reset when the reviewed version was deployed). Then, from
-`PROBE_ADMIN_TOKEN=<token> vpx scripts/report.ts <url> --hours 48`:
-
-- [ ] Colo histogram per hint: still one colo each, or did any probe move (`moves`, and the colo runs)?
-- [ ] Alarm cadence: gaps between samples (p95, max), lateness, retries, and any hole longer than a few minutes.
-- [ ] Latency percentiles per hint and target over 48 hours, and how many requests failed.
-- [ ] Instances per hint over 48 hours: is every sample a new instance, as the first ones suggest?
-- [ ] Answer question 3 and update RFC 0007 "Placement" in the same PR as this result.
-
-Do not redeploy `brigade-probe-dev` before the window ends: a deploy restarts every object, which inflates
-`instances` and could move a probe.
-
-The probes keep running after the window. Once the result is recorded, stop them with `POST /probes/stop` (keeps
-the samples), and in the PR that records the result delete the Worker (`wrangler delete`, which deletes the
-samples too, so only after the result is written down) and remove `spikes/s2-probe-placement`, following RFC
-0002's rule for spike code.
-
 ## Result (48 hours)
 
-Pending.
+Read at 2026-10-27 14:51 UTC with `scripts/report.ts --hours 48`: about 2,880 samples per hint (one a minute).
+
+| Hint      | Colo (samples)     | Moves | Gap s p50/p95/max | Late ms p50/p95/max | Nearest AWS p50/p95 ms   |
+| --------- | ------------------ | ----- | ----------------- | ------------------- | ------------------------ |
+| `wnam`    | SEA (2878)         | 0     | 60 / 60 / 120     | 2 / 24 / 4409       | us-east-1 353 / 428      |
+| `enam`    | MIA (2878)         | 0     | 60 / 60 / 120     | 1 / 21 / 3152       | us-east-1 114 / 129      |
+| `sam`     | MIA (2879)         | 0     | 60 / 60 / 71      | 1 / 19 / 11489      | us-east-1 117 / 131      |
+| `weur`    | CDG (2880)         | 0     | 60 / 60 / 60      | 1 / 18 / 303        | eu-central-1 49 / 53     |
+| `eeur`    | FRA (2879)         | 0     | 60 / 60 / 69      | 11 / 52 / 8785      | eu-central-1 13 / 21     |
+| `apac`    | NRT (2877), none 1 | 0     | 60 / 60 / 65      | 2 / 24 / 4940       | ap-southeast-1 316 / 354 |
+| `apac-ne` | KIX (2880)         | 0     | 60 / 60 / 60      | 1 / 13 / 386        | ap-southeast-1 342 / 392 |
+| `apac-se` | SIN (2879)         | 0     | 60 / 60 / 63      | 12 / 47 / 2877      | ap-southeast-1 16 / 21   |
+| `oc`      | SYD (2880)         | 0     | 60 / 60 / 61      | 1 / 14 / 1000       | ap-southeast-1 726 / 760 |
+| `afr`     | LHR (2878)         | 0     | 60 / 60 / 70      | 12 / 32 / 10304     | eu-central-1 65 / 77     |
+| `me`      | WAW (2880)         | 0     | 60 / 60 / 60      | 2 / 23 / 455        | eu-central-1 91 / 106    |
+
+- **Placement is stable.** No probe moved in 48 hours: every hint ran every sample from the colo its first sample
+  named. The one `none` on `apac` is a single trace request that failed, not a move.
+- **`sam`, `afr` and `me` stayed out of region** for the whole window (Miami, London, Warsaw), as Cloudflare's data
+  location docs say.
+- **`apac-ne` and `apac-se` are real, distinct placements** (Osaka and Singapore), narrower than `apac` (Tokyo).
+- **Every sample was a new instance** (instances = samples for every hint): with alarms a minute apart the runtime
+  evicts the idle object and builds it again in the same colo. A new instance is not a migration; only a colo change
+  is, and none happened. Each run pays the object's cold start.
+- **Alarms are reliable.** No retries anywhere. The largest gap was 120 s on `wnam` and `enam` (one missed minute in
+  48 hours); everywhere else at most 71 s. Lateness is a few milliseconds at p95 (13 to 52 ms), with rare outliers
+  up to 11.5 s.
+- **Egress follows the colo**, confirming the first samples: each probe is fastest to the AWS region nearest it
+  (Frankfurt 13 ms, Singapore 16 ms, Paris to Frankfurt 49 ms), and the trace's `loc` said `US` for every probe, so
+  it is useless for location.
+- **Timings are cold connections** (DNS, TCP and TLS each run) and stable: p95 is within about 10% of p50 for every
+  near target. Failures (5 s timeout) cluster on far, cross-ocean targets (up to 32 of about 2,880 for `apac-ne` to
+  Frankfurt, about 1%) and are near zero for near ones.
 
 ## Decision
 
-Pending the 48-hour result. Leaning, from the first samples: keep `ProbeDO` with `locationHint` for the regions
-where Durable Objects spawn, and do not offer `sam`, `afr` or `me` as check locations (or label them with the colo
-they really run from) until Cloudflare places objects there; show the observed colo, never the hint, in the UI.
+RFC 0007 "Placement" stands as built, now settled by the full window:
+
+- Keep one `ProbeDO` per workspace and region created with `locationHint`, and keep offering only the six regions
+  where objects spawn in-region (`wnam`, `enam`, `weur`, `eeur`, `apac`, `oc`). Do not offer `sam`, `afr` or `me`
+  until Cloudflare places objects there; a check "from São Paulo" would really run from Miami.
+- Keep reporting the colo each run really used and show it next to the region; never trust the trace's `loc`.
+- `apac-ne` and `apac-se` are candidates for later regions (a Singapore probe is 20x closer to South-East Asian
+  targets than Tokyo's); adding them is a product choice, not a placement risk.
+- Treat a colo change, not a new instance, as the signal that a probe moved; expect a cold start every run.
+- A check's timeout should stay well above cross-ocean cold-connection times (p95 up to about 1.4 s here); the
+  product's limits (up to 30 s) already are.
 
 ## Resources created
 
-On the Freecorps Cloudflare account:
+On the Freecorps Cloudflare account, all deleted once this result was recorded:
 
 - Worker `brigade-probe-dev`, on its workers.dev URL (no routes, no custom domain, no preview URLs)
 - Durable Object namespace for `ProbeDO` (SQLite), class of `brigade-probe-dev`, with eleven objects `s2:<hint>`

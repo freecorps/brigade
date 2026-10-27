@@ -44,9 +44,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
     launch screen now uses the splash ground ([write-up](spikes/s4-expo-workspace.md)).
   - `eas build` succeeded for Android and iOS under the Freecorps EAS organisation; the Android build ran on the
     emulator ([write-up](spikes/s4-expo-workspace.md#eas-build)).
-- [ ] **S2 — Probe placement** (RFC 0007). Pass: observed colo per `locationHint` over 48h (deploy needs Heitor's approval).
-  - Deployed as `brigade-probe-dev` and sampling every hint since 2026-10-25; first samples in the
-    [write-up](spikes/s2-probe-placement.md). Left: read the 48-hour result and settle RFC 0007 "Placement".
+- [x] **S2 — Probe placement** (RFC 0007). Pass: observed colo per `locationHint` over 48h (deploy needs Heitor's approval).
+  - 48 hours on every hint: no probe moved colo, alarms missed at most one minute, egress leaves from the object's
+    colo; `sam`, `afr` and `me` run from Miami, London and Warsaw, so the six offered regions stand
+    ([write-up](spikes/s2-probe-placement.md)). The spike Worker and code are deleted.
 - [x] **S1 — APNs from a Worker and payload encryption** (RFC 0006). Pass: push received on a real iPhone from a
       Worker, decrypted in the Notification Service Extension (needs Apple credentials and a device).
   - Done on the iOS Simulator: a deployed Worker reaches APNs over HTTP/2 (local workerd cannot); HPKE (P-256,
@@ -148,7 +149,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Left: whether "No data" pages (Q17); TLS expiry, which Workers cannot read (RFC 0007 "Check types": neither
     `fetch` nor the Sockets API exposes the peer certificate); paging, not only a notice, on a stalled probe (RFC 0007
     "Watching the watcher"); `AlertGroupDO` and alert routes, moving monitor alerts out of the workspace shard;
-    revisiting the regions with S2's 48-hour result; the workspace default locale for the incident title (Q15).
+    `apac-ne` and `apac-se` as further regions (S2); the workspace default locale for the incident title (Q15).
 - [x] Incidents: declare, severity, status, roles, timeline, updates
   - Timeline as its own synced table written by every incident mutation (and the monitor recovery note), written
     updates, three incident roles checked against the shard's member list, and an incident page in the dashboard

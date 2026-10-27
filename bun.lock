@@ -212,18 +212,6 @@
         "vite-plus": "catalog:",
       },
     },
-    "spikes/s2-probe-placement": {
-      "name": "@freecorps/brigade-spike-s2",
-      "version": "0.0.0",
-      "devDependencies": {
-        "@cloudflare/vite-plugin": "^1.65.0",
-        "@cloudflare/vitest-plugin": "^1.4.7",
-        "@types/node": "^26.6.5",
-        "typescript": "^7.0.2",
-        "vite-plus": "catalog:",
-        "wrangler": "^4.152.0",
-      },
-    },
   },
   "overrides": {
     "react": "19.3.0",
@@ -628,8 +616,6 @@
     "@freecorps/brigade-sdk": ["@freecorps/brigade-sdk@workspace:packages/sdk"],
 
     "@freecorps/brigade-slack": ["@freecorps/brigade-slack@workspace:integrations/slack"],
-
-    "@freecorps/brigade-spike-s2": ["@freecorps/brigade-spike-s2@workspace:spikes/s2-probe-placement"],
 
     "@freecorps/brigade-sync": ["@freecorps/brigade-sync@workspace:packages/sync"],
 

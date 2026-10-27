@@ -19,7 +19,7 @@ import {
   type Actor,
   type StatusSnapshot,
 } from "@freecorps/brigade-schema";
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test, vi } from "vite-plus/test";
 import type { EmailSender, OutgoingEmail } from "../src/email.ts";
 import worker from "../src/index.ts";
 import { consumeEvents, type Fetch } from "../src/notify.ts";
@@ -1070,22 +1070,31 @@ describe("maintenance", () => {
           body: "Read-only for a minute.",
           componentIds: [component],
           startsAt: now + 200,
-          endsAt: now + 400,
+          endsAt: now + 1500,
         },
         t.responder,
       ),
     ).toMatchObject({ ok: true });
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    await runDurableObjectAlarm(t.stub);
-    expect(await t.events("maintenance.started")).toHaveLength(1);
+    // Run the shard's alarm until the window has started: the runtime may run the same alarm first, or meanwhile.
+    await vi.waitFor(
+      async () => {
+        await runDurableObjectAlarm(t.stub);
+        expect(await t.events("maintenance.started")).toHaveLength(1);
+      },
+      { timeout: 5000, interval: 100 },
+    );
     // The alarm's own push waits on KV's spacing after the test's pushes (which run ahead of the clock): push now.
     await t.push();
     const page = await env.STATUS!.get<StatusSnapshot>(statusKey(t.address), "json");
     expect(page?.maintenance).toMatchObject([{ title: "Database upgrade", components: ["API"] }]);
     expect(page?.groups[0]?.components[0]?.status).toBe("maintenance");
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    await runDurableObjectAlarm(t.stub);
-    expect(await t.events("maintenance.ended")).toHaveLength(1);
+    await vi.waitFor(
+      async () => {
+        await runDurableObjectAlarm(t.stub);
+        expect(await t.events("maintenance.ended")).toHaveLength(1);
+      },
+      { timeout: 5000, interval: 100 },
+    );
     const { sent, sender } = recorder();
     await deliver(
       [

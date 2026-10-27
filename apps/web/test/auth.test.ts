@@ -245,7 +245,10 @@ describe("switching workspaces", () => {
 
 describe("after a sign-up, a sign-in refused", () => {
   test("says the address may have an account, whose owner was emailed", () => {
-    const message = authErrorMessage({ status: 401, code: "INVALID_EMAIL_OR_PASSWORD" }, "after-sign-up");
+    const message = authErrorMessage(
+      { status: 401, code: "INVALID_EMAIL_OR_PASSWORD" },
+      "after-sign-up",
+    );
     expect(message).toContain("we've emailed its owner");
     expect(authErrorMessage({ status: 429 }, "after-sign-up")).toBe(
       authErrorMessage({ status: 429 }, "sign-in"),

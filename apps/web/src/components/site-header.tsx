@@ -124,7 +124,9 @@ function WorkspaceSwitcher() {
         }}
       >
         <DropdownMenuTrigger
-          render={<Button variant="ghost" className="-mx-2 h-11 min-w-0 gap-1.5 px-2" />}
+          render={
+            <Button variant="ghost" className="-mx-2 h-11 max-w-full min-w-0 shrink gap-1.5 px-2" />
+          }
         >
           <span className="sr-only">{m.workspace_label()}: </span>
           <span className="truncate" title={name}>

@@ -164,7 +164,9 @@ nothing internal (tested: the snapshot never contains the internal title, any me
 monitor or maintenance id). Version 2 added uptime, maintenance and the `maintenance` component status; the reader
 renders 1 and 2 and refuses anything else, including a 1 carrying the new fields. A page with no uptime bar and no
 maintenance window under way or upcoming is still written as a 1, so a Worker rolled back to a reader of 1 keeps
-serving it; only a page using what 2 added needs the newer reader.
+serving it; only a page using what 2 added needs the newer reader. Incidents and windows also say when what the
+public reads about them last changed (`updatedAt`, and a window's `publishedAt`), optional in both versions: every
+reader skips fields it does not check, so they need no new version ("Feeds").
 
 - **Where it lives: Workers KV** (binding `STATUS`, key `status:<slug>`). Chosen for the read path: KV is built for
   data read far more often than it is written and cached at the edge near readers (cacheTtl, default 60 s, at least
@@ -254,6 +256,13 @@ serving it; only a page using what 2 added needs the newer reader.
   the edge cache, `isSnapshot`, the 404 and 503 pages), never from the shard: a feed holds nothing the page does not
   show (tested). An entry's id is the page's address and when the incident was first published (or the window
   starts), since the snapshot has no ids; an incident taken off and published again is a new entry.
+- **Dated by what the public reads.** An entry's `updated` (Atom) and `date_modified` (JSON Feed) is when what the
+  page says about it last changed (the snapshot's `updatedAt`, from the row): a publish, an edited or removed update,
+  a component taken out, a window edited, started or ended. So a correction moves it and a reader replaces the text
+  it kept. A window is published when it was planned (`publishedAt`), never at its start, so an upcoming one is not
+  dated in the future; its times are in the text. Both fields are optional additions to the snapshot (no version
+  change): one written before them dates an incident by its newest update and a window by the earlier of its start
+  and the snapshot's build.
 - **Headers**: the page's caching (`max-age=30`, the edge cache keyed by slug, format and origin),
   `Access-Control-Allow-Origin: *` (it is public, and a widget on another site may read it), `nosniff`. Addresses in
   a feed are absolute, from `DASHBOARD_URL` (the page's origin), else the request's.

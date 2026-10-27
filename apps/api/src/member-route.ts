@@ -1,8 +1,10 @@
 // The checks a member's own HTTP route makes before it wakes a shard: the method, the workspace id, the origin for
-// writes, the session and the member's role in D1. Used by the postmortem draft and the export routes.
+// writes, the session and the member's role in D1, or an API token (RFC 0014) with the route's scope. Used by the
+// postmortem draft, the export and the status page routes.
 
-import type { Actor } from "@freecorps/brigade-schema";
+import { allows, type Actor, type Permission } from "@freecorps/brigade-schema";
 import { memberRole } from "./actor.ts";
+import { bearerToken, resolveBearer, type ApiTokenEnv } from "./api-tokens.ts";
 import type { Auth } from "./auth.ts";
 import { readBounded } from "./body.ts";
 import { ORGANIZATION_ID } from "./workspace.ts";
@@ -16,14 +18,19 @@ export function json(body: unknown, status = 200, headers?: HeadersInit): Respon
 /**
  * The signed-in member of `workspaceId` making `request`, as an actor with their role in D1; or the answer to give:
  * 405, 400 for an id that is not a workspace's, 403 for another site's write, 401 without a session, 403
- * `not_a_member`, 503 when D1 fails. A made-up workspace or an outsider never wakes (or creates) a shard.
+ * `not_a_member`, 503 when D1 fails. A made-up workspace or an outsider never wakes (or creates) a shard. With
+ * `scope`, a request with `Authorization: Bearer` acts as that API token instead (its creator's current role, its
+ * scopes; its cookie ignored, no `Origin` check): every refusal of the token itself is `401`, a token without `scope`
+ * (or whose creator's role lacks it) `403 forbidden`, and over its limit `429`.
  */
 export async function checkMember(
   request: Request,
-  env: Omit<Env, "AI">,
+  env: Omit<Env, "AI"> & ApiTokenEnv,
   lazyAuth: () => Auth,
   workspaceId: string,
   methods: readonly string[],
+  scope?: Permission,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<MemberCheck> {
   const refuse = (response: Response): MemberCheck => ({ ok: false, response });
   if (!methods.includes(request.method)) {
@@ -31,6 +38,13 @@ export async function checkMember(
   }
   if (!ORGANIZATION_ID.test(workspaceId))
     return refuse(json({ error: "invalid_workspace_id" }, 400));
+  const token = scope === undefined ? undefined : bearerToken(request);
+  if (token !== undefined) {
+    const resolved = await resolveBearer(token, env, workspaceId, waitUntil);
+    if (!resolved.ok) return refuse(resolved.response);
+    if (!allows(resolved.actor, scope!)) return refuse(json({ error: "forbidden" }, 403));
+    return { ok: true, actor: resolved.actor };
+  }
   const origin = request.headers.get("Origin");
   if (request.method !== "GET" && origin !== null && origin !== new URL(request.url).origin) {
     return refuse(json({ error: "forbidden_origin" }, 403));

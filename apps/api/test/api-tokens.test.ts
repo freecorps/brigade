@@ -543,6 +543,150 @@ describe("using one", () => {
   });
 });
 
+describe("the dashboard's internal routes", () => {
+  /** One request per route a token now reaches, each a valid one for `t`. */
+  const routes = (t: Team) => ({
+    createWebhook: (token: string) =>
+      bearer(`/workspaces/${t.id}/webhooks`, token, {
+        method: "POST",
+        body: JSON.stringify({
+          id: newId("whk", Date.now(), random),
+          url: "https://hooks.example.com/brigade",
+          description: "",
+          events: ["incident.declared"],
+        }),
+      }),
+    configureStatusPage: (token: string) =>
+      bearer(`/workspaces/${t.id}/status-page`, token, {
+        method: "PUT",
+        body: JSON.stringify({
+          slug: `acme-${crypto.randomUUID().slice(0, 8)}`,
+          title: "Acme status",
+          locale: "en",
+          enabled: true,
+        }),
+      }),
+    createExport: (token: string) =>
+      bearer(`/workspaces/${t.id}/exports`, token, {
+        method: "POST",
+        body: JSON.stringify({ scope: { kind: "incident", incidentId: t.incident } }),
+      }),
+    requestDraft: (token: string) =>
+      bearer(`/workspaces/${t.id}/incidents/${t.incident}/postmortem/draft`, token, {
+        method: "POST",
+        body: JSON.stringify({ locale: "en" }),
+      }),
+  });
+  /** What each answers when the token passes: the tests have no `AI` binding, so a draft stops there. */
+  const passed = {
+    createWebhook: 201,
+    configureStatusPage: 200,
+    createExport: 201,
+    requestDraft: 503,
+  };
+  const scopes: Permission[] = [
+    "webhook:manage",
+    "status:manage",
+    "data:export",
+    "incident:update",
+  ];
+
+  test("a token with the scope uses each as its creator, from any Origin", async () => {
+    const t = await team();
+    const minted = await mint(t, t.ana, scopes);
+    for (const [name, send] of Object.entries(routes(t))) {
+      const response = await send(minted.token);
+      expect(response.status, name).toBe(passed[name as keyof typeof passed]);
+      if (name === "requestDraft")
+        expect(await response.json()).toEqual({ error: "ai_unavailable" });
+      if (name === "createExport") {
+        const { id } = (await response.json()) as { id: string };
+        const download = await bearer(`/workspaces/${t.id}/exports/${id}`, minted.token);
+        expect(download.status).toBe(200);
+        expect(await download.json()).toMatchObject({
+          incidents: [{ incident: { id: t.incident } }],
+        });
+      }
+    }
+    const events = await outbox(t);
+    for (const type of ["webhook.created", "status_page.configured", "workspace.exported"]) {
+      const event = events.find((one) => one.type === type);
+      expect(event, type).toBeDefined();
+      expect(event!.actor).toMatchObject({ kind: "token", id: minted.id });
+    }
+  });
+
+  test("a token without the scope is refused with 403, though its creator's role allows it", async () => {
+    const t = await team();
+    const minted = await mint(t, t.ana, ["incident:read"]);
+    for (const [name, send] of Object.entries(routes(t))) {
+      const response = await send(minted.token);
+      expect(response.status, name).toBe(403);
+      expect(await response.json()).toEqual({ error: "forbidden" });
+    }
+    const download = await bearer(
+      `/workspaces/${t.id}/exports/${newId("exp", Date.now(), random)}`,
+      minted.token,
+    );
+    expect(download.status).toBe(403);
+  });
+
+  test("revoked or expired tokens get 401", async () => {
+    const t = await team();
+    const expired = await mint(t, t.ana, scopes);
+    await env.DB.prepare(`update api_token set expires_at = ? where id = ?`)
+      .bind(Date.now() - 1, expired.id)
+      .run();
+    const revoked = await mint(t, t.ana, scopes);
+    await api(`/workspaces/${t.id}/api-tokens/${revoked.id}`, {
+      method: "DELETE",
+      headers: { Cookie: t.ana.cookie },
+    });
+    for (const token of [expired.token, revoked.token]) {
+      for (const [name, send] of Object.entries(routes(t))) {
+        const response = await send(token);
+        expect(response.status, name).toBe(401);
+        expect(response.headers.get("WWW-Authenticate")).toBe("Bearer");
+      }
+    }
+  });
+
+  test("a revoke the shard has holds on them too, though this isolate's cache would still serve the token", async () => {
+    const t = await team();
+    const minted = await mint(t, t.ana, scopes);
+    expect((await routes(t).createWebhook(minted.token)).status).toBe(201);
+    await env.DB.prepare(`update api_token set revoked_at = ? where id = ?`)
+      .bind(Date.now(), minted.id)
+      .run();
+    await t.stub.apiTokenRun(
+      t.id,
+      { kind: "user", id: t.ana.id, role: "owner" },
+      "apiToken.revoke",
+      { id: minted.id },
+    );
+    for (const name of ["createWebhook", "configureStatusPage", "createExport"] as const) {
+      expect((await routes(t)[name](minted.token)).status, name).toBe(401);
+    }
+  });
+
+  test("a creator demoted loses them at the next use", async () => {
+    const t = await team();
+    const minted = await mint(t, t.bea, scopes);
+    expect((await routes(t).createWebhook(minted.token)).status).toBe(201);
+    const demote = await api(`/workspaces/${t.id}/members/${t.bea.id}`, {
+      method: "PATCH",
+      headers: { Cookie: t.ana.cookie },
+      body: JSON.stringify({ role: "viewer" }),
+    });
+    expect(demote.status).toBe(200);
+    for (const [name, send] of Object.entries(routes(t))) {
+      const response = await send(minted.token);
+      expect(response.status, name).toBe(403);
+      expect(await response.json()).toEqual({ error: "forbidden" });
+    }
+  });
+});
+
 describe("the sync socket", () => {
   test("acts as the token: queries and mutations are held to its scopes", async () => {
     const t = await team();

@@ -21,6 +21,9 @@ import type {
   ServiceCreateRequest,
   ServicePatchRequest,
   Severity,
+  StatusLocale,
+  WebhookEventType,
+  WebhookHeader,
   workspaceName,
 } from "@freecorps/brigade-schema";
 
@@ -92,6 +95,51 @@ export type IncidentFilter = {
 
 export type IncidentPage = { incidents: Incident[]; nextCursor: string | null };
 
+/** A webhook endpoint's signing secret (`whsec_…`), answered once, when it is made. */
+export type WebhookSecret = { id: string; secret: string };
+
+/** A new endpoint: `id` (`whk_<ULID>`) is yours to make; at most 5 `headers`, sent on every delivery. */
+export type WebhookCreateRequest = {
+  id: string;
+  url: string;
+  description: string;
+  events: WebhookEventType[];
+  headers?: { name: string; value: string }[];
+};
+
+/** Every custom header of an endpoint; one without `value` keeps the value it has. */
+export type WebhookHeadersRequest = { headers: { name: string; value?: string }[] };
+
+export type { WebhookHeader };
+
+export type StatusPageRequest = {
+  /** `/status/<slug>`: 3 to 40 lowercase letters, digits and hyphens. */
+  slug: string;
+  title: string;
+  locale: StatusLocale;
+  enabled: boolean;
+};
+
+/** What `createExport` writes: one incident, or those declared from `from` to `to` (`YYYY-MM-DD`, UTC). */
+export type ExportScope =
+  | { kind: "incident"; incidentId: string }
+  | { kind: "range"; from: string; to: string };
+
+/** An export written; download it before `expiresAt` (epoch milliseconds). */
+export type ExportCreated = { id: string; expiresAt: number; incidents: number; bytes: number };
+
+/** An export file (`format: "brigade.export"`, RFC 0013): its incidents with their timelines and follow-ups. */
+export type ExportFile = { format: string; incidents: unknown[]; [key: string]: unknown };
+
+/** Options of the webhook writes. */
+export type WebhookWriteOptions = {
+  /**
+   * 16 to 64 letters, digits, `_` or `-` (a UUID fits); a random one by default. Send the same again to retry after
+   * a lost answer: the same request, the same secret answered, and a rotation never runs twice.
+   */
+  idempotencyKey?: string;
+};
+
 /** What every write of the incident and catalog routes takes. */
 export type WriteOptions = {
   /**
@@ -157,6 +205,26 @@ const REST_READ = [
  * with another request (422).
  */
 const REST_WRITE = [...REST_READ, "invalid_args", "idempotency_key_reused"] as const;
+
+/** The dashboard's routes that check the member (or token) themselves before the shard. */
+const MEMBER_CHECK = [
+  ...SIGNED_IN,
+  "invalid_workspace_id",
+  "not_a_member",
+  "unavailable",
+  ...BEARER,
+] as const;
+const WEBHOOK_WRITE = [
+  ...MEMBER_CHECK,
+  "invalid_args",
+  "invalid_idempotency_key",
+  "not_found",
+  "not_configured",
+  "forbidden",
+  "conflict",
+  "limit_reached",
+  "internal",
+] as const;
 
 /** The `error` codes each operation answers with, as the reference lists them. */
 export const OPERATION_ERRORS = {
@@ -233,6 +301,38 @@ export const OPERATION_ERRORS = {
   createCustomField: [...REST_WRITE, "limit_reached"],
   getCustomField: REST_READ,
   updateCustomField: REST_WRITE,
+  createWebhook: WEBHOOK_WRITE,
+  rotateWebhookSecret: WEBHOOK_WRITE,
+  setWebhookHeaders: WEBHOOK_WRITE,
+  configureStatusPage: [
+    ...MEMBER_CHECK,
+    "invalid_args",
+    "forbidden",
+    "slug_taken",
+    "not_found",
+    "not_applied",
+    "internal",
+  ],
+  createExport: [
+    ...MEMBER_CHECK,
+    "invalid_args",
+    "forbidden",
+    "not_found",
+    "limit_reached",
+    "too_large",
+    "exports_unavailable",
+    "internal",
+  ],
+  downloadExport: [...MEMBER_CHECK, "not_found", "expired", "exports_unavailable"],
+  requestPostmortemDraft: [
+    ...MEMBER_CHECK,
+    "invalid_args",
+    "forbidden",
+    "not_found",
+    "conflict",
+    "limit_reached",
+    "ai_unavailable",
+  ],
 } as const satisfies Record<string, readonly string[]>;
 
 export type Operation = keyof typeof OPERATION_ERRORS;
@@ -387,6 +487,10 @@ export function createClient(options: ClientOptions) {
     "Idempotency-Key": options.idempotencyKey ?? crypto.randomUUID(),
   });
   const ws = (workspaceId: string) => `/workspaces/${segment(workspaceId)}`;
+  /** The optional `Idempotency-Key` of a webhook write. */
+  const webhookKeyed = (options: WebhookWriteOptions) => ({
+    "Idempotency-Key": options.idempotencyKey ?? crypto.randomUUID(),
+  });
 
   return {
     /** `GET /health`: whether the API answers. */
@@ -715,6 +819,90 @@ export function createClient(options: ClientOptions) {
         "PATCH",
         () => `${ws(workspaceId)}/custom-fields/${segment(fieldId)}`,
         { body, headers: keyed(options) },
+      ),
+
+    /**
+     * `POST /workspaces/:id/webhooks`: an outbound webhook endpoint, and its signing secret, answered this once.
+     * Header values are sealed and never shown back.
+     */
+    createWebhook: (
+      workspaceId: string,
+      body: WebhookCreateRequest,
+      options: WebhookWriteOptions = {},
+    ) =>
+      call<WebhookSecret, "createWebhook">(
+        "createWebhook",
+        "POST",
+        () => `${ws(workspaceId)}/webhooks`,
+        { body, headers: webhookKeyed(options) },
+      ),
+
+    /** `POST /workspaces/:id/webhooks/:webhookId/rotate`: a new secret; the old one signs too for 24 hours. */
+    rotateWebhookSecret: (
+      workspaceId: string,
+      webhookId: string,
+      options: WebhookWriteOptions = {},
+    ) =>
+      call<WebhookSecret, "rotateWebhookSecret">(
+        "rotateWebhookSecret",
+        "POST",
+        () => `${ws(workspaceId)}/webhooks/${segment(webhookId)}/rotate`,
+        { headers: webhookKeyed(options) },
+      ),
+
+    /** `PUT /workspaces/:id/webhooks/:webhookId/headers`: every custom header; answers names and hints only. */
+    setWebhookHeaders: (
+      workspaceId: string,
+      webhookId: string,
+      body: WebhookHeadersRequest,
+      options: WebhookWriteOptions = {},
+    ) =>
+      call<{ id: string; headers: WebhookHeader[] }, "setWebhookHeaders">(
+        "setWebhookHeaders",
+        "PUT",
+        () => `${ws(workspaceId)}/webhooks/${segment(webhookId)}/headers`,
+        { body, headers: webhookKeyed(options) },
+      ),
+
+    /** `PUT /workspaces/:id/status-page`: sets up or changes the public status page. */
+    configureStatusPage: (workspaceId: string, body: StatusPageRequest) =>
+      call<Ok, "configureStatusPage">(
+        "configureStatusPage",
+        "PUT",
+        () => `${ws(workspaceId)}/status-page`,
+        { body },
+      ),
+
+    /** `POST /workspaces/:id/exports`: writes the file, kept 24 hours. */
+    createExport: (workspaceId: string, body: { scope: ExportScope }) =>
+      call<ExportCreated, "createExport">(
+        "createExport",
+        "POST",
+        () => `${ws(workspaceId)}/exports`,
+        {
+          body,
+        },
+      ),
+
+    /** `GET /workspaces/:id/exports/:exportId`: the file, parsed. */
+    downloadExport: (workspaceId: string, exportId: string) =>
+      call<ExportFile, "downloadExport">(
+        "downloadExport",
+        "GET",
+        () => `${ws(workspaceId)}/exports/${segment(exportId)}`,
+      ),
+
+    /** `POST /workspaces/:id/incidents/:incidentId/postmortem/draft`: the draft follows over Brigade Sync. */
+    requestPostmortemDraft: (
+      workspaceId: string,
+      incidentId: string,
+      body: { locale?: StatusLocale } = {},
+    ) =>
+      call<{ requestId: string }, "requestPostmortemDraft">(
+        "requestPostmortemDraft",
+        "POST",
+        () => `${ws(workspaceId)}/incidents/${segment(incidentId)}/postmortem/draft`,
+        { body },
       ),
   };
 }

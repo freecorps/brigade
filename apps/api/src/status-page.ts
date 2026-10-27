@@ -3,7 +3,7 @@
 // snapshot (src/status-html.ts renders it), so a page read a million times wakes no Durable Object.
 
 import {
-  can,
+  allows,
   newId,
   statusPageArgs,
   statusSnapshot,
@@ -90,7 +90,7 @@ export class StatusPublisher {
    * stamped no later than what it releases, so a release that lands late never undoes a claim made meanwhile.
    */
   async configure(workspaceId: string, actor: Actor, raw: unknown): Promise<StatusConfigureResult> {
-    if (!can(actor.role, "status:manage")) return { ok: false, code: "forbidden" };
+    if (!allows(actor, "status:manage")) return { ok: false, code: "forbidden" };
     const parsed = statusPageArgs(raw);
     if (!parsed.ok) return { ok: false, code: "invalid_args" };
     const args = parsed.value;

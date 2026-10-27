@@ -1,20 +1,23 @@
-// Exports to R2 (RFC 0013 "Exports"). `POST /workspaces/:id/exports` (owners and admins) has the shard build the JSON
+// Exports to R2 (RFC 0013 "Exports"). `POST /workspaces/:id/exports` (owners and admins, or an API token with
+// `data:export`, RFC 0014) has the shard build the JSON
 // file in parts (`WorkspaceDO.buildExport`: the hourly limit, then one incident at a time up to `MAX_EXPORT_BYTES`),
 // streams the parts into the `EXPORTS` bucket under the workspace's prefix and has the shard record it
 // (`export.record`, its event through the outbox). `GET /workspaces/:id/exports/:exportId` streams it
-// back to an owner or admin: the bucket is never public. A file lasts `EXPORT_TTL_MS`: the download refuses an
+// back to an owner or admin (or such a token): the bucket is never public. A file lasts `EXPORT_TTL_MS`: the download refuses an
 // expired one and deletes it, the cron's hourly sweep deletes the rest (`sweepExports`), and the bucket's lifecycle
 // rule is the backstop (apps/api/README.md "Exports"). Without the binding every route answers 503.
 
 import {
-  can,
+  allows,
   EXPORT_TTL_MS,
   exportScope,
   isId,
   MAX_EXPORT_BYTES,
   type ExportScope,
 } from "@freecorps/brigade-schema";
+import { unauthenticated } from "./api-tokens.ts";
 import type { Auth } from "./auth.ts";
+import { EXPORT_STATUS } from "./http.ts";
 import { checkMember, json, readJson } from "./member-route.ts";
 import { instanceMonitorCap, type MonitorEnv } from "./monitors.ts";
 
@@ -35,28 +38,26 @@ export type BuiltExport =
   | { ok: true; id: string; parts: Uint8Array[]; bytes: number; incidents: number }
   | { ok: false; code: string };
 
-/** `limit_reached`: a range over `MAX_EXPORT_INCIDENTS`; `rate_limited`: past `EXPORTS_PER_HOUR`. */
-const STATUS: Record<string, number> = {
-  not_found: 404,
-  forbidden: 403,
-  not_a_member: 403,
-  limit_reached: 413,
-  too_large: 413,
-  rate_limited: 429,
-  invalid_args: 400,
-};
-
 /** `POST /workspaces/:id/exports`, body `{ scope }`: 201 `{ id, expiresAt, incidents, bytes }`. */
 export async function createExport(
   request: Request,
   env: Env & ExportEnv,
   lazyAuth: () => Auth,
   workspaceId: string,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<Response> {
-  const member = await checkMember(request, env, lazyAuth, workspaceId, ["POST"]);
+  const member = await checkMember(
+    request,
+    env,
+    lazyAuth,
+    workspaceId,
+    ["POST"],
+    "data:export",
+    waitUntil,
+  );
   if (!member.ok) return member.response;
   // Checked before the shard wakes: responders and viewers never export.
-  if (!can(member.actor.role, "data:export")) return json({ error: "forbidden" }, 403);
+  if (!allows(member.actor, "data:export")) return json({ error: "forbidden" }, 403);
   const bucket = env.EXPORTS;
   if (!bucket) return json({ error: "exports_unavailable" }, 503);
   const body = await readJson(request);
@@ -69,7 +70,10 @@ export async function createExport(
   } catch (error) {
     return failed("WorkspaceDO.buildExport failed", workspaceId, error);
   }
-  if (!built.ok) return json({ error: built.code }, STATUS[built.code] ?? 500);
+  if (!built.ok) {
+    if (built.code === "unauthenticated") return unauthenticated();
+    return json({ error: built.code }, EXPORT_STATUS[built.code] ?? 500);
+  }
   const { id, parts, bytes } = built;
   const key = exportKey(workspaceId, id);
   const expiresAt = Date.now() + EXPORT_TTL_MS;
@@ -126,9 +130,17 @@ export async function downloadExport(
   workspaceId: string,
   exportId: string,
 ): Promise<Response> {
-  const member = await checkMember(request, env, lazyAuth, workspaceId, ["GET"]);
+  const member = await checkMember(
+    request,
+    env,
+    lazyAuth,
+    workspaceId,
+    ["GET"],
+    "data:export",
+    ctx.waitUntil.bind(ctx),
+  );
   if (!member.ok) return member.response;
-  if (!can(member.actor.role, "data:export")) return json({ error: "forbidden" }, 403);
+  if (!allows(member.actor, "data:export")) return json({ error: "forbidden" }, 403);
   const bucket = env.EXPORTS;
   if (!bucket) return json({ error: "exports_unavailable" }, 503);
   if (!isId("exp", exportId)) return json({ error: "not_found" }, 404);

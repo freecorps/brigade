@@ -23,7 +23,9 @@ import {
   type StatusLocale,
   type TimelineRow,
 } from "@freecorps/brigade-schema";
+import { unauthenticated } from "./api-tokens.ts";
 import type { Auth } from "./auth.ts";
+import { DRAFT_STATUS } from "./http.ts";
 import { checkMember, json, readJson } from "./member-route.ts";
 
 /**
@@ -356,18 +358,9 @@ export type DraftRequestResult =
   | { ok: true; requestId: string; source: DraftSource }
   | { ok: false; code: string };
 
-const REQUEST_STATUS: Record<string, number> = {
-  not_found: 404,
-  forbidden: 403,
-  not_a_member: 403,
-  conflict: 409,
-  limit_reached: 429,
-  invalid_args: 400,
-};
-
 /**
  * `POST /workspaces/:id/incidents/:incidentId/postmortem/draft` (body `{ locale }`, the asker's language, used when
- * the workspace has no status page language): responders and up. 503 `ai_unavailable` without the `AI` binding; 202
+ * the workspace has no status page language): responders and up, or an API token with `incident:update`. 503 `ai_unavailable` without the `AI` binding; 202
  * `{ requestId }` once the draft is pending, the draft itself arriving through sync.
  */
 export async function requestDraftRoute(
@@ -378,7 +371,15 @@ export async function requestDraftRoute(
   workspaceId: string,
   incidentId: string,
 ): Promise<Response> {
-  const member = await checkMember(request, env, lazyAuth, workspaceId, ["POST"]);
+  const member = await checkMember(
+    request,
+    env,
+    lazyAuth,
+    workspaceId,
+    ["POST"],
+    "incident:update",
+    ctx.waitUntil.bind(ctx),
+  );
   if (!member.ok) return member.response;
   if (!isId("inc", incidentId)) return json({ error: "not_found" }, 404);
   const ai = env.AI;
@@ -400,7 +401,10 @@ export async function requestDraftRoute(
     );
     return json({ error: "unavailable" }, 503);
   }
-  if (!result.ok) return json({ error: result.code }, REQUEST_STATUS[result.code] ?? 500);
+  if (!result.ok) {
+    if (result.code === "unauthenticated") return unauthenticated();
+    return json({ error: result.code }, DRAFT_STATUS[result.code] ?? 500);
+  }
   const { requestId, source } = result;
   ctx.waitUntil(
     (async () => {

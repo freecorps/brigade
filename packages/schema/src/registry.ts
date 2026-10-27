@@ -71,6 +71,7 @@ import {
   recordWebhookAttempt,
   redeliverWebhooks,
   rotateWebhookSecret,
+  setWebhookHeaders,
   webhookMutations,
 } from "./webhooks.ts";
 import { followUpMutations, followUpQueries } from "./followups.ts";
@@ -209,6 +210,7 @@ export const serverMutations = defineRegistry([
   slackArchiveDue,
   createWebhook,
   rotateWebhookSecret,
+  setWebhookHeaders,
   recordWebhookAttempt,
   redeliverWebhooks,
   ...postmortemServerMutations,

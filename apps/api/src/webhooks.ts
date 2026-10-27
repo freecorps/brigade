@@ -9,6 +9,7 @@ import {
   isWebhookEventType,
   NOTIFIER_ACTOR,
   WEBHOOK_REDELIVER_EVENT,
+  WEBHOOK_REPLAY_EVENT,
   WEBHOOK_TEST_EVENT,
   webhookPayload,
   webhookSubject,
@@ -17,6 +18,7 @@ import {
   type Issue,
   type MutationErrorCode,
   type WebhookError,
+  type WebhookHeader,
   type WebhookRow,
 } from "@freecorps/brigade-schema";
 import type { MutationResultMessage } from "@freecorps/brigade-sync/protocol";
@@ -40,11 +42,14 @@ export const WEBHOOK_REDRIVE_BATCH = 50;
 export const WEBHOOK_CLIENT_ID = "webhooks";
 const NOTIFIER_CLIENT_ID = "webhook-notifier";
 
-/** Whether the webhook notifier acts on `event`: a catalog event, a test, or a redelivery. Most events are none. */
+/**
+ * Whether the webhook notifier acts on `event`: a catalog event, a test, a redelivery or a replay. Most events are none.
+ */
 export function asksForWebhooks(event: Pick<BrigadeEvent, "type">): boolean {
   return (
     event.type === WEBHOOK_TEST_EVENT ||
     event.type === WEBHOOK_REDELIVER_EVENT ||
+    event.type === WEBHOOK_REPLAY_EVENT ||
     isWebhookEventType(event.type)
   );
 }
@@ -93,6 +98,8 @@ export type WebhookSend = {
   url: string;
   /** The sealed secrets to sign with: the current one, then the previous one during its grace. */
   secrets: string[];
+  /** The endpoint's custom headers, each value sealed. */
+  headers: { name: string; value: string }[];
   /** 1 for the first try. */
   attempt: number;
 };
@@ -107,8 +114,14 @@ export type WebhookPlan = {
   sends: WebhookSend[];
 };
 
-/** The event a delivery carries, as far as signing and the log need it. */
-export type WebhookEventRef = Pick<BrigadeEvent, "id" | "type" | "workspaceId">;
+/**
+ * The event a delivery carries, as far as signing and the log need it. `ledger`: for a replay, the `webhook.replay`
+ * event's id, which keys its own row in the ledger (the event's own row may be done long ago); the delivery still
+ * carries `id` as its `webhook-id`.
+ */
+export type WebhookEventRef = Pick<BrigadeEvent, "id" | "type" | "workspaceId"> & {
+  ledger?: string;
+};
 
 const refOf = (event: BrigadeEvent): WebhookEventRef => ({
   id: event.id,
@@ -153,12 +166,14 @@ export class WebhookDesk {
   }
 
   /**
-   * `webhook.create` or `webhook.rotateSecret` as the member who asked (RPC from the API's routes), with the sealed
-   * secret the API made. De-duplicated by `key`, so a retried request gets the first answer.
+   * `webhook.create`, `webhook.rotateSecret` or `webhook.setHeaders` as the member or token who asked (RPC from the
+   * API's routes), with what the API sealed. A header sent without a value (`value: null`) keeps the sealed value and
+   * hint the endpoint has for that name (whatever its case); one it does not have is `invalid_args`. De-duplicated by
+   * `key`, so a retried request gets the first answer.
    */
   run(
     actor: Actor,
-    name: "webhook.create" | "webhook.rotateSecret",
+    name: WebhookRunName,
     args: Record<string, unknown>,
     key: string,
     now: number,
@@ -166,6 +181,35 @@ export class WebhookDesk {
     const { shard } = this.options;
     const stored = shard.storedResult(actor.id, WEBHOOK_CLIENT_ID, key, now);
     if (stored) return stored;
+    if (name === "webhook.setHeaders" && Array.isArray(args.headers)) {
+      const id = typeof args.id === "string" ? args.id : "";
+      const kept = shard.store.get("webhook_secrets", id)?.headers ?? [];
+      const shown = shard.store.get("webhooks", id)?.headers ?? [];
+      const headers: unknown[] = [];
+      for (const [index, header] of (args.headers as WebhookHeaderArg[]).entries()) {
+        if (header?.value !== null) {
+          headers.push(header);
+          continue;
+        }
+        const lower = String(header.name).toLowerCase();
+        const value = kept.find((one) => one.name.toLowerCase() === lower)?.value;
+        if (value === undefined) {
+          return {
+            type: "mutationResult",
+            mutationId: key,
+            ok: false,
+            error: {
+              code: "invalid_args",
+              message: "A new header needs a value",
+              issues: [{ path: `headers[${index}].value`, message: "Required" }],
+            },
+          };
+        }
+        const hint = shown.find((one) => one.name.toLowerCase() === lower)?.hint ?? null;
+        headers.push({ name: header.name, value, hint });
+      }
+      args = { ...args, headers };
+    }
     const { result, changes } = shard.mutate({
       clientId: WEBHOOK_CLIENT_ID,
       mutationId: key,
@@ -189,13 +233,14 @@ export class WebhookDesk {
     this.prune(now);
     const none: WebhookPlan = { event: null, body: null, sends: [] };
     if (event.type === WEBHOOK_REDELIVER_EVENT) return this.replan(event, now) ?? none;
+    if (event.type === WEBHOOK_REPLAY_EVENT) return this.replay(event, now) ?? none;
     if (!asksForWebhooks(event)) return none;
     const { store } = this.options.shard;
     const endpoints = store.scan("webhooks").filter((row) => webhookWants(row, event));
     if (endpoints.length === 0) return none;
     const body = this.body(event, now);
     if (body === null) return none;
-    return { event: refOf(event), body, sends: this.claim(event, endpoints, now) };
+    return { event: refOf(event), body, sends: this.claim(event.id, endpoints, now) };
   }
 
   private replan(redeliver: BrigadeEvent, now: number): WebhookPlan | undefined {
@@ -209,6 +254,8 @@ export class WebhookDesk {
       .toArray();
     if (!kept) return undefined;
     const event = JSON.parse(kept.event) as BrigadeEvent;
+    // A replay the consumer never recorded (put off, or the consumer died) comes back as itself.
+    if (event.type === WEBHOOK_REPLAY_EVENT) return this.replay(event, now);
     const { store } = this.options.shard;
     const endpoints: WebhookRow[] = [];
     for (const { webhook_id } of this.sql
@@ -232,15 +279,78 @@ export class WebhookDesk {
         webhook_id,
       );
     }
-    return { event: refOf(event), body: kept.body, sends: this.claim(event, endpoints, now) };
+    return { event: refOf(event), body: kept.body, sends: this.claim(event.id, endpoints, now) };
   }
 
-  /** Claims each of `endpoints` due for `event` now; one held, waiting out its backoff or done is skipped. */
-  private claim(event: BrigadeEvent, endpoints: readonly WebhookRow[], now: number): WebhookSend[] {
+  /**
+   * A `webhook.replay` (`data`: the endpoint, the event and its type): the event's kept body, once, to that endpoint
+   * while it is on, under the replay's own row in the ledger (keyed by the replay's id), so the event's own row, done
+   * or not, is never touched. The body is kept again under the replay's id, so a replay the consumer never recorded
+   * comes back through `redrive` like any delivery. Undefined when the payload is no longer kept, the endpoint is gone
+   * or off, or the replay is done or held.
+   */
+  private replay(replay: BrigadeEvent, now: number): WebhookPlan | undefined {
+    const data = replay.data as { id?: unknown; eventId?: unknown; type?: unknown } | null;
+    const webhookId = data?.id;
+    const eventId = data?.eventId;
+    const type = data?.type;
+    if (typeof webhookId !== "string" || typeof eventId !== "string" || typeof type !== "string") {
+      return undefined;
+    }
+    const keptBody = (id: string) =>
+      this.sql
+        .exec<{ body: string }>("select body from webhook_events where event_id = ?", id)
+        .toArray()[0]?.body;
+    let body = keptBody(replay.id);
+    if (body === undefined) {
+      body = keptBody(eventId);
+      if (body === undefined) {
+        this.options.log("webhook replay dropped: payload no longer kept", {
+          event: eventId,
+          webhook: webhookId,
+        });
+        return undefined;
+      }
+      this.sql.exec(
+        "insert into webhook_events (event_id, event, body, at) values (?, ?, ?, ?)",
+        replay.id,
+        JSON.stringify(replay),
+        body,
+        now,
+      );
+    }
+    const endpoint = this.options.shard.store.get("webhooks", webhookId);
+    if (!endpoint?.enabled) {
+      this.options.log("webhook replay dropped: endpoint gone or off", {
+        event: eventId,
+        webhook: webhookId,
+      });
+      this.sql.exec(
+        `insert into webhook_sends (event_id, webhook_id, attempts, claimed_until, retry_at, queued_until, done, at)
+         values (?, ?, 0, 0, 0, 0, 1, ?)
+         on conflict (event_id, webhook_id) do update set done = 1`,
+        replay.id,
+        webhookId,
+        now,
+      );
+      return undefined;
+    }
+    return {
+      event: { id: eventId, type, workspaceId: replay.workspaceId, ledger: replay.id },
+      body,
+      sends: this.claim(replay.id, [endpoint], now),
+    };
+  }
+
+  /**
+   * Claims each of `endpoints` due now under ledger key `ledgerId` (the event's id, or a replay's); one held, waiting
+   * out its backoff or done is skipped.
+   */
+  private claim(ledgerId: string, endpoints: readonly WebhookRow[], now: number): WebhookSend[] {
     const { store } = this.options.shard;
     const sends: WebhookSend[] = [];
     for (const endpoint of endpoints) {
-      const ledger = this.send(event.id, endpoint.id);
+      const ledger = this.send(ledgerId, endpoint.id);
       if (ledger?.done) continue;
       if (Math.max(ledger?.claimed_until ?? 0, ledger?.retry_at ?? 0) > now) continue;
       const secrets = store.get("webhook_secrets", endpoint.id);
@@ -250,7 +360,7 @@ export class WebhookDesk {
          values (?, ?, 0, ?, 0, 0, 0, ?)
          on conflict (event_id, webhook_id) do update set claimed_until = excluded.claimed_until,
            queued_until = 0`,
-        event.id,
+        ledgerId,
         endpoint.id,
         now + WEBHOOK_CLAIM_MS,
         now,
@@ -261,6 +371,7 @@ export class WebhookDesk {
         webhookId: endpoint.id,
         url: endpoint.url,
         secrets: [secrets.secret, ...previous],
+        headers: secrets.headers ?? [],
         attempt: (ledger?.attempts ?? 0) + 1,
       });
     }
@@ -333,7 +444,8 @@ export class WebhookDesk {
   /**
    * What one attempt did: kept in the endpoint's log (`webhook.record`, which may turn it off), and in the ledger.
    * Returns when to try again, or null when this event is done at this endpoint: delivered, given up after
-   * `WEBHOOK_MAX_ATTEMPTS`, refused for good (a blocked URL, a secret that does not open) or the endpoint gone.
+   * `WEBHOOK_MAX_ATTEMPTS`, refused for good (a blocked URL, a secret that does not open) or the endpoint gone. A
+   * replay (`event.ledger`) is one attempt: never retried by itself, since a member can replay it again.
    */
   record(
     event: WebhookEventRef,
@@ -341,9 +453,11 @@ export class WebhookDesk {
     outcome: WebhookOutcome,
     now: number,
   ): { retryAt: number | null } {
-    const attempts = (this.send(event.id, webhookId)?.attempts ?? 0) + 1;
+    const ledgerId = event.ledger ?? event.id;
+    const replay = event.ledger !== undefined;
+    const attempts = (this.send(ledgerId, webhookId)?.attempts ?? 0) + 1;
     const { shard } = this.options;
-    const mutationId = `record:${event.id}:${webhookId}:${attempts}`;
+    const mutationId = `record:${ledgerId}:${webhookId}:${attempts}`;
     let gone = false;
     if (!shard.storedResult(NOTIFIER_ACTOR.id, NOTIFIER_CLIENT_ID, mutationId, now)) {
       const { result, changes } = shard.mutate({
@@ -353,7 +467,13 @@ export class WebhookDesk {
         name: "webhook.record",
         args: {
           id: webhookId,
-          attempt: { eventId: event.id, type: event.type, attempt: attempts, ...outcome },
+          attempt: {
+            eventId: event.id,
+            type: event.type,
+            attempt: attempts,
+            ...outcome,
+            ...(replay ? { replay } : {}),
+          },
         },
         now,
         internal: true,
@@ -364,13 +484,14 @@ export class WebhookDesk {
     }
     const retryable = outcome.error !== "blocked" && outcome.error !== "secret";
     const retryAt =
-      !outcome.ok && !gone && retryable && attempts < WEBHOOK_MAX_ATTEMPTS
+      !outcome.ok && !gone && !replay && retryable && attempts < WEBHOOK_MAX_ATTEMPTS
         ? now + WEBHOOK_RETRY_DELAYS_MS[attempts - 1]!
         : null;
     if (!outcome.ok) {
       this.options.log(retryAt === null ? "webhook given up" : "webhook failed", {
         event: event.id,
         webhook: webhookId,
+        ...(replay ? { replay: ledgerId } : {}),
         attempts,
         status: outcome.status,
         error: outcome.error,
@@ -381,7 +502,7 @@ export class WebhookDesk {
        values (?, ?, ?, 0, ?, 0, ?, ?)
        on conflict (event_id, webhook_id) do update set attempts = excluded.attempts,
          claimed_until = 0, retry_at = excluded.retry_at, queued_until = 0, done = excluded.done`,
-      event.id,
+      ledgerId,
       webhookId,
       attempts,
       retryAt ?? 0,
@@ -488,7 +609,13 @@ export class WebhookDesk {
   }
 }
 
-/** A mutation's refusal, as the API's webhook routes answer it. */
+/** What the API's webhook routes run in the shard (src/webhook-routes.ts). */
+export type WebhookRunName = "webhook.create" | "webhook.rotateSecret" | "webhook.setHeaders";
+
+/** A custom header as the routes send it: its value sealed, or null to keep the one the endpoint has. */
+export type WebhookHeaderArg = { name: string; value: string | null; hint: string | null };
+
+/** A mutation's outcome, as the API's webhook routes answer it; `headers`: the endpoint's, after `setHeaders`. */
 export type WebhookRunResult =
-  | { ok: true }
-  | { ok: false; code: MutationErrorCode | "not_a_member"; issues?: Issue[] };
+  | { ok: true; headers?: WebhookHeader[] }
+  | { ok: false; code: MutationErrorCode | "not_a_member" | "unauthenticated"; issues?: Issue[] };

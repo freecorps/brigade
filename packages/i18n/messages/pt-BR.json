@@ -2476,6 +2476,36 @@
         "part=recent_title": "Entregas recentes",
         "part=recent_empty": "Nada entregue ainda. Envie um evento de teste para experimentar o endpoint.",
         "part=attempt": "Tentativa {when}",
+        "part=headers_label": "Cabeçalhos personalizados",
+        "part=headers_hint": "Opcional, até 5. Enviados em cada entrega, por exemplo Authorization para o seu receptor. O Brigade guarda os valores selados e nunca os mostra de novo.",
+        "part=headers_none": "Nenhum cabeçalho personalizado.",
+        "part=headers_edit": "Editar cabeçalhos",
+        "part=headers_save": "Salvar cabeçalhos",
+        "part=headers_saving": "Salvando…",
+        "part=headers_saved": "Cabeçalhos salvos.",
+        "part=headers_failed": "Não foi possível salvar os cabeçalhos. Tente de novo.",
+        "part=headers_refused": "O Brigade recusou este cabeçalho. Confira o nome e o valor.",
+        "part=headers_limit": "Use no máximo 5 cabeçalhos.",
+        "part=header_add": "Adicionar cabeçalho",
+        "part=header_remove": "Remover cabeçalho",
+        "part=header_name": "Nome do cabeçalho",
+        "part=header_value": "Valor",
+        "part=header_keep": "Sem alteração",
+        "part=header_name_invalid": "Use letras, dígitos e hifens, como X-Team.",
+        "part=header_reserved": "O Brigade define este cabeçalho por conta própria.",
+        "part=header_duplicate": "Este cabeçalho aparece duas vezes.",
+        "part=header_value_required": "Informe um valor.",
+        "part=header_value_invalid": "Use até 1024 caracteres ASCII simples, sem quebras de linha.",
+        "part=header_hidden": "valor oculto",
+        "part=header_hint": "termina em {when}",
+        "part=replay": "Reenviar",
+        "part=replaying": "Reenviando…",
+        "part=replay_sent": "Reenvio a caminho, com o mesmo webhook-id. Ele aparece no topo de Entregas recentes.",
+        "part=replay_too_soon": "Uma entrega foi reenviada há pouco, ou este endpoint atingiu o limite de reenvios da hora. Aguarde um pouco.",
+        "part=replay_off": "Ligue este endpoint para reenviar uma entrega.",
+        "part=replay_gone": "O Brigade não guarda mais esta entrega, então ela não pode ser reenviada.",
+        "part=replay_failed": "Não foi possível reenviar. Tente de novo.",
+        "part=replayed": "Reenvio",
         "part=*": "Webhooks"
       }
     }
@@ -2526,6 +2556,20 @@
       "match": {
         "countPlural=one": "{countFormatted} evento",
         "countPlural=*": "{countFormatted} eventos"
+      }
+    }
+  ],
+  "webhook_headers_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} cabeçalho personalizado",
+        "countPlural=*": "{countFormatted} cabeçalhos personalizados"
       }
     }
   ],

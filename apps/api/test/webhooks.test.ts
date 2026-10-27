@@ -16,6 +16,9 @@ import {
   newId,
   WEBHOOK_DISABLE_AFTER_MS,
   WEBHOOK_DISABLE_FAILURES,
+  WEBHOOK_REPLAY_EVERY_MS,
+  WEBHOOK_REPLAY_MAX_AGE_MS,
+  WEBHOOK_REPLAYS_PER_HOUR,
   type Actor,
   type WebhookRow,
 } from "@freecorps/brigade-schema";
@@ -497,7 +500,7 @@ describe("POST /workspaces/:id/webhooks", () => {
     });
     const response = await webhookRequest(
       request,
-      { DB: env.DB, WORKSPACE: env.WORKSPACE },
+      { DB: env.DB, WORKSPACE: env.WORKSPACE, API_TOKEN_LIMIT: env.API_TOKEN_LIMIT },
       () => workerAuth(env, createExecutionContext(), request),
       t.id,
       undefined,
@@ -886,4 +889,284 @@ describe("delivery", () => {
     ]);
     expect(await redrive(t)).toEqual([]);
   }, 120_000);
+});
+
+/** Runs mutation `name` as `actor` from a client, answering its result (refusals included). */
+const attempt = (t: Team, name: string, args: unknown, actor: Actor, now = Date.now()) =>
+  t.withShard((shard) => {
+    const { result } = shard.mutate({
+      clientId: "test",
+      mutationId: newId("mut", now, random),
+      actor,
+      name,
+      args,
+      now,
+      internal: false,
+    });
+    return result;
+  });
+
+/** An endpoint whose one delivery of a declare was given up after every attempt failed. */
+async function givenUp(t: Team) {
+  const { id, secret } = await endpoint(t);
+  const event = await declare(t, owner(t));
+  const failing = receiver(() => new Response("down", { status: 503 }));
+  await deliver([event], failing.send);
+  for (let attempt = 2; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt++) {
+    await deliver(await redrive(t), failing.send);
+  }
+  expect(await ledger(t)).toEqual([expect.objectContaining({ done: 1 })]);
+  return { id, secret, event, failing };
+}
+
+describe("replaying a delivery", () => {
+  test("sends a given-up delivery once more: the same body and webhook-id, signed afresh", async () => {
+    const t = await team();
+    const { id, secret, event, failing } = await givenUp(t);
+    expect(await attempt(t, "webhook.replay", { id, eventId: event.id }, owner(t))).toMatchObject({
+      ok: true,
+    });
+    const [replay] = await eventsOf(t, "webhook.replay");
+    expect(replay).toMatchObject({
+      subject: id,
+      data: { id, eventId: event.id, type: "incident.declared" },
+    });
+    const hook = receiver();
+    expect(await deliver([replay!], hook.send)).toMatchObject({ retryMessages: [] });
+    expect(hook.received).toHaveLength(1);
+    const [got] = hook.received;
+    expect(got!.headers["webhook-id"]).toBe(event.id);
+    expect(got!.body).toBe(failing.received[0]!.body);
+    const timestamp = Number(got!.headers["webhook-timestamp"]);
+    expect(got!.headers["webhook-signature"]).toBe(
+      `v1,${await sign(secret, event.id, timestamp, got!.body)}`,
+    );
+    const [newest] = (await row(t, id)).recent;
+    expect(newest).toMatchObject({ eventId: event.id, attempt: 1, ok: true, replay: true });
+    // Its own row in the ledger, done; the event's own row stays as it was.
+    expect((await ledger(t)).map((one) => [one.attempts, one.done])).toEqual([
+      [WEBHOOK_MAX_ATTEMPTS, 1],
+      [1, 1],
+    ]);
+    // Delivered again by the Queue: sent once.
+    await deliver([replay!], hook.send, { attempts: 2 });
+    expect(hook.received).toHaveLength(1);
+  }, 30_000);
+
+  test("a failed replay is one attempt, never retried by itself; one the consumer put off comes back", async () => {
+    const t = await team();
+    const { id, event } = await givenUp(t);
+    await attempt(t, "webhook.replay", { id, eventId: event.id }, owner(t));
+    const [replay] = await eventsOf(t, "webhook.replay");
+    const failing = receiver(() => new Response("still down", { status: 500 }));
+    await deliver([replay!], failing.send);
+    expect(failing.received).toHaveLength(1);
+    expect(await redrive(t)).toEqual([]);
+    expect((await row(t, id)).recent[0]).toMatchObject({ ok: false, replay: true, status: 500 });
+
+    // A replay planned and never recorded (the consumer died) is brought back by the alarm, still as a replay.
+    const later = Date.now() + WEBHOOK_REPLAY_EVERY_MS + 1;
+    expect(
+      await attempt(t, "webhook.replay", { id, eventId: event.id }, owner(t), later),
+    ).toMatchObject({ ok: true });
+    const second = (await eventsOf(t, "webhook.replay")).at(-1)!;
+    await runInDurableObject(t.stub, (instance: WorkspaceDO) => instance.planWebhooks(second));
+    const [redelivery] = await redrive(t);
+    expect(redelivery).toMatchObject({ data: { eventId: second.id } });
+    const hook = receiver();
+    await deliver([redelivery!], hook.send);
+    expect(hook.received.map((one) => one.headers["webhook-id"])).toEqual([event.id]);
+    expect((await row(t, id)).recent[0]).toMatchObject({ ok: true, replay: true });
+  }, 30_000);
+
+  test("is capped per endpoint, refused while it is off, and only for what its log holds", async () => {
+    const t = await team();
+    const { id } = await endpoint(t);
+    const event = await declare(t, owner(t));
+    await deliver([event], receiver().send);
+    const replay = (now: number, eventId = event.id) =>
+      attempt(t, "webhook.replay", { id, eventId }, owner(t), now);
+    const start = Date.now();
+    expect(await replay(start)).toMatchObject({ ok: true });
+    expect(await replay(start + 1000)).toMatchObject({
+      ok: false,
+      error: { code: "limit_reached" },
+    });
+    for (let n = 1; n < WEBHOOK_REPLAYS_PER_HOUR; n++) {
+      expect(await replay(start + n * WEBHOOK_REPLAY_EVERY_MS)).toMatchObject({ ok: true });
+    }
+    const past = start + WEBHOOK_REPLAYS_PER_HOUR * WEBHOOK_REPLAY_EVERY_MS;
+    expect(await replay(past)).toMatchObject({ ok: false, error: { code: "limit_reached" } });
+    // An hour after the first, there is room again.
+    expect(await replay(start + 60 * 60 * 1000 + 1)).toMatchObject({ ok: true });
+    // Not in its log, or its payload no longer kept: not found.
+    const other = newId("evt", Date.now(), random);
+    expect(await replay(start + 2 * 60 * 60 * 1000, other)).toMatchObject({
+      ok: false,
+      error: { code: "not_found" },
+    });
+    expect(await replay(start + WEBHOOK_REPLAY_MAX_AGE_MS + 60_000)).toMatchObject({
+      ok: false,
+      error: { code: "not_found" },
+    });
+    // Off: turn it on first. A responder never replays.
+    await t.run("webhook.setEnabled", { id, enabled: false }, owner(t));
+    expect(await replay(start + 3 * 60 * 60 * 1000)).toMatchObject({
+      ok: false,
+      error: { code: "invalid_transition" },
+    });
+    expect(
+      await attempt(t, "webhook.replay", { id, eventId: event.id }, responder(t)),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+  });
+
+  test("a replay for an endpoint turned off before it went out is dropped", async () => {
+    const t = await team();
+    const { id } = await endpoint(t);
+    const event = await declare(t, owner(t));
+    await deliver([event], receiver().send);
+    await attempt(t, "webhook.replay", { id, eventId: event.id }, owner(t));
+    const [replay] = await eventsOf(t, "webhook.replay");
+    await t.run("webhook.setEnabled", { id, enabled: false }, owner(t));
+    const hook = receiver();
+    await deliver([replay!], hook.send);
+    expect(hook.received).toEqual([]);
+    expect(await redrive(t)).toEqual([]);
+  });
+
+  test("a replay to a receiver that never answers never holds back a page in the same batch", async () => {
+    const t = await team();
+    const { id } = await endpoint(t);
+    await phone(t, "e".repeat(64));
+    const first = await declare(t, responder(t));
+    await deliver([first], receiver().send);
+    await attempt(t, "webhook.replay", { id, eventId: first.id }, owner(t));
+    const [replay] = await eventsOf(t, "webhook.replay");
+    const page = await declare(t, responder(t), "Second");
+    const hook = receiver(hang);
+    const result = await deliver([replay!, page], hook.send);
+    expect(hook.pushes).toContain("e".repeat(64));
+    expect(result.settledIn).toBeLessThan(WEBHOOK_BUDGET_MS + 1500);
+    expect(result).toMatchObject({ explicitAcks: ["msg-0", "msg-1"], retryMessages: [] });
+  }, 40_000);
+});
+
+describe("custom headers", () => {
+  const putHeaders = (t: Team, id: string, headers: unknown, by: Person = t.ana) =>
+    api(`/workspaces/${t.id}/webhooks/${id}/headers`, {
+      method: "PUT",
+      headers: { Cookie: by.cookie },
+      body: JSON.stringify({ headers }),
+    });
+
+  test("are set on create, sent on every delivery, sealed at rest and never shown back", async () => {
+    const t = await team();
+    const id = newId("whk", Date.now(), random);
+    const bearer = "Bearer receiver-token-0123456789";
+    const response = await api(`/workspaces/${t.id}/webhooks`, {
+      method: "POST",
+      headers: { Cookie: t.ana.cookie },
+      body: JSON.stringify({
+        id,
+        url: HOOK,
+        description: "",
+        events: ["incident.declared"],
+        headers: [
+          { name: "Authorization", value: bearer },
+          { name: "X-Team", value: "ops" },
+        ],
+      }),
+    });
+    expect(response.status).toBe(201);
+    expect((await row(t, id)).headers).toEqual([
+      { name: "Authorization", hint: "6789" },
+      { name: "X-Team", hint: null },
+    ]);
+    const kept = await t.withShard((shard) => shard.store.get("webhook_secrets", id));
+    expect(kept?.headers?.map((one) => one.name)).toEqual(["Authorization", "X-Team"]);
+    expect(JSON.stringify(kept)).not.toContain("receiver-token");
+    expect(JSON.stringify(await outbox(t))).not.toContain("receiver-token");
+    const event = await declare(t, owner(t));
+    const hook = receiver();
+    await deliver([event], hook.send);
+    expect(hook.received[0]!.headers).toMatchObject({
+      authorization: bearer,
+      "x-team": "ops",
+      "content-type": "application/json",
+      "webhook-id": event.id,
+    });
+  });
+
+  test("refuse reserved and hop-by-hop names, line breaks, duplicates and more than five", async () => {
+    const t = await team();
+    const { id } = await endpoint(t);
+    for (const headers of [
+      [{ name: "Host", value: "evil.test" }],
+      [{ name: "content-type", value: "text/plain" }],
+      [{ name: "Content-Length", value: "1" }],
+      [{ name: "Transfer-Encoding", value: "chunked" }],
+      [{ name: "Connection", value: "close" }],
+      [{ name: "webhook-signature", value: "v1,forged" }],
+      [{ name: "X-Forwarded-For", value: "10.0.0.1" }],
+      [{ name: "Bad Name", value: "x" }],
+      [{ name: "X-Ok", value: "one\r\nX-Injected: two" }],
+      [{ name: "X-Ok", value: "" }],
+      [
+        { name: "X-A", value: "1" },
+        { name: "x-a", value: "2" },
+      ],
+      Array.from({ length: 6 }, (_, index) => ({ name: `X-${index}`, value: "v" })),
+    ]) {
+      const refused = await putHeaders(t, id, headers);
+      expect(refused.status, JSON.stringify(headers)).toBe(400);
+      expect(await refused.json()).toMatchObject({ error: "invalid_args" });
+    }
+    expect((await row(t, id)).headers ?? []).toEqual([]);
+  });
+
+  test("PUT replaces them all, keeps a value sent without one, and its event names them only", async () => {
+    const t = await team();
+    const { id } = await endpoint(t);
+    const set = await putHeaders(t, id, [
+      { name: "Authorization", value: "Bearer first-secret-value-0001" },
+      { name: "X-Team", value: "ops" },
+    ]);
+    expect(set.status).toBe(200);
+    expect(await set.json()).toEqual({
+      id,
+      headers: [
+        { name: "Authorization", hint: "0001" },
+        { name: "X-Team", hint: null },
+      ],
+    });
+    // Keep Authorization as it is, change X-Team, drop nothing else.
+    const changed = await putHeaders(t, id, [
+      { name: "authorization" },
+      { name: "X-Team", value: "sre" },
+    ]);
+    expect(changed.status).toBe(200);
+    const event = await declare(t, owner(t));
+    const hook = receiver();
+    await deliver([event], hook.send);
+    expect(hook.received[0]!.headers).toMatchObject({
+      authorization: "Bearer first-secret-value-0001",
+      "x-team": "sre",
+    });
+    // A new header needs its value.
+    const missing = await putHeaders(t, id, [{ name: "X-New" }]);
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toMatchObject({ issues: [{ path: "headers[0].value" }] });
+    // An empty list removes them.
+    expect((await putHeaders(t, id, [])).status).toBe(200);
+    expect((await row(t, id)).headers).toEqual([]);
+    const changes = await eventsOf(t, "webhook.headers_changed");
+    expect(changes.map((one) => one.data)).toEqual([
+      { id, names: ["Authorization", "X-Team"] },
+      { id, names: ["authorization", "X-Team"] },
+      { id, names: [] },
+    ]);
+    expect(JSON.stringify(changes)).not.toContain("secret-value");
+    // Responders never set them.
+    expect((await putHeaders(t, id, [], t.caio)).status).toBe(403);
+  });
 });

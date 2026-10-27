@@ -58,6 +58,8 @@ const INC = "inc_01M5W19VG0081040G2081040G2";
 const SVC = "svc_01M5W19VG0081040G2081040G2";
 const TYP = "typ_01M5W19VG0081040G2081040G2";
 const FLD = "fld_01M5W19VG0081040G2081040G2";
+const WHK = "whk_01M5W19VG0081040G2081040G2";
+const EXP = "exp_01M5W19VG0081040G2081040G2";
 
 /** Each method, called with a value per path parameter. */
 const CALLS: Record<keyof BrigadeClient, (client: BrigadeClient) => Promise<unknown>> = {
@@ -94,6 +96,21 @@ const CALLS: Record<keyof BrigadeClient, (client: BrigadeClient) => Promise<unkn
   createCustomField: (c) => c.createCustomField(WS, { name: "Region", kind: "text" }),
   getCustomField: (c) => c.getCustomField(WS, FLD),
   updateCustomField: (c) => c.updateCustomField(WS, FLD, { name: "Regions" }),
+  createWebhook: (c) =>
+    c.createWebhook(WS, {
+      id: WHK,
+      url: "https://hooks.example.com/brigade",
+      description: "",
+      events: ["incident.declared"],
+      headers: [{ name: "Authorization", value: "Bearer receiver-token" }],
+    }),
+  rotateWebhookSecret: (c) => c.rotateWebhookSecret(WS, WHK),
+  setWebhookHeaders: (c) => c.setWebhookHeaders(WS, WHK, { headers: [{ name: "Authorization" }] }),
+  configureStatusPage: (c) =>
+    c.configureStatusPage(WS, { slug: "acme", title: "Acme", locale: "en", enabled: true }),
+  createExport: (c) => c.createExport(WS, { scope: { kind: "incident", incidentId: INC } }),
+  downloadExport: (c) => c.downloadExport(WS, EXP),
+  requestPostmortemDraft: (c) => c.requestPostmortemDraft(WS, INC, { locale: "pt-BR" }),
 };
 
 const VALUES: Record<string, string> = {
@@ -104,6 +121,8 @@ const VALUES: Record<string, string> = {
   serviceId: SVC,
   typeId: TYP,
   fieldId: FLD,
+  webhookId: WHK,
+  exportId: EXP,
   token: `${WS}.mon_x.secret`,
 };
 

@@ -1,15 +1,21 @@
-// The dashboard's side of outbound webhooks (RFC 0005 "Outbound webhooks"): the card's words, checking a draft the way
-// the shard will, the event groups of the form, how an endpoint's state and last delivery read, and the two requests
-// that make a secret on the server (`POST /api/workspaces/:id/webhooks`, `…/webhooks/:id/rotate`). Pure apart from
-// `fetch`; tested in test/webhooks.test.tsx.
+// The dashboard's side of outbound webhooks (RFC 0005 "Outbound webhooks"): the card's words, checking a draft and its
+// custom headers the way the shard will, the event groups of the form, how an endpoint's state and last delivery read,
+// which deliveries can be replayed, and the requests that need the server's key (`POST /api/workspaces/:id/webhooks`,
+// `…/webhooks/:id/rotate`, `PUT …/webhooks/:id/headers`). Pure apart from `fetch`; tested in test/webhooks.test.tsx.
 import { m } from "@freecorps/brigade-i18n";
 import {
+  isReservedWebhookHeader,
+  MAX_WEBHOOK_HEADERS,
   newId,
   WEBHOOK_DESCRIPTION_MAX,
   WEBHOOK_EVENT_TYPES,
+  WEBHOOK_REPLAY_MAX_AGE_MS,
+  webhookHeaderNameProblem,
+  webhookHeaderValueProblem,
   webhookTargetProblem,
   type WebhookAttempt,
   type WebhookEventType,
+  type WebhookHeader,
   type WebhookRow,
 } from "@freecorps/brigade-schema";
 
@@ -128,6 +134,141 @@ export function attemptResult(attempt: WebhookAttempt): string {
   });
 }
 
+// ---- Custom headers ----------------------------------------------------------------------------------------------
+
+/** A custom header in the form. `kept`: one the endpoint has, whose value stays as it is while `value` is empty. */
+export type HeaderDraft = { name: string; value: string; kept?: boolean };
+
+export type HeaderIssue = { name?: string; value?: string };
+
+/** The form's rows for an endpoint's headers: each one it has, its value left to keep. */
+export const headerDrafts = (headers: readonly WebhookHeader[] = []): HeaderDraft[] =>
+  headers.map(({ name }) => ({ name, value: "", kept: true }));
+
+/**
+ * The headers to send, or what is wrong with each row, as the API would refuse it. A row with neither a name nor a
+ * value is left out; a kept one sent without a value keeps the one it has.
+ */
+export function checkHeaders(
+  rows: readonly HeaderDraft[],
+):
+  | { ok: true; value: { name: string; value?: string }[] }
+  | { ok: false; issues: Record<number, HeaderIssue> } {
+  const issues: Record<number, HeaderIssue> = {};
+  const value: { name: string; value?: string }[] = [];
+  const seen = new Set<string>();
+  rows.forEach((row, index) => {
+    const name = row.name.trim();
+    const text = row.value.trim();
+    if (name === "" && text === "" && !row.kept) return;
+    const issue: HeaderIssue = {};
+    if (webhookHeaderNameProblem(name) !== null) {
+      issue.name = webhookText(
+        isReservedWebhookHeader(name) ? "header_reserved" : "header_name_invalid",
+      );
+    } else if (seen.has(name.toLowerCase())) {
+      issue.name = webhookText("header_duplicate");
+    }
+    seen.add(name.toLowerCase());
+    if (text === "" && !row.kept) issue.value = webhookText("header_value_required");
+    else if (text !== "" && webhookHeaderValueProblem(text) !== null) {
+      issue.value = webhookText("header_value_invalid");
+    }
+    if (issue.name || issue.value) issues[index] = issue;
+    else value.push(text === "" ? { name } : { name, value: text });
+  });
+  if (value.length > MAX_WEBHOOK_HEADERS) {
+    issues[MAX_WEBHOOK_HEADERS] = { name: webhookText("headers_limit") };
+  }
+  return Object.keys(issues).length ? { ok: false, issues } : { ok: true, value };
+}
+
+/** How a header's value shows: never itself; its last 4 characters when the server kept them. */
+export function headerValueShown(header: WebhookHeader): string {
+  return header.hint === null
+    ? webhookText("header_hidden")
+    : webhookText("header_hint", { when: header.hint });
+}
+
+export type HeadersResult =
+  | { ok: true; headers: WebhookHeader[] }
+  | { ok: false; error: SecretRequestError; index?: number };
+
+/**
+ * `PUT /api/workspaces/:id/webhooks/:webhookId/headers`: every custom header, each value sealed by the server, which
+ * answers only names and hints. Sent with an `Idempotency-Key`, and once more with it when the answer was lost.
+ */
+export async function requestHeaders(
+  workspaceId: string,
+  id: string,
+  headers: { name: string; value?: string }[],
+  fetcher: typeof fetch = fetch,
+  key: string = crypto.randomUUID(),
+): Promise<HeadersResult> {
+  const url = `/api/workspaces/${encodeURIComponent(workspaceId)}/webhooks/${encodeURIComponent(id)}/headers`;
+  const put = async (): Promise<Response | undefined> => {
+    try {
+      return await fetcher(url, {
+        method: "PUT",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "Idempotency-Key": key,
+        },
+        body: JSON.stringify({ headers }),
+      });
+    } catch {
+      return undefined;
+    }
+  };
+  let response = await put();
+  if (response === undefined || response.status === 503) response = (await put()) ?? response;
+  if (response === undefined) return { ok: false, error: "network" };
+  const body = (await response.json().catch(() => ({}))) as {
+    headers?: unknown;
+    error?: unknown;
+    issues?: { path?: unknown }[];
+  };
+  if (response.ok && Array.isArray(body.headers)) {
+    return { ok: true, headers: body.headers as WebhookHeader[] };
+  }
+  const error = knownError(body.error);
+  const path = Array.isArray(body.issues) ? body.issues[0]?.path : undefined;
+  const index = typeof path === "string" ? /^headers\[(\d+)\]/.exec(path)?.[1] : undefined;
+  return index === undefined ? { ok: false, error } : { ok: false, error, index: Number(index) };
+}
+
+// ---- Replay ------------------------------------------------------------------------------------------------------
+
+/**
+ * Whether the log's `attempt` gets a Replay button: the newest attempt of its event (one button per event), while the
+ * shard still keeps the payload. The shard decides the rest (on, the rate limit).
+ */
+export function canReplay(
+  attempts: readonly WebhookAttempt[],
+  index: number,
+  now: number,
+): boolean {
+  const attempt = attempts[index];
+  if (!attempt) return false;
+  if (attempts.findIndex((one) => one.eventId === attempt.eventId) !== index) return false;
+  const first = Math.min(
+    ...attempts.filter((one) => one.eventId === attempt.eventId).map((one) => one.at),
+  );
+  return now - first <= WEBHOOK_REPLAY_MAX_AGE_MS;
+}
+
+export type ReplayOutcome = "sent" | "too_soon" | "off" | "gone" | "failed";
+
+/** What a refused `webhook.replay` means on the card. */
+export function replayOutcome(code: string | undefined): ReplayOutcome {
+  if (code === undefined) return "sent";
+  if (code === "limit_reached") return "too_soon";
+  if (code === "invalid_transition") return "off";
+  if (code === "not_found") return "gone";
+  return "failed";
+}
+
 /** A new endpoint id, made here as every id the dashboard sends is. */
 export function newWebhookId(now = Date.now()): string {
   return newId("whk", now, (length) => crypto.getRandomValues(new Uint8Array(length)));
@@ -147,7 +288,21 @@ export type SecretRequestError =
 
 export type SecretResult =
   | { ok: true; id: string; secret: string }
-  | { ok: false; error: SecretRequestError; field?: "url" | "description" | "events" };
+  | { ok: false; error: SecretRequestError; field?: "url" | "description" | "events" | "headers" };
+
+const KNOWN_ERRORS: SecretRequestError[] = [
+  "forbidden",
+  "not_a_member",
+  "not_configured",
+  "limit_reached",
+  "conflict",
+  "invalid_args",
+  "not_found",
+  "unavailable",
+];
+
+const knownError = (code: unknown): SecretRequestError =>
+  KNOWN_ERRORS.find((known) => known === code) ?? "internal";
 
 /**
  * Creates an endpoint (`draft` given) or gives `id` a new secret: the server makes the secret and answers it once.
@@ -159,7 +314,7 @@ export type SecretResult =
 export async function requestSecret(
   workspaceId: string,
   id: string,
-  draft: WebhookDraft | null,
+  draft: (WebhookDraft & { headers?: { name: string; value: string }[] }) | null,
   fetcher: typeof fetch = fetch,
   key: string = crypto.randomUUID(),
 ): Promise<SecretResult> {
@@ -189,19 +344,14 @@ export async function requestSecret(
     issues?: { path?: unknown }[];
   };
   if (response.ok && typeof body.secret === "string") return { ok: true, id, secret: body.secret };
-  const known: SecretRequestError[] = [
-    "forbidden",
-    "not_a_member",
-    "not_configured",
-    "limit_reached",
-    "conflict",
-    "invalid_args",
-    "not_found",
-    "unavailable",
-  ];
-  const error = known.find((code) => code === body.error) ?? "internal";
+  const error = knownError(body.error);
   const path = Array.isArray(body.issues) ? body.issues[0]?.path : undefined;
-  const field = path === "url" || path === "description" || path === "events" ? path : undefined;
+  const field =
+    path === "url" || path === "description" || path === "events"
+      ? path
+      : typeof path === "string" && path.startsWith("headers")
+        ? "headers"
+        : undefined;
   return field ? { ok: false, error, field } : { ok: false, error };
 }
 

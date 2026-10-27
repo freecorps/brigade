@@ -378,6 +378,7 @@ export * from './verify_page.js';
 export * from './webhook_error.js';
 export * from './webhook_event.js';
 export * from './webhook_events_count.js';
+export * from './webhook_headers_count.js';
 export * from './webhooks_card.js';
 export * from './widget_description.js';
 export * from './widget_name.js';

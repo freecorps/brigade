@@ -4,7 +4,7 @@
 // operation answers 401 without one; and every operation marked `bearerAuth` answers the same success with an API
 // token instead of the cookie (RFC 0014), and 401 with a wrong one.
 import { env, exports } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
+import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import {
   alertSourceToken,
   checkJsonSchema,
@@ -22,6 +22,7 @@ import { afterEach, describe, expect, test } from "vite-plus/test";
 import committed from "../../../docs/api/openapi.json?raw";
 import {
   IDEMPOTENCY_KEY_PATTERN,
+  WEBHOOK_IDEMPOTENCY_KEY_PATTERN,
   OPERATIONS,
   openApiDocument,
   openApiJson,
@@ -32,6 +33,9 @@ import {
 import { forgetAllTokens, newApiToken, tokenDigest } from "../src/api-tokens.ts";
 import { Shard } from "../src/shard.ts";
 import { serverSignedFixture } from "./sdk-fixture.ts";
+import { workerAuth } from "../src/index.ts";
+import { requestDraftRoute } from "../src/postmortem.ts";
+import { WEBHOOK_IDEMPOTENCY_KEY } from "../src/webhook-routes.ts";
 import { IDEMPOTENCY_KEY_HEADER, ORGANIZATION_ID, type WorkspaceDO } from "../src/workspace.ts";
 import { sessionCookie } from "./session.ts";
 
@@ -178,11 +182,153 @@ async function catalogEntry(t: Team, prefix: "svc" | "typ" | "fld"): Promise<str
   return id;
 }
 
-/** One request for an operation: its path filled in, and who sends it. */
-type Case = { path: string; init?: Init; cookie?: string; status: number };
+/**
+ * One request for an operation: its path filled in, and who sends it. `route`: called instead of the Worker, for a
+ * route that needs a binding the tests do not have (Workers AI).
+ */
+type Case = {
+  path: string;
+  init?: Init;
+  cookie?: string;
+  status: number;
+  route?: (request: Request) => Promise<Response>;
+};
+
+/** A webhook endpoint made through the API as the team's owner. */
+async function webhookEndpoint(t: Team): Promise<string> {
+  const id = newId("whk", Date.now(), random);
+  const response = await api(`/workspaces/${t.id}/webhooks`, {
+    method: "POST",
+    headers: { Cookie: t.ana.cookie },
+    body: JSON.stringify({
+      id,
+      url: "https://hooks.example.com/brigade",
+      description: "",
+      events: ["incident.declared"],
+    }),
+  });
+  expect(response.status).toBe(201);
+  return id;
+}
+
+/** Workers AI, faked: a draft as the model answers it. */
+const fakeAi = {
+  run: async () => ({
+    response: JSON.stringify({
+      summary: "Checkout was down.",
+      impact: "Card payments.",
+      timeline: "12:00 declared",
+      rootCause: "To be found.",
+      wentWell: "Quick rollback.",
+      wentPoorly: "Late alert.",
+      followUps: "- Retry budget",
+    }),
+  }),
+};
 
 /** A basic case per operation, by `operationId`: what it takes to get its documented success. */
 const CASES: Record<string, () => Promise<Case>> = {
+  createWebhook: async () => {
+    const t = await team();
+    return {
+      path: `/workspaces/${t.id}/webhooks`,
+      init: {
+        method: "POST",
+        body: JSON.stringify({
+          id: newId("whk", Date.now(), random),
+          url: "https://hooks.example.com/brigade",
+          description: "Ops bot",
+          events: ["incident.declared"],
+          headers: [{ name: "Authorization", value: "Bearer receiver-token-0123456789" }],
+        }),
+      },
+      cookie: t.ana.cookie,
+      status: 201,
+    };
+  },
+  rotateWebhookSecret: async () => {
+    const t = await team();
+    const id = await webhookEndpoint(t);
+    return {
+      path: `/workspaces/${t.id}/webhooks/${id}/rotate`,
+      init: { method: "POST" },
+      cookie: t.ana.cookie,
+      status: 200,
+    };
+  },
+  setWebhookHeaders: async () => {
+    const t = await team();
+    const id = await webhookEndpoint(t);
+    return {
+      path: `/workspaces/${t.id}/webhooks/${id}/headers`,
+      init: {
+        method: "PUT",
+        body: JSON.stringify({ headers: [{ name: "X-Team", value: "ops" }] }),
+      },
+      cookie: t.ana.cookie,
+      status: 200,
+    };
+  },
+  configureStatusPage: async () => {
+    const t = await team();
+    return {
+      path: `/workspaces/${t.id}/status-page`,
+      init: {
+        method: "PUT",
+        body: JSON.stringify({
+          slug: `acme-${crypto.randomUUID().slice(0, 8)}`,
+          title: "Acme status",
+          locale: "en",
+          enabled: true,
+        }),
+      },
+      cookie: t.ana.cookie,
+      status: 200,
+    };
+  },
+  createExport: async () => {
+    const t = await team();
+    const incidentId = await declared(t);
+    return {
+      path: `/workspaces/${t.id}/exports`,
+      init: { method: "POST", body: JSON.stringify({ scope: { kind: "incident", incidentId } }) },
+      cookie: t.ana.cookie,
+      status: 201,
+    };
+  },
+  downloadExport: async () => {
+    const t = await team();
+    const incidentId = await declared(t);
+    const made = await api(`/workspaces/${t.id}/exports`, {
+      method: "POST",
+      headers: { Cookie: t.ana.cookie },
+      body: JSON.stringify({ scope: { kind: "incident", incidentId } }),
+    });
+    expect(made.status).toBe(201);
+    const { id } = (await made.json()) as { id: string };
+    return { path: `/workspaces/${t.id}/exports/${id}`, cookie: t.ana.cookie, status: 200 };
+  },
+  requestPostmortemDraft: async () => {
+    const t = await team();
+    const incidentId = await declared(t);
+    return {
+      path: `/workspaces/${t.id}/incidents/${incidentId}/postmortem/draft`,
+      init: { method: "POST", body: JSON.stringify({ locale: "en" }) },
+      cookie: t.ana.cookie,
+      status: 202,
+      route: async (request) => {
+        const ctx = createExecutionContext();
+        return requestDraftRoute(
+          request,
+          { ...env, AI: fakeAi },
+          ctx,
+          () => workerAuth(env, ctx, request),
+          t.id,
+          incidentId,
+        );
+      },
+    };
+  },
   getHealth: async () => ({ path: "/health", status: 200 }),
   getPagingHealth: async () => {
     const t = await team();
@@ -575,11 +721,15 @@ async function ownerToken(workspaceId: string): Promise<string> {
 /** The case's workspace, from its path. */
 const caseWorkspace = (path: string) => /\/(?:workspaces|sync)\/(ws_[0-9A-Z]{26})/.exec(path)?.[1];
 
-function send({ path, init = {}, cookie }: Case): Promise<Response> {
-  return api(path, {
-    ...init,
-    headers: { ...init.headers, ...(cookie ? { Cookie: cookie } : {}) },
-  });
+function send({ path, init = {}, cookie, route }: Case): Promise<Response> {
+  const headers = { ...init.headers, ...(cookie ? { Cookie: cookie } : {}) };
+  if (!route) return api(path, { ...init, headers });
+  return route(
+    new Request(`${ORIGIN}${path}`, {
+      ...init,
+      headers: { Origin: ORIGIN, "Content-Type": "application/json", ...headers },
+    }),
+  );
 }
 
 /** The answer's status is documented for the operation, and its body is what the reference says. */
@@ -607,6 +757,8 @@ function samplePath(path: string): string {
     serviceId: newId("svc", Date.now(), random),
     typeId: newId("typ", Date.now(), random),
     fieldId: newId("fld", Date.now(), random),
+    webhookId: newId("whk", Date.now(), random),
+    exportId: newId("exp", Date.now(), random),
     token: "token",
   };
   return path.replaceAll(/\{(\w+)\}/g, (_, name: string) => samples[name]!);
@@ -620,6 +772,7 @@ describe("the API reference", () => {
   test("its patterns and names are the ones the routes check", () => {
     expect(WORKSPACE_ID_PATTERN).toBe(ORGANIZATION_ID.source);
     expect(IDEMPOTENCY_KEY_PATTERN).toBe(TOKEN.source);
+    expect(WEBHOOK_IDEMPOTENCY_KEY_PATTERN).toBe(WEBHOOK_IDEMPOTENCY_KEY.source);
     const ack = OPERATIONS.find((operation) => operation.operationId === "acknowledgeIncident");
     expect(ack?.parameters?.map((parameter) => parameter.name)).toContain(IDEMPOTENCY_KEY_HEADER);
   });
@@ -636,7 +789,9 @@ describe("the API reference", () => {
       const methods = OPERATIONS.filter((operation) => operation.path === path).map((operation) =>
         operation.method.toUpperCase(),
       );
-      const response = await api(samplePath(path), { method: "PUT" });
+      // A method none of them is: PUT, or PATCH where PUT is one.
+      const probe = methods.includes("PUT") ? "PATCH" : "PUT";
+      const response = await api(samplePath(path), { method: probe });
       expect(response.status, path).toBe(405);
       const allowed = response.headers
         .get("Allow")!

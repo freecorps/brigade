@@ -20,7 +20,7 @@ import {
 import type { BrigadeEvent } from "./outbox.ts";
 import { isTokenKey, openToken, tokenBinding } from "./slack-token.ts";
 import { NotStarted, SideConnections } from "./side-connections.ts";
-import { signatureHeaders } from "./webhook-sign.ts";
+import { headerBinding, signatureHeaders } from "./webhook-sign.ts";
 import {
   asksForWebhooks,
   WEBHOOK_EMAIL_CLAIM_MS,
@@ -105,9 +105,16 @@ export async function deliver(
   // Checked again before every delivery, in case the rules got stricter since it was saved.
   if (webhookTargetProblem(target.url) !== null) return failed("blocked");
   let secrets: string[];
+  let custom: [string, string][];
   try {
     const binding = tokenBinding(event.workspaceId, target.webhookId);
     secrets = await Promise.all(target.secrets.map((sealed) => openToken(key, sealed, binding)));
+    custom = await Promise.all(
+      (target.headers ?? []).map(async ({ name, value }): Promise<[string, string]> => [
+        name,
+        await openToken(key, value, headerBinding(event.workspaceId, target.webhookId, name)),
+      ]),
+    );
   } catch (error) {
     // The key was changed without re-sealing, or the row is not this workspace's: retrying cannot open it.
     log("webhook secret could not be opened", {
@@ -141,7 +148,10 @@ export async function deliver(
     const request = send(
       new Request(target.url, {
         method: "POST",
+        // The endpoint's own headers first: none of them may be one of Brigade's (`webhookHeaderNameProblem`), and
+        // Brigade's are set after them anyway.
         headers: {
+          ...Object.fromEntries(custom),
           ...headers,
           "Content-Type": "application/json",
           "User-Agent": WEBHOOK_USER_AGENT,

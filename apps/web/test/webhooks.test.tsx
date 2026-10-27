@@ -7,7 +7,16 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { WebhooksManageOnly, WebhooksPanel } from "../src/components/webhooks-card";
-import { checkDraft, emptyDraft, requestSecret, shownUrl, webhookName } from "../src/lib/webhooks";
+import {
+  canReplay,
+  checkDraft,
+  checkHeaders,
+  emptyDraft,
+  requestHeaders,
+  requestSecret,
+  shownUrl,
+  webhookName,
+} from "../src/lib/webhooks";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -47,6 +56,8 @@ function render(props: Partial<Parameters<typeof WebhooksPanel>[0]> = {}) {
     deletes: [] as string[],
     tests: [] as string[],
     rotations: [] as string[],
+    headers: [] as unknown[],
+    replays: [] as unknown[],
   };
   const container = document.createElement("div");
   document.body.append(container);
@@ -59,8 +70,8 @@ function render(props: Partial<Parameters<typeof WebhooksPanel>[0]> = {}) {
         failed={false}
         locale="en"
         now={NOW}
-        onCreate={async (draft) => {
-          calls.creates.push(draft);
+        onCreate={async (draft, headers) => {
+          calls.creates.push(headers.length ? { ...draft, headers } : draft);
           return {
             ok: true,
             id: "whk_x",
@@ -85,6 +96,17 @@ function render(props: Partial<Parameters<typeof WebhooksPanel>[0]> = {}) {
         }}
         onTest={async (id) => {
           calls.tests.push(id);
+          return "sent";
+        }}
+        onSetHeaders={async (id, headers) => {
+          calls.headers.push({ id, headers });
+          return {
+            ok: true,
+            headers: headers.map(({ name }) => ({ name, hint: null })),
+          };
+        }}
+        onReplay={async (id, eventId) => {
+          calls.replays.push({ id, eventId });
           return "sent";
         }}
         onRetry={() => {}}
@@ -406,5 +428,209 @@ describe("WebhooksPanel", () => {
     expect(container.textContent).toContain("Ligado");
     expect(container.textContent).toContain("2 eventos");
     expect(container.textContent).toContain("Nenhuma entrega ainda");
+  });
+});
+
+const attempt = (
+  more: Partial<WebhookRow["recent"][number]> = {},
+): WebhookRow["recent"][number] => ({
+  eventId: "evt_01JB0000000000000000000001",
+  type: "incident.declared",
+  attempt: 6,
+  at: NOW - 5 * 60_000,
+  ok: false,
+  status: 503,
+  ms: 140,
+  error: "status",
+  snippet: null,
+  ...more,
+});
+
+describe("custom headers", () => {
+  test("checks names and values as the API does: reserved, malformed, twice, empty, line breaks", () => {
+    expect(
+      checkHeaders([
+        { name: "Authorization", value: "Bearer x" },
+        { name: "", value: "" },
+        { name: "X-Team", value: "", kept: true },
+      ]),
+    ).toEqual({
+      ok: true,
+      value: [{ name: "Authorization", value: "Bearer x" }, { name: "X-Team" }],
+    });
+    const checked = checkHeaders([
+      { name: "Host", value: "a" },
+      { name: "webhook-id", value: "a" },
+      { name: "Bad Name", value: "a" },
+      { name: "X-A", value: "" },
+      { name: "x-a", value: "line\nbreak" },
+    ]);
+    expect(checked.ok).toBe(false);
+    if (checked.ok) return;
+    expect(checked.issues[0]?.name).toBe("Brigade sets this header itself.");
+    expect(checked.issues[1]?.name).toBe("Brigade sets this header itself.");
+    expect(checked.issues[2]?.name).toContain("letters, digits and hyphens");
+    expect(checked.issues[3]?.value).toBe("Enter a value.");
+    expect(checked.issues[4]).toEqual({
+      name: "This header is listed twice.",
+      value: "Use up to 1024 plain ASCII characters, without line breaks.",
+    });
+  });
+
+  test("requestHeaders PUTs them with a key and reads names and hints back", async () => {
+    const sent: { url: string; init: RequestInit }[] = [];
+    const fetcher = (async (url: string, init: RequestInit) => {
+      sent.push({ url, init });
+      return Response.json({ id: "whk_x", headers: [{ name: "Authorization", hint: "6789" }] });
+    }) as unknown as typeof fetch;
+    const result = await requestHeaders(
+      "ws_x",
+      "whk_x",
+      [{ name: "Authorization" }],
+      fetcher,
+      "k".repeat(16),
+    );
+    expect(result).toEqual({ ok: true, headers: [{ name: "Authorization", hint: "6789" }] });
+    expect(sent[0]!.url).toBe("/api/workspaces/ws_x/webhooks/whk_x/headers");
+    expect(sent[0]!.init.method).toBe("PUT");
+    expect(new Headers(sent[0]!.init.headers).get("Idempotency-Key")).toBe("k".repeat(16));
+    expect(JSON.parse(String(sent[0]!.init.body))).toEqual({
+      headers: [{ name: "Authorization" }],
+    });
+    const refused = await requestHeaders("ws_x", "whk_x", [], (async () =>
+      Response.json(
+        { error: "invalid_args", issues: [{ path: "headers[2].value" }] },
+        { status: 400 },
+      )) as unknown as typeof fetch);
+    expect(refused).toEqual({ ok: false, error: "invalid_args", index: 2 });
+  });
+
+  test("adding an endpoint sends its headers; a reserved name is said on its field and sends nothing", async () => {
+    const { container, calls } = render();
+    act(() => button(container, "Add endpoint")!.click());
+    type(
+      container.querySelector<HTMLInputElement>("input[type=url]")!,
+      "https://hooks.example.com/",
+    );
+    act(() => button(container, "Add header")!.click());
+    const [name, value] = [
+      ...container.querySelectorAll<HTMLInputElement>("fieldset input:not([type])"),
+    ];
+    type(name!, "Content-Type");
+    type(value!, "text/plain");
+    act(() => container.querySelector("form")!.requestSubmit());
+    await flush();
+    expect(calls.creates).toEqual([]);
+    expect(container.textContent).toContain("Brigade sets this header itself.");
+    type(name!, "Authorization");
+    type(value!, "Bearer receiver-token-0123456789");
+    act(() => container.querySelector("form")!.requestSubmit());
+    await flush();
+    expect(calls.creates).toEqual([
+      expect.objectContaining({
+        headers: [{ name: "Authorization", value: "Bearer receiver-token-0123456789" }],
+      }),
+    ]);
+  });
+
+  test("the editor shows each name, never a value, and an edit keeps what is left empty", async () => {
+    const { container, calls } = render({
+      rows: [
+        row({
+          headers: [
+            { name: "Authorization", hint: "6789" },
+            { name: "X-Team", hint: null },
+          ],
+        }),
+      ],
+    });
+    expect(container.textContent).toContain("2 custom headers");
+    act(() => container.querySelector<HTMLButtonElement>("button[aria-label=Edit]")!.click());
+    const text = container.textContent ?? "";
+    expect(text).toContain("Authorization");
+    expect(text).toContain("ends in 6789");
+    expect(text).toContain("value hidden");
+    act(() => button(container, "Edit headers")!.click());
+    const form = button(container, "Save headers")!.closest("form")!;
+    const inputs = [...form.querySelectorAll<HTMLInputElement>("input")];
+    // Two rows of name and value; the names are the endpoint's, left as they are.
+    expect(inputs.map((input) => input.value)).toEqual(["Authorization", "", "X-Team", ""]);
+    expect(inputs[0]!.readOnly).toBe(true);
+    type(inputs[3]!, "sre");
+    act(() => button(container, "Save headers")!.click());
+    await flush();
+    expect(calls.headers).toEqual([
+      { id: row().id, headers: [{ name: "Authorization" }, { name: "X-Team", value: "sre" }] },
+    ]);
+    expect(container.textContent).toContain("Headers saved.");
+  });
+});
+
+describe("replaying a delivery", () => {
+  test("one Replay per event in the log, on its newest attempt, while the payload is kept", () => {
+    const log = [
+      attempt({ attempt: 6 }),
+      attempt({ attempt: 5, at: NOW - 60 * 60_000 }),
+      attempt({ eventId: "evt_01JB0000000000000000000002", attempt: 1, ok: true, status: 200 }),
+      attempt({ eventId: "evt_01JB0000000000000000000003", at: NOW - 20 * 86_400_000 }),
+    ];
+    expect(log.map((_, index) => canReplay(log, index, NOW))).toEqual([true, false, true, false]);
+  });
+
+  test("replays from the log, says it went, and marks a replayed attempt", async () => {
+    const { container, calls } = render({
+      rows: [
+        row({
+          recent: [
+            attempt({ attempt: 1, ok: true, status: 200, replay: true, at: NOW - 60_000 }),
+            attempt(),
+          ],
+        }),
+      ],
+    });
+    act(() => container.querySelector<HTMLButtonElement>("button[aria-label=Edit]")!.click());
+    const replays = [...container.querySelectorAll("button")].filter((one) =>
+      one.textContent?.includes("Replay"),
+    );
+    expect(replays).toHaveLength(1);
+    expect(container.textContent).toContain("Replay");
+    act(() => replays[0]!.click());
+    await flush();
+    expect(calls.replays).toEqual([{ id: row().id, eventId: attempt().eventId }]);
+    expect(container.textContent).toContain("Replay on its way, with the same webhook-id.");
+  });
+
+  test("an endpoint that is off says to turn it on first, and a replay too soon says to wait", async () => {
+    const off = render({
+      rows: [row({ enabled: false, disabledReason: "manual", recent: [attempt()] })],
+    });
+    act(() => off.container.querySelector<HTMLButtonElement>("button[aria-label=Edit]")!.click());
+    expect(off.container.textContent).toContain("Turn this endpoint on to replay a delivery.");
+    const disabled = [...off.container.querySelectorAll("button")].find((one) =>
+      one.getAttribute("aria-label")?.startsWith("Replay"),
+    );
+    expect(disabled?.disabled).toBe(true);
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
+    const soon = render({ rows: [row({ recent: [attempt()] })], onReplay: async () => "too_soon" });
+    act(() => soon.container.querySelector<HTMLButtonElement>("button[aria-label=Edit]")!.click());
+    const replay = [...soon.container.querySelectorAll("button")].find((one) =>
+      one.getAttribute("aria-label")?.startsWith("Replay"),
+    );
+    act(() => replay!.click());
+    await flush();
+    expect(soon.container.textContent).toContain("A delivery was replayed moments ago");
+  });
+
+  test("reads in Portuguese too", () => {
+    void setI18nLocale("pt-BR");
+    const { container } = render({
+      rows: [row({ recent: [attempt()], headers: [{ name: "X-Team", hint: null }] })],
+    });
+    expect(container.textContent).toContain("1 cabeçalho personalizado");
+    act(() => container.querySelector<HTMLButtonElement>("button[aria-label=Editar]")!.click());
+    expect(container.textContent).toContain("Reenviar");
+    expect(container.textContent).toContain("Cabeçalhos personalizados");
+    expect(container.textContent).toContain("valor oculto");
   });
 });

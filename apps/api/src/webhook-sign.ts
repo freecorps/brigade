@@ -41,6 +41,15 @@ export async function derivedWebhookSecret(
   return SECRET_PREFIX + toBase64(new Uint8Array(bits));
 }
 
+/**
+ * The additional data a custom header's sealed value is bound to (src/slack-token.ts `sealToken`): the workspace, the
+ * endpoint and the header's name, so a sealed value copied to another endpoint, another header or the signing secret's
+ * place does not open.
+ */
+export function headerBinding(workspaceId: string, webhookId: string, name: string): string {
+  return `${workspaceId}:${webhookId}:header:${name.toLowerCase()}`;
+}
+
 /** Whether `secret` is one `newWebhookSecret` makes. */
 export function isWebhookSecret(secret: string): boolean {
   return SECRET.test(secret);

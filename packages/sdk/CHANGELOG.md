@@ -13,6 +13,12 @@
 - Types: `Incident`, `Service`, `IncidentType`, `CustomField`, `IncidentFilter`, `IncidentPage`, `WriteOptions`, the
   request bodies (`DeclareRequest`, `IncidentPatch`, `ServiceCreateRequest`, …), `FieldValue`, `FIELD_KINDS` and
   `SERVICE_TIERS`.
+- The dashboard's own routes, now in the reference and taking an API token: `createWebhook` (with up to 5 custom
+  `headers`, sent on every delivery and never shown back), `rotateWebhookSecret` and `setWebhookHeaders`
+  (`webhook:manage`; an optional `idempotencyKey`), `configureStatusPage` (`status:manage`), `createExport` and
+  `downloadExport` (`data:export`), and `requestPostmortemDraft` (`incident:update`). Types: `WebhookCreateRequest`,
+  `WebhookHeadersRequest`, `WebhookHeader`, `WebhookSecret`, `WebhookWriteOptions`, `StatusPageRequest`,
+  `ExportScope`, `ExportCreated` and `ExportFile`.
 
 ## 0.1.0 (unreleased)
 

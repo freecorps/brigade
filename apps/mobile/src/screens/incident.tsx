@@ -445,8 +445,13 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
             holder={row.roles?.[role.id] ?? null}
             who={who}
             pending={busy.has(`role/${role.id}`)}
-            // The workspace's own roles are given on the dashboard for now.
-            editable={editable && role.builtin !== null && !role.removed}
+            // The workspace's own roles are given on the dashboard for now. A removed built-in someone still holds
+            // stays editable, so it can be cleared here too.
+            editable={
+              editable &&
+              role.builtin !== null &&
+              (!role.removed || (row.roles?.[role.id] ?? null) !== null)
+            }
             onPress={() => changeRole(role, row.roles?.[role.id] ?? null)}
           />
         ))}

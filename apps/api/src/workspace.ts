@@ -3,14 +3,23 @@ import type { SlackActOutcome } from "@freecorps/brigade-slack/bridge";
 import type { SlackPostOutcome } from "@freecorps/brigade-slack/notifier";
 import {
   ACCOUNT_ACTOR,
+  AI_ACTOR,
+  buildExport,
+  can,
   fitMemberName,
+  isRole,
   newId,
+  STATUS_PAGE_ID,
   type Actor,
   type EmailAbout,
   type MemberChange,
   type MutationErrorCode,
+  type ExportScope,
+  type PostmortemDraftFailure,
+  type PostmortemSections,
   type ProbeRegion,
   type Role,
+  type StatusLocale,
 } from "@freecorps/brigade-schema";
 import {
   encode,
@@ -60,6 +69,8 @@ import {
   type WebhookPlan,
   type WebhookRunResult,
 } from "./webhooks.ts";
+import type { BuiltExport } from "./exports.ts";
+import { AI_MODEL, draftSource, type DraftRequestResult } from "./postmortem.ts";
 import type { RowChange } from "./store.ts";
 
 export interface WorkspaceInfo {
@@ -530,6 +541,121 @@ export class WorkspaceDO extends DurableObject<Env> {
         });
     if (!result.ok) return { ok: false, code: result.error.code };
     if (!stored) this.broadcast(result.version, changes, undefined);
+    return { ok: true };
+  }
+
+  /**
+   * Asks for an AI draft of the incident's postmortem (RPC from `POST
+   * /workspaces/:id/incidents/:incidentId/postmortem/draft`, which checked the session, the member's role and that
+   * the deployment has the `AI` binding): runs the server-only `postmortem.requestDraft` as the member (RBAC, the
+   * rate limit, its event) and hands back what the model may read (src/postmortem.ts). The language is the status
+   * page's when the workspace has one, else `locale`, the asker's.
+   */
+  async requestPostmortemDraft(
+    workspaceId: string,
+    actor: Actor,
+    incidentId: string,
+    locale: StatusLocale,
+  ): Promise<DraftRequestResult> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    const now = Date.now();
+    const requestId = newId("drf", now, (length) => crypto.getRandomValues(new Uint8Array(length)));
+    const { result, changes } = this.shard.mutate({
+      clientId: "api",
+      mutationId: requestId,
+      actor,
+      name: "postmortem.requestDraft",
+      args: { id: incidentId, requestId },
+      now,
+      internal: true,
+    });
+    if (!result.ok) return { ok: false, code: result.error.code };
+    this.broadcast(result.version, changes, undefined);
+    const language = this.shard.store.get("status_page", STATUS_PAGE_ID)?.locale ?? locale;
+    const source = draftSource(this.shard.store, incidentId, language);
+    if (!source) return { ok: false, code: "not_found" };
+    return { ok: true, requestId, source };
+  }
+
+  /** Writes the model's draft, or why there is none, as `sys_ai` (RPC from the Worker's `waitUntil`). */
+  finishPostmortemDraft(
+    workspaceId: string,
+    incidentId: string,
+    requestId: string,
+    outcome:
+      | { ok: true; sections: PostmortemSections }
+      | { ok: false; reason: PostmortemDraftFailure },
+  ): { ok: boolean; code?: string } {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    const run = (name: string, args: unknown) =>
+      this.shard.mutate({
+        clientId: "ai",
+        mutationId: `${requestId}:${name}`,
+        actor: AI_ACTOR,
+        name,
+        args,
+        now: Date.now(),
+        internal: true,
+      });
+    let { result, changes } = outcome.ok
+      ? run("postmortem.writeDraft", {
+          id: incidentId,
+          requestId,
+          sections: outcome.sections,
+          model: AI_MODEL,
+        })
+      : run("postmortem.failDraft", { id: incidentId, requestId, reason: outcome.reason });
+    // A draft the text rules still refuse is a failed draft, not a pending one.
+    if (!result.ok && outcome.ok && result.error.code === "invalid_args") {
+      this.log("an AI draft was refused", { issues: result.error.issues });
+      ({ result, changes } = run("postmortem.failDraft", {
+        id: incidentId,
+        requestId,
+        reason: "failed",
+      }));
+    }
+    if (!result.ok) return { ok: false, code: result.error.code };
+    this.broadcast(result.version, changes, undefined);
+    return { ok: true };
+  }
+
+  /**
+   * The export file for `scope` (RPC from `POST /workspaces/:id/exports`, which checked the session and that the
+   * member may export): built from this shard's rows, as JSON text. Nothing is written until `recordExport`.
+   */
+  async buildExport(workspaceId: string, actor: Actor, scope: ExportScope): Promise<BuiltExport> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    if (!isRole(actor.role) || !can(actor.role, "data:export"))
+      return { ok: false, code: "forbidden" };
+    const built = buildExport(this.shard.store, scope, Date.now());
+    if (!built.ok) return built;
+    return { ok: true, body: JSON.stringify(built.file), incidents: built.incidents };
+  }
+
+  /** Records an export the Worker wrote to R2 (`export.record`, as the member), so it is listed and an event. */
+  recordExport(
+    workspaceId: string,
+    actor: Actor,
+    args: { id: string; scope: ExportScope; incidents: number; bytes: number },
+  ): { ok: boolean; code?: string } {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    const { result, changes } = this.shard.mutate({
+      clientId: "api",
+      mutationId: args.id,
+      actor,
+      name: "export.record",
+      args,
+      now: Date.now(),
+      internal: true,
+    });
+    if (!result.ok) return { ok: false, code: result.error.code };
+    this.broadcast(result.version, changes, undefined);
     return { ok: true };
   }
 

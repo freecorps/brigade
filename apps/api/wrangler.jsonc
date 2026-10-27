@@ -80,6 +80,12 @@
   // `staging` until a namespace exists (apps/api/README.md "Status page"), and the page then answers 404 while the
   // dashboard still sets it up.
   "kv_namespaces": [{ "binding": "STATUS" }],
+  // Exports (RFC 0013, src/exports.ts): files owners and admins export, under `workspaces/<id>/`, never public, read
+  // back through `GET /workspaces/:id/exports/:exportId`. Without a `bucket_name` this binding is for local runs and the
+  // tests only (Miniflare simulates it). `dev` and `staging` have none until their buckets exist (apps/api/README.md
+  // "Exports"), and exporting answers 503 there, the dashboard hiding it. Workers AI (`AI`, postmortem drafts) is bound
+  // nowhere yet: the same README says how to turn it on; without it the "Draft with AI" button is hidden.
+  "r2_buckets": [{ "binding": "EXPORTS" }],
   // Set with `wrangler secret put` (deployed) or apps/api/.dev.vars (local, gitignored); never in this file.
   // RELAY_SEND_TOKEN (src/notify.ts) is optional: paging needs it and the relay, reached through the `RELAY` service
   // binding (per environment, below) or, unbound, at the RELAY_URL secret (a self-hosted instance using Freecorps'

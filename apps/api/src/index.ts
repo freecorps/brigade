@@ -35,6 +35,8 @@ import { consumeDeadLetters, consumeEvents, type NotifyEnv } from "./notify.ts";
 import { receiptWorkspace } from "./receipts.ts";
 import { beginSlackInstall } from "./slack-bridge.ts";
 import { configureStatusPage, serveStatusPage } from "./status-route.ts";
+import { createExport, downloadExport, features, sweepExports } from "./exports.ts";
+import { requestDraftRoute } from "./postmortem.ts";
 import { readBounded } from "./body.ts";
 import { webhookRequest } from "./webhook-routes.ts";
 import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, RECEIPT_STATUS, USER_ID } from "./http.ts";
@@ -63,6 +65,11 @@ const WEBHOOKS_PATH = /^\/workspaces\/([^/]+)\/webhooks(?:\/([^/]+)\/rotate)?$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
 const STATUS_PAGE_PATH = /^\/workspaces\/([^/]+)\/status-page$/;
+const DRAFT_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/postmortem\/draft$/;
+const EXPORTS_PATH = /^\/workspaces\/([^/]+)\/exports$/;
+const EXPORT_PATH = /^\/workspaces\/([^/]+)\/exports\/([^/]+)$/;
+/** Minute of the hour the cron sweeps expired exports (src/exports.ts). */
+const EXPORT_SWEEP_MINUTE = 17;
 /** `/status/<slug>`; `/status` and `/status/` alone are the page's 404 (no slug). */
 const PUBLIC_STATUS_PATH = /^\/status(?:\/([^/]*))?$/;
 const READ_METHODS = ["GET", "HEAD"];
@@ -147,6 +154,14 @@ export default {
     if (ack) return acknowledgeIncident(request, env, auth, ack[1]!, ack[2]!);
     const slackInstall = SLACK_INSTALL_PATH.exec(pathname)?.[1];
     if (slackInstall !== undefined) return beginSlackInstall(request, env, auth, slackInstall);
+    // Postmortem drafts and exports (RFC 0013).
+    const draft = DRAFT_PATH.exec(pathname);
+    if (draft) return requestDraftRoute(request, env, ctx, auth, draft[1]!, draft[2]!);
+    const exports = EXPORTS_PATH.exec(pathname)?.[1];
+    if (exports !== undefined) return createExport(request, env, auth, exports);
+    const download = EXPORT_PATH.exec(pathname);
+    if (download) return downloadExport(request, env, ctx, auth, download[1]!, download[2]!);
+    if (pathname === "/features") return features(request, env, auth);
     const statusPage = STATUS_PAGE_PATH.exec(pathname)?.[1];
     if (statusPage !== undefined) return configureStatusPage(request, env, auth, statusPage);
     // The public status page (RFC 0012): no session, read from KV, never from the shard.
@@ -184,7 +199,15 @@ export default {
    * (src/watchdog.ts). A failure throws, so the Cron Trigger's past events show it, and the silence it leaves trips
    * the external check.
    */
-  async scheduled(_controller, env): Promise<void> {
+  async scheduled(controller, env, ctx?: Pick<ExecutionContext, "waitUntil">): Promise<void> {
+    // Expired exports (RFC 0013), once an hour beside the heartbeat, never in its way: a failure is only logged.
+    const bucket = env.EXPORTS;
+    if (bucket && new Date(controller.scheduledTime).getUTCMinutes() === EXPORT_SWEEP_MINUTE) {
+      const sweep = sweepExports(bucket, Date.now()).catch((error: unknown) =>
+        console.error(JSON.stringify({ message: "export sweep failed", error: String(error) })),
+      );
+      ctx?.waitUntil(sweep);
+    }
     await env.WATCHDOG.getByName(WATCHDOG_NAME).beat();
   },
 } satisfies ExportedHandler<Env>;

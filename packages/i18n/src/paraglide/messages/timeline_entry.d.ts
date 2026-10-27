@@ -53,6 +53,10 @@ export type Timeline_EntryInputs = {
 * | "slack_failed_not_authorized" | "Couldn't post to Slack: Slack refused Brigade's access" |
 * | "slack_failed_rate_limited" | "Couldn't post to Slack: Slack kept asking Brigade to slow down" |
 * | "slack_failed_undelivered" | "Couldn't post to Slack" |
+* | "status_published" | "{actor} published an update to the status page: {a}" |
+* | "status_corrected_edited" | "{actor} corrected an update on the status page" |
+* | "status_corrected_removed" | "{actor} removed an update from the status page" |
+* | "status_corrected_withdrawn" | "{actor} took the incident off the status page" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs

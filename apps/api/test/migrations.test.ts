@@ -29,6 +29,8 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
     "session",
     // migrations/0006_slack_team.sql (RFC 0011).
     "slack_team",
+    // migrations/0008_status_slug.sql (RFC 0012).
+    "status_slug",
     "takeover_notice",
     "user",
     "verification",

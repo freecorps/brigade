@@ -154,6 +154,16 @@ export function entryText(entry: TimelineRow, who: People): string {
     case "slack_failed":
       // Written by the notifier: about the channel message, not who wrote it.
       return say(`slack_failed_${entry.reason}`);
+    case "status_published":
+      return say(
+        "status_published",
+        m.status_text({ part: `public_${entry.status}`, time: "", list: "" }),
+      );
+    case "status_corrected":
+      return say(`status_corrected_${entry.change}`);
+    default:
+      // A kind a newer shard wrote that this build does not know: a line saying something changed, never a blank.
+      return say("unknown");
   }
 }
 

@@ -302,6 +302,8 @@ export * from './stack_round_trip.js';
 export * from './stack_tables.js';
 export * from './stack_timed_out.js';
 export * from './stack_unreachable.js';
+export * from './status_card.js';
+export * from './status_text.js';
 export * from './sync_connecting.js';
 export * from './sync_error_clock_skew.js';
 export * from './sync_error_closed.js';

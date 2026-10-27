@@ -19,6 +19,7 @@
         "@freecorps/brigade-schema": "workspace:*",
         "@freecorps/brigade-slack": "workspace:*",
         "@freecorps/brigade-sync": "workspace:*",
+        "@freecorps/brigade-ui": "workspace:*",
         "better-auth": "1.7.13",
       },
       "devDependencies": {

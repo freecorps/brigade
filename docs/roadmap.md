@@ -141,8 +141,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Timeline as its own synced table written by every incident mutation (and the monitor recovery note), written
     updates, three incident roles checked against the shard's member list, and an incident page in the dashboard
     (`/incidents/<number>`) to change status and severity, assign roles and post updates (RFC 0003).
-  - Left for later items: publishing an update to a status page (Phase 3), role definitions (Phase 3), editing an
-    update. Members who join by invitation are in the shard's member list from the moment they accept. The mobile incident screen is done (Mobile item).
+  - Left for later items: role definitions (Phase 3), editing an update. Publishing an update to the status page
+    is done (Phase 3 item). Members who join by invitation are in the shard's member list from the moment they accept. The mobile incident screen is done (Mobile item).
 - [ ] Brigade Sync in production for web + mobile
   - Done so far: D1 `brigade-db` and `brigade-db-staging` exist with the migrations applied. Left: production and
     staging queues, the first deploy, and the relay's production secrets.
@@ -298,6 +298,21 @@ Validate the risky assumptions before writing product code. Each spike produces 
 - [ ] Service catalog; custom fields; incident types; role definitions
 - [ ] Follow-ups; postmortem draft with Workers AI; exports to R2
 - [ ] Public status page with email subscriptions
+  - Done (RFC 0012): one page per workspace with a name, an address (`/status/<slug>`, unique across the instance,
+    claimed in D1) and a language (en, pt-BR), public or a draft; components in optional groups with a status set by
+    hand, shown as the worse of that and their open incidents' impact; publishing an update to the page from the
+    incident page (public title, status, impact, components and text, never the internal timeline), with a
+    `status_published` timeline entry, and correcting or taking down what was published (`status_corrected`);
+    owners and admins manage the page, responders publish and correct, events through the
+    outbox. The shard pushes a sanitized snapshot to KV on every change (marked in the change's transaction, retried
+    with backoff), and `GET /status/:slug` renders it as HTML with no script or session from KV behind the edge
+    cache, so no visitor wakes a shard; 90 days of history. The dashboard's Status page card and the incident
+    page's Status page panel.
+  - Left: staging's and production's KV namespaces (`dev` binds `brigade-status-dev`), applying migration 0008 to
+    staging's and production's databases (owner's call, apps/api README "Status page"); email
+    subscriptions with double opt-in (slice 3); custom domains; uptime bars from monitors; scheduled maintenance;
+    reordering components; local times on the page; a JSON or RSS feed; the mobile app's publish action; polish of
+    the card (slice 2); Q23.
 - [ ] Outbound webhooks; OpenAPI reference; `packages/sdk` published
 
 ## Phase 4 — Open source launch (ongoing)

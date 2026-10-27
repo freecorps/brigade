@@ -44,6 +44,13 @@ import {
   failSlack,
   slackConnection,
 } from "./slack.ts";
+import {
+  configureStatusPage,
+  statusComponents,
+  statusIncidentById,
+  statusMutations,
+  statusPageConfig,
+} from "./status.ts";
 import { incidentTimeline } from "./timeline.ts";
 import { invitationMutations } from "./invitations.ts";
 import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";
@@ -65,6 +72,7 @@ export const mutations = defineRegistry([
   setEmailSettings,
   configureSlack,
   disconnectSlack,
+  ...statusMutations,
 ]);
 
 export const queries = defineRegistry([
@@ -80,6 +88,9 @@ export const queries = defineRegistry([
   incidentDeliveries,
   allDevices,
   slackConnection,
+  statusPageConfig,
+  statusComponents,
+  statusIncidentById,
 ]);
 
 /**
@@ -101,6 +112,8 @@ export const serverMutations = defineRegistry([
   setEmailSettings,
   configureSlack,
   disconnectSlack,
+  ...statusMutations,
+  configureStatusPage,
   createWorkspace,
   syncMember,
   changeMemberRole,

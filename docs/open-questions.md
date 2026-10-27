@@ -149,6 +149,24 @@ the email Slack confirmed for one of the connected team's own users (RFC 0011 "W
 - Who may connect Slack: owners and admins (`workspace:manage`). Should integrations get their own permission?
 - Getting the Slack app (Freecorps' hosted app, the dev app): who creates it in Slack, and under which Slack workspace?
 
+## Q23 — Status page choices to confirm (RFC 0012)
+
+- Responders may publish to the status page (`status:publish`), as they post updates. Should it be owners, admins
+  and the incident's communications role only, once role definitions exist?
+- The page shows when its snapshot was built and nothing else about freshness. Should it also say "this page may be
+  out of date" past a threshold? The shard now rebuilds a public page at least daily, so a snapshot older than a day
+  or two means the shard or KV is stuck, which a visitor could be told.
+- Misses are not rate-limited: each made-up address costs one KV read per location a minute (the cached 404). A
+  rate limit per IP on `/status/*` misses (Workers rate limiting binding) would bound a flood of distinct addresses;
+  is that worth it before custom domains bring Cloudflare's own protection?
+- Slugs can be probed: `GET /status/<slug>` tells anyone which public pages exist, and saving a slug another
+  workspace holds answers `slug_taken`, so any workspace admin can learn which addresses are in use, drafts
+  included. Should a draft's slug be claimed only when it first goes public, or the 409 be rate-limited?
+- Times are shown in UTC because the page has no script. Is a small script for local times worth giving up
+  `default-src 'none'`?
+- Without a `STATUS` KV namespace every address answers 404. Deployed environments need one each (apps/api README
+  "Status page"); should self-host setup create it?
+
 # Decided
 
 | #   | Question                       | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |

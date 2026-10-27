@@ -22,13 +22,16 @@ import {
   BellRingIcon,
   ChevronDownIcon,
   CircleAlertIcon,
+  CircleDotIcon,
   CirclePlusIcon,
   GaugeIcon,
+  GlobeIcon,
   HeartPulseIcon,
   LoaderCircleIcon,
   MessageSquareTextIcon,
   MailWarningIcon,
   MessageSquareWarningIcon,
+  PencilLineIcon,
   PhoneMissedIcon,
   SendIcon,
   TimerOffIcon,
@@ -52,6 +55,7 @@ import { SeverityMenu, StatusMenu } from "@/components/incident-item";
 import { ANNOUNCE_MS, useNow } from "@/components/incidents-card";
 import { EscalationProgress } from "@/components/escalation-progress";
 import { usePreferences } from "@/components/preferences";
+import { StatusPublishCard } from "@/components/status-publish";
 import { PagingCard, WhyPagedView, type PagingData } from "@/components/why-paged";
 import { useMember } from "@/components/session";
 import { Button } from "@/components/ui/button";
@@ -444,6 +448,7 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
               {noticesFor(["role"])}
             </CardContent>
           </Card>
+          <StatusPublishCard incidentId={row.id} />
           {row.escalation ? (
             // While it is escalating, phones show it above the roles: "Level 2 in 59 seconds" is what matters then.
             <div className={cn("min-w-0", escalating && "max-md:order-first")}>
@@ -696,6 +701,9 @@ function UpdateForm({
   );
 }
 
+/** An entry of a kind a newer shard wrote that this build does not know yet. */
+const UNKNOWN_ENTRY_ICON: LucideIcon = CircleDotIcon;
+
 const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, LucideIcon> = {
   declared: CirclePlusIcon,
   severity_changed: GaugeIcon,
@@ -706,6 +714,8 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
   page_failed: PhoneMissedIcon,
   email_failed: MailWarningIcon,
   slack_failed: MessageSquareWarningIcon,
+  status_published: GlobeIcon,
+  status_corrected: PencilLineIcon,
   escalated: BellRingIcon,
   escalation_exhausted: TimerOffIcon,
 };
@@ -750,7 +760,10 @@ function Timeline({
         {items.map((item, index) => {
           const entry = item.kind === "entry" ? item.entry : item.entries[0];
           const Icon =
-            entry.kind === "status_changed" ? STATUS_ICONS[entry.to] : ENTRY_ICONS[entry.kind];
+            (entry.kind === "status_changed"
+              ? STATUS_ICONS[entry.to]
+              : (ENTRY_ICONS as Partial<Record<string, LucideIcon>>)[entry.kind]) ??
+            UNKNOWN_ENTRY_ICON;
           const last = index === items.length - 1;
           return (
             <li
@@ -762,7 +775,10 @@ function Timeline({
                 <span
                   className={cn(
                     "flex size-8 shrink-0 items-center justify-center rounded-full border bg-card",
-                    entry.kind === "update" && "border-primary/40 text-primary",
+                    (entry.kind === "update" ||
+                      entry.kind === "status_published" ||
+                      entry.kind === "status_corrected") &&
+                      "border-primary/40 text-primary",
                     (entry.kind === "page_failed" ||
                       entry.kind === "email_failed" ||
                       entry.kind === "slack_failed") &&
@@ -784,7 +800,11 @@ function Timeline({
                     {entryTime(entry.at, now, locale, TIME_ZONE)}
                   </time>
                 </p>
-                {entry.kind === "update" ? <UpdateBody body={entry.body} /> : null}
+                {entry.kind === "update" ||
+                entry.kind === "status_published" ||
+                entry.kind === "status_corrected" ? (
+                  <UpdateBody body={entry.body} />
+                ) : null}
                 {item.kind === "pages_failed" ? <FailedNames item={item} who={who} /> : null}
               </div>
             </li>

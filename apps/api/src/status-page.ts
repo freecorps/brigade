@@ -1,0 +1,306 @@
+// The public status page's server side (RFC 0012): claiming a slug in D1 and setting the page up in the shard, and
+// pushing the page's sanitized snapshot to KV whenever it changes. The public never reaches the shard: it reads the
+// snapshot (src/status-html.ts renders it), so a page read a million times wakes no Durable Object.
+
+import {
+  can,
+  newId,
+  statusPageArgs,
+  statusSnapshot,
+  STATUS_PAGE_ID,
+  type Actor,
+} from "@freecorps/brigade-schema";
+import type { Shard } from "./shard.ts";
+import type { RowChange } from "./store.ts";
+
+/** The KV key a page's snapshot lives under. */
+export const statusKey = (slug: string) => `status:${slug}`;
+
+/** KV takes at most one write a second to a key: pushes are spaced at least this far apart. */
+export const STATUS_PUSH_SPACING_MS = 1000;
+/** A failed push is tried again after 1 s, doubling to 5 minutes, with jitter. */
+export const STATUS_RETRY_MIN_MS = 1000;
+export const STATUS_RETRY_MAX_MS = 5 * 60 * 1000;
+/**
+ * How long a slug the page gave up stays claimed in D1 after its snapshot was deleted from KV: the delete takes up to
+ * a minute to reach every location, then KV's cache (`cacheTtl`) and the edge cache may each keep the old page 30 s
+ * more. Released earlier, another workspace's new page could share the address with the old one meanwhile.
+ */
+export const STATUS_SLUG_GRACE_MS = 5 * 60 * 1000;
+/**
+ * A public page is rebuilt at least this often even when nothing changed, so its 90-day history and its "Updated"
+ * time stay true on a quiet page.
+ */
+export const STATUS_REFRESH_MS = 24 * 60 * 60 * 1000;
+
+export type StatusConfigureCode =
+  | "forbidden"
+  | "invalid_args"
+  | "slug_taken"
+  | "not_found"
+  | "unavailable"
+  | "not_applied";
+
+export type StatusConfigureResult = { ok: true } | { ok: false; code: StatusConfigureCode };
+
+type Deps = {
+  shard: Shard;
+  sql: SqlStorage;
+  /** The snapshots' namespace; unbound, nothing is published (the dashboard still configures the page). */
+  kv: KVNamespace | undefined;
+  db: D1Database;
+  randomBytes: (length: number) => Uint8Array;
+  log: (message: string, fields: Record<string, unknown>) => void;
+  committed: (version: number, changes: readonly RowChange[]) => void;
+  wake: (at: number) => void;
+};
+
+const earliest = (a: number | null, b: number | null) =>
+  a === null ? b : b === null ? a : Math.min(a, b);
+
+export class StatusPublisher {
+  /**
+   * The push under way. KV calls have no deadline, so one can outlast the alarm that started it; another is never
+   * started beside it, since two could land in KV out of order.
+   */
+  private pushing: Promise<void> | null = null;
+
+  constructor(private readonly deps: Deps) {}
+
+  /**
+   * Sets up or changes the page as `actor` (RPC from `PUT /workspaces/:id/status-page`): the slug claimed in D1
+   * first, so two workspaces never hold one address, then `statusPage.configure` in this shard with its event. A
+   * slug that was free and that the shard then refused is released again. A storage failure after the claim leaves
+   * the slug with this workspace, which is harmless: the next save with it succeeds.
+   *
+   * Never waits on KV or on a push. Claims and releases need no lock either: each claim stamps the row with its time
+   * (`created_at`, rewritten when this workspace claims a slug it already holds), and a release deletes only a row
+   * stamped no later than what it releases, so a release that lands late never undoes a claim made meanwhile.
+   */
+  async configure(workspaceId: string, actor: Actor, raw: unknown): Promise<StatusConfigureResult> {
+    if (!can(actor.role, "status:manage")) return { ok: false, code: "forbidden" };
+    const parsed = statusPageArgs(raw);
+    if (!parsed.ok) return { ok: false, code: "invalid_args" };
+    const args = parsed.value;
+    const { store } = this.deps.shard;
+    const current = store.get("status_page", STATUS_PAGE_ID);
+    let claimed: number | null = null;
+    if (current?.slug !== args.slug) {
+      try {
+        const now = Date.now();
+        const [before, , owner] = await this.deps.db.batch([
+          this.deps.db
+            .prepare("select workspace_id from status_slug where slug = ?")
+            .bind(args.slug),
+          this.deps.db
+            .prepare(
+              `insert into status_slug (slug, workspace_id, created_at) values (?, ?, ?)
+               on conflict (slug) do update set created_at = excluded.created_at
+               where status_slug.workspace_id = excluded.workspace_id`,
+            )
+            .bind(args.slug, workspaceId, now),
+          this.deps.db
+            .prepare("select workspace_id from status_slug where slug = ?")
+            .bind(args.slug),
+        ]);
+        const holder = (owner?.results[0] as { workspace_id?: string } | undefined)?.workspace_id;
+        if (holder !== workspaceId) return { ok: false, code: "slug_taken" };
+        if ((before?.results.length ?? 0) === 0) claimed = now;
+      } catch (error) {
+        this.deps.log("claiming a status page slug failed", { error });
+        return { ok: false, code: "unavailable" };
+      }
+    }
+    const now = Date.now();
+    let outcome;
+    try {
+      outcome = this.deps.shard.mutate({
+        clientId: "api",
+        mutationId: newId("mut", now, this.deps.randomBytes),
+        actor,
+        name: "statusPage.configure",
+        args,
+        now,
+        internal: true,
+      });
+    } catch (error) {
+      this.deps.log("status page not applied to the shard", { error });
+      return { ok: false, code: "not_applied" };
+    }
+    const { result, changes } = outcome;
+    if (!result.ok) {
+      if (claimed !== null) await this.release(workspaceId, args.slug, claimed);
+      // Nothing changed: what the caller asked for is what the page already says.
+      if (result.error.code === "conflict") return { ok: true };
+      const code = result.error.code === "forbidden" ? "forbidden" : "invalid_args";
+      return { ok: false, code };
+    }
+    this.deps.committed(result.version, changes);
+    this.deps.wake(now);
+    return { ok: true };
+  }
+
+  /** Gives a slug this workspace claimed at `claimed` back to D1, unless the page uses it or still retires it. */
+  private async release(workspaceId: string, slug: string, claimed: number): Promise<void> {
+    const { store } = this.deps.shard;
+    if (store.get("status_page", STATUS_PAGE_ID)?.slug === slug) return;
+    if (store.get("status_retired", slug)) return;
+    try {
+      await this.deps.db
+        .prepare("delete from status_slug where slug = ? and workspace_id = ? and created_at <= ?")
+        .bind(slug, workspaceId, claimed)
+        .run();
+    } catch (error) {
+      // Left with this workspace; nobody else can use it until an operator deletes the row. Logged for that.
+      this.deps.log("releasing a status page slug failed", { slug, error });
+    }
+  }
+
+  /**
+   * When the alarm should come back to push: null when there is nothing to do, else the earliest moment the backoff
+   * and KV's one write a second allow. Something to do: a change not pushed yet, a public page not rebuilt for a day
+   * (`STATUS_REFRESH_MS`), a retired slug whose snapshot is still in KV or whose grace (`STATUS_SLUG_GRACE_MS`) has
+   * run out. Without KV only retired slugs, released at once: nothing was ever published under them.
+   */
+  nextAt(now: number): number | null {
+    const { kv } = this.deps;
+    const { shard } = this.deps;
+    let due: number | null = null;
+    if (kv) {
+      if (shard.statusDirty() !== undefined) due = now;
+      if (shard.store.get("status_page", STATUS_PAGE_ID)?.enabled) {
+        due = earliest(due, (this.meta("status_pushed_at") ?? 0) + STATUS_REFRESH_MS);
+      }
+    }
+    for (const retired of shard.store.scan("status_retired")) {
+      due = earliest(
+        due,
+        kv && retired.cleared !== undefined ? retired.cleared + STATUS_SLUG_GRACE_MS : now,
+      );
+    }
+    if (due === null) return null;
+    const retryAt = this.meta("status_retry_at") ?? 0;
+    const spaced = kv ? (this.meta("status_pushed_at") ?? 0) + STATUS_PUSH_SPACING_MS : 0;
+    return Math.max(now, due, retryAt, spaced);
+  }
+
+  /**
+   * Runs a push if one is due (see `nextAt`). Run from the shard's alarm; never throws. A failure keeps everything
+   * pending and backs off (`STATUS_RETRY_MIN_MS` to `STATUS_RETRY_MAX_MS`). While an earlier push is still out, none
+   * starts and it backs off the same way, so an alarm never comes straight back to wait on a KV that hangs.
+   */
+  publish(workspaceId: string, now: number): Promise<void> {
+    if (this.pushing) {
+      this.failed(now, new Error("the previous push has not finished"));
+      return Promise.resolve();
+    }
+    let at: number | null;
+    try {
+      at = this.nextAt(now);
+    } catch (error) {
+      this.deps.log("reading the status page push failed", { error });
+      return Promise.resolve();
+    }
+    if (at === null || at > now) return Promise.resolve();
+    const run = this.push(workspaceId, now).finally(() => {
+      this.pushing = null;
+    });
+    this.pushing = run;
+    return run;
+  }
+
+  /**
+   * The alarm stopped waiting for the push (`STATUS_PUSH_BUDGET_MS`): backs off as after a failure, so the alarm
+   * comes back later rather than at once. The push goes on; when it finishes, its own outcome is recorded.
+   */
+  late(now: number): void {
+    if (this.pushing) this.failed(now, new Error("the push is taking too long"));
+  }
+
+  /**
+   * Pushes the snapshot when the page changed since the last push or is due its daily rebuild (put when public,
+   * deleted when not), then deletes the snapshots of slugs the page gave up, and releases them in D1 once their grace
+   * is over, so no other workspace can claim a slug whose old snapshot may still be served.
+   */
+  private async push(workspaceId: string, now: number): Promise<void> {
+    const { shard, kv } = this.deps;
+    try {
+      if (kv) {
+        const dirty = shard.statusDirty();
+        const page = shard.store.get("status_page", STATUS_PAGE_ID);
+        const stale =
+          page?.enabled === true && (this.meta("status_pushed_at") ?? 0) + STATUS_REFRESH_MS <= now;
+        if ((dirty !== undefined || stale) && page) {
+          // Built and read in one turn: a change landing during the write marks a newer version, pushed next.
+          const snapshot = statusSnapshot(shard.store, now);
+          if (snapshot) await kv.put(statusKey(page.slug), JSON.stringify(snapshot));
+          else await kv.delete(statusKey(page.slug));
+          this.setMeta("status_pushed_at", now);
+        }
+        if (dirty !== undefined) shard.statusPushed(dirty);
+      }
+      for (const retired of shard.store.scan("status_retired")) {
+        if (shard.store.get("status_page", STATUS_PAGE_ID)?.slug === retired.id) {
+          shard.store.delete("status_retired", retired.id);
+          continue;
+        }
+        let cleared = retired.cleared;
+        if (kv && cleared === undefined) {
+          await kv.delete(statusKey(retired.id));
+          cleared = now;
+          // Taken back while KV deleted it: still this workspace's, nothing to release.
+          if (!shard.store.get("status_retired", retired.id)) continue;
+          shard.store.update("status_retired", retired.id, { cleared });
+        }
+        if (kv && (cleared ?? now) + STATUS_SLUG_GRACE_MS > now) continue;
+        // Only a row stamped before it was given up: one stamped later is a claim made since.
+        await this.deps.db
+          .prepare(
+            "delete from status_slug where slug = ? and workspace_id = ? and created_at <= ?",
+          )
+          .bind(retired.id, workspaceId, retired.at)
+          .run();
+        if (shard.store.get("status_retired", retired.id)) {
+          shard.store.delete("status_retired", retired.id);
+        }
+      }
+      this.clearMeta("status_attempts");
+      this.clearMeta("status_retry_at");
+    } catch (error) {
+      this.failed(now, error);
+    }
+  }
+
+  /** Records a failed or stuck push: tried again after `STATUS_RETRY_MIN_MS`, doubling, with jitter. */
+  private failed(now: number, error: unknown): void {
+    try {
+      const attempts = (this.meta("status_attempts") ?? 0) + 1;
+      const step = Math.min(STATUS_RETRY_MAX_MS, STATUS_RETRY_MIN_MS * 2 ** (attempts - 1));
+      const retryAt = now + step / 2 + Math.random() * (step / 2);
+      this.setMeta("status_attempts", attempts);
+      this.setMeta("status_retry_at", Math.round(retryAt));
+      this.deps.log("publishing the status page failed", { attempts, error });
+    } catch (failure) {
+      this.deps.log("recording a failed status page push failed", { error: failure });
+    }
+  }
+
+  private meta(key: string): number | undefined {
+    const [row] = this.deps.sql
+      .exec<{ value: number }>("select value from shard_meta where key = ?", key)
+      .toArray();
+    return row?.value;
+  }
+
+  private setMeta(key: string, value: number): void {
+    this.deps.sql.exec(
+      "insert into shard_meta (key, value) values (?, ?) on conflict (key) do update set value = excluded.value",
+      key,
+      value,
+    );
+  }
+
+  private clearMeta(key: string): void {
+    this.deps.sql.exec("delete from shard_meta where key = ?", key);
+  }
+}

@@ -61,6 +61,15 @@ describe("web Worker → API Worker → WorkspaceDO, with the real configs", () 
     expect(await response.json()).toEqual({ error: "not_found" });
   });
 
+  test("/status/:slug and /status reach the API Worker, not index.html, and need no session", async () => {
+    for (const path of ["/status/acme", "/status"]) {
+      const response = await get(path, navigate);
+      expect(response.status, path).toBe(404);
+      expect(response.headers.get("content-type"), path).toBe("text/html; charset=utf-8");
+      expect(await response.text(), path).toContain("No status page here");
+    }
+  });
+
   test("a deep SPA path gets index.html", async () => {
     for (const path of ["/incidents/42", "/apis"]) {
       const response = await get(path, navigate);

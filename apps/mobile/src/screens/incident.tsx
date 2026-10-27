@@ -678,6 +678,13 @@ function UpdateForm({
   );
 }
 
+/** An entry of a kind a newer shard wrote that this build does not know yet (an app store build lags the server). */
+const UNKNOWN_ENTRY_GLYPH: Glyph = {
+  ios: "circle.dotted",
+  android: "radio_button_unchecked",
+  web: "radio_button_unchecked",
+};
+
 const ENTRY_GLYPHS: Record<Exclude<TimelineRow["kind"], "status_changed">, Glyph> = {
   declared: { ios: "plus.circle", android: "add_circle", web: "add_circle" },
   severity_changed: { ios: "gauge.with.dots.needle.67percent", android: "speed", web: "speed" },
@@ -692,6 +699,8 @@ const ENTRY_GLYPHS: Record<Exclude<TimelineRow["kind"], "status_changed">, Glyph
     android: "feedback",
     web: "feedback",
   },
+  status_published: { ios: "globe", android: "public", web: "public" },
+  status_corrected: { ios: "pencil.line", android: "edit", web: "edit" },
   escalated: { ios: "bell.and.waves.left.and.right", android: "campaign", web: "campaign" },
   escalation_exhausted: { ios: "hourglass", android: "hourglass_empty", web: "hourglass_empty" },
 };
@@ -747,13 +756,17 @@ function Timeline({
       {items.map((item, index) => {
         const entry = item.kind === "entry" ? item.entry : item.entries[0];
         const glyph =
-          entry.kind === "status_changed" ? STATUS_GLYPHS[entry.to] : ENTRY_GLYPHS[entry.kind];
+          (entry.kind === "status_changed"
+            ? STATUS_GLYPHS[entry.to]
+            : (ENTRY_GLYPHS as Partial<Record<string, Glyph>>)[entry.kind]) ?? UNKNOWN_ENTRY_GLYPH;
         const tint =
           entry.kind === "page_failed" ||
           entry.kind === "email_failed" ||
           entry.kind === "slack_failed"
             ? colors.destructive
-            : entry.kind === "update"
+            : entry.kind === "update" ||
+                entry.kind === "status_published" ||
+                entry.kind === "status_corrected"
               ? colors.primary
               : colors.mutedForeground;
         return (
@@ -777,7 +790,11 @@ function Timeline({
                     {entryTime(entry.at, now, locale, timeZone)}
                   </ThemedText>
                 )}
-                {entry.kind === "update" ? <UpdateBody body={entry.body} /> : null}
+                {entry.kind === "update" ||
+                entry.kind === "status_published" ||
+                entry.kind === "status_corrected" ? (
+                  <UpdateBody body={entry.body} />
+                ) : null}
                 {item.kind === "pages_failed" ? <FailedNames item={item} who={who} /> : null}
               </View>
             </View>

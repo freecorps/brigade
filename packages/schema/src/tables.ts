@@ -6,6 +6,7 @@ import type { EmailAbout, EmailFailure, PageFailure } from "./notifications.ts";
 import type { EscalationTargetKind } from "./policies.ts";
 import type { RotationUnit } from "./schedules.ts";
 import type { SlackFailure, SlackLocale } from "./slack.ts";
+import type { ComponentStatus, PublicStatus, StatusCorrection, StatusLocale } from "./status.ts";
 import type {
   AlertStatus,
   CheckSource,
@@ -215,7 +216,14 @@ export type TimelineEntry =
    */
   | { kind: "email_failed"; userId: string; reason: EmailFailure; about: EmailAbout }
   /** The Slack notifier gave up on the incident's channel message (`notification.failSlack`, RFC 0011). */
-  | { kind: "slack_failed"; reason: SlackFailure };
+  | { kind: "slack_failed"; reason: SlackFailure }
+  /** An update published to the status page (`incident.publishUpdate`, RFC 0012): what the public was told. */
+  | { kind: "status_published"; status: PublicStatus; body: string }
+  /**
+   * What the status page says was corrected (RFC 0012 "Corrections"): an update's text `edited` (`body`: the new
+   * text), an update `removed` (`body`: the text taken down) or the incident `withdrawn` (`body`: its public title).
+   */
+  | { kind: "status_corrected"; change: StatusCorrection; body: string };
 
 /**
  * One entry of an incident's timeline: append-only, written by the mutation that made the change, in its
@@ -483,6 +491,64 @@ export type SlackTokenRow = {
   scopes: string[];
 };
 
+/**
+ * The workspace's public status page (RFC 0012): one row (`STATUS_PAGE_ID`), written by `statusPage.configure`
+ * once the API claimed the slug in D1.
+ */
+export type StatusPageRow = {
+  id: string;
+  /** The page's address, `/status/<slug>`; unique across the instance. */
+  slug: string;
+  /** The name the page shows, usually the company's or the product's. */
+  title: string;
+  /** The language the page is written in, for every visitor. */
+  locale: StatusLocale;
+  /** Whether the public can read it; a page that is not enabled is a draft nobody outside sees. */
+  enabled: boolean;
+  updatedAt: number;
+  updatedBy: string;
+};
+
+/** A part of the service the status page lists (RFC 0012 "Components"). */
+export type StatusComponentRow = {
+  id: string; // cmp_<ULID>, made by the client
+  name: string;
+  /** Components with the same group are listed together under it; null: ungrouped, listed first. */
+  group: string | null;
+  /** Its status set by hand; what the page shows is the worse of this and its open incidents' impact. */
+  status: ComponentStatus;
+  createdAt: number;
+  updatedAt: number;
+};
+
+/** One update the public was given about an incident; its id is the incident's `status_published` entry. */
+export type StatusUpdate = { id: string; at: number; status: PublicStatus; body: string };
+
+/**
+ * What the status page says about an incident (RFC 0012 "Publishing"): written only by `incident.publishUpdate`,
+ * never from the incident's own fields, so nothing internal reaches the public unless someone wrote it for them.
+ */
+export type StatusIncidentRow = {
+  id: string; // the incident's id
+  title: string;
+  status: PublicStatus;
+  impact: ComponentStatus;
+  componentIds: string[];
+  /** Oldest first. */
+  updates: StatusUpdate[];
+  publishedAt: number;
+  /** When it was first published as resolved; null while open (publishing again reopens it). */
+  resolvedAt: number | null;
+  updatedAt: number;
+};
+
+/**
+ * Server-only: a slug the page gave up (`id`) at `at`, whose snapshot the shard still has to delete before D1 lets
+ * anyone else claim it (RFC 0012 "Addresses"). `cleared`: when the snapshot was deleted from KV; the slug is released
+ * a grace period after that, once no cache can still serve the old page.
+ */
+export type StatusRetiredRow = { id: string; at: number; cleared?: number };
+
 /** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only. */
 export type CounterRow = { id: string; value: number };
 
@@ -504,6 +570,10 @@ export type BrigadeTables = {
   escalation_timers: EscalationTimerRow;
   slack: SlackRow;
   slack_tokens: SlackTokenRow;
+  status_page: StatusPageRow;
+  status_components: StatusComponentRow;
+  status_incidents: StatusIncidentRow;
+  status_retired: StatusRetiredRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -527,6 +597,10 @@ export const TABLES = {
   escalation_timers: { serverOnly: true },
   slack: { serverOnly: false },
   slack_tokens: { serverOnly: true },
+  status_page: { serverOnly: false },
+  status_components: { serverOnly: false },
+  status_incidents: { serverOnly: false },
+  status_retired: { serverOnly: true },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

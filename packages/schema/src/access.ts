@@ -22,6 +22,9 @@ export const statement = {
   schedule: ["read", "manage", "override"],
   // Escalation policies (RFC 0003 "Escalation policies"): who is paged, in which order, after how long.
   escalation: ["read", "manage"],
+  // The public status page (RFC 0012): `manage` sets it up and edits its components; `publish` tells the public
+  // about an incident.
+  status: ["read", "manage", "publish"],
 } as const;
 
 type Statement = typeof statement;
@@ -42,6 +45,7 @@ export const roles = {
     device: ["register"],
     schedule: ["read", "manage", "override"],
     escalation: ["read", "manage"],
+    status: ["read", "manage", "publish"],
   },
   admin: {
     incident: ["read", "declare", "update", "ack"],
@@ -51,6 +55,7 @@ export const roles = {
     device: ["register"],
     schedule: ["read", "manage", "override"],
     escalation: ["read", "manage"],
+    status: ["read", "manage", "publish"],
   },
   // Responders see what monitors say (they run the incidents monitors open) but do not change what is watched.
   responder: {
@@ -61,6 +66,8 @@ export const roles = {
     // Responders cover for each other (their own overrides) but do not change the rotations.
     schedule: ["read", "override"],
     escalation: ["read"],
+    // Responders run incidents, so they tell the public about them; what the page lists is an admin's call.
+    status: ["read", "publish"],
   },
   viewer: {
     incident: ["read"],
@@ -69,6 +76,7 @@ export const roles = {
     device: ["register"],
     schedule: ["read"],
     escalation: ["read"],
+    status: ["read"],
   },
 } as const satisfies Record<Role, Grants>;
 

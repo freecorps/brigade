@@ -445,10 +445,11 @@ const monitorId = v.id("mon");
 const monitorName = v.string({ min: 1, max: MONITOR_NAME_MAX });
 const intervalSeconds = v.integer({ min: MIN_INTERVAL_SECONDS, max: MAX_INTERVAL_SECONDS });
 /**
- * The escalation policy the monitor's incidents page through; null or left out: the workspace's default (so an
- * update that leaves it out goes back to the default). It must exist (`checkPolicy`).
+ * The escalation policy the monitor's incidents page through; null: the workspace's default. Left out, a new monitor
+ * takes the default and an edit keeps the monitor's (`policyOf`), so a client that does not know the field never
+ * clears it. A named one must exist (`checkPolicy`).
  */
-const monitorPolicy = v.optional(v.nullable(v.id("esc")));
+const monitorPolicy = v.omittable(v.nullable(v.id("esc")));
 
 const httpFields = {
   name: monitorName,
@@ -526,11 +527,15 @@ function checkNewId(id: string, ctx: MutationContext): MutationResult | undefine
   return undefined;
 }
 
-/** A named policy must exist in the shard (`invalid_args` on `policyId` otherwise). */
-function checkPolicy(store: MutationStore, policyId: string | null): Issue[] {
-  if (policyId === null || store.get("escalation_policies", policyId)) return [];
+/** A named policy must exist in the shard (`invalid_args` on `policyId` otherwise); left out or null is the default. */
+function checkPolicy(store: MutationStore, policyId: string | null | undefined): Issue[] {
+  if (policyId == null || store.get("escalation_policies", policyId)) return [];
   return [{ path: "policyId", message: "Escalation policy not found" }];
 }
+
+/** The policy an edit leaves the monitor on: the one it names, or (left out) the one it had. */
+const policyOf = (monitor: MonitorRow, policyId: string | null | undefined): string | null =>
+  policyId === undefined ? (monitor.policyId ?? null) : policyId;
 
 /** `limit_reached` when the workspace has `MAX_MONITORS_PER_WORKSPACE` monitors already. */
 function checkCap(store: MutationStore): MutationResult | undefined {
@@ -621,7 +626,7 @@ export const createHttpMonitor = defineMutation({
       regions,
       intervalSeconds: args.intervalSeconds,
       graceSeconds: null,
-      policyId: args.policyId,
+      policyId: args.policyId ?? null,
       ...fresh(ctx),
     };
     store.insert("monitors", row);
@@ -658,7 +663,7 @@ export const createTcpMonitor = defineMutation({
       regions,
       intervalSeconds: args.intervalSeconds,
       graceSeconds: null,
-      policyId: args.policyId,
+      policyId: args.policyId ?? null,
       ...fresh(ctx),
     };
     store.insert("monitors", row);
@@ -698,7 +703,7 @@ export const createHeartbeatMonitor = defineMutation({
       regions: [],
       intervalSeconds: args.intervalSeconds,
       graceSeconds: args.graceSeconds,
-      policyId: args.policyId,
+      policyId: args.policyId ?? null,
       ...fresh(ctx),
     };
     store.insert("monitors", row);
@@ -747,7 +752,7 @@ export const updateHttpMonitor = defineMutation({
       intervalSeconds: args.intervalSeconds,
       timeoutSeconds: args.timeoutSeconds,
       regions,
-      policyId: args.policyId,
+      policyId: policyOf(monitor, args.policyId),
     };
     const changed = (Object.keys(next) as (keyof typeof next)[]).filter(
       (key) => JSON.stringify(monitor[key] ?? null) !== JSON.stringify(next[key]),
@@ -780,7 +785,7 @@ export const updateTcpMonitor = defineMutation({
       intervalSeconds: args.intervalSeconds,
       timeoutSeconds: args.timeoutSeconds,
       regions,
-      policyId: args.policyId,
+      policyId: policyOf(monitor, args.policyId),
     };
     const changed = (Object.keys(next) as (keyof typeof next)[]).filter(
       (key) => JSON.stringify(monitor[key] ?? null) !== JSON.stringify(next[key]),
@@ -809,7 +814,7 @@ export const updateHeartbeatMonitor = defineMutation({
       monitor.name === args.name &&
       monitor.intervalSeconds === args.intervalSeconds &&
       monitor.graceSeconds === args.graceSeconds &&
-      (monitor.policyId ?? null) === args.policyId
+      (monitor.policyId ?? null) === policyOf(monitor, args.policyId)
     ) {
       return fail("conflict", "Nothing to change");
     }
@@ -817,7 +822,7 @@ export const updateHeartbeatMonitor = defineMutation({
       name: args.name,
       intervalSeconds: args.intervalSeconds,
       graceSeconds: args.graceSeconds,
-      policyId: args.policyId,
+      policyId: policyOf(monitor, args.policyId),
       updatedAt: ctx.now,
     });
     return ok(updated(row));

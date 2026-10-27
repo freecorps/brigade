@@ -601,8 +601,8 @@
       "declarations": ["input kind", "input name"],
       "selectors": ["kind"],
       "match": {
-        "kind=own": "Chama por {name}",
-        "kind=default": "Chama por {name} (padrão)",
+        "kind=own": "Chama pela política {name}",
+        "kind=default": "Chama pela política {name} (padrão)",
         "kind=none": "Sem política de escalonamento",
         "kind=option_default": "Padrão do workspace ({name})",
         "kind=option_none": "Padrão do workspace (nenhuma definida)",
@@ -721,6 +721,7 @@
         "kind=escalated_started": "Nível {a} chamado: {b}",
         "kind=escalated_timeout": "Ninguém confirmou, então o nível {a} foi chamado: {b}",
         "kind=escalated_unreachable": "Os níveis anteriores não alcançaram ninguém, então o nível {a} foi chamado: {b}",
+        "kind=escalated_undelivered": "Ninguém no nível anterior pôde ser alcançado, então o nível {a} foi chamado na hora: {b}",
         "kind=escalated_everyone": "Nenhum nível alcançou ninguém, então todos que podem responder foram chamados",
         "kind=escalated_everyone_later": "Nenhum nível seguinte alcançou ninguém, então todos que podem responder foram chamados",
         "kind=escalated_started_aware": "Nível {a}: {b}",
@@ -1317,22 +1318,11 @@
         "part=fallback_unreachable_later_nobody": "Nenhum nível seguinte alcançou ninguém. Tentamos todos que podem responder: ninguém pôde ser chamado",
         "part=fallback_exhausted_nobody": "Ninguém confirmou depois de todos os níveis. Tentamos todos que podem responder: ninguém pôde ser chamado",
         "part=fallback_stalled_nobody": "Um nível continuou falhando. Tentamos todos que podem responder: ninguém pôde ser chamado",
-        "part=fallback_undelivered": "Ninguém no último nível pôde ser alcançado: todos que podem responder foram chamados",
-        "part=fallback_undelivered_nobody": "Ninguém no último nível pôde ser alcançado. Tentamos todos que podem responder: ninguém pôde ser chamado",
         "part=*": "Escalonamento"
       }
     }
   ],
-  "escalation_early": [
-    {
-      "declarations": ["input kind", "input from", "input level", "input who"],
-      "selectors": ["kind"],
-      "match": {
-        "kind=level": "Ninguém no nível {from} pôde ser alcançado, então o nível {level} foi chamado na hora: {who}",
-        "kind=*": "Ninguém no nível {from} pôde ser alcançado e não há outro nível, então todos que podem responder foram chamados na hora"
-      }
-    }
-  ],
+  "escalation_early": "Ninguém no nível {from} pôde ser alcançado, então o nível {level} foi chamado na hora: {who}",
   "escalation_miss": [
     {
       "declarations": ["input reason", "input name"],

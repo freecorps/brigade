@@ -208,8 +208,6 @@ export type TimelineEntry =
       kind: "escalation_exhausted";
       levels: number;
       rounds: number;
-      /** The last level none of whose pushes any device took, so this came before its timeout. */
-      unreached?: number;
     }
   /**
    * The email notifier could not email `userId` (`notification.failEmail`, RFC 0005 "Email"): `about` says which

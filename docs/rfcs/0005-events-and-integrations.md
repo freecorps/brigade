@@ -169,8 +169,8 @@ or dependencies should not share the API's.
   never blocks the events after it; any drain that throws (storage) backs off like a failed send.
 - **Delivery receipts.** Each page records a row per device, from planned to accepted by APNs, and the phone reports
   when it opened it (RFC 0006 "Delivery receipts"); the dashboard explains from them why someone was or was not
-  paged. None of it is in a page's way: recording fails open. Escalating early when a level's pushes all fail
-  (rather than at its timeout) is still open (Q18). Outside the incident, a failed page reaches people by email
+  paged. None of it is in a page's way: recording fails open. A level whose pushes all fail escalates to the next
+  level of its round at once (RFC 0006 "Who is paged"; what else should count is Q18). Outside the incident, a failed page reaches people by email
   (below).
 
 ## Email

@@ -721,6 +721,7 @@
         "kind=escalated_started": "Paged level {a}: {b}",
         "kind=escalated_timeout": "Nobody acknowledged, so level {a} was paged: {b}",
         "kind=escalated_unreachable": "Earlier levels couldn't reach anyone, so level {a} was paged: {b}",
+        "kind=escalated_undelivered": "Nobody on the level before could be reached, so level {a} was paged now: {b}",
         "kind=escalated_everyone": "No level could reach anyone, so everyone who can respond was paged",
         "kind=escalated_everyone_later": "No later level could reach anyone, so everyone who can respond was paged",
         "kind=escalated_started_aware": "Level {a}: {b}",
@@ -1317,22 +1318,11 @@
         "part=fallback_unreachable_later_nobody": "No later level could reach anyone. Tried everyone who can respond: nobody could be paged",
         "part=fallback_exhausted_nobody": "Nobody acknowledged after every level. Tried everyone who can respond: nobody could be paged",
         "part=fallback_stalled_nobody": "A level kept failing to fire. Tried everyone who can respond: nobody could be paged",
-        "part=fallback_undelivered": "Nobody on the last level could be reached: paged everyone who can respond",
-        "part=fallback_undelivered_nobody": "Nobody on the last level could be reached. Tried everyone who can respond: nobody could be paged",
         "part=*": "Escalation"
       }
     }
   ],
-  "escalation_early": [
-    {
-      "declarations": ["input kind", "input from", "input level", "input who"],
-      "selectors": ["kind"],
-      "match": {
-        "kind=level": "Nobody on level {from} could be reached, so level {level} was paged now: {who}",
-        "kind=*": "Nobody on level {from} could be reached and no level is left, so everyone who can respond was paged now"
-      }
-    }
-  ],
+  "escalation_early": "Nobody on level {from} could be reached, so level {level} was paged now: {who}",
   "escalation_miss": [
     {
       "declarations": ["input reason", "input name"],

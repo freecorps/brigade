@@ -386,26 +386,21 @@ describe("a run on the incident page", () => {
       reason: "undelivered",
       unreached: 1,
     });
-    const end = entry({ kind: "escalation_exhausted", levels: 2, rounds: 1, unreached: 2 });
-    expect(entryText(early, who)).toBe(
-      "Nobody on level 1 could be reached, so level 2 was paged now: Ana",
+    // Without the level it left (a row written by another version), still why and who, not a generic line.
+    const { unreached: _, ...bare } = early as Extract<TimelineRow, { kind: "escalated" }>;
+    expect(entryText(bare as TimelineRow, who)).toBe(
+      "Nobody on the level before could be reached, so level 2 was paged now: Ana",
     );
-    expect(entryText(end, who)).toBe(
-      "Nobody on level 2 could be reached and no level is left, so everyone who can respond was paged now",
+    // A reason this client does not know reads as a plain page of the level.
+    expect(entryText({ ...early, reason: "later_reason" } as unknown as TimelineRow, who)).toBe(
+      "Paged level 2: Ana",
     );
-    const ended: Escalation = {
-      ...run([page(1), page(2), { ...page(null), reason: "exhausted", unreached: 2 }]),
-      status: "exhausted",
-      endedAt: 40,
-    };
-    const open = { acknowledgedAt: null, acknowledgedBy: null };
-    expect(runStatus(ended, open, [], [])).toMatchObject({
-      kind: "fallback",
-      reason: "undelivered",
-    });
     await setLocale("pt-BR");
     expect(entryText(early, who)).toBe(
       "Ninguém no nível 1 pôde ser alcançado, então o nível 2 foi chamado na hora: Ana",
+    );
+    expect(entryText(bare as TimelineRow, who)).toBe(
+      "Ninguém no nível anterior pôde ser alcançado, então o nível 2 foi chamado na hora: Ana",
     );
   });
 });

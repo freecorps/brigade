@@ -32,6 +32,7 @@ import {
   EMPTY_DRAFT,
   monitorLimitReached,
   splitHostPort,
+  stalePolicy,
   tcpFieldReason,
   type CheckedDraft,
   type CheckedEdit,
@@ -168,12 +169,14 @@ export function MonitorForm({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (sending) return;
-    // A policy deleted while the form was open: the shard would refuse it.
-    if (draft.policyId !== "" && !policies.some((policy) => policy.id === draft.policyId)) {
+    // What is sent: an edit goes out rebased on the live row (fields left alone take its values).
+    const sent = mode.kind === "edit" ? rebaseDraft(draft, initial, mode.row) : draft;
+    // A policy picked here and deleted while the form was open: the shard would refuse it.
+    if (stalePolicy(sent, mode.kind === "edit" ? mode.row : null, policies)) {
       return refuse(["policyId"]);
     }
     if (mode.kind === "edit") {
-      const checked = checkEdit(rebaseDraft(draft, initial, mode.row), mode.row);
+      const checked = checkEdit(sent, mode.row);
       if (!checked.ok) return refuse(checked.fields);
       // The shard refuses an edit that changes nothing: there is nothing to send.
       if (checked.changed) mode.onSave(checked);

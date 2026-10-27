@@ -24,8 +24,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 export const monitor_policy = /** @type {((inputs: Monitor_PolicyInputs, options?: { locale?: "en" | "pt-BR" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Monitor_PolicyInputs, { locale?: "en" | "pt-BR" }, {}>} */ ((i, options = {}) => {
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
-		if (i?.kind === "own") return /** @type {LocalizedString} */ (`Chama por ${i?.name}`);
-		if (i?.kind === "default") return /** @type {LocalizedString} */ (`Chama por ${i?.name} (padrão)`);
+		if (i?.kind === "own") return /** @type {LocalizedString} */ (`Chama pela política ${i?.name}`);
+		if (i?.kind === "default") return /** @type {LocalizedString} */ (`Chama pela política ${i?.name} (padrão)`);
 		if (i?.kind === "none") return /** @type {LocalizedString} */ (`Sem política de escalonamento`);
 		if (i?.kind === "option_default") return /** @type {LocalizedString} */ (`Padrão do workspace (${i?.name})`);
 		if (i?.kind === "option_none") return /** @type {LocalizedString} */ (`Padrão do workspace (nenhuma definida)`);

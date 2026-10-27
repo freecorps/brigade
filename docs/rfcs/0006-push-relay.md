@@ -122,14 +122,19 @@ chain:
 - **A level nobody could be reached on by push escalates early.** When a level's page settles (`Pager.record` with
   its last result: every push answered, retries spent) and no device took any of its pushes (each refused or failed
   for good: `token_invalid`, `undelivered` after the last try, `unsupported`, `not_configured`; or none of its members
-  had a device left when it was planned), the shard fires what would come at the level's timeout now
-  (`escalation.unreached`, as `sys_escalation`): the next level, level 1 of the next round, or, past the last level
-  and repeat, everyone who can respond once and the run ends, exactly as at a timeout. The page and its timeline entry
+  had a device left when it was planned), the shard fires the next level of the same round that reaches someone now
+  (`escalation.unreached`, as `sys_escalation`), on that level's own timeout from then. It never crosses into the next
+  round or ends the run: on the round's last level (or with no later level of the round reaching anyone) it is refused,
+  and the level's timeout fires what comes next as before (level 1 of the next round, or everyone who can respond once
+  and the run ends), so a relay that refuses every push, or none there at all, spends at most one round's worth of
+  levels early and every repeat still waits its timeout. The page and its timeline entry
   say why ("Nobody on level 1 could be reached, so level 2 was paged now", `reason: undelivered`, `unreached: 1`).
   Only refusals count: a push APNs accepted counts as reached whether or not a receipt came back (receipts are best
   effort), so one device that took it, on any member of the level, keeps the level waiting for its timeout; so does
-  whoever caused the run's first page being on level 1 (reached without a push). Only the level's own page counts:
-  not a severity raise paging it again, and not a page the Queue gave up on (that one is paged again instead, "A lost
+  whoever caused the run's first page being on level 1 (reached without a push), and a device that took a severity
+  raise paging the level again (the shard's ledger remembers each planned page's run and step, `page_steps`, so this
+  holds even when its delivery rows could not be written). Only the level's own page settling escalates: not a
+  severity raise paging it again, and not a page the Queue gave up on (that one is paged again instead, "A lost
   page"; a page made again for it does count). It is de-duplicated by the run and its step
   (`unreached:<run>:<step>`) and refused once the run moved on, was acknowledged or resolved, so a redelivered or
   dead-lettered result never advances twice. Never in the way: if it cannot run, it is logged and the level's timeout

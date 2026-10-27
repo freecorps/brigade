@@ -1074,6 +1074,27 @@ describe("a policy per monitor", () => {
     // A policy change is not a new target: the checks do not start over.
     expect(store.get("monitors", MON)).toMatchObject({ policyId: ESC, restartedAt: T });
     expect(update(ESC)).toMatchObject({ ok: false, error: { code: "conflict" } });
+    // Left out of an edit (a client that does not know the field): the monitor keeps its policy.
+    expect(
+      runMutation(
+        mutations,
+        "monitor.updateHttp",
+        httpMonitor({ name: "Checkout" }),
+        store,
+        ctx("usr_bia", "admin", T + 2 * MINUTE),
+      ),
+    ).toMatchObject({ ok: true, events: [{ data: { name: "Checkout", policyId: ESC } }] });
+    expect(store.get("monitors", MON)!.policyId).toBe(ESC);
+    expect(
+      runMutation(
+        mutations,
+        "monitor.updateHttp",
+        httpMonitor({ name: "Checkout" }),
+        store,
+        ctx("usr_bia", "admin", T + 3 * MINUTE),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    // An explicit null: back to the default.
     expect(update(null)).toMatchObject({ ok: true });
     expect(store.get("monitors", MON)!.policyId).toBeNull();
   });
@@ -1092,6 +1113,14 @@ describe("a policy per monitor", () => {
       runMutation(mutations, "monitor.createHeartbeat", args, store, ctx("usr_bia", "admin")),
     ).toMatchObject({ ok: true });
     const { tokenHash: _hash, ...update } = args;
+    // Left out: kept.
+    const { policyId: _policy, ...renamed } = { ...update, name: "Nightly job" };
+    expect(
+      runMutation(mutations, "monitor.updateHeartbeat", renamed, store, ctx("usr_bia", "admin")),
+    ).toMatchObject({ ok: true, events: [{ data: { policyId: ESC } }] });
+    expect(
+      runMutation(mutations, "monitor.updateHeartbeat", renamed, store, ctx("usr_bia", "admin")),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
     expect(
       runMutation(
         mutations,
@@ -1204,44 +1233,61 @@ describe("escalating early (every push of a level failed)", () => {
     expect(unreached(resolved, 1)).toMatchObject({ ok: false, error: { code: "not_found" } });
   });
 
-  test("the last level repeats from level 1 while repeats are left, in a timeout's order", () => {
+  test("never past the round: the last level waits for its timeout, which repeats from level 1", () => {
     const store = withPolicy({ repeat: 1 });
     start(store);
     advance(store, T + 5 * MINUTE);
     expect(unreached(store, 2, T + 6 * MINUTE)).toMatchObject({
-      ok: true,
-      events: [{ data: { level: 1, round: 1, reason: "undelivered" } }],
+      ok: false,
+      error: { code: "conflict" },
     });
-    expect(run(store).pages.at(-1)).toMatchObject({ unreached: 2 });
+    // Nothing moved: level 2 keeps its timeout, and the timeout starts round 2 as before.
+    expect(run(store)).toMatchObject({ status: "running", paged: 2, nextAt: T + 15 * MINUTE });
+    expect(store.get("escalation_timers", INC)).toMatchObject({ at: T + 15 * MINUTE });
+    expect(advance(store, T + 15 * MINUTE)).toMatchObject({
+      ok: true,
+      events: [{ data: { level: 1, round: 1, reason: "timeout" } }],
+    });
+    expect(run(store).pages.at(-1)).not.toHaveProperty("unreached");
   });
 
-  test("the last level failing ends the run as today: everyone who can respond, once", () => {
+  test("the last level failing does not end the run early: its timeout does, as before", () => {
     const store = withPolicy();
     start(store);
     advance(store, T + 5 * MINUTE);
     expect(unreached(store, 2, T + 6 * MINUTE)).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(run(store)).toMatchObject({ status: "running", endedAt: null });
+    expect(advance(store, T + 15 * MINUTE)).toMatchObject({
       ok: true,
       events: [
         { type: "escalation.paged", data: { level: null, reason: "exhausted", step: 3 } },
         { type: "escalation.exhausted", data: { levels: 2, rounds: 1 } },
       ],
     });
-    expect(run(store)).toMatchObject({
-      status: "exhausted",
-      nextAt: null,
-      endedAt: T + 6 * MINUTE,
-    });
-    expect(run(store).pages.at(-1)).toMatchObject({ level: null, unreached: 2 });
-    expect(store.get("escalation_timers", INC)).toBeUndefined();
     expect(timeline(store).at(-1)).toEqual({
       kind: "escalation_exhausted",
       actor: "sys_escalation",
       levels: 2,
       rounds: 1,
-      unreached: 2,
     });
     // An ended run takes no more.
     expect(unreached(store, 3)).toMatchObject({ ok: false, error: { code: "not_found" } });
+  });
+
+  test("with no later level of the round reaching anyone, it waits for the timeout too", () => {
+    const store = withPolicy({
+      repeat: 1,
+      levels: [
+        level(LVL1, [{ kind: "schedule", id: SCH }]),
+        level(LVL2, [{ kind: "member", id: "usr_bia" }]),
+      ],
+    });
+    start(store);
+    expect(unreached(store)).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(run(store)).toMatchObject({ status: "running", paged: 1, nextAt: T + 5 * MINUTE });
   });
 
   test("levels nobody can be reached at after it are skipped, still saying why it left early", () => {

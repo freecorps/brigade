@@ -36,6 +36,7 @@ export type Timeline_EntryInputs = {
 * | "escalated_started" | "Paged level {a}: {b}" |
 * | "escalated_timeout" | "Nobody acknowledged, so level {a} was paged: {b}" |
 * | "escalated_unreachable" | "Earlier levels couldn't reach anyone, so level {a} was paged: {b}" |
+* | "escalated_undelivered" | "Nobody on the level before could be reached, so level {a} was paged now: {b}" |
 * | "escalated_everyone" | "No level could reach anyone, so everyone who can respond was paged" |
 * | "escalated_everyone_later" | "No later level could reach anyone, so everyone who can respond was paged" |
 * | "escalated_started_aware" | "Level {a}: {b}" |

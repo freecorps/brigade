@@ -339,7 +339,8 @@ export type CheckedEdit =
 /**
  * The update mutation's args for an edited `draft` of `row`, checked like a new monitor (the same validators and
  * cross-field rule), and whether anything changed: the shard refuses an update that changes nothing, so the form
- * just closes then. The kind never changes.
+ * just closes then. The kind never changes. A policy left as the row has it is left out of the args, so the shard
+ * keeps the monitor's own (already null if that policy was deleted meanwhile) instead of refusing a stale id.
  */
 export function checkEdit(draft: MonitorDraft, row: MonitorRow): CheckedEdit {
   const checked = checkDraft({ ...draft, kind: row.kind }, row.id);
@@ -352,7 +353,7 @@ export function checkEdit(draft: MonitorDraft, row: MonitorRow): CheckedEdit {
       args.intervalSeconds !== row.intervalSeconds ||
       args.graceSeconds !== row.graceSeconds ||
       args.policyId !== (row.policyId ?? null);
-    return { ok: true, kind: "heartbeat", args, changed };
+    return { ok: true, kind: "heartbeat", args: keptPolicy(args, row), changed };
   }
   // The shard keeps the regions in `PROBE_REGIONS` order, so the comparison does too.
   const regions = PROBE_REGIONS.filter((region) => checked.args.regions.includes(region));
@@ -361,13 +362,34 @@ export function checkEdit(draft: MonitorDraft, row: MonitorRow): CheckedEdit {
     const changed = (["name", "intervalSeconds", "policyId", ...TCP_TARGET_FIELDS] as const).some(
       (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key] ?? null),
     );
-    return { ok: true, kind: "tcp", args, changed };
+    return { ok: true, kind: "tcp", args: keptPolicy(args, row), changed };
   }
   const args = { ...checked.args, regions };
   const changed = (["name", "intervalSeconds", "policyId", ...TARGET_FIELDS] as const).some(
     (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key] ?? null),
   );
-  return { ok: true, kind: "http", args, changed };
+  return { ok: true, kind: "http", args: keptPolicy(args, row), changed };
+}
+
+/**
+ * Whether `sent` (the draft as it goes out: an edit rebased on the live `row`, a new monitor as drafted) names a policy
+ * this client no longer has, which the shard would refuse. The row's own is never sent (`checkEdit` leaves it out), so
+ * an edit that leaves the policy alone is never blocked by it.
+ */
+export function stalePolicy(
+  sent: Pick<MonitorDraft, "policyId">,
+  row: Pick<MonitorRow, "policyId"> | null,
+  policies: readonly Pick<EscalationPolicyRow, "id">[],
+): boolean {
+  if (sent.policyId === "" || (row && sent.policyId === (row.policyId ?? ""))) return false;
+  return !policies.some((policy) => policy.id === sent.policyId);
+}
+
+/** `args` without `policyId` when it is the row's: an edit that leaves it out keeps the monitor's. */
+function keptPolicy<T extends { policyId?: string | null }>(args: T, row: MonitorRow): T {
+  if (args.policyId !== (row.policyId ?? null)) return args;
+  const { policyId: _kept, ...rest } = args;
+  return rest as T;
 }
 
 /**

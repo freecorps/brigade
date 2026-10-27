@@ -136,25 +136,14 @@ export function entryText(entry: TimelineRow, who: People): string {
       }
       // Every push of a level failed, so the next one was paged before its timeout.
       if (entry.reason === "undelivered" && entry.unreached !== undefined) {
-        return m.escalation_early({
-          kind: "level",
-          from: String(entry.unreached),
-          level,
-          who: names,
-        });
+        return m.escalation_early({ from: String(entry.unreached), level, who: names });
       }
-      return say(`escalated_${entry.reason}`, level, names);
+      // A reason this client has no words for (a newer server's) reads as a plain page of the level, never as
+      // "changed the incident".
+      const known = ["started", "timeout", "unreachable", "undelivered"].includes(entry.reason);
+      return say(known ? `escalated_${entry.reason}` : "escalated_started", level, names);
     }
     case "escalation_exhausted":
-      // The last level's pushes all failed: everyone was paged before its timeout.
-      if (entry.unreached !== undefined) {
-        return m.escalation_early({
-          kind: "everyone",
-          from: String(entry.unreached),
-          level: "",
-          who: "",
-        });
-      }
       return say("escalation_exhausted");
     case "email_failed":
       // Written by the notifier, like a failed page: about who was not emailed.

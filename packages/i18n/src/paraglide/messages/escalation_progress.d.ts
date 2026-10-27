@@ -22,8 +22,6 @@ export type Escalation_ProgressInputs = {
 * | "fallback_unreachable_later_nobody" | "No later level could reach anyone. Tried everyone who can respond: nobody could be paged" |
 * | "fallback_exhausted_nobody" | "Nobody acknowledged after every level. Tried everyone who can respond: nobody could be paged" |
 * | "fallback_stalled_nobody" | "A level kept failing to fire. Tried everyone who can respond: nobody could be paged" |
-* | "fallback_undelivered" | "Nobody on the last level could be reached: paged everyone who can respond" |
-* | "fallback_undelivered_nobody" | "Nobody on the last level could be reached. Tried everyone who can respond: nobody could be paged" |
 * | * | "Escalation" |
 *
 * @param {Escalation_ProgressInputs} inputs

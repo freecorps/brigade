@@ -239,8 +239,7 @@ export type RunStatus =
   | { kind: "resolved"; at: number }
   | {
       kind: "fallback";
-      /** `undelivered`: every push of the last level failed, so the run ended before its timeout. */
-      reason: "unreachable" | "exhausted" | "stalled" | "undelivered";
+      reason: "unreachable" | "exhausted" | "stalled";
       /** An earlier level paged someone: no later level could reach anyone. */
       later: boolean;
       /** The page to everyone who can respond reached nobody (nobody else can respond, or none could be paged). */
@@ -262,11 +261,7 @@ export function runStatus(
   if (run.status === "exhausted") {
     const last = run.pages[run.pages.length - 1];
     const reason =
-      last?.reason === "exhausted" && last.unreached !== undefined
-        ? "undelivered"
-        : last?.reason === "exhausted" || last?.reason === "stalled"
-          ? last.reason
-          : "unreachable";
+      last?.reason === "exhausted" || last?.reason === "stalled" ? last.reason : "unreachable";
     const later = run.pages.some((page) => page.level !== null) || run.paged > run.pages.length;
     const failed = pageFailures(run, timeline, run.paged);
     const everyone = everyoneWhoCanRespond(members, run.causedBy);

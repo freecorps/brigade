@@ -47,8 +47,16 @@ const SCHEMA = `
     primary key (event_id, device_id)
   ) without rowid;
   create table if not exists page_events (event_id text primary key, at integer not null) without rowid;
+  create table if not exists page_steps (
+    event_id text primary key,
+    run text not null,
+    step integer not null,
+    at integer not null
+  ) without rowid;
   create index if not exists page_deliveries_at on page_deliveries (at);
   create index if not exists page_events_at on page_events (at);
+  create index if not exists page_steps_run on page_steps (run, step);
+  create index if not exists page_steps_at on page_steps (at);
 `;
 
 export type Urgency = "high" | "page";
@@ -378,6 +386,7 @@ export class Pager {
       });
       for (const userId of missed) skipped.push({ userId, reason: "over_limit" });
     }
+    this.planStep(event, incident.id, now);
     this.planDeliveries(event, incident.id, targets, now);
     return {
       send: true,
@@ -392,6 +401,31 @@ export class Pager {
       targets,
       skipped,
     };
+  }
+
+  /**
+   * Remembers which page of the run (its run and step) `event` is sending, as it is planned: a severity raise paging
+   * a level again is the same page as the level's own event, so a device that took either counts as reached on it
+   * (`reached`), even when the delivery rows that say so could not be written. Never in the page's way.
+   */
+  private planStep(event: BrigadeEvent, incidentId: string, now: number): void {
+    try {
+      const page = this.pageOf(event, incidentId);
+      if (!page) return;
+      this.options.storage.sql.exec(
+        "insert into page_steps (event_id, run, step, at) values (?, ?, ?, ?) on conflict do nothing",
+        event.id,
+        page.run,
+        page.step,
+        now,
+      );
+    } catch (error) {
+      this.options.log("recording a page's step failed", {
+        event: event.id,
+        incident: incidentId,
+        error: String(error),
+      });
+    }
   }
 
   /**
@@ -655,8 +689,8 @@ export class Pager {
 
   /**
    * Escalates early (RFC 0006 "Who is paged"): when `event` is the running run's last page, a level's, and it settled
-   * with no device taking any push (every one refused, or failed with its retries spent), the next level fires now
-   * (`escalation.unreached`) instead of at the level's timeout. Not when a device of that page took it (even one
+   * with no device taking any push (every one refused, or failed with its retries spent), the next level of its round
+   * fires now (`escalation.unreached`) instead of at the level's timeout; the round's last level waits for it. Not when a device of that page took it (even one
    * nobody has acknowledged yet: a missing receipt is not a missed page), when whoever caused the run's first page is
    * on it (they count as reached), for a severity raise paging the level again, or for a lost page (the dead-letter
    * consumer pages it again instead). De-duplicated by the run and its step, and refused once the run moved on or
@@ -706,8 +740,8 @@ export class Pager {
 
   /**
    * Whether a device took any push of the page `step` of run `runId`: this event's or the lost one's it was made
-   * again for (the ledger), or any push of that page the relay accepted (its delivery rows, a severity raise's
-   * included).
+   * again for (the ledger), any event planned as that page (the ledger by `page_steps`: a severity raise paging the
+   * level again), or any push of that page the relay accepted (its delivery rows, a severity raise's included).
    */
   private reached(event: BrigadeEvent, incidentId: string, runId: string, step: number): boolean {
     const lost =
@@ -722,6 +756,15 @@ export class Pager {
       )
       .toArray();
     if (ledger.length > 0) return true;
+    const again = this.options.storage.sql
+      .exec(
+        `select 1 from page_deliveries d join page_steps s on s.event_id = d.event_id
+         where s.run = ? and s.step = ? limit 1`,
+        runId,
+        step,
+      )
+      .toArray();
+    if (again.length > 0) return true;
     const { from, to } = prefixRange(`${incidentId}:`);
     return this.options.shard.store
       .range("deliveries", from, to)
@@ -938,6 +981,7 @@ export class Pager {
     try {
       sql.exec("delete from page_deliveries where at < ?", before);
       sql.exec("delete from page_events where at < ?", before);
+      sql.exec("delete from page_steps where at < ?", before);
     } catch (error) {
       this.options.log("pruning the page ledger failed", { error });
     }

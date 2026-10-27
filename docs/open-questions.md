@@ -45,8 +45,8 @@ without a policy keeps the interim rule (commander, then every owner, admin and 
   email should also go to admins, or skip an owner who declared the incident; and whether the external dead-man
   switch should hear of it too. Email verification gates these emails now: only verified addresses get them (RFC
   0005 "Email", "Abuse"); the caps on them and on account emails are Q21's.
-- A level whose pushes all fail now escalates before its timeout (RFC 0006 "Who is paged"): only refusals and
-  failures with retries spent count, never a missing receipt. Still open: should a level whose members were all
+- A level whose pushes all fail now escalates before its timeout, to the next level of its round only (RFC 0006 "Who
+  is paged"): only refusals and failures with retries spent count, never a missing receipt. Still open: should a level whose members were all
   pushed but never opened it (no receipt within a minute or two) escalate early too, given receipts are best effort?
   And an exhausted run already falls back to everyone who can respond once; should a workspace be able to turn that
   off, or point it at a smaller group?

@@ -1,6 +1,6 @@
 // Escalation runs (RFC 0003 "Escalation run", RFC 0006 "Who is paged"): the first page of an incident starts one
 // on the policy of the monitor that opened it, or the workspace's default, and the shard's alarm fires each next
-// level when nobody acknowledged in time; a level every push of which failed fires the next one at once.
+// level when nobody acknowledged in time; a level every push of which failed fires the next one of its round at once.
 // A level is resolved when it fires: schedules to whoever is on call at that instant. A level nobody on it can be
 // reached at is skipped at once; when no level is left, when every level and repeat went unacknowledged, or when a
 // level keeps failing to fire, the run falls back to the interim rule (everyone who can respond) and ends.
@@ -232,7 +232,6 @@ function paged(
         kind: "escalation_exhausted",
         levels: run.levels.length,
         rounds: run.repeat + 1,
-        ...(page.unreached !== undefined && { unreached: page.unreached }),
       },
       ctx,
     );
@@ -355,63 +354,55 @@ export const advanceEscalation = defineMutation({
     if (run.paged !== args.step || run.nextAt === null || run.nextAt > ctx.now || !last) {
       return fail("conflict", "Not due");
     }
-    return ok(...next(store, incident, run, last, { reason: "timeout" }, ctx));
+    const index = last.level ?? run.levels.length;
+    if (index < run.levels.length) {
+      return ok(
+        ...fire(store, incident, run, { index, round: last.round, reason: "timeout" }, ctx, null),
+      );
+    }
+    if (last.round < run.repeat) {
+      return ok(
+        ...fire(
+          store,
+          incident,
+          run,
+          { index: 0, round: last.round + 1, reason: "timeout" },
+          ctx,
+          null,
+        ),
+      );
+    }
+    const events = paged(
+      store,
+      incident,
+      run,
+      pageOf(null, last.round, [], [], "exhausted", ctx.now),
+      [],
+      ctx,
+    );
+    const exhausted: EscalationExhausted = {
+      type: "escalation.exhausted",
+      subject: incident.id,
+      data: {
+        incidentId: incident.id,
+        policyId: run.policyId,
+        levels: run.levels.length,
+        rounds: run.repeat + 1,
+      },
+    };
+    return ok(...events, exhausted);
   },
 });
 
 /**
- * What comes after `last` (the run's last page, a level): the next level, or level 1 of the next round while repeats
- * are left; past the last repeat the run is exhausted: everyone who can respond is paged once and the run ends. For
- * `undelivered`, `last` is the level every push of which failed, and each page says so (`unreached`).
- */
-function next(
-  store: MutationStore,
-  incident: IncidentRow,
-  run: Escalation,
-  last: EscalationPage,
-  why: { reason: "timeout" | "undelivered" },
-  ctx: { now: number; actor: Actor; server: boolean },
-): DomainEvent[] {
-  const unreached = why.reason === "undelivered" ? (last.level ?? undefined) : undefined;
-  const index = last.level ?? run.levels.length;
-  if (index < run.levels.length) {
-    return fire(store, incident, run, { index, round: last.round, ...why, unreached }, ctx, null);
-  }
-  if (last.round < run.repeat) {
-    return fire(
-      store,
-      incident,
-      run,
-      { index: 0, round: last.round + 1, ...why, unreached },
-      ctx,
-      null,
-    );
-  }
-  const page = {
-    ...pageOf(null, last.round, [], [], "exhausted", ctx.now),
-    ...(unreached !== undefined && { unreached }),
-  };
-  const events = paged(store, incident, run, page, [], ctx);
-  const exhausted: EscalationExhausted = {
-    type: "escalation.exhausted",
-    subject: incident.id,
-    data: {
-      incidentId: incident.id,
-      policyId: run.policyId,
-      levels: run.levels.length,
-      rounds: run.repeat + 1,
-    },
-  };
-  return [...events, exhausted];
-}
-
-/**
  * Server only, as `ESCALATION_ACTOR`, from the pager when the run's last page settled (RFC 0006 "Who is paged"):
  * every push of that level failed for good (refused, or retries spent) and no device took any, so waiting for its
- * timeout would only wait. The next level fires at once, in the order a timeout would take (next level, level 1 of
- * the next round, then everyone who can respond and the run ends), each page saying why (`undelivered`,
- * `unreached`). `step` is the run's page count with the failed page, so a redelivered result, a dead-lettered one or a
- * repeated call advances once (`conflict` once the run moved on); an acknowledged or resolved run is `not_found`.
+ * timeout would only wait. The next level of the same round that reaches someone fires at once, saying why
+ * (`undelivered`, `unreached`). Never past the round: on its last level (or with no later level reaching anyone) it is
+ * refused, and the level's timeout fires what comes next (level 1 of the next round, or everyone who can respond and
+ * the run ends), so a relay that refuses everything never spends the run's rounds in moments. `step` is the run's page
+ * count with the failed page, so a redelivered result, a dead-lettered one or a repeated call advances once
+ * (`conflict` once the run moved on); an acknowledged or resolved run is `not_found`.
  */
 export const unreachedEscalation = defineMutation({
   name: "escalation.unreached",
@@ -433,7 +424,22 @@ export const unreachedEscalation = defineMutation({
     if (run.paged !== args.step || !last || last.level === null) {
       return fail("conflict", "The run moved on");
     }
-    return ok(...next(store, incident, run, last, { reason: "undelivered" }, ctx));
+    // Only later in the same round, and only to a level that reaches someone: anything else waits for the timeout.
+    const index = last.level;
+    const later = run.levels
+      .slice(index)
+      .some((level) => resolveLevel(store, level, ctx.now, null).userIds.length > 0);
+    if (!later) return fail("conflict", "No later level in this round");
+    return ok(
+      ...fire(
+        store,
+        incident,
+        run,
+        { index, round: last.round, reason: "undelivered", unreached: index },
+        ctx,
+        null,
+      ),
+    );
   },
 });
 

@@ -274,7 +274,8 @@ How a page uses them is RFC 0006 "Who is paged".
   `escalation_policy.updated`, `reason: default_changed`). With no default, RFC 0006's interim rule pages, unchanged,
   so a workspace that never creates a policy pages as before.
 - **A policy per monitor** (`policyId` on the monitor, RFC 0007): a monitor may name a policy, set by `monitor.create*`
-  and `monitor.update*` (left out or null: the default), checked against the shard's policies (`invalid_args` on
+  and `monitor.update*` (null: the default; left out, a new monitor takes the default and an edit keeps the monitor's,
+  so a client that does not know the field never clears it), checked against the shard's policies (`invalid_args` on
   `policyId` otherwise), with the monitors' own RBAC (`monitor:manage`, owners and admins) and in `monitor.created` and
   `monitor.updated`. Changing it never starts the checks over. An incident a monitor opened starts its run on that
   policy (`incidentPolicy`: the monitor still firing on the incident, else the one whose alert opened it); a monitor
@@ -310,9 +311,11 @@ How a page uses them is RFC 0006 "Who is paged".
   next round, or, past the last round, `exhausted`: nobody acknowledged, so everyone who can respond is paged once
   (the interim rule, RFC 0006) and the run ends (a timeline entry, `escalation.exhausted`). A level `escalation.advance`
   keeps refusing is recorded at once and, 3 minutes after its first refusal, ends the run the same way
-  (`escalation.fallback`). **Early.** A level every push of which failed for good (no device took any) fires what
-  comes next at once (`escalation.unreached`, from the pager when that page settles), in the same order, rather than
-  waiting out its timeout (RFC 0006 "Who is paged").
+  (`escalation.fallback`). **Early.** A level every push of which failed for good (no device took any) fires the
+  next level of its round that reaches someone at once (`escalation.unreached`, from the pager when that page
+  settles), rather than waiting out its timeout. Never past the round: the round's last level waits for its timeout,
+  which starts the next round or ends the run as above, so a relay that refuses everything cannot spend every round in
+  moments (RFC 0006 "Who is paged").
 - **Stop.** `incident.ack` (any responder, through any route: the mutation does it, not an endpoint) sets the run
   `acknowledged`, and a status change out of the active ones (resolved, declined) sets it `resolved`; both delete
   the timer in the same transaction, so no level fires after them. Both also close a run that already ended

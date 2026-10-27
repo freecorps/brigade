@@ -25,6 +25,7 @@ import {
   monitorsFull,
   newHeartbeat,
   sourceChips,
+  stalePolicy,
   splitHostPort,
   tcpFieldReason,
   tcpHostLabel,
@@ -368,7 +369,6 @@ test("the edit form opens with the monitor's values, and an untouched one change
       name: "Checkout",
       intervalSeconds: 60,
       graceSeconds: 120,
-      policyId: null,
     },
   });
   // No token hash in a heartbeat's update: its URL stays as it was.
@@ -500,7 +500,7 @@ test("a monitor's escalation policy: its own, the default, or none; picked and s
   });
   expect(monitorPolicy({ policyId: null }, [])).toEqual({ kind: "none" });
   expect(m.monitor_policy({ kind: "own", name: "Payments" }, { locale: "pt-BR" })).toBe(
-    "Chama por Payments",
+    "Chama pela política Payments",
   );
 
   expect(
@@ -514,6 +514,10 @@ test("a monitor's escalation policy: its own, the default, or none; picked and s
   expect(editRestarts({ ...draftFromRow(http), policyId: ESC2 }, http)).toBe(false);
   const own = row({ policyId: ESC2 });
   expect(checkEdit(draftFromRow(own), own)).toMatchObject({ ok: true, changed: false });
+  // Left alone, the policy is not sent: the shard keeps the monitor's.
+  const renamed = checkEdit({ ...draftFromRow(own), name: "Renamed" }, own);
+  expect(renamed).toMatchObject({ ok: true, changed: true });
+  expect(renamed.ok && renamed.args).not.toHaveProperty("policyId");
   expect(checkEdit({ ...draftFromRow(own), policyId: "" }, own)).toMatchObject({
     ok: true,
     changed: true,
@@ -529,4 +533,22 @@ test("a monitor's escalation policy: its own, the default, or none; picked and s
   expect(
     checkDraft({ ...EMPTY_DRAFT, name: "API", url: "https://example.com", policyId: "nope" }, id()),
   ).toMatchObject({ ok: false, fields: ["policyId"] });
+});
+
+test("only a policy that would be sent and is gone blocks the save", () => {
+  const policies = [{ id: ESC }];
+  const GONE = "esc_01JB0000000000000000000009";
+  // A new monitor naming a deleted policy.
+  expect(stalePolicy({ policyId: GONE }, null, policies)).toBe(true);
+  expect(stalePolicy({ policyId: "" }, null, policies)).toBe(false);
+  expect(stalePolicy({ policyId: ESC }, null, policies)).toBe(false);
+  // An edit that left the policy alone sends the live row's, which is never sent: not blocked, even when this
+  // client has not caught up with that policy (or the draft opened on an older one the row has moved off).
+  const own = row({ policyId: GONE });
+  const initial = draftFromRow(row({ policyId: ESC2 }));
+  const sent = rebaseDraft({ ...initial, name: "Renamed" }, initial, own);
+  expect(sent.policyId).toBe(GONE);
+  expect(stalePolicy(sent, own, policies)).toBe(false);
+  // Picking it again by hand, on a monitor that moved off it, is.
+  expect(stalePolicy({ policyId: GONE }, row({ policyId: null }), policies)).toBe(true);
 });

@@ -75,18 +75,24 @@ export type StatusEmailPlan =
   | { send: false; reason: "held"; until: number }
   | {
       send: true;
-      /** The ledger's key: the event the emails are about, or `confirm:<subscriber>:<send>`. */
+      /** The ledger's key: the event the emails are about, or `confirm:<requested event>`. */
       key: string;
       page: StatusEmailPage;
       /** A notification: who to email next (ids after `cursor`, at most `limit`) and what. */
       notify?: { cursor: string; limit: number; content: StatusEmailContent };
-      /** A confirmation: the subscriber to email. */
-      confirm?: { subscriberId: string };
+      /**
+       * A confirmation: the subscriber to email, and whether an earlier delivery already counted it against the
+       * inbox and domain caps (`COUNTED`), so a retry never counts it twice.
+       */
+      confirm?: { subscriberId: string; counted: boolean };
     };
+
+/** A confirmation's `cursor` once its delivery counted it against the inbox and domain caps (in D1). */
+export const COUNTED = "counted";
 
 /** What a batch did, as the consumer saw it. */
 export type StatusEmailReport = {
-  /** The last subscriber handled in order (sent, or refused for good). */
+  /** The last subscriber handled in order (sent, or refused for good); for a confirmation, `COUNTED` or "". */
   cursor: string;
   /** Emails that went out. */
   sent: number;
@@ -168,7 +174,7 @@ export class StatusMailer {
         return { send: false, reason: "nothing" };
       }
       subscriberId = data.subscriberId;
-      key = `confirm:${data.subscriberId}:${data.send}`;
+      key = `confirm:${event.id}`;
     } else if (event.type === "status_email.continue") {
       const eventId = (event.data as { eventId?: unknown } | null)?.eventId;
       if (typeof eventId !== "string") return { send: false, reason: "nothing" };
@@ -216,7 +222,12 @@ export class StatusMailer {
         );
       }
       this.claim(key, now);
-      return { send: true, key, page: facts, confirm: { subscriberId } };
+      return {
+        send: true,
+        key,
+        page: facts,
+        confirm: { subscriberId, counted: row?.cursor === COUNTED },
+      };
     }
     const content = original ? this.content(original) : null;
     if (!content) {

@@ -11,7 +11,7 @@ import {
 } from "@freecorps/brigade-schema";
 import { describe, expect, test, vi } from "vite-plus/test";
 import type { BrigadeEvent } from "../src/outbox.ts";
-import { Shard } from "../src/shard.ts";
+import { Shard, touchesStatusPage } from "../src/shard.ts";
 import {
   STATUS_OUTAGE_REFRESH_MS,
   STATUS_PUSH_ABANDON_MS,
@@ -517,6 +517,50 @@ describe("the snapshot", () => {
     expect(await nextAt(after + 1)).toBe(
       (Math.floor(after / STATUS_REFRESH_MS) + 1) * STATUS_REFRESH_MS,
     );
+  });
+
+  test("only an alert of a monitor a component shows marks the page for a rebuild", async () => {
+    const t = await team();
+    await configure(t, t.ana, settings(slug()));
+    const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    const component = newId("cmp", Date.now(), random);
+    const [shown, hidden] = [newId("mon", Date.now(), random), newId("mon", Date.now(), random)];
+    await t.run("statusComponent.create", { id: component, name: "API", group: null }, ana);
+    await t.withShard((shard) => {
+      for (const id of [shown, hidden]) {
+        shard.store.insert("monitors", {
+          id,
+          createdAt: Date.now(),
+          paused: false,
+          pausedAt: null,
+        } as MonitorRow);
+      }
+    });
+    const alert = (monitorId: string) => {
+      const id = newId("alt", Date.now(), random);
+      return t.withShard((shard) => {
+        shard.store.insert("alerts", {
+          id,
+          monitorId,
+          status: "firing",
+          firedAt: Date.now(),
+          resolvedAt: null,
+        } as AlertRow);
+        return touchesStatusPage([{ table: "alerts", id }], shard.store);
+      });
+    };
+    // Nothing linked yet: no alert moves the page.
+    expect(await alert(shown)).toBe(false);
+    expect(
+      await t.run("statusComponent.linkMonitors", { id: component, monitorIds: [shown] }, ana),
+    ).toMatchObject({ ok: true });
+    expect(await alert(hidden)).toBe(false);
+    expect(await alert(shown)).toBe(true);
+    expect(
+      await t.withShard((shard) =>
+        touchesStatusPage([{ table: "status_components", id: component }], shard.store),
+      ),
+    ).toBe(true);
   });
 
   test("a failed push keeps the change pending and backs off", async () => {

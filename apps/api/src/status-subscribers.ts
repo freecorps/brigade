@@ -21,8 +21,13 @@ export const STATUS_CONFIRM_SENDS = 3;
 export const STATUS_CONFIRM_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** Confirmation emails one inbox (`canonicalEmail`) gets in a UTC day, from every page together (counted when sent). */
 export const STATUS_CONFIRM_DAILY_CAP = 5;
-/** Confirmation emails one recipient domain gets in a UTC day, from every page together (counted when sent). */
-export const STATUS_CONFIRM_DOMAIN_DAILY_CAP = 200;
+/** Confirmation emails one page sends to one recipient domain in a UTC day (counted when sent). */
+export const STATUS_CONFIRM_PAGE_DOMAIN_DAILY_CAP = 20;
+/**
+ * Confirmation emails one recipient domain gets in a UTC day from every page together, for a domain that is not a
+ * large mail provider (`LARGE_PROVIDERS`): a domain that takes every local part, or one company's, is bounded here.
+ */
+export const STATUS_CONFIRM_DOMAIN_DAILY_CAP = 50;
 /** Confirmed subscribers one page may have; past it a subscribe does nothing (and says the same). */
 export const STATUS_SUBSCRIBERS_MAX = 1000;
 /** Pending subscribers one page may have at once, counted apart from the confirmed ones. */
@@ -34,21 +39,66 @@ export const STATUS_EMAIL_MAX = 254;
 /** The largest form body read. */
 const MAX_FORM_LENGTH = 2048;
 
-/** An address as stored: trimmed and lower-cased; undefined when it is not one. */
+/**
+ * An address as stored: trimmed and lower-cased, its domain in ASCII (an internationalized domain as punycode, so
+ * both spellings of it are one address); undefined when it is not one.
+ */
 export function normalizeEmail(input: unknown): string | undefined {
   if (typeof input !== "string") return undefined;
-  const email = input.trim().toLowerCase();
-  if (email.length > STATUS_EMAIL_MAX) return undefined;
-  return /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:".]{2,}$/.test(email)
-    ? email
+  const trimmed = input.trim().toLowerCase();
+  if (!/^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"/?#%]+$/.test(trimmed)) return undefined;
+  const at = trimmed.lastIndexOf("@");
+  const domain = asciiDomain(trimmed.slice(at + 1));
+  if (!domain) return undefined;
+  const email = `${trimmed.slice(0, at)}@${domain}`;
+  return email.length <= STATUS_EMAIL_MAX ? email : undefined;
+}
+
+/** `domain` in ASCII (IDNA, as a URL's host), with at least two labels and a TLD of two or more; else undefined. */
+function asciiDomain(domain: string): string | undefined {
+  let host: string;
+  try {
+    host = new URL(`http://${domain}`).hostname;
+  } catch {
+    return undefined;
+  }
+  return /^(?:[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?\.)+(?:[a-z]{2,}|xn--[a-z0-9-]+)$/.test(host)
+    ? host
     : undefined;
 }
 
 const GMAIL = new Set(["gmail.com", "googlemail.com"]);
 
 /**
- * The inbox a normalized address reaches, for the caps and for one subscriber per inbox: the `+tag` dropped, and at
- * Gmail the dots too (with `googlemail.com` as `gmail.com`). Every spelling of one inbox counts as one.
+ * Large mail providers: the instance-wide per-domain cap (`STATUS_CONFIRM_DOMAIN_DAILY_CAP`) skips them, since
+ * one page's sign-ups could otherwise spend it for everyone; each page's own per-domain cap still applies.
+ */
+const LARGE_PROVIDERS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "msn.com",
+  "yahoo.com",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "proton.me",
+  "protonmail.com",
+]);
+
+/** Whether `domain` (ASCII, lower-cased) is a large mail provider's (`LARGE_PROVIDERS`, and GMX at its country domains). */
+export function isLargeProvider(domain: string): boolean {
+  return LARGE_PROVIDERS.has(domain) || /^gmx\.(?:[a-z]{2,3}|co\.uk)$/.test(domain);
+}
+
+/**
+ * The inbox a normalized address reaches, for the caps and for one subscriber per inbox: the `+tag` dropped at every
+ * domain (so `a+b@` and `a@` are one inbox even where `+` is a plain character: a rare address loses its own
+ * subscription, and no domain gives one inbox many), and at Gmail the dots too (with `googlemail.com` as
+ * `gmail.com`). Spellings this cannot see (a custom domain's own dots or aliases, a catch-all, subdomains) are
+ * bounded by the per-domain caps instead.
  */
 export function canonicalEmail(email: string): string {
   const at = email.lastIndexOf("@");
@@ -177,8 +227,9 @@ type PageFacts = { title: string; locale: "en" | "pt-BR" };
 
 /**
  * `/status/:slug/subscribe` (POST, the page's form), `/confirm` (GET shows a button, POST confirms), `/manage` (GET)
- * and `/unsubscribe` (POST, also RFC 8058's one-click from a mail client). Always an HTML page, never cached. A GET
- * only shows a button, so a mail scanner opening links confirms or unsubscribes nobody. Subscribing needs the public
+ * and `/unsubscribe` (GET shows the manage page and its button, as the emails' footer links there; POST unsubscribes,
+ * also RFC 8058's one-click from a mail client). Always an HTML page, never cached. A GET only shows a button, so a
+ * mail scanner opening links confirms or unsubscribes nobody. Subscribing needs the public
  * page; the links work from their signed token alone (it names the workspace), so a link keeps working after the page
  * moved to another address or stopped being public.
  */
@@ -189,8 +240,8 @@ export async function serveSubscription(
   slug: string,
   action: SubscriptionAction,
 ): Promise<Response> {
-  const allowed = action === "subscribe" || action === "unsubscribe" ? ["POST"] : ["GET", "POST"];
-  if (action === "manage") allowed.splice(1);
+  const allowed =
+    action === "subscribe" ? ["POST"] : action === "manage" ? ["GET"] : ["GET", "POST"];
   if (!allowed.includes(request.method)) {
     return new Response(null, { status: 405, headers: { Allow: allowed.join(", ") } });
   }
@@ -213,7 +264,7 @@ export async function serveSubscription(
         return page(200, { kind: "confirm", token: token! }, facts, slug);
       return await confirm(env, claims, facts, slug);
     }
-    if (action === "manage") {
+    if (action === "manage" || request.method === "GET") {
       const row = await env.DB.prepare(
         "select email from status_subscriber where id = ? and workspace_id = ?",
       )
@@ -399,24 +450,28 @@ export async function recordSubscriber(
   return updated.meta.changes === 1 ? { id: row.id, send, created: false } : null;
 }
 
-/** Gives back a confirmation the shard never recorded: the new row deleted, or the send counted back. */
-async function undoRequest(db: D1Database, asked: SubscriberRequest): Promise<void> {
+/**
+ * Gives back a confirmation the shard never recorded: one send counted back, and a row whose sends all go back to
+ * its first window is deleted (an older row, emailed before, stays for the sweep and its `expired` event). It never matches a particular send, so two requests at once that both failed always end with
+ * no row (in whichever order they fail), and one that failed beside one that went through leaves the row with the
+ * latter's confirmation on its way.
+ */
+export async function undoRequest(db: D1Database, asked: SubscriberRequest): Promise<void> {
   try {
-    if (asked.created) {
-      await db
+    await db.batch([
+      db
         .prepare(
-          "delete from status_subscriber where id = ? and status = 'pending' and confirm_sends = 1",
+          `update status_subscriber set confirm_sends = confirm_sends - 1
+           where id = ? and status = 'pending' and confirm_sends > 0`,
         )
-        .bind(asked.id)
-        .run();
-    } else {
-      await db
+        .bind(asked.id),
+      db
         .prepare(
-          `update status_subscriber set confirm_sends = ? where id = ? and status = 'pending' and confirm_sends = ?`,
+          `delete from status_subscriber
+           where id = ? and status = 'pending' and confirm_sends = 0 and confirm_since = created_at`,
         )
-        .bind(asked.send - 1, asked.id, asked.send)
-        .run();
-    }
+        .bind(asked.id),
+    ]);
   } catch (error) {
     log("giving back a status confirmation failed", { error: String(error) });
   }
@@ -503,16 +558,17 @@ async function shardChange(
 export async function sweepSubscribers(env: Env, now: number): Promise<void> {
   const cutoff = now - STATUS_CONFIRM_TTL_MS;
   const { results } = await env.DB.prepare(
-    `select id, workspace_id from status_subscriber where status = 'pending' and requested_at <= ?
+    `select id, workspace_id, requested_at from status_subscriber where status = 'pending' and requested_at <= ?
      order by requested_at limit ?`,
   )
     .bind(cutoff, STATUS_SWEEP_MAX)
-    .all<{ id: string; workspace_id: string }>();
-  const byWorkspace = new Map<string, string[]>();
+    .all<{ id: string; workspace_id: string; requested_at: number }>();
+  const byWorkspace = new Map<string, { id: string; requested_at: number }[]>();
   for (const row of results) {
-    byWorkspace.set(row.workspace_id, [...(byWorkspace.get(row.workspace_id) ?? []), row.id]);
+    byWorkspace.set(row.workspace_id, [...(byWorkspace.get(row.workspace_id) ?? []), row]);
   }
-  for (const [workspaceId, ids] of byWorkspace) {
+  for (const [workspaceId, rows] of byWorkspace) {
+    const ids = rows.map((row) => row.id);
     try {
       const result = await env.WORKSPACE.getByName(workspaceId).expireStatusSubscribers(
         workspaceId,
@@ -526,11 +582,12 @@ export async function sweepSubscribers(env: Env, now: number): Promise<void> {
       log("expiring status subscribers failed", { workspaceId, error: String(error) });
       continue;
     }
+    // Only rows still as they were read: one asked for again meanwhile keeps its new confirmation.
     await env.DB.batch(
-      ids.map((id) =>
+      rows.map((row) =>
         env.DB.prepare(
-          "delete from status_subscriber where id = ? and status = 'pending' and requested_at <= ?",
-        ).bind(id, cutoff),
+          "delete from status_subscriber where id = ? and status = 'pending' and requested_at = ?",
+        ).bind(row.id, row.requested_at),
       ),
     );
   }
@@ -538,6 +595,7 @@ export async function sweepSubscribers(env: Env, now: number): Promise<void> {
   await env.DB.batch([
     env.DB.prepare("delete from status_confirmation_send where day < ?").bind(yesterday),
     env.DB.prepare("delete from status_confirmation_domain where day < ?").bind(yesterday),
+    env.DB.prepare("delete from status_confirmation_page_domain where day < ?").bind(yesterday),
   ]);
 }
 

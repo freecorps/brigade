@@ -469,14 +469,16 @@ to the environment's database. `migrations/0008_status_slug.sql` is applied to `
 
 Email subscriptions, uptime bars and scheduled maintenance (RFC 0012, slice 2): visitors subscribe through
 `POST /status/:slug/subscribe` and confirm, manage and unsubscribe through `/status/:slug/confirm|manage|unsubscribe`
-(`src/status-subscribers.ts`); subscribers are in D1 (`migrations/0009_status_subscriber.sql`), the links are signed
+(`src/status-subscribers.ts`); subscribers are in D1 (`migrations/0009_status_subscriber.sql`, and the per-page domain caps in
+`migrations/0010_status_confirmation_caps.sql`), the links are signed
 with a key derived from `BETTER_AUTH_SECRET`, and the emails go out from the queue consumer (`src/notify-status.ts`,
 the shard's ledger in `src/status-mail.ts`) with links on `DASHBOARD_URL`. The form shows only where email is set up
 (`EMAIL_FROM`, or `EMAIL_LOG=1` under `vp run dev`, where each email is logged with its links). Subscribing is
 rate-limited by `STATUS_SUBSCRIBE_IP_LIMIT` and `STATUS_SUBSCRIBE_PAGE_LIMIT` (Workers Rate Limiting, namespaces
 4161-4163 and 4171-4173, one per environment). Pending subscribers who never confirm are deleted by the cron at minute
-37 of every hour, 48 hours after they asked. Apply `migrations/0009_status_subscriber.sql` with 0008 wherever the
-page is turned on (owner's call); it is not applied anywhere yet.
+37 of every hour, 48 hours after they asked. Apply `migrations/0009_status_subscriber.sql` and
+`migrations/0010_status_confirmation_caps.sql` with 0008 wherever the page is turned on (owner's call); they are not
+applied anywhere yet.
 
 ## Webhooks
 

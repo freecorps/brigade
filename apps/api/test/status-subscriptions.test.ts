@@ -31,12 +31,17 @@ import { STATUS_CONFIRM_PAGE_DAILY_CAP, STATUS_EMAIL_BATCH } from "../src/status
 import { statusKey, type StatusPublisher } from "../src/status-page.ts";
 import {
   canonicalEmail,
+  isLargeProvider,
+  normalizeEmail,
+  recordSubscriber,
   signLink,
   STATUS_CONFIRM_DAILY_CAP,
   STATUS_CONFIRM_DOMAIN_DAILY_CAP,
+  STATUS_CONFIRM_PAGE_DOMAIN_DAILY_CAP,
   STATUS_CONFIRM_TTL_MS,
   STATUS_PENDING_MAX,
   sweepSubscribers,
+  undoRequest,
   verifyLink,
 } from "../src/status-subscribers.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
@@ -52,7 +57,11 @@ let slugs = 0;
 let addresses = 0;
 const clientIp = () => `198.51.${Math.floor(++clients / 150) % 250}.${(clients % 150) + 101}`;
 const slug = () => `subs-${Date.now().toString(36)}-${++slugs}`;
-const visitor = () => `visitor-${Date.now().toString(36)}-${++addresses}@example.com`;
+/** Each visitor on a domain of its own, so the suite's sign-ups never reach the per-domain caps. */
+const visitor = () => {
+  const n = ++addresses;
+  return `visitor-${Date.now().toString(36)}-${n}@v${n}.example.com`;
+};
 
 const api = (
   path: string,
@@ -426,6 +435,14 @@ describe("notifications", () => {
     const [, resolved] = await t.events("incident.update_published");
     await deliver([resolved!], sender);
     expect(sent[1]!.subject).toBe("Acme <Cloud> resolved: Slow <API> responses");
+    // The footer's link, opened in a browser: the manage page and its button, nothing unsubscribed yet.
+    const footer = /https:\/\/brigade\.test\/\S+\/unsubscribe\?t=\S+/.exec(mail.text)![0];
+    const shown = await exports.default.fetch(
+      `${ORIGIN}${new URL(footer).pathname}${new URL(footer).search}`,
+    );
+    expect(shown.status).toBe(200);
+    expect(await shown.text()).toMatch(/<form method="post" action="[^"]+\/unsubscribe\?t=/);
+    expect((await rows(t.id)).map((row) => row.email)).toContain(email);
     // One click from the mail client: a POST with RFC 8058's body.
     const url = new URL(unsubscribe);
     const response = await exports.default.fetch(`${ORIGIN}${url.pathname}${url.search}`, {
@@ -571,6 +588,93 @@ describe("one inbox, many spellings", () => {
     expect(sent).toHaveLength(1);
   });
 
+  test("an internationalized domain is one address in either spelling; a host that is no domain is refused", () => {
+    expect(normalizeEmail("Ana@Bücher.example")).toBe("ana@xn--bcher-kva.example");
+    expect(normalizeEmail("ana@xn--bcher-kva.example")).toBe("ana@xn--bcher-kva.example");
+    expect(canonicalEmail(normalizeEmail("ana+news@bücher.example")!)).toBe(
+      "ana@xn--bcher-kva.example",
+    );
+    for (const bad of [
+      "a@x/y.example",
+      "a@192.0.2.1",
+      "a@example.com.",
+      "a@.example",
+      "a@x..example",
+    ]) {
+      expect(normalizeEmail(bad)).toBeUndefined();
+    }
+  });
+
+  test(`one page sends one domain at most ${STATUS_CONFIRM_PAGE_DOMAIN_DAILY_CAP} confirmations a day; other pages still can`, async () => {
+    const domain = `shared-${Date.now().toString(36)}-${++addresses}.example.com`;
+    const day = new Date().toISOString().slice(0, 10);
+    const t = await team();
+    await env.DB.prepare(
+      "insert into status_confirmation_page_domain (workspace_id, domain, day, count) values (?, ?, ?, ?)",
+    )
+      .bind(t.id, domain, day, STATUS_CONFIRM_PAGE_DOMAIN_DAILY_CAP - 1)
+      .run();
+    await subscribe(t.address, { email: `first@${domain}` });
+    await subscribe(t.address, { email: `second@${domain}` });
+    const { sent, sender } = recorder();
+    await deliver(await t.events("status_subscriber.requested"), sender);
+    expect(sent).toHaveLength(1);
+    // That page's flood is its own: another page still reaches the domain.
+    const other = await team();
+    await subscribe(other.address, { email: `third@${domain}` });
+    await deliver(await other.events("status_subscriber.requested"), sender);
+    expect(sent.map((one) => one.to.email)).toEqual([`first@${domain}`, `third@${domain}`]);
+  });
+
+  test("the instance-wide domain cap is for domains that are not a large provider's", () => {
+    expect(isLargeProvider("gmail.com")).toBe(true);
+    expect(isLargeProvider("gmx.de")).toBe(true);
+    expect(isLargeProvider("example.com")).toBe(false);
+    expect(isLargeProvider("gmx.example.com")).toBe(false);
+  });
+
+  test("an inbox confirmed on another page skips the domain caps", async () => {
+    const domain = `known-${Date.now().toString(36)}-${++addresses}.example.com`;
+    const email = `owner@${domain}`;
+    await confirmed(await team(), email);
+    const day = new Date().toISOString().slice(0, 10);
+    const t = await team();
+    await env.DB.batch([
+      env.DB.prepare(
+        "insert into status_confirmation_page_domain (workspace_id, domain, day, count) values (?, ?, ?, ?)",
+      ).bind(t.id, domain, day, STATUS_CONFIRM_PAGE_DOMAIN_DAILY_CAP),
+      env.DB.prepare(
+        `insert into status_confirmation_domain (domain, day, count) values (?, ?, ?)
+         on conflict (domain, day) do update set count = excluded.count`,
+      ).bind(domain, day, STATUS_CONFIRM_DOMAIN_DAILY_CAP),
+    ]);
+    await subscribe(t.address, { email: `stranger@${domain}` });
+    await subscribe(t.address, { email });
+    const { sent, sender } = recorder();
+    await deliver(await t.events("status_subscriber.requested"), sender);
+    expect(sent.map((one) => one.to.email)).toEqual([email]);
+  });
+
+  test("a confirmation retried after a refused send counts against the inbox cap once", async () => {
+    const t = await team();
+    const email = visitor();
+    await subscribe(t.address, { email });
+    const [requested] = await t.events("status_subscriber.requested");
+    let failing = true;
+    const { sent, sender } = recorder(() => failing);
+    expect((await deliver([requested!], sender)).retryMessages).toHaveLength(1);
+    failing = false;
+    await t.withShard((_shard, state) =>
+      state.storage.sql.exec("update status_emails set claimed_until = 0"),
+    );
+    await deliver([requested!], sender);
+    expect(sent).toHaveLength(1);
+    const count = await env.DB.prepare("select count from status_confirmation_send where email = ?")
+      .bind(canonicalEmail(email))
+      .first<{ count: number }>();
+    expect(count?.count).toBe(1);
+  });
+
   test(`a page sends at most ${STATUS_CONFIRM_PAGE_DAILY_CAP} confirmations a day, apart from its notifications`, async () => {
     const t = await team();
     const day = new Date().toISOString().slice(0, 10);
@@ -659,7 +763,7 @@ describe("links outlive the page's address", () => {
     await t.push();
     const shown = await exports.default.fetch(`${ORIGIN}${manage.pathname}${manage.search}`);
     expect(shown.status).toBe(200);
-    expect(await shown.text()).toContain("•••@example.com");
+    expect(await shown.text()).toMatch(/•••@v\d+\.example\.com/);
     const response = await oneClick(unsubscribe);
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("unsubscribed");
@@ -746,6 +850,61 @@ describe("pending subscribers", () => {
     expect(await rows(t.id)).toEqual([]);
   });
 
+  test("two requests at once whose shard calls both failed leave no row, in either order", async () => {
+    const t = await team();
+    for (const order of [
+      [0, 1],
+      [1, 0],
+    ]) {
+      const email = visitor();
+      const now = Date.now();
+      const asked = [
+        await recordSubscriber(env.DB, t.id, email, ORIGIN, now),
+        await recordSubscriber(env.DB, t.id, email, ORIGIN, now + 1),
+      ];
+      expect(asked.map((one) => one?.send)).toEqual([1, 2]);
+      for (const index of order) await undoRequest(env.DB, asked[index]!);
+      expect((await rows(t.id)).map((row) => row.email)).not.toContain(email);
+    }
+    // One failed beside one that went through: the row stays, its confirmation on the way.
+    const email = visitor();
+    const first = await recordSubscriber(env.DB, t.id, email, ORIGIN, Date.now());
+    await recordSubscriber(env.DB, t.id, email, ORIGIN, Date.now());
+    await undoRequest(env.DB, first!);
+    expect((await rows(t.id)).filter((row) => row.email === email)).toMatchObject([
+      { status: "pending", confirm_sends: 1 },
+    ]);
+  });
+
+  test("the sweep keeps a row asked for again while it ran", async () => {
+    const t = await team();
+    const id = newId("ssb", Date.now(), random);
+    const long = Date.now() - STATUS_CONFIRM_TTL_MS - 60_000;
+    const email = visitor();
+    await env.DB.prepare(
+      `insert into status_subscriber (id, workspace_id, email, canonical, status, created_at, confirmed_at, requested_at, confirm_sends, confirm_since, origin)
+       values (?, ?, ?, ?, 'pending', ?, null, ?, 1, ?, null)`,
+    )
+      .bind(id, t.id, email, email, long, long, long)
+      .run();
+    // Between the sweep's read and its delete, the row is asked for again.
+    const racing = {
+      ...env,
+      WORKSPACE: {
+        getByName: (name: string) => ({
+          expireStatusSubscribers: async (workspaceId: string, ids: string[]) => {
+            await env.DB.prepare("update status_subscriber set requested_at = ? where id = ?")
+              .bind(long + 1, id)
+              .run();
+            return env.WORKSPACE.getByName(name).expireStatusSubscribers(workspaceId, ids);
+          },
+        }),
+      },
+    } as unknown as Env;
+    await sweepSubscribers(racing, Date.now());
+    expect((await rows(t.id)).map((row) => row.id)).toEqual([id]);
+  });
+
   test(`at most ${STATUS_PENDING_MAX} pending on a page, counted apart from the confirmed`, async () => {
     const t = await team();
     const now = Date.now();
@@ -798,7 +957,7 @@ describe("paging comes first", () => {
     const ids = Array.from({ length: 20 }, (_, index) => newId("ssb", now + index, random));
     await env.DB.batch(
       ids.map((id, index) => {
-        const email = `flood-${index}-${now}@example.com`;
+        const email = `flood-${index}@f${index}-${now}.example.com`;
         return env.DB.prepare(
           `insert into status_subscriber (id, workspace_id, email, canonical, status, created_at, confirmed_at, requested_at, confirm_sends, confirm_since, origin)
            values (?, ?, ?, ?, 'pending', ?, null, ?, 1, ?, null)`,

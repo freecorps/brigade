@@ -207,8 +207,9 @@ serving it; only a page using what 2 added needs the newer reader.
   so 99.999 never shows 100. Monitors keep no history of their checks, which is why alerts are the source. A
   monitor paused now has watched nothing since its pause: those days are `none` unless another linked monitor
   watched, and downtime counts only while one did. Earlier pauses are not kept, so they count as up (Q23).
-- **Pushed when it moves**: an alert firing or resolving marks the snapshot dirty when any component is linked, the
-  page is rebuilt every 5 minutes while one fires, and at UTC midnight the bars move on to the new day ("The
+- **Pushed when it moves**: an alert firing or resolving marks the snapshot dirty only when its monitor is linked to
+  a component (`touchesStatusPage`), so a busy monitor nobody shows never rebuilds the page; the page is rebuilt
+  every 5 minutes while a linked one fires, and at UTC midnight the bars move on to the new day ("The
   snapshot").
 - **On the page**: 90 thin bars under the component, coloured like the component scale, each with its day as a
   tooltip, hidden from screen readers behind one text alternative (`role="img"`): the percentage and every day with
@@ -239,15 +240,19 @@ serving it; only a page using what 2 added needs the newer reader.
 
 Visitors subscribe on the page to hear of incidents and maintenance by email, in the page's language.
 
-- **Subscribers live in D1** (`status_subscriber`, migration 0009: id `ssb_…`, workspace, lower-cased address, the
-  inbox it reaches (`canonical`: the `+tag` dropped, and at Gmail the dots, `googlemail.com` as `gmail.com`), `pending`
+- **Subscribers live in D1** (`status_subscriber`, migration 0009: id `ssb_…`, workspace, lower-cased address with
+  its domain in ASCII (an internationalized domain as punycode, so both spellings are one address), the inbox it
+  reaches (`canonical`: the `+tag` dropped at every domain, and at Gmail the dots, `googlemail.com` as `gmail.com`),
+  `pending`
   or `confirmed`, when, and how many confirmations were asked for), never in the shard: the shard keeps no email
   addresses (RFC 0005 "Email"), and a refused or repeated subscribe never wakes it. One inbox is one subscriber per
   page, whichever spelling it came with. Every change still emits an event through the shard's outbox, with the
   subscriber's id and never the address: `status_subscriber.requested` (`subscriberId`, `send`), `.confirmed`,
   `.removed` (`reason`: `unsubscribed`, `deleted` or `expired`), from server-only mutations.
 - **The shard and D1 stay in step.** A request writes D1, then runs its mutation; a shard that refuses or cannot be
-  reached gives the confirmation back in D1 (the new row deleted, or its send counted back), so asking again sends it.
+  reached gives the confirmation back in D1: its send counted back, and a row whose sends in its first window all
+  went back deleted (an older one stays for the sweep and its `expired` event), so asking again sends it. Two
+  requests at once that both failed end with no row, in either order (tested).
   Confirming, unsubscribing and deleting run the shard's mutation first and then write D1; the shard records each
   subscriber's confirmation and removal once (`status_subscriber_events`, kept 15 days), so a retry after a failure
   in between finishes the D1 write without a second event.
@@ -259,10 +264,18 @@ Visitors subscribe on the page to hear of incidents and maintenance by email, in
 - **Abuse.** Workers Rate Limiting before D1 or a shard: 5 a minute per caller address
   (`STATUS_SUBSCRIBE_IP_LIMIT`) and 30 a minute per page (`STATUS_SUBSCRIBE_PAGE_LIMIT`), namespaces 416x and 417x
   per environment; over either a 429 page. Every cap on an address counts its inbox (`canonical`), so `+tags` and
-  Gmail's dots add up to one. A pending inbox gets at most 3 confirmations from one page (`STATUS_CONFIRM_SENDS`), an
-  inbox at most 5 a day from every page together (`status_confirmation_send`) and a recipient domain at most 200 a
-  day (`STATUS_CONFIRM_DOMAIN_DAILY_CAP`, `status_confirmation_domain`), both counted in D1 when sent, so many pages
-  or many spellings cannot add up to flood one inbox and made-up addresses cannot flood a catch-all domain. A page
+  Gmail's dots add up to one. The `+tag` is dropped at every domain, not only where `+` is known to be a tag: a rare
+  address whose `+` is part of its name shares a subscription with the one without it, which is the safer mistake
+  for abuse. A pending inbox gets at most 3 confirmations from one page (`STATUS_CONFIRM_SENDS`) and an inbox at
+  most 5 a day from every page together (`status_confirmation_send`). By recipient domain, unless the inbox is
+  already confirmed on some page of the instance (its owner reads them; found by `canonical`, migration 0010): one
+  page sends a domain at most 20 a day (`STATUS_CONFIRM_PAGE_DOMAIN_DAILY_CAP`, `status_confirmation_page_domain`),
+  and a domain that is not a large mail provider's (Gmail, Outlook and Hotmail, Live, MSN, Yahoo, iCloud, Proton,
+  GMX: `isLargeProvider`) gets at most 50 a day from every page together (`STATUS_CONFIRM_DOMAIN_DAILY_CAP`,
+  `status_confirmation_domain`). So one page cannot use up a large provider for everyone, and made-up addresses
+  cannot flood a catch-all domain. Spellings of one inbox that `canonical` cannot see (a custom domain's own dots
+  or aliases, a catch-all, subdomain addressing) are bounded by that same non-provider cap. All are counted in D1
+  when sent, once per confirmation: a retry after a refused send does not count it again. A page
   sends at most 200 confirmations a day (`STATUS_CONFIRM_PAGE_DAILY_CAP`, counted in the shard apart from its
   notifications, so sign-ups never spend their budget). A page holds at most 1000 confirmed subscribers
   (`STATUS_SUBSCRIBERS_MAX`) and, apart from them, 200 pending (`STATUS_PENDING_MAX`). A pending subscriber is
@@ -271,7 +284,8 @@ Visitors subscribe on the page to hear of incidents and maintenance by email, in
   that one confirmation ever goes to an unconfirmed address. Q21 and Q23 have the numbers.
 - **Double opt-in.** The confirmation email links `/status/:slug/confirm?t=…`, signed (HMAC-SHA256 under a key
   derived from `BETTER_AUTH_SECRET`; the token carries the kind, workspace, subscriber and expiry) and valid until 48
-  hours after the subscribe it answers, when the row is swept.
+  hours after the subscribe it answers, when the row is swept. The sweep deletes only rows still as it read them
+  (`requested_at` unchanged), so one asked for again while it ran keeps its new confirmation.
   A `GET` only shows a "Confirm subscription" button that posts, so a mail scanner opening links confirms nobody.
 - **Links work from their token alone.** It names the workspace, so a link keeps working after the page moved to
   another address or stopped being public: the page's title and language come from the address only while it still
@@ -279,7 +293,8 @@ Visitors subscribe on the page to hear of incidents and maintenance by email, in
 - **Leaving.** Every notification carries a manage link (`/manage?t=…`, signed, no expiry, dead once the row is
   gone) showing the masked address and an Unsubscribe button, and RFC 8058's `List-Unsubscribe` (https only, which
   Email Sending requires) with `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, so a mail client unsubscribes in
-  one click with a `POST`. Unsubscribing deletes the row.
+  one click with a `POST`. The email's footer links `/unsubscribe` too: a `GET` there shows the manage page and its
+  button, so a scanner unsubscribes nobody. Unsubscribing deletes the row.
 - **Owners and admins** (`status:manage`, checked in D1): `GET /workspaces/:id/status-page/subscribers` (counts),
   `…/export` (CSV of address, status and times; a value starting with a formula character is quoted), and `DELETE`
   with `{ email }` (any spelling of the inbox). The dashboard's Status page card shows the counts, the export and removal by address; no other
@@ -297,7 +312,10 @@ Visitors subscribe on the page to hear of incidents and maintenance by email, in
   only within `STATUS_EMAIL_BUDGET_MS` (3 s); one under way past that finishes under `waitUntil`, and the delivery lets
   go at most 2 s later, so the next batch's pages never wait on email. A confirmation runs its D1 reads, its caps and
   its send in one slot the same way, so a flood of sign-ups in a batch never holds a page's relay call (tested); one
-  that finds no slot in time is tried again soon, without counting as a failure. Subscribers left: the shard runs
+  that finds no slot in time is tried again soon, without counting as a failure in the ledger. That wait rides the
+  message's Queue retries (a confirmation that finds no slot through all of them is dead-lettered, and the visitor
+  can ask again); moving confirmations onto the outbox like long lists is left until slot waits show up in the
+  logs. Subscribers left: the shard runs
   `statusEmail.continue`, whose `status_email.continue` event brings the event back through the outbox, never riding
   the original message's Queue retries. A refusal a retry may fix stops the batch there and is retried (30 s doubling
   to 5 minutes, at most 5 failed batches, then given up and logged); one refused for good is skipped. A lost report

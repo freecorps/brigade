@@ -162,12 +162,15 @@ the email Slack confirmed for one of the connected team's own users (RFC 0011 "W
   is that worth it before custom domains bring Cloudflare's own protection?
 - Subscribers and their emails (slice 2): 5 subscribes a minute per caller address and 30 per page; caps counted per
   inbox (`+tag` dropped, and Gmail's dots): at most 3 confirmations per inbox and page while it is pending and 5 per
-  inbox a day across pages; 200 confirmations a day per recipient domain across the instance and 200 a day per page;
+  inbox a day across pages; 20 confirmations a day per recipient domain from one page, 50 a day per domain across
+  the instance for domains that are not a large provider's (an inbox confirmed anywhere skips both), and 200 a day
+  per page;
   1000 confirmed and 200 pending subscribers per page, a pending one deleted 48 hours after it asked; 5000
   notifications a page a day. A page past its caps drops new subscribers silently (the answer cannot say so without
-  telling who is subscribed); should they be higher, per plan, or should owners be told? The domain cap stops a
-  catch-all domain being flooded with made-up addresses, but on a busy instance 200 a day for gmail.com is something
-  anyone can use up: should large mail providers get their own, higher caps? Should subscribers pick components?
+  telling who is subscribed); should they be higher, per plan, or should owners be told? The large-provider list is
+  short and fixed in code (src/status-subscribers.ts): should an instance be able to extend it? A company domain
+  with many people signing up on one busy page meets the 50 a day across the instance: is that low enough to stop a
+  catch-all flood and high enough for them? Should subscribers pick components?
 - Uptime counts an alert firing as downtime and anything else as up, including a degraded component the team set by
   hand. A monitor paused now shows no data from its pause on; earlier pauses are not kept, so they count as up. Should
   pauses be kept so they always show as no data, and should hand-set or incident impact count as degraded? An hour of

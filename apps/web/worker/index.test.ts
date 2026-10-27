@@ -89,6 +89,32 @@ describe("web worker routing", () => {
     expect(assets.seen).toHaveLength(4);
     expect(api.seen).toHaveLength(0);
   });
+
+  // In `vp dev`, ASSETS is a Node handler and an upgrade sent to it exits the dev server (noSocket in index.ts).
+  test("answers a WebSocket upgrade outside /api with a 404, never the assets", async () => {
+    const { api, assets, env } = bindings();
+    for (const path of ["/", "/sync/demo", "/incidents/42"]) {
+      const response = await handle(
+        new Request(`http://web.test${path}`, { headers: { Upgrade: "websocket" } }),
+        env,
+      );
+      expect(response.status, path).toBe(404);
+      expect(await response.json(), path).toEqual({ error: "not_found" });
+    }
+    expect(assets.seen).toHaveLength(0);
+    expect(api.seen).toHaveLength(0);
+  });
+
+  test("still forwards a WebSocket upgrade under /api to the API", async () => {
+    const { api, assets, env } = bindings();
+    await handle(
+      new Request("http://web.test/api/sync/demo", { headers: { Upgrade: "websocket" } }),
+      env,
+    );
+    expect(api.seen.map((request) => new URL(request.url).pathname)).toEqual(["/sync/demo"]);
+    expect(api.seen[0]?.headers.get("Upgrade")).toBe("websocket");
+    expect(assets.seen).toHaveLength(0);
+  });
 });
 
 describe("status page routing", () => {

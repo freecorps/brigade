@@ -4,11 +4,7 @@
 // first, then runs these, so they never decide a change on their own (apps/api/src/members.ts).
 
 import { allows, can, ROLES, type Role } from "./access.ts";
-import {
-  DEFAULT_CALL_CHOICE,
-  forgetMemberSettings,
-  type MemberCallsChanged,
-} from "./calls.ts";
+import { DEFAULT_CALL_CHOICE, forgetMemberSettings, type MemberCallsChanged } from "./calls.ts";
 import { dropDevices } from "./devices.ts";
 import { defineMutation, fail, ok, type Actor, type DomainEvent } from "./mutation.ts";
 import { dropFromSchedules } from "./schedules.ts";

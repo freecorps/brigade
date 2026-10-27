@@ -324,7 +324,7 @@ function targeted(
 function callOf(calls: readonly WhyDelivery[]): WhyCall | null {
   if (calls.length === 0) return null;
   if (calls.some(({ row }) => row.acceptedAt !== null)) return "accepted";
-  if (calls.some(({ row, stuck }) => row.sentAt === null && row.error === null && !stuck)) {
+  if (calls.some(({ row, stuck }) => row.acceptedAt === null && row.error === null && !stuck)) {
     return "sending";
   }
   if (calls.some(({ row }) => row.error !== null)) return "failed";

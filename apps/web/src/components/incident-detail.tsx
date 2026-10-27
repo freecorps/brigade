@@ -321,12 +321,14 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
     deliveries: deliveries.rows,
     timeline: timeline.rows,
     schedules: schedules.rows,
-    settings: memberSettings.rows,
+    // Optional: without them every member reads as the default choice of calls.
+    settings: memberSettings.status === "ready" ? memberSettings.rows : undefined,
     now,
   };
 
-  // Every query the explanation reads must have loaded: empty lists while they fill would read as "no phone".
-  const feeds = [members, timeline, schedules, deliveries, devices, memberSettings];
+  // Every query the explanation needs must have loaded: empty lists while they fill would read as "no phone". The
+  // members' call choices are not needed: a failure there never hides why someone was or was not paged.
+  const feeds = [members, timeline, schedules, deliveries, devices];
   const pagingFailed = feeds.find((feed) => feed.status === "error");
   const pagingReady = feeds.every((feed) => feed.status === "ready");
 

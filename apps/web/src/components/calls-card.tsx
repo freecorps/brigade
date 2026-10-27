@@ -3,7 +3,7 @@ import { CALL_CHOICES, callChoiceOf, type CallChoice } from "@freecorps/brigade-
 import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { cn } from "cn";
 import { CheckIcon, LoaderCircleIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useMember } from "@/components/session";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { FormError } from "@/components/ui/field";
@@ -48,14 +48,18 @@ export function CallsPanel({ value, loading, failed, onChange }: PanelProps) {
   const [state, setState] = useState<"idle" | "saving" | "saved" | "failed">("idle");
   // What the member just picked, shown until the synced row agrees (or the save fails).
   const [picked, setPicked] = useState<CallChoice | null>(null);
-  const shown = state === "saving" && picked !== null ? picked : value;
+  const shown = picked ?? value;
+  // The synced row caught up: show it from here on.
+  useEffect(() => {
+    if (picked !== null && value === picked) setPicked(null);
+  }, [picked, value]);
   const pick = (calls: CallChoice) => {
     if (calls === shown) return;
     setPicked(calls);
     setState("saving");
     void onChange(calls).then((ok) => {
       setState(ok ? "saved" : "failed");
-      setPicked(null);
+      if (!ok) setPicked(null);
     });
   };
   return (

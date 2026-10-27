@@ -397,6 +397,16 @@ describe("whyPaged", () => {
       }),
     );
     expect(unsent.call).toBe("not_sent");
+    // Handed to the relay and not answered yet: on its way, not "not sent".
+    const inFlight = whyPaged(
+      input({
+        deliveries: [
+          delivery({ deliveredAt: T + 900 }),
+          call({ sentAt: T + 200, acceptedAt: null }),
+        ],
+      }),
+    );
+    expect(inFlight.call).toBe("sending");
     expect(whyPaged(input({ deliveries: [delivery()] })).call).toBeNull();
   });
 

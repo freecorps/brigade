@@ -382,9 +382,7 @@ describe("member.changeRole, member.remove, member.reconcile", () => {
     );
     expect(result).toMatchObject({
       ok: true,
-      events: [
-        { type: "member.calls_changed", data: { userId: "usr_gone", calls: "sev1_sev2" } },
-      ],
+      events: [{ type: "member.calls_changed", data: { userId: "usr_gone", calls: "sev1_sev2" } }],
     });
     expect(store.scan("member_settings").map((row) => row.id)).toEqual(["usr_ana"]);
   });

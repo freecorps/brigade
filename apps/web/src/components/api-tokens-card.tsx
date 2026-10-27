@@ -52,31 +52,32 @@ const STATES: Record<TokenState, "resolved" | "declined" | "outline"> = {
  */
 export function ApiTokensCard() {
   const { role } = useMember();
+  const [attempt, setAttempt] = useState(0);
   if (!can(role, "token:manage")) return <TokensManageOnly />;
-  return <ManagedTokens />;
+  // A new key remounts the component holding the queries: a new listener asks the shard again.
+  return <ManagedTokens key={attempt} onRetry={() => setAttempt((count) => count + 1)} />;
 }
 
-function ManagedTokens() {
+function ManagedTokens({ onRetry }: { onRetry: () => void }) {
   const { workspaceId, userId, role } = useMember();
   const { locale } = usePreferences();
-  const [attempt, setAttempt] = useState(0);
   const { rows, status } = useQuery("apiToken.all", {});
+  // Names and whether each creator is still a member: without them every token would read as disabled.
   const members = useQuery("members.all", {});
   const now = useNow(30_000);
   return (
     <ApiTokensPanel
-      key={attempt}
       rows={rows}
       members={members.rows}
       self={userId}
       role={role}
-      loading={status === "loading"}
-      failed={status === "error"}
+      loading={status === "loading" || members.status === "loading"}
+      failed={status === "error" || members.status === "error"}
       locale={locale}
       now={now}
       onCreate={(draft) => mintToken(workspaceId, draft)}
       onRevoke={(id) => revokeToken(workspaceId, id)}
-      onRetry={() => setAttempt((count) => count + 1)}
+      onRetry={onRetry}
     />
   );
 }
@@ -369,6 +370,11 @@ function TokenForm({
                   <span className="min-w-0">{scopeLabel(scope)}</span>
                 </label>
               ))}
+              {group.resource === "members" ? (
+                <p className="max-w-prose text-xs text-muted-foreground">
+                  {tokenText("members_note")}
+                </p>
+              ) : null}
             </div>
           ))}
         </div>

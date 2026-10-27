@@ -35,9 +35,13 @@ copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving
   the answer to the request that minted it, with a Copy button in the dashboard; never again.
 - **At rest:** only its digest, in D1 (`api_token.hash`, unique): HMAC-SHA-256 under the optional `API_TOKEN_KEY`
   secret (32 random bytes, base64url) when it is set, else SHA-256 of the token. 256 random bits need no salt or
-  slow hash; the key adds a server-side pepper, so a copy of D1 alone cannot be checked against a guess. Setting,
-  changing or removing `API_TOKEN_KEY` invalidates every token minted before (they are then refused like a wrong
-  token), so set it before minting the first.
+  slow hash; the key adds a server-side pepper, so a copy of D1 alone cannot be checked against a guess.
+- **Setting the key later** ends no token: with `API_TOKEN_KEY` set, a digest D1 does not have is looked up again by
+  the plain SHA-256, and a row found so is moved to the HMAC digest in one conditional update (so two isolates never
+  both move it). A token minted before the key was set therefore works on, and its row is peppered from its next use;
+  one never used since keeps its plain digest until then. A wrong token costs two lookups instead of one. Changing or
+  removing the key does end every token hashed under the old one (refused like a wrong token): there is no second
+  key to try.
 - **Lookup:** the digest is the index (a lookup by a hash of 256 random bits leaks nothing by its timing), and the
   row's digest is then compared with the computed one in constant time (`crypto.subtle.timingSafeEqual`) anyway.
 - **Secret scanning:** the prefix makes a leaked token findable. A GitHub custom pattern for it:
@@ -59,17 +63,34 @@ copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving
   token, a revoked one, an expired one, one whose creator left, and one for another workspace than the path's. A
   valid token without the scope is `403 forbidden`.
 - **Routes** (RFC 0002's public list): changing and removing members (`members:manage`; a token never changes or
-  removes its own creator), listing, sending, revoking and resending invitations (`members:manage`; sending also
+  removes its own creator, see "Members" below), listing, sending, revoking and resending invitations (`members:manage`; sending also
   needs the creator's address verified, and the invitation is from the creator), acknowledging an incident
   (`incident:ack`) and the sync WebSocket (each query and mutation checked against the scopes). Not: `POST
   /workspaces` (a token belongs to a workspace that exists) and the invitee's routes (they are about one person's
   own address). The dashboard's internal routes (webhooks, the status page, exports, drafts) stay cookie-only.
 - **As an actor** (RFC 0004): `{ kind: "token", id: "tok_…", role, by: "usr_…", scopes }`, where `role` is the
   creator's current role and `by` the creator. The shard records `tok_…` as the actor of what it does (timeline
-  entries, events' `actor`), and the dashboard names it "API token <name> (by Ana)" from the synced list.
+  entries, events' `actor`), and the dashboard names it "API token <name> (by Ana)" from the synced list. Outbound
+  webhook payloads carry it as `actor: { kind: "token", id: "tok_…" }`, and `incident.acknowledged`'s `by` is then
+  the token's id too (RFC 0005 "Payloads"; the SDK's `WebhookActor`).
+- **Open sync sockets:** a token's socket is checked against the shard's copy of the token on every frame, not only
+  at the upgrade (in memory, no D1): one that expired, was revoked, or whose creator the shard demoted since is closed
+  (1008 `token ended`, or 1012 to reconnect with the new role) instead of answering. The upgrade brings the shard's
+  alarm to the token's expiry, and the alarm closes the token's sockets then, so an idle one stops receiving patches
+  too.
+- **Members:** `members:manage` lets a token do less than its creator. It never grants `owner` or `admin` (an
+  invitation to either, or a role change to either), never changes, removes, or revokes or resends an invitation for,
+  someone who is an `owner` or `admin` (or invited as one), and never targets its creator: making or unmaking the
+  people who run the workspace is a person's call (`TOKEN_OUT_OF_REACH`, `checkMemberChange` and `checkInvite` in
+  `packages/schema`, checked by the shard against D1 before it writes, and again by `member.changeRole` and
+  `member.remove`). The dashboard says so next to the scope. In the shard, `member.remove` asks a token for
+  `members:manage` (`tokenPermission`) rather than the `workspace:read` a member's own leave needs, so a token holding
+  only `members:manage` removes as well as it changes roles. A removal D1 has whose shard step still fails is caught
+  up by the repair alarm (`member.reconcile`, RFC 0006 "Who is paged"), so the removed member stops being paged.
 - **Rate limit:** 300 requests a minute per token (Workers Rate Limiting, `API_TOKEN_LIMIT`, namespace ids 4141,
-  4142 for `staging` and 4143 for `dev`, after 41X1 to 41X3 for the receipt and alert limits), counted only once the
-  token is valid, so wrong tokens never spend a real one's budget. Over it: `429 rate_limited`, `Retry-After: 60`.
+  4142 for `staging` and 4143 for `dev`, after 41X1 to 41X3 for the receipt and alert limits), counted once the
+  token itself is valid (its digest found, its workspace and expiry checked) and before its creator is read, so wrong
+  tokens never spend a real one's budget and one over its limit costs no more D1 reads. Over it: `429 rate_limited`, `Retry-After: 60`.
   Approximate and per location, and failing open, like the alert limits.
 - **Last used:** written to D1 at most once every 5 minutes per token (a conditional update, so isolates never
   write it twice in the window), then copied to the shard's list by a silent server-only mutation

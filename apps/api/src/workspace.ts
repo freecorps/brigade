@@ -884,6 +884,34 @@ export class WorkspaceDO extends DurableObject<Env> {
       : actor;
   }
 
+  /** Whether a socket acting as API token `actor` must close: no longer backed here, or its role lowered since. */
+  private tokenVerdict(actor: Actor): SocketVerdict | undefined {
+    const acting = this.tokenActor(actor);
+    if (!acting) return "token_ended";
+    return acting.role === actor.role ? undefined : "role_changed";
+  }
+
+  /**
+   * The alarm's part of RFC 0014: closes every API token socket this shard no longer backs (`tokenVerdict`), so one
+   * that expires while idle does not keep receiving patches, and answers when the next open one expires (null for
+   * none). Never throws.
+   */
+  private closeEndedTokens(): number | null {
+    const expiries: number[] = [];
+    try {
+      this.closeSockets((actor) => {
+        if (actor.kind !== "token") return undefined;
+        const verdict = this.tokenVerdict(actor);
+        const expiresAt = this.shard.store.get("api_tokens", actor.id)?.expiresAt ?? null;
+        if (verdict === undefined && expiresAt !== null) expiries.push(expiresAt);
+        return verdict;
+      });
+    } catch (error) {
+      this.log("closing ended API token sockets failed", { error });
+    }
+    return expiries.length === 0 ? null : Math.min(...expiries);
+  }
+
   /** Runs a server-only mutation as `ACCOUNT_ACTOR`; a `conflict` is nothing to do. Throws on anything else. */
   private serverMutation(name: string, args: Record<string, unknown>): void {
     const now = Date.now();
@@ -1297,6 +1325,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       this.log("reading the status page push failed", { error });
     }
     // Never before now plus a beat: a redrive that could not run is tried again then, not in a loop.
+    const tokenAt = this.closeEndedTokens();
     let webhookAt: number | null = now + MONITOR_TICK_MS;
     try {
       const at = this.webhooks.nextAt();
@@ -1308,7 +1337,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       earliest(earliest(monitors, escalationAt), earliest(repair, armed)),
       earliest(
         earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
-        webhookAt,
+        earliest(webhookAt, tokenAt),
       ),
     );
     if (next === null) await this.ctx.storage.deleteAlarm();
@@ -1401,6 +1430,9 @@ export class WorkspaceDO extends DurableObject<Env> {
       const acting = this.tokenActor(actor);
       if (!acting) return Response.json({ error: "unauthenticated" }, { status: 401 });
       actor = acting;
+      // The alarm closes the socket when the token expires, whether or not it sends anything.
+      const expiresAt = this.shard.store.get("api_tokens", actor.id)?.expiresAt ?? null;
+      if (expiresAt !== null) this.wake(expiresAt, "API token expiry");
     }
     const name = readMemberName(request.headers);
     // A member just removed here whose upgrade the Worker let through before the removal: refused, as the Worker
@@ -1500,6 +1532,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (verdict === "removed") close(ws, CLOSE_POLICY_VIOLATION, "not a member");
       else if (verdict === "role_changed") close(ws, CLOSE_SERVICE_RESTART, "role changed");
       else if (verdict === "signed_out") close(ws, CLOSE_SERVICE_RESTART, "signed out");
+      else if (verdict === "token_ended") close(ws, CLOSE_POLICY_VIOLATION, "token ended");
     }
   }
 
@@ -1533,6 +1566,14 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (!state) {
       close(ws, CLOSE_INTERNAL_ERROR, "no socket state");
       return;
+    }
+    // An API token's socket (RFC 0014) is checked on every frame, not only at the upgrade: one that expired, was
+    // revoked here, or whose creator's copy here was demoted since closes instead of answering. In memory only; the
+    // alarm closes an idle one when it expires (`closeEndedTokens`).
+    if (state.actor.kind === "token") {
+      const verdict = this.tokenVerdict(state.actor);
+      if (verdict === "token_ended") return close(ws, CLOSE_POLICY_VIOLATION, "token ended");
+      if (verdict === "role_changed") return close(ws, CLOSE_SERVICE_RESTART, "role changed");
     }
     // Checks size (64 KiB), JSON, shape and ids; never throws. Binary frames are refused as not text.
     const parsed = parseClientMessage(data);

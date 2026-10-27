@@ -75,6 +75,12 @@ export type MutationDef<Name extends string = string, Args = unknown> = {
   args: Validator<Args>;
   permission: Permission;
   /**
+   * What an API token (RFC 0014) needs instead of `permission`, when a token's only use of the mutation needs more or
+   * other than a member's: `member.remove` is a leave (`workspace:read`) for a member, and only ever a removal
+   * (`members:manage`) for a token, which never leaves.
+   */
+  tokenPermission?: Permission;
+  /**
    * May succeed without events. Only for a write that refreshes observed values (a monitor's latency, colo and
    * check time), or keeps a server-only count (a rate limit's ledger), and is no domain event: it is synced like any
    * change but writes nothing to the outbox (RFC 0005).
@@ -93,6 +99,7 @@ export function defineMutation<const Name extends string, V extends Validator<an
   name: Name;
   args: V;
   permission: Permission;
+  tokenPermission?: Permission;
   silent?: boolean;
   apply(store: MutationStore, args: Infer<V>, ctx: MutationContext): MutationResult;
 }): MutationDef<Name, Infer<V>> {
@@ -182,7 +189,9 @@ export function runMutation(
     if (!Number.isSafeInteger(ctx.now) || ctx.now < 0) {
       throw new RangeError("ctx.now must be a safe non-negative integer");
     }
-    if (!allows(ctx.actor, def.permission)) {
+    const permission =
+      ctx.actor.kind === "token" ? (def.tokenPermission ?? def.permission) : def.permission;
+    if (!allows(ctx.actor, permission)) {
       return fail("forbidden", `Not allowed to run ${def.name}`);
     }
     // Validators only read `rawArgs`, but a hostile value (a proxy, a throwing getter) must not escape either.

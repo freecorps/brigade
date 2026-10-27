@@ -525,8 +525,9 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
     vector (apps/api test/webhooks.test.ts).
 - **Payloads** (`WebhookPayload` and its validators `WEBHOOK_PAYLOADS`, MIT, which the SDK and the OpenAPI reference
   reuse): an envelope `{ version: 1, id,
-  type, time, workspaceId, actor: { kind, id }, data }`; `time` is when the event happened. Member ids, never names
-  or addresses. **What version 1 may grow by:** new event types, new values in any list (a severity, a status, a
+  type, time, workspaceId, actor: { kind, id }, data }`; `time` is when the event happened. `actor.kind` is `user`,
+  `system`, `integration` or `token` (an API token, `tok_…`, RFC 0014; an id that stands where a member's would, like
+  `incident.acknowledged`'s `by`, may be one too). Member ids, never names or addresses. **What version 1 may grow by:** new event types, new values in any list (a severity, a status, a
   monitor kind, a role, an actor kind, a reason) and new fields, anywhere. Removing or renaming any of them, or changing
   a field's type or meaning, is `version: 2`, never an edit of version 1. So a receiver must take what it does not know
   yet: the validators accept any string where a list may grow (typed as the known values or `string`), text much

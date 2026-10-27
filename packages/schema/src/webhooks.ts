@@ -505,8 +505,11 @@ export type WebhookMonitor = {
   status: Open<MonitorStatus> | null;
 };
 
-/** Who caused the event: a member's id (`usr_…`) or a system actor (`sys_monitors`); never a name or an address. */
-export type WebhookActor = { kind: Open<"user" | "system" | "integration">; id: string };
+/**
+ * Who caused the event: a member's id (`usr_…`), an API token's (`tok_…`, RFC 0014: a script acting for the member who
+ * made it) or a system actor's (`sys_monitors`); never a name or an address.
+ */
+export type WebhookActor = { kind: Open<"user" | "system" | "integration" | "token">; id: string };
 
 type Envelope<Type extends string, Data> = {
   version: typeof WEBHOOK_PAYLOAD_VERSION;
@@ -531,6 +534,7 @@ export type WebhookPayload =
       "incident.severity_changed",
       { incident: WebhookIncident; from: Open<Severity>; to: Open<Severity> }
     >
+  /** `by`: the actor's id, a member's (`usr_…`) or an API token's (`tok_…`). */
   | Envelope<"incident.acknowledged", { incident: WebhookIncident; by: string }>
   | Envelope<"incident.update_posted", { incident: WebhookIncident; body: string }>
   | Envelope<
@@ -794,7 +798,7 @@ export function webhookWants(row: WebhookRow, event: WebhookSourceEvent): boolea
 // a string), text far longer than Brigade writes today, and a `type` added since parses as `UnknownWebhookPayload`.
 // A test holds each to `WebhookPayload` and to what `webhookPayload` makes.
 
-/** A user id, or a system actor's (`sys_monitors`): never a name or an address. */
+/** A user id, an API token's (`tok_…`) or a system actor's (`sys_monitors`): never a name or an address. */
 const actorId = v.string({ min: 1, max: 64 });
 /** An ISO 8601 time, as `Date.prototype.toISOString` writes it. */
 const isoTime = v.string({ min: 1, max: 64 });
@@ -838,7 +842,10 @@ const envelopeFields = {
   id: v.id("evt"),
   time: isoTime,
   workspaceId: v.id("ws"),
-  actor: v.object({ kind: known(["user", "system", "integration"]), id: actorId }, { open: true }),
+  actor: v.object(
+    { kind: known(["user", "system", "integration", "token"]), id: actorId },
+    { open: true },
+  ),
 };
 
 function envelope<const Type extends string, const S extends Record<string, Validator<unknown>>>(

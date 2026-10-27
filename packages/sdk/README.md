@@ -81,7 +81,10 @@ export default {
 The payloads, by `type`: `incident.declared`, `incident.status_changed`, `incident.severity_changed`,
 `incident.acknowledged`, `incident.update_posted`, `incident.role_assigned`, `alert.fired`, `alert.resolved`,
 `monitor.status_changed`, `escalation.paged` and `webhook.test` ("Send test event"). Their schemas are the reference's
-`webhooks` section; `WebhookPayloadOf<"alert.fired">` is one of them as a type.
+`webhooks` section; `WebhookPayloadOf<"alert.fired">` is one of them as a type. Every payload's `actor` is
+`{ kind, id }`: `kind` is `user` (`usr_…`), `token` (an API token, `tok_…`, acting for the member who made it),
+`system` (`sys_…`) or `integration`, and like every list it may grow. An id that names who did something, like
+`incident.acknowledged`'s `data.by`, may be a `tok_…` too.
 
 ## Ping a heartbeat
 

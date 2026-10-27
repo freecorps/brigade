@@ -80,7 +80,8 @@ export function bearerToken(request: Request): string | undefined {
 
 /**
  * A token's digest, hex: HMAC-SHA-256 under `API_TOKEN_KEY` when it is set, else SHA-256. A key that is set but is
- * not 32 bytes of base64url throws: falling back to the plain hash would quietly change every digest.
+ * not 32 bytes of base64url throws: falling back to the plain hash would quietly change every digest. A token minted
+ * before the key was set keeps its SHA-256 row until its next use (`resolveBearer` moves it over).
  */
 export async function tokenDigest(token: string, key: string | undefined): Promise<string> {
   const data = new TextEncoder().encode(token);
@@ -119,9 +120,10 @@ export type BearerResult =
 
 /**
  * The actor a bearer token acts as in `workspaceId`: the token's creator's current role (read in D1 on every use),
- * its scopes, its id, its creator (`by`). Every refusal of the token itself is the same `401 unauthenticated`: malformed, unknown, revoked,
- * expired, another workspace's, or its creator no longer a member (or a member again since, after leaving). Then the
- * token's rate limit (`429`). Its last use is recorded at most every `LAST_USED_EVERY_MS` (`waitUntil` when given).
+ * its scopes, its id, its creator (`by`). Every refusal of the token itself is the same `401 unauthenticated`:
+ * malformed, unknown, revoked, expired, another workspace's, or its creator no longer a member (or a member again
+ * since, after leaving). The token's rate limit (`429`) is counted once the token itself is valid, before its creator
+ * is read. Its last use is recorded at most every `LAST_USED_EVERY_MS` (`waitUntil` when given).
  */
 export async function resolveBearer(
   token: string,
@@ -145,6 +147,9 @@ export async function resolveBearer(
     resolved.delete(hash);
     try {
       found = await lookUp(env.DB, hash);
+      // Minted before `API_TOKEN_KEY` was set: its row holds the plain SHA-256. Found by it once, and moved to the
+      // keyed digest, so setting the key never ends a token (RFC 0014 "At rest").
+      if (found === undefined && env.API_TOKEN_KEY) found = await migrate(env.DB, token, hash);
     } catch (error) {
       log("API token lookup failed", { error: String(error) });
       return { ok: false, response: answer({ error: "unavailable" }, 503) };
@@ -159,6 +164,13 @@ export async function resolveBearer(
   if (found.workspaceId !== workspaceId || (found.expiresAt !== null && found.expiresAt <= now)) {
     return { ok: false, response: unauthenticated() };
   }
+  // Before its creator is read: a token over its limit costs no more D1 reads.
+  if (!(await withinLimit(env.API_TOKEN_LIMIT, found.id))) {
+    return {
+      ok: false,
+      response: answer({ error: "rate_limited" }, 429, { "Retry-After": "60" }),
+    };
+  }
   let creator: { role: Role; emailVerified: boolean } | undefined;
   try {
     creator = await creatorNow(env.DB, found);
@@ -167,12 +179,6 @@ export async function resolveBearer(
     return { ok: false, response: answer({ error: "unavailable" }, 503) };
   }
   if (creator === undefined) return { ok: false, response: unauthenticated() };
-  if (!(await withinLimit(env.API_TOKEN_LIMIT, found.id))) {
-    return {
-      ok: false,
-      response: answer({ error: "rate_limited" }, 429, { "Retry-After": "60" }),
-    };
-  }
   if (found.lastUsedAt === null || now - found.lastUsedAt >= LAST_USED_EVERY_MS) {
     found.lastUsedAt = now;
     const recording = recordUse(env, found, now);
@@ -210,6 +216,28 @@ async function lookUp(db: D1Database, hash: string): Promise<TokenRow | undefine
     return undefined;
   }
   return Array.isArray(scopes) ? { ...row, scopes: scopes as Permission[] } : undefined;
+}
+
+/**
+ * The token whose row still holds its plain SHA-256 (minted before `API_TOKEN_KEY` was set), with that row moved to
+ * `keyed` (its HMAC digest) in one conditional update; undefined for none. A row another isolate moved meanwhile is
+ * found by `keyed` again.
+ */
+async function migrate(
+  db: D1Database,
+  token: string,
+  keyed: string,
+): Promise<TokenRow | undefined> {
+  const plain = await tokenDigest(token, undefined);
+  const row = await lookUp(db, plain);
+  if (row === undefined || !sameDigest(row.hash, plain)) return undefined;
+  const moved = await db
+    .prepare(`update api_token set hash = ? where id = ? and hash = ?`)
+    .bind(keyed, row.id, plain)
+    .run();
+  if (moved.meta.changes !== 1) return lookUp(db, keyed);
+  log("API token digest moved to API_TOKEN_KEY", { token: row.id });
+  return { ...row, hash: keyed };
 }
 
 /**

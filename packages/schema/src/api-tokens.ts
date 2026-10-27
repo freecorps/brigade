@@ -146,13 +146,14 @@ export const createApiToken = defineMutation({
 
 /**
  * Server only (`WorkspaceDO.apiTokenRun`, after the API Worker marked the D1 row revoked): marks the listed token
- * revoked and emits `apiToken.revoked`. `conflict` when it already is.
+ * revoked and emits `apiToken.revoked`. `conflict` when it already is. Only a member revokes, like minting.
  */
 export const revokeApiToken = defineMutation({
   name: "apiToken.revoke",
   args: v.object({ id: v.id("tok") }),
   permission: "token:manage",
   apply(store, args, ctx) {
+    if (ctx.actor.kind !== "user") return fail("forbidden", "Only a member revokes a token");
     const row = store.get("api_tokens", args.id);
     if (!row) return fail("not_found", "No such token");
     if (row.revokedAt !== null) return fail("conflict", "Token already revoked");
@@ -176,7 +177,9 @@ export const touchApiToken = defineMutation({
   permission: "token:manage",
   silent: true,
   apply(store, args, ctx) {
-    if (ctx.actor.id !== TOKENS_ACTOR.id) return fail("forbidden", "Only the API records a use");
+    if (ctx.actor.kind !== TOKENS_ACTOR.kind || ctx.actor.id !== TOKENS_ACTOR.id) {
+      return fail("forbidden", "Only the API records a use");
+    }
     const row = store.get("api_tokens", args.id);
     if (!row) return fail("not_found", "No such token");
     if (row.lastUsedAt !== null && row.lastUsedAt >= args.at)

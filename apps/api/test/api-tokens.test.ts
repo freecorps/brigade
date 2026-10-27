@@ -2,7 +2,7 @@
 // sync upgrade, scopes and the creator's current role checked at use time, the same 401 for every refused token, the
 // rate limit, the last use, and that the token never reaches a log, an event, a synced row or the shard.
 import { env, exports } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { newId, type Permission } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
@@ -345,6 +345,104 @@ describe("using one", () => {
     expect(owner.status).toBe(403);
   });
 
+  test("a token with only members:manage removes a member and changes a role, in D1 and the shard", async () => {
+    const t = await team();
+    const minted = await mint(t, t.ana, ["members:manage"]);
+    const demoted = await bearer(`/workspaces/${t.id}/members/${t.caio.id}`, minted.token, {
+      method: "PATCH",
+      body: JSON.stringify({ role: "viewer" }),
+    });
+    expect(demoted.status).toBe(200);
+    const removed = await bearer(`/workspaces/${t.id}/members/${t.caio.id}`, minted.token, {
+      method: "DELETE",
+    });
+    expect(removed.status).toBe(200);
+    expect(
+      await env.DB.prepare(`select 1 from member where "organizationId" = ? and "userId" = ?`)
+        .bind(t.id, t.caio.id)
+        .first(),
+    ).toBeNull();
+    const events = await outbox(t);
+    expect(events.find((event) => event.type === "member.role_changed")).toMatchObject({
+      actor: { kind: "token", id: minted.id },
+      data: { userId: t.caio.id, from: "responder", to: "viewer" },
+    });
+    expect(events.find((event) => event.type === "member.removed")).toMatchObject({
+      actor: { kind: "token", id: minted.id },
+      data: { userId: t.caio.id, role: "viewer", reason: "removed" },
+    });
+    // Nothing left for the repair alarm: the shard ran it.
+    expect(
+      await t.withShard((_shard, state) =>
+        state.storage.sql.exec("select key from member_repair where key like 'target:%'").toArray(),
+      ),
+    ).toEqual([]);
+  });
+
+  test("a token never grants owner or admin, nor changes or removes an owner or admin", async () => {
+    const t = await team();
+    // Ana owns the workspace: her own role would allow all of these.
+    const minted = await mint(t, t.ana, ["members:manage"]);
+    const patch = (target: Person, role: string) =>
+      bearer(`/workspaces/${t.id}/members/${target.id}`, minted.token, {
+        method: "PATCH",
+        body: JSON.stringify({ role }),
+      });
+    expect((await patch(t.caio, "admin")).status).toBe(403);
+    expect((await patch(t.caio, "owner")).status).toBe(403);
+    expect((await patch(t.bea, "responder")).status).toBe(403);
+    const owner2 = await signUp("Olga");
+    await addMember(t.id, owner2.id, "owner", Date.now() - 1000);
+    expect((await patch(owner2, "viewer")).status).toBe(403);
+    for (const target of [t.bea, owner2]) {
+      const removed = await bearer(`/workspaces/${t.id}/members/${target.id}`, minted.token, {
+        method: "DELETE",
+      });
+      expect(removed.status).toBe(403);
+    }
+    const roles = await env.DB.prepare(
+      `select "userId", role from member where "organizationId" = ? order by "userId"`,
+    )
+      .bind(t.id)
+      .all<{ userId: string; role: string }>();
+    expect(Object.fromEntries(roles.results.map((row) => [row.userId, row.role]))).toEqual({
+      [t.ana.id]: "owner",
+      [t.bea.id]: "admin",
+      [t.caio.id]: "responder",
+      [owner2.id]: "owner",
+    });
+
+    const invite = (role: string) =>
+      bearer(`/workspaces/${t.id}/invitations`, minted.token, {
+        method: "POST",
+        body: JSON.stringify({
+          email: `${role}-${crypto.randomUUID().slice(0, 8)}@example.com`,
+          role,
+        }),
+      });
+    expect((await invite("owner")).status).toBe(403);
+    expect((await invite("admin")).status).toBe(403);
+    expect((await invite("responder")).status).toBe(201);
+    // An invitation to be an admin, sent by Ana herself: the token neither revokes nor resends it.
+    const sent = await api(`/workspaces/${t.id}/invitations`, {
+      method: "POST",
+      headers: { Cookie: t.ana.cookie },
+      body: JSON.stringify({ email: "dora@example.com", role: "admin" }),
+    });
+    expect(sent.status).toBe(201);
+    const { invitation } = (await sent.json()) as { invitation: { id: string } };
+    const revoked = await bearer(`/workspaces/${t.id}/invitations/${invitation.id}`, minted.token, {
+      method: "DELETE",
+    });
+    expect(revoked.status).toBe(403);
+    const resent = await bearer(
+      `/workspaces/${t.id}/invitations/${invitation.id}/resend`,
+      minted.token,
+      { method: "POST" },
+    );
+    expect(resent.status).toBe(403);
+  });
+
   test("its creator removed disables it for good, even once they are a member again", async () => {
     const t = await team();
     const minted = await mint(t, t.bea, ["incident:ack"]);
@@ -506,6 +604,77 @@ describe("the sync socket", () => {
   });
 });
 
+describe("an open sync socket", () => {
+  /** Has the shard's copy of the token expire a moment ago, as time passing would. */
+  const expire = (t: Team, tokenId: string) =>
+    t.withShard((shard) =>
+      shard.store.update("api_tokens", tokenId, { expiresAt: Date.now() - 1 }),
+    );
+
+  test("closes on its next frame once the token expired, without answering it", async () => {
+    const t = await team();
+    const minted = await mint(t, t.ana, ["incident:read"], { expiresInDays: 30 });
+    const socket = await openSocket(t, minted.token);
+    const frames = collect(socket);
+    const closed = new Promise<number>((resolve) =>
+      socket.addEventListener("close", (event) => resolve(event.code)),
+    );
+    socket.send(JSON.stringify({ type: "hello", protocol: PROTOCOL_VERSION, clientId: "script" }));
+    socket.send(
+      JSON.stringify({ type: "subscribe", subId: "a", query: "incidents.active", args: {} }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        frames.find((frame) => frame.type === "snapshot" && frame.subId === "a"),
+      ).toBeDefined(),
+    );
+    await expire(t, minted.id);
+    socket.send(
+      JSON.stringify({ type: "subscribe", subId: "b", query: "incidents.active", args: {} }),
+    );
+    expect(await closed).toBe(1008);
+    expect(frames.find((frame) => frame.subId === "b")).toBeUndefined();
+  });
+
+  test("an idle one is closed by the alarm, armed for the token's expiry at the upgrade", async () => {
+    const t = await team();
+    const minted = await mint(t, t.ana, ["incident:read"], { expiresInDays: 30 });
+    const socket = await openSocket(t, minted.token);
+    const closed = new Promise<number>((resolve) =>
+      socket.addEventListener("close", (event) => resolve(event.code)),
+    );
+    socket.send(JSON.stringify({ type: "hello", protocol: PROTOCOL_VERSION, clientId: "script" }));
+    await vi.waitFor(async () => {
+      const alarm = await t.withShard((_shard, state) => state.storage.getAlarm());
+      expect(alarm).not.toBeNull();
+      expect(alarm!).toBeLessThanOrEqual(minted.expiresAt!);
+    });
+    await expire(t, minted.id);
+    expect(await runDurableObjectAlarm(t.stub)).toBe(true);
+    expect(await closed).toBe(1008);
+  });
+
+  test("a demotion the shard ran closes it on its next frame, to reconnect with the new role", async () => {
+    const t = await team();
+    const minted = await mint(t, t.bea, ["incident:read"]);
+    const socket = await openSocket(t, minted.token);
+    const closed = new Promise<number>((resolve) =>
+      socket.addEventListener("close", (event) => resolve(event.code)),
+    );
+    socket.send(JSON.stringify({ type: "hello", protocol: PROTOCOL_VERSION, clientId: "script" }));
+    // Bea's copy in the shard demoted without the member change's own close (as if it failed).
+    await t.withShard((shard) => {
+      if (!shard.store.get("members", t.bea.id)) {
+        shard.store.insert("members", { id: t.bea.id, name: "Bea", role: "viewer", updatedAt: 0 });
+      } else shard.store.update("members", t.bea.id, { role: "viewer" });
+    });
+    socket.send(
+      JSON.stringify({ type: "subscribe", subId: "a", query: "incidents.active", args: {} }),
+    );
+    expect(await closed).toBe(1012);
+  });
+});
+
 describe("the token itself", () => {
   test("never reaches a log, an event, a synced row or the shard", async () => {
     const lines: string[] = [];
@@ -566,6 +735,55 @@ describe("the token itself", () => {
     expect(await tokenDigest(token, key)).not.toBe(await tokenDigest(token, undefined));
     await expect(tokenDigest(token, "short")).rejects.toThrow();
   });
+
+  test("setting API_TOKEN_KEY later keeps a token minted without it, moving its row to the keyed digest", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const t = await team();
+    // Minted with no key (the test Worker has none): D1 holds its plain SHA-256.
+    const minted = await mint(t, t.ana, ["incident:ack"]);
+    const plain = await tokenDigest(minted.token, undefined);
+    const key = "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk";
+    const keyed = await tokenDigest(minted.token, key);
+    const stored = () =>
+      env.DB.prepare(`select hash from api_token where id = ?`)
+        .bind(minted.id)
+        .first<{ hash: string }>()
+        .then((row) => row?.hash);
+    expect(await stored()).toBe(plain);
+    const withKey: ApiTokenEnv = { ...env, API_TOKEN_KEY: key };
+    const first = await resolveBearer(minted.token, withKey, t.id, () => {});
+    expect(first).toMatchObject({ ok: true, actor: { kind: "token", id: minted.id } });
+    expect(await stored()).toBe(keyed);
+    // From then on found by the keyed digest alone (no cache to help), and still refused for a wrong token.
+    forgetAllTokens();
+    expect((await resolveBearer(minted.token, withKey, t.id, () => {})).ok).toBe(true);
+    expect((await resolveBearer(newApiToken(), withKey, t.id, () => {})).ok).toBe(false);
+    // The other way: a token minted with the key is never found by its plain SHA-256, and without the key (removed)
+    // its keyed row no longer matches.
+    forgetAllTokens();
+    expect((await resolveBearer(minted.token, env, t.id, () => {})).ok).toBe(false);
+  });
+
+  test("minted with API_TOKEN_KEY set, D1 holds the keyed digest and only the key finds it", async () => {
+    const t = await team();
+    const key = "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk";
+    const token = newApiToken();
+    const id = newId("tok", Date.now(), random);
+    // A token minted while the key is set: its row holds the keyed digest.
+    await env.DB.prepare(
+      `insert into api_token (id, workspace_id, hash, name, created_by, scopes, created_at)
+       values (?, ?, ?, 'Keyed', ?, '["incident:ack"]', ?)`,
+    )
+      .bind(id, t.id, await tokenDigest(token, key), t.ana.id, Date.now())
+      .run();
+    const withKey: ApiTokenEnv = { ...env, API_TOKEN_KEY: key };
+    expect(await resolveBearer(token, withKey, t.id, () => {})).toMatchObject({
+      ok: true,
+      actor: { id },
+    });
+    forgetAllTokens();
+    expect((await resolveBearer(token, env, t.id, () => {})).ok).toBe(false);
+  });
 });
 
 describe("the rate limit", () => {
@@ -594,6 +812,24 @@ describe("the rate limit", () => {
     const wrong = await resolveBearer(newApiToken(), limited, t.id, () => {});
     expect(wrong.ok).toBe(false);
     expect(keys).toEqual([minted.id]);
+    // Over the limit, the creator is never read: only the token's own row was.
+    forgetAllTokens();
+    const reads: string[] = [];
+    const counting: ApiTokenEnv = {
+      ...limited,
+      DB: new Proxy(env.DB, {
+        get(target, name) {
+          if (name !== "prepare") return Reflect.get(target, name);
+          return (sql: string) => {
+            reads.push(sql);
+            return target.prepare(sql);
+          };
+        },
+      }),
+    };
+    expect((await resolveBearer(minted.token, counting, t.id, () => {})).ok).toBe(false);
+    expect(reads).toHaveLength(1);
+    expect(reads[0]).toContain("from api_token");
 
     vi.spyOn(console, "error").mockImplementation(() => {});
     answer = async () => {

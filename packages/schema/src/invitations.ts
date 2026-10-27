@@ -4,7 +4,7 @@
 // decide a change on their own (apps/api/src/invitations.ts).
 
 import { can, ROLES, type Role } from "./access.ts";
-import { MEMBERS_ACTOR } from "./members.ts";
+import { MEMBERS_ACTOR, tokenReaches } from "./members.ts";
 import {
   actingMember,
   defineMutation,
@@ -68,21 +68,23 @@ export type InviteRefusal = "forbidden";
 
 /**
  * Whether `actor` may invite someone as `role` (RFC 0003 "Invitations"): owners and admins (`members:manage`)
- * invite, and only an owner invites an owner, as only an owner makes someone one. Revoking and resending follow the
- * same rule for the invitation's role. The API checks it against D1; the dashboard uses it to offer only the roles
- * that will be accepted.
+ * invite, and only an owner invites an owner, as only an owner makes someone one; an API token (RFC 0014) never invites
+ * an owner or an admin (`TOKEN_OUT_OF_REACH`), whatever its creator's role. Revoking and resending follow the same
+ * rule for the invitation's role. The API checks it against D1; the dashboard uses it to offer only the roles that
+ * will be accepted.
  */
 export function checkInvite(
-  actor: { role: Role },
+  actor: { role: Role; kind?: Actor["kind"] },
   role: Role,
 ): { ok: true } | { ok: false; code: InviteRefusal } {
   if (!can(actor.role, "members:manage")) return { ok: false, code: "forbidden" };
   if (role === "owner" && actor.role !== "owner") return { ok: false, code: "forbidden" };
+  if (actor.kind === "token" && !tokenReaches(role)) return { ok: false, code: "forbidden" };
   return { ok: true };
 }
 
 /** The roles `actor` may invite as, most powerful first; empty when they may invite nobody. */
-export function inviteRoles(actor: { role: Role }): Role[] {
+export function inviteRoles(actor: { role: Role; kind?: Actor["kind"] }): Role[] {
   return ROLES.filter((role) => checkInvite(actor, role).ok);
 }
 

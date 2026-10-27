@@ -94,14 +94,14 @@ function refusals(...lists: Record<number, readonly string[]>[]): Record<number,
 
 const REFUSED: Record<number, string> = {
   400: "The request is malformed.",
-  401: "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
-  403: "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+  401: "No session.",
+  403: "Refused: another site's `Origin`, not a member, or not allowed.",
   404: "Not found.",
   409: "Conflicts with the current state.",
   410: "Expired.",
   413: "The body is too large.",
   426: "Not a WebSocket upgrade.",
-  429: "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+  429: "Too many requests.",
   500: "Failed. Not retried by itself.",
   503: "Unavailable for now: retry.",
 };
@@ -124,6 +124,12 @@ const SHARD_FAILED = { 500: ["internal"], 503: ["unavailable"] };
 const SIGNED_IN = { 401: ["unauthenticated"], 403: ["forbidden_origin"] };
 /** What an API token adds (RFC 0014): a scope or role that does not allow it, and the token's rate limit. */
 const BEARER = { 403: ["forbidden"], 429: ["rate_limited"] };
+/** `REFUSED`'s wording on the operations that also take an API token (and only on those). */
+const BEARER_REFUSED: Record<number, string> = {
+  401: "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+  403: "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+  429: "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+};
 
 const workspaceId: Parameter = {
   name: "workspaceId",
@@ -564,13 +570,26 @@ export const OPERATIONS: readonly Operation[] = LISTED.map((operation) =>
     ? operation
     : {
         ...operation,
-        responses: withRefusals(
-          operation.responses,
-          // A socket's frames are refused on the socket, not by the upgrade.
-          operation.bearer === "frames" ? { 429: BEARER[429] } : BEARER,
+        responses: bearerWording(
+          withRefusals(
+            operation.responses,
+            // A socket's frames are refused on the socket, not by the upgrade.
+            operation.bearer === "frames" ? { 429: BEARER[429] } : BEARER,
+          ),
         ),
       },
 );
+
+/** `responses` with `REFUSED`'s wording swapped for `BEARER_REFUSED`'s, for an operation that takes a token. */
+function bearerWording(responses: Record<number, Answer>): Record<number, Answer> {
+  const out: Record<number, Answer> = { ...responses };
+  for (const [key, description] of Object.entries(BEARER_REFUSED)) {
+    const status = Number(key);
+    const known = out[status];
+    if (known?.description === REFUSED[status]) out[status] = { ...known, description };
+  }
+  return out;
+}
 
 /** `responses` with `errors` added: to the status's codes, or as a new refusal. */
 function withRefusals(

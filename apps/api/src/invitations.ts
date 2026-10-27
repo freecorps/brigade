@@ -302,7 +302,8 @@ export class Invitations {
       this.prune(now);
       const actor = await this.manager(workspaceId, actorId);
       if (!actor.ok) return actor;
-      if (!checkInvite(actor, role).ok) return { ok: false, code: "forbidden" };
+      if (!checkInvite(acting(actorId, actor.role, token), role).ok)
+        return { ok: false, code: "forbidden" };
       let found: { pending: number; same: number; member: number };
       try {
         found = (await db
@@ -398,7 +399,8 @@ export class Invitations {
       if (!row || row.status !== "pending" || !isRole(row.role)) {
         return { ok: false, code: "not_found" };
       }
-      if (!checkInvite(actor, row.role).ok) return { ok: false, code: "forbidden" };
+      if (!checkInvite(acting(actorId, actor.role, token), row.role).ok)
+        return { ok: false, code: "forbidden" };
       const sends = this.sends(invitationId);
       if (sends.last !== null && now - sends.last < INVITATION_RESEND_INTERVAL_MS) {
         return { ok: false, code: "too_soon" };
@@ -470,7 +472,8 @@ export class Invitations {
       if (!row || row.status !== "pending" || !isRole(row.role)) {
         return { ok: false, code: "not_found" };
       }
-      if (!checkInvite(actor, row.role).ok) return { ok: false, code: "forbidden" };
+      if (!checkInvite(acting(actorId, actor.role, token), row.role).ok)
+        return { ok: false, code: "forbidden" };
       try {
         const result = await db
           .prepare(`update invitation set status = 'canceled' where id = ? and status = 'pending'`)

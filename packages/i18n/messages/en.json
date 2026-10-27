@@ -2653,6 +2653,7 @@
         "part=name_invalid": "Give it a name of up to 60 characters.",
         "part=scopes_label": "Scopes",
         "part=scopes_none": "Pick at least one scope.",
+        "part=members_note": "A token never makes anyone an owner or admin, never changes or removes an owner or admin, and never changes its creator.",
         "part=expiry_label": "Expires",
         "part=expiry_30": "In 30 days",
         "part=expiry_90": "In 90 days",

@@ -21,6 +21,7 @@ export type Api_Tokens_CardInputs = {
 * | "name_invalid" | "Give it a name of up to 60 characters." |
 * | "scopes_label" | "Scopes" |
 * | "scopes_none" | "Pick at least one scope." |
+* | "members_note" | "A token never makes anyone an owner or admin, never changes or removes an owner or admin, and never changes its creator." |
 * | "expiry_label" | "Expires" |
 * | "expiry_30" | "In 30 days" |
 * | "expiry_90" | "In 90 days" |

@@ -22,6 +22,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "name_invalid" | "Give it a name of up to 60 characters." |
 * | "scopes_label" | "Scopes" |
 * | "scopes_none" | "Pick at least one scope." |
+* | "members_note" | "A token never makes anyone an owner or admin, never changes or removes an owner or admin, and never changes its creator." |
 * | "expiry_label" | "Expires" |
 * | "expiry_30" | "In 30 days" |
 * | "expiry_90" | "In 90 days" |
@@ -90,6 +91,7 @@ export const api_tokens_card = /** @type {((inputs: Api_Tokens_CardInputs, optio
 		if (i?.part === "name_invalid") return /** @type {LocalizedString} */ (`Dê a ele um nome de até 60 caracteres.`);
 		if (i?.part === "scopes_label") return /** @type {LocalizedString} */ (`Escopos`);
 		if (i?.part === "scopes_none") return /** @type {LocalizedString} */ (`Escolha pelo menos um escopo.`);
+		if (i?.part === "members_note") return /** @type {LocalizedString} */ (`Um token nunca torna alguém dono ou admin, nunca altera nem remove um dono ou admin, e nunca altera quem o criou.`);
 		if (i?.part === "expiry_label") return /** @type {LocalizedString} */ (`Expira`);
 		if (i?.part === "expiry_30") return /** @type {LocalizedString} */ (`Em 30 dias`);
 		if (i?.part === "expiry_90") return /** @type {LocalizedString} */ (`Em 90 dias`);
@@ -152,6 +154,7 @@ export const api_tokens_card = /** @type {((inputs: Api_Tokens_CardInputs, optio
 		if (i?.part === "name_invalid") return /** @type {LocalizedString} */ (`Give it a name of up to 60 characters.`);
 		if (i?.part === "scopes_label") return /** @type {LocalizedString} */ (`Scopes`);
 		if (i?.part === "scopes_none") return /** @type {LocalizedString} */ (`Pick at least one scope.`);
+		if (i?.part === "members_note") return /** @type {LocalizedString} */ (`A token never makes anyone an owner or admin, never changes or removes an owner or admin, and never changes its creator.`);
 		if (i?.part === "expiry_label") return /** @type {LocalizedString} */ (`Expires`);
 		if (i?.part === "expiry_30") return /** @type {LocalizedString} */ (`In 30 days`);
 		if (i?.part === "expiry_90") return /** @type {LocalizedString} */ (`In 90 days`);

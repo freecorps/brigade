@@ -167,11 +167,32 @@ describe("apiToken.revoke and apiToken.touch", () => {
     ).toMatchObject({ ok: false, error: { code: "conflict" } });
   });
 
+  test("only a member revokes: never a system actor, an integration or a token", () => {
+    const { store } = create();
+    for (const kind of ["system", "integration"] as const) {
+      expect(
+        runMutation(serverMutations, "apiToken.revoke", { id: TOK }, store, ctx("owner", kind)),
+      ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    }
+    expect(
+      runMutation(serverMutations, "apiToken.revoke", { id: TOK }, store, {
+        actor: TOKENS_ACTOR,
+        now: T,
+        server: true,
+      }),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(store.get("api_tokens", TOK)!.revokedAt).toBeNull();
+  });
+
   test("touch is the API's alone, and only moves forward", () => {
     const { store } = create();
     const touch = (at: number, context: MutationContext) =>
       runMutation(serverMutations, "apiToken.touch", { id: TOK, at }, store, context);
     expect(touch(T, ctx("owner"))).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    // Its id under another kind is not it.
+    expect(
+      touch(T, { actor: { ...TOKENS_ACTOR, kind: "integration" }, now: T, server: true }),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
     expect(touch(T + 1, { actor: TOKENS_ACTOR, now: T, server: true })).toEqual({
       ok: true,
       events: [],

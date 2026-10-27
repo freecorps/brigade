@@ -29,6 +29,7 @@ import {
   MAX_RECONCILED_MEMBERS,
   MEMBERS_ACTOR,
   newId,
+  tokenReaches,
   type Actor,
   type MemberChange,
   type RandomBytes,
@@ -144,10 +145,11 @@ export type MemberChangeResult =
     };
 
 /**
- * Why the shard closes a member's sockets: they are no longer a member, their role changed, or their password was
- * reset, which ended every session (`signOutUser` in src/workspace.ts).
+ * Why the shard closes a member's sockets: they are no longer a member, their role changed, their password was
+ * reset, which ended every session (`signOutUser` in src/workspace.ts), or the API token it acts as (RFC 0014) is no
+ * longer backed by this shard (expired or revoked).
  */
-export type SocketVerdict = "removed" | "role_changed" | "signed_out";
+export type SocketVerdict = "removed" | "role_changed" | "signed_out" | "token_ended";
 
 /** The member a socket acts for: a member's own, or an API token's creator (RFC 0014); undefined for the rest. */
 function actingFor(actor: Actor): string | undefined {
@@ -255,7 +257,9 @@ export class Membership {
 
   /**
    * `token`: the API token (RFC 0014) `actorId` (its creator) made the request through. The rules are the creator's,
-   * with their role as D1 has it now; the mutation runs as the token, so its scopes are checked and its events name it.
+   * with their role as D1 has it now, and a token's own (never an owner or admin, `checkMemberChange`); the mutation
+   * runs as the token with the creator's role and the scopes the Worker checked (`members:manage`, which is all
+   * `member.remove` and `member.changeRole` ask of a token), so its events name it.
    */
   private async decide(
     workspaceId: string,
@@ -305,14 +309,21 @@ export class Membership {
       // Gone from D1 already: a retry after the shard step failed, or an edit made outside Brigade. Only someone who
       // could have removed them may have the shard catch up, and only a real leftover answers anything but 404.
       const allowed =
-        can(actor.role, "members:manage") && (copy?.role !== "owner" || actor.role === "owner");
+        can(actor.role, "members:manage") &&
+        (copy?.role !== "owner" || actor.role === "owner") &&
+        (!token || tokenReaches(copy?.role ?? null));
       if (!allowed) return { ok: false, code: "forbidden" };
       if (change.kind === "role" || !leftovers) return { ok: false, code: "not_found" };
       return this.catchUp(targetId, members);
     }
 
     const owners = members.filter((member) => member.role === "owner").length;
-    const check = checkMemberChange(actor, target, change, owners);
+    const check = checkMemberChange(
+      { ...actor, kind: token ? "token" : "user" },
+      target,
+      change,
+      owners,
+    );
     if (!check.ok && check.code !== "conflict") return check;
     // D1 already has the role (a retry): bring the shard's copy along if it lags.
     if (!check.ok) return this.catchUp(targetId, members);

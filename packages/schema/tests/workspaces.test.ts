@@ -59,6 +59,10 @@ describe("workspace.create", () => {
       "webhook.rotateSecret",
       "webhook.record",
       "webhook.redeliver",
+      "postmortem.requestDraft",
+      "postmortem.writeDraft",
+      "postmortem.failDraft",
+      "export.record",
     ]);
     const result = runMutation(
       mutations,

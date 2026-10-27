@@ -30,6 +30,8 @@ export const statement = {
   // The catalog (RFC 0003 "Service catalog", "Incident types", "Custom fields"): `manage` defines services, incident
   // types and custom fields. Naming an incident's type and services and filling its fields is `incident:update`.
   catalog: ["read", "manage"],
+  // Taking the workspace's incidents out of Brigade as a file (RFC 0013 "Exports").
+  data: ["export"],
 } as const;
 
 type Statement = typeof statement;
@@ -53,6 +55,7 @@ export const roles = {
     status: ["read", "manage", "publish"],
     webhook: ["manage"],
     catalog: ["read", "manage"],
+    data: ["export"],
   },
   admin: {
     incident: ["read", "declare", "update", "ack"],
@@ -65,6 +68,7 @@ export const roles = {
     status: ["read", "manage", "publish"],
     webhook: ["manage"],
     catalog: ["read", "manage"],
+    data: ["export"],
   },
   // Responders see what monitors say (they run the incidents monitors open) but do not change what is watched.
   responder: {

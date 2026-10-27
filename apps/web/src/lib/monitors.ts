@@ -19,6 +19,7 @@ import {
   tcpTargetProblems,
   type ArgsOf,
   type CheckSource,
+  type EscalationPolicyRow,
   type HttpMethod,
   type MonitorCheck,
   type MonitorKind,
@@ -103,6 +104,8 @@ export type MonitorDraft = {
   timeoutSeconds: string;
   graceSeconds: string;
   regions: ProbeRegion[];
+  /** The escalation policy its incidents page through; empty: the workspace's default. */
+  policyId: string;
 };
 
 export const EMPTY_DRAFT: MonitorDraft = {
@@ -118,6 +121,7 @@ export const EMPTY_DRAFT: MonitorDraft = {
   timeoutSeconds: "10",
   graceSeconds: "300",
   regions: ["enam", "weur"],
+  policyId: "",
 };
 
 /** A field of the draft the form draws an error under. */
@@ -148,6 +152,7 @@ export function checkDraft(draft: MonitorDraft, id: string): CheckedDraft {
     id,
     name: draft.name,
     intervalSeconds: wholeNumber(draft.intervalSeconds),
+    policyId: draft.policyId === "" ? null : draft.policyId,
   };
   if (draft.kind === "heartbeat") {
     const result = createHeartbeatMonitor.args({
@@ -211,6 +216,7 @@ const DRAFT_FIELDS: readonly DraftField[] = [
   "timeoutSeconds",
   "graceSeconds",
   "regions",
+  "policyId",
 ];
 
 /**
@@ -286,6 +292,8 @@ export function draftFromRow(row: MonitorRow): MonitorDraft {
     timeoutSeconds: number(row.timeoutSeconds, EMPTY_DRAFT.timeoutSeconds),
     graceSeconds: number(row.graceSeconds, EMPTY_DRAFT.graceSeconds),
     regions: row.kind === "heartbeat" ? EMPTY_DRAFT.regions : [...row.regions],
+    // Rows from before policies per monitor have none: the default.
+    policyId: row.policyId ?? "",
   };
 }
 
@@ -337,26 +345,27 @@ export function checkEdit(draft: MonitorDraft, row: MonitorRow): CheckedEdit {
   const checked = checkDraft({ ...draft, kind: row.kind }, row.id);
   if (!checked.ok) return checked;
   if (checked.kind === "heartbeat") {
-    const { id, name, intervalSeconds, graceSeconds } = checked.args;
-    const args = { id, name, intervalSeconds, graceSeconds };
+    const { id, name, intervalSeconds, graceSeconds, policyId } = checked.args;
+    const args = { id, name, intervalSeconds, graceSeconds, policyId };
     const changed =
       args.name !== row.name ||
       args.intervalSeconds !== row.intervalSeconds ||
-      args.graceSeconds !== row.graceSeconds;
+      args.graceSeconds !== row.graceSeconds ||
+      args.policyId !== (row.policyId ?? null);
     return { ok: true, kind: "heartbeat", args, changed };
   }
   // The shard keeps the regions in `PROBE_REGIONS` order, so the comparison does too.
   const regions = PROBE_REGIONS.filter((region) => checked.args.regions.includes(region));
   if (checked.kind === "tcp") {
     const args = { ...checked.args, regions };
-    const changed = (["name", "intervalSeconds", ...TCP_TARGET_FIELDS] as const).some(
-      (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key]),
+    const changed = (["name", "intervalSeconds", "policyId", ...TCP_TARGET_FIELDS] as const).some(
+      (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key] ?? null),
     );
     return { ok: true, kind: "tcp", args, changed };
   }
   const args = { ...checked.args, regions };
-  const changed = (["name", "intervalSeconds", ...TARGET_FIELDS] as const).some(
-    (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key]),
+  const changed = (["name", "intervalSeconds", "policyId", ...TARGET_FIELDS] as const).some(
+    (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key] ?? null),
   );
   return { ok: true, kind: "http", args, changed };
 }
@@ -387,6 +396,26 @@ const TARGET_FIELDS = [
 
 /** What a TCP check is: changing any of these starts it over (`monitor.updateTcp`). */
 const TCP_TARGET_FIELDS = ["host", "port", "timeoutSeconds", "regions"] as const;
+
+/**
+ * Which escalation policy a monitor's incidents page through (RFC 0003 "Escalation policies"): its own (`own`), the
+ * workspace's default (`default`, also for a policy it names that this client no longer has), or none at all, so the
+ * interim rule pages (`none`). `name` is the policy's.
+ */
+export type MonitorPolicy =
+  | { kind: "own"; name: string }
+  | { kind: "default"; name: string }
+  | { kind: "none" };
+
+export function monitorPolicy(
+  row: Pick<MonitorRow, "policyId">,
+  policies: readonly Pick<EscalationPolicyRow, "id" | "name" | "isDefault">[],
+): MonitorPolicy {
+  const own = row.policyId ? policies.find((policy) => policy.id === row.policyId) : undefined;
+  if (own) return { kind: "own", name: own.name };
+  const fallback = policies.find((policy) => policy.isDefault);
+  return fallback ? { kind: "default", name: fallback.name } : { kind: "none" };
+}
 
 /**
  * Why the shard refused a change to a monitor, in the shared wording (`mutationErrorReason`), except "not found",

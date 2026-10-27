@@ -53,11 +53,18 @@ export type EscalationMiss = {
 };
 
 /**
- * Why a level was paged: the run `started`, the level before timed out, the ones before were `unreachable`; for the
- * interim rule (`level` null) also `exhausted` (every level and repeat paged, nobody acknowledged) or `stalled` (a
- * level kept failing to fire, `escalation.fallback`).
+ * Why a level was paged: the run `started`, the level before timed out, the ones before were `unreachable`, or
+ * every push of the level before failed (`undelivered`: no device took it, `escalation.unreached`); for the interim
+ * rule (`level` null) also `exhausted` (every level and repeat paged, nobody acknowledged) or `stalled` (a level kept
+ * failing to fire, `escalation.fallback`).
  */
-export type EscalationReason = "started" | "timeout" | "unreachable" | "exhausted" | "stalled";
+export type EscalationReason =
+  | "started"
+  | "timeout"
+  | "unreachable"
+  | "undelivered"
+  | "exhausted"
+  | "stalled";
 
 /** One level an escalation run paged. */
 export type EscalationPage = {
@@ -77,6 +84,8 @@ export type EscalationPage = {
   reason: EscalationReason;
   /** The run's page before this one paged again: its event was lost (RFC 0006 "A lost page"). */
   again?: boolean;
+  /** For `undelivered`: the level (1-based) none of whose pushes any device took. */
+  unreached?: number;
 };
 
 export type EscalationStatus = "running" | "acknowledged" | "resolved" | "exhausted";
@@ -88,6 +97,11 @@ export type EscalationStatus = "running" | "acknowledged" | "resolved" | "exhaus
 export type Escalation = {
   policyId: string;
   policyName: string;
+  /**
+   * The monitor whose own policy this is (its name when the run started), for an incident that monitor opened;
+   * null or absent: the workspace's default policy.
+   */
+  monitor?: { id: string; name: string } | null;
   levels: EscalationLevel[];
   repeat: number;
   /** The event whose page started the run: a redelivery of it pages the same level again, never a new run. */
@@ -186,9 +200,17 @@ export type TimelineEntry =
       causedBy?: string;
       /** The page before paged again, the same level and people: its event was lost. */
       again?: boolean;
+      /** For `undelivered`: the level none of whose pushes any device took, so this one was paged at once. */
+      unreached?: number;
     }
   /** Every level and repeat was paged and nobody acknowledged, so everyone who can respond was paged. */
-  | { kind: "escalation_exhausted"; levels: number; rounds: number }
+  | {
+      kind: "escalation_exhausted";
+      levels: number;
+      rounds: number;
+      /** The last level none of whose pushes any device took, so this came before its timeout. */
+      unreached?: number;
+    }
   /**
    * The email notifier could not email `userId` (`notification.failEmail`, RFC 0005 "Email"): `about` says which
    * email, the one telling a member their page did not reach them or the one telling an owner nobody was paged.
@@ -294,6 +316,11 @@ export type MonitorRow = {
   restartedAt: number;
   /** One entry per source that reported, in report order. */
   checks: MonitorCheck[];
+  /**
+   * The escalation policy an incident this monitor opens is paged through (RFC 0003 "Escalation policies"); null or
+   * absent (rows from before): the workspace's default.
+   */
+  policyId?: string | null;
   /** The firing alert, at most one per monitor (deduplication), and the incident it opened. */
   alertId: string | null;
   incidentId: string | null;

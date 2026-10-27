@@ -134,9 +134,27 @@ export function entryText(entry: TimelineRow, who: People): string {
       if (entry.userIds.length > 0 && entry.userIds.every(aware)) {
         return say("escalated_started_aware", level, names);
       }
+      // Every push of a level failed, so the next one was paged before its timeout.
+      if (entry.reason === "undelivered" && entry.unreached !== undefined) {
+        return m.escalation_early({
+          kind: "level",
+          from: String(entry.unreached),
+          level,
+          who: names,
+        });
+      }
       return say(`escalated_${entry.reason}`, level, names);
     }
     case "escalation_exhausted":
+      // The last level's pushes all failed: everyone was paged before its timeout.
+      if (entry.unreached !== undefined) {
+        return m.escalation_early({
+          kind: "everyone",
+          from: String(entry.unreached),
+          level: "",
+          who: "",
+        });
+      }
       return say("escalation_exhausted");
     case "email_failed":
       // Written by the notifier, like a failed page: about who was not emailed.

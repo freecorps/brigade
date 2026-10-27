@@ -460,6 +460,7 @@
         "field=timeout": "Use de 1 a 30 segundos, e não mais que o intervalo.",
         "field=grace": "Use segundos inteiros, de 0 a 86.400 (24 horas).",
         "field=regions": "Escolha pelo menos uma região.",
+        "field=policy": "Essa política não existe mais. Escolha outra.",
         "field=*": "Confira este valor."
       }
     }
@@ -481,6 +482,7 @@
         "field=interval": "A cada (segundos)",
         "field=timeout": "Tempo limite (segundos)",
         "field=grace": "Tolerância (segundos)",
+        "field=policy": "Política de escalonamento",
         "field=*": "Verificar de"
       }
     }
@@ -496,6 +498,7 @@
         "field=port": "Qualquer porta menos a 25.",
         "field=timeout": "Quanto tempo uma verificação pode levar.",
         "field=timeout_tcp": "Quanto tempo a conexão pode levar para abrir.",
+        "field=policy": "Um incidente aberto por este monitor chama por esta política.",
         "field=*": "Quanto um sinal pode atrasar antes de contar como perdido."
       }
     }
@@ -593,6 +596,20 @@
     }
   ],
   "monitor_gone": "Ele foi excluído.",
+  "monitor_policy": [
+    {
+      "declarations": ["input kind", "input name"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=own": "Chama por {name}",
+        "kind=default": "Chama por {name} (padrão)",
+        "kind=none": "Sem política de escalonamento",
+        "kind=option_default": "Padrão do workspace ({name})",
+        "kind=option_none": "Padrão do workspace (nenhuma definida)",
+        "kind=*": "{name}"
+      }
+    }
+  ],
   "monitor_discard": [
     {
       "declarations": ["input part", "input name"],
@@ -1161,7 +1178,7 @@
         "text=title": "Escalonamento",
         "text=empty": "Ainda não há políticas de escalonamento. Sem uma política padrão, as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
         "text=no_default": "Nenhuma política padrão: as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
-        "text=default_note": "Toda chamada, de um monitor ou declarada à mão, passa pela política padrão.",
+        "text=default_note": "Toda chamada passa pela política padrão, a não ser que o monitor que abriu o incidente indique a sua própria.",
         "text=default_badge": "Padrão",
         "text=level": "Nível {level}",
         "text=level_empty": "Ninguém para chamar neste nível: ele é pulado até alguém ser adicionado",
@@ -1192,6 +1209,9 @@
         "text=declarer_you_object": "você (declarou)",
         "text=replaces_default": "Substitui {name} como padrão.",
         "text=level_empty_draft": "Ninguém para chamar ainda: adicione uma escala ou uma pessoa, ou remova este nível.",
+        "text=policy_default": "Política: {name}, a padrão do workspace",
+        "text=policy_monitor": "Política: {name}, definida no monitor {who}",
+        "text=early": "Chamado na hora: ninguém no nível {level} pôde ser alcançado",
         "text=*": "Escalonamento"
       }
     }
@@ -1297,7 +1317,19 @@
         "part=fallback_unreachable_later_nobody": "Nenhum nível seguinte alcançou ninguém. Tentamos todos que podem responder: ninguém pôde ser chamado",
         "part=fallback_exhausted_nobody": "Ninguém confirmou depois de todos os níveis. Tentamos todos que podem responder: ninguém pôde ser chamado",
         "part=fallback_stalled_nobody": "Um nível continuou falhando. Tentamos todos que podem responder: ninguém pôde ser chamado",
+        "part=fallback_undelivered": "Ninguém no último nível pôde ser alcançado: todos que podem responder foram chamados",
+        "part=fallback_undelivered_nobody": "Ninguém no último nível pôde ser alcançado. Tentamos todos que podem responder: ninguém pôde ser chamado",
         "part=*": "Escalonamento"
+      }
+    }
+  ],
+  "escalation_early": [
+    {
+      "declarations": ["input kind", "input from", "input level", "input who"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=level": "Ninguém no nível {from} pôde ser alcançado, então o nível {level} foi chamado na hora: {who}",
+        "kind=*": "Ninguém no nível {from} pôde ser alcançado e não há outro nível, então todos que podem responder foram chamados na hora"
       }
     }
   ],

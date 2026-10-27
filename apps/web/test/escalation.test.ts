@@ -366,4 +366,46 @@ describe("a run on the incident page", () => {
       "Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados",
     );
   });
+
+  test("a level paged early, because no device took any push of the one before, says so", async () => {
+    const who = people("usr_me", [{ id: "usr_ana", name: "Ana", role: "owner", updatedAt: 0 }]);
+    const entry = (fields: object) =>
+      ({
+        id: "i:1",
+        incidentId: "i",
+        seq: 1,
+        at: 0,
+        actor: "sys_escalation",
+        ...fields,
+      }) as TimelineRow;
+    const early = entry({
+      kind: "escalated",
+      level: 2,
+      round: 0,
+      userIds: ["usr_ana"],
+      reason: "undelivered",
+      unreached: 1,
+    });
+    const end = entry({ kind: "escalation_exhausted", levels: 2, rounds: 1, unreached: 2 });
+    expect(entryText(early, who)).toBe(
+      "Nobody on level 1 could be reached, so level 2 was paged now: Ana",
+    );
+    expect(entryText(end, who)).toBe(
+      "Nobody on level 2 could be reached and no level is left, so everyone who can respond was paged now",
+    );
+    const ended: Escalation = {
+      ...run([page(1), page(2), { ...page(null), reason: "exhausted", unreached: 2 }]),
+      status: "exhausted",
+      endedAt: 40,
+    };
+    const open = { acknowledgedAt: null, acknowledgedBy: null };
+    expect(runStatus(ended, open, [], [])).toMatchObject({
+      kind: "fallback",
+      reason: "undelivered",
+    });
+    await setLocale("pt-BR");
+    expect(entryText(early, who)).toBe(
+      "Ninguém no nível 1 pôde ser alcançado, então o nível 2 foi chamado na hora: Ana",
+    );
+  });
 });

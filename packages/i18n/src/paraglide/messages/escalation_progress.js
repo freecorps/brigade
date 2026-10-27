@@ -23,6 +23,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "fallback_unreachable_later_nobody" | "No later level could reach anyone. Tried everyone who can respond: nobody could be paged" |
 * | "fallback_exhausted_nobody" | "Nobody acknowledged after every level. Tried everyone who can respond: nobody could be paged" |
 * | "fallback_stalled_nobody" | "A level kept failing to fire. Tried everyone who can respond: nobody could be paged" |
+* | "fallback_undelivered" | "Nobody on the last level could be reached: paged everyone who can respond" |
+* | "fallback_undelivered_nobody" | "Nobody on the last level could be reached. Tried everyone who can respond: nobody could be paged" |
 * | * | "Escalation" |
 *
 * @param {Escalation_ProgressInputs} inputs
@@ -45,6 +47,8 @@ export const escalation_progress = /** @type {((inputs: Escalation_ProgressInput
 		if (i?.part === "fallback_unreachable_later_nobody") return /** @type {LocalizedString} */ (`Nenhum nível seguinte alcançou ninguém. Tentamos todos que podem responder: ninguém pôde ser chamado`);
 		if (i?.part === "fallback_exhausted_nobody") return /** @type {LocalizedString} */ (`Ninguém confirmou depois de todos os níveis. Tentamos todos que podem responder: ninguém pôde ser chamado`);
 		if (i?.part === "fallback_stalled_nobody") return /** @type {LocalizedString} */ (`Um nível continuou falhando. Tentamos todos que podem responder: ninguém pôde ser chamado`);
+		if (i?.part === "fallback_undelivered") return /** @type {LocalizedString} */ (`Ninguém no último nível pôde ser alcançado: todos que podem responder foram chamados`);
+		if (i?.part === "fallback_undelivered_nobody") return /** @type {LocalizedString} */ (`Ninguém no último nível pôde ser alcançado. Tentamos todos que podem responder: ninguém pôde ser chamado`);
 		return /** @type {LocalizedString} */ (`Escalonamento`)
 	}
 	{
@@ -61,6 +65,8 @@ export const escalation_progress = /** @type {((inputs: Escalation_ProgressInput
 		if (i?.part === "fallback_unreachable_later_nobody") return /** @type {LocalizedString} */ (`No later level could reach anyone. Tried everyone who can respond: nobody could be paged`);
 		if (i?.part === "fallback_exhausted_nobody") return /** @type {LocalizedString} */ (`Nobody acknowledged after every level. Tried everyone who can respond: nobody could be paged`);
 		if (i?.part === "fallback_stalled_nobody") return /** @type {LocalizedString} */ (`A level kept failing to fire. Tried everyone who can respond: nobody could be paged`);
+		if (i?.part === "fallback_undelivered") return /** @type {LocalizedString} */ (`Nobody on the last level could be reached: paged everyone who can respond`);
+		if (i?.part === "fallback_undelivered_nobody") return /** @type {LocalizedString} */ (`Nobody on the last level could be reached. Tried everyone who can respond: nobody could be paged`);
 		return /** @type {LocalizedString} */ (`Escalation`)
 	}
 });

@@ -35,6 +35,7 @@ import {
   fallbackEscalation,
   repageEscalation,
   startEscalation,
+  unreachedEscalation,
 } from "./escalation.ts";
 import {
   configureSlack,
@@ -120,6 +121,7 @@ export const serverMutations = defineRegistry([
   advanceEscalation,
   fallbackEscalation,
   repageEscalation,
+  unreachedEscalation,
   connectSlack,
   failSlack,
 ]);

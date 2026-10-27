@@ -269,11 +269,22 @@ How a page uses them is RFC 0006 "Who is paged".
   **targets**, each a schedule (whoever `onCallAt` says is on call when the level fires) or a member, and a timeout
   of 1 to 1440 minutes before the next level fires. Levels and targets are kept in the policy's own row, so an edit
   is one mutation and never half applied. At most 50 policies per workspace.
-- **The default policy** (`isDefault`, at most one): every page uses it, whether a monitor opened the incident or a
-  member declared it. Making a policy the default takes the flag from the previous one (its own
+- **The default policy** (`isDefault`, at most one): every page uses it unless the monitor that opened the incident
+  names its own (below). Making a policy the default takes the flag from the previous one (its own
   `escalation_policy.updated`, `reason: default_changed`). With no default, RFC 0006's interim rule pages, unchanged,
-  so a workspace that never creates a policy pages as before. A policy per monitor (and alert routes, Phase 3) can
-  come later: the run already records which policy it follows.
+  so a workspace that never creates a policy pages as before.
+- **A policy per monitor** (`policyId` on the monitor, RFC 0007): a monitor may name a policy, set by `monitor.create*`
+  and `monitor.update*` (left out or null: the default), checked against the shard's policies (`invalid_args` on
+  `policyId` otherwise), with the monitors' own RBAC (`monitor:manage`, owners and admins) and in `monitor.created` and
+  `monitor.updated`. Changing it never starts the checks over. An incident a monitor opened starts its run on that
+  policy (`incidentPolicy`: the monitor still firing on the incident, else the one whose alert opened it); a monitor
+  that names none, or one since deleted, goes to the default, then to the interim rule. The run records which and why
+  (`monitor`: the monitor's id and name, null for the default), and the incident page says it. A member's own
+  declaration always uses the default. Alert routes (Phase 3) will pick a policy the same way.
+- **Deleting a policy a monitor names** is not refused: the monitor goes back to the default in the same transaction
+  (`monitor.updated`, `reason: policy_deleted`), so a monitor never names a policy that is gone and a delete never
+  needs the monitors edited first. Falling back is the safe side: the default pages (or the interim rule), never
+  nobody. Runs under way keep their snapshot.
 - **Who manages them** (`escalation:read`, `escalation:manage`): owners and admins create, edit, delete and pick the
   default; everyone reads. A member target must be in the shard's member list and not a viewer; a schedule target
   must exist (`invalid_args` otherwise).
@@ -286,9 +297,9 @@ How a page uses them is RFC 0006 "Who is paged".
 ## Escalation run
 
 - **State** lives on the incident (`escalation` on its row, synced with it, so every client can show "Level 2 paged
-  at 14:05 · next level at 14:20"): the policy's id, name, levels and repeat as they were when the run started (a
-  snapshot, so an edit or a delete mid-run changes nothing for a run under way; the next run reads the policy
-  again), the level and round paged last, `status` (`running`, `acknowledged`, `resolved`, `exhausted`), when it
+  at 14:05 · next level at 14:20"): the policy's id, name, levels and repeat as they were when the run started, and
+  the monitor whose policy it is, if any (a snapshot, so an edit or a delete mid-run changes nothing for a run under
+  way; the next run reads the policy again), the level and round paged last, `status` (`running`, `acknowledged`, `resolved`, `exhausted`), when it
   started, when the next level fires (`nextAt`), how many pages it made (`paged`) and the last 20 of them (`pages`:
   level, round, when, whom, why, and the first 20 targets that could not be paged with their count; the timeline and
   the events keep everything, the row stays small). A server-only `escalation_timers` row per running run (incident id, `nextAt`) is what the shard's alarm
@@ -299,7 +310,9 @@ How a page uses them is RFC 0006 "Who is paged".
   next round, or, past the last round, `exhausted`: nobody acknowledged, so everyone who can respond is paged once
   (the interim rule, RFC 0006) and the run ends (a timeline entry, `escalation.exhausted`). A level `escalation.advance`
   keeps refusing is recorded at once and, 3 minutes after its first refusal, ends the run the same way
-  (`escalation.fallback`).
+  (`escalation.fallback`). **Early.** A level every push of which failed for good (no device took any) fires what
+  comes next at once (`escalation.unreached`, from the pager when that page settles), in the same order, rather than
+  waiting out its timeout (RFC 0006 "Who is paged").
 - **Stop.** `incident.ack` (any responder, through any route: the mutation does it, not an endpoint) sets the run
   `acknowledged`, and a status change out of the active ones (resolved, declined) sets it `resolved`; both delete
   the timer in the same transaction, so no level fires after them. Both also close a run that already ended

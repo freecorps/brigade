@@ -23,6 +23,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "timeout" | "Use 1 to 30 seconds, and no more than the interval." |
 * | "grace" | "Use whole seconds, from 0 to 86,400 (24 hours)." |
 * | "regions" | "Pick at least one region." |
+* | "policy" | "That policy no longer exists. Pick another." |
 * | * | "Check this value." |
 *
 * @param {Monitor_Field_InvalidInputs} inputs
@@ -45,6 +46,7 @@ export const monitor_field_invalid = /** @type {((inputs: Monitor_Field_InvalidI
 		if (i?.field === "timeout") return /** @type {LocalizedString} */ (`Use de 1 a 30 segundos, e não mais que o intervalo.`);
 		if (i?.field === "grace") return /** @type {LocalizedString} */ (`Use segundos inteiros, de 0 a 86.400 (24 horas).`);
 		if (i?.field === "regions") return /** @type {LocalizedString} */ (`Escolha pelo menos uma região.`);
+		if (i?.field === "policy") return /** @type {LocalizedString} */ (`Essa política não existe mais. Escolha outra.`);
 		return /** @type {LocalizedString} */ (`Confira este valor.`)
 	}
 	{
@@ -61,6 +63,7 @@ export const monitor_field_invalid = /** @type {((inputs: Monitor_Field_InvalidI
 		if (i?.field === "timeout") return /** @type {LocalizedString} */ (`Use 1 to 30 seconds, and no more than the interval.`);
 		if (i?.field === "grace") return /** @type {LocalizedString} */ (`Use whole seconds, from 0 to 86,400 (24 hours).`);
 		if (i?.field === "regions") return /** @type {LocalizedString} */ (`Pick at least one region.`);
+		if (i?.field === "policy") return /** @type {LocalizedString} */ (`That policy no longer exists. Pick another.`);
 		return /** @type {LocalizedString} */ (`Check this value.`)
 	}
 });

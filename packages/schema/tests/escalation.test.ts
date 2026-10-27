@@ -930,3 +930,347 @@ describe("escalation runs", () => {
     });
   });
 });
+
+const MON = "mon_01JB0000000000000000000001";
+const httpMonitor = (patch: Record<string, unknown> = {}) => ({
+  id: MON,
+  name: "Checkout API",
+  url: "https://example.com/health",
+  method: "GET",
+  expectedStatus: null,
+  keyword: null,
+  intervalSeconds: 60,
+  timeoutSeconds: 10,
+  regions: ["weur"],
+  ...patch,
+});
+
+/** A shard with the default policy (`ESC`) and a second one (`ESC2`, Eva only), and a monitor naming `policyId`. */
+function withMonitor(policyId: string | null) {
+  const store = withPolicy();
+  expect(
+    runMutation(
+      mutations,
+      "escalation.createPolicy",
+      policyArgs({
+        id: ESC2,
+        name: "Payments",
+        levels: [level(LVL3, [{ kind: "member", id: "usr_eva" }])],
+        isDefault: false,
+      }),
+      store,
+      ctx("usr_ana", "owner"),
+    ),
+  ).toMatchObject({ ok: true });
+  expect(
+    runMutation(
+      mutations,
+      "monitor.createHttp",
+      httpMonitor({ policyId }),
+      store,
+      ctx("usr_bia", "admin"),
+    ),
+  ).toMatchObject({ ok: true, events: [{ type: "monitor.created", data: { policyId } }] });
+  // The monitor opened the incident and its alert still fires.
+  store.update("monitors", MON, { incidentId: INC, alertId: "alt_01JB0000000000000000000001" });
+  store.insert("alerts", {
+    id: "alt_01JB0000000000000000000001",
+    fingerprint: `monitor:${MON}`,
+    monitorId: MON,
+    status: "firing",
+    firedAt: T,
+    resolvedAt: null,
+    incidentId: INC,
+  });
+  return store;
+}
+
+describe("a policy per monitor", () => {
+  test("an incident a monitor opened runs on the monitor's policy, and the run says so", () => {
+    const store = withMonitor(ESC2);
+    expect(start(store, "sys_monitors")).toMatchObject({
+      ok: true,
+      events: [{ data: { policyId: ESC2, level: 1, userIds: ["usr_eva"] } }],
+    });
+    expect(run(store)).toMatchObject({
+      policyId: ESC2,
+      policyName: "Payments",
+      monitor: { id: MON, name: "Checkout API" },
+    });
+  });
+
+  test("a monitor without a policy, or one deleted since, runs on the default", () => {
+    const none = withMonitor(null);
+    start(none, "sys_monitors");
+    expect(run(none)).toMatchObject({ policyId: ESC, monitor: null });
+
+    // The monitor recovered (no longer firing on it) and was deleted: its alert still names it, the row does not.
+    const gone = withMonitor(ESC2);
+    gone.update("monitors", MON, { incidentId: null, alertId: null });
+    expect(
+      runMutation(mutations, "monitor.delete", { id: MON }, gone, ctx("usr_bia", "admin")),
+    ).toMatchObject({ ok: true });
+    start(gone, "sys_monitors");
+    expect(run(gone)).toMatchObject({ policyId: ESC, monitor: null });
+  });
+
+  test("a recovered monitor's incident still runs on its policy, found through its alert", () => {
+    const store = withMonitor(ESC2);
+    store.update("monitors", MON, { incidentId: null, alertId: null });
+    start(store, "sys_monitors");
+    expect(run(store)).toMatchObject({ policyId: ESC2, monitor: { id: MON } });
+  });
+
+  test("with no default, a monitor's own policy still pages, and one without stays on the interim rule", () => {
+    const own = withMonitor(ESC2);
+    own.update("escalation_policies", ESC, { isDefault: false });
+    expect(start(own, "sys_monitors")).toMatchObject({ ok: true });
+    expect(run(own).policyId).toBe(ESC2);
+
+    const none = withMonitor(null);
+    none.update("escalation_policies", ESC, { isDefault: false });
+    expect(start(none, "sys_monitors")).toMatchObject({ ok: false, error: { code: "not_found" } });
+  });
+
+  test("the policy must exist; only owners and admins set it; an update can change or clear it", () => {
+    const store = withPolicy();
+    const missing = runMutation(
+      mutations,
+      "monitor.createHttp",
+      httpMonitor({ policyId: ESC2 }),
+      store,
+      ctx("usr_bia", "admin"),
+    );
+    expect(missing).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args", issues: [{ path: "policyId" }] },
+    });
+    expect(
+      runMutation(
+        mutations,
+        "monitor.createHttp",
+        httpMonitor({ policyId: ESC }),
+        store,
+        ctx("usr_caio", "responder"),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    // Left out: the default.
+    expect(
+      runMutation(mutations, "monitor.createHttp", httpMonitor(), store, ctx("usr_bia", "admin")),
+    ).toMatchObject({ ok: true });
+    expect(store.get("monitors", MON)!.policyId).toBeNull();
+    const update = (policyId: string | null) =>
+      runMutation(
+        mutations,
+        "monitor.updateHttp",
+        httpMonitor({ policyId }),
+        store,
+        ctx("usr_bia", "admin", T + MINUTE),
+      );
+    expect(update(ESC)).toMatchObject({
+      ok: true,
+      events: [{ type: "monitor.updated", data: { id: MON, policyId: ESC } }],
+    });
+    // A policy change is not a new target: the checks do not start over.
+    expect(store.get("monitors", MON)).toMatchObject({ policyId: ESC, restartedAt: T });
+    expect(update(ESC)).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(update(null)).toMatchObject({ ok: true });
+    expect(store.get("monitors", MON)!.policyId).toBeNull();
+  });
+
+  test("a heartbeat takes a policy too", () => {
+    const store = withPolicy();
+    const args = {
+      id: MON,
+      name: "Nightly backup",
+      intervalSeconds: 3600,
+      graceSeconds: 300,
+      tokenHash: "0".repeat(64),
+      policyId: ESC,
+    };
+    expect(
+      runMutation(mutations, "monitor.createHeartbeat", args, store, ctx("usr_bia", "admin")),
+    ).toMatchObject({ ok: true });
+    const { tokenHash: _hash, ...update } = args;
+    expect(
+      runMutation(
+        mutations,
+        "monitor.updateHeartbeat",
+        { ...update, policyId: null },
+        store,
+        ctx("usr_bia", "admin"),
+      ),
+    ).toMatchObject({ ok: true, events: [{ data: { policyId: null } }] });
+  });
+
+  test("deleting a policy a monitor names puts the monitor back on the default, and says so", () => {
+    const store = withMonitor(ESC2);
+    expect(
+      runMutation(
+        mutations,
+        "escalation.deletePolicy",
+        { id: ESC2 },
+        store,
+        ctx("usr_ana", "owner", T + MINUTE),
+      ),
+    ).toEqual({
+      ok: true,
+      events: [
+        { type: "escalation_policy.deleted", subject: ESC2, data: { id: ESC2, wasDefault: false } },
+        {
+          type: "monitor.updated",
+          subject: MON,
+          data: {
+            id: MON,
+            name: "Checkout API",
+            kind: "http",
+            policyId: null,
+            reason: "policy_deleted",
+          },
+        },
+      ],
+    });
+    expect(store.get("monitors", MON)).toMatchObject({ policyId: null, updatedAt: T + MINUTE });
+    start(store, "sys_monitors");
+    expect(run(store)).toMatchObject({ policyId: ESC, monitor: null });
+  });
+});
+
+const unreached = (store: MutationStore, step = run(store).paged, now = T + MINUTE) =>
+  runMutation(
+    serverMutations,
+    "escalation.unreached",
+    { incidentId: INC, step },
+    store,
+    system(now),
+  );
+
+describe("escalating early (every push of a level failed)", () => {
+  test("the next level fires at once, saying which level nobody could be reached on", () => {
+    const store = withPolicy();
+    start(store);
+    expect(unreached(store)).toMatchObject({
+      ok: true,
+      events: [
+        {
+          type: "escalation.paged",
+          data: { level: 2, round: 0, userIds: ["usr_eva"], reason: "undelivered", step: 2 },
+        },
+      ],
+    });
+    // Level 2's own timeout, from now.
+    expect(run(store)).toMatchObject({ status: "running", nextAt: T + 11 * MINUTE });
+    expect(run(store).pages.at(-1)).toMatchObject({
+      level: 2,
+      reason: "undelivered",
+      unreached: 1,
+    });
+    expect(store.get("escalation_timers", INC)).toMatchObject({ at: T + 11 * MINUTE });
+    expect(timeline(store).at(-1)).toEqual({
+      kind: "escalated",
+      actor: "sys_escalation",
+      level: 2,
+      round: 0,
+      userIds: ["usr_eva"],
+      reason: "undelivered",
+      unreached: 1,
+    });
+  });
+
+  test("advances once per step: a repeated or stale call is refused", () => {
+    const store = withPolicy({ repeat: 1 });
+    start(store);
+    expect(unreached(store, 1)).toMatchObject({ ok: true });
+    expect(unreached(store, 1)).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(run(store).paged).toBe(2);
+  });
+
+  test("an ack or a resolve in between stops it", () => {
+    const acked = withPolicy();
+    start(acked);
+    runMutation(mutations, "incident.ack", { id: INC }, acked, ctx("usr_caio", "responder"));
+    expect(unreached(acked, 1)).toMatchObject({ ok: false, error: { code: "not_found" } });
+    expect(run(acked).pages).toHaveLength(1);
+
+    const resolved = withPolicy();
+    start(resolved);
+    runMutation(
+      mutations,
+      "incident.setStatus",
+      { id: INC, status: "resolved" },
+      resolved,
+      ctx("usr_ana", "owner"),
+    );
+    expect(unreached(resolved, 1)).toMatchObject({ ok: false, error: { code: "not_found" } });
+  });
+
+  test("the last level repeats from level 1 while repeats are left, in a timeout's order", () => {
+    const store = withPolicy({ repeat: 1 });
+    start(store);
+    advance(store, T + 5 * MINUTE);
+    expect(unreached(store, 2, T + 6 * MINUTE)).toMatchObject({
+      ok: true,
+      events: [{ data: { level: 1, round: 1, reason: "undelivered" } }],
+    });
+    expect(run(store).pages.at(-1)).toMatchObject({ unreached: 2 });
+  });
+
+  test("the last level failing ends the run as today: everyone who can respond, once", () => {
+    const store = withPolicy();
+    start(store);
+    advance(store, T + 5 * MINUTE);
+    expect(unreached(store, 2, T + 6 * MINUTE)).toMatchObject({
+      ok: true,
+      events: [
+        { type: "escalation.paged", data: { level: null, reason: "exhausted", step: 3 } },
+        { type: "escalation.exhausted", data: { levels: 2, rounds: 1 } },
+      ],
+    });
+    expect(run(store)).toMatchObject({
+      status: "exhausted",
+      nextAt: null,
+      endedAt: T + 6 * MINUTE,
+    });
+    expect(run(store).pages.at(-1)).toMatchObject({ level: null, unreached: 2 });
+    expect(store.get("escalation_timers", INC)).toBeUndefined();
+    expect(timeline(store).at(-1)).toEqual({
+      kind: "escalation_exhausted",
+      actor: "sys_escalation",
+      levels: 2,
+      rounds: 1,
+      unreached: 2,
+    });
+    // An ended run takes no more.
+    expect(unreached(store, 3)).toMatchObject({ ok: false, error: { code: "not_found" } });
+  });
+
+  test("levels nobody can be reached at after it are skipped, still saying why it left early", () => {
+    const store = withPolicy({
+      levels: [
+        level(LVL1, [{ kind: "schedule", id: SCH }]),
+        level(LVL2, [{ kind: "member", id: "usr_bia" }]),
+        level(LVL3, [{ kind: "member", id: "usr_eva" }]),
+      ],
+    });
+    start(store);
+    expect(unreached(store)).toMatchObject({
+      ok: true,
+      events: [{ data: { level: 3, reason: "undelivered", missed: [{ userId: "usr_bia" }] } }],
+    });
+  });
+
+  test("members may not send it", () => {
+    const store = withPolicy();
+    start(store);
+    expect(
+      runMutation(
+        mutations,
+        "escalation.unreached",
+        { incidentId: INC, step: 1 },
+        store,
+        ctx("usr_ana", "owner"),
+      ),
+    ).toMatchObject({ ok: false });
+    expect(run(store).paged).toBe(1);
+  });
+});

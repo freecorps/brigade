@@ -412,11 +412,18 @@ const sha256Hex: Validator<string> = (input, path = "") =>
 
 export type MonitorCreated = DomainEvent<
   "monitor.created",
-  Pick<MonitorRow, "id" | "name" | "kind">
+  Pick<MonitorRow, "id" | "name" | "kind"> & { policyId: string | null }
 >;
+/**
+ * `policy_deleted`: the escalation policy the monitor named was deleted, so its incidents page through the default
+ * again (`escalation.deletePolicy`); absent for an edit.
+ */
 export type MonitorUpdated = DomainEvent<
   "monitor.updated",
-  Pick<MonitorRow, "id" | "name" | "kind">
+  Pick<MonitorRow, "id" | "name" | "kind"> & {
+    policyId: string | null;
+    reason?: "policy_deleted";
+  }
 >;
 export type MonitorPaused = DomainEvent<"monitor.paused" | "monitor.resumed", { id: string }>;
 export type MonitorDeleted = DomainEvent<"monitor.deleted", { id: string }>;
@@ -437,6 +444,11 @@ export type AlertResolved = DomainEvent<
 const monitorId = v.id("mon");
 const monitorName = v.string({ min: 1, max: MONITOR_NAME_MAX });
 const intervalSeconds = v.integer({ min: MIN_INTERVAL_SECONDS, max: MAX_INTERVAL_SECONDS });
+/**
+ * The escalation policy the monitor's incidents page through; null or left out: the workspace's default (so an
+ * update that leaves it out goes back to the default). It must exist (`checkPolicy`).
+ */
+const monitorPolicy = v.optional(v.nullable(v.id("esc")));
 
 const httpFields = {
   name: monitorName,
@@ -447,6 +459,7 @@ const httpFields = {
   intervalSeconds,
   timeoutSeconds: v.integer({ min: 1, max: MAX_TIMEOUT_SECONDS }),
   regions: v.array(v.picklist(PROBE_REGIONS), { min: 1, max: PROBE_REGIONS.length, unique: true }),
+  policyId: monitorPolicy,
 };
 const tcpFields = {
   name: monitorName,
@@ -455,11 +468,13 @@ const tcpFields = {
   intervalSeconds,
   timeoutSeconds: v.integer({ min: 1, max: MAX_TIMEOUT_SECONDS }),
   regions: v.array(v.picklist(PROBE_REGIONS), { min: 1, max: PROBE_REGIONS.length, unique: true }),
+  policyId: monitorPolicy,
 };
 const heartbeatFields = {
   name: monitorName,
   intervalSeconds,
   graceSeconds: v.integer({ min: 0, max: MAX_GRACE_SECONDS }),
+  policyId: monitorPolicy,
 };
 
 type HttpFields = {
@@ -511,6 +526,12 @@ function checkNewId(id: string, ctx: MutationContext): MutationResult | undefine
   return undefined;
 }
 
+/** A named policy must exist in the shard (`invalid_args` on `policyId` otherwise). */
+function checkPolicy(store: MutationStore, policyId: string | null): Issue[] {
+  if (policyId === null || store.get("escalation_policies", policyId)) return [];
+  return [{ path: "policyId", message: "Escalation policy not found" }];
+}
+
 /** `limit_reached` when the workspace has `MAX_MONITORS_PER_WORKSPACE` monitors already. */
 function checkCap(store: MutationStore): MutationResult | undefined {
   if (store.scan("monitors").length < MAX_MONITORS_PER_WORKSPACE) return undefined;
@@ -521,8 +542,40 @@ function created(row: MonitorRow): MonitorCreated {
   return {
     type: "monitor.created",
     subject: row.id,
-    data: { id: row.id, name: row.name, kind: row.kind },
+    data: { id: row.id, name: row.name, kind: row.kind, policyId: row.policyId ?? null },
   };
+}
+
+function updated(row: MonitorRow, reason?: "policy_deleted"): MonitorUpdated {
+  return {
+    type: "monitor.updated",
+    subject: row.id,
+    data: {
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      policyId: row.policyId ?? null,
+      ...(reason && { reason }),
+    },
+  };
+}
+
+/**
+ * Takes a deleted escalation policy off every monitor that named it, in the transaction that deleted it: their
+ * incidents page through the workspace's default again (RFC 0003 "Escalation policies"), never through nothing.
+ */
+export function dropPolicyFromMonitors(
+  store: MutationStore,
+  policyId: string,
+  ctx: MutationContext,
+): DomainEvent[] {
+  const events: DomainEvent[] = [];
+  for (const monitor of store.scan("monitors")) {
+    if (monitor.policyId !== policyId) continue;
+    const row = store.update("monitors", monitor.id, { policyId: null, updatedAt: ctx.now });
+    events.push(updated(row, "policy_deleted"));
+  }
+  return events;
 }
 
 const fresh = (ctx: MutationContext) => ({
@@ -548,6 +601,7 @@ export const createHttpMonitor = defineMutation({
     const clock = checkNewId(args.id, ctx);
     if (clock) return clock;
     const { issues, regions } = checkHttp(args);
+    issues.push(...checkPolicy(store, args.policyId));
     if (issues.length)
       return fail("invalid_args", "Invalid arguments for monitor.createHttp", issues);
     if (store.get("monitors", args.id)) return fail("conflict", "Monitor already exists");
@@ -567,6 +621,7 @@ export const createHttpMonitor = defineMutation({
       regions,
       intervalSeconds: args.intervalSeconds,
       graceSeconds: null,
+      policyId: args.policyId,
       ...fresh(ctx),
     };
     store.insert("monitors", row);
@@ -583,6 +638,7 @@ export const createTcpMonitor = defineMutation({
     const clock = checkNewId(args.id, ctx);
     if (clock) return clock;
     const { issues, regions } = checkTcp(args);
+    issues.push(...checkPolicy(store, args.policyId));
     if (issues.length)
       return fail("invalid_args", "Invalid arguments for monitor.createTcp", issues);
     if (store.get("monitors", args.id)) return fail("conflict", "Monitor already exists");
@@ -602,6 +658,7 @@ export const createTcpMonitor = defineMutation({
       regions,
       intervalSeconds: args.intervalSeconds,
       graceSeconds: null,
+      policyId: args.policyId,
       ...fresh(ctx),
     };
     store.insert("monitors", row);
@@ -620,6 +677,10 @@ export const createHeartbeatMonitor = defineMutation({
   apply(store, args, ctx) {
     const clock = checkNewId(args.id, ctx);
     if (clock) return clock;
+    const issues = checkPolicy(store, args.policyId);
+    if (issues.length) {
+      return fail("invalid_args", "Invalid arguments for monitor.createHeartbeat", issues);
+    }
     if (store.get("monitors", args.id)) return fail("conflict", "Monitor already exists");
     const full = checkCap(store);
     if (full) return full;
@@ -637,6 +698,7 @@ export const createHeartbeatMonitor = defineMutation({
       regions: [],
       intervalSeconds: args.intervalSeconds,
       graceSeconds: args.graceSeconds,
+      policyId: args.policyId,
       ...fresh(ctx),
     };
     store.insert("monitors", row);
@@ -661,6 +723,9 @@ const restart = (
   restartedAt: ctx.now,
 });
 
+/** Fields an edit may change without starting the checks over: none of them is what is checked. */
+const UNTARGETED: readonly string[] = ["name", "intervalSeconds", "policyId"];
+
 export const updateHttpMonitor = defineMutation({
   name: "monitor.updateHttp",
   args: v.object({ id: monitorId, ...httpFields }),
@@ -670,6 +735,7 @@ export const updateHttpMonitor = defineMutation({
     if (!monitor) return fail("not_found", "Monitor not found");
     if (monitor.kind !== "http") return fail("invalid_args", "Not an HTTP monitor");
     const { issues, regions } = checkHttp(args);
+    issues.push(...checkPolicy(store, args.policyId));
     if (issues.length)
       return fail("invalid_args", "Invalid arguments for monitor.updateHttp", issues);
     const next = {
@@ -681,20 +747,16 @@ export const updateHttpMonitor = defineMutation({
       intervalSeconds: args.intervalSeconds,
       timeoutSeconds: args.timeoutSeconds,
       regions,
+      policyId: args.policyId,
     };
     const changed = (Object.keys(next) as (keyof typeof next)[]).filter(
-      (key) => JSON.stringify(monitor[key]) !== JSON.stringify(next[key]),
+      (key) => JSON.stringify(monitor[key] ?? null) !== JSON.stringify(next[key]),
     );
     if (changed.length === 0) return fail("conflict", "Nothing to change");
-    const retarget = changed.some((key) => key !== "name" && key !== "intervalSeconds");
+    const retarget = changed.some((key) => !UNTARGETED.includes(key));
     const restarted = retarget && !monitor.paused ? restart(ctx) : {};
-    store.update("monitors", args.id, { ...next, ...restarted, updatedAt: ctx.now });
-    const event: MonitorUpdated = {
-      type: "monitor.updated",
-      subject: args.id,
-      data: { id: args.id, name: args.name, kind: "http" },
-    };
-    return ok(event);
+    const row = store.update("monitors", args.id, { ...next, ...restarted, updatedAt: ctx.now });
+    return ok(updated(row));
   },
 });
 
@@ -708,6 +770,7 @@ export const updateTcpMonitor = defineMutation({
     if (!monitor) return fail("not_found", "Monitor not found");
     if (monitor.kind !== "tcp") return fail("invalid_args", "Not a TCP monitor");
     const { issues, regions } = checkTcp(args);
+    issues.push(...checkPolicy(store, args.policyId));
     if (issues.length)
       return fail("invalid_args", "Invalid arguments for monitor.updateTcp", issues);
     const next = {
@@ -717,20 +780,16 @@ export const updateTcpMonitor = defineMutation({
       intervalSeconds: args.intervalSeconds,
       timeoutSeconds: args.timeoutSeconds,
       regions,
+      policyId: args.policyId,
     };
     const changed = (Object.keys(next) as (keyof typeof next)[]).filter(
-      (key) => JSON.stringify(monitor[key]) !== JSON.stringify(next[key]),
+      (key) => JSON.stringify(monitor[key] ?? null) !== JSON.stringify(next[key]),
     );
     if (changed.length === 0) return fail("conflict", "Nothing to change");
-    const retarget = changed.some((key) => key !== "name" && key !== "intervalSeconds");
+    const retarget = changed.some((key) => !UNTARGETED.includes(key));
     const restarted = retarget && !monitor.paused ? restart(ctx) : {};
-    store.update("monitors", args.id, { ...next, ...restarted, updatedAt: ctx.now });
-    const event: MonitorUpdated = {
-      type: "monitor.updated",
-      subject: args.id,
-      data: { id: args.id, name: args.name, kind: "tcp" },
-    };
-    return ok(event);
+    const row = store.update("monitors", args.id, { ...next, ...restarted, updatedAt: ctx.now });
+    return ok(updated(row));
   },
 });
 
@@ -742,25 +801,26 @@ export const updateHeartbeatMonitor = defineMutation({
     const monitor = store.get("monitors", args.id);
     if (!monitor) return fail("not_found", "Monitor not found");
     if (monitor.kind !== "heartbeat") return fail("invalid_args", "Not a heartbeat monitor");
+    const issues = checkPolicy(store, args.policyId);
+    if (issues.length) {
+      return fail("invalid_args", "Invalid arguments for monitor.updateHeartbeat", issues);
+    }
     if (
       monitor.name === args.name &&
       monitor.intervalSeconds === args.intervalSeconds &&
-      monitor.graceSeconds === args.graceSeconds
+      monitor.graceSeconds === args.graceSeconds &&
+      (monitor.policyId ?? null) === args.policyId
     ) {
       return fail("conflict", "Nothing to change");
     }
-    store.update("monitors", args.id, {
+    const row = store.update("monitors", args.id, {
       name: args.name,
       intervalSeconds: args.intervalSeconds,
       graceSeconds: args.graceSeconds,
+      policyId: args.policyId,
       updatedAt: ctx.now,
     });
-    const event: MonitorUpdated = {
-      type: "monitor.updated",
-      subject: args.id,
-      data: { id: args.id, name: args.name, kind: "heartbeat" },
-    };
-    return ok(event);
+    return ok(updated(row));
   },
 });
 

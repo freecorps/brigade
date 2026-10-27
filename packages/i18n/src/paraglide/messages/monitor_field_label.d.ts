@@ -18,6 +18,7 @@ export type Monitor_Field_LabelInputs = {
 * | "interval" | "Every (seconds)" |
 * | "timeout" | "Timeout (seconds)" |
 * | "grace" | "Grace (seconds)" |
+* | "policy" | "Escalation policy" |
 * | * | "Check from" |
 *
 * @param {Monitor_Field_LabelInputs} inputs

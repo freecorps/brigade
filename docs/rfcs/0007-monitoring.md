@@ -151,7 +151,9 @@ verdict or failure reason changes.
   `incident.declare` (SEV2, "<name> is down") in the same transaction, so there is never an alert without its
   incident (its `incident.declared` event comes before `alert.fired`). When the quorum turns up again the alert resolves; the incident is left for people, since incidents have no
   timeline yet. Pausing or deleting a monitor resolves its alert too. Every step is an event in the outbox
-  (`monitor.*`, `alert.fired`, `alert.resolved`, `incident.declared`).
+  (`monitor.*`, `alert.fired`, `alert.resolved`, `incident.declared`). A monitor may name an escalation policy
+  (`policyId`): the incident it opens pages through that policy instead of the workspace's default (RFC 0003
+  "Escalation policies").
 
 ## Watching the watcher
 

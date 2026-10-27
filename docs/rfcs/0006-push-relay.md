@@ -81,8 +81,9 @@ relay's bearer token):
 
 ## Who is paged
 
-A workspace with a **default escalation policy** (RFC 0003 "Escalation policies") pages through it; one without
-pages by the **interim rule**, unchanged since Phase 1.
+A workspace with a **default escalation policy** (RFC 0003 "Escalation policies") pages through it, and an incident a
+monitor opened pages through that monitor's own policy when it names one; with neither, the **interim rule** pages,
+unchanged since Phase 1.
 
 **Through the policy.** The first page of an incident (`incident.declared`, or a severity raised into SEV1 or SEV2
 while no run is under way) starts an escalation run in the shard (`escalation.start`) and pages level 1 on that same
@@ -118,10 +119,23 @@ chain:
   unacknowledged, through a mutation that does not read the levels (`escalation.fallback`, `reason: "stalled"`), and
   the run ends. An "ok" that left the level due (a stored result the run did not move past) counts as a failure, so
   the alarm never comes straight back to it.
-- A level reached on some device whose push then fails (relay down, APNs refusing) is recorded when the page
-  settles (RFC 0005 "Notifiers") and escalates at its timeout, not before: retries take about 75 s and a level's
-  timeout is at least a minute. Escalating early on a failed delivery is still open (Q18), now that receipts say
-  which pushes APNs refused ("Delivery receipts").
+- **A level nobody could be reached on by push escalates early.** When a level's page settles (`Pager.record` with
+  its last result: every push answered, retries spent) and no device took any of its pushes (each refused or failed
+  for good: `token_invalid`, `undelivered` after the last try, `unsupported`, `not_configured`; or none of its members
+  had a device left when it was planned), the shard fires what would come at the level's timeout now
+  (`escalation.unreached`, as `sys_escalation`): the next level, level 1 of the next round, or, past the last level
+  and repeat, everyone who can respond once and the run ends, exactly as at a timeout. The page and its timeline entry
+  say why ("Nobody on level 1 could be reached, so level 2 was paged now", `reason: undelivered`, `unreached: 1`).
+  Only refusals count: a push APNs accepted counts as reached whether or not a receipt came back (receipts are best
+  effort), so one device that took it, on any member of the level, keeps the level waiting for its timeout; so does
+  whoever caused the run's first page being on level 1 (reached without a push). Only the level's own page counts:
+  not a severity raise paging it again, and not a page the Queue gave up on (that one is paged again instead, "A lost
+  page"; a page made again for it does count). It is de-duplicated by the run and its step
+  (`unreached:<run>:<step>`) and refused once the run moved on, was acknowledged or resolved, so a redelivered or
+  dead-lettered result never advances twice. Never in the way: if it cannot run, it is logged and the level's timeout
+  fires the next level as before, and a result that never arrives (the consumer still retrying, or gone) leaves it to
+  the alarm. Tests: `apps/api/test/escalation.test.ts` ("escalating early when every push of a level fails"),
+  `packages/schema/tests/escalation.test.ts`.
 - **Timers survive restarts.** The run and its timer are in the shard's storage; the alarm is set whenever a run
   starts or advances, and the object re-arms it from the earliest timer every time it wakes, so an eviction or a
   deploy mid-escalation resumes on time (or at once, if the level was due meanwhile). The alarm fires due levels

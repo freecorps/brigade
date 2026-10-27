@@ -20,6 +20,7 @@ import {
   formatSeconds,
   monitorActions,
   monitorBadge,
+  monitorPolicy,
   monitorRefusal,
   monitorsFull,
   newHeartbeat,
@@ -362,7 +363,13 @@ test("the edit form opens with the monitor's values, and an untouched one change
     ok: true,
     kind: "heartbeat",
     changed: false,
-    args: { id: heartbeat.id, name: "Checkout", intervalSeconds: 60, graceSeconds: 120 },
+    args: {
+      id: heartbeat.id,
+      name: "Checkout",
+      intervalSeconds: 60,
+      graceSeconds: 120,
+      policyId: null,
+    },
   });
   // No token hash in a heartbeat's update: its URL stays as it was.
   expect(checkEdit({ ...beat, name: "Nightly backup" }, heartbeat)).toMatchObject({
@@ -474,4 +481,52 @@ test("saving an edit keeps a teammate's change to another field made while the f
     regions: ["enam"],
   });
   expect(regions.regions).toEqual(["enam"]);
+});
+
+const ESC = "esc_01JB0000000000000000000001";
+const ESC2 = "esc_01JB0000000000000000000002";
+
+test("a monitor's escalation policy: its own, the default, or none; picked and saved through the form", () => {
+  const policies = [
+    { id: ESC, name: "Checkout", isDefault: true },
+    { id: ESC2, name: "Payments", isDefault: false },
+  ];
+  expect(monitorPolicy({ policyId: ESC2 }, policies)).toEqual({ kind: "own", name: "Payments" });
+  // Rows from before policies per monitor, and a policy this client no longer has, read as the default.
+  expect(monitorPolicy({}, policies)).toEqual({ kind: "default", name: "Checkout" });
+  expect(monitorPolicy({ policyId: "esc_01JB0000000000000000000009" }, policies)).toEqual({
+    kind: "default",
+    name: "Checkout",
+  });
+  expect(monitorPolicy({ policyId: null }, [])).toEqual({ kind: "none" });
+  expect(m.monitor_policy({ kind: "own", name: "Payments" }, { locale: "pt-BR" })).toBe(
+    "Chama por Payments",
+  );
+
+  expect(
+    checkDraft({ ...EMPTY_DRAFT, name: "API", url: "https://example.com" }, id()),
+  ).toMatchObject({ ok: true, args: { policyId: null } });
+  const http = row();
+  expect(draftFromRow(http).policyId).toBe("");
+  const picked = checkEdit({ ...draftFromRow(http), policyId: ESC2 }, http);
+  expect(picked).toMatchObject({ ok: true, changed: true, args: { policyId: ESC2 } });
+  // A policy change is not a new target: the checks do not start over.
+  expect(editRestarts({ ...draftFromRow(http), policyId: ESC2 }, http)).toBe(false);
+  const own = row({ policyId: ESC2 });
+  expect(checkEdit(draftFromRow(own), own)).toMatchObject({ ok: true, changed: false });
+  expect(checkEdit({ ...draftFromRow(own), policyId: "" }, own)).toMatchObject({
+    ok: true,
+    changed: true,
+    args: { policyId: null },
+  });
+  const beat = row({ kind: "heartbeat", url: null, method: null, regions: [], graceSeconds: 300 });
+  expect(checkEdit({ ...draftFromRow(beat), policyId: ESC }, beat)).toMatchObject({
+    ok: true,
+    kind: "heartbeat",
+    changed: true,
+    args: { policyId: ESC },
+  });
+  expect(
+    checkDraft({ ...EMPTY_DRAFT, name: "API", url: "https://example.com", policyId: "nope" }, id()),
+  ).toMatchObject({ ok: false, fields: ["policyId"] });
 });

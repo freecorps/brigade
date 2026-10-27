@@ -16,6 +16,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "port" | "Any port but 25." |
 * | "timeout" | "How long one check may take." |
 * | "timeout_tcp" | "How long the connection may take to open." |
+* | "policy" | "An incident this monitor opens pages through this policy." |
 * | * | "How late a ping may be before it counts as missed." |
 *
 * @param {Monitor_Field_HintInputs} inputs
@@ -31,6 +32,7 @@ export const monitor_field_hint = /** @type {((inputs: Monitor_Field_HintInputs,
 		if (i?.field === "port") return /** @type {LocalizedString} */ (`Qualquer porta menos a 25.`);
 		if (i?.field === "timeout") return /** @type {LocalizedString} */ (`Quanto tempo uma verificação pode levar.`);
 		if (i?.field === "timeout_tcp") return /** @type {LocalizedString} */ (`Quanto tempo a conexão pode levar para abrir.`);
+		if (i?.field === "policy") return /** @type {LocalizedString} */ (`Um incidente aberto por este monitor chama por esta política.`);
 		return /** @type {LocalizedString} */ (`Quanto um sinal pode atrasar antes de contar como perdido.`)
 	}
 	{
@@ -40,6 +42,7 @@ export const monitor_field_hint = /** @type {((inputs: Monitor_Field_HintInputs,
 		if (i?.field === "port") return /** @type {LocalizedString} */ (`Any port but 25.`);
 		if (i?.field === "timeout") return /** @type {LocalizedString} */ (`How long one check may take.`);
 		if (i?.field === "timeout_tcp") return /** @type {LocalizedString} */ (`How long the connection may take to open.`);
+		if (i?.field === "policy") return /** @type {LocalizedString} */ (`An incident this monitor opens pages through this policy.`);
 		return /** @type {LocalizedString} */ (`How late a ping may be before it counts as missed.`)
 	}
 });

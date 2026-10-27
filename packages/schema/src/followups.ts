@@ -136,6 +136,8 @@ export const createFollowUp = defineMutation({
     const row: FollowUpRow = {
       id: args.id,
       incidentId: args.incidentId,
+      incidentNumber: incident.number,
+      incidentTitle: incident.title,
       title: args.title,
       ownerId: args.ownerId,
       dueDate: args.dueDate,

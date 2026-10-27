@@ -705,6 +705,9 @@ export type CatalogDeletedRow = { id: string; at: number };
 export type FollowUpRow = {
   id: string; // fup_<ULID>, made by the client
   incidentId: string;
+  /** The incident's number and title when it was added (titles never change), for the workspace-wide list. */
+  incidentNumber: number | null;
+  incidentTitle: string;
   title: string;
   /** The member who owns it; null: nobody yet (or its owner left). */
   ownerId: string | null;

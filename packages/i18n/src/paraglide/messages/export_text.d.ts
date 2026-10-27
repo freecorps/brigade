@@ -25,7 +25,7 @@ export type Export_TextInputs = {
 * | "recent" | "Recent exports" |
 * | "none" | "No exports yet." |
 * | "expires" | "Expires {time}" |
-* | "scope_incident" | "Incident {name}" |
+* | "scope_incident" | "One incident" |
 * | "scope_range" | "{name}" |
 * | "failed_too_large" | "Too many incidents for one file. Pick a shorter range." |
 * | "failed_limit_reached" | "Too many incidents for one file. Pick a shorter range." |

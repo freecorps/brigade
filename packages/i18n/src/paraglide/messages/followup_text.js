@@ -49,6 +49,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "incident_column" | "Incident" |
 * | "mine" | "Mine only" |
 * | "back" | "Overview" |
+* | "title_required" | "Say what needs doing." |
 * | * | "Follow-ups" |
 *
 * @param {Followup_TextInputs} inputs
@@ -97,6 +98,7 @@ export const followup_text = /** @type {((inputs: Followup_TextInputs, options?:
 		if (i?.text === "incident_column") return /** @type {LocalizedString} */ (`Incidente`);
 		if (i?.text === "mine") return /** @type {LocalizedString} */ (`Só as minhas`);
 		if (i?.text === "back") return /** @type {LocalizedString} */ (`Visão geral`);
+		if (i?.text === "title_required") return /** @type {LocalizedString} */ (`Diga o que precisa ser feito.`);
 		return /** @type {LocalizedString} */ (`Ações de acompanhamento`)
 	}
 	{
@@ -139,6 +141,7 @@ export const followup_text = /** @type {((inputs: Followup_TextInputs, options?:
 		if (i?.text === "incident_column") return /** @type {LocalizedString} */ (`Incident`);
 		if (i?.text === "mine") return /** @type {LocalizedString} */ (`Mine only`);
 		if (i?.text === "back") return /** @type {LocalizedString} */ (`Overview`);
+		if (i?.text === "title_required") return /** @type {LocalizedString} */ (`Say what needs doing.`);
 		return /** @type {LocalizedString} */ (`Follow-ups`)
 	}
 });

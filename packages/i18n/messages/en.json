@@ -2359,6 +2359,7 @@
         "text=incident_column": "Incident",
         "text=mine": "Mine only",
         "text=back": "Overview",
+        "text=title_required": "Say what needs doing.",
         "text=*": "Follow-ups"
       }
     }
@@ -2427,7 +2428,7 @@
         "part=recent": "Recent exports",
         "part=none": "No exports yet.",
         "part=expires": "Expires {time}",
-        "part=scope_incident": "Incident {name}",
+        "part=scope_incident": "One incident",
         "part=scope_range": "{name}",
         "part=failed_too_large": "Too many incidents for one file. Pick a shorter range.",
         "part=failed_limit_reached": "Too many incidents for one file. Pick a shorter range.",
@@ -2435,6 +2436,20 @@
         "part=failed_exports_unavailable": "Exports aren't set up on this server.",
         "part=failed_other": "Couldn't export: {reason}",
         "part=*": "Export"
+      }
+    }
+  ],
+  "export_incidents": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} incident",
+        "countPlural=*": "{countFormatted} incidents"
       }
     }
   ]

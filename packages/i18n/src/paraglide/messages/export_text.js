@@ -24,7 +24,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "recent" | "Recent exports" |
 * | "none" | "No exports yet." |
 * | "expires" | "Expires {time}" |
-* | "scope_incident" | "Incident {name}" |
+* | "scope_incident" | "One incident" |
 * | "scope_range" | "{name}" |
 * | "failed_too_large" | "Too many incidents for one file. Pick a shorter range." |
 * | "failed_limit_reached" | "Too many incidents for one file. Pick a shorter range." |
@@ -54,7 +54,7 @@ export const export_text = /** @type {((inputs: Export_TextInputs, options?: { l
 		if (i?.part === "recent") return /** @type {LocalizedString} */ (`Exportações recentes`);
 		if (i?.part === "none") return /** @type {LocalizedString} */ (`Nenhuma exportação ainda.`);
 		if (i?.part === "expires") return /** @type {LocalizedString} */ (`Expira ${i?.time}`);
-		if (i?.part === "scope_incident") return /** @type {LocalizedString} */ (`Incidente ${i?.name}`);
+		if (i?.part === "scope_incident") return /** @type {LocalizedString} */ (`Um incidente`);
 		if (i?.part === "scope_range") return /** @type {LocalizedString} */ (`${i?.name}`);
 		if (i?.part === "failed_too_large") return /** @type {LocalizedString} */ (`Incidentes demais para um arquivo. Escolha um período menor.`);
 		if (i?.part === "failed_limit_reached") return /** @type {LocalizedString} */ (`Incidentes demais para um arquivo. Escolha um período menor.`);
@@ -78,7 +78,7 @@ export const export_text = /** @type {((inputs: Export_TextInputs, options?: { l
 		if (i?.part === "recent") return /** @type {LocalizedString} */ (`Recent exports`);
 		if (i?.part === "none") return /** @type {LocalizedString} */ (`No exports yet.`);
 		if (i?.part === "expires") return /** @type {LocalizedString} */ (`Expires ${i?.time}`);
-		if (i?.part === "scope_incident") return /** @type {LocalizedString} */ (`Incident ${i?.name}`);
+		if (i?.part === "scope_incident") return /** @type {LocalizedString} */ (`One incident`);
 		if (i?.part === "scope_range") return /** @type {LocalizedString} */ (`${i?.name}`);
 		if (i?.part === "failed_too_large") return /** @type {LocalizedString} */ (`Too many incidents for one file. Pick a shorter range.`);
 		if (i?.part === "failed_limit_reached") return /** @type {LocalizedString} */ (`Too many incidents for one file. Pick a shorter range.`);

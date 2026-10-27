@@ -50,6 +50,7 @@ export type Followup_TextInputs = {
 * | "incident_column" | "Incident" |
 * | "mine" | "Mine only" |
 * | "back" | "Overview" |
+* | "title_required" | "Say what needs doing." |
 * | * | "Follow-ups" |
 *
 * @param {Followup_TextInputs} inputs

@@ -708,6 +708,8 @@ const ENTRY_GLYPHS: Record<Exclude<TimelineRow["kind"], "status_changed">, Glyph
   type_changed: { ios: "tag", android: "label", web: "label" },
   services_changed: { ios: "square.stack.3d.up", android: "layers", web: "layers" },
   field_changed: { ios: "square.and.pencil", android: "edit_note", web: "edit_note" },
+  follow_up: { ios: "checklist", android: "checklist", web: "checklist" },
+  postmortem: { ios: "doc.text", android: "description", web: "description" },
 };
 
 /**

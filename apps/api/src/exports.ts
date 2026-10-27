@@ -16,6 +16,7 @@ import {
 } from "@freecorps/brigade-schema";
 import type { Auth } from "./auth.ts";
 import { checkMember, json, readJson } from "./member-route.ts";
+import { instanceMonitorCap, type MonitorEnv } from "./monitors.ts";
 
 export { MAX_EXPORT_BYTES };
 /** Objects one R2 list call of the sweep reads (the most R2 lists, and deletes, at once). */
@@ -188,10 +189,13 @@ export async function sweepExports(
   return deleted;
 }
 
-/** Whether this deployment can draft with AI and export, for the dashboard (`GET /features`, signed in). */
+/**
+ * Whether this deployment can draft with AI and export, and the most monitors a workspace may have here
+ * (`maxMonitors`, RFC 0007 "Limits"), for the dashboard (`GET /features`, signed in).
+ */
 export async function features(
   request: Request,
-  env: Env & ExportEnv & { AI?: unknown },
+  env: Env & ExportEnv & MonitorEnv & { AI?: unknown },
   lazyAuth: () => Auth,
 ): Promise<Response> {
   if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405, { Allow: "GET" });
@@ -201,9 +205,15 @@ export async function features(
   } catch {
     return json({ error: "unavailable" }, 503);
   }
-  return json({ ai: env.AI !== undefined, exports: env.EXPORTS !== undefined }, 200, {
-    "Cache-Control": "private, no-store",
-  });
+  return json(
+    {
+      ai: env.AI !== undefined,
+      exports: env.EXPORTS !== undefined,
+      maxMonitors: instanceMonitorCap(env),
+    },
+    200,
+    { "Cache-Control": "private, no-store" },
+  );
 }
 
 function failed(message: string, workspaceId: string, error: unknown): Response {

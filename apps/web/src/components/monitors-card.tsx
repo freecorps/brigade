@@ -1,8 +1,13 @@
-import { m, type Locale } from "@freecorps/brigade-i18n";
+import { formatNumber, m, type Locale } from "@freecorps/brigade-i18n";
 import {
   can,
+  expectedStatuses,
   formatIncidentNumber,
+  isCheckError,
+  MAX_MONITORS_PER_WORKSPACE,
+  MONITOR_CAP_MAX,
   monitorAlerting,
+  type MemberRow,
   type MonitorCheck,
   type MonitorRow,
 } from "@freecorps/brigade-schema";
@@ -12,11 +17,13 @@ import { cn } from "cn";
 import {
   BellRingIcon,
   CheckIcon,
+  CircleHelpIcon,
   CircleCheckIcon,
   CircleDashedIcon,
   CirclePauseIcon,
   CloudOffIcon,
   CopyIcon,
+  GaugeIcon,
   OctagonAlertIcon,
   PauseIcon,
   PencilIcon,
@@ -47,11 +54,13 @@ import { useMember } from "@/components/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
-import { FormError } from "@/components/ui/field";
+import { Field, FormError } from "@/components/ui/field";
 import { formatAge, queryErrorReason } from "@/lib/incidents";
 import {
   checkErrorReason,
   formatLatency,
+  checkErrorMonitors,
+  formatStatuses,
   formatSeconds,
   monitorActions,
   monitorPolicy,
@@ -59,7 +68,9 @@ import {
   monitorsFull,
   monitorRefusal,
   newHeartbeat,
+  pausedBy,
   sourceChips,
+  stalledRegions,
   tcpHostLabel,
   type CheckedDraft,
   type CheckedEdit,
@@ -67,7 +78,9 @@ import {
   type MonitorPolicy,
   type MonitorBadge,
   type SourceChip,
+  workspaceMonitorCap,
 } from "@/lib/monitors";
+import { useFeatures } from "@/lib/follow-ups";
 import type { MutationOutcome } from "@freecorps/brigade-sync";
 
 /** Down is the only solid fill, like SEV1: it is what pages people. No data is a warning, never "up". */
@@ -95,6 +108,14 @@ export function MonitorsCard() {
   const manage = can(role, "monitor:manage");
   const { rows, status, error } = useQuery("monitors.all", {});
   const policies = useQuery("escalationPolicies.all", {}).rows;
+  const members = useQuery("members.all", {}).rows;
+  const [settings] = useQuery("monitors.cap", {}).rows;
+  const instanceCap = useFeatures().maxMonitors;
+  const cap = workspaceMonitorCap(settings, instanceCap);
+  // Owners only (`monitor.setCap`): the limit is the workspace's, not one admin's call.
+  const ownsCap = role === "owner";
+  const [cappingOpen, setCapping] = useState(false);
+  const capRef = useRef<HTMLButtonElement>(null);
   const createHttp = useMutation("monitor.createHttp");
   const createTcp = useMutation("monitor.createTcp");
   const createHeartbeat = useMutation("monitor.createHeartbeat");
@@ -104,6 +125,7 @@ export function MonitorsCard() {
   const rotateHeartbeat = useMutation("monitor.rotateHeartbeat");
   const setPaused = useMutation("monitor.setPaused");
   const remove = useMutation("monitor.delete");
+  const setCap = useMutation("monitor.setCap");
   const [adding, setAdding] = useState(false);
   /** The monitor whose edit form is open. */
   const [editing, setEditing] = useState<string | null>(null);
@@ -139,7 +161,9 @@ export function MonitorsCard() {
 
   const report = (name: string) => (outcome: MutationOutcome) => {
     if (!outcome.ok) {
-      setRefused(m.monitor_change_failed({ name, reason: monitorRefusal(outcome.error.code) }));
+      setRefused(
+        m.monitor_change_failed({ name, reason: monitorRefusal(outcome.error.code, cap, locale) }),
+      );
     }
     return outcome.ok;
   };
@@ -302,18 +326,30 @@ export function MonitorsCard() {
           <CardTitle id="monitors-title" className="truncate">
             {m.monitors_title()}
           </CardTitle>
-          {manage && !adding ? (
-            <Button ref={addRef} variant="outline" onClick={() => ask({ kind: "add" })}>
-              <PlusIcon aria-hidden />
-              {m.monitor_add()}
-            </Button>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {ownsCap && !cappingOpen ? (
+              <Button ref={capRef} variant="ghost" onClick={() => setCapping(true)}>
+                <GaugeIcon aria-hidden />
+                {m.monitor_cap({ part: "edit", count: "", max: "" })}
+              </Button>
+            ) : null}
+            {manage && !adding ? (
+              <Button ref={addRef} variant="outline" onClick={() => ask({ kind: "add" })}>
+                <PlusIcon aria-hidden />
+                {m.monitor_add()}
+              </Button>
+            ) : null}
+          </div>
         </div>
         <div className="flex h-6 items-center gap-2 text-sm whitespace-nowrap text-muted-foreground tabular-nums">
           {status === "ready" ? (
             rows.length > 0 ? (
               <>
                 <span>{m.monitors_count({ count: rows.length })}</span>
+                <span aria-hidden>·</span>
+                <span>
+                  {m.monitor_cap({ part: "limit", count: "", max: formatNumber(cap, locale) })}
+                </span>
                 {down > 0 ? (
                   <Badge variant="sev1">
                     <OctagonAlertIcon aria-hidden />
@@ -329,9 +365,26 @@ export function MonitorsCard() {
       </div>
 
       <CardContent className="flex flex-col gap-5">
+        {cappingOpen ? (
+          <MonitorCapForm
+            current={settings?.cap ?? null}
+            instance={instanceCap}
+            count={rows.length}
+            locale={locale}
+            onDone={(next) => {
+              setCapping(false);
+              requestAnimationFrame(() => capRef.current?.focus());
+              if (next === undefined) return;
+              setRefused(null);
+              void setCap({ cap: next }).then(
+                report(m.monitor_cap({ part: "label", count: "", max: "" })),
+              );
+            }}
+          />
+        ) : null}
         {adding ? (
           <MonitorForm
-            mode={{ kind: "create", full: monitorsFull(rows.length), onCreate }}
+            mode={{ kind: "create", full: monitorsFull(rows.length, cap), cap, onCreate }}
             policies={policies}
             onCancel={close}
             onChanged={onChanged}
@@ -358,6 +411,8 @@ export function MonitorsCard() {
           <DismissableError onDismiss={() => setRefused(null)}>{refused}</DismissableError>
         ) : null}
         {status === "error" ? <FormError>{queryErrorReason(error?.code)}</FormError> : null}
+        <StalledProbes rows={rows} now={now} locale={locale} />
+        <CheckErrors rows={rows} now={now} locale={locale} />
 
         {rows.length > 0 ? (
           <ul
@@ -372,6 +427,7 @@ export function MonitorsCard() {
                 locale={locale}
                 now={now}
                 userId={userId}
+                members={members}
                 policy={monitorPolicy(row, policies)}
                 actions={monitorActions(role, row)}
                 onPause={onPause}
@@ -406,6 +462,147 @@ export function MonitorsCard() {
   );
 }
 
+/**
+ * The workspace's monitor limit, for owners (`monitor.setCap`): a whole number up to the instance's (`instance`, from
+ * `GET /api/features`; the shard checks it either way), or empty for the instance's own. A limit under the monitors it
+ * has is allowed and said: they keep running, and no new one is added. `onDone` gets the cap to send (null: the
+ * instance's), or undefined when nothing changed or it was cancelled.
+ */
+function MonitorCapForm({
+  current,
+  instance,
+  count,
+  locale,
+  onDone,
+}: {
+  current: number | null;
+  instance: number | undefined;
+  count: number;
+  locale: Locale;
+  onDone: (cap: number | null | undefined) => void;
+}) {
+  const [text, setText] = useState(current === null ? "" : String(current));
+  const [invalid, setInvalid] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => inputRef.current?.focus(), []);
+  const max = instance ?? MAX_MONITORS_PER_WORKSPACE;
+  const typed = text.trim() === "" ? null : /^\d+$/.test(text.trim()) ? Number(text) : Number.NaN;
+  const below = typed !== null && Number.isInteger(typed) && typed < count;
+  return (
+    <form
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (typed !== null && (!Number.isInteger(typed) || typed < 1 || typed > max)) {
+          setInvalid(true);
+          inputRef.current?.focus();
+          return;
+        }
+        onDone(typed === current ? undefined : typed);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          onDone(undefined);
+        }
+      }}
+      className="flex min-w-0 flex-col gap-3 rounded-md border bg-muted/40 p-4"
+    >
+      <Field
+        ref={inputRef}
+        label={m.monitor_cap({ part: "label", count: "", max: "" })}
+        hint={m.monitor_cap({ part: "hint", count: "", max: formatNumber(max, locale) })}
+        error={
+          invalid
+            ? m.monitor_cap({ part: "invalid", count: "", max: formatNumber(max, locale) })
+            : undefined
+        }
+        inputMode="numeric"
+        placeholder={String(max)}
+        maxLength={String(MONITOR_CAP_MAX).length}
+        className="sm:max-w-xs"
+        value={text}
+        onChange={(event) => {
+          setText(event.target.value);
+          setInvalid(false);
+        }}
+      />
+      <div aria-live="polite">
+        {below ? (
+          <p className="rounded-md bg-card px-3 py-2 text-sm text-muted-foreground">
+            {m.monitor_cap({ part: "below", count: formatNumber(count, locale), max: "" })}
+          </p>
+        ) : null}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit">{m.monitor_cap({ part: "save", count: "", max: "" })}</Button>
+        <Button type="button" variant="ghost" onClick={() => onDone(undefined)}>
+          {m.declare_cancel()}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Brigade's own probes gone quiet in a region (`stalledRegions`): said once above the list, since every monitor there
+ * turns "No data" together, which is Brigade's failure, not the targets'. It pages nobody (Q17); the shard has already
+ * pushed the region's checks again to restart it.
+ */
+function StalledProbes({
+  rows,
+  now,
+  locale,
+}: {
+  rows: readonly MonitorRow[];
+  now: number;
+  locale: Locale;
+}) {
+  const regions = stalledRegions(rows, now);
+  if (regions.length === 0) return null;
+  const names = new Intl.ListFormat(locale, { type: "conjunction" }).format(
+    regions.map((region) => m.monitor_region({ region })),
+  );
+  return (
+    <p
+      role="status"
+      className="flex items-start gap-2 rounded-md bg-sev3 px-3 py-2.5 text-sm text-sev3-foreground"
+    >
+      <CloudOffIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+      <span className="min-w-0">{m.monitor_stalled({ regions: names })}</span>
+    </p>
+  );
+}
+
+/**
+ * Monitors whose latest check Brigade could not judge (`checkErrorMonitors`): named once above the list. Their
+ * regions keep their last verdict, so nobody is paged for it (RFC 0007 "Body patterns"); the pattern needs fixing.
+ */
+function CheckErrors({
+  rows,
+  now,
+  locale,
+}: {
+  rows: readonly MonitorRow[];
+  now: number;
+  locale: Locale;
+}) {
+  const unjudged = checkErrorMonitors(rows, now);
+  if (unjudged.length === 0) return null;
+  const names = new Intl.ListFormat(locale, { type: "conjunction" }).format(
+    unjudged.map((row) => row.name),
+  );
+  return (
+    <p
+      role="status"
+      className="flex items-start gap-2 rounded-md bg-sev3 px-3 py-2.5 text-sm text-sev3-foreground"
+    >
+      <CircleHelpIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+      <span className="min-w-0 break-words">{m.monitor_check_errors({ monitors: names })}</span>
+    </p>
+  );
+}
+
 /** A form to open: the create form, or a monitor's edit form. */
 type Opening = { kind: "add" } | { kind: "edit"; id: string };
 
@@ -421,6 +618,7 @@ function MonitorItem({
   locale,
   now,
   userId,
+  members,
   policy,
   actions,
   onPause,
@@ -431,6 +629,8 @@ function MonitorItem({
   locale: Locale;
   now: number;
   userId: string;
+  /** The shard's member list, for who paused it. */
+  members: readonly MemberRow[];
   /** Which escalation policy its incidents page through (`monitorPolicy`). */
   policy: MonitorPolicy;
   /** What this member may do here (`monitorActions`): none for responders and viewers. */
@@ -474,12 +674,13 @@ function MonitorItem({
   const line =
     row.paused && row.pausedAt !== null
       ? m.monitor_last_result({
-          state: row.pausedBy === userId ? "paused_you" : "paused_other",
+          ...pausedBy(row, userId, members),
           when: formatAge(Math.min(row.pausedAt, now), now, locale),
         })
       : latest && !row.paused
         ? m.monitor_last_result({
             state: "report",
+            name: "",
             when: formatAge(Math.min(latest.at, now), now, locale),
           })
         : null;
@@ -717,6 +918,19 @@ function CheckChip({ chip, row, locale }: { chip: SourceChip; row: MonitorRow; l
     );
   }
   const { check } = chip;
+  if (isCheckError(check.error)) {
+    // Not the target's failure: neither up nor down, and it changed neither (`CHECK_ERRORS`).
+    return (
+      <li className={cn(base, "flex-wrap border-sev3-foreground/40 text-sev3-foreground")}>
+        <CircleHelpIcon aria-hidden className="size-3 shrink-0" />
+        <span className="whitespace-nowrap">{where}</span>
+        {check.colo === null ? null : <span className="font-medium">{check.colo}</span>}
+        <span className="font-medium">
+          {m.monitor_check_error({ reason: check.error ?? "", got: "", expected: "" })}
+        </span>
+      </li>
+    );
+  }
   return (
     <li
       className={cn(
@@ -740,9 +954,9 @@ function CheckChip({ chip, row, locale }: { chip: SourceChip; row: MonitorRow; l
       {check.up ? null : (
         <span className="font-medium">
           {m.monitor_check_error({
-            reason: checkErrorReason(check, row.expectedStatus),
+            reason: checkErrorReason(check, expectedStatuses(row)),
             got: String(check.httpStatus ?? ""),
-            expected: String(row.expectedStatus ?? ""),
+            expected: formatStatuses(expectedStatuses(row)),
           })}
         </span>
       )}

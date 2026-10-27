@@ -70,8 +70,11 @@ export function formatDueDate(date: string, locale: Locale): string {
 export const linkProblem = (value: string) =>
   value.trim() !== "" && !isFieldLink(value.trim()) ? followUpText("link_invalid") : undefined;
 
-/** What this server can do beyond the basics (`GET /api/features`); both off until it answers. */
-export type Features = { ai: boolean; exports: boolean };
+/**
+ * What this server can do beyond the basics (`GET /api/features`); both off until it answers. `maxMonitors`: the most
+ * monitors a workspace may have on this instance (RFC 0007 "Limits"), absent until it answers.
+ */
+export type Features = { ai: boolean; exports: boolean; maxMonitors?: number };
 
 let cached: Promise<Features> | undefined;
 
@@ -81,7 +84,12 @@ export function loadFeatures(fetcher: typeof fetch = fetch): Promise<Features> {
     .then(async (response) => {
       if (!response.ok) throw new Error(String(response.status));
       const body = (await response.json()) as Partial<Features>;
-      return { ai: body.ai === true, exports: body.exports === true };
+      const max = body.maxMonitors;
+      return {
+        ai: body.ai === true,
+        exports: body.exports === true,
+        ...(Number.isSafeInteger(max) && max! > 0 && { maxMonitors: max }),
+      };
     })
     .catch(() => {
       // Asked again next time: a failed answer is no reason to hide them for good.

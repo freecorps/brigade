@@ -17,6 +17,7 @@ import type {
   AlertStatus,
   CheckSource,
   HttpMethod,
+  KeywordMode,
   MonitorKind,
   MonitorStatus,
   ProbeRegion,
@@ -399,6 +400,19 @@ export type WorkspaceRow = {
 };
 
 /**
+ * The workspace's own monitor settings: one row, `MONITOR_SETTINGS_ID`, written by `monitor.setCap`. Its own table, so
+ * every member syncs the cap and nothing else of the workspace row.
+ */
+export type MonitorSettingsRow = {
+  id: string;
+  /**
+   * The most monitors it may have, set by an owner; never above the instance's own cap (`MAX_MONITORS_PER_WORKSPACE`,
+   * or the API's `MAX_MONITORS` env var). Null: the instance's cap.
+   */
+  cap: number | null;
+};
+
+/**
  * Who the email notifier writes to when paging fails (RFC 0005 "Email"):
  * - `unpaged`: a member a SEV1 or SEV2 page did not reach (no device, or every push failed), once per incident;
  * - `nobodyPaged`: the workspace's owners, when a page reached nobody and nothing else will page on its own.
@@ -417,7 +431,10 @@ export type MonitorCheck = {
   colo: string | null;
   /** The HTTP status of the last check, if it got one. */
   httpStatus: number | null;
-  /** Why the last check failed (`timeout`, `status`, `keyword`, `network`, `blocked`, `missed`); null if it passed. */
+  /**
+   * Why the last check failed (`timeout`, `status`, `keyword`, `network`, `blocked`, `missed`); null if it passed.
+   * Or a check error (`CHECK_ERRORS`: the check could not be judged), kept with either verdict, which it did not change.
+   */
   error: string | null;
 };
 
@@ -434,8 +451,29 @@ export type MonitorRow = {
   method: HttpMethod | null;
   /** The status that counts as up; null: any 2xx or 3xx (redirects are never followed). */
   expectedStatus: number | null;
-  /** Text the body must contain; null: none. */
+  /** Text the body must contain (or, with `keywordMode` `regex`, a pattern it must match); null: none. */
   keyword: string | null;
+  /** How `keyword` is matched (RFC 0007 "Check types"): plain text, or a pattern (`pattern.ts`). Absent: `text`. */
+  keywordMode?: KeywordMode;
+  /**
+   * The statuses that count as up, as inclusive ranges (`200`, `200-299`); null or absent: `expectedStatus`, and when
+   * that is null too, any 2xx or 3xx. Written by every save since; `expectedStatus` stays for rows from before.
+   */
+  expectedStatuses?: StatusRange[] | null;
+  /**
+   * Request headers an HTTP check sends. Not secret: synced to every member, viewers too, like the URL; a header
+   * that carries credentials (`Authorization`, `Cookie`, …) is refused (`headerProblem`). Absent: none.
+   */
+  headers?: MonitorHeader[];
+  /**
+   * HTTP and TCP: how many fresh regions must agree for the status to change (RFC 0007 "Quorum and flapping"); null
+   * or absent: a majority of the fresh ones.
+   */
+  quorum?: number | null;
+  /** HTTP and TCP: alike checks in a row before a region's verdict flips; null or absent: `CONSECUTIVE_CHECKS`. */
+  consecutiveChecks?: number | null;
+  /** The severity of the incident it opens; absent: `MONITOR_INCIDENT_SEVERITY`. */
+  severity?: Severity;
   /** TCP: the host name or address (IPv6 without brackets) and port connected to. */
   host: string | null;
   port: number | null;
@@ -482,6 +520,11 @@ export type AlertRow = {
   resolvedAt: number | null;
   incidentId: string | null;
 };
+
+/** An inclusive range of HTTP statuses: `{ min: 200, max: 299 }`, or one status as `{ min: 204, max: 204 }`. */
+export type StatusRange = { min: number; max: number };
+/** A request header an HTTP check sends: a token name and a value. */
+export type MonitorHeader = { name: string; value: string };
 
 /**
  * A heartbeat monitor's secret side, never synced: the SHA-256 of its token (hex) and the last ping, kept exactly
@@ -1023,6 +1066,7 @@ export type BrigadeTables = {
   counters: CounterRow;
   workspace: WorkspaceRow;
   monitors: MonitorRow;
+  monitor_settings: MonitorSettingsRow;
   alerts: AlertRow;
   heartbeats: HeartbeatRow;
   timeline: TimelineRow;
@@ -1070,6 +1114,7 @@ export const TABLES = {
   counters: { serverOnly: true },
   workspace: { serverOnly: false },
   monitors: { serverOnly: false },
+  monitor_settings: { serverOnly: false },
   alerts: { serverOnly: false },
   heartbeats: { serverOnly: true },
   timeline: { serverOnly: false },

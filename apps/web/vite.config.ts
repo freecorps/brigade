@@ -40,6 +40,7 @@ function localSecrets(): Record<string, string> {
     "EMAIL_FROM",
     "DASHBOARD_URL",
     "WEBHOOK_SECRET_KEY",
+    "MAX_MONITORS",
   ];
   return Object.fromEntries(
     names.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])),

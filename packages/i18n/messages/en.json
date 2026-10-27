@@ -402,6 +402,57 @@
     }
   ],
   "monitor_limit_reached": "This workspace has {max} monitors, the most it can have. Delete one to add another.",
+  "monitor_keyword_mode": [
+    {
+      "declarations": ["input mode"],
+      "selectors": ["mode"],
+      "match": {
+        "mode=regex": "Pattern",
+        "mode=*": "Text"
+      }
+    }
+  ],
+  "monitor_header": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=add": "Add header",
+        "part=remove": "Remove header {name}",
+        "part=remove_unnamed": "Remove this header",
+        "part=*": "Header"
+      }
+    }
+  ],
+  "monitor_quorum_option": [
+    {
+      "declarations": ["input kind", "input count", "input total"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=majority": "Majority (default)",
+        "kind=*": "{count} of {total}"
+      }
+    }
+  ],
+  "monitor_failure_title": "When it fails",
+  "monitor_stalled": "Checks from {regions} stopped reporting. Monitors there show No data until they report again, and nobody is paged for it.",
+  "monitor_check_errors": "Brigade couldn't judge the latest checks of {monitors}: the body pattern took too long. They keep their last result and nobody is paged for it. Simplify the pattern to fix it.",
+  "monitor_cap": [
+    {
+      "declarations": ["input part", "input count", "input max"],
+      "selectors": ["part"],
+      "match": {
+        "part=limit": "Limit {max}",
+        "part=edit": "Change limit",
+        "part=label": "Monitor limit",
+        "part=hint": "At most {max} on this instance. Leave it empty to use that.",
+        "part=below": "This workspace has {count} monitors already. They keep running, but no new one can be added until some are deleted.",
+        "part=invalid": "Use a whole number from 1 to {max}, or leave it empty.",
+        "part=save": "Save limit",
+        "part=*": "Monitor limit"
+      }
+    }
+  ],
   "monitor_status": [
     {
       "declarations": ["input status"],
@@ -443,10 +494,11 @@
   ],
   "monitor_last_result": [
     {
-      "declarations": ["input state", "input when"],
+      "declarations": ["input state", "input name", "input when"],
       "selectors": ["state"],
       "match": {
         "state=paused_you": "Paused by you {when}",
+        "state=paused_name": "Paused by {name} {when}",
         "state=paused_other": "Paused by a teammate {when}",
         "state=*": "Last report {when}"
       }
@@ -466,13 +518,18 @@
         "field=host_underscore": "Host names can't contain underscores (_). Use a public host name or IP address.",
         "field=port": "Use a port from 1 to 65535.",
         "field=port_blocked": "Cloudflare blocks port 25. Use another port.",
-        "field=expected_status": "Use a status from 100 to 599, or leave it empty.",
+        "field=expected_status": "Use statuses from 100 to 599, like 200, 204 or 301-302, or leave it empty.",
         "field=keyword": "Use at most 200 characters.",
         "field=interval": "Use whole seconds, from 30 to 86,400 (24 hours).",
         "field=timeout": "Use 1 to 30 seconds, and no more than the interval.",
         "field=grace": "Use whole seconds, from 0 to 86,400 (24 hours).",
         "field=regions": "Pick at least one region.",
         "field=policy": "That policy no longer exists. Pick another.",
+        "field=keyword_regex": "This pattern isn't supported. Lookarounds, backreferences and word boundaries aren't, and repeat counts go up to 100.",
+        "field=keyword_regex_slow": "This pattern could take too long on a large page. Use smaller repeat counts, like 50 instead of 100.",
+        "field=headers": "Fix the marked headers: each needs a name and a value of plain characters, no credentials, and no name twice.",
+        "field=quorum": "Pick at most as many regions as it checks from.",
+        "field=consecutive": "Use a whole number from 1 to 10, or leave it empty.",
         "field=*": "Check this value."
       }
     }
@@ -495,6 +552,14 @@
         "field=timeout": "Timeout (seconds)",
         "field=grace": "Grace (seconds)",
         "field=policy": "Escalation policy",
+        "field=keyword_regex": "Pattern the page must match",
+        "field=keyword_mode": "Match as",
+        "field=headers": "Request headers",
+        "field=header_name": "Header name",
+        "field=header_value": "Header value",
+        "field=severity": "Incident severity",
+        "field=quorum": "Regions that must agree",
+        "field=consecutive": "Failed checks in a row",
         "field=*": "Check from"
       }
     }
@@ -505,12 +570,17 @@
       "selectors": ["field"],
       "match": {
         "field=url": "Everyone in the workspace, viewers too, can see this URL: keep tokens and passwords out of it.",
-        "field=expected_status": "Empty: any 2xx or 3xx. Redirects are not followed.",
+        "field=expected_status": "Empty: any 2xx or 3xx. Or list them: 200, 204, 301-302. Redirects are not followed.",
         "field=host": "Passes when a connection to this host and port opens; nothing is sent. Hosts proxied by Cloudflare can't be checked over TCP.",
         "field=port": "Any port but 25.",
         "field=timeout": "How long one check may take.",
         "field=timeout_tcp": "How long the connection may take to open.",
         "field=policy": "An incident this monitor opens pages through this policy.",
+        "field=keyword_regex": "A regular expression, without lookarounds or backreferences. Start it with (?i) to ignore case.",
+        "field=headers": "Sent with every check. Everyone in the workspace, viewers too, can see them: Host, Authorization, Cookie and other credentials can't go here.",
+        "field=severity": "The severity of the incident it opens.",
+        "field=quorum": "How many of its regions must see it down to open an incident, and up to resolve it.",
+        "field=consecutive": "Checks a region must fail in a row before it counts as down, and pass to count as up. Empty: 2.",
         "field=*": "How late a ping may be before it counts as missed."
       }
     }
@@ -526,8 +596,20 @@
         "reason=status": "Got {got}, expected {expected}",
         "reason=status_any": "Got {got}, expected 2xx or 3xx",
         "reason=keyword": "Text not found",
+        "reason=pattern_slow": "Check error: pattern too slow",
         "reason=missed": "No ping in time",
         "reason=*": "Check failed"
+      }
+    }
+  ],
+  "monitor_form_note": [
+    {
+      "declarations": ["input kind", "input time"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=status_5xx": "A 5xx status means the server failed. Listed here, it counts as up, so this monitor won't page for it.",
+        "kind=quorum_all": "Every region must see it down: an outage only some regions see won't open an incident. A region that stops reporting is left out until it reports again.",
+        "kind=*": "Opens an incident after about {time} of failed checks."
       }
     }
   ],

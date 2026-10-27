@@ -138,10 +138,16 @@ Validate the risky assumptions before writing product code. Each spike produces 
     (`MAX_MONITORS_PER_WORKSPACE`), refused as `limit_reached` and said in the form. A new heartbeat URL
     (`monitor.rotateHeartbeat`, owners and admins): New URL in the edit form, confirmed, the old URL refused at once,
     the monitor started over with a fresh interval and grace, and the new URL shown once with Copy (RFC 0007).
-  - Left: a per-plan or configurable monitor cap in place of the one 100 for every workspace; whether "No data" pages (Q17); member names for "Paused by" (today "you" or "a teammate"; the shard's member list now has them); regex,
-    headers and TLS expiry; configurable quorum and severity; alerting on a stalled probe (RFC 0007 "Watching the
-    watcher"; today it is logged and re-pushed); `AlertGroupDO` and alert routes, moving monitor alerts out of the
-    workspace shard;
+  - Also done: HTTP check options: statuses and ranges that count as up (`200, 204, 500-599`), a body pattern in a
+    restricted syntax run by a linear-time engine (`packages/schema/src/pattern.ts`, never `RegExp`), and up to 10
+    request headers, synced like the URL and refusing `Host`, `Authorization`, `Cookie` and anything credential-like;
+    per monitor, how many regions must agree, how many failed checks in a row count, and the severity of the incident
+    it opens (defaults unchanged for existing monitors, and their probe configs too); a monitor cap per workspace set
+    by owners (`monitor.setCap`) under the instance's (`MAX_MONITORS`, default 100); member names for "Paused by"; and
+    a notice in the Monitors card when a region's probe stalls (RFC 0007).
+  - Left: whether "No data" pages (Q17); TLS expiry, which Workers cannot read (RFC 0007 "Check types": neither
+    `fetch` nor the Sockets API exposes the peer certificate); paging, not only a notice, on a stalled probe (RFC 0007
+    "Watching the watcher"); `AlertGroupDO` and alert routes, moving monitor alerts out of the workspace shard;
     revisiting the regions with S2's 48-hour result; the workspace default locale for the incident title (Q15).
 - [x] Incidents: declare, severity, status, roles, timeline, updates
   - Timeline as its own synced table written by every incident mutation (and the monitor recovery note), written

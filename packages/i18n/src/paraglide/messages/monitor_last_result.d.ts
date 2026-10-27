@@ -1,14 +1,16 @@
 export type LocalizedString = import('../runtime.js').LocalizedString;
 export type Monitor_Last_ResultInputs = {
     state: NonNullable<unknown>;
+    name: NonNullable<unknown>;
     when: NonNullable<unknown>;
 };
 /** @typedef {import('../runtime.js').LocalizedString} LocalizedString */
-/** @typedef {{ state: NonNullable<unknown>, when: NonNullable<unknown> }} Monitor_Last_ResultInputs */
+/** @typedef {{ state: NonNullable<unknown>, name: NonNullable<unknown>, when: NonNullable<unknown> }} Monitor_Last_ResultInputs */
 /**
 * | state | output |
 * | --- | --- |
 * | "paused_you" | "Paused by you {when}" |
+* | "paused_name" | "Paused by {name} {when}" |
 * | "paused_other" | "Paused by a teammate {when}" |
 * | * | "Last report {when}" |
 *

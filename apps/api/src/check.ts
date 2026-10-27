@@ -1,9 +1,20 @@
-// One HTTP or TCP check (RFC 0007 "Check types"). HTTP: status, latency and an optional keyword, with the target
-// rules of `targetProblem` applied again right before the request, no redirects followed and a bounded body read.
+// One HTTP or TCP check (RFC 0007 "Check types"). HTTP: status (one, or ranges), latency, optional request headers and
+// an optional keyword or pattern (matched by `pattern.ts`, never `RegExp`), with the target and header rules applied
+// again right before the request, no redirects followed and a bounded body read.
 // TCP: whether a connection opens within the timeout, with `tcpTargetProblems` applied again first.
 
 import { connect } from "cloudflare:sockets";
-import { targetProblem, tcpTargetProblems, type HttpMethod } from "@freecorps/brigade-schema";
+import {
+  compilePattern,
+  headerProblem,
+  matchPattern,
+  statusExpected,
+  targetProblem,
+  tcpTargetProblems,
+  type HttpMethod,
+  type MonitorHeader,
+  type StatusRange,
+} from "@freecorps/brigade-schema";
 
 /** What a probe needs to run one monitor's check; pushed by the workspace shard. */
 export type CheckConfig = HttpCheckConfig | TcpCheckConfig;
@@ -14,10 +25,18 @@ export type HttpCheckConfig = {
   id: string;
   url: string;
   method: HttpMethod;
+  /** One status; null with no `expectedStatuses`: any 2xx or 3xx. */
   expectedStatus: number | null;
+  /** Ranges of statuses that count as up, when more than one status does. */
+  expectedStatuses?: StatusRange[];
   keyword: string | null;
+  /** Absent: `keyword` is plain text. */
+  keywordMode?: "regex";
+  headers?: MonitorHeader[];
   intervalSeconds: number;
   timeoutSeconds: number;
+  /** Alike checks in a row before the region's verdict flips; absent: `CONSECUTIVE_CHECKS`. */
+  consecutiveChecks?: number;
 };
 
 export type TcpCheckConfig = {
@@ -27,14 +46,20 @@ export type TcpCheckConfig = {
   port: number;
   intervalSeconds: number;
   timeoutSeconds: number;
+  consecutiveChecks?: number;
 };
 
-/** One check's outcome. `error` names why it failed; null when it passed. */
+/**
+ * One check's outcome. `error` names why it failed; null when it passed. `pattern_slow` is a check error
+ * (`CHECK_ERRORS`), not a failure of the target: the body pattern gave up past the cost it was saved with before
+ * finding or ruling out a match, which no saved pattern does unless that bound is wrong. The probe then leaves the
+ * region's verdict as it was, so it pages nobody.
+ */
 export type CheckResult = {
   ok: boolean;
   latencyMs: number | null;
   httpStatus: number | null;
-  error: "blocked" | "timeout" | "network" | "status" | "keyword" | null;
+  error: "blocked" | "timeout" | "network" | "status" | "keyword" | "pattern_slow" | null;
 };
 
 /** Opens a TCP connection: `connect` from `cloudflare:sockets`; the tests replace it. */
@@ -109,9 +134,21 @@ export async function httpCheck(
   fetcher: typeof fetch,
   config: HttpCheckConfig,
 ): Promise<CheckResult> {
-  // The shard validated the URL when it was saved; checked again in case the rules got stricter since.
-  if (targetProblem(config.url) !== null) {
+  // The shard validated the URL and headers when they were saved; checked again in case the rules got stricter since.
+  const headers = config.headers ?? [];
+  if (
+    targetProblem(config.url) !== null ||
+    headers.some((header) => headerProblem(header.name, header.value) !== null)
+  ) {
     return { ok: false, latencyMs: null, httpStatus: null, error: "blocked" };
+  }
+  const pattern =
+    config.keyword !== null && config.keywordMode === "regex"
+      ? compilePattern(config.keyword)
+      : undefined;
+  // A pattern the rules no longer take cannot match: the check fails as a missing keyword would, and says so.
+  if (pattern && !pattern.ok) {
+    return { ok: false, latencyMs: null, httpStatus: null, error: "keyword" };
   }
   const signal = AbortSignal.timeout(config.timeoutSeconds * 1000);
   // Workers clocks advance only across I/O, which is exactly what is timed here.
@@ -123,7 +160,11 @@ export async function httpCheck(
       // A redirect is the answer: following it could lead to a host the rules refuse.
       redirect: "manual",
       cache: "no-store",
-      headers: { "User-Agent": USER_AGENT },
+      // The monitor's own first, so none can replace the user agent (`headerProblem` refuses it anyway).
+      headers: [
+        ...headers.map((header) => [header.name, header.value]),
+        ["User-Agent", USER_AGENT],
+      ],
       signal,
     });
   } catch (error) {
@@ -137,21 +178,26 @@ export async function httpCheck(
   }
   const latencyMs = Math.max(0, Date.now() - start);
   const httpStatus = response.status;
-  const expected =
-    config.expectedStatus === null
-      ? httpStatus >= 200 && httpStatus < 400
-      : httpStatus === config.expectedStatus;
+  const expected = statusExpected(
+    httpStatus,
+    config.expectedStatuses ??
+      (config.expectedStatus === null
+        ? null
+        : [{ min: config.expectedStatus, max: config.expectedStatus }]),
+  );
   if (!expected || config.keyword === null) {
     await response.body?.cancel().catch(() => undefined);
     return { ok: expected, latencyMs, httpStatus, error: expected ? null : "status" };
   }
-  let found: boolean;
+  let found: boolean | "too_slow";
   try {
-    found = (await readPrefix(response, MAX_BODY_BYTES)).includes(config.keyword);
+    const body = await readPrefix(response, MAX_BODY_BYTES);
+    found = pattern?.ok ? matchPattern(pattern.pattern, body) : body.includes(config.keyword);
   } catch {
     // The body stopped (or the timeout hit) mid-read.
     return { ok: false, latencyMs, httpStatus, error: signal.aborted ? "timeout" : "network" };
   }
+  if (found === "too_slow") return { ok: false, latencyMs, httpStatus, error: "pattern_slow" };
   return { ok: found, latencyMs, httpStatus, error: found ? null : "keyword" };
 }
 

@@ -4,7 +4,12 @@
 
 import { monitor_incident_title } from "@freecorps/brigade-i18n/messages";
 import {
+  CONSECUTIVE_CHECKS,
+  consecutiveChecks,
+  expectedStatuses,
+  MAX_MONITORS_PER_WORKSPACE,
   MONITOR_ACTOR,
+  MONITOR_CAP_MAX,
   monitorStatus,
   newId,
   PROBE_REGIONS,
@@ -36,6 +41,27 @@ const SCHEMA = `
 `;
 
 export type MonitorReport = Omit<ProbeReport, "reportId"> & { source: CheckSource };
+
+/** The optional env var an operator caps every workspace's monitors with (RFC 0007 "Limits"). */
+export type MonitorEnv = { MAX_MONITORS?: string };
+
+/**
+ * The most monitors any workspace on this instance may have: `MAX_MONITORS` when it is a whole number from 1 to
+ * `MONITOR_CAP_MAX`, else `MAX_MONITORS_PER_WORKSPACE` (a value it cannot read is logged and ignored). An owner may
+ * set a lower one for their workspace (`monitor.setCap`).
+ */
+export function instanceMonitorCap(env: MonitorEnv): number {
+  const raw = env.MAX_MONITORS?.trim();
+  if (!raw) return MAX_MONITORS_PER_WORKSPACE;
+  const cap = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (Number.isSafeInteger(cap) && cap >= 1 && cap <= MONITOR_CAP_MAX) return cap;
+  console.error(
+    JSON.stringify({
+      message: `MAX_MONITORS is not a whole number from 1 to ${MONITOR_CAP_MAX}; ignored`,
+    }),
+  );
+  return MAX_MONITORS_PER_WORKSPACE;
+}
 
 export type MonitoringOptions = {
   storage: DurableObjectStorage;
@@ -281,7 +307,16 @@ export class Monitoring {
   }
 }
 
-function toConfig(monitor: MonitorRow): CheckConfig {
+/**
+ * What a probe runs for `monitor`. A setting at its default is left out, so a monitor that uses none of them pushes
+ * the same config as before they existed, and a deploy does not start every probe's streaks over (`configure`
+ * restarts a check whose config changed).
+ */
+export function toConfig(monitor: MonitorRow): CheckConfig {
+  const streak =
+    consecutiveChecks(monitor) === CONSECUTIVE_CHECKS
+      ? {}
+      : { consecutiveChecks: consecutiveChecks(monitor) };
   if (monitor.kind === "tcp") {
     return {
       kind: "tcp",
@@ -290,17 +325,26 @@ function toConfig(monitor: MonitorRow): CheckConfig {
       port: monitor.port!,
       intervalSeconds: monitor.intervalSeconds,
       timeoutSeconds: monitor.timeoutSeconds!,
+      ...streak,
     };
   }
+  const ranges = expectedStatuses(monitor);
+  // One status is sent as before ranges existed; only a list or a range needs the new field.
+  const single = ranges !== null && ranges.length === 1 && ranges[0]!.min === ranges[0]!.max;
+  const headers = monitor.headers ?? [];
   // No `kind`: the config an HTTP check had before TCP checks, so a deploy does not restart every probe's streaks.
   return {
     id: monitor.id,
     url: monitor.url!,
     method: monitor.method!,
-    expectedStatus: monitor.expectedStatus,
+    expectedStatus: single ? ranges[0]!.min : null,
+    ...(ranges !== null && !single && { expectedStatuses: ranges }),
     keyword: monitor.keyword,
+    ...(monitor.keyword !== null && monitor.keywordMode === "regex" && { keywordMode: "regex" }),
+    ...(headers.length > 0 && { headers }),
     intervalSeconds: monitor.intervalSeconds,
     timeoutSeconds: monitor.timeoutSeconds!,
+    ...streak,
   };
 }
 

@@ -290,6 +290,35 @@ test("a down monitor links its incident and says why each region failed; no data
   expect(item(silent.id).textContent).not.toMatch(/\bUp\b/);
 });
 
+test("a check Brigade could not judge reads as a check error, not as down, with one notice above the list", async () => {
+  const unjudged = monitor({
+    name: "Status page",
+    status: "up",
+    regions: ["weur"],
+    checks: [
+      {
+        source: "weur",
+        at: T0 - 1000,
+        up: true,
+        latencyMs: 80,
+        colo: "CDG",
+        httpStatus: 200,
+        error: "pattern_slow",
+      },
+    ],
+  });
+  await mount([unjudged]);
+  const item = document.querySelector(`[data-monitor="${unjudged.id}"]`)!;
+  expect(item.textContent).toContain("Check error: pattern too slow");
+  expect(item.textContent).not.toContain("Down");
+  const notices = [...document.querySelectorAll('[role="status"]')].filter((notice) =>
+    notice.textContent?.includes("couldn't judge"),
+  );
+  expect(notices).toHaveLength(1);
+  expect(notices[0]!.textContent).toContain("Status page");
+  expect(notices[0]!.textContent).toContain("nobody is paged");
+});
+
 test("a monitor that went silent while down still links its incident, sorts first and counts as down", async () => {
   const incidentId = newId("inc", T0, randomBytes);
   const fine = monitor({ name: "Account", status: "up" });

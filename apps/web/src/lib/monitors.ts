@@ -4,28 +4,47 @@ import { formatNumber, m, type Locale } from "@freecorps/brigade-i18n";
 import { mutationErrorReason } from "@freecorps/brigade-i18n/incident";
 import {
   can,
+  CONSECUTIVE_CHECKS,
   createHeartbeatMonitor,
   createHttpMonitor,
   createTcpMonitor,
   heartbeatToken,
+  isCheckError,
   isCloudflareAddress,
   isFresh,
+  MAX_CONSECUTIVE_CHECKS,
   MAX_MONITORS_PER_WORKSPACE,
+  MIN_INTERVAL_SECONDS,
+  MONITOR_INCIDENT_SEVERITY,
+  monitorCap,
+  monitorSettings,
   monitorSources,
   newHeartbeatSecret,
+  headerProblem,
+  MONITOR_HEADER_NAME_MAX,
+  MONITOR_HEADER_VALUE_MAX,
   normalizeTcpHost,
+  PATTERN_TOO_COMPLEX,
+  PATTERN_TOO_SLOW,
+  patternProblem,
   PROBE_REGIONS,
+  staleAfterMs,
   TCP_BLOCKED_PORTS,
   tcpTargetProblems,
   type ArgsOf,
   type CheckSource,
   type EscalationPolicyRow,
   type HttpMethod,
+  type KeywordMode,
+  type MemberRow,
   type MonitorCheck,
+  type MonitorHeader,
   type MonitorKind,
   type MonitorRow,
   type ProbeRegion,
   type Role,
+  type Severity,
+  type StatusRange,
   type updateHeartbeatMonitor,
   type updateHttpMonitor,
   type updateTcpMonitor,
@@ -70,13 +89,126 @@ export function sourceChips(
   });
 }
 
+/**
+ * The regions whose probe stopped reporting (RFC 0007 "Watching the watcher"): every running HTTP or TCP monitor
+ * checked from there has gone past its stale window (`staleAfterMs`) since its last result from there, or since it
+ * started over without one. One quiet monitor is not a stalled probe; all of a region's going quiet together is.
+ * In `PROBE_REGIONS` order.
+ */
+export function stalledRegions(
+  rows: readonly Pick<
+    MonitorRow,
+    "kind" | "paused" | "regions" | "intervalSeconds" | "checks" | "restartedAt"
+  >[],
+  now: number,
+): ProbeRegion[] {
+  return PROBE_REGIONS.filter((region) => {
+    const watching = rows.filter(
+      (row) => row.kind !== "heartbeat" && !row.paused && row.regions.includes(region),
+    );
+    return (
+      watching.length > 0 &&
+      watching.every((row) => {
+        const last = row.checks.find((check) => check.source === region)?.at ?? row.restartedAt;
+        return now - last > staleAfterMs(row);
+      })
+    );
+  });
+}
+
+/**
+ * The running monitors with a fresh check error (`CHECK_ERRORS`) from any source: checks Brigade could not judge,
+ * which keep their last verdict and page nobody. In list order.
+ */
+export function checkErrorMonitors<
+  Row extends Pick<MonitorRow, "kind" | "paused" | "intervalSeconds" | "checks">,
+>(rows: readonly Row[], now: number): Row[] {
+  return rows.filter(
+    (row) =>
+      !row.paused &&
+      row.checks.some((check) => isCheckError(check.error) && isFresh(row, check, now)),
+  );
+}
+
+/**
+ * The `monitor_field_invalid` key for a refused pattern: one that is too large or could cost too much on a large page
+ * says to use smaller repeats, anything else what is not supported.
+ */
+export function patternFieldReason(keyword: string): "keyword_regex" | "keyword_regex_slow" {
+  const problem = patternProblem(keyword.trim());
+  return problem === PATTERN_TOO_SLOW || problem === PATTERN_TOO_COMPLEX
+    ? "keyword_regex_slow"
+    : "keyword_regex";
+}
+
 /** The `monitor_check_error` reason for a failed check (`status_any` when any 2xx or 3xx would do). */
 export function checkErrorReason(
   check: Pick<MonitorCheck, "error">,
-  expectedStatus: number | null,
+  expected: readonly StatusRange[] | null,
 ): string {
-  if (check.error === "status" && expectedStatus === null) return "status_any";
+  if (check.error === "status" && expected === null) return "status_any";
   return check.error ?? "unknown";
+}
+
+/** Status ranges as people type them: `200, 204, 301-302`. */
+export function formatStatuses(ranges: readonly StatusRange[] | null): string {
+  if (ranges === null) return "";
+  return ranges
+    .map((range) => (range.min === range.max ? `${range.min}` : `${range.min}-${range.max}`))
+    .join(", ");
+}
+
+/**
+ * `200, 204, 500-599` (commas or spaces between, a dash or an en dash in a range) as ranges; null when empty, and
+ * undefined when it is not such a list, so the validator refuses the field.
+ */
+export function parseStatuses(text: string): StatusRange[] | null | undefined {
+  const parts = text
+    .split(/[,;\s]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0) return null;
+  const ranges: StatusRange[] = [];
+  for (const part of parts) {
+    const found = /^(\d{3})(?:[-–](\d{3}))?$/.exec(part);
+    if (!found) return undefined;
+    const min = Number(found[1]);
+    ranges.push({ min, max: found[2] === undefined ? min : Number(found[2]) });
+  }
+  return ranges;
+}
+
+/**
+ * Whether the statuses typed list a 5xx: a server failure that would count as up, which the monitor then never pages
+ * for. Allowed (a check may expect one on purpose), but the form warns.
+ */
+export function listsServerError(text: string): boolean {
+  return parseStatuses(text)?.some((range) => range.max >= 500) ?? false;
+}
+
+/**
+ * Whether the draft's quorum is every one of two or more regions: an outage only some regions see never pages, so
+ * the form warns. (A region that stops reporting does not silence it: `monitorStatus` then needs only the fresh ones.)
+ */
+export function quorumIsEveryRegion(draft: Pick<MonitorDraft, "quorum" | "regions">): boolean {
+  const regions = new Set(draft.regions).size;
+  const quorum = optionalNumber(draft.quorum);
+  return quorum !== null && regions > 1 && quorum >= regions;
+}
+
+/**
+ * How long a region takes to count an outage as down: its failed checks in a row times the interval (the first
+ * failure can come up to an interval after it starts). Undefined while either field is not a valid number.
+ */
+export function secondsToDown(
+  draft: Pick<MonitorDraft, "intervalSeconds" | "consecutiveChecks">,
+): number | undefined {
+  const interval = wholeNumber(draft.intervalSeconds);
+  const streak = optionalNumber(draft.consecutiveChecks) ?? CONSECUTIVE_CHECKS;
+  if (!(interval >= MIN_INTERVAL_SECONDS) || !(streak >= 1 && streak <= MAX_CONSECUTIVE_CHECKS)) {
+    return undefined;
+  }
+  return interval * streak;
 }
 
 /** A TCP monitor's host as it reads before `:port`: an IPv6 address in brackets (`[2001:db8::1]`). */
@@ -98,14 +230,22 @@ export type MonitorDraft = {
   host: string;
   port: string;
   method: HttpMethod;
+  /** Statuses that count as up, as typed: `200, 500-599` (`parseStatuses`); empty: any 2xx or 3xx. */
   expectedStatus: string;
   keyword: string;
+  keywordMode: KeywordMode;
+  headers: MonitorHeader[];
   intervalSeconds: string;
   timeoutSeconds: string;
   graceSeconds: string;
   regions: ProbeRegion[];
   /** The escalation policy its incidents page through; empty: the workspace's default. */
   policyId: string;
+  severity: Severity;
+  /** Regions that must agree; empty: a majority. */
+  quorum: string;
+  /** Failed checks in a row before a region counts as down; empty: the default, 2. */
+  consecutiveChecks: string;
 };
 
 export const EMPTY_DRAFT: MonitorDraft = {
@@ -117,15 +257,23 @@ export const EMPTY_DRAFT: MonitorDraft = {
   method: "GET",
   expectedStatus: "",
   keyword: "",
+  keywordMode: "text",
+  headers: [],
   intervalSeconds: "60",
   timeoutSeconds: "10",
   graceSeconds: "300",
   regions: ["enam", "weur"],
   policyId: "",
+  severity: MONITOR_INCIDENT_SEVERITY,
+  quorum: "",
+  consecutiveChecks: "",
 };
 
 /** A field of the draft the form draws an error under. */
-export type DraftField = Exclude<keyof MonitorDraft, "kind" | "method">;
+export type DraftField = Exclude<
+  keyof MonitorDraft,
+  "kind" | "method" | "keywordMode" | "severity"
+>;
 
 /** An empty optional field is null; anything else must be a whole number (the validator checks the range). */
 const optionalNumber = (text: string) => (text.trim() === "" ? null : wholeNumber(text));
@@ -153,6 +301,12 @@ export function checkDraft(draft: MonitorDraft, id: string): CheckedDraft {
     name: draft.name,
     intervalSeconds: wholeNumber(draft.intervalSeconds),
     policyId: draft.policyId === "" ? null : draft.policyId,
+    severity: draft.severity,
+  };
+  // The quorum's own rule (no more than the regions) comes from the mutation's validator, through `issues` below.
+  const probed = {
+    quorum: optionalNumber(draft.quorum),
+    consecutiveChecks: optionalNumber(draft.consecutiveChecks),
   };
   if (draft.kind === "heartbeat") {
     const result = createHeartbeatMonitor.args({
@@ -166,6 +320,9 @@ export function checkDraft(draft: MonitorDraft, id: string): CheckedDraft {
   // The cross-field rule, also when other fields are refused, if both numbers are fine on their own.
   const issues: { path: string }[] =
     timeoutSeconds > common.intervalSeconds ? [{ path: "timeoutSeconds" }] : [];
+  if (probed.quorum !== null && probed.quorum > new Set(draft.regions).size) {
+    issues.push({ path: "quorum" });
+  }
   if (draft.kind === "tcp") {
     const host = draft.host.trim();
     const port = wholeNumber(draft.port);
@@ -175,6 +332,7 @@ export function checkDraft(draft: MonitorDraft, id: string): CheckedDraft {
       port,
       timeoutSeconds,
       regions: draft.regions,
+      ...probed,
     });
     // Also when another field is refused, so every field to fix is named at once.
     issues.push(...tcpTargetProblems(host, port));
@@ -182,27 +340,71 @@ export function checkDraft(draft: MonitorDraft, id: string): CheckedDraft {
       return refused([...(result.ok ? [] : result.issues), ...issues]);
     return { ok: true, kind: "tcp", args: result.value };
   }
+  const keyword = draft.method === "HEAD" ? null : optionalText(draft.keyword);
+  const statuses = parseStatuses(draft.expectedStatus);
   const result = createHttpMonitor.args({
     ...common,
     url: draft.url.trim(),
     method: draft.method,
-    expectedStatus: optionalNumber(draft.expectedStatus),
-    keyword: draft.method === "HEAD" ? null : optionalText(draft.keyword),
+    // Not a list of statuses: a value the validator refuses, so the field is marked.
+    expectedStatuses: statuses === undefined ? "" : statuses,
+    keyword,
+    keywordMode: draft.keywordMode,
+    // Rows left empty are dropped, so an unused "Add header" sends nothing.
+    headers: draft.headers
+      .map((header) => ({ name: header.name.trim(), value: header.value.trim() }))
+      .filter((header) => header.name !== "" || header.value !== ""),
     timeoutSeconds,
     regions: draft.regions,
+    ...probed,
   });
+  statuses?.forEach((range) => range.min > range.max && issues.push({ path: "expectedStatus" }));
+  if (keyword !== null && draft.keywordMode === "regex" && patternProblem(keyword) !== null) {
+    issues.push({ path: "keyword" });
+  }
   if (!result.ok || issues.length) return refused([...(result.ok ? [] : result.issues), ...issues]);
   return { ok: true, kind: "http", args: result.value };
 }
+
+/** The draft field an argument is typed into, where their names differ. */
+const ARG_FIELDS: Record<string, DraftField> = {
+  expectedStatuses: "expectedStatus",
+  keywordMode: "keyword",
+};
 
 /** The draft fields an issue list names (`regions[2]` is `regions`). */
 function refused(issues: readonly { path: string }[]): Extract<CheckedDraft, { ok: false }> {
   const fields = new Set<DraftField>();
   for (const issue of issues) {
-    const field = issue.path.split(/[.[]/)[0];
-    if (field && DRAFT_FIELDS.includes(field as DraftField)) fields.add(field as DraftField);
+    const arg = issue.path.split(/[.[]/)[0] ?? "";
+    const field = ARG_FIELDS[arg] ?? arg;
+    if (DRAFT_FIELDS.includes(field as DraftField)) fields.add(field as DraftField);
   }
   return { ok: false, fields: [...fields] };
+}
+
+/**
+ * The header rows the shard would refuse, by their index in the draft, so the form marks each one: a name or value
+ * missing or too long, a header no check may send (`headerProblem`), or a name given twice. Empty rows are dropped
+ * on submit, never refused.
+ */
+export function refusedHeaderRows(draft: Pick<MonitorDraft, "headers">): number[] {
+  const rows: number[] = [];
+  const seen = new Set<string>();
+  draft.headers.forEach((header, index) => {
+    const name = header.name.trim();
+    const value = header.value.trim();
+    if (name === "" && value === "") return;
+    const fits =
+      name !== "" &&
+      value !== "" &&
+      name.length <= MONITOR_HEADER_NAME_MAX &&
+      value.length <= MONITOR_HEADER_VALUE_MAX;
+    const twice = seen.has(name.toLowerCase());
+    seen.add(name.toLowerCase());
+    if (!fits || twice || headerProblem(name, value) !== null) rows.push(index);
+  });
+  return rows;
 }
 
 const DRAFT_FIELDS: readonly DraftField[] = [
@@ -212,10 +414,13 @@ const DRAFT_FIELDS: readonly DraftField[] = [
   "port",
   "expectedStatus",
   "keyword",
+  "headers",
   "intervalSeconds",
   "timeoutSeconds",
   "graceSeconds",
   "regions",
+  "quorum",
+  "consecutiveChecks",
   "policyId",
 ];
 
@@ -259,11 +464,36 @@ export function splitHostPort(text: string): { host: string; port: string | null
 }
 
 /**
- * Whether the workspace has `MAX_MONITORS_PER_WORKSPACE` monitors, so the shard would refuse another one
+ * The most monitors this workspace may have (`monitorCap`): the owner's cap, within the instance's (`maxMonitors` from
+ * `GET /api/features`; `MAX_MONITORS_PER_WORKSPACE` until it answers).
+ */
+export function workspaceMonitorCap(
+  workspace: Parameters<typeof monitorCap>[0],
+  instance: number | undefined,
+): number {
+  return monitorCap(workspace, instance ?? MAX_MONITORS_PER_WORKSPACE);
+}
+
+/**
+ * Whether the workspace has as many monitors as `cap` allows, so the shard would refuse another one
  * (`limit_reached`): the form says so on submit instead of sending it.
  */
-export function monitorsFull(count: number): boolean {
-  return count >= MAX_MONITORS_PER_WORKSPACE;
+export function monitorsFull(count: number, cap: number = MAX_MONITORS_PER_WORKSPACE): boolean {
+  return count >= cap;
+}
+
+/**
+ * Who paused a monitor, as the row says it: you, a member by name from the shard's member list, or "a teammate"
+ * for someone it has no name for (an unnamed member, someone who left, or the server pausing after a takeover).
+ */
+export function pausedBy(
+  row: Pick<MonitorRow, "pausedBy">,
+  userId: string,
+  members: readonly Pick<MemberRow, "id" | "name">[],
+): { state: "paused_you" | "paused_other"; name: "" } | { state: "paused_name"; name: string } {
+  if (row.pausedBy === userId) return { state: "paused_you", name: "" };
+  const name = members.find((member) => member.id === row.pausedBy)?.name;
+  return name ? { state: "paused_name", name } : { state: "paused_other", name: "" };
 }
 
 /** What an owner or admin can do to a monitor from its row; everyone else reads it (`monitor:manage`). */
@@ -278,6 +508,8 @@ export function monitorActions(role: Role, row: Pick<MonitorRow, "paused">): Mon
 export function draftFromRow(row: MonitorRow): MonitorDraft {
   const number = (value: number | null, fallback: string) =>
     value === null ? fallback : String(value);
+  // Rows from before these settings have none: the defaults.
+  const settings = monitorSettings(row);
   return {
     kind: row.kind,
     name: row.name,
@@ -286,14 +518,19 @@ export function draftFromRow(row: MonitorRow): MonitorDraft {
     host: row.host ?? "",
     port: row.port == null ? "" : String(row.port),
     method: row.method ?? "GET",
-    expectedStatus: number(row.expectedStatus, ""),
+    expectedStatus: formatStatuses(settings.expectedStatuses),
     keyword: row.keyword ?? "",
+    keywordMode: settings.keywordMode,
+    headers: settings.headers.map((header) => ({ ...header })),
     intervalSeconds: String(row.intervalSeconds),
     timeoutSeconds: number(row.timeoutSeconds, EMPTY_DRAFT.timeoutSeconds),
     graceSeconds: number(row.graceSeconds, EMPTY_DRAFT.graceSeconds),
     regions: row.kind === "heartbeat" ? EMPTY_DRAFT.regions : [...row.regions],
     // Rows from before policies per monitor have none: the default.
     policyId: row.policyId ?? "",
+    severity: settings.severity,
+    quorum: number(settings.quorum, ""),
+    consecutiveChecks: number(settings.consecutiveChecks, ""),
   };
 }
 
@@ -322,7 +559,7 @@ export function rebaseDraft(
   const same = (key: keyof MonitorDraft) =>
     key === "regions"
       ? !draftChanged({ ...initial, regions: draft.regions }, initial)
-      : draft[key] === initial[key];
+      : JSON.stringify(draft[key]) === JSON.stringify(initial[key]);
   const live = draftFromRow(row);
   const keys = Object.keys(draft) as (keyof MonitorDraft)[];
   return Object.fromEntries(
@@ -346,29 +583,42 @@ export function checkEdit(draft: MonitorDraft, row: MonitorRow): CheckedEdit {
   const checked = checkDraft({ ...draft, kind: row.kind }, row.id);
   if (!checked.ok) return checked;
   if (checked.kind === "heartbeat") {
-    const { id, name, intervalSeconds, graceSeconds, policyId } = checked.args;
-    const args = { id, name, intervalSeconds, graceSeconds, policyId };
-    const changed =
-      args.name !== row.name ||
-      args.intervalSeconds !== row.intervalSeconds ||
-      args.graceSeconds !== row.graceSeconds ||
-      args.policyId !== (row.policyId ?? null);
+    const { id, name, intervalSeconds, graceSeconds, policyId, severity } = checked.args;
+    const args = { id, name, intervalSeconds, graceSeconds, policyId, severity };
+    const changed = differs(args, row, ["name", "intervalSeconds", "graceSeconds", ...ALERTING]);
     return { ok: true, kind: "heartbeat", args: keptPolicy(args, row), changed };
   }
   // The shard keeps the regions in `PROBE_REGIONS` order, so the comparison does too.
   const regions = PROBE_REGIONS.filter((region) => checked.args.regions.includes(region));
   if (checked.kind === "tcp") {
     const args = { ...checked.args, regions };
-    const changed = (["name", "intervalSeconds", "policyId", ...TCP_TARGET_FIELDS] as const).some(
-      (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key] ?? null),
-    );
+    const changed = differs(args, row, [
+      "name",
+      "intervalSeconds",
+      ...ALERTING,
+      ...TCP_TARGET_FIELDS,
+    ]);
     return { ok: true, kind: "tcp", args: keptPolicy(args, row), changed };
   }
   const args = { ...checked.args, regions };
-  const changed = (["name", "intervalSeconds", "policyId", ...TARGET_FIELDS] as const).some(
-    (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key] ?? null),
-  );
+  const changed = differs(args, row, ["name", "intervalSeconds", ...ALERTING, ...TARGET_FIELDS]);
   return { ok: true, kind: "http", args: keptPolicy(args, row), changed };
+}
+
+/** What an edit may change without starting the checks over, besides the name and the interval. */
+const ALERTING = ["policyId", "severity", "quorum", "consecutiveChecks"] as const;
+
+/** `row`'s values with its settings' defaults filled in, as the shard compares them (`monitorSettings`). */
+function current(row: MonitorRow): Record<string, unknown> {
+  return { ...row, ...monitorSettings(row), policyId: row.policyId ?? null };
+}
+
+/** Whether any of `keys` differs between `args` and `row` (settings compared with their defaults filled in). */
+function differs(args: object, row: MonitorRow, keys: readonly string[]): boolean {
+  const now = current(row);
+  return keys.some(
+    (key) => JSON.stringify(Reflect.get(args, key) ?? null) !== JSON.stringify(now[key] ?? null),
+  );
 }
 
 /**
@@ -401,17 +651,17 @@ export function editRestarts(draft: MonitorDraft, row: MonitorRow): boolean {
   if (row.kind === "heartbeat" || row.paused) return false;
   const checked = checkEdit(draft, row);
   if (!checked.ok || checked.kind === "heartbeat") return false;
-  const args: Partial<MonitorRow> = checked.args;
-  const fields = checked.kind === "tcp" ? TCP_TARGET_FIELDS : TARGET_FIELDS;
-  return fields.some((key) => JSON.stringify(args[key]) !== JSON.stringify(row[key]));
+  return differs(checked.args, row, checked.kind === "tcp" ? TCP_TARGET_FIELDS : TARGET_FIELDS);
 }
 
 /** What an HTTP check is: changing any of these starts it over (`monitor.updateHttp`). */
 const TARGET_FIELDS = [
   "url",
   "method",
-  "expectedStatus",
+  "expectedStatuses",
   "keyword",
+  "keywordMode",
+  "headers",
   "timeoutSeconds",
   "regions",
 ] as const;
@@ -443,15 +693,15 @@ export function monitorPolicy(
  * Why the shard refused a change to a monitor, in the shared wording (`mutationErrorReason`), except "not found",
  * whose shared sentence is about an incident, and the monitor cap, which says what to do.
  */
-export function monitorRefusal(code: string): string {
+export function monitorRefusal(code: string, cap: number, locale: Locale): string {
   if (code === "not_found") return m.monitor_gone();
-  if (code === "limit_reached") return monitorLimitReached();
+  if (code === "limit_reached") return monitorLimitReached(cap, locale);
   return mutationErrorReason(code);
 }
 
-/** Why a new monitor cannot be added: the workspace has `MAX_MONITORS_PER_WORKSPACE` already. */
-export const monitorLimitReached = () =>
-  m.monitor_limit_reached({ max: String(MAX_MONITORS_PER_WORKSPACE) });
+/** Why a new monitor cannot be added: the workspace has as many as its cap allows already. */
+export const monitorLimitReached = (cap: number, locale: Locale) =>
+  m.monitor_limit_reached({ max: formatNumber(cap, locale) });
 
 /** A new heartbeat token, its SHA-256 (what the shard stores) and the URL to ping. */
 export async function newHeartbeat(

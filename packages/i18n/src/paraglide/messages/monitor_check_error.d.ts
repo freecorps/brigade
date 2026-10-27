@@ -15,6 +15,7 @@ export type Monitor_Check_ErrorInputs = {
 * | "status" | "Got {got}, expected {expected}" |
 * | "status_any" | "Got {got}, expected 2xx or 3xx" |
 * | "keyword" | "Text not found" |
+* | "pattern_slow" | "Check error: pattern too slow" |
 * | "missed" | "No ping in time" |
 * | * | "Check failed" |
 *

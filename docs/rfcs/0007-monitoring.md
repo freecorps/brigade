@@ -21,17 +21,114 @@
   region has reported nothing for 15 minutes, which re-arms a probe whose alarm was lost. The shard's own alarm sets
   a fallback a minute out before its work and moves it to the next deadline after, and an accepted heartbeat ping
   re-arms it if it is missing.
-- **Cost of slow targets:** a probe runs at most 6 checks at once, HTTP and TCP together, and waits up to the timeout
-  (at most 30 s) for each. Six is also what a Worker allows: at most six connections waiting for their headers or to
-  open, the rest queued (and a queued check's timeout would already be running). So a region whose targets all
-  time out keeps its object busy, and billed for duration, for about
+- **Cost of slow targets:** a probe runs at most 6 checks at once (`PARALLEL_CHECKS`), HTTP and TCP together, and
+  waits up to the timeout (at most 30 s) for each. Six is also what a Worker allows: at most six connections waiting
+  for their headers or to open, the rest queued (and a queued check's timeout would already be running). So a region
+  whose targets all time out keeps its object busy, and billed for duration, for about
   `ceil(checks / 6) × timeout` per run instead of a few hundred milliseconds.
+- **What one region sustains under hanging targets (decided: documented, not capped lower).** A probe is one object
+  per workspace and region, and every check holds one of its six slots until it answers or times out, so when its
+  targets hang it completes about `PARALLEL_CHECKS / timeout` checks per second: 0.2 per second, 12 a minute, at the
+  30 s maximum timeout. Due checks wait their turn, the most overdue first, so every monitor falls behind evenly
+  rather than some starving. A region's result goes stale after `max(3 × interval, 10 min)` (`staleAfterMs`), and a
+  monitor with fewer than half its regions fresh shows "No data" (below), which pages nobody (Q17), so falling behind
+  shows on the dashboard and never as up; when every monitor of a region is stale the Monitors card also says the
+  region stopped reporting. With every target hanging at 30 s, a region keeps about `6 × 600 / 30 = 120` monitors
+  fresh whatever their interval (at a 5 s timeout, about 720); past that, some show "No data" until their targets
+  answer again. The default cap, 100 monitors per workspace (`MAX_MONITORS_PER_WORKSPACE`), stays under that, so a
+  workspace on defaults never goes "No data" for this. `MONITOR_CAP_MAX` (10,000) is not lowered to match: targets
+  that answer take a few hundred milliseconds, and a region then runs thousands of checks a minute. An operator who
+  raises `MAX_MONITORS` above about 120 trades that: a workspace whose targets hang together sees some monitors as
+  "No data" rather than checked late, and only its own probes are slowed (one object per workspace and region), not
+  another workspace's.
+- **CPU per alarm (built):** an alarm has 30 s of CPU by default (no `limits.cpu_ms` is set). A run takes at most
+  `MAX_CHECKS_PER_RUN` (50) due checks, the most overdue first; the rest stay due, and the next alarm comes a second
+  later, so a region with thousands of checks runs them across alarms instead of in one. Each check's CPU is bounded
+  too: a saved body pattern costs at most `PATTERN_STEPS_PER_CHAR` steps per character of the 64 KiB read (below),
+  about 100 ms for the costliest measured, so a run's CPU stays within a few seconds at worst and its wall time (six
+  at once, each within its timeout) a few minutes.
 
 ## Check types (v1)
 
-- HTTP(S): status, latency, keyword/regex in body, headers, TLS expiry. Built: method `GET` or `HEAD`, an expected
-  status (default any 2xx or 3xx), a keyword (plain text, `GET` only), interval 30 s to 24 h, timeout 1 to 30 s.
-  Regex, headers and TLS expiry are not built yet.
+- HTTP(S): status, latency, keyword/regex in body, headers, TLS expiry. Built: method `GET` or `HEAD`, the statuses
+  that count as up (up to 10 statuses or inclusive ranges, `200, 204, 301-302`; default any 2xx or 3xx; the form
+  warns when the list includes a 5xx, which would count a server failure as up), a keyword
+  (`GET` only) matched as plain text or as a pattern, up to 10 request headers, interval 30 s to 24 h, timeout 1 to
+  30 s. TLS expiry cannot be built in Workers (below). Rows from before ranges keep their one `expectedStatus`, and a
+  monitor that uses none of these options pushes its probes the same config as before them, so a deploy restarts no
+  probe's streaks.
+  - **Method:** still `GET` or `HEAD`, no `POST`. A check runs from up to six regions every 30 s; a `POST` would let a
+    monitor call a state-changing endpoint on any public host that often.
+  - **Body patterns (decided: restricted syntax, linear engine).** JavaScript's `RegExp` backtracks: `(a+)+$` against
+    a few dozen characters takes exponential time, and a Worker cannot stop a running match, so one pattern could pin
+    its probe's CPU. A pattern is instead compiled by `packages/schema/src/pattern.ts` into a small program and run as
+    a Pike VM (every possible match followed in lockstep, one step per character, no backtracking), so a match costs
+    at most the program's length times the body's. Bounds: a pattern of at most 200 characters, a program of at most
+    256 instructions once repeats are expanded (`a{3}` is three), repeat counts up to 100, and the 64 KiB the probe
+    reads of any body. The program's size is computed before any repeat is expanded, so nested repeats
+    (`((a{100}){100}){100}`) are refused without building them, the compiler's own steps are counted, a repeat count is
+    read to its closing brace however many digits it has, and repeating something that matches only empty text
+    (`(){100}`) is refused.
+  - **Cost (decided: fixed when saved).** A pattern's cost is the most steps a match can take per character of the
+    body, a property of its program: every instruction visited once, every class tested once, and the classes a
+    match can start with added once (`Pattern.cost`, at most twice the program's length). A pattern costing more than
+    `PATTERN_STEPS_PER_CHAR` (448) is refused on save ("Pattern could take too long on a large page: use smaller
+    repeat counts"; the form says the same), so a saved pattern's work on any body is known: at most 448 × 64 Ki,
+    about 29 million steps, and the costliest measured take about 100 ms of CPU. Ordinary patterns cost a few
+    hundred: `[^<]{0,100}error` 313, `[^"]{0,80}"status":"down"` 273, `(\w+\s){0,20}outage` 195. (A
+    first version gave every pattern a flat 64 steps per character, so these ran out of steps on long pages and every
+    check failed and paged.)
+  - **A check error does not page (decided).** The match still counts its steps against the pattern's cost and gives
+    up past it (`too_slow`), as a safety net no saved pattern reaches unless the cost is wrong. The check is then
+    `pattern_slow`, a check error (`CHECK_ERRORS`): Brigade could not judge the body, which says nothing about the
+    target. It changes neither the region's streak nor its verdict, so it neither pages nor resolves an alert; the
+    region reports it at once with the verdict it left, and the dashboard shows "Check error: pattern too slow" on the
+    region and one notice above the list naming the monitors ("they keep their last result and nobody is paged").
+    Paging for it would wake someone for Brigade's own limit; the cost is that a target whose body changes while every
+    check errors is not judged on its body until the pattern is fixed, though its status, timeout and connection are
+    still checked first and still page.
+  - **Matching.** Classes are compiled to an ASCII table and sorted ranges searched by halves, the copies a repeat
+    makes share one class and ask it once per character, and the threads a match starts with mid-body are walked
+    once. A seeded test compares thousands of patterns and bodies with JavaScript's `RegExp` (`u` flag, and `iu` for
+    `(?i)`), over text that includes final sigma, the micro sign, sharp s, long s, dotless i and the Kelvin sign.
+    Supported: literals, `.`, `\d \w \s` and their negations, escaped punctuation, classes `[a-z]` and `[^…]`, `^`
+    and `$` (start and end of what was read), groups (they only group), `|`, `* + ?` and `{n,m}` (a lazy `?` after
+    one is accepted and changes nothing), and `(?i)` at the very start to ignore case.
+  - **Ignoring case (decided: as `iu`).** Two characters are the same letter when they share a simple case folding,
+    as JavaScript's `iu` flags compare them: `ς σ Σ`, `µ μ`, `ß ẞ`, `ſ s S`, the Kelvin sign and `k`, `ϑ θ ϴ`, but not
+    `ı` and `i`. At compile time each literal and class is closed under that relation (a negated item such as `\W`
+    after closing what it negates, so `\w` takes the Kelvin sign and the long s, as `iu` does), and the body's
+    character is then matched as it is. The relation comes from a table derived from the engine's own `RegExp` by
+    `packages/schema/scripts/case-fold.ts` (about 1,500 groups, 2.6 KB as runs), which a test derives again on the
+    same Unicode version. Comparing the body's character's own cases only, as a first version did, disagreed with
+    `iu` whenever folding is not symmetric under upper and lower case. Refused on save, with a reason: backreferences, lookahead and lookbehind, named
+    groups and word boundaries, which a linear engine does not run. The same compiler checks a pattern in the
+    dashboard, in the shard on save, and in the probe before each check (one the rules no longer take fails as
+    `keyword`).
+  - **Request headers (decided: not secret, and credentials refused).** Header values are synced with the monitor
+    row, like its URL, so every member reads them, viewers too; they are not sealed like webhook secrets. Sealing
+    them would need a route that encrypts what a member types before the shard sees it, a server-only table and a key
+    in every probe, for a value the probe still sends in clear to a host the monitor names. Instead a check never
+    sends `Host` (it would point the request at another site than the URL names), `Authorization`,
+    `Proxy-Authorization`, `Cookie`, or a name that reads like a credential (`auth`, `token`, `secret`, `passw`,
+    `session`, `cookie`, `credential` or `signature` anywhere in it, `key` as a word, or `api`, `access`,
+    `subscription`, `private` or `client` joined to `key` by `-`, `_` or nothing, as in `X-Api-Key`, `access_key`,
+    `Ocp-Apim-Subscription-Key` or `X-Hub-Signature-256`); nor the headers the runtime sets (`Content-Length`,
+    `Connection`, `Transfer-Encoding`, …), `User-Agent` (checks name Brigade), the ones that claim another client
+    (`Forwarded`, `X-Forwarded`, `X-Forwarded-*`, `X-Real-IP`, `True-Client-IP`, `X-Client-IP`, `X-Originating-IP`,
+    `Via`, `Proxy-*`, `CF-*`), and the ones that make a proxy route the request elsewhere or as another method
+    (`X-Original-URL`, `X-Rewrite-URL`, `X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override`). Values are printable ASCII, at most 512 characters; at most 10 headers, no name
+    twice (`headerProblem`, on save and in the probe). An endpoint that needs credentials gets an unauthenticated
+    health path, or a heartbeat. The form says under the list who can read them.
+  - **TLS certificate expiry (not built: Workers cannot read the certificate).** `fetch` exposes nothing of the
+    server's certificate, and neither does the Sockets API: with `secureTransport: "on"` or after `startTls()`, a
+    `Socket` has `readable`, `writable`, `opened`, `closed`, `upgraded`, `secureTransport`, `close()` and `startTls()`,
+    and `opened` resolves to a `SocketInfo` with only `remoteAddress` and `localAddress`
+    (<https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/> and the runtime's types, October 2026).
+    The certificate fields Workers do get (`request.cf.tlsClientAuth`) describe a client certificate presented to
+    Cloudflare, not a server's. Reading one ourselves would mean a TLS client in JavaScript over a plain socket (TLS
+    1.3 encrypts the server's certificate), and `connect()` cannot reach hosts proxied by Cloudflare anyway. So expiry
+    warnings stay out until the runtime exposes the peer certificate.
 - **Targets (SSRF):** only `http:` and `https:`, no credentials in the URL, and no host that is private, loopback,
   link-local, shared, reserved or multicast (IPv4 and IPv6 literals, any IPv4 spelling the URL parser normalises),
   nor a local-only name (`localhost`, single-label, `.local`, `.internal`, `.lan`, `.home.arpa`, …). Checked when a
@@ -75,13 +172,22 @@
   - **Why any port, unlike HTTP:** whether something listens on a port is the whole answer of a TCP check, so the
     HTTP allowlist's reason (a check's error must not reveal an open database port) cannot apply without making
     the check useless. What bounds the scanning a monitor could do instead: public hosts only, one host and port per
-    monitor, at most one connection per region every 30 s, only owners and admins create monitors, and at most
-    `MAX_MONITORS_PER_WORKSPACE` (100) monitors per workspace. The cap is what answers scanning, not the error:
+    monitor, at most one connection per region every 30 s, only owners and admins create monitors, and a cap on the
+    monitors per workspace ("Limits" below; 100 unless the instance's operator sets another). The cap is what answers scanning, not the error:
     `network` against `timeout` does tell closed from filtered. Cloudflare's own rules still apply (no Cloudflare
     IP ranges, no private networks, no port 25).
-  - **Limits:** a workspace has at most 100 monitors of every kind together (`MAX_MONITORS_PER_WORKSPACE`); every
-    create mutation refuses one more with `limit_reached`, and the form says so before sending. One cap for every
-    workspace until plans exist; a per-plan or configurable cap comes later (roadmap). `connect()` counts toward the six connections a Worker may have opening at once (the pool above);
+  - **Limits:** a workspace has at most as many monitors, of every kind together, as its cap; every create mutation
+    refuses one more with `limit_reached`, and the form says so before sending. The cap (decided) has two levels, so
+    it fits a self-hosted instance as well as a hosted one: the instance's, `MAX_MONITORS` in the API's env (1 to
+    10000; without it `MAX_MONITORS_PER_WORKSPACE`, 100), which the shard hands every mutation as
+    `ctx.limits.monitors` and `GET /features` tells the dashboard as `maxMonitors`; and the workspace's own, set by an
+    owner in the Monitors card (`monitor.setCap`: `workspace:manage` and the `owner` role, `monitor.cap_changed`), at
+    most the instance's, or none for the instance's. It is stored in its own one-row synced table
+    (`monitor_settings`), which the `monitors.cap` query reads, so every member syncs the cap and nothing else of the
+    workspace row. A workspace cap above an instance cap lowered later counts as the
+    instance's. A cap under the monitors a workspace already has is allowed: they keep running, and no new one is
+    added until some are deleted (the form says so). A client's optimistic run does not know the instance's cap and
+    leaves that check to the shard. Plans, when they exist, would set the workspace's value. `connect()` counts toward the six connections a Worker may have opening at once (the pool above);
     an open socket keeps a Durable Object alive for up to 15 minutes, which a check never needs since it closes at
     once. Locally (workerd under `vp dev` and the tests) `connect()` reaches loopback, so
     `apps/api/test/monitors.test.ts` checks a real listener and a closed port as well as stubbed sockets. A closed
@@ -124,11 +230,29 @@ Recovery uses the same rule. Results feed `AlertGroupDO` as normal `AlertEvent`s
 alerts share routing and dedupe.
 
 Built (first slice): K is a majority and M is 2 (`CONSECUTIVE_CHECKS`): a region's verdict flips after two alike
-results (a new monitor is up on its first success). The probe reports a region's verdict to the workspace shard when
-it changes, and otherwise every 5 minutes, with the time of its latest check, so the latency, colo and check time stay
-fresh without a shard version per check. Those refreshes change the synced row but are no domain events: the
-mutation is declared `silent` and writes nothing to the outbox; `monitor.checked` is emitted only when a region's
-verdict or failure reason changes.
+results (a new monitor is up on its first success).
+
+- **Per monitor (built):** an HTTP or TCP monitor may set its own K (`quorum`, 1 to its number of regions) and M
+  (`consecutiveChecks`, 1 to 10), and every kind its incident's severity (`severity`, default SEV2). Left out, a new
+  monitor takes the defaults and an edit keeps what the monitor has, so rows from before, and clients that do not know
+  the fields, behave as before. With a K, the status turns down when at least K fresh regions are down, and up when
+  at least K are up and fewer than K are down; with K at most half the regions both can hold at once, and down wins,
+  so a monitor that pages on one region in three stays down while any region is down. Once the freshness floor is
+  met (`freshFloor`, below), the K used is `min(K, fresh regions)` (decided): with K equal to the regions, one region
+  that stops reporting would otherwise leave the monitor "No data" however down the others see it, and nothing would
+  page; now the regions still reporting decide, all of them having to agree. Below the floor it is still "No data",
+  so one region never speaks for three. A stored region this deploy no longer probes (one dropped from
+  `PROBE_REGIONS` after S2) counts toward nothing: neither the floor, nor the fresh results, nor the sources shown.
+  The form warns when K equals the regions (an outage only some regions see never pages) and says how long a region
+  takes to count an outage as down (M × the interval). Changing K, M or the severity does not start the checks over:
+  a new K applies at the next report or the shard's next alarm (`monitor.evaluate` within a minute, when it changes
+  the status), and a new M reaches the probes with the next push, which keeps each region's results, streak and
+  verdict (the next result is judged by the new M) and the shard's results. A heartbeat has
+  one source, which is always its quorum. The probe reports a region's verdict to the workspace shard when
+  it changes, and otherwise every 5 minutes, with the time of its latest check, so the latency, colo and check time stay
+  fresh without a shard version per check. Those refreshes change the synced row but are no domain events: the
+  mutation is declared `silent` and writes nothing to the outbox; `monitor.checked` is emitted only when a region's
+  verdict or failure reason changes.
 
 - **Freshness:** a region's result counts for `max(3 × interval, 2 × 5 min)` (`staleAfterMs`; two refresh periods
   at least, since an unchanged verdict is re-sent only every 5 minutes). The status is a majority of the fresh
@@ -152,7 +276,7 @@ verdict or failure reason changes.
   until then the workspace shard is the alert's home: the server-only mutation `monitor.report`, run as the system actor
   `sys_monitors` (RFC 0004 "Server-side writes"), records the result, and when the quorum turns down it fires one alert
   per monitor (`alerts` table, fingerprint `monitor:<id>`; no second one while it fires) and opens an incident through
-  `incident.declare` (SEV2, "<name> is down") in the same transaction, so there is never an alert without its
+  `incident.declare` (the monitor's severity, SEV2 unless it sets one; "<name> is down") in the same transaction, so there is never an alert without its
   incident (its `incident.declared` event comes before `alert.fired`). When the quorum turns up again the alert resolves; the incident is left for people, since incidents have no
   timeline yet. Pausing or deleting a monitor resolves its alert too. Every step is an event in the outbox
   (`monitor.*`, `alert.fired`, `alert.resolved`, `incident.declared`). A monitor may name an escalation policy
@@ -215,7 +339,10 @@ verdict or failure reason changes.
 
 - Internal self-check: a DO alarm verifies every `ProbeDO` reported recently and alerts on stalled probes.
   Built so far: the workspace shard's alarm logs a stalled region and pushes its config again, and a monitor whose
-  regions all go quiet turns "No data"; it does not page (Q17).
+  regions all go quiet turns "No data"; it does not page (Q17). The dashboard's Monitors card says when a region
+  stalled, as one notice above the list ("Checks from US East stopped reporting…"): a region where every running
+  HTTP or TCP monitor has gone past its stale window (`stalledRegions`), from the synced rows alone, so it needs no new
+  state. One quiet monitor is that monitor, not the probe, and says nothing.
 
 ## Notes
 

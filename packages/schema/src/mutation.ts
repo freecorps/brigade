@@ -37,6 +37,11 @@ export type MutationContext = {
    * then; clients leave those fields empty until the server's patch arrives.
    */
   server: boolean;
+  /**
+   * Caps the instance's operator set (the API's env), known only to the server; a client's optimistic run has none and
+   * leaves the check to the shard. `monitors`: the most monitors any workspace may have (`MAX_MONITORS`).
+   */
+  limits?: { monitors?: number };
 };
 
 /** A domain event without its envelope; the server wraps it as a `BrigadeEvent` (RFC 0005). */

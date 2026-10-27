@@ -165,7 +165,12 @@ describe("drafting a postmortem with Workers AI", () => {
     const t = await team();
     expect((await draft(t, t.caio, undefined)).status).toBe(503);
     const features = await api("/features", { headers: { Cookie: t.caio.cookie } });
-    expect(await features.json()).toEqual({ ai: false, exports: true });
+    expect(await features.json()).toEqual({
+      ai: false,
+      exports: true,
+      // RFC 0007 "Limits": no MAX_MONITORS in the tests, so the default.
+      maxMonitors: 100,
+    });
     expect((await api("/features")).status).toBe(401);
   });
 

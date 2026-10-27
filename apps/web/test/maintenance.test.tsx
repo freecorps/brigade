@@ -5,7 +5,7 @@ import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
 import type { MaintenanceRow, StatusComponentRow, StatusPageRow } from "@freecorps/brigade-schema";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, test } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import {
   checkDraft,
   fromLocalInput,
@@ -19,7 +19,14 @@ import { loadSubscriberCounts, removeSubscriber } from "../src/lib/status-page";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root | undefined;
+// The form checks a window against the real clock when it is saved: pin it to the fixtures' NOW, or the windows they
+// plan from NOW have ended by the afternoon.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+});
 afterEach(() => {
+  vi.useRealTimers();
   act(() => root?.unmount());
   root = undefined;
   document.body.innerHTML = "";

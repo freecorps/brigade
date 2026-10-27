@@ -535,7 +535,10 @@ describe("escalation runs", () => {
     // Past the last level with no repeat left: everyone who can respond, and the run ends.
     expect(now("admin", "usr_bia")).toMatchObject({
       ok: true,
-      events: [{ type: "escalation.paged", data: { level: null, reason: "manual" } }],
+      events: [
+        { type: "escalation.paged", data: { level: null, reason: "manual" } },
+        { type: "escalation.exhausted", data: { levels: 2, rounds: 1 } },
+      ],
     });
     expect(run(store).status).toBe("exhausted");
     expect(now("admin", "usr_bia")).toMatchObject({ ok: false, error: { code: "not_found" } });

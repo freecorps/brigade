@@ -57,22 +57,32 @@ export async function notifySlack(
     const plan = await shard.planSlack(event);
     if (!plan.send) return plan.reason === "held" ? secondsUntil(plan.until, now()) : undefined;
     let outcome: SlackJobOutcome;
+    let token: string | undefined;
     try {
-      const token = await openToken(
+      token = await openToken(
         env.SLACK_TOKEN_KEY,
         plan.token,
         tokenBinding(event.workspaceId, plan.teamId),
       );
-      outcome = await perform(plan, token, event, env, send, now);
     } catch (error) {
       // The key was rotated without re-sealing, or the row is not this workspace's: retrying cannot open it.
       log("slack token could not be opened", { event: event.id, error: String(error) });
+    }
+    if (token === undefined) {
       outcome = {
         ok: false,
         error: "token_unreadable",
         retryable: false,
         reason: "not_authorized",
       };
+    } else {
+      try {
+        outcome = await perform(plan, token, event, env, send, now);
+      } catch (error) {
+        // Not Slack's answer (Slack's calls never throw): D1 down while looking members up, say. Worth retrying.
+        log("slack job threw", { event: event.id, job: plan.job, error: String(error) });
+        outcome = { ok: false, error: "internal_error", retryable: true, reason: "undelivered" };
+      }
     }
     const { retryAt } = await shard.recordSlack(event, plan.job, outcome);
     if (retryAt !== null) return secondsUntil(retryAt, now());

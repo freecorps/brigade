@@ -966,6 +966,10 @@ describe("fallbacks (the paging path's)", () => {
     expect(await pagedMembers(ws, tokens)).toEqual([bia.id, caio.id, eva.id]);
     const entry = (await ws.timeline(incident)).filter((row) => row.kind === "escalated").at(-1);
     expect(entry).toMatchObject({ level: null, reason: "manual" });
+    // The run ended, as the alarm's would have: said once, for whoever acts on it.
+    expect(
+      (await ws.events(incident)).filter((e) => e.type === "escalation.exhausted"),
+    ).toHaveLength(1);
   });
 
   test("a one-level policy where the person on call declared it pages everyone else at its timeout", async () => {

@@ -490,9 +490,26 @@ export const escalateNow = defineMutation({
         ),
       );
     }
-    return ok(
-      ...paged(store, incident, run, pageOf(null, last.round, [], [], "manual", ctx.now), [], ctx),
+    // Past the last repeat the run ends, as the alarm's would: `escalation.exhausted` for whoever acts on it.
+    const events = paged(
+      store,
+      incident,
+      run,
+      pageOf(null, last.round, [], [], "manual", ctx.now),
+      [],
+      ctx,
     );
+    const exhausted: EscalationExhausted = {
+      type: "escalation.exhausted",
+      subject: incident.id,
+      data: {
+        incidentId: incident.id,
+        policyId: run.policyId,
+        levels: run.levels.length,
+        rounds: run.repeat + 1,
+      },
+    };
+    return ok(...events, exhausted);
   },
 });
 

@@ -21,6 +21,7 @@ import type { SlackActResult } from "@freecorps/brigade-slack/bridge";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { clearPeople } from "@freecorps/brigade-slack/people";
 import { consumeEvents, QUEUE_MAX_RETRIES, SLACK_BUDGET_MS, type Fetch } from "../src/notify.ts";
+import { notifySlack } from "../src/notify-slack.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import {
@@ -1654,6 +1655,46 @@ describe("what must happen once: escalations, messages, retried events, the clai
     expect(
       (await incidents(t)).every((one) => one.typeId === undefined || one.typeId === null),
     ).toBe(true);
+  });
+
+  test("D1 failing while members are looked up is retried, never recorded as an unreadable token", async () => {
+    const t = await team();
+    const teamId = await connect(t, newTeam(), null);
+    await t.run("member.sync", { id: t.ana.id, name: "Ana", role: "owner" }, owner(t), true);
+    await t.run(
+      "slack.configure",
+      { channelId: null, locale: "en", incidentChannels: "all" },
+      owner(t),
+    );
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.ana.email),
+        action: { kind: "declare", title: "Checkout down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
+    const declared = (await eventsOf(t, "incident.declared"))[0]!;
+    const down = {
+      prepare: () => {
+        throw new Error("D1 down");
+      },
+    } as unknown as D1Database;
+    const slack = slackApi();
+    const delay = await notifySlack(
+      declared,
+      {
+        WORKSPACE: env.WORKSPACE,
+        DB: down,
+        SLACK_TOKEN_KEY: Reflect.get(env, "SLACK_TOKEN_KEY") as string,
+      },
+      slack.send,
+    );
+    expect(delay).toBeGreaterThan(0);
+    expect(slack.calls.map((call) => call.method)).toEqual(["conversations.create"]);
+    expect(await eventsOf(t, "notification.failed")).toHaveLength(0);
   });
 
   test("an event holds the incident across its jobs: another event of it waits until it is done", async () => {

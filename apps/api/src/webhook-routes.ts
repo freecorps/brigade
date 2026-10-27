@@ -3,17 +3,21 @@
 // a new secret. Each makes the secret here, seals it under `WEBHOOK_SECRET_KEY` (bound to the workspace and the
 // endpoint) and runs the named mutation in the shard as the member, with the same RBAC as every mutation; the answer
 // is the only time the secret is shown. Every other change (edit, on and off, delete, test) is a mutation over sync.
+// The dashboard sends an `Idempotency-Key` with each, so a retried request is the same request (see `webhookRequest`).
 
 import { isId, type Role } from "@freecorps/brigade-schema";
 import { memberRole } from "./actor.ts";
 import { readPrefix } from "./check.ts";
 import type { Auth } from "./auth.ts";
-import { isTokenKey, sealToken, tokenBinding } from "./slack-token.ts";
-import { newWebhookSecret } from "./webhook-sign.ts";
+import { fromBase64url, isTokenKey, sealToken, tokenBinding } from "./slack-token.ts";
+import { derivedWebhookSecret, newWebhookSecret } from "./webhook-sign.ts";
 import type { WebhookRunResult } from "./webhooks.ts";
 import { ORGANIZATION_ID } from "./workspace.ts";
 
 export type WebhookRouteEnv = Pick<Env, "DB" | "WORKSPACE"> & { WEBHOOK_SECRET_KEY?: string };
+
+/** An `Idempotency-Key` the dashboard sends: a UUID fits. */
+const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{16,64}$/;
 
 /** Largest request body read: a URL (2048), a description (200) and the event list fit well under it. */
 const MAX_BODY_BYTES = 8 * 1024;
@@ -30,8 +34,11 @@ const STATUS: Partial<Record<Exclude<WebhookRunResult, { ok: true }>["code"], nu
 /**
  * `POST /workspaces/:id/webhooks` with `{ id, url, description, events }` (201 `{ id, secret }`), or
  * `POST /workspaces/:id/webhooks/:webhookId/rotate` (200 `{ id, secret }`). 503 `not_configured` without
- * `WEBHOOK_SECRET_KEY`. A retried request is a new one: a create sent twice answers 409 the second time (the endpoint
- * exists, its secret shown once already: rotate it), and a rotation sent twice rotates twice.
+ * `WEBHOOK_SECRET_KEY`. With an `Idempotency-Key` (16 to 64 of `A-Z a-z 0-9 _ -`, 400 `invalid_idempotency_key`
+ * otherwise) the key is the mutation's id and the secret is derived from it (`derivedWebhookSecret`): a retried request
+ * gets the first one's answer, the same secret, and a rotation retried never rotates again (which would drop the
+ * previous secret's grace). Without one a request is new each time: a create sent twice answers 409 the second time,
+ * and a rotation sent twice rotates twice.
  */
 export async function webhookRequest(
   request: Request,
@@ -50,6 +57,10 @@ export async function webhookRequest(
     return Response.json({ error: "invalid_workspace_id" }, { status: 400 });
   if (rotate !== undefined && !isId("whk", rotate))
     return Response.json({ error: "not_found" }, { status: 404 });
+  const idempotencyKey = request.headers.get("Idempotency-Key");
+  if (idempotencyKey !== null && !IDEMPOTENCY_KEY.test(idempotencyKey)) {
+    return Response.json({ error: "invalid_idempotency_key" }, { status: 400 });
+  }
   const origin = request.headers.get("Origin");
   if (origin !== null && origin !== new URL(request.url).origin) {
     return Response.json({ error: "forbidden_origin" }, { status: 403 });
@@ -78,7 +89,14 @@ export async function webhookRequest(
   } else {
     id = rotate;
   }
-  const secret = newWebhookSecret();
+  const action = rotate === undefined ? "create" : "rotate";
+  const secret =
+    idempotencyKey === null
+      ? newWebhookSecret()
+      : await derivedWebhookSecret(
+          fromBase64url(env.WEBHOOK_SECRET_KEY),
+          [workspaceId, id, session.user.id, action, idempotencyKey].join(":"),
+        );
   const sealed = await sealToken(env.WEBHOOK_SECRET_KEY, secret, tokenBinding(workspaceId, id));
   let result: WebhookRunResult;
   try {
@@ -87,7 +105,7 @@ export async function webhookRequest(
       { kind: "user", id: session.user.id, role },
       rotate === undefined ? "webhook.create" : "webhook.rotateSecret",
       { id, ...fields, secret: sealed },
-      `${rotate === undefined ? "create" : "rotate"}:${crypto.randomUUID()}`,
+      `${action}:${idempotencyKey ?? crypto.randomUUID()}`,
     );
   } catch (error) {
     log("WorkspaceDO.webhookRun failed", { workspace: workspaceId, error: String(error) });

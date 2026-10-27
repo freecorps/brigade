@@ -55,7 +55,7 @@ function toBase64url(bytes: Uint8Array): string {
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
-function fromBase64url(text: string): Uint8Array<ArrayBuffer> {
+export function fromBase64url(text: string): Uint8Array<ArrayBuffer> {
   if (!/^[A-Za-z0-9_-]*$/.test(text)) throw new Error("Not base64url");
   const binary = atob(text.replaceAll("-", "+").replaceAll("_", "/"));
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));

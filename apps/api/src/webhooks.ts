@@ -1,11 +1,14 @@
 // The workspace shard's side of outbound webhooks (RFC 0005 "Outbound webhooks"): creating an endpoint and rotating
 // its secret as the member who asked (the API made the secret and sealed it), and the delivery ledger that makes each
 // event's delivery to each endpoint at-least-once, never twice at a time, with backoff and a cap. The queue consumer
-// reaches it through `planWebhooks` / `recordWebhook` (src/notify-webhooks.ts).
+// reaches it through `planWebhooks` / `recordWebhook` (src/notify-webhooks.ts). A delivery due again (its backoff ran
+// out, or a claim nobody recorded) is brought back by the shard's alarm (`redrive`): a `webhook.redeliver` event
+// through the outbox, so the backoff never rides the original event's Queue retries, which a page needs.
 
 import {
   isWebhookEventType,
   NOTIFIER_ACTOR,
+  WEBHOOK_REDELIVER_EVENT,
   WEBHOOK_TEST_EVENT,
   webhookPayload,
   webhookSubject,
@@ -14,6 +17,7 @@ import {
   type Issue,
   type MutationErrorCode,
   type WebhookError,
+  type WebhookRow,
 } from "@freecorps/brigade-schema";
 import type { MutationResultMessage } from "@freecorps/brigade-sync/protocol";
 import type { BrigadeEvent } from "./outbox.ts";
@@ -28,13 +32,21 @@ export const WEBHOOK_MAX_ATTEMPTS = WEBHOOK_RETRY_DELAYS_MS.length + 1;
 export const WEBHOOK_CLAIM_MS = 30_000;
 /** How long a plan holds the email that tells the owners an endpoint was turned off. */
 export const WEBHOOK_EMAIL_CLAIM_MS = 60_000;
+/** After the alarm re-enqueued a delivery, how long before it does again if no consumer planned it meanwhile. */
+export const WEBHOOK_REQUEUE_MS = 10 * 60_000;
+/** Events re-enqueued per alarm; more wait for the next one, set for right away. */
+export const WEBHOOK_REDRIVE_BATCH = 50;
 /** The client id the API's webhook mutations run under, and the notifier's. */
 export const WEBHOOK_CLIENT_ID = "webhooks";
 const NOTIFIER_CLIENT_ID = "webhook-notifier";
 
-/** Whether the webhook notifier acts on `event`: a catalog event, or a test. Most events are neither. */
-export function asksForWebhooks(event: BrigadeEvent): boolean {
-  return event.type === WEBHOOK_TEST_EVENT || isWebhookEventType(event.type);
+/** Whether the webhook notifier acts on `event`: a catalog event, a test, or a redelivery. Most events are none. */
+export function asksForWebhooks(event: Pick<BrigadeEvent, "type">): boolean {
+  return (
+    event.type === WEBHOOK_TEST_EVENT ||
+    event.type === WEBHOOK_REDELIVER_EVENT ||
+    isWebhookEventType(event.type)
+  );
 }
 
 /** Whether `event` asks for the email that tells the owners an endpoint was turned off for failing. */
@@ -48,25 +60,31 @@ export function asksForWebhookEmail(event: BrigadeEvent): boolean {
 const SCHEMA = `
   create table if not exists webhook_events (
     event_id text primary key,
+    event text not null,
     body text not null,
     at integer not null
   ) without rowid;
+  create index if not exists webhook_events_at on webhook_events (at);
   create table if not exists webhook_sends (
     event_id text not null,
     webhook_id text not null,
     attempts integer not null,
     claimed_until integer not null,
     retry_at integer not null,
+    queued_until integer not null default 0,
     done integer not null,
     at integer not null,
     primary key (event_id, webhook_id)
   ) without rowid;
+  create index if not exists webhook_sends_at on webhook_sends (at);
+  create index if not exists webhook_sends_open on webhook_sends (done, event_id);
   create table if not exists webhook_emails (
     event_id text primary key,
     claimed_until integer not null,
     done integer not null,
     at integer not null
   ) without rowid;
+  create index if not exists webhook_emails_at on webhook_emails (at);
 `;
 
 /** One delivery the consumer should make now. */
@@ -80,10 +98,23 @@ export type WebhookSend = {
 };
 
 /**
- * What the consumer should do for an event: `body` is the payload, the same bytes on every delivery; `sends` are due
- * now; `waitUntil` is the earliest a send held by another delivery or waiting for its backoff is due again.
+ * What the consumer should do for an event: `event` is the one delivered (for a redelivery, the original), `body` its
+ * payload, the same bytes on every delivery; `sends` are due now. Anything else due later comes back on its own.
  */
-export type WebhookPlan = { body: string | null; sends: WebhookSend[]; waitUntil: number | null };
+export type WebhookPlan = {
+  event: WebhookEventRef | null;
+  body: string | null;
+  sends: WebhookSend[];
+};
+
+/** The event a delivery carries, as far as signing and the log need it. */
+export type WebhookEventRef = Pick<BrigadeEvent, "id" | "type" | "workspaceId">;
+
+const refOf = (event: BrigadeEvent): WebhookEventRef => ({
+  id: event.id,
+  type: event.type,
+  workspaceId: event.workspaceId,
+});
 
 /** What one delivery attempt did, as the consumer saw it. */
 export type WebhookOutcome = {
@@ -106,6 +137,8 @@ export type WebhookDeskOptions = {
   shard: Shard;
   log: (message: string, fields: Record<string, unknown>) => void;
   committed: (version: number, changes: readonly RowChange[]) => void;
+  /** Brings the shard's alarm forward to `at` (for `redrive`). Never throws. */
+  wake: (at: number) => void;
 };
 
 type SendRow = { attempts: number; claimed_until: number; retry_at: number; done: number };
@@ -149,33 +182,74 @@ export class WebhookDesk {
   /**
    * Plans `event`'s deliveries (see `WebhookPlan`), claiming each one due for `WEBHOOK_CLAIM_MS`. The payload is made
    * the first time from the event and the incident or monitor it is about as they are then, and kept, so every retry
-   * carries the same bytes.
+   * carries the same bytes. A `webhook.redeliver` plans its original event again, for the endpoints the ledger still
+   * has open; one turned off or deleted since is given up.
    */
   plan(event: BrigadeEvent, now: number): WebhookPlan {
     this.prune(now);
-    const none: WebhookPlan = { body: null, sends: [], waitUntil: null };
+    const none: WebhookPlan = { event: null, body: null, sends: [] };
+    if (event.type === WEBHOOK_REDELIVER_EVENT) return this.replan(event, now) ?? none;
     if (!asksForWebhooks(event)) return none;
     const { store } = this.options.shard;
     const endpoints = store.scan("webhooks").filter((row) => webhookWants(row, event));
     if (endpoints.length === 0) return none;
     const body = this.body(event, now);
     if (body === null) return none;
+    return { event: refOf(event), body, sends: this.claim(event, endpoints, now) };
+  }
+
+  private replan(redeliver: BrigadeEvent, now: number): WebhookPlan | undefined {
+    const eventId = (redeliver.data as { eventId?: unknown } | null)?.eventId;
+    if (typeof eventId !== "string") return undefined;
+    const [kept] = this.sql
+      .exec<{ event: string; body: string }>(
+        "select event, body from webhook_events where event_id = ?",
+        eventId,
+      )
+      .toArray();
+    if (!kept) return undefined;
+    const event = JSON.parse(kept.event) as BrigadeEvent;
+    const { store } = this.options.shard;
+    const endpoints: WebhookRow[] = [];
+    for (const { webhook_id } of this.sql
+      .exec<{ webhook_id: string }>(
+        "select webhook_id from webhook_sends where event_id = ? and done = 0",
+        eventId,
+      )
+      .toArray()) {
+      const endpoint = store.get("webhooks", webhook_id);
+      if (endpoint && webhookWants(endpoint, event)) {
+        endpoints.push(endpoint);
+        continue;
+      }
+      this.options.log("webhook retry dropped: endpoint gone or off", {
+        event: eventId,
+        webhook: webhook_id,
+      });
+      this.sql.exec(
+        "update webhook_sends set done = 1 where event_id = ? and webhook_id = ?",
+        eventId,
+        webhook_id,
+      );
+    }
+    return { event: refOf(event), body: kept.body, sends: this.claim(event, endpoints, now) };
+  }
+
+  /** Claims each of `endpoints` due for `event` now; one held, waiting out its backoff or done is skipped. */
+  private claim(event: BrigadeEvent, endpoints: readonly WebhookRow[], now: number): WebhookSend[] {
+    const { store } = this.options.shard;
     const sends: WebhookSend[] = [];
-    let waitUntil: number | null = null;
     for (const endpoint of endpoints) {
       const ledger = this.send(event.id, endpoint.id);
       if (ledger?.done) continue;
-      const due = Math.max(ledger?.claimed_until ?? 0, ledger?.retry_at ?? 0);
-      if (due > now) {
-        waitUntil = waitUntil === null ? due : Math.min(waitUntil, due);
-        continue;
-      }
+      if (Math.max(ledger?.claimed_until ?? 0, ledger?.retry_at ?? 0) > now) continue;
       const secrets = store.get("webhook_secrets", endpoint.id);
       if (!secrets) continue;
       this.sql.exec(
-        `insert into webhook_sends (event_id, webhook_id, attempts, claimed_until, retry_at, done, at)
-         values (?, ?, 0, ?, 0, 0, ?)
-         on conflict (event_id, webhook_id) do update set claimed_until = excluded.claimed_until`,
+        `insert into webhook_sends (event_id, webhook_id, attempts, claimed_until, retry_at, queued_until, done, at)
+         values (?, ?, 0, ?, 0, 0, 0, ?)
+         on conflict (event_id, webhook_id) do update set claimed_until = excluded.claimed_until,
+           queued_until = 0`,
         event.id,
         endpoint.id,
         now + WEBHOOK_CLAIM_MS,
@@ -190,7 +264,70 @@ export class WebhookDesk {
         attempt: (ledger?.attempts ?? 0) + 1,
       });
     }
-    return { body, sends, waitUntil };
+    // A consumer that dies (or puts a send off) never records: the alarm brings those back once the claim runs out.
+    if (sends.length > 0) this.options.wake(now + WEBHOOK_CLAIM_MS);
+    return sends;
+  }
+
+  /**
+   * From the shard's alarm: every event with a delivery due again (a backoff that ran out, or a claim nobody recorded)
+   * goes back to the queue as `webhook.redeliver` (a mutation, so through the outbox), and is not re-enqueued for
+   * `WEBHOOK_REQUEUE_MS` unless a consumer plans it. Returns how many events went.
+   */
+  redrive(now: number): number {
+    const { shard } = this.options;
+    const due = this.sql
+      .exec<{ event_id: string }>(
+        `select distinct event_id from webhook_sends
+         where done = 0 and claimed_until <= ? and retry_at <= ? and queued_until <= ?
+         limit ?`,
+        now,
+        now,
+        now,
+        WEBHOOK_REDRIVE_BATCH,
+      )
+      .toArray();
+    let sent = 0;
+    for (const { event_id: eventId } of due) {
+      // Set first, so one that fails to queue is tried again later, never in a loop.
+      this.sql.exec(
+        "update webhook_sends set queued_until = ? where event_id = ? and done = 0",
+        now + WEBHOOK_REQUEUE_MS,
+        eventId,
+      );
+      const mutationId = `redeliver:${eventId}:${now}`;
+      if (!shard.storedResult(NOTIFIER_ACTOR.id, NOTIFIER_CLIENT_ID, mutationId, now)) {
+        const { result, changes } = shard.mutate({
+          clientId: NOTIFIER_CLIENT_ID,
+          mutationId,
+          actor: NOTIFIER_ACTOR,
+          name: "webhook.redeliver",
+          args: { eventId },
+          now,
+          internal: true,
+        });
+        if (!result.ok) {
+          this.options.log("webhook redelivery not queued", {
+            event: eventId,
+            code: result.error.code,
+          });
+          continue;
+        }
+        this.options.committed(result.version, changes);
+      }
+      sent++;
+    }
+    return sent;
+  }
+
+  /** When `redrive` has something to do next; null when no delivery is open. */
+  nextAt(): number | null {
+    const [row] = this.sql
+      .exec<{ at: number | null }>(
+        `select min(max(claimed_until, retry_at, queued_until)) as at from webhook_sends where done = 0`,
+      )
+      .toArray();
+    return row?.at ?? null;
   }
 
   /**
@@ -199,7 +336,7 @@ export class WebhookDesk {
    * `WEBHOOK_MAX_ATTEMPTS`, refused for good (a blocked URL, a secret that does not open) or the endpoint gone.
    */
   record(
-    event: BrigadeEvent,
+    event: WebhookEventRef,
     webhookId: string,
     outcome: WebhookOutcome,
     now: number,
@@ -240,10 +377,10 @@ export class WebhookDesk {
       });
     }
     this.sql.exec(
-      `insert into webhook_sends (event_id, webhook_id, attempts, claimed_until, retry_at, done, at)
-       values (?, ?, ?, 0, ?, ?, ?)
+      `insert into webhook_sends (event_id, webhook_id, attempts, claimed_until, retry_at, queued_until, done, at)
+       values (?, ?, ?, 0, ?, 0, ?, ?)
        on conflict (event_id, webhook_id) do update set attempts = excluded.attempts,
-         claimed_until = 0, retry_at = excluded.retry_at, done = excluded.done`,
+         claimed_until = 0, retry_at = excluded.retry_at, queued_until = 0, done = excluded.done`,
       event.id,
       webhookId,
       attempts,
@@ -251,6 +388,7 @@ export class WebhookDesk {
       retryAt === null ? 1 : 0,
       now,
     );
+    if (retryAt !== null) this.options.wake(retryAt);
     return { retryAt };
   }
 
@@ -319,8 +457,9 @@ export class WebhookDesk {
     if (!payload) return null;
     const body = JSON.stringify(payload);
     this.sql.exec(
-      "insert into webhook_events (event_id, body, at) values (?, ?, ?)",
+      "insert into webhook_events (event_id, event, body, at) values (?, ?, ?, ?)",
       event.id,
+      JSON.stringify(event),
       body,
       now,
     );

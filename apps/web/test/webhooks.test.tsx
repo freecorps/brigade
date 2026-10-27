@@ -184,6 +184,14 @@ describe("requestSecret", () => {
       await requestSecret(
         "ws_x",
         "whk_x",
+        emptyDraft(),
+        answer(400, { error: "invalid_args", issues: [{ path: "events" }] }) as typeof fetch,
+      ),
+    ).toEqual({ ok: false, error: "invalid_args", field: "events" });
+    expect(
+      await requestSecret(
+        "ws_x",
+        "whk_x",
         null,
         answer(503, { error: "not_configured" }) as typeof fetch,
       ),
@@ -198,6 +206,34 @@ describe("requestSecret", () => {
       ok: false,
       error: "network",
     });
+  });
+});
+
+describe("requestSecret retries", () => {
+  test("sends an Idempotency-Key, and a lost answer is asked again with the same key", async () => {
+    const keys: (string | null)[] = [];
+    let calls = 0;
+    const flaky = async (_url: string, init: RequestInit) => {
+      keys.push(new Headers(init.headers).get("Idempotency-Key"));
+      if (++calls === 1) throw new TypeError("connection reset");
+      return Response.json({ id: "whk_x", secret: "whsec_x" });
+    };
+    expect(await requestSecret("ws_x", "whk_x", null, flaky as typeof fetch)).toEqual({
+      ok: true,
+      id: "whk_x",
+      secret: "whsec_x",
+    });
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatch(/^[A-Za-z0-9_-]{16,64}$/);
+    expect(keys[1]).toBe(keys[0]);
+    // A refusal is the answer: never sent twice.
+    const refusals: unknown[] = [];
+    const refuse = async () => {
+      refusals.push(1);
+      return Response.json({ error: "forbidden" }, { status: 403 });
+    };
+    await requestSecret("ws_x", "whk_x", null, refuse as typeof fetch);
+    expect(refusals).toHaveLength(1);
   });
 });
 
@@ -244,6 +280,44 @@ describe("WebhooksPanel", () => {
     act(() => container.querySelector("form")!.requestSubmit());
     await flush();
     expect(container.querySelector("input[type=url]")!.getAttribute("aria-invalid")).toBe("true");
+  });
+
+  test("a refused event filter is said on the field, and a request that threw never leaves the form busy", async () => {
+    let attempt = 0;
+    const { container } = render({
+      onCreate: async () => {
+        if (++attempt === 1) throw new Error("socket closed");
+        return { ok: false, error: "invalid_args", field: "events" };
+      },
+    });
+    act(() => button(container, "Add endpoint")!.click());
+    type(
+      container.querySelector<HTMLInputElement>("input[type=url]")!,
+      "https://hooks.example.com/",
+    );
+    act(() => container.querySelector("form")!.requestSubmit());
+    await flush();
+    expect(container.querySelector<HTMLButtonElement>("form button[type=submit]")?.disabled).toBe(
+      false,
+    );
+    expect(container.textContent).toContain("Couldn't save. Try again.");
+    act(() => container.querySelector("form")!.requestSubmit());
+    await flush();
+    expect(container.textContent).toContain("Pick at least one event");
+  });
+
+  test("an editor action that threw gives the buttons back and says it failed", async () => {
+    const { container } = render({
+      rows: [row()],
+      onSetEnabled: async () => {
+        throw new Error("socket closed");
+      },
+    });
+    act(() => container.querySelector<HTMLButtonElement>("button[aria-label=Edit]")!.click());
+    act(() => button(container, "Turn off")!.click());
+    await flush();
+    expect(button(container, "Turn off")?.disabled).toBe(false);
+    expect(container.textContent).toContain("Couldn't change it. Try again.");
   });
 
   test("an endpoint reads its state, its events and its last delivery, never its token", () => {

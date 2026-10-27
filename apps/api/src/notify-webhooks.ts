@@ -2,8 +2,9 @@
 // test), the shard plans which endpoints are due (src/webhooks.ts), this opens each one's secrets, signs the payload
 // (Standard Webhooks, src/webhook-sign.ts), POSTs it under the target rules (https, a public host, no redirects
 // followed, a timeout, a bounded read of the answer) and reports back. It runs next to push like Slack, within its own
-// budget (src/notify.ts `WEBHOOK_BUDGET_MS`), and never decides whether a page is retried. Also here: the email that
-// tells the owners Brigade turned an endpoint off.
+// budget (src/notify.ts `WEBHOOK_BUDGET_MS`) and within the invocation's side connections (src/side-connections.ts),
+// and never decides whether a page is retried; its own retries come back through the shard's alarm and the outbox
+// (`webhook.redeliver`). Also here: the email that tells the owners Brigade turned an endpoint off.
 
 import { resolveLocale } from "@freecorps/brigade-i18n";
 import { v, WEBHOOK_SNIPPET_MAX, webhookTargetProblem } from "@freecorps/brigade-schema";
@@ -18,10 +19,12 @@ import {
 } from "./notify-email.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 import { isTokenKey, openToken, tokenBinding } from "./slack-token.ts";
+import { NotStarted, SideConnections } from "./side-connections.ts";
 import { signatureHeaders } from "./webhook-sign.ts";
 import {
   asksForWebhooks,
   WEBHOOK_EMAIL_CLAIM_MS,
+  type WebhookEventRef,
   type WebhookOutcome,
   type WebhookSend,
 } from "./webhooks.ts";
@@ -41,35 +44,46 @@ export type WebhookNotifyEnv = {
 export type Fetch = (request: Request) => Promise<Response>;
 
 /**
- * Delivers `event` to every endpoint due. Returns the seconds until the event should come back for webhooks (a retry,
- * or a delivery another consumer holds), or undefined when nothing is left. A shard that cannot be reached throws.
+ * Delivers `event` (a catalog event, a test, or the ledger's `webhook.redeliver`) to every endpoint due, each within
+ * one of `slots` (src/side-connections.ts) so a page's relay request always finds a connection free. A delivery still
+ * waiting for a slot at `deadline` is not started: no attempt, its claim stands, and the shard's alarm brings it back
+ * when the claim runs out. Retries are the ledger's (`WebhookDesk.redrive`), never the message's. A shard that cannot
+ * be reached throws.
  */
 export async function notifyWebhooks(
   event: BrigadeEvent,
   env: WebhookNotifyEnv,
   send: Fetch,
-  now: () => number = Date.now,
-): Promise<number | undefined> {
-  if (!asksForWebhooks(event) || !isTokenKey(env.WEBHOOK_SECRET_KEY)) return undefined;
+  slots: SideConnections = new SideConnections(),
+  deadline?: number,
+): Promise<void> {
+  if (!asksForWebhooks(event) || !isTokenKey(env.WEBHOOK_SECRET_KEY)) return;
   const key = env.WEBHOOK_SECRET_KEY;
   const shard = env.WORKSPACE.getByName(event.workspaceId);
   const plan = await shard.planWebhooks(event);
-  const body = plan.body;
-  if (body === null) return undefined;
-  const retries = await Promise.all(
+  const { body, event: original } = plan;
+  if (body === null || original === null) return;
+  await Promise.all(
     plan.sends.map(async (one) => {
-      const outcome = await deliver(event, body, one, key, send);
-      return (await shard.recordWebhook(event, one.webhookId, outcome)).retryAt;
+      let outcome: WebhookOutcome;
+      try {
+        outcome = await slots.run(() => deliver(original, body, one, key, send), deadline);
+      } catch (error) {
+        if (!(error instanceof NotStarted)) throw error;
+        log("webhook delivery put off: no free connection", {
+          event: original.id,
+          webhook: one.webhookId,
+        });
+        return;
+      }
+      await shard.recordWebhook(original, one.webhookId, outcome);
     }),
   );
-  const next = [...retries, plan.waitUntil].filter((at): at is number => at !== null);
-  if (next.length === 0) return undefined;
-  return Math.max(1, Math.ceil((Math.min(...next) - now()) / 1000));
 }
 
 /** One POST to one endpoint. Never throws: every failure is an outcome. */
 export async function deliver(
-  event: BrigadeEvent,
+  event: WebhookEventRef,
   body: string,
   target: WebhookSend,
   key: string,
@@ -103,7 +117,18 @@ export async function deliver(
     });
     return failed("secret");
   }
-  const headers = await signatureHeaders(secrets, event.id, Math.floor(Date.now() / 1000), body);
+  let headers: Record<string, string>;
+  try {
+    headers = await signatureHeaders(secrets, event.id, Math.floor(Date.now() / 1000), body);
+  } catch (error) {
+    // A secret that opened but is no key (a damaged row): retrying cannot sign with it either.
+    log("webhook secret could not sign", {
+      event: event.id,
+      webhook: target.webhookId,
+      error: String(error),
+    });
+    return failed("secret");
+  }
   const signal = AbortSignal.timeout(WEBHOOK_TIMEOUT_MS);
   const started = Date.now();
   let response: Response;
@@ -147,9 +172,12 @@ export async function deliver(
   }
   let text = "";
   try {
-    text = await readPrefix(response, WEBHOOK_RESPONSE_BYTES);
+    // Bounded by the same timeout as the request: a receiver that sends its headers and then stalls the body never
+    // holds the delivery past `WEBHOOK_TIMEOUT_MS`.
+    text = await Promise.race([readPrefix(response, WEBHOOK_RESPONSE_BYTES), aborted]);
   } catch {
     // The answer stopped mid-read (or the timeout hit): its status is what counts.
+    await response.body?.cancel().catch(() => undefined);
   }
   return failed(status >= 300 && status < 400 ? "redirect" : "status", {
     status: status >= 100 && status <= 599 ? status : null,

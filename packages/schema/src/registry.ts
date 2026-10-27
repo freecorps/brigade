@@ -56,6 +56,7 @@ import {
   allWebhooks,
   createWebhook,
   recordWebhookAttempt,
+  redeliverWebhooks,
   rotateWebhookSecret,
   webhookMutations,
 } from "./webhooks.ts";
@@ -150,4 +151,5 @@ export const serverMutations = defineRegistry([
   createWebhook,
   rotateWebhookSecret,
   recordWebhookAttempt,
+  redeliverWebhooks,
 ]);

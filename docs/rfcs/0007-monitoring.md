@@ -46,8 +46,11 @@
   is visible to all of them. The form says so under the URL field; values are not redacted per role, since the
   query result is the same rows for every member. Redirects are never followed (a
   3xx is the answer), at most 64 KiB of a body is read, and every request has its timeout. A public name that
-  resolves to a private address is not caught (Workers cannot resolve names); deployed Workers cannot reach private
-  networks.
+  resolves to a private address is not caught: Workers cannot resolve names, and `fetch` cannot pin the address it
+  connects to, so the protection is Cloudflare's network (deployed Workers cannot reach private networks), not this
+  check. Under `wrangler dev`, or workerd run outside Cloudflare, a public name resolving to `127.0.0.1` (or any
+  private address) reaches it, and with it the machine's local services; the same holds for outbound webhooks
+  (RFC 0005).
 - TCP: connect via `connect()` (Sockets API). Built: a host (a name, or an IPv4 or IPv6 address, without a scheme,
   port or path) and a port, interval 30 s to 24 h, timeout 1 to 30 s, regions as for HTTP (`monitor.createTcp`,
   `monitor.updateTcp`; pause and delete are the same mutations for every kind, and a new host, port, timeout or

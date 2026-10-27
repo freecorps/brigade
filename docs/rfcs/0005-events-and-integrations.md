@@ -105,6 +105,7 @@ Outbound webhooks ("Outbound webhooks" below) emit `webhook.created` (`id`, `eve
 (`id`, `events`, `urlChanged`), `webhook.enabled` (`id`), `webhook.disabled` (`id`, `reason`: `manual`, or `failing`
 when Brigade turned it off, `failures`), `webhook.secret_rotated` (`id`), `webhook.deleted` (`id`) and `webhook.test`
 (`id`: "Send test event"), subject the endpoint; never its URL (which may carry the receiver's token) or its secret.
+The webhook notifier's `webhook.redeliver` (`eventId`) brings deliveries due again back to the queue ("Retries").
 
 The paging pipeline's own watchdog (RFC 0007 "Watching the watcher") writes events too, through its own outbox and
 the same Queue, with `workspaceId` `_system` (no workspace can have it; `source` `brigade://_system/watchdog`, actor
@@ -322,7 +323,11 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   the server-only `webhook_secrets` table. The trade-off: whoever has both the shard's storage and the key can sign
   as Brigade; neither alone can. Without the key, webhooks are off (creating answers `not_configured`, nothing is
   delivered). Rotating keeps the previous secret signing alongside the new one for 24 hours
-  (`WEBHOOK_ROTATION_GRACE_MS`), so a receiver can switch without dropping deliveries; two at most.
+  (`WEBHOOK_ROTATION_GRACE_MS`), so a receiver can switch without dropping deliveries; two at most. Create and rotate
+  take an `Idempotency-Key` (the dashboard sends one, and sends a request again with it when the answer was lost): it
+  is the mutation's id, and the secret is derived from it (HKDF-SHA256 under `WEBHOOK_SECRET_KEY`, over the
+  workspace, endpoint, member, action and key), so a retried request answers the first one's outcome and the same
+  secret, and a retried rotation never rotates again (which would cut the previous secret's grace short).
 - **Signatures** ([Standard Webhooks](https://www.standardwebhooks.com), so any of its libraries verifies them). Each
   delivery is `POST` with `Content-Type: application/json` and:
   - `webhook-id`: the event's id (`evt_…`), the same on every retry: the idempotency key;
@@ -355,12 +360,22 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   follow the monitors' rules (RFC 0007 "Targets": no credentials, the same ports, no private, loopback, link-local,
   reserved or local-only host) plus `https:` only and no literal Cloudflare address, checked on save and again before
   each attempt; redirects are never followed (a 3xx is a failure), each attempt gets 5 s
-  (`WEBHOOK_TIMEOUT_MS`), and at most 1 KB of a failed answer is read. Only 2xx is success. A local receiver is
-  reached through a public https tunnel: plain http is refused everywhere, since the rules live in the mutation.
+  (`WEBHOOK_TIMEOUT_MS`, reading the answer included), and at most 1 KB of a failed answer is read. Only 2xx is
+  success. A local receiver is reached through a public https tunnel: plain http is refused everywhere, since the
+  rules live in the mutation. The rules check the URL, not where its name resolves: a Worker's `fetch` cannot pin
+  an address, so a public name that resolves to a private one is kept off private networks by Cloudflare's network
+  alone (deployed Workers cannot reach them; RFC 0007 "Targets"). Under `wrangler dev`, or workerd run outside
+  Cloudflare, nothing stops it: such a name resolving to `127.0.0.1` reaches the machine's own services, so a local
+  or self-hosted run must not let untrusted members add endpoints.
 - **Retries.** At least once: 6 attempts per event and endpoint, after 30 s, 2 min, 10 min, 1 h and 4 h
-  (`WEBHOOK_RETRY_DELAYS_MS`), then given up; a blocked URL or a secret that no longer opens is not retried. The
-  message's own retry is the earliest any endpoint (or push) needs; past the Queue's `max_retries` webhooks give up
-  rather than dead-letter the event.
+  (`WEBHOOK_RETRY_DELAYS_MS`), then given up (logged); a blocked URL or a secret that no longer opens is not retried.
+  The schedule is the shard's, not the Queue's: the ledger keeps when each delivery is due again (`retry_at`, or its
+  hold running out with nothing recorded) and the shard's alarm brings it back as `webhook.redeliver` (`eventId`), a
+  server-only mutation's event through the outbox, which the consumer plans as the original event for the endpoints
+  still open (one turned off or deleted since is dropped). Not delivered within 10 min (`WEBHOOK_REQUEUE_MS`), it is
+  queued again. So a webhook never asks for the event's own message to be retried, and never spends the Queue's
+  `max_retries`, which a page on the same event needs; the only exception is a shard that cannot be reached at all,
+  which nothing was recorded for.
 - **Delivery log.** Each endpoint keeps its last 10 attempts on its row (`recent`: event, attempt, time, ok, status,
   latency, error, and for a failure at most 200 characters of the answer, printable text only), written by the
   silent `webhook.record`. No request bodies are kept beyond the ledger's payload (15 days, like the page ledger).
@@ -370,10 +385,14 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   description or host only, never the path or query), claimed in the shard so a redelivery sends nobody twice.
   Turning it back on starts the count over.
 - **Never in a page's way.** Webhooks are not a paging path, but share the consumer. They run alongside push like
-  Slack, and get at most 3 s per event in a batch (`WEBHOOK_BUDGET_MS`): past it the message is retried for their
-  sake and the attempt finishes under `waitUntil`, recording its outcome; its hold makes the retry wait. A page in
-  the same batch (or the same event) goes to the relay without waiting on a receiver (tested with one that never
-  answers).
+  Slack, and get at most 3 s per event in a batch (`WEBHOOK_BUDGET_MS`): past it the consumer moves on without a
+  retry, an attempt under way finishes under `waitUntil` and records its outcome, and the alarm brings back whatever
+  is due. They also share the invocation's connections: a Worker invocation has six open at once and a seventh
+  subrequest waits, so a relay reached through `RELAY_URL` would wait behind receivers that never answer. Slack and
+  webhooks together hold at most 3 per invocation (`SIDE_CONNECTIONS`, src/side-connections.ts; a Slack answer is
+  read before its slot is freed); a delivery still waiting for one at its budget is not started (no attempt; the
+  alarm brings it back when its hold runs out). A page in the same batch (or the same event) goes to the relay at
+  once (tested with 20 receivers that never answer, against a model of the six-connection limit).
 - **Not yet.** The OpenAPI reference and `packages/sdk` (with a verifier) publishing these types; per-endpoint
   custom headers; replaying a given-up delivery from the dashboard.
 

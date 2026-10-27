@@ -1,7 +1,8 @@
 // Outbound webhooks (RFC 0005 "Outbound webhooks"): the signature (Standard Webhooks, against the specification's
 // own example), creating an endpoint and rotating its secret through the API, and delivery from the queue consumer:
-// signed, filtered, idempotent per event, retried with backoff and a cap, refused for targets the rules forbid,
-// turned off after sustained failures with an email to the owners, and never in the way of a page.
+// signed, filtered, idempotent per event, retried by the shard's alarm with backoff and a cap, refused for targets the
+// rules forbid, turned off after sustained failures with an email to the owners, and never in the way of a page: not
+// its time, not its Queue retries, not its connections.
 import { env, exports } from "cloudflare:workers";
 import {
   createExecutionContext,
@@ -19,13 +20,19 @@ import {
 } from "@freecorps/brigade-schema";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import type { EmailSender, OutgoingEmail } from "../src/email.ts";
-import { consumeEvents, WEBHOOK_BUDGET_MS, type Fetch } from "../src/notify.ts";
+import { consumeEvents, retryDelay, WEBHOOK_BUDGET_MS, type Fetch } from "../src/notify.ts";
 import { snippet, WEBHOOK_TIMEOUT_MS } from "../src/notify-webhooks.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import { newWebhookSecret, sign, signatureHeaders } from "../src/webhook-sign.ts";
 import { webhookRequest } from "../src/webhook-routes.ts";
-import { WEBHOOK_MAX_ATTEMPTS, WEBHOOK_RETRY_DELAYS_MS } from "../src/webhooks.ts";
+import { SIDE_CONNECTIONS } from "../src/side-connections.ts";
+import {
+  WEBHOOK_CLAIM_MS,
+  WEBHOOK_MAX_ATTEMPTS,
+  WEBHOOK_REQUEUE_MS,
+  WEBHOOK_RETRY_DELAYS_MS,
+} from "../src/webhooks.ts";
 import { workerAuth } from "../src/index.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
 
@@ -292,8 +299,50 @@ async function deliver(
 /** Lets every backoff and hold in the webhook ledger run out, so the next delivery is due at once. */
 const due = (t: Team) =>
   t.withShard((_shard, state) =>
-    state.storage.sql.exec("update webhook_sends set retry_at = 0, claimed_until = 0"),
+    state.storage.sql.exec(
+      "update webhook_sends set retry_at = 0, claimed_until = 0, queued_until = 0",
+    ),
   );
+
+type Ledger = {
+  webhook_id: string;
+  attempts: number;
+  claimed_until: number;
+  retry_at: number;
+  queued_until: number;
+  done: number;
+};
+const ledger = (t: Team) =>
+  t.withShard((_shard, state) =>
+    state.storage.sql
+      .exec<Ledger>(
+        "select webhook_id, attempts, claimed_until, retry_at, queued_until, done from webhook_sends",
+      )
+      .toArray(),
+  );
+
+/** Runs the shard's alarm; returns the `webhook.redeliver` events it queued. */
+async function alarm(t: Team): Promise<BrigadeEvent[]> {
+  const before = new Set((await eventsOf(t, "webhook.redeliver")).map((event) => event.id));
+  await runInDurableObject(t.stub, (instance: WorkspaceDO) => instance.alarm());
+  return (await eventsOf(t, "webhook.redeliver")).filter((event) => !before.has(event.id));
+}
+
+/** Lets every backoff run out, then runs the alarm: the redeliveries due. */
+async function redrive(t: Team): Promise<BrigadeEvent[]> {
+  await due(t);
+  return alarm(t);
+}
+
+/** A receiver that never answers: each delivery waits out `WEBHOOK_TIMEOUT_MS`. */
+const hang = (request: Request) =>
+  new Promise<Response>((resolve, reject) => {
+    const timer = setTimeout(() => resolve(new Response("late")), WEBHOOK_TIMEOUT_MS + 5000);
+    request.signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(request.signal.reason);
+    });
+  });
 
 describe("POST /workspaces/:id/webhooks", () => {
   test("an owner or admin gets the secret once; the shard keeps it sealed and never in an event", async () => {
@@ -347,6 +396,51 @@ describe("POST /workspaces/:id/webhooks", () => {
         issues: [{ path: "url" }],
       });
     }
+  });
+
+  test("with an Idempotency-Key a retried create or rotation is the same request: same answer, same secret", async () => {
+    const t = await team();
+    const id = newId("whk", Date.now(), random);
+    const create = () =>
+      api(`/workspaces/${t.id}/webhooks`, {
+        method: "POST",
+        headers: { Cookie: t.ana.cookie, "Idempotency-Key": "create-0123456789abcdef" },
+        body: JSON.stringify({ id, url: HOOK, description: "", events: ["incident.declared"] }),
+      });
+    const [made, remade] = [await create(), await create()];
+    expect([made.status, remade.status]).toEqual([201, 201]);
+    const { secret: first } = (await made.json()) as { secret: string };
+    expect(await remade.json()).toEqual({ id, secret: first });
+    expect(await eventsOf(t, "webhook.created")).toHaveLength(1);
+
+    const rotate = (key: string, by = t.ana) =>
+      api(`/workspaces/${t.id}/webhooks/${id}/rotate`, {
+        method: "POST",
+        headers: { Cookie: by.cookie, "Idempotency-Key": key },
+      });
+    const key = crypto.randomUUID();
+    const rotated = await rotate(key);
+    const retried = await rotate(key);
+    const { secret: second } = (await rotated.json()) as { secret: string };
+    expect(second).not.toBe(first);
+    expect(await retried.json()).toEqual({ id, secret: second });
+    // Rotated once: the first secret keeps its day of grace, and deliveries carry both.
+    expect(await eventsOf(t, "webhook.secret_rotated")).toHaveLength(1);
+    const hook = receiver();
+    const event = await declare(t, owner(t));
+    await deliver([event], hook.send);
+    const [got] = hook.received;
+    const timestamp = Number(got!.headers["webhook-timestamp"]);
+    expect(got!.headers["webhook-signature"]).toBe(
+      `v1,${await sign(second, event.id, timestamp, got!.body)} v1,${await sign(first, event.id, timestamp, got!.body)}`,
+    );
+    // Another member's request with the same key is their own; a new key is a new rotation.
+    const bias = await rotate(key, t.bia);
+    expect(((await bias.json()) as { secret: string }).secret).not.toBe(second);
+    expect(await eventsOf(t, "webhook.secret_rotated")).toHaveLength(2);
+    const bad = await rotate("short");
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ error: "invalid_idempotency_key" });
   });
 
   test("without WEBHOOK_SECRET_KEY webhooks are off", async () => {
@@ -451,40 +545,59 @@ describe("delivery", () => {
     });
   });
 
-  test("a failure is retried with backoff, then given up after the last attempt", async () => {
+  test("a failure is retried by the shard's alarm with backoff, then given up after the last attempt", async () => {
     const t = await team();
     const { id } = await endpoint(t);
     const event = await declare(t, owner(t));
     const hook = receiver(() => new Response("upstream on fire\n", { status: 502 }));
-    const first = await deliver([event], hook.send);
-    expect(first.retryMessages).toEqual([
-      { msgId: "msg-0", delaySeconds: WEBHOOK_RETRY_DELAYS_MS[0] / 1000 },
-    ]);
-    // Redelivered before the backoff ran out: nothing is sent, and it comes back when it is due.
-    const early = await deliver([event], hook.send, { attempts: 2 });
+    // The message is settled at once: the retry is the ledger's, never the Queue's.
+    expect(await deliver([event], hook.send)).toMatchObject({
+      explicitAcks: ["msg-0"],
+      retryMessages: [],
+    });
+    const backoff = async (attempt: number) => {
+      const [open] = await ledger(t);
+      expect(open).toMatchObject({ attempts: attempt, done: 0, claimed_until: 0 });
+      const wait = open!.retry_at - Date.now();
+      expect(wait).toBeGreaterThan(WEBHOOK_RETRY_DELAYS_MS[attempt - 1]! - 5000);
+      expect(wait).toBeLessThanOrEqual(WEBHOOK_RETRY_DELAYS_MS[attempt - 1]!);
+      // The alarm comes back for it.
+      const armed = await runInDurableObject(t.stub, (_instance, state) =>
+        state.storage.getAlarm(),
+      );
+      expect(armed).not.toBeNull();
+      expect(armed!).toBeLessThanOrEqual(open!.retry_at);
+    };
+    await backoff(1);
+    // Redelivered, or the alarm run, before the backoff ran out: nothing is sent or queued.
+    await deliver([event], hook.send, { attempts: 2 });
+    expect(await alarm(t)).toEqual([]);
     expect(hook.received).toHaveLength(1);
-    expect(early.retryMessages[0]!.delaySeconds).toBeGreaterThan(20);
     for (let attempt = 2; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt++) {
-      await due(t);
-      const result = await deliver([event], hook.send, { attempts: attempt + 1 });
-      if (attempt < WEBHOOK_MAX_ATTEMPTS) {
-        expect(result.retryMessages).toEqual([
-          { msgId: "msg-0", delaySeconds: WEBHOOK_RETRY_DELAYS_MS[attempt - 1]! / 1000 },
-        ]);
-      } else {
-        expect(result).toMatchObject({ explicitAcks: ["msg-0"], retryMessages: [] });
-      }
+      const queued = await redrive(t);
+      expect(queued).toEqual([
+        expect.objectContaining({ type: "webhook.redeliver", data: { eventId: event.id } }),
+      ]);
+      // Queued once: the alarm does not queue it again while the redelivery is on its way.
+      expect(await alarm(t)).toEqual([]);
+      expect(await deliver(queued, hook.send)).toMatchObject({ retryMessages: [] });
+      expect(hook.received).toHaveLength(attempt);
+      if (attempt < WEBHOOK_MAX_ATTEMPTS) await backoff(attempt);
     }
-    expect(hook.received).toHaveLength(WEBHOOK_MAX_ATTEMPTS);
+    expect(await ledger(t)).toEqual([
+      expect.objectContaining({ attempts: WEBHOOK_MAX_ATTEMPTS, done: 1 }),
+    ]);
     // Every try carries the same id and bytes, so a receiver de-duplicates them.
     expect(new Set(hook.received.map((one) => one.body)).size).toBe(1);
     expect(new Set(hook.received.map((one) => one.headers["webhook-id"]))).toEqual(
       new Set([event.id]),
     );
-    await due(t);
+    // Given up: nothing more is queued or sent.
+    expect(await redrive(t)).toEqual([]);
     await deliver([event], hook.send, { attempts: 9 });
     expect(hook.received).toHaveLength(WEBHOOK_MAX_ATTEMPTS);
     const log = (await row(t, id)).recent;
+    expect(log.map((one) => one.attempt)).toEqual([6, 5, 4, 3, 2, 1]);
     expect(log[0]).toMatchObject({
       attempt: WEBHOOK_MAX_ATTEMPTS,
       ok: false,
@@ -492,6 +605,29 @@ describe("delivery", () => {
       error: "status",
       snippet: "upstream on fire",
     });
+  });
+
+  test("a redelivery the Queue lost is queued again, and one for an endpoint turned off is dropped", async () => {
+    const t = await team();
+    const { id } = await endpoint(t);
+    const event = await declare(t, owner(t));
+    await deliver([event], receiver(() => new Response("no", { status: 500 })).send);
+    expect(await redrive(t)).toHaveLength(1);
+    // Never delivered: after `WEBHOOK_REQUEUE_MS` the alarm queues it again.
+    const [open] = await ledger(t);
+    expect(open!.queued_until - Date.now()).toBeGreaterThan(WEBHOOK_REQUEUE_MS - 5000);
+    await t.withShard((_shard, state) =>
+      state.storage.sql.exec("update webhook_sends set queued_until = 0"),
+    );
+    const again = await alarm(t);
+    expect(again).toHaveLength(1);
+    // Turned off meanwhile: the redelivery sends nothing and closes the delivery.
+    await t.run("webhook.setEnabled", { id, enabled: false }, owner(t));
+    const hook = receiver();
+    await deliver(again, hook.send);
+    expect(hook.received).toEqual([]);
+    expect(await ledger(t)).toEqual([expect.objectContaining({ done: 1 })]);
+    expect(await redrive(t)).toEqual([]);
   });
 
   test("never follows a redirect, and never sends to a target the rules refuse now", async () => {
@@ -591,22 +727,14 @@ describe("delivery", () => {
     // Caio declares, so Ana's phone is paged; the same event goes to the endpoint, which never answers in time.
     const event = await declare(t, responder(t));
     const other = await declare(t, responder(t), "Second");
-    const hook = receiver(
-      (request) =>
-        new Promise<Response>((resolve) => {
-          const timer = setTimeout(() => resolve(new Response("late")), WEBHOOK_TIMEOUT_MS + 5000);
-          request.signal.addEventListener("abort", () => clearTimeout(timer));
-        }),
-    );
+    const hook = receiver(hang);
     const result = await deliver([event, other], hook.send);
-    // Both pages went out, and the batch settled within the webhooks' budget, not the receiver's pace.
+    // Both pages went out, and the batch settled within the webhooks' budget, not the receiver's pace, with no retry
+    // of the messages: the webhooks' retries are the shard's.
     expect(hook.pushes).toEqual(["c".repeat(64), "c".repeat(64)]);
     expect(result.settledIn).toBeGreaterThanOrEqual(WEBHOOK_BUDGET_MS - 100);
     expect(result.settledIn).toBeLessThan(WEBHOOK_BUDGET_MS + 1500);
-    expect(result.retryMessages).toEqual([
-      { msgId: "msg-0", delaySeconds: expect.any(Number) },
-      { msgId: "msg-1", delaySeconds: expect.any(Number) },
-    ]);
+    expect(result).toMatchObject({ explicitAcks: ["msg-0", "msg-1"], retryMessages: [] });
     // The late attempt finished under waitUntil: recorded as a timeout, and the retry waits out its backoff.
     const log = await t.withShard((shard) => shard.store.scan("webhooks")[0]!.recent);
     expect(log.map((one) => one.error)).toEqual(["timeout", "timeout"]);
@@ -615,4 +743,102 @@ describe("delivery", () => {
     await deliver([event], hook.send, { attempts: 2 });
     expect(hook.pushes).toHaveLength(2);
   }, 40_000);
+
+  test("twenty endpoints that never answer leave a connection for the page's relay request", async () => {
+    const t = await team();
+    for (let i = 0; i < 20; i++) await endpoint(t, undefined, `https://hooks.example.com/${i}`);
+    await phone(t, "d".repeat(64));
+    const event = await declare(t, responder(t));
+    // The Worker's limit, modelled: six connections open at once, a seventh waits for one to close.
+    const CAP = 6;
+    let open = 0;
+    let hooksOpen = 0;
+    let hooksPeak = 0;
+    const waiting: (() => void)[] = [];
+    let relayAt: number | undefined;
+    const started = Date.now();
+    const send: Fetch = async (request) => {
+      if (open >= CAP) await new Promise<void>((resolve) => waiting.push(resolve));
+      open++;
+      const hook = !request.url.startsWith("https://relay.test/");
+      if (hook) hooksPeak = Math.max(hooksPeak, ++hooksOpen);
+      try {
+        if (!hook) {
+          relayAt ??= Date.now() - started;
+          await request.body?.cancel();
+          return Response.json({ status: 200 });
+        }
+        return await hang(request);
+      } finally {
+        open--;
+        if (hook) hooksOpen--;
+        waiting.shift()?.();
+      }
+    };
+    const result = await deliver([event], send);
+    // The relay was asked at once, not after the receivers' timeouts.
+    expect(relayAt).toBeDefined();
+    expect(relayAt!).toBeLessThan(1000);
+    expect(hooksPeak).toBeLessThanOrEqual(SIDE_CONNECTIONS);
+    expect(result).toMatchObject({ explicitAcks: ["msg-0"], retryMessages: [] });
+    // The ones that started timed out and are logged; the rest were put off without an attempt, and come back
+    // through the alarm once their claim runs out.
+    const rows = await t.withShard((shard) => shard.store.scan("webhooks"));
+    const tried = rows.filter((one) => one.recent.length > 0);
+    expect(tried.length).toBeGreaterThan(0);
+    expect(tried.length).toBeLessThanOrEqual(SIDE_CONNECTIONS);
+    expect(tried.flatMap((one) => one.recent.map((attempt) => attempt.error))).toEqual(
+      tried.map(() => "timeout"),
+    );
+    const open20 = await ledger(t);
+    expect(open20).toHaveLength(20);
+    expect(open20.every((one) => one.done === 0)).toBe(true);
+    const putOff = open20.filter((one) => one.attempts === 0);
+    expect(putOff).toHaveLength(20 - tried.length);
+    expect(putOff.every((one) => one.claimed_until <= Date.now() + WEBHOOK_CLAIM_MS)).toBe(true);
+    expect(await redrive(t)).toEqual([
+      expect.objectContaining({ type: "webhook.redeliver", data: { eventId: event.id } }),
+    ]);
+  }, 40_000);
+
+  test("an endpoint that always times out gets every attempt, beside a page's own retries", async () => {
+    const t = await team();
+    const { id } = await endpoint(t);
+    await phone(t, "e".repeat(64));
+    const event = await declare(t, responder(t));
+    // The relay fails, so the page is retried on its own schedule; the receiver never answers in time.
+    let pushes = 0;
+    const send: Fetch = async (request) => {
+      if (request.url.startsWith("https://relay.test/")) {
+        pushes++;
+        return Response.json({ error: "apns_unreachable" }, { status: 502 });
+      }
+      return hang(request);
+    };
+    // The page's retries are push's alone: every delivery of the event asks for exactly push's delay.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const result = await deliver([event], send, { attempts: attempt });
+      expect(result.retryMessages).toEqual([{ msgId: "msg-0", delaySeconds: retryDelay(attempt) }]);
+    }
+    expect(pushes).toBe(3);
+    // The webhook's attempts come through the alarm, each one recorded, until the last.
+    for (let attempt = 2; attempt <= WEBHOOK_MAX_ATTEMPTS; attempt++) {
+      const queued = await redrive(t);
+      expect(queued).toHaveLength(1);
+      const result = await deliver(queued, send);
+      // Over its budget, and still no retry of the message.
+      expect(result).toMatchObject({ explicitAcks: ["msg-0"], retryMessages: [] });
+    }
+    const log = (await row(t, id)).recent;
+    expect(log.map((one) => [one.attempt, one.error])).toEqual(
+      Array.from({ length: WEBHOOK_MAX_ATTEMPTS }, (_, index) => [
+        WEBHOOK_MAX_ATTEMPTS - index,
+        "timeout",
+      ]),
+    );
+    expect(await ledger(t)).toEqual([
+      expect.objectContaining({ attempts: WEBHOOK_MAX_ATTEMPTS, done: 1 }),
+    ]);
+    expect(await redrive(t)).toEqual([]);
+  }, 120_000);
 });

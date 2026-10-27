@@ -318,9 +318,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
     workspace on the dashboard's Webhooks card (URL, description, event filter from the public catalog, on and off),
     with a signing secret made on the server, shown once, sealed under `WEBHOOK_SECRET_KEY` and rotatable with a
     24-hour overlap; deliveries from the queue consumer, signed per Standard Webhooks (`webhook-id` is the event id),
-    under the monitors' target rules plus https only, retried 5 times over about 5 hours, with a delivery log of the
-    last 10 attempts, "Send test event", and auto-disable after a day of failures with an email to the owners. A
-    slow receiver never holds back a page. Versioned payload types in `packages/schema`.
+    under the monitors' target rules plus https only, retried 5 times over about 5 hours by the shard's alarm, with a
+    delivery log of the last 10 attempts, "Send test event", and auto-disable after a day of failures with an email
+    to the owners. A slow receiver never holds back a page: not its time, its Queue retries or its connections.
+    Versioned payload types in `packages/schema`.
   - Left: setting `WEBHOOK_SECRET_KEY` on the deployed environments (owner's call, apps/api/README.md); the OpenAPI
     reference generated from `packages/schema`; `packages/sdk` (payload types and a signature verifier) published;
     replaying a given-up delivery; custom headers per endpoint.

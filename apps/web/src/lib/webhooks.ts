@@ -151,25 +151,38 @@ export type SecretResult =
 
 /**
  * Creates an endpoint (`draft` given) or gives `id` a new secret: the server makes the secret and answers it once.
- * A field the shard refused comes back as `field`.
+ * A field the shard refused comes back as `field`. Sent with an `Idempotency-Key`, and sent once more with the same
+ * key when the first answer was lost (no connection, or the API could not reach the shard): the server answers the
+ * first request's outcome and secret, so a rotation retried never rotates twice (which would cut the previous
+ * secret's grace short).
  */
 export async function requestSecret(
   workspaceId: string,
   id: string,
   draft: WebhookDraft | null,
   fetcher: typeof fetch = fetch,
+  key: string = crypto.randomUUID(),
 ): Promise<SecretResult> {
   const base = `/api/workspaces/${encodeURIComponent(workspaceId)}/webhooks`;
-  let response: Response;
-  try {
-    response = await fetcher(draft ? base : `${base}/${encodeURIComponent(id)}/rotate`, {
-      method: "POST",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
-      ...(draft ? { body: JSON.stringify({ id, ...draft }) } : {}),
-    });
-  } catch {
-    return { ok: false, error: "network" };
-  }
+  const post = async (): Promise<Response | undefined> => {
+    try {
+      return await fetcher(draft ? base : `${base}/${encodeURIComponent(id)}/rotate`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "Idempotency-Key": key,
+        },
+        ...(draft ? { body: JSON.stringify({ id, ...draft }) } : {}),
+      });
+    } catch {
+      return undefined;
+    }
+  };
+  let response = await post();
+  // A 503 is `unavailable` (the shard may have run it) or `not_configured`, which only answers the same again.
+  if (response === undefined || response.status === 503) response = (await post()) ?? response;
+  if (response === undefined) return { ok: false, error: "network" };
   const body = (await response.json().catch(() => ({}))) as {
     secret?: unknown;
     error?: unknown;
@@ -188,8 +201,7 @@ export async function requestSecret(
   ];
   const error = known.find((code) => code === body.error) ?? "internal";
   const path = Array.isArray(body.issues) ? body.issues[0]?.path : undefined;
-  const field =
-    path === "url" || path === "description" || path === "events" ? (path as "url") : undefined;
+  const field = path === "url" || path === "description" || path === "events" ? path : undefined;
   return field ? { ok: false, error, field } : { ok: false, error };
 }
 

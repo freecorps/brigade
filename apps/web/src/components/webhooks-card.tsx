@@ -194,9 +194,11 @@ export function WebhooksPanel({
                 setShown({ secret: result.secret, host: hostOf(draft.url), rotated: false });
                 return null;
               }
-              return result.field === "url"
-                ? { url: webhookText("url_invalid") }
-                : { form: webhookText(secretErrorPart(result.error)) };
+              if (result.field === "url") return { url: webhookText("url_invalid") };
+              if (result.field === "description")
+                return { description: webhookText("description_invalid") };
+              if (result.field === "events") return { events: webhookText("events_none") };
+              return { form: webhookText(secretErrorPart(result.error)) };
             }}
           />
         ) : null}
@@ -346,7 +348,7 @@ function EndpointItem({
 }
 
 /** A form-level refusal, or the field the shard refused. */
-type SubmitProblem = { form?: string; url?: string } | null;
+type SubmitProblem = { form?: string; url?: string; description?: string; events?: string } | null;
 
 function EndpointForm({
   initial,
@@ -391,15 +393,23 @@ function EndpointForm({
       return;
     }
     setState("busy");
-    void onSubmit(checked.value).then((result) => {
-      if (!result) {
-        setState("saved");
-        return;
-      }
-      setState("idle");
-      if (result.url) setIssues({ url: result.url });
-      setProblem(result.form ?? null);
-    });
+    void onSubmit(checked.value).then(
+      (result) => {
+        if (!result) {
+          setState("saved");
+          return;
+        }
+        setState("idle");
+        const { form, ...fields } = result;
+        if (Object.keys(fields).length) setIssues(fields);
+        setProblem(form ?? null);
+      },
+      () => {
+        // A request that threw (the socket closed mid-mutation): never leave the form stuck saying it is saving.
+        setState("idle");
+        setProblem(webhookText("save_failed"));
+      },
+    );
   };
   const toggle = (type: WebhookEventType, on: boolean) =>
     change({ events: on ? [...draft.events, type] : draft.events.filter((one) => one !== type) });
@@ -482,6 +492,14 @@ function EndpointForm({
 
 type Confirm = "rotate" | "delete" | null;
 
+/** What each editor action says when its request threw. */
+const FAILED = {
+  toggle: "toggle_failed",
+  test: "test_failed",
+  rotate: "rotate_failed",
+  delete: "delete_failed",
+} as const;
+
 function EndpointEditor({
   row,
   locale,
@@ -513,9 +531,15 @@ function EndpointEditor({
   ) => {
     setBusy(what);
     setNote(null);
-    const result = await work();
-    setBusy(null);
-    if (result.part) setNote({ ok: result.ok, part: result.part });
+    try {
+      const result = await work();
+      if (result.part) setNote({ ok: result.ok, part: result.part });
+    } catch {
+      // A request that threw: the buttons come back, and the failure is said, never a silent stuck state.
+      setNote({ ok: false, part: FAILED[what] });
+    } finally {
+      setBusy(null);
+    }
   };
   return (
     <div className="flex min-w-0 flex-col gap-5">

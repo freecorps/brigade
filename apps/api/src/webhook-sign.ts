@@ -18,6 +18,29 @@ export function newWebhookSecret(
   return SECRET_PREFIX + toBase64(bytes.subarray(0, SECRET_BYTES));
 }
 
+/**
+ * The secret a create or rotation sent with an `Idempotency-Key` makes (src/webhook-routes.ts): HKDF-SHA256 under the
+ * 32-byte `key` (`WEBHOOK_SECRET_KEY`), over `label`, which names the request (workspace, endpoint, member, action and
+ * key). A retried request makes the same secret the first one stored, so the answer it shows is the secret in use.
+ */
+export async function derivedWebhookSecret(
+  key: Uint8Array<ArrayBuffer>,
+  label: string,
+): Promise<string> {
+  const base = await crypto.subtle.importKey("raw", key, "HKDF", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: new Uint8Array(),
+      info: new TextEncoder().encode(`brigade-webhook-secret:${label}`),
+    },
+    base,
+    SECRET_BYTES * 8,
+  );
+  return SECRET_PREFIX + toBase64(new Uint8Array(bits));
+}
+
 /** Whether `secret` is one `newWebhookSecret` makes. */
 export function isWebhookSecret(secret: string): boolean {
   return SECRET.test(secret);

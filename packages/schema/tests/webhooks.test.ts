@@ -154,6 +154,7 @@ describe("webhook endpoints", () => {
     expect(Object.keys(mutations)).not.toContain("webhook.create");
     expect(Object.keys(mutations)).not.toContain("webhook.rotateSecret");
     expect(Object.keys(mutations)).not.toContain("webhook.record");
+    expect(Object.keys(mutations)).not.toContain("webhook.redeliver");
   });
 
   test(`at most ${MAX_WEBHOOKS_PER_WORKSPACE} per workspace`, () => {
@@ -397,6 +398,42 @@ describe("payload", () => {
       monitor: { id: "mon_x", name: null, kind: null, status: null },
       reason: "deleted",
     });
+  });
+
+  test("an event missing a field (or holding the wrong kind) has no payload, never a coerced one", () => {
+    const alert = (data: unknown) => webhookPayload(event("alert.fired", data, "alt_x"), {});
+    expect(alert({ id: "alt_x", monitorId: "mon_x", incidentId: incident.id })?.data).toMatchObject(
+      { alertId: "alt_x", incidentId: incident.id },
+    );
+    expect(alert({ id: "alt_x", monitorId: "mon_x" })).toBeUndefined();
+    expect(alert({ id: null, monitorId: "mon_x", incidentId: incident.id })).toBeUndefined();
+    for (const [type, data] of [
+      ["incident.acknowledged", {}],
+      ["incident.acknowledged", { by: null }],
+      ["incident.update_posted", { body: 42 }],
+      ["incident.status_changed", { from: "triage", to: "sideways" }],
+      ["incident.severity_changed", { from: "sev2" }],
+      ["incident.role_assigned", { role: "chef", from: null, to: "usr_ana" }],
+      ["incident.role_assigned", { role: "commander", from: 7, to: "usr_ana" }],
+      ["escalation.paged", { incidentId: incident.id, level: 1, reason: "started" }],
+      ["escalation.paged", { incidentId: incident.id, level: 0, round: 1, reason: "started" }],
+      ["escalation.paged", { incidentId: incident.id, level: 1, round: 1, reason: "bored" }],
+    ] as const) {
+      const payload = webhookPayload(event(type, data), { incident });
+      expect(payload, `${type} ${JSON.stringify(data)}`).toBeUndefined();
+    }
+    expect(
+      webhookPayload(event("alert.resolved", { id: "alt_x", monitorId: "mon_x" }, "alt_x"), {}),
+    ).toBeUndefined();
+    expect(
+      webhookPayload(event("monitor.status_changed", { from: "up" }, "mon_x"), {}),
+    ).toBeUndefined();
+    // A role cleared is null, never the string "null".
+    expect(
+      webhookPayload(event("incident.role_assigned", { role: "commander", to: "usr_ana" }), {
+        incident,
+      })?.data,
+    ).toMatchObject({ role: "commander", from: null, to: "usr_ana" });
   });
 
   test("nothing outside the catalog", () => {

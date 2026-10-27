@@ -4,9 +4,17 @@
 // API and server-only (`webhook_secrets`), and no event carries the URL or the secret. Delivery, signing and retries
 // are the API's queue consumer (apps/api src/notify-webhooks.ts).
 
-import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
+import {
+  INCIDENT_ROLES,
+  INCIDENT_STATUSES,
+  SEVERITIES,
+  type IncidentRole,
+  type IncidentStatus,
+  type Severity,
+} from "./lifecycle.ts";
 import {
   isCloudflareAddress,
+  MONITOR_STATUSES,
   MONITOR_URL_MAX,
   targetProblem,
   type MonitorKind,
@@ -58,6 +66,8 @@ export const WEBHOOK_EVENT_TYPES = [
 ] as const;
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
 export const WEBHOOK_TEST_EVENT = "webhook.test";
+/** The notifier's own event that brings deliveries the ledger has due back to the queue (`webhook.redeliver`). */
+export const WEBHOOK_REDELIVER_EVENT = "webhook.redeliver";
 
 /** Whether `type` is in the public catalog. */
 export function isWebhookEventType(type: unknown): type is WebhookEventType {
@@ -150,6 +160,7 @@ export type WebhookDisabled = DomainEvent<
 export type WebhookSecretRotated = DomainEvent<"webhook.secret_rotated", { id: string }>;
 export type WebhookDeleted = DomainEvent<"webhook.deleted", { id: string }>;
 export type WebhookTestRequested = DomainEvent<"webhook.test", { id: string }>;
+export type WebhookRedeliver = DomainEvent<"webhook.redeliver", { eventId: string }>;
 
 // ---- Mutations ---------------------------------------------------------------------------------------------------
 
@@ -428,6 +439,25 @@ export const recordWebhookAttempt = defineMutation({
   },
 });
 
+/**
+ * Server only, as the notifier, from the shard's alarm: the deliveries of event `eventId` the webhook ledger has due
+ * again (a backoff that ran out, a claim nobody recorded) go back to the queue as `webhook.redeliver`, through the
+ * outbox like every event. Their retries never ride the original event's own redeliveries, so a slow receiver costs
+ * the Queue's retries of a page nothing, and every attempt the ledger promises happens. No row changes.
+ */
+export const redeliverWebhooks = defineMutation({
+  name: "webhook.redeliver",
+  args: v.object({ eventId: v.id("evt") }),
+  permission: "webhook:manage",
+  apply(_store, args) {
+    const event: WebhookRedeliver = {
+      type: WEBHOOK_REDELIVER_EVENT,
+      data: { eventId: args.eventId },
+    };
+    return ok(event);
+  },
+});
+
 export const webhookMutations = [
   updateWebhook,
   setWebhookEnabled,
@@ -442,7 +472,7 @@ export const allWebhooks = defineQuery({
   permission: "webhook:manage",
   table: "webhooks",
   filter: () => true,
-  sort: (a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1),
+  sort: (a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
 });
 
 // ---- Payload -------------------------------------------------------------------------------------------------------
@@ -538,6 +568,18 @@ export type WebhookSourceEvent = {
 /** What the shard knows when it first prepares a delivery: the event's incident or monitor, as they are then. */
 export type WebhookContext = { incident?: IncidentRow; monitor?: MonitorRow };
 
+/** Every `EscalationReason`, to check an event's against. */
+const ESCALATION_REASONS = [
+  "started",
+  "timeout",
+  "unreachable",
+  "undelivered",
+  "exhausted",
+  "stalled",
+] as const satisfies readonly EscalationReason[];
+/** Why an alert resolves (`alert.resolved`). */
+const ALERT_RESOLVED_REASONS = ["recovered", "paused", "deleted"] as const;
+
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
 
 function incidentOf(row: IncidentRow): WebhookIncident {
@@ -598,97 +640,121 @@ export function webhookPayload(
     actor: { kind: event.actor.kind, id: event.actor.id },
   };
   const data = event.data;
-  const get = (key: string) => field(data, key);
+  // Each field is checked, never coerced: an event missing one (or holding the wrong kind) has no payload, so a
+  // receiver never gets `"undefined"`, `"null"` or `NaN` where an id, a status or a count should be.
+  const text = (key: string): string | undefined => {
+    const value = field(data, key);
+    return typeof value === "string" ? value : undefined;
+  };
+  const textOrNull = (key: string): string | null | undefined => {
+    const value = field(data, key);
+    return value === null || value === undefined
+      ? null
+      : typeof value === "string"
+        ? value
+        : undefined;
+  };
+  const oneOf = <T extends string>(key: string, values: readonly T[]): T | undefined => {
+    const value = field(data, key);
+    return (values as readonly unknown[]).includes(value) ? (value as T) : undefined;
+  };
+  const count = (key: string): number | undefined => {
+    const value = field(data, key);
+    return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : undefined;
+  };
   if (event.type === WEBHOOK_TEST_EVENT) {
-    const id = get("id");
-    return typeof id === "string"
-      ? { ...base, type: "webhook.test", data: { webhookId: id } }
-      : undefined;
+    const id = text("id");
+    return id === undefined
+      ? undefined
+      : { ...base, type: "webhook.test", data: { webhookId: id } };
   }
   if (!isWebhookEventType(event.type)) return undefined;
-  if (event.type.startsWith("incident.") || event.type === "escalation.paged") {
-    if (!context.incident) return undefined;
-    const incident = incidentOf(context.incident);
-    switch (event.type) {
-      case "incident.declared":
-        return { ...base, type: event.type, data: { incident } };
-      case "incident.status_changed":
-        return {
-          ...base,
-          type: event.type,
-          data: {
-            incident,
-            from: get("from") as IncidentStatus,
-            to: get("to") as IncidentStatus,
-          },
-        };
-      case "incident.severity_changed":
-        return {
-          ...base,
-          type: event.type,
-          data: { incident, from: get("from") as Severity, to: get("to") as Severity },
-        };
-      case "incident.acknowledged":
-        return { ...base, type: event.type, data: { incident, by: String(get("by")) } };
-      case "incident.update_posted":
-        return { ...base, type: event.type, data: { incident, body: String(get("body")) } };
-      case "incident.role_assigned":
-        return {
-          ...base,
-          type: event.type,
-          data: {
-            incident,
-            role: get("role") as IncidentRole,
-            from: (get("from") as string | null) ?? null,
-            to: (get("to") as string | null) ?? null,
-          },
-        };
-      case "escalation.paged": {
-        const userIds = get("userIds");
-        const missed = get("missed");
-        return {
-          ...base,
-          type: event.type,
-          data: {
-            incident,
-            level: (get("level") as number | null) ?? null,
-            round: Number(get("round") ?? 0),
-            reason: get("reason") as EscalationReason,
-            paged: Array.isArray(userIds) ? userIds.length : 0,
-            missed: Array.isArray(missed) ? missed.length : 0,
-          },
-        };
-      }
-    }
-    return undefined;
-  }
+  const type: WebhookEventType = event.type;
   const subject = webhookSubject(event);
-  if (!subject || !("monitorId" in subject)) return undefined;
-  const monitor = monitorOf(subject.monitorId, context.monitor);
-  if (event.type === "monitor.status_changed") {
-    return {
-      ...base,
-      type: event.type,
-      data: { monitor, from: get("from") as MonitorStatus, to: get("to") as MonitorStatus },
-    };
+  const incident =
+    subject && "incidentId" in subject && context.incident
+      ? incidentOf(context.incident)
+      : undefined;
+  const monitor =
+    subject && "monitorId" in subject ? monitorOf(subject.monitorId, context.monitor) : undefined;
+  switch (type) {
+    case "incident.declared":
+      return incident && { ...base, type, data: { incident } };
+    case "incident.status_changed": {
+      const from = oneOf("from", INCIDENT_STATUSES);
+      const to = oneOf("to", INCIDENT_STATUSES);
+      return incident && from && to ? { ...base, type, data: { incident, from, to } } : undefined;
+    }
+    case "incident.severity_changed": {
+      const from = oneOf("from", SEVERITIES);
+      const to = oneOf("to", SEVERITIES);
+      return incident && from && to ? { ...base, type, data: { incident, from, to } } : undefined;
+    }
+    case "incident.acknowledged": {
+      const by = text("by");
+      return incident && by !== undefined ? { ...base, type, data: { incident, by } } : undefined;
+    }
+    case "incident.update_posted": {
+      const body = text("body");
+      return incident && body !== undefined
+        ? { ...base, type, data: { incident, body } }
+        : undefined;
+    }
+    case "incident.role_assigned": {
+      const role = oneOf("role", INCIDENT_ROLES);
+      const from = textOrNull("from");
+      const to = textOrNull("to");
+      return incident && role && from !== undefined && to !== undefined
+        ? { ...base, type, data: { incident, role, from, to } }
+        : undefined;
+    }
+    case "escalation.paged": {
+      const level = field(data, "level");
+      const round = count("round");
+      const reason = oneOf("reason", ESCALATION_REASONS);
+      const userIds = field(data, "userIds");
+      const missed = field(data, "missed");
+      if (!incident || round === undefined || !reason) return undefined;
+      if (level !== null && !(Number.isSafeInteger(level) && (level as number) >= 1))
+        return undefined;
+      return {
+        ...base,
+        type,
+        data: {
+          incident,
+          level: level as number | null,
+          round,
+          reason,
+          paged: Array.isArray(userIds) ? userIds.length : 0,
+          missed: Array.isArray(missed) ? missed.length : 0,
+        },
+      };
+    }
+    case "monitor.status_changed": {
+      const from = oneOf("from", MONITOR_STATUSES);
+      const to = oneOf("to", MONITOR_STATUSES);
+      return monitor && from && to ? { ...base, type, data: { monitor, from, to } } : undefined;
+    }
+    case "alert.fired": {
+      const alertId = text("id");
+      const incidentId = text("incidentId");
+      return monitor && alertId !== undefined && incidentId !== undefined
+        ? { ...base, type, data: { alertId, monitor, incidentId } }
+        : undefined;
+    }
+    case "alert.resolved": {
+      const alertId = text("id");
+      const reason = oneOf("reason", ALERT_RESOLVED_REASONS);
+      return monitor && alertId !== undefined && reason
+        ? { ...base, type, data: { alertId, monitor, reason } }
+        : undefined;
+    }
+    default: {
+      // A type added to the catalog without a payload here fails to compile.
+      const unhandled: never = type;
+      return unhandled;
+    }
   }
-  const alertId = String(get("id"));
-  if (event.type === "alert.fired") {
-    return {
-      ...base,
-      type: event.type,
-      data: { alertId, monitor, incidentId: String(get("incidentId")) },
-    };
-  }
-  return {
-    ...base,
-    type: "alert.resolved",
-    data: {
-      alertId,
-      monitor,
-      reason: get("reason") as "recovered" | "paused" | "deleted",
-    },
-  };
 }
 
 /** Whether endpoint `row` takes `event`: its own test, or (on, filtered in, and created by then) a catalog event. */

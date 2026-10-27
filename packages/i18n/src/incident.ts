@@ -122,6 +122,8 @@ export function entryText(entry: TimelineRow, who: People): string {
       );
     case "severity_changed":
       return say("severity_changed", severityName(entry.from), severityName(entry.to));
+    case "renamed":
+      return say("renamed", entry.from, entry.to);
     case "acknowledged":
       return say("acknowledged");
     case "role_assigned": {

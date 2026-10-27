@@ -794,6 +794,11 @@ describe("payload validators", () => {
   /** One source event per payload type, as the outbox writes them, with what the shard reads for it. */
   const SOURCES: Record<WebhookPayloadType, [subject: string, data: unknown, context: object]> = {
     "incident.declared": [incident.id, { severity: "sev1" }, { incident }],
+    "incident.renamed": [
+      incident.id,
+      { from: "Checkout is slow", to: "Checkout errors in eu-west" },
+      { incident },
+    ],
     "incident.status_changed": [incident.id, { from: "triage", to: "investigating" }, { incident }],
     "incident.severity_changed": [incident.id, { from: "sev2", to: "sev1" }, { incident }],
     "incident.acknowledged": [incident.id, { by: "usr_ana" }, { incident }],

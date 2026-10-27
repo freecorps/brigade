@@ -20,6 +20,7 @@ import {
   INCIDENT_SCAN_CAP,
   newId,
   prefixRange,
+  UPDATE_REMOVED,
   publicCustomField,
   publicIncident,
   publicIncidentType,
@@ -76,6 +77,8 @@ export type RestWrite =
   | { kind: "declare"; body: DeclareRequest }
   | { kind: "updateIncident"; id: string; body: IncidentPatch }
   | { kind: "postUpdate"; id: string; body: { body: string } }
+  | { kind: "editUpdate"; id: string; entryId: string; body: { body: string } }
+  | { kind: "deleteUpdate"; id: string; entryId: string }
   | { kind: "createService"; body: ServiceCreateRequest }
   | { kind: "updateService"; id: string; body: ServicePatchRequest }
   | { kind: "deleteService"; id: string }
@@ -114,6 +117,8 @@ export const WRITE_PERMISSION: Record<RestWrite["kind"], Permission> = {
   declare: "incident:declare",
   updateIncident: "incident:update",
   postUpdate: "incident:update",
+  editUpdate: "incident:update",
+  deleteUpdate: "incident:update",
   createService: "catalog:manage",
   updateService: "catalog:manage",
   deleteService: "catalog:manage",
@@ -272,9 +277,13 @@ export function writeRest(ctx: WriteContext, write: RestWrite): RestResult {
       return declare(ctx, write.body);
     case "updateIncident":
       return updateIncident(ctx, write.id, write.body);
-    case "postUpdate": {
-      const args = { id: write.id, body: write.body.body };
-      const result = run(ctx, "incident.postUpdate", args, [write.id, "update"]);
+    case "postUpdate":
+      return postUpdate(ctx, write.id, write.body.body);
+    case "editUpdate":
+      return editUpdate(ctx, write.id, write.entryId, write.body.body);
+    case "deleteUpdate": {
+      const args = { id: write.id, entryId: write.entryId };
+      const result = run(ctx, "incident.deleteUpdate", args, [write.entryId, "delete"]);
       return result.ok ? { ok: true, body: { ok: true } } : failure(result);
     }
     case "createService":
@@ -361,8 +370,41 @@ function declare(ctx: WriteContext, body: DeclareRequest): RestResult {
 }
 
 /**
- * Each change through its own mutation, in a fixed order: type, services, fields, severity, status (last, so a
- * resolve comes after the details it closes with). One that asks for what already is counts as done. The first
+ * Posts a written update; the answer names its timeline entry (`entryId`), so the caller can edit or remove it. The
+ * entry is the actor's update written when the mutation first ran (the stored result's time, on a retry).
+ */
+function postUpdate(ctx: WriteContext, id: string, body: string): RestResult {
+  const parts = [id, "update"];
+  const result = run(ctx, "incident.postUpdate", { id, body }, parts);
+  if (!result.ok) return failure(result);
+  const at =
+    ctx.shard.storedAt(ctx.actor.id, REST_CLIENT_ID, mutationIdOf(ctx, parts), ctx.now) ?? ctx.now;
+  const { from, to } = prefixRange(`${id}:`);
+  let entryId: string | null = null;
+  let seq = 0;
+  for (const entry of ctx.shard.store.range("timeline", from, to)) {
+    if (entry.kind !== "update" || entry.actor !== ctx.actor.id || entry.at !== at) continue;
+    if (entry.seq > seq) [entryId, seq] = [entry.id, entry.seq];
+  }
+  return { ok: true, body: { ok: true, entryId } };
+}
+
+/**
+ * Edits a written update (`incident.editUpdate`: its author only). Text it already has counts as done, as in a
+ * `PATCH`; an update removed already is a `conflict`.
+ */
+function editUpdate(ctx: WriteContext, id: string, entryId: string, body: string): RestResult {
+  const result = run(ctx, "incident.editUpdate", { id, entryId, body }, [entryId, "edit"]);
+  if (result.ok) return { ok: true, body: { ok: true } };
+  if (unchanged(result) && result.error.message !== UPDATE_REMOVED) {
+    return { ok: true, body: { ok: true } };
+  }
+  return failure(result);
+}
+
+/**
+ * Each change through its own mutation, in a fixed order: title, type, services, fields, roles, severity, status (last,
+ * so a resolve comes after the details it closes with). One that asks for what already is counts as done. The first
  * refusal stops the rest and is the answer; the ones before it stay made. Every step's result is stored, refusals
  * too, so the same request with the same key answers the same refusal again; once what refused it is fixed, a new
  * key runs it, and the steps already made come back as changing nothing.
@@ -370,6 +412,9 @@ function declare(ctx: WriteContext, body: DeclareRequest): RestResult {
 function updateIncident(ctx: WriteContext, id: string, body: IncidentPatch): RestResult {
   if (!ctx.shard.store.get("incidents", id)) return refused("not_found");
   const steps: [string, Record<string, unknown>, string][] = [];
+  if (body.title !== undefined) {
+    steps.push(["incident.rename", { id, title: body.title }, "title"]);
+  }
   if (body.typeId !== undefined) {
     steps.push(["incident.setType", { id, typeId: body.typeId }, "type"]);
   }
@@ -378,6 +423,9 @@ function updateIncident(ctx: WriteContext, id: string, body: IncidentPatch): Res
   }
   for (const [fieldId, value] of Object.entries(body.fields ?? {})) {
     steps.push(["incident.setField", { id, fieldId, value }, `field:${fieldId}`]);
+  }
+  for (const [role, userId] of Object.entries(body.roles ?? {})) {
+    steps.push(["incident.assignRole", { id, role, userId }, `role:${role}`]);
   }
   if (body.severity !== undefined) {
     steps.push(["incident.setSeverity", { id, severity: body.severity }, "severity"]);

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Brigade API",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "Brigade's public HTTP API: what an integration may call. Incidents and the catalog (services,\nincident types, custom fields) are read and changed here too, each write through the same named mutation the apps\nsend, with the same rules, timeline entries and events. Everything else (monitors, schedules, escalation policies,\ndevices) is read and changed over Brigade Sync, the WebSocket `openSync` opens (RFC 0004). Routes not listed here\nare internal and may change without notice.\n\n**Auth.** A Better Auth session: sign in with `POST /api/auth/sign-in/email` (`{ \"email\", \"password\" }`) and send\nthe cookie it sets. Writes that carry a cookie refuse another site's `Origin` (`403 forbidden_origin`); a request\nwithout `Origin` is not refused for it. Operations marked with `bearerAuth` also take an API token (RFC 0014): an\nowner or admin mints one in the dashboard for one workspace, with scopes, and sends it as `Authorization: Bearer\nbrg_…`. A token acts with its creator's role as it is now and only within its scopes (`403 forbidden` otherwise);\nevery refused token (wrong, revoked, expired, its creator gone) is the same `401 unauthenticated`; a token's requests\nare limited (`429 rate_limited`, `Retry-After`). A bearer request skips the `Origin` check and ignores any cookie.\n\n**Errors.** Every refusal is JSON, `{ \"error\": \"<code>\" }`, with the codes each operation lists. Any other method on\na listed path answers `405` with `Allow`; an unknown path `404 not_found`.\n\n**Webhooks.** What Brigade sends to the endpoints a workspace registers: a signed `POST` per event, as the Standard\nWebhooks specification has it (`@freecorps/brigade-sdk`'s `verifyWebhook`, or any of its libraries, verifies\nit). Each payload is `version: 1`; fields may be added to it, so ignore the ones you do not know. A change that\nis not purely additive is a new version. See RFC 0005 \"Outbound webhooks\".",
     "license": {
       "name": "AGPL-3.0-only",
@@ -3516,8 +3516,8 @@
         "tags": [
           "Incidents"
         ],
-        "summary": "Change an incident's type, services, fields, severity or status",
-        "description": "Each change is its own named mutation, as in the app, in this order: `incident.setType`, `incident.setServices`, `incident.setField` per field, `incident.setSeverity`, `incident.setStatus` (each with its timeline entry and event). One that asks for what already is changes nothing. The first refusal stops the rest and is the answer; the changes before it stay made. The same request with the same key answers the same refusal again (results are kept, refusals too); once what refused it is fixed, send it with a new key: the changes already made come back as changing nothing, and the rest run. Responders and up. `409 invalid_transition`: the status cannot follow the current one. The title is not changed here. The answer is the incident, so an API token needs `incident:read` too. With an API token: the `incident:update` and `incident:read` scopes.",
+        "summary": "Change an incident's title, type, services, fields, roles, severity or status",
+        "description": "Each change is its own named mutation, as in the app, in this order: `incident.rename`, `incident.setType`, `incident.setServices`, `incident.setField` per field, `incident.assignRole` per role, `incident.setSeverity`, `incident.setStatus` (each with its timeline entry and event). One that asks for what already is changes nothing. The first refusal stops the rest and is the answer; the changes before it stay made. The same request with the same key answers the same refusal again (results are kept, refusals too); once what refused it is fixed, send it with a new key: the changes already made come back as changing nothing, and the rest run. Responders and up. `409 invalid_transition`: the status cannot follow the current one. `400 invalid_args` with an issue at `roles.<role id>`: a role the workspace does not offer, or someone who is not a member or is a viewer. The answer is the incident, so an API token needs `incident:read` too. With an API token: the `incident:update` and `incident:read` scopes.",
         "security": [
           {
             "session": []
@@ -3565,6 +3565,11 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
                   "typeId": {
                     "anyOf": [
                       {
@@ -3612,6 +3617,25 @@
                       "anyOf": [
                         {
                           "$ref": "#/components/schemas/FieldValue"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "roles": {
+                    "type": "object",
+                    "description": "Who holds each incident role, by role id (`commander`, `communications`, `operations` or a workspace role's `rol_<ULID>`, at most 15): a member's user id, or `null` to leave the role empty.",
+                    "propertyNames": {
+                      "maxLength": 32
+                    },
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
                         },
                         {
                           "type": "null"
@@ -3846,7 +3870,7 @@
           "Incidents"
         ],
         "summary": "Post a written update to an incident",
-        "description": "Runs `incident.postUpdate`: an update on the incident's timeline (what responders know), in any status. Responders and up. With an API token: the `incident:update` scope.",
+        "description": "Runs `incident.postUpdate`: an update on the incident's timeline (what responders know), in any status. Responders and up. The answer names its timeline entry (`entryId`), to edit or remove it. With an API token: the `incident:update` scope.",
         "security": [
           {
             "session": []
@@ -3911,6 +3935,285 @@
         "responses": {
           "201": {
             "description": "Posted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "entryId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "The update's timeline entry (`<incident id>:<seq>`)."
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "entryId"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id",
+                        "invalid_args"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "idempotency_key_reused"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/incidents/{incidentId}/updates/{entryId}": {
+      "patch": {
+        "operationId": "editIncidentUpdate",
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Edit a written update",
+        "description": "Runs `incident.editUpdate`: the update's text changes in place (it keeps its place, time and author, and reads \"edited\"), in any status. Only its author: the member who posted it, or an API token that posted it or whose creator did; anyone else is `403 forbidden`, owners and admins included. Text it already has changes nothing. `409 conflict`: the update was removed. `404 not_found`: no such update on this incident. What was published on the status page is never changed by it. With an API token: the `incident:update` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "incidentId",
+            "in": "path",
+            "description": "The incident (`inc_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "entryId",
+            "in": "path",
+            "description": "The update's timeline entry, `<incident id>:<seq>` (as `postIncidentUpdate` answers it and webhook payloads carry it); the colon may be percent-encoded.",
+            "schema": {
+              "type": "string",
+              "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}(:|%3[Aa])[1-9][0-9]{0,8}$"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key with the same request again, within 7 days, answers what the first request did (a create, the same entry; a refusal, the same refusal) and changes nothing more. The key is tied to that request (its route, target and body): sent with another one it is `422 idempotency_key_reused` and runs nothing. A key is the caller's own: another member or token reusing it makes a new request.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w:-]{1,64}$"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "body": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  }
+                },
+                "required": [
+                  "body"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Edited.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3996,6 +4299,288 @@
                       "type": "string",
                       "enum": [
                         "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "conflict"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "idempotency_key_reused"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteIncidentUpdate",
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Remove a written update",
+        "description": "Runs `incident.deleteUpdate`: the update's text is gone and its entry stays as \"removed by …\". Its author (as for an edit), or an owner or admin (anyone's); anyone else is `403 forbidden`. `409 conflict`: removed already. `404 not_found`: no such update on this incident. With an API token: the `incident:update` scope.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "description": "The workspace (`ws_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^ws_[0-9A-HJKMNP-TV-Z]{26}$"
+            },
+            "required": true
+          },
+          {
+            "name": "incidentId",
+            "in": "path",
+            "description": "The incident (`inc_<ULID>`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "entryId",
+            "in": "path",
+            "description": "The update's timeline entry, `<incident id>:<seq>` (as `postIncidentUpdate` answers it and webhook payloads carry it); the colon may be percent-encoded.",
+            "schema": {
+              "type": "string",
+              "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}(:|%3[Aa])[1-9][0-9]{0,8}$"
+            },
+            "required": true
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key with the same request again, within 7 days, answers what the first request did (a create, the same entry; a refusal, the same refusal) and changes nothing more. The key is tied to that request (its route, target and body): sent with another one it is `422 idempotency_key_reused` and runs nothing. A key is the caller's own: another member or token reusing it makes a new request.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w:-]{1,64}$"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is malformed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_workspace_id",
+                        "invalid_args"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unauthenticated"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "forbidden_origin",
+                        "not_a_member",
+                        "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "conflict"
                       ]
                     }
                   },
@@ -7484,6 +8069,7 @@
                       "type": "string",
                       "enum": [
                         "incident.declared",
+                        "incident.renamed",
                         "incident.status_changed",
                         "incident.severity_changed",
                         "incident.acknowledged",
@@ -7498,7 +8084,7 @@
                       ]
                     },
                     "minItems": 1,
-                    "maxItems": 12,
+                    "maxItems": 13,
                     "uniqueItems": true
                   },
                   "headers": {
@@ -9606,6 +10192,233 @@
                     },
                     "required": [
                       "incident"
+                    ]
+                  }
+                },
+                "required": [
+                  "version",
+                  "id",
+                  "time",
+                  "workspaceId",
+                  "actor",
+                  "type",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Anything else, or no answer in 5 s, is retried."
+          }
+        }
+      }
+    },
+    "incident.renamed": {
+      "post": {
+        "operationId": "incidentRenamedWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "An incident was renamed",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "description": "The event's id (`evt_<ULID>`), the payload's `id`: the same on every retry, so de-duplicate by it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "description": "When this attempt was signed, Unix seconds. Refuse one more than 5 minutes off.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "description": "`v1,<base64 HMAC-SHA256>` of `<webhook-id>.<webhook-timestamp>.<body>` under each secret in use (two while one is rotated), space separated. The key is the secret's bytes after `whsec_`, base64-decoded.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^ws_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "actor": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "user",
+                              "system",
+                              "integration",
+                              "token"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          }
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ]
+                  },
+                  "type": {
+                    "const": "incident.renamed"
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "incident": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                          },
+                          "number": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 65536
+                          },
+                          "severity": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "sev1",
+                                  "sev2",
+                                  "sev3",
+                                  "sev4"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
+                            ]
+                          },
+                          "status": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "triage",
+                                  "investigating",
+                                  "fixing",
+                                  "monitoring",
+                                  "resolved",
+                                  "declined"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              }
+                            ]
+                          },
+                          "declaredAt": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "acknowledgedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "number",
+                          "title",
+                          "severity",
+                          "status",
+                          "declaredAt",
+                          "acknowledgedAt"
+                        ]
+                      },
+                      "from": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 65536
+                      },
+                      "to": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 65536
+                      }
+                    },
+                    "required": [
+                      "incident",
+                      "from",
+                      "to"
                     ]
                   }
                 },

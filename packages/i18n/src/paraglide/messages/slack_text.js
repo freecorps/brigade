@@ -37,6 +37,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "message_channel" | "Incident channel: {detail}" |
 * | "mirror_status" | "{name} changed the status to *{detail}*" |
 * | "mirror_severity" | "{name} changed the severity to *{detail}*" |
+* | "mirror_renamed" | "{name} renamed the incident to *{detail}*" |
 * | "mirror_ack" | "{name} acknowledged the incident. Paging has stopped." |
 * | "mirror_role" | "{name} made {person} the {detail}" |
 * | "mirror_role_cleared" | "{name} left the {detail} role empty" |
@@ -105,6 +106,7 @@ export const slack_text = /** @type {((inputs: Slack_TextInputs, options?: { loc
 		if (i?.part === "message_channel") return /** @type {LocalizedString} */ (`Canal do incidente: ${i?.detail}`);
 		if (i?.part === "mirror_status") return /** @type {LocalizedString} */ (`${i?.name} mudou o status para *${i?.detail}*`);
 		if (i?.part === "mirror_severity") return /** @type {LocalizedString} */ (`${i?.name} mudou a gravidade para *${i?.detail}*`);
+		if (i?.part === "mirror_renamed") return /** @type {LocalizedString} */ (`${i?.name} renomeou o incidente para *${i?.detail}*`);
 		if (i?.part === "mirror_ack") return /** @type {LocalizedString} */ (`${i?.name} confirmou o incidente. As chamadas pararam.`);
 		if (i?.part === "mirror_role") return /** @type {LocalizedString} */ (`${i?.name} definiu ${i?.person} como ${i?.detail}`);
 		if (i?.part === "mirror_role_cleared") return /** @type {LocalizedString} */ (`${i?.name} deixou o papel de ${i?.detail} sem ninguém`);
@@ -168,6 +170,7 @@ ${i?.detail}`);
 		if (i?.part === "message_channel") return /** @type {LocalizedString} */ (`Incident channel: ${i?.detail}`);
 		if (i?.part === "mirror_status") return /** @type {LocalizedString} */ (`${i?.name} changed the status to *${i?.detail}*`);
 		if (i?.part === "mirror_severity") return /** @type {LocalizedString} */ (`${i?.name} changed the severity to *${i?.detail}*`);
+		if (i?.part === "mirror_renamed") return /** @type {LocalizedString} */ (`${i?.name} renamed the incident to *${i?.detail}*`);
 		if (i?.part === "mirror_ack") return /** @type {LocalizedString} */ (`${i?.name} acknowledged the incident. Paging has stopped.`);
 		if (i?.part === "mirror_role") return /** @type {LocalizedString} */ (`${i?.name} made ${i?.person} the ${i?.detail}`);
 		if (i?.part === "mirror_role_cleared") return /** @type {LocalizedString} */ (`${i?.name} left the ${i?.detail} role empty`);

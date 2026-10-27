@@ -10,6 +10,7 @@ import {
   incidentById,
   incidentByNumber,
   postIncidentUpdate,
+  renameIncident,
   setIncidentSeverity,
   setIncidentStatus,
 } from "./incidents.ts";
@@ -113,6 +114,7 @@ export const mutations = defineRegistry([
   declareIncident,
   setIncidentStatus,
   setIncidentSeverity,
+  renameIncident,
   acknowledgeIncident,
   postIncidentUpdate,
   editIncidentUpdate,
@@ -178,6 +180,7 @@ export const serverMutations = defineRegistry([
   declareIncident,
   setIncidentStatus,
   setIncidentSeverity,
+  renameIncident,
   acknowledgeIncident,
   postIncidentUpdate,
   editIncidentUpdate,

@@ -15,6 +15,7 @@ import {
   incidentPatchRequest,
   incidentTypeCreateRequest,
   incidentTypePatchRequest,
+  isEntryIdOf,
   isId,
   serviceCreateRequest,
   servicePatchRequest,
@@ -46,7 +47,7 @@ export type RestEnv = Pick<Env, "DB" | "WORKSPACE" | "API_TOKEN_LIMIT"> & {
   API_TOKEN_KEY?: string;
 };
 
-const INCIDENTS_PATH = /^\/workspaces\/([^/]+)\/incidents(?:\/([^/]+)(\/updates)?)?$/;
+const INCIDENTS_PATH = /^\/workspaces\/([^/]+)\/incidents(?:\/([^/]+)(\/updates(?:\/([^/]+))?)?)?$/;
 const CATALOG_PATH =
   /^\/workspaces\/([^/]+)\/(services|incident-types|custom-fields)(?:\/([^/]+))?$/;
 
@@ -109,7 +110,7 @@ export function restRoute(
 ): Promise<Response> | undefined {
   const incidents = INCIDENTS_PATH.exec(pathname);
   if (incidents) {
-    const [, workspaceId, incidentId, updates] = incidents;
+    const [, workspaceId, incidentId, updates, rawEntryId] = incidents;
     const serve = new Route(request, env, lazyAuth, workspaceId!, waitUntil);
     if (incidentId === undefined) {
       if (request.method === "GET") return serve.read(incidentFilter(request));
@@ -117,6 +118,23 @@ export function restRoute(
         return serve.write(declareRequest, (body) => ({ kind: "declare", body }), 201);
       }
       return Promise.resolve(notAllowed("GET, POST"));
+    }
+    if (rawEntryId !== undefined) {
+      if (request.method !== "PATCH" && request.method !== "DELETE") {
+        return Promise.resolve(notAllowed("PATCH, DELETE"));
+      }
+      // `<incident id>:<seq>`: the colon may come percent-encoded, as `encodeURIComponent` sends it.
+      const entryId = rawEntryId.replace(/%3a/gi, ":");
+      if (!isId("inc", incidentId) || !isEntryIdOf(incidentId, entryId)) return serve.notFound();
+      if (request.method === "DELETE") {
+        return serve.write(undefined, () => ({ kind: "deleteUpdate", id: incidentId, entryId }));
+      }
+      return serve.write(updateRequest, (body) => ({
+        kind: "editUpdate",
+        id: incidentId,
+        entryId,
+        body,
+      }));
     }
     if (updates) {
       if (request.method !== "POST") return Promise.resolve(notAllowed("POST"));

@@ -49,6 +49,7 @@ import {
   TagIcon,
   TimerOffIcon,
   TriangleAlertIcon,
+  TypeIcon,
   UserRoundIcon,
   XIcon,
   type LucideIcon,
@@ -801,6 +802,7 @@ const UNKNOWN_ENTRY_ICON: LucideIcon = CircleDotIcon;
 const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, LucideIcon> = {
   declared: CirclePlusIcon,
   severity_changed: GaugeIcon,
+  renamed: TypeIcon,
   acknowledged: BellOffIcon,
   role_assigned: UserRoundIcon,
   update: MessageSquareTextIcon,

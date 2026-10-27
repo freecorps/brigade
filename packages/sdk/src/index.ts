@@ -33,6 +33,7 @@ export {
   type Invitation,
   type InvitationPreview,
   type Ok,
+  type UpdatePosted,
   type Operation,
   type PagingHealth,
   type PagingHealthReason,

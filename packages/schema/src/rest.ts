@@ -14,6 +14,7 @@ import {
   serviceArgs,
 } from "./catalog.ts";
 import { INCIDENT_TITLE_MAX, MAX_INCIDENT_SERVICES, UPDATE_BODY_MAX } from "./incidents.ts";
+import { isRoleId, MAX_INCIDENT_ROLES } from "./roles.ts";
 import { INCIDENT_STATUSES, SEVERITIES, type IncidentStatus, type Severity } from "./lifecycle.ts";
 import type { MutationStore } from "./mutation.ts";
 import type {
@@ -101,11 +102,44 @@ export const fieldValues: Validator<Record<string, FieldValue | null>> = (input,
 };
 
 /**
- * `PATCH /workspaces/:id/incidents/:incidentId` but `fields` (`incidentPatchRequest` adds it): what changes, each
- * through its own named mutation, in this order: `incident.setType`, `incident.setServices`, `incident.setField` per
- * field, `incident.setSeverity`, `incident.setStatus`.
+ * Who holds each incident role, by role id (a built-in's name or a `rol_` id), `null` to leave one empty: each becomes
+ * an `incident.assignRole`. The shape only; whether the role is offered and the person may hold it is the mutation's
+ * check. Hand-written like `fieldValues`; the reference spells it out itself.
+ */
+export const roleHolders: Validator<Record<string, string | null>> = (input, path = "") => {
+  const at = (key: string) => (path ? `${path}.${key}` : key);
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return { ok: false, issues: [{ path, message: "Expected an object" }] };
+  }
+  const entries = Object.entries(input);
+  if (entries.length > MAX_INCIDENT_ROLES) {
+    return { ok: false, issues: [{ path, message: `At most ${MAX_INCIDENT_ROLES} roles` }] };
+  }
+  const holder = v.nullable(v.string({ min: 1, max: 64 }));
+  const issues: Issue[] = [];
+  const out: Record<string, string | null> = {};
+  for (const [key, raw] of entries) {
+    if (!isRoleId(key)) {
+      issues.push({ path: at(key), message: "Not a role id" });
+      continue;
+    }
+    const checked = holder(raw, at(key));
+    if (checked.ok) out[key] = checked.value;
+    else issues.push(...checked.issues);
+  }
+  return issues.length
+    ? { ok: false, issues: issues.slice(0, MAX_ISSUES) }
+    : { ok: true, value: out };
+};
+
+/**
+ * `PATCH /workspaces/:id/incidents/:incidentId` but `fields` and `roles` (`incidentPatchRequest` adds them): what
+ * changes, each through its own named mutation, in this order: `incident.rename`, `incident.setType`,
+ * `incident.setServices`, `incident.setField` per field, `incident.assignRole` per role, `incident.setSeverity`,
+ * `incident.setStatus`.
  */
 export const incidentPatchFields = v.object({
+  title: v.omittable(v.string({ min: 1, max: INCIDENT_TITLE_MAX })),
   typeId: v.omittable(v.nullable(v.id("typ"))),
   serviceIds: v.omittable(serviceIds),
   severity: v.omittable(v.picklist(SEVERITIES)),
@@ -113,28 +147,54 @@ export const incidentPatchFields = v.object({
 });
 export type IncidentPatch = Sent<Infer<typeof incidentPatchFields>> & {
   fields?: Record<string, FieldValue | null>;
+  /** User ids by role id; `null` leaves the role empty. */
+  roles?: Record<string, string | null>;
 };
 
 export const incidentPatchRequest: Validator<IncidentPatch> = (input, path = "") => {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
     return { ok: false, issues: [{ path, message: "Expected an object" }] };
   }
-  const { fields, ...rest } = input as Record<string, unknown>;
+  const { fields, roles, ...rest } = input as Record<string, unknown>;
   const base = incidentPatchFields(rest, path);
   const values: Validated<Record<string, FieldValue | null> | undefined> =
     fields === undefined ? { ok: true, value: undefined } : fieldValues(fields, "fields");
-  const issues = [...(base.ok ? [] : base.issues), ...(values.ok ? [] : values.issues)];
-  if (!base.ok || !values.ok) return { ok: false, issues: issues.slice(0, MAX_ISSUES) };
+  const holders: Validated<Record<string, string | null> | undefined> =
+    roles === undefined ? { ok: true, value: undefined } : roleHolders(roles, "roles");
+  const issues = [
+    ...(base.ok ? [] : base.issues),
+    ...(values.ok ? [] : values.issues),
+    ...(holders.ok ? [] : holders.issues),
+  ];
+  if (!base.ok || !values.ok || !holders.ok) {
+    return { ok: false, issues: issues.slice(0, MAX_ISSUES) };
+  }
   return {
     ok: true,
-    value: { ...base.value, ...(values.value !== undefined && { fields: values.value }) },
+    value: {
+      ...base.value,
+      ...(values.value !== undefined && { fields: values.value }),
+      ...(holders.value !== undefined && { roles: holders.value }),
+    },
   };
 };
 
-/** `POST /workspaces/:id/incidents/:incidentId/updates`: `incident.postUpdate`'s body. */
+/**
+ * `POST /workspaces/:id/incidents/:incidentId/updates`: `incident.postUpdate`'s body; also `PATCH …/updates/:entryId`'s,
+ * the text an edit (`incident.editUpdate`) puts in its place.
+ */
 export const updateRequest = v.object({
   body: v.string({ min: 1, max: UPDATE_BODY_MAX, multiline: true, joiners: true }),
 });
+
+/**
+ * Whether `entryId` can be a timeline entry of incident `incidentId` (`<incident id>:<seq>`), as the edit and removal
+ * routes take it: anything else is no entry of that incident.
+ */
+export function isEntryIdOf(incidentId: string, entryId: string): boolean {
+  const prefix = `${incidentId}:`;
+  return entryId.startsWith(prefix) && /^[1-9][0-9]{0,8}$/.test(entryId.slice(prefix.length));
+}
 
 /** `POST /workspaces/:id/services`: `service.create`'s arguments; only the name and tier are required. */
 export const serviceCreateRequest = v.object({

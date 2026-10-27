@@ -41,6 +41,7 @@ export type Slack_TextInputs = {
 * | "message_channel" | "Incident channel: {detail}" |
 * | "mirror_status" | "{name} changed the status to *{detail}*" |
 * | "mirror_severity" | "{name} changed the severity to *{detail}*" |
+* | "mirror_renamed" | "{name} renamed the incident to *{detail}*" |
 * | "mirror_ack" | "{name} acknowledged the incident. Paging has stopped." |
 * | "mirror_role" | "{name} made {person} the {detail}" |
 * | "mirror_role_cleared" | "{name} left the {detail} role empty" |

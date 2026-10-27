@@ -31,6 +31,9 @@ import type {
 
 export type Ok = { ok: true };
 
+/** A written update posted: its timeline entry (`<incident id>:<seq>`), to edit or remove it. */
+export type UpdatePosted = { ok: true; entryId: string | null };
+
 /** What an alert source took from a payload: how many alerts it held, and whether Brigade could not read it. */
 export type AlertsAccepted = { ok: true; alerts: number; malformed?: boolean; tooLarge?: true };
 
@@ -288,6 +291,8 @@ export const OPERATION_ERRORS = {
   getIncident: REST_READ,
   updateIncident: [...REST_WRITE, "invalid_transition"],
   postIncidentUpdate: REST_WRITE,
+  editIncidentUpdate: [...REST_WRITE, "conflict"],
+  deleteIncidentUpdate: [...REST_WRITE, "conflict"],
   listServices: REST_READ,
   createService: [...REST_WRITE, "limit_reached"],
   getService: REST_READ,
@@ -652,8 +657,9 @@ export function createClient(options: ClientOptions) {
       ),
 
     /**
-     * `PATCH /workspaces/:id/incidents/:incidentId`: type, services, custom fields (`null` clears one), severity,
-     * status, each changed in that order; the first refusal stops the rest (those before it stay made). The same key
+     * `PATCH /workspaces/:id/incidents/:incidentId`: title, type, services, custom fields (`null` clears one), roles
+     * (a user id by role id, `null` leaves one empty), severity, status, each changed in that order; the first refusal
+     * stops the rest (those before it stay made). The same key
      * answers the same refusal again: once fixed, retry with a new key (the changes made come back as no change).
      * With an API token, needs `incident:read` as well as `incident:update`, since it answers the incident.
      */
@@ -670,18 +676,56 @@ export function createClient(options: ClientOptions) {
         { body, headers: keyed(options) },
       ),
 
-    /** `POST /workspaces/:id/incidents/:incidentId/updates`: a written update on the incident's timeline. */
+    /**
+     * `POST /workspaces/:id/incidents/:incidentId/updates`: a written update on the incident's timeline. `entryId`
+     * names it, to edit or remove it.
+     */
     postIncidentUpdate: (
       workspaceId: string,
       incidentId: string,
       body: { body: string },
       options: WriteOptions = {},
     ) =>
-      call<Ok, "postIncidentUpdate">(
+      call<UpdatePosted, "postIncidentUpdate">(
         "postIncidentUpdate",
         "POST",
         () => `${ws(workspaceId)}/incidents/${segment(incidentId)}/updates`,
         { body, headers: keyed(options) },
+      ),
+
+    /**
+     * `PATCH /workspaces/:id/incidents/:incidentId/updates/:entryId`: new text for a written update, by its author
+     * only (an API token that posted it, or whose creator did); text it already has changes nothing.
+     */
+    editIncidentUpdate: (
+      workspaceId: string,
+      incidentId: string,
+      entryId: string,
+      body: { body: string },
+      options: WriteOptions = {},
+    ) =>
+      call<Ok, "editIncidentUpdate">(
+        "editIncidentUpdate",
+        "PATCH",
+        () => `${ws(workspaceId)}/incidents/${segment(incidentId)}/updates/${segment(entryId)}`,
+        { body, headers: keyed(options) },
+      ),
+
+    /**
+     * `DELETE /workspaces/:id/incidents/:incidentId/updates/:entryId`: removes a written update (its author, or an
+     * owner or admin); its entry stays as "removed by …".
+     */
+    deleteIncidentUpdate: (
+      workspaceId: string,
+      incidentId: string,
+      entryId: string,
+      options: WriteOptions = {},
+    ) =>
+      call<Ok, "deleteIncidentUpdate">(
+        "deleteIncidentUpdate",
+        "DELETE",
+        () => `${ws(workspaceId)}/incidents/${segment(incidentId)}/updates/${segment(entryId)}`,
+        { headers: keyed(options) },
       ),
 
     /** `GET /workspaces/:id/services`: the most critical tier first, then by name. */

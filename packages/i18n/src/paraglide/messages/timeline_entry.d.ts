@@ -13,6 +13,7 @@ export type Timeline_EntryInputs = {
 * | "declared" | "{actor} declared the incident as {a}" |
 * | "status_changed" | "{actor} changed the status from {a} to {b}" |
 * | "severity_changed" | "{actor} changed the severity from {a} to {b}" |
+* | "renamed" | "{actor} renamed the incident from “{a}” to “{b}”" |
 * | "acknowledged" | "{actor} acknowledged the page" |
 * | "role_assigned" | "{actor} made {b} {a}" |
 * | "role_unassigned" | "{actor} removed {b} as {a}" |

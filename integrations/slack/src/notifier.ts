@@ -219,6 +219,8 @@ function failed(
 export type SlackEntryView =
   | { kind: "status"; by: SlackPerson; to: IncidentStatus }
   | { kind: "severity"; by: SlackPerson; to: Severity }
+  /** `to`: the title it has now. */
+  | { kind: "renamed"; by: SlackPerson; to: string }
   | { kind: "ack"; by: SlackPerson }
   /** `role`: a built-in by its id (`name` null) or the workspace's name; `to` null: nobody holds it now. */
   | {
@@ -244,6 +246,9 @@ export function entryMessage(entry: SlackEntryView, locale: SlackLocale): SlackM
       text = say("mirror_severity", {
         detail: `${entry.to.toUpperCase()} · ${escapeMrkdwn(severityLabels[entry.to]({}, { locale }))}`,
       });
+      break;
+    case "renamed":
+      text = say("mirror_renamed", { detail: escapeMrkdwn(entry.to) });
       break;
     case "ack":
       text = say("mirror_ack");

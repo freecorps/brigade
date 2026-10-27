@@ -89,6 +89,8 @@ export function describeEntry(
       return `changed the status from ${entry.from} to ${entry.to}`;
     case "severity_changed":
       return `changed the severity from ${entry.from.toUpperCase()} to ${entry.to.toUpperCase()}`;
+    case "renamed":
+      return `renamed the incident from "${entry.from}" to "${entry.to}"`;
     case "acknowledged":
       return "acknowledged the page";
     case "role_assigned": {

@@ -13,6 +13,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "declared" | "{actor} declared the incident as {a}" |
 * | "status_changed" | "{actor} changed the status from {a} to {b}" |
 * | "severity_changed" | "{actor} changed the severity from {a} to {b}" |
+* | "renamed" | "{actor} renamed the incident from “{a}” to “{b}”" |
 * | "acknowledged" | "{actor} acknowledged the page" |
 * | "role_assigned" | "{actor} made {b} {a}" |
 * | "role_unassigned" | "{actor} removed {b} as {a}" |
@@ -97,6 +98,7 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "declared") return /** @type {LocalizedString} */ (`${i?.actor} declarou o incidente como ${i?.a}`);
 		if (i?.kind === "status_changed") return /** @type {LocalizedString} */ (`${i?.actor} mudou o status de ${i?.a} para ${i?.b}`);
 		if (i?.kind === "severity_changed") return /** @type {LocalizedString} */ (`${i?.actor} mudou a severidade de ${i?.a} para ${i?.b}`);
+		if (i?.kind === "renamed") return /** @type {LocalizedString} */ (`${i?.actor} renomeou o incidente de “${i?.a}” para “${i?.b}”`);
 		if (i?.kind === "acknowledged") return /** @type {LocalizedString} */ (`${i?.actor} reconheceu o chamado`);
 		if (i?.kind === "role_assigned") return /** @type {LocalizedString} */ (`${i?.actor} definiu ${i?.b} como ${i?.a}`);
 		if (i?.kind === "role_unassigned") return /** @type {LocalizedString} */ (`${i?.actor} tirou ${i?.b} de ${i?.a}`);
@@ -175,6 +177,7 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "declared") return /** @type {LocalizedString} */ (`${i?.actor} declared the incident as ${i?.a}`);
 		if (i?.kind === "status_changed") return /** @type {LocalizedString} */ (`${i?.actor} changed the status from ${i?.a} to ${i?.b}`);
 		if (i?.kind === "severity_changed") return /** @type {LocalizedString} */ (`${i?.actor} changed the severity from ${i?.a} to ${i?.b}`);
+		if (i?.kind === "renamed") return /** @type {LocalizedString} */ (`${i?.actor} renamed the incident from “${i?.a}” to “${i?.b}”`);
 		if (i?.kind === "acknowledged") return /** @type {LocalizedString} */ (`${i?.actor} acknowledged the page`);
 		if (i?.kind === "role_assigned") return /** @type {LocalizedString} */ (`${i?.actor} made ${i?.b} ${i?.a}`);
 		if (i?.kind === "role_unassigned") return /** @type {LocalizedString} */ (`${i?.actor} removed ${i?.b} as ${i?.a}`);

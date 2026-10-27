@@ -270,6 +270,8 @@ export type TimelineEntry =
   | { kind: "declared"; title: string; severity: Severity }
   | { kind: "status_changed"; from: IncidentStatus; to: IncidentStatus }
   | { kind: "severity_changed"; from: Severity; to: Severity }
+  /** `incident.rename`: the title it had and the one it has now. */
+  | { kind: "renamed"; from: string; to: string }
   | { kind: "acknowledged" }
   /**
    * `role`: the role's id, a built-in's name or a workspace role's `rol_` id. `roleName`: the workspace's name for it

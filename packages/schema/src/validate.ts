@@ -93,6 +93,11 @@ function optional<T>(inner: Validator<T>): Validator<T | null> {
   return (input, path = "") => (input === undefined ? valid(null) : inner(input, path));
 }
 
+/** Like `optional`, but a left-out value stays left out (`undefined`), so "not given" and `null` stay apart. */
+function omittable<T>(inner: Validator<T>): Validator<T | undefined> {
+  return (input, path = "") => (input === undefined ? valid(undefined) : inner(input, path));
+}
+
 /**
  * An array of `min` to `max` items, each checked by `item`; with `unique`, no item twice. Longer input is refused
  * before any item is read.
@@ -152,4 +157,15 @@ function object<const S extends Record<string, Validator<unknown>>>(
   };
 }
 
-export const v = { string, picklist, id, object, integer, boolean, nullable, optional, array };
+export const v = {
+  string,
+  picklist,
+  id,
+  object,
+  integer,
+  boolean,
+  nullable,
+  optional,
+  omittable,
+  array,
+};

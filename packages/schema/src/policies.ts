@@ -1,9 +1,11 @@
 // Escalation policies (RFC 0003 "Escalation policies"): ordered levels, each paging schedules (whoever is on call
 // when it fires) or members, with a timeout before the next level, repeated when nobody acknowledges. The default
-// policy is what pages use (RFC 0006 "Who is paged"); how a run walks a policy is in escalation.ts.
+// policy is what pages use (RFC 0006 "Who is paged"), unless the monitor that opened the incident names its own;
+// how a run walks a policy is in escalation.ts.
 
 import { idTime } from "./id.ts";
 import { ID_CLOCK_SKEW_MS } from "./incidents.ts";
+import { dropPolicyFromMonitors } from "./monitors.ts";
 import {
   defineMutation,
   fail,
@@ -81,6 +83,30 @@ const updated = (
 /** The workspace's default policy, if it has one: what every page uses (RFC 0006 "Who is paged"). */
 export function defaultPolicy(store: MutationStore): EscalationPolicyRow | undefined {
   return store.scan("escalation_policies").find((row) => row.isDefault);
+}
+
+/**
+ * The policy a run on `incidentId` follows (RFC 0003 "Escalation policies"): the policy of the monitor that opened
+ * the incident when it names one (`monitor` says which, by its name now), otherwise the default; undefined with
+ * neither (the interim rule pages). A monitor deleted since, or a policy gone, falls back to the default.
+ */
+export function incidentPolicy(
+  store: MutationStore,
+  incidentId: string,
+): { policy: EscalationPolicyRow; monitor: { id: string; name: string } | null } | undefined {
+  const opener = openedBy(store, incidentId);
+  const own = opener?.policyId ? store.get("escalation_policies", opener.policyId) : undefined;
+  if (opener && own) return { policy: own, monitor: { id: opener.id, name: opener.name } };
+  const policy = defaultPolicy(store);
+  return policy && { policy, monitor: null };
+}
+
+/** The monitor that opened `incidentId`: the one still firing on it, else the one whose alert opened it. */
+function openedBy(store: MutationStore, incidentId: string) {
+  const firing = store.scan("monitors").find((monitor) => monitor.incidentId === incidentId);
+  if (firing) return firing;
+  const alert = store.scan("alerts").find((one) => one.incidentId === incidentId);
+  return alert ? store.get("monitors", alert.monitorId) : undefined;
 }
 
 // ---- Validation -------------------------------------------------------------------------------------------------
@@ -241,12 +267,16 @@ export const updatePolicy = defineMutation({
   },
 });
 
-/** Deletes the policy. Deleting the default leaves none, so pages go back to the interim rule (RFC 0006). */
+/**
+ * Deletes the policy. Deleting the default leaves none, so pages go back to the interim rule (RFC 0006). Monitors
+ * that named it go back to the default in the same transaction (`monitor.updated`, `reason: policy_deleted`), so a
+ * monitor never names a policy that is gone.
+ */
 export const deletePolicy = defineMutation({
   name: "escalation.deletePolicy",
   args: v.object({ id: policyId }),
   permission: "escalation:manage",
-  apply(store, args) {
+  apply(store, args, ctx) {
     const policy = store.get("escalation_policies", args.id);
     if (!policy) return fail("not_found", "Policy not found");
     store.delete("escalation_policies", args.id);
@@ -255,7 +285,7 @@ export const deletePolicy = defineMutation({
       subject: args.id,
       data: { id: args.id, wasDefault: policy.isDefault },
     };
-    return ok(event);
+    return ok(event, ...dropPolicyFromMonitors(store, args.id, ctx));
   },
 });
 

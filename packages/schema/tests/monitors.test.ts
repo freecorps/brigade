@@ -454,7 +454,7 @@ describe("managing monitors", () => {
         {
           type: "monitor.created",
           subject: args.id,
-          data: { id: args.id, name: "Checkout", kind: "http" },
+          data: { id: args.id, name: "Checkout", kind: "http", policyId: null },
         },
       ],
     });

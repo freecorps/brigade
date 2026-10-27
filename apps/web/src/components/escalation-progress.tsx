@@ -139,7 +139,10 @@ export function EscalationProgress({
             <span className="min-w-0">{statusText(status, who, now, locale)}</span>
           </p>
           <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-            {escalationText("policy_named", { name: run.policyName })}
+            {/* Which policy, and why this one: the monitor that opened the incident names it, or the default. */}
+            {run.monitor
+              ? escalationText("policy_monitor", { name: run.policyName, who: run.monitor.name })
+              : escalationText("policy_default", { name: run.policyName })}
           </p>
         </div>
         {next && run.nextAt !== null ? (
@@ -320,6 +323,11 @@ function PageRow({
         ) : (
           <p className="text-muted-foreground">{escalationText("nobody_reached")}</p>
         )}
+        {page.unreached !== undefined && page.level !== null ? (
+          <p className="text-muted-foreground">
+            {escalationText("early", { level: String(page.unreached) })}
+          </p>
+        ) : null}
         {misses.length > 0 ? (
           <p className="text-amber-700 [overflow-wrap:anywhere] dark:text-amber-400">
             {escalationText("missed")}: {misses.join(", ")}

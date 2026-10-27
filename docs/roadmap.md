@@ -225,7 +225,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
     the shard's alarm, stopped by `incident.ack` or a resolve, with every level an `escalation.paged` event and a
     timeline entry; unreachable levels skipped at once and the interim rule as the last fallback; the dashboard's
     Escalation card and an incident's escalation progress (RFC 0003 "Escalation policies", RFC 0006 "Who is paged").
-  - Left: a policy per monitor or alert route; escalating early when a level's pushes all fail; the mobile on-call
+  - Done: a policy per monitor (picked in the monitor form, shown on its row and on the incident's escalation
+    progress; a deleted policy puts its monitors back on the default) and escalating early when every push of a level
+    failed, with the timeline saying why (RFC 0003 "Escalation policies", RFC 0006 "Who is paged").
+  - Left: a policy per alert route (Phase 3); the mobile on-call
     view and "I'm on call" (the Mobile item); schedules on teams (Better Auth teams); layer
     restrictions (only some hours or days); a calendar view and export (iCal); telling someone their shift starts;
     Q20.

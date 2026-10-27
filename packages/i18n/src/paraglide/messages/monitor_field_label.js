@@ -21,6 +21,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "interval" | "Every (seconds)" |
 * | "timeout" | "Timeout (seconds)" |
 * | "grace" | "Grace (seconds)" |
+* | "policy" | "Escalation policy" |
 * | * | "Check from" |
 *
 * @param {Monitor_Field_LabelInputs} inputs
@@ -41,6 +42,7 @@ export const monitor_field_label = /** @type {((inputs: Monitor_Field_LabelInput
 		if (i?.field === "interval") return /** @type {LocalizedString} */ (`A cada (segundos)`);
 		if (i?.field === "timeout") return /** @type {LocalizedString} */ (`Tempo limite (segundos)`);
 		if (i?.field === "grace") return /** @type {LocalizedString} */ (`Tolerância (segundos)`);
+		if (i?.field === "policy") return /** @type {LocalizedString} */ (`Política de escalonamento`);
 		return /** @type {LocalizedString} */ (`Verificar de`)
 	}
 	{
@@ -55,6 +57,7 @@ export const monitor_field_label = /** @type {((inputs: Monitor_Field_LabelInput
 		if (i?.field === "interval") return /** @type {LocalizedString} */ (`Every (seconds)`);
 		if (i?.field === "timeout") return /** @type {LocalizedString} */ (`Timeout (seconds)`);
 		if (i?.field === "grace") return /** @type {LocalizedString} */ (`Grace (seconds)`);
+		if (i?.field === "policy") return /** @type {LocalizedString} */ (`Escalation policy`);
 		return /** @type {LocalizedString} */ (`Check from`)
 	}
 });

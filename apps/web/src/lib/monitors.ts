@@ -19,6 +19,7 @@ import {
   tcpTargetProblems,
   type ArgsOf,
   type CheckSource,
+  type EscalationPolicyRow,
   type HttpMethod,
   type MonitorCheck,
   type MonitorKind,
@@ -103,6 +104,8 @@ export type MonitorDraft = {
   timeoutSeconds: string;
   graceSeconds: string;
   regions: ProbeRegion[];
+  /** The escalation policy its incidents page through; empty: the workspace's default. */
+  policyId: string;
 };
 
 export const EMPTY_DRAFT: MonitorDraft = {
@@ -118,6 +121,7 @@ export const EMPTY_DRAFT: MonitorDraft = {
   timeoutSeconds: "10",
   graceSeconds: "300",
   regions: ["enam", "weur"],
+  policyId: "",
 };
 
 /** A field of the draft the form draws an error under. */
@@ -148,6 +152,7 @@ export function checkDraft(draft: MonitorDraft, id: string): CheckedDraft {
     id,
     name: draft.name,
     intervalSeconds: wholeNumber(draft.intervalSeconds),
+    policyId: draft.policyId === "" ? null : draft.policyId,
   };
   if (draft.kind === "heartbeat") {
     const result = createHeartbeatMonitor.args({
@@ -211,6 +216,7 @@ const DRAFT_FIELDS: readonly DraftField[] = [
   "timeoutSeconds",
   "graceSeconds",
   "regions",
+  "policyId",
 ];
 
 /**
@@ -286,6 +292,8 @@ export function draftFromRow(row: MonitorRow): MonitorDraft {
     timeoutSeconds: number(row.timeoutSeconds, EMPTY_DRAFT.timeoutSeconds),
     graceSeconds: number(row.graceSeconds, EMPTY_DRAFT.graceSeconds),
     regions: row.kind === "heartbeat" ? EMPTY_DRAFT.regions : [...row.regions],
+    // Rows from before policies per monitor have none: the default.
+    policyId: row.policyId ?? "",
   };
 }
 
@@ -331,34 +339,57 @@ export type CheckedEdit =
 /**
  * The update mutation's args for an edited `draft` of `row`, checked like a new monitor (the same validators and
  * cross-field rule), and whether anything changed: the shard refuses an update that changes nothing, so the form
- * just closes then. The kind never changes.
+ * just closes then. The kind never changes. A policy left as the row has it is left out of the args, so the shard
+ * keeps the monitor's own (already null if that policy was deleted meanwhile) instead of refusing a stale id.
  */
 export function checkEdit(draft: MonitorDraft, row: MonitorRow): CheckedEdit {
   const checked = checkDraft({ ...draft, kind: row.kind }, row.id);
   if (!checked.ok) return checked;
   if (checked.kind === "heartbeat") {
-    const { id, name, intervalSeconds, graceSeconds } = checked.args;
-    const args = { id, name, intervalSeconds, graceSeconds };
+    const { id, name, intervalSeconds, graceSeconds, policyId } = checked.args;
+    const args = { id, name, intervalSeconds, graceSeconds, policyId };
     const changed =
       args.name !== row.name ||
       args.intervalSeconds !== row.intervalSeconds ||
-      args.graceSeconds !== row.graceSeconds;
-    return { ok: true, kind: "heartbeat", args, changed };
+      args.graceSeconds !== row.graceSeconds ||
+      args.policyId !== (row.policyId ?? null);
+    return { ok: true, kind: "heartbeat", args: keptPolicy(args, row), changed };
   }
   // The shard keeps the regions in `PROBE_REGIONS` order, so the comparison does too.
   const regions = PROBE_REGIONS.filter((region) => checked.args.regions.includes(region));
   if (checked.kind === "tcp") {
     const args = { ...checked.args, regions };
-    const changed = (["name", "intervalSeconds", ...TCP_TARGET_FIELDS] as const).some(
-      (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key]),
+    const changed = (["name", "intervalSeconds", "policyId", ...TCP_TARGET_FIELDS] as const).some(
+      (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key] ?? null),
     );
-    return { ok: true, kind: "tcp", args, changed };
+    return { ok: true, kind: "tcp", args: keptPolicy(args, row), changed };
   }
   const args = { ...checked.args, regions };
-  const changed = (["name", "intervalSeconds", ...TARGET_FIELDS] as const).some(
-    (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key]),
+  const changed = (["name", "intervalSeconds", "policyId", ...TARGET_FIELDS] as const).some(
+    (key) => JSON.stringify(args[key]) !== JSON.stringify(row[key] ?? null),
   );
-  return { ok: true, kind: "http", args, changed };
+  return { ok: true, kind: "http", args: keptPolicy(args, row), changed };
+}
+
+/**
+ * Whether `sent` (the draft as it goes out: an edit rebased on the live `row`, a new monitor as drafted) names a policy
+ * this client no longer has, which the shard would refuse. The row's own is never sent (`checkEdit` leaves it out), so
+ * an edit that leaves the policy alone is never blocked by it.
+ */
+export function stalePolicy(
+  sent: Pick<MonitorDraft, "policyId">,
+  row: Pick<MonitorRow, "policyId"> | null,
+  policies: readonly Pick<EscalationPolicyRow, "id">[],
+): boolean {
+  if (sent.policyId === "" || (row && sent.policyId === (row.policyId ?? ""))) return false;
+  return !policies.some((policy) => policy.id === sent.policyId);
+}
+
+/** `args` without `policyId` when it is the row's: an edit that leaves it out keeps the monitor's. */
+function keptPolicy<T extends { policyId?: string | null }>(args: T, row: MonitorRow): T {
+  if (args.policyId !== (row.policyId ?? null)) return args;
+  const { policyId: _kept, ...rest } = args;
+  return rest as T;
 }
 
 /**
@@ -387,6 +418,26 @@ const TARGET_FIELDS = [
 
 /** What a TCP check is: changing any of these starts it over (`monitor.updateTcp`). */
 const TCP_TARGET_FIELDS = ["host", "port", "timeoutSeconds", "regions"] as const;
+
+/**
+ * Which escalation policy a monitor's incidents page through (RFC 0003 "Escalation policies"): its own (`own`), the
+ * workspace's default (`default`, also for a policy it names that this client no longer has), or none at all, so the
+ * interim rule pages (`none`). `name` is the policy's.
+ */
+export type MonitorPolicy =
+  | { kind: "own"; name: string }
+  | { kind: "default"; name: string }
+  | { kind: "none" };
+
+export function monitorPolicy(
+  row: Pick<MonitorRow, "policyId">,
+  policies: readonly Pick<EscalationPolicyRow, "id" | "name" | "isDefault">[],
+): MonitorPolicy {
+  const own = row.policyId ? policies.find((policy) => policy.id === row.policyId) : undefined;
+  if (own) return { kind: "own", name: own.name };
+  const fallback = policies.find((policy) => policy.isDefault);
+  return fallback ? { kind: "default", name: fallback.name } : { kind: "none" };
+}
 
 /**
  * Why the shard refused a change to a monitor, in the shared wording (`mutationErrorReason`), except "not found",

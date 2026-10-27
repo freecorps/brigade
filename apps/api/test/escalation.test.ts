@@ -26,6 +26,7 @@ import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import { WorkspaceDO } from "../src/workspace.ts";
 
+const MINUTE = 60_000;
 const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
 const user = (id: string, role: Role): Actor => ({ kind: "user", id, role });
 const ana = user("usr_ana", "owner");
@@ -1159,5 +1160,384 @@ describe("the shard's alarm", () => {
     fireDue.mockRestore();
     expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
     expect((await ws.levels(incident)).map((one) => one.level)).toEqual([1, 2]);
+  });
+});
+
+/** A relay that refuses for good (APNs said no) every push but those to `accepted` device tokens. */
+function refusing(accepted: readonly string[] = []) {
+  const tokens: string[] = [];
+  const send: Fetch = async (request) => {
+    const body = (await request.json()) as { deviceToken: string };
+    tokens.push(body.deviceToken);
+    if (accepted.includes(body.deviceToken)) return Response.json({ status: 200 });
+    return Response.json(
+      { error: "apns_refused", status: 400, reason: "BadTopic" },
+      { status: 502 },
+    );
+  };
+  return { tokens, send };
+}
+
+/** A relay nobody reaches: every push fails in a way a retry may fix. */
+const unreachable: Fetch = async () => {
+  throw new Error("connection refused");
+};
+
+async function deliverTry(event: BrigadeEvent, send: Fetch, attempts: number) {
+  const batch = createMessageBatch("brigade-events", [
+    { id: "msg-0", timestamp: new Date(), attempts, body: event },
+  ]);
+  const ctx = createExecutionContext();
+  await consumeEvents(batch, relayEnv, send);
+  return getQueueResult(batch, ctx);
+}
+
+const pushTokenOf = (ws: Workspace, member: Actor) =>
+  ws.withShard(
+    (shard) => shard.store.scan("devices").find((device) => device.userId === member.id)!.pushToken,
+  );
+
+const pagedEvents = async (ws: Workspace, incident: string) =>
+  (await ws.events(incident)).filter((e) => e.type === "escalation.paged");
+
+describe("escalating early when every push of a level fails (the paging path's)", () => {
+  test("every push of level 1 refused: level 2 is paged now, says why, and its event pages it", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, refusing().send);
+    expect(await ws.levels(incident)).toEqual([
+      expect.objectContaining({ level: 1, userIds: [caio.id], reason: "started" }),
+      expect.objectContaining({ level: 2, userIds: [eva.id], reason: "undelivered" }),
+    ]);
+    const run = await ws.escalation(incident);
+    expect(run).toMatchObject({ status: "running", paged: 2 });
+    expect(run!.pages.at(-1)).toMatchObject({ level: 2, unreached: 1 });
+    const entries = await ws.timeline(incident);
+    // Caio's failed push first, then why level 2 came early.
+    expect(entries.filter((row) => row.kind === "page_failed")).toEqual([
+      expect.objectContaining({ userId: caio.id, reason: "undelivered", step: 1 }),
+    ]);
+    expect(entries.filter((row) => row.kind === "escalated").at(-1)).toMatchObject({
+      level: 2,
+      reason: "undelivered",
+      unreached: 1,
+    });
+    const alarm = await ws.withShard((_shard, state) => state.storage.getAlarm());
+    expect(alarm).not.toBeNull();
+    expect(alarm!).toBeLessThanOrEqual(run!.nextAt!);
+    const second = (await pagedEvents(ws, incident))[1]!;
+    const { tokens, send } = relay();
+    await deliver(second, send);
+    expect(await pagedMembers(ws, tokens)).toEqual([eva.id]);
+  });
+
+  test("one device that took the push is enough: the level waits for its timeout", async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    await withPolicy(ws, [
+      {
+        targets: [
+          { kind: "schedule", id: SCHEDULE },
+          { kind: "member", id: bia.id },
+        ],
+      },
+      { targets: [{ kind: "member", id: eva.id }] },
+    ]);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, refusing([await pushTokenOf(ws, bia)]).send);
+    expect(await ws.levels(incident)).toHaveLength(1);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "running", paged: 1 });
+    // Caio's refusal is still recorded.
+    expect((await ws.timeline(incident)).filter((row) => row.kind === "page_failed")).toEqual([
+      expect.objectContaining({ userId: caio.id, reason: "undelivered" }),
+    ]);
+  });
+
+  test("a push still being retried is not a failure; past the last try it is", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    const first = await deliverTry(event, unreachable, 1);
+    expect(first.retryMessages).toHaveLength(1);
+    expect(await ws.levels(incident)).toHaveLength(1);
+    const last = await deliverTry(event, unreachable, 5);
+    expect(last.retryMessages).toHaveLength(0);
+    expect((await ws.levels(incident)).map((one) => [one.level, one.reason])).toEqual([
+      [1, "started"],
+      [2, "undelivered"],
+    ]);
+  });
+
+  test("results that never arrive leave it to the alarm: the level's timeout still fires the next", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    // The first try fails and is retried; no final result ever comes back.
+    await deliverTry(event, unreachable, 1);
+    await ws.due(incident);
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+    expect((await ws.levels(incident)).map((one) => [one.level, one.reason])).toEqual([
+      [1, "started"],
+      [2, "timeout"],
+    ]);
+  });
+
+  test("a redelivered or dead-lettered result never advances twice", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws, undefined, 2);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, refusing().send);
+    expect(await ws.levels(incident)).toHaveLength(2);
+    await deliver(event, refusing().send);
+    expect(await deadLetter(event)).toMatchObject({ explicitAcks: ["dlq-0"] });
+    expect(await ws.levels(incident)).toHaveLength(2);
+    // The same result recorded again straight to the shard (a consumer retrying its RPC): still once.
+    await ws.stub.recordPage(event, [], true, []);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "running", paged: 2 });
+    // A dead-lettered level page is paged again, never escalated past: its pushes may have gone out.
+    const second = (await pagedEvents(ws, incident))[1]!;
+    await deadLetter(second);
+    expect((await ws.levels(incident)).map((one) => one.level)).toEqual([1, 2, 2]);
+  });
+
+  test("an acknowledgement in between stops it", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    const plan = await ws.stub.planPage(event);
+    expect(plan.send).toBe(true);
+    if (!plan.send) return;
+    await ws.run(eva, "incident.ack", { id: incident }, false);
+    await ws.stub.recordPage(
+      event,
+      plan.targets.map((target) => ({
+        deviceId: target.deviceId,
+        userId: target.userId,
+        ok: false as const,
+        reason: "undelivered" as const,
+        error: "apns_refused" as const,
+      })),
+      true,
+      plan.skipped,
+    );
+    expect(await ws.levels(incident)).toHaveLength(1);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "acknowledged" });
+  });
+
+  test("whoever declared it is on the level and counts as reached: no early escalation", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws, [
+      {
+        targets: [
+          { kind: "schedule", id: SCHEDULE },
+          { kind: "member", id: eva.id },
+        ],
+      },
+      { targets: [{ kind: "member", id: bia.id }] },
+    ]);
+    const { event, incident } = await ws.declare(caio);
+    await deliver(event, refusing().send);
+    expect(await ws.levels(incident)).toHaveLength(1);
+  });
+
+  test("a severity raise paging the level again that fails does not escalate early", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR, "sev3");
+    await deliver(event, relay().send);
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev1" }, false);
+    const raised = (await ws.events(incident)).find((e) => e.type === "incident.severity_changed")!;
+    await deliver(raised, refusing().send);
+    expect(await ws.levels(incident)).toHaveLength(1);
+  });
+
+  test("a severity raise a device took counts for its level, even without its delivery rows", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR, "sev3");
+    const plan = await ws.stub.planPage(event);
+    expect(plan.send).toBe(true);
+    if (!plan.send) return;
+    // Level 1 paged again by a raise, which Caio's phone took; its delivery rows were never written.
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev1" }, false);
+    const raised = (await ws.events(incident)).find((e) => e.type === "incident.severity_changed")!;
+    const { tokens, send } = relay();
+    await deliver(raised, send);
+    expect(await pagedMembers(ws, tokens)).toEqual([caio.id]);
+    await ws.withShard((shard) => {
+      for (const row of shard.store.scan("deliveries")) shard.store.delete("deliveries", row.id);
+    });
+    // Then level 1's own page settles with every push refused: Caio was reached all the same.
+    await ws.stub.recordPage(
+      event,
+      plan.targets.map((target) => ({
+        deviceId: target.deviceId,
+        userId: target.userId,
+        ok: false as const,
+        reason: "undelivered" as const,
+        error: "apns_refused" as const,
+      })),
+      true,
+      plan.skipped,
+    );
+    expect(await ws.levels(incident)).toHaveLength(1);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "running", paged: 1 });
+  });
+
+  test("a level whose only device APNs dropped plans nobody on its retry, and escalates early from there", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    const gone: Fetch = async () =>
+      Response.json(
+        { error: "apns_refused", status: 410, reason: "Unregistered" },
+        { status: 502 },
+      );
+    // The token is gone: the device is dropped and the page retried, so nothing is final yet.
+    const first = await deliverTry(event, gone, 1);
+    expect(first.retryMessages).toHaveLength(1);
+    expect(await ws.levels(incident)).toHaveLength(1);
+    expect(
+      await ws.withShard((shard) =>
+        shard.store.scan("devices").filter((device) => device.userId === caio.id),
+      ),
+    ).toEqual([]);
+    // The retry finds Caio with no device left: nobody to send to, so level 2 now.
+    const { tokens, send } = relay();
+    const retry = await deliverTry(event, send, 2);
+    expect(retry.retryMessages).toHaveLength(0);
+    expect(tokens).toEqual([]);
+    expect((await ws.levels(incident)).map((one) => [one.level, one.reason])).toEqual([
+      [1, "started"],
+      [2, "undelivered"],
+    ]);
+    expect((await ws.timeline(incident)).filter((row) => row.kind === "page_failed")).toEqual([
+      expect.objectContaining({ userId: caio.id, reason: "token_invalid", step: 1 }),
+    ]);
+  });
+
+  test("never past the round: the last level failing waits for its timeout, which repeats, then ends", async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    await withPolicy(ws, undefined, 1);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    // A relay that refuses everything: level 1 escalates early to level 2, in the same round.
+    await deliver(event, refusing().send);
+    let paged = await pagedEvents(ws, incident);
+    expect(paged.map((e) => e.data)).toEqual([
+      expect.objectContaining({ level: 1, round: 0 }),
+      expect.objectContaining({ level: 2, round: 0, reason: "undelivered" }),
+    ]);
+    // Level 2 refused too: the run keeps level 2's timeout instead of starting round 2 (or ending) at once.
+    const before = await ws.escalation(incident);
+    await deliver(paged[1]!, refusing().send);
+    expect(await ws.escalation(incident)).toEqual(before);
+    expect(before).toMatchObject({ status: "running", paged: 2 });
+    expect(before!.nextAt! - before!.pages.at(-1)!.at).toBe(5 * MINUTE);
+    expect(
+      await ws.withShard((shard) => shard.store.get("escalation_timers", incident)),
+    ).toMatchObject({ at: before!.nextAt });
+    // Its timeout starts round 2; the same again there.
+    await ws.due(incident);
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+    paged = await pagedEvents(ws, incident);
+    expect(paged[2]!.data).toMatchObject({ level: 1, round: 1, reason: "timeout" });
+    await deliver(paged[2]!, refusing().send);
+    paged = await pagedEvents(ws, incident);
+    expect(paged[3]!.data).toMatchObject({ level: 2, round: 1, reason: "undelivered" });
+    await deliver(paged[3]!, refusing().send);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "running", paged: 4 });
+    expect((await ws.events(incident)).map((e) => e.type)).not.toContain("escalation.exhausted");
+    // Only the last timeout ends the run: everyone who can respond, once.
+    await ws.due(incident);
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "exhausted", nextAt: null });
+    expect((await ws.events(incident)).map((e) => e.type)).toContain("escalation.exhausted");
+    expect(await ws.withShard((shard) => shard.store.scan("escalation_timers"))).toEqual([]);
+    const end = (await pagedEvents(ws, incident))[4]!;
+    expect(end.data).toMatchObject({ level: null, round: 1, reason: "exhausted" });
+    const { tokens, send } = relay();
+    await deliver(end, send);
+    // Everyone who can respond with a device, the commander not asked first; the monitor caused it.
+    expect(await pagedMembers(ws, tokens)).toEqual([bia.id, caio.id, eva.id]);
+  });
+
+  test("the end page failing too changes nothing more: the run already ended", async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    await withPolicy(ws, [{ targets: [{ kind: "member", id: eva.id }] }]);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, refusing().send);
+    await ws.due(incident);
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+    const ended = await ws.escalation(incident);
+    expect(ended).toMatchObject({ status: "exhausted" });
+    const events = await ws.events(incident);
+    expect(events.filter((e) => e.type === "escalation.paged")).toHaveLength(2);
+    const end = (await pagedEvents(ws, incident)).at(-1)!;
+    expect(end.data).toMatchObject({ level: null });
+    await deliver(end, refusing().send);
+    // The row, its timer and the outbox are as the end left them, save the end page's failures.
+    expect(await ws.escalation(incident)).toEqual(ended);
+    const escalations = (list: BrigadeEvent[]) =>
+      list.filter((e) => e.type.startsWith("escalation."));
+    expect(escalations(await ws.events(incident))).toEqual(escalations(events));
+    expect(await ws.withShard((shard) => shard.store.scan("escalation_timers"))).toEqual([]);
+  });
+
+  test("a relay nobody reaches: each level of the round is paged when the one before gives up, on its own clock", async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    await withPolicy(
+      ws,
+      [
+        { targets: [{ kind: "schedule", id: SCHEDULE }], timeoutMinutes: 5 },
+        { targets: [{ kind: "member", id: eva.id }], timeoutMinutes: 10 },
+        { targets: [{ kind: "member", id: bia.id }], timeoutMinutes: 15 },
+      ],
+      1,
+    );
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    // Retried while attempts remain: level 1 keeps its own timeout meanwhile.
+    expect((await deliverTry(event, unreachable, 1)).retryMessages).toHaveLength(1);
+    const started = await ws.escalation(incident);
+    expect(started).toMatchObject({ paged: 1 });
+    expect(started!.nextAt! - started!.startedAt).toBe(5 * MINUTE);
+    // Its last try: level 2 now, on level 2's timeout from now.
+    expect((await deliverTry(event, unreachable, 5)).retryMessages).toHaveLength(0);
+    const second = await ws.escalation(incident);
+    expect(second!.pages.at(-1)).toMatchObject({ level: 2, round: 0, reason: "undelivered" });
+    expect(second!.nextAt! - second!.pages.at(-1)!.at).toBe(10 * MINUTE);
+    // Level 2 gives up too: level 3, on its own 15 minutes.
+    const paged = await pagedEvents(ws, incident);
+    await deliverTry(paged[1]!, unreachable, 5);
+    const third = await ws.escalation(incident);
+    expect(third!.pages.at(-1)).toMatchObject({
+      level: 3,
+      round: 0,
+      reason: "undelivered",
+      unreached: 2,
+    });
+    expect(third!.nextAt! - third!.pages.at(-1)!.at).toBe(15 * MINUTE);
+    // Level 3, the round's last, gives up: nothing moves until its timeout.
+    await deliverTry((await pagedEvents(ws, incident))[2]!, unreachable, 5);
+    expect(await ws.escalation(incident)).toEqual(third);
+    await ws.due(incident);
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+    expect((await ws.escalation(incident))!.pages.at(-1)).toMatchObject({
+      level: 1,
+      round: 1,
+      reason: "timeout",
+    });
   });
 });

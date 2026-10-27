@@ -36,6 +36,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "escalated_started" | "Paged level {a}: {b}" |
 * | "escalated_timeout" | "Nobody acknowledged, so level {a} was paged: {b}" |
 * | "escalated_unreachable" | "Earlier levels couldn't reach anyone, so level {a} was paged: {b}" |
+* | "escalated_undelivered" | "Nobody on the level before could be reached, so level {a} was paged now: {b}" |
 * | "escalated_everyone" | "No level could reach anyone, so everyone who can respond was paged" |
 * | "escalated_everyone_later" | "No later level could reach anyone, so everyone who can respond was paged" |
 * | "escalated_started_aware" | "Level {a}: {b}" |
@@ -87,6 +88,7 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "escalated_started") return /** @type {LocalizedString} */ (`Nível ${i?.a} chamado: ${i?.b}`);
 		if (i?.kind === "escalated_timeout") return /** @type {LocalizedString} */ (`Ninguém confirmou, então o nível ${i?.a} foi chamado: ${i?.b}`);
 		if (i?.kind === "escalated_unreachable") return /** @type {LocalizedString} */ (`Os níveis anteriores não alcançaram ninguém, então o nível ${i?.a} foi chamado: ${i?.b}`);
+		if (i?.kind === "escalated_undelivered") return /** @type {LocalizedString} */ (`Ninguém no nível anterior pôde ser alcançado, então o nível ${i?.a} foi chamado na hora: ${i?.b}`);
 		if (i?.kind === "escalated_everyone") return /** @type {LocalizedString} */ (`Nenhum nível alcançou ninguém, então todos que podem responder foram chamados`);
 		if (i?.kind === "escalated_everyone_later") return /** @type {LocalizedString} */ (`Nenhum nível seguinte alcançou ninguém, então todos que podem responder foram chamados`);
 		if (i?.kind === "escalated_started_aware") return /** @type {LocalizedString} */ (`Nível ${i?.a}: ${i?.b}`);
@@ -132,6 +134,7 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "escalated_started") return /** @type {LocalizedString} */ (`Paged level ${i?.a}: ${i?.b}`);
 		if (i?.kind === "escalated_timeout") return /** @type {LocalizedString} */ (`Nobody acknowledged, so level ${i?.a} was paged: ${i?.b}`);
 		if (i?.kind === "escalated_unreachable") return /** @type {LocalizedString} */ (`Earlier levels couldn't reach anyone, so level ${i?.a} was paged: ${i?.b}`);
+		if (i?.kind === "escalated_undelivered") return /** @type {LocalizedString} */ (`Nobody on the level before could be reached, so level ${i?.a} was paged now: ${i?.b}`);
 		if (i?.kind === "escalated_everyone") return /** @type {LocalizedString} */ (`No level could reach anyone, so everyone who can respond was paged`);
 		if (i?.kind === "escalated_everyone_later") return /** @type {LocalizedString} */ (`No later level could reach anyone, so everyone who can respond was paged`);
 		if (i?.kind === "escalated_started_aware") return /** @type {LocalizedString} */ (`Level ${i?.a}: ${i?.b}`);

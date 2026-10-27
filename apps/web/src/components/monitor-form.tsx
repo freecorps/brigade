@@ -12,6 +12,7 @@ import {
   MONITOR_URL_MAX,
   monitorAlerting,
   PROBE_REGIONS,
+  type EscalationPolicyRow,
   type HttpMethod,
   type MonitorRow,
 } from "@freecorps/brigade-schema";
@@ -31,6 +32,7 @@ import {
   EMPTY_DRAFT,
   monitorLimitReached,
   splitHostPort,
+  stalePolicy,
   tcpFieldReason,
   type CheckedDraft,
   type CheckedEdit,
@@ -63,6 +65,7 @@ const FIELD_KEYS: Record<DraftField, string> = {
   timeoutSeconds: "timeout",
   graceSeconds: "grace",
   regions: "regions",
+  policyId: "policy",
 };
 
 /** What the form is for: a new monitor, or changes to `row` (whose kind stays), which can also delete it. */
@@ -97,14 +100,17 @@ export type DiscardPrompt = { onDiscard: () => void; onKeep: () => void; asked: 
  * happens to its alert and incidents. The name field takes focus when the form opens; Escape and Cancel close it,
  * changes and all, without asking: they are the explicit way out, unlike opening another form. `onChanged`
  * hears whether the draft differs from what it opened with, and `discard` asks, at the top, before it is dropped.
+ * `policies` are the workspace's escalation policies, for the picker of the one its incidents page through.
  */
 export function MonitorForm({
   mode,
+  policies,
   onCancel,
   onChanged,
   discard,
 }: {
   mode: MonitorFormMode;
+  policies: readonly EscalationPolicyRow[];
   onCancel: () => void;
   onChanged?: (changed: boolean) => void;
   discard?: DiscardPrompt | null;
@@ -121,6 +127,9 @@ export function MonitorForm({
   const kindId = useId();
   const regionsId = useId();
   const methodId = useId();
+  const policyId = useId();
+  const policyHintId = useId();
+  const policyErrorId = useId();
   const regionsErrorId = useId();
   const hostErrorId = useId();
   const portErrorId = useId();
@@ -160,8 +169,14 @@ export function MonitorForm({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (sending) return;
+    // What is sent: an edit goes out rebased on the live row (fields left alone take its values).
+    const sent = mode.kind === "edit" ? rebaseDraft(draft, initial, mode.row) : draft;
+    // A policy picked here and deleted while the form was open: the shard would refuse it.
+    if (stalePolicy(sent, mode.kind === "edit" ? mode.row : null, policies)) {
+      return refuse(["policyId"]);
+    }
     if (mode.kind === "edit") {
-      const checked = checkEdit(rebaseDraft(draft, initial, mode.row), mode.row);
+      const checked = checkEdit(sent, mode.row);
       if (!checked.ok) return refuse(checked.fields);
       // The shard refuses an edit that changes nothing: there is nothing to send.
       if (checked.changed) mode.onSave(checked);
@@ -475,6 +490,42 @@ export function MonitorForm({
         )}
       </div>
 
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={policyId} className="text-sm font-medium">
+          {m.monitor_field_label({ field: "policy" })}
+        </label>
+        <select
+          id={policyId}
+          value={draft.policyId}
+          onChange={(event) => set("policyId", event.target.value)}
+          aria-invalid={invalid.has("policyId") ? true : undefined}
+          aria-describedby={describe(invalid.has("policyId") && policyErrorId, policyHintId)}
+          className="h-11 w-full min-w-0 truncate rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive sm:max-w-md"
+        >
+          <option value="">{defaultOption(policies)}</option>
+          {policies
+            .filter((policy) => !policy.isDefault || policy.id === initial.policyId)
+            .map((policy) => (
+              <option key={policy.id} value={policy.id}>
+                {policy.name}
+              </option>
+            ))}
+          {/* The policy it names, until this client has it (or after it went): still shown, not silently swapped. */}
+          {draft.policyId !== "" && !policies.some((policy) => policy.id === draft.policyId) ? (
+            <option value={draft.policyId}>{m.escalation_text(GONE)}</option>
+          ) : null}
+        </select>
+        {invalid.has("policyId") ? (
+          <p id={policyErrorId} className="flex items-start gap-1.5 text-sm text-destructive">
+            <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+            <span className="min-w-0">{m.monitor_field_invalid({ field: "policy" })}</span>
+          </p>
+        ) : null}
+        <p id={policyHintId} className="text-sm text-muted-foreground">
+          {m.monitor_field_hint({ field: "policy" })}
+        </p>
+      </div>
+
       {mode.kind === "edit" && mode.row.kind === "heartbeat" && mode.onRotate ? (
         <RotateHeartbeat row={mode.row} changed={changed} onRotate={mode.onRotate} />
       ) : null}
@@ -512,6 +563,20 @@ export function MonitorForm({
       </div>
     </form>
   );
+}
+
+const GONE = { text: "gone", name: "", time: "", level: "", reason: "", who: "" } as const;
+
+/**
+ * The picker's first choice: the workspace's default, by name, or that there is none (the interim rule pages). The
+ * default itself is not listed again (unless the monitor already names it): picking it by name would pin the monitor
+ * to it after the default changes.
+ */
+function defaultOption(policies: readonly EscalationPolicyRow[]): string {
+  const fallback = policies.find((policy) => policy.isDefault);
+  return fallback
+    ? m.monitor_policy({ kind: "option_default", name: fallback.name })
+    : m.monitor_policy({ kind: "option_none", name: "" });
 }
 
 /** The ids an input is described by, skipping the ones not shown. */

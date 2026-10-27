@@ -366,4 +366,41 @@ describe("a run on the incident page", () => {
       "Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados",
     );
   });
+
+  test("a level paged early, because no device took any push of the one before, says so", async () => {
+    const who = people("usr_me", [{ id: "usr_ana", name: "Ana", role: "owner", updatedAt: 0 }]);
+    const entry = (fields: object) =>
+      ({
+        id: "i:1",
+        incidentId: "i",
+        seq: 1,
+        at: 0,
+        actor: "sys_escalation",
+        ...fields,
+      }) as TimelineRow;
+    const early = entry({
+      kind: "escalated",
+      level: 2,
+      round: 0,
+      userIds: ["usr_ana"],
+      reason: "undelivered",
+      unreached: 1,
+    });
+    // Without the level it left (a row written by another version), still why and who, not a generic line.
+    const { unreached: _, ...bare } = early as Extract<TimelineRow, { kind: "escalated" }>;
+    expect(entryText(bare as TimelineRow, who)).toBe(
+      "Nobody on the level before could be reached, so level 2 was paged now: Ana",
+    );
+    // A reason this client does not know reads as a plain page of the level.
+    expect(entryText({ ...early, reason: "later_reason" } as unknown as TimelineRow, who)).toBe(
+      "Paged level 2: Ana",
+    );
+    await setLocale("pt-BR");
+    expect(entryText(early, who)).toBe(
+      "Ninguém no nível 1 pôde ser alcançado, então o nível 2 foi chamado na hora: Ana",
+    );
+    expect(entryText(bare as TimelineRow, who)).toBe(
+      "Ninguém no nível anterior pôde ser alcançado, então o nível 2 foi chamado na hora: Ana",
+    );
+  });
 });

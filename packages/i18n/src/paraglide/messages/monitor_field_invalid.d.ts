@@ -20,6 +20,7 @@ export type Monitor_Field_InvalidInputs = {
 * | "timeout" | "Use 1 to 30 seconds, and no more than the interval." |
 * | "grace" | "Use whole seconds, from 0 to 86,400 (24 hours)." |
 * | "regions" | "Pick at least one region." |
+* | "policy" | "That policy no longer exists. Pick another." |
 * | * | "Check this value." |
 *
 * @param {Monitor_Field_InvalidInputs} inputs

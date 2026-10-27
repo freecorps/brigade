@@ -13,7 +13,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "title" | "Escalation" |
 * | "empty" | "No escalation policies yet. Without a default policy, pages go to the incident's commander, or to everyone who can respond." |
 * | "no_default" | "No default policy: pages go to the incident's commander, or to everyone who can respond." |
-* | "default_note" | "Every page, from a monitor or declared by hand, goes through the default policy." |
+* | "default_note" | "Every page goes through the default policy, unless the monitor that opened the incident names its own." |
 * | "default_badge" | "Default" |
 * | "level" | "Level {level}" |
 * | "level_empty" | "Nobody to page at this level: it is skipped until someone is added" |
@@ -44,6 +44,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "declarer_you_object" | "you (declared it)" |
 * | "replaces_default" | "Replaces {name} as the default." |
 * | "level_empty_draft" | "Nobody to page yet: add a schedule or a person, or remove this level." |
+* | "policy_default" | "Policy: {name}, the workspace default" |
+* | "policy_monitor" | "Policy: {name}, set on the monitor {who}" |
+* | "early" | "Paged now: nobody on level {level} could be reached" |
 * | * | "Escalation" |
 *
 * @param {Escalation_TextInputs} inputs
@@ -56,7 +59,7 @@ export const escalation_text = /** @type {((inputs: Escalation_TextInputs, optio
 		if (i?.text === "title") return /** @type {LocalizedString} */ (`Escalonamento`);
 		if (i?.text === "empty") return /** @type {LocalizedString} */ (`Ainda não há políticas de escalonamento. Sem uma política padrão, as chamadas vão para o comandante do incidente, ou para todos que podem responder.`);
 		if (i?.text === "no_default") return /** @type {LocalizedString} */ (`Nenhuma política padrão: as chamadas vão para o comandante do incidente, ou para todos que podem responder.`);
-		if (i?.text === "default_note") return /** @type {LocalizedString} */ (`Toda chamada, de um monitor ou declarada à mão, passa pela política padrão.`);
+		if (i?.text === "default_note") return /** @type {LocalizedString} */ (`Toda chamada passa pela política padrão, a não ser que o monitor que abriu o incidente indique a sua própria.`);
 		if (i?.text === "default_badge") return /** @type {LocalizedString} */ (`Padrão`);
 		if (i?.text === "level") return /** @type {LocalizedString} */ (`Nível ${i?.level}`);
 		if (i?.text === "level_empty") return /** @type {LocalizedString} */ (`Ninguém para chamar neste nível: ele é pulado até alguém ser adicionado`);
@@ -87,13 +90,16 @@ export const escalation_text = /** @type {((inputs: Escalation_TextInputs, optio
 		if (i?.text === "declarer_you_object") return /** @type {LocalizedString} */ (`você (declarou)`);
 		if (i?.text === "replaces_default") return /** @type {LocalizedString} */ (`Substitui ${i?.name} como padrão.`);
 		if (i?.text === "level_empty_draft") return /** @type {LocalizedString} */ (`Ninguém para chamar ainda: adicione uma escala ou uma pessoa, ou remova este nível.`);
+		if (i?.text === "policy_default") return /** @type {LocalizedString} */ (`Política: ${i?.name}, a padrão do workspace`);
+		if (i?.text === "policy_monitor") return /** @type {LocalizedString} */ (`Política: ${i?.name}, definida no monitor ${i?.who}`);
+		if (i?.text === "early") return /** @type {LocalizedString} */ (`Chamado na hora: ninguém no nível ${i?.level} pôde ser alcançado`);
 		return /** @type {LocalizedString} */ (`Escalonamento`)
 	}
 	{
 		if (i?.text === "title") return /** @type {LocalizedString} */ (`Escalation`);
 		if (i?.text === "empty") return /** @type {LocalizedString} */ (`No escalation policies yet. Without a default policy, pages go to the incident's commander, or to everyone who can respond.`);
 		if (i?.text === "no_default") return /** @type {LocalizedString} */ (`No default policy: pages go to the incident's commander, or to everyone who can respond.`);
-		if (i?.text === "default_note") return /** @type {LocalizedString} */ (`Every page, from a monitor or declared by hand, goes through the default policy.`);
+		if (i?.text === "default_note") return /** @type {LocalizedString} */ (`Every page goes through the default policy, unless the monitor that opened the incident names its own.`);
 		if (i?.text === "default_badge") return /** @type {LocalizedString} */ (`Default`);
 		if (i?.text === "level") return /** @type {LocalizedString} */ (`Level ${i?.level}`);
 		if (i?.text === "level_empty") return /** @type {LocalizedString} */ (`Nobody to page at this level: it is skipped until someone is added`);
@@ -124,6 +130,9 @@ export const escalation_text = /** @type {((inputs: Escalation_TextInputs, optio
 		if (i?.text === "declarer_you_object") return /** @type {LocalizedString} */ (`you (declared it)`);
 		if (i?.text === "replaces_default") return /** @type {LocalizedString} */ (`Replaces ${i?.name} as the default.`);
 		if (i?.text === "level_empty_draft") return /** @type {LocalizedString} */ (`Nobody to page yet: add a schedule or a person, or remove this level.`);
+		if (i?.text === "policy_default") return /** @type {LocalizedString} */ (`Policy: ${i?.name}, the workspace default`);
+		if (i?.text === "policy_monitor") return /** @type {LocalizedString} */ (`Policy: ${i?.name}, set on the monitor ${i?.who}`);
+		if (i?.text === "early") return /** @type {LocalizedString} */ (`Paged now: nobody on level ${i?.level} could be reached`);
 		return /** @type {LocalizedString} */ (`Escalation`)
 	}
 });

@@ -4,7 +4,6 @@
 // the incident's timeline through `notification.fail`.
 
 import {
-  defaultPolicy,
   deliveryId,
   type DeliveryError,
   ESCALATION_ACTOR,
@@ -17,6 +16,7 @@ import {
   type EscalationPage,
   type EscalationPaged,
   type DevicePlatform,
+  incidentPolicy,
   type IncidentRow,
   type PageFailure,
   prefixRange,
@@ -47,8 +47,16 @@ const SCHEMA = `
     primary key (event_id, device_id)
   ) without rowid;
   create table if not exists page_events (event_id text primary key, at integer not null) without rowid;
+  create table if not exists page_steps (
+    event_id text primary key,
+    run text not null,
+    step integer not null,
+    at integer not null
+  ) without rowid;
   create index if not exists page_deliveries_at on page_deliveries (at);
   create index if not exists page_events_at on page_events (at);
+  create index if not exists page_steps_run on page_steps (run, step);
+  create index if not exists page_steps_at on page_steps (at);
 `;
 
 export type Urgency = "high" | "page";
@@ -366,6 +374,8 @@ export class Pager {
         );
       }
       this.finish(event.id, now);
+      // A level whose members have no device left by now reached nobody: its timeout would only wait.
+      this.unreached(event, incident.id, now);
       return { send: false, reason: "nobody" };
     }
     // A page made again for a lost one skips the devices the lost one reached before the Queue gave up on it.
@@ -398,6 +408,7 @@ export class Pager {
       });
       for (const userId of missed) skipped.push({ userId, reason: "over_limit" });
     }
+    this.planStep(event, incident.id, now);
     this.planDeliveries(event, incident.id, targets, now);
     return {
       send: true,
@@ -412,6 +423,31 @@ export class Pager {
       targets,
       skipped,
     };
+  }
+
+  /**
+   * Remembers which page of the run (its run and step) `event` is sending, as it is planned: a severity raise paging
+   * a level again is the same page as the level's own event, so a device that took either counts as reached on it
+   * (`reached`), even when the delivery rows that say so could not be written. Never in the page's way.
+   */
+  private planStep(event: BrigadeEvent, incidentId: string, now: number): void {
+    try {
+      const page = this.pageOf(event, incidentId);
+      if (!page) return;
+      this.options.storage.sql.exec(
+        "insert into page_steps (event_id, run, step, at) values (?, ?, ?, ?) on conflict do nothing",
+        event.id,
+        page.run,
+        page.step,
+        now,
+      );
+    } catch (error) {
+      this.options.log("recording a page's step failed", {
+        event: event.id,
+        incident: incidentId,
+        error: String(error),
+      });
+    }
   }
 
   /**
@@ -539,11 +575,12 @@ export class Pager {
   }
 
   /**
-   * Starts a run on the default policy for the page `event` asked for (`escalation.start`, de-duplicated by the
-   * event) and brings the alarm forward to its next level. False without a default policy (the interim rule pages).
+   * Starts a run for the page `event` asked for, on the policy of the monitor that opened the incident or the default
+   * (`escalation.start`, de-duplicated by the event), and brings the alarm forward to its next level. False with
+   * neither policy (the interim rule pages).
    */
   private start(event: BrigadeEvent, incident: IncidentRow, now: number): boolean {
-    if (!defaultPolicy(this.options.shard.store)) return false;
+    if (!incidentPolicy(this.options.shard.store, incident.id)) return false;
     this.run(
       ESCALATION_ACTOR,
       "escalation",
@@ -671,6 +708,91 @@ export class Pager {
     }
     this.settle(event, event.subject!, missed, now);
     this.finish(event.id, now);
+    this.unreached(event, event.subject!, now);
+  }
+
+  /**
+   * Escalates early (RFC 0006 "Who is paged"): when `event` is the running run's last page, a level's, and it settled
+   * with no device taking any push (every one refused, or failed with its retries spent), the next level of its round
+   * fires now (`escalation.unreached`) instead of at the level's timeout; the round's last level waits for it. Not when a device of that page took it (even one
+   * nobody has acknowledged yet: a missing receipt is not a missed page), when whoever caused the run's first page is
+   * on it (they count as reached), for a severity raise paging the level again, or for a lost page (the dead-letter
+   * consumer pages it again instead). De-duplicated by the run and its step, and refused once the run moved on or
+   * stopped, so a redelivered result never advances twice. Never throws: the level's timeout still fires the next
+   * level if this cannot.
+   */
+  private unreached(event: BrigadeEvent, incidentId: string, now: number): void {
+    try {
+      const { store } = this.options.shard;
+      const incident = store.get("incidents", incidentId);
+      const run = incident?.escalation;
+      if (!incident || !run || run.status !== "running") return;
+      if (!isActive(incident.status) || incident.acknowledgedAt != null) return;
+      const last = run.pages[run.pages.length - 1];
+      if (!last || last.level === null || this.stepOf(event, run) !== run.paged) return;
+      // The run's first page (or that page made again) on which whoever caused it was reached without a push.
+      const first = run.paged === 1 || (run.paged === 2 && last.again === true);
+      if (first && run.pages[0]?.userIds.includes(run.causedBy)) return;
+      if (this.reached(event, incidentId, run.eventId, run.paged)) return;
+      this.run(
+        ESCALATION_ACTOR,
+        "escalation",
+        `unreached:${run.eventId}:${run.paged}`,
+        "escalation.unreached",
+        { incidentId, step: run.paged },
+        now,
+      );
+      const after = store.get("incidents", incidentId)?.escalation;
+      if (after?.status === "running" && after.nextAt !== null) this.options.wake(after.nextAt);
+    } catch (error) {
+      this.options.log("escalating early failed", {
+        event: event.id,
+        incident: incidentId,
+        error: String(error),
+      });
+    }
+  }
+
+  /** The step of `run` that `event` is the own page of: a level's event, or the event that started the run (1). */
+  private stepOf(event: BrigadeEvent, run: Escalation): number | undefined {
+    if (event.type === "escalation.paged") {
+      const data = event.data as Partial<EscalationPaged["data"]> | null;
+      return data?.run === run.eventId && typeof data.step === "number" ? data.step : undefined;
+    }
+    return run.eventId === event.id ? 1 : undefined;
+  }
+
+  /**
+   * Whether a device took any push of the page `step` of run `runId`: this event's or the lost one's it was made
+   * again for (the ledger), any event planned as that page (the ledger by `page_steps`: a severity raise paging the
+   * level again), or any push of that page the relay accepted (its delivery rows, a severity raise's included).
+   */
+  private reached(event: BrigadeEvent, incidentId: string, runId: string, step: number): boolean {
+    const lost =
+      event.type === "escalation.paged"
+        ? (event.data as Partial<EscalationPaged["data"]> | null)?.lost
+        : undefined;
+    const ledger = this.options.storage.sql
+      .exec(
+        "select 1 from page_deliveries where event_id in (?, ?) limit 1",
+        event.id,
+        lost ?? event.id,
+      )
+      .toArray();
+    if (ledger.length > 0) return true;
+    const again = this.options.storage.sql
+      .exec(
+        `select 1 from page_deliveries d join page_steps s on s.event_id = d.event_id
+         where s.run = ? and s.step = ? limit 1`,
+        runId,
+        step,
+      )
+      .toArray();
+    if (again.length > 0) return true;
+    const { from, to } = prefixRange(`${incidentId}:`);
+    return this.options.shard.store
+      .range("deliveries", from, to)
+      .some((row) => row.run === runId && row.step === step && row.acceptedAt !== null);
   }
 
   /**
@@ -883,6 +1005,7 @@ export class Pager {
     try {
       sql.exec("delete from page_deliveries where at < ?", before);
       sql.exec("delete from page_events where at < ?", before);
+      sql.exec("delete from page_steps where at < ?", before);
     } catch (error) {
       this.options.log("pruning the page ledger failed", { error });
     }

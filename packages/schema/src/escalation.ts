@@ -1,5 +1,6 @@
 // Escalation runs (RFC 0003 "Escalation run", RFC 0006 "Who is paged"): the first page of an incident starts one
-// on the workspace's default policy, and the shard's alarm fires each next level when nobody acknowledged in time.
+// on the policy of the monitor that opened it, or the workspace's default, and the shard's alarm fires each next
+// level when nobody acknowledged in time; a level every push of which failed fires the next one of its round at once.
 // A level is resolved when it fires: schedules to whoever is on call at that instant. A level nobody on it can be
 // reached at is skipped at once; when no level is left, when every level and repeat went unacknowledged, or when a
 // level keeps failing to fire, the run falls back to the interim rule (everyone who can respond) and ends.
@@ -8,7 +9,7 @@
 import type { Actor } from "./mutation.ts";
 import { isActive } from "./lifecycle.ts";
 import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
-import { defaultPolicy } from "./policies.ts";
+import { incidentPolicy } from "./policies.ts";
 import { onCallAt } from "./schedules.ts";
 import type {
   Escalation,
@@ -138,7 +139,13 @@ function fire(
   store: MutationStore,
   incident: IncidentRow,
   run: Escalation,
-  from: { index: number; round: number; reason: "started" | "timeout" },
+  from: {
+    index: number;
+    round: number;
+    reason: "started" | "timeout" | "undelivered";
+    /** For `undelivered`: the level none of whose pushes any device took. */
+    unreached?: number;
+  },
   ctx: { now: number; actor: Actor; server: boolean },
   aware: string | null,
 ): DomainEvent[] {
@@ -147,8 +154,13 @@ function fire(
     const resolved = resolveLevel(store, run.levels[index], ctx.now, aware);
     missed.push(...resolved.missed);
     if (resolved.userIds.length > 0) {
-      const reason = index > from.index ? "unreachable" : from.reason;
-      const page = pageOf(index + 1, from.round, resolved.userIds, missed, reason, ctx.now);
+      // Levels skipped after an undelivered one still say why the run left that level early.
+      const reason =
+        index > from.index && from.reason !== "undelivered" ? "unreachable" : from.reason;
+      const page = {
+        ...pageOf(index + 1, from.round, resolved.userIds, missed, reason, ctx.now),
+        ...(from.unreached !== undefined && { unreached: from.unreached }),
+      };
       const nextAt = ctx.now + run.levels[index].timeoutMinutes * MINUTE_MS;
       setTimer(store, incident.id, nextAt);
       return paged(store, incident, { ...run, status: "running", nextAt }, page, missed, ctx);
@@ -216,7 +228,11 @@ function paged(
     appendTimeline(
       store,
       current,
-      { kind: "escalation_exhausted", levels: run.levels.length, rounds: run.repeat + 1 },
+      {
+        kind: "escalation_exhausted",
+        levels: run.levels.length,
+        rounds: run.repeat + 1,
+      },
       ctx,
     );
   } else {
@@ -236,6 +252,7 @@ function paged(
         ...(later && { later }),
         ...(run.paged === 0 && page.userIds.includes(run.causedBy) && { causedBy: run.causedBy }),
         ...(page.again && { again: true }),
+        ...(page.unreached !== undefined && { unreached: page.unreached }),
       },
       ctx,
     );
@@ -267,10 +284,11 @@ function setTimer(store: MutationStore, incidentId: string, at: number): void {
 }
 
 /**
- * Server only, as `ESCALATION_ACTOR`: starts a run on the default policy for the page `eventId` asked for, and pages
- * its first reachable level (RFC 0006 "Who is paged"). `causedBy` (who caused that event) counts as reached without
- * a push. `not_found` without a default policy (the interim rule pages instead); `conflict` while a run is under
- * way, or for an incident already acknowledged or no longer active.
+ * Server only, as `ESCALATION_ACTOR`: starts a run for the page `eventId` asked for, on the policy of the monitor that
+ * opened the incident or else the default (`incidentPolicy`), and pages its first reachable level (RFC 0006 "Who is
+ * paged"). `causedBy` (who caused that event) counts as reached without a push. `not_found` with neither policy (the
+ * interim rule pages instead); `conflict` while a run is under way, or for an incident already acknowledged or no
+ * longer active.
  */
 export const startEscalation = defineMutation({
   name: "escalation.start",
@@ -287,11 +305,13 @@ export const startEscalation = defineMutation({
       return fail("conflict", "Incident is not waiting for a page");
     }
     if (incident.escalation?.status === "running") return fail("conflict", "Already escalating");
-    const policy = defaultPolicy(store);
-    if (!policy) return fail("not_found", "No default escalation policy");
+    const chosen = incidentPolicy(store, incident.id);
+    if (!chosen) return fail("not_found", "No escalation policy");
+    const { policy, monitor } = chosen;
     const run: Escalation = {
       policyId: policy.id,
       policyName: policy.name,
+      monitor,
       levels: policy.levels,
       repeat: policy.repeat,
       eventId: args.eventId,
@@ -371,6 +391,55 @@ export const advanceEscalation = defineMutation({
       },
     };
     return ok(...events, exhausted);
+  },
+});
+
+/**
+ * Server only, as `ESCALATION_ACTOR`, from the pager when the run's last page settled (RFC 0006 "Who is paged"):
+ * every push of that level failed for good (refused, or retries spent) and no device took any, so waiting for its
+ * timeout would only wait. The next level of the same round that reaches someone fires at once, saying why
+ * (`undelivered`, `unreached`). Never past the round: on its last level (or with no later level reaching anyone) it is
+ * refused, and the level's timeout fires what comes next (level 1 of the next round, or everyone who can respond and
+ * the run ends), so a relay that refuses everything never spends the run's rounds in moments. `step` is the run's page
+ * count with the failed page, so a redelivered result, a dead-lettered one or a repeated call advances once
+ * (`conflict` once the run moved on); an acknowledged or resolved run is `not_found`.
+ */
+export const unreachedEscalation = defineMutation({
+  name: "escalation.unreached",
+  args: v.object({
+    incidentId: v.id("inc"),
+    step: v.integer({ min: 1, max: Number.MAX_SAFE_INTEGER }),
+  }),
+  permission: "incident:update",
+  apply(store, args, ctx) {
+    const incident = store.get("incidents", args.incidentId);
+    const run = incident?.escalation;
+    if (!incident || !run || run.status !== "running") {
+      return fail("not_found", "No escalation under way");
+    }
+    if (!isActive(incident.status) || incident.acknowledgedAt != null) {
+      return fail("conflict", "Incident is not waiting for a page");
+    }
+    const last = run.pages[run.pages.length - 1];
+    if (run.paged !== args.step || !last || last.level === null) {
+      return fail("conflict", "The run moved on");
+    }
+    // Only later in the same round, and only to a level that reaches someone: anything else waits for the timeout.
+    const index = last.level;
+    const later = run.levels
+      .slice(index)
+      .some((level) => resolveLevel(store, level, ctx.now, null).userIds.length > 0);
+    if (!later) return fail("conflict", "No later level in this round");
+    return ok(
+      ...fire(
+        store,
+        incident,
+        run,
+        { index, round: last.round, reason: "undelivered", unreached: index },
+        ctx,
+        null,
+      ),
+    );
   },
 });
 

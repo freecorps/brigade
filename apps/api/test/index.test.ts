@@ -3,10 +3,10 @@ import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import worker, { WorkspaceDO } from "../src/index.ts";
 
-// store_rows, shard_meta, change_log, mutation_results, outbox, outbox_drain, page_deliveries, page_events,
+// store_rows, shard_meta, change_log, mutation_results, outbox, outbox_drain, page_deliveries, page_events, page_steps,
 // receipt_key, receipt_rate, email_sends, email_keys, probe_pushes, member_repair, invitation_sends,
 // invitation_repair, slack_states, slack_commands, slack_messages and slack_events, created when the shard starts.
-const SYNC_TABLES = 20;
+const SYNC_TABLES = 21;
 
 const ORIGIN = "http://api.test";
 const api = (path: string, init?: RequestInit) => exports.default.fetch(`${ORIGIN}${path}`, init);

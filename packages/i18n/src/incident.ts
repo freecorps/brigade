@@ -134,7 +134,14 @@ export function entryText(entry: TimelineRow, who: People): string {
       if (entry.userIds.length > 0 && entry.userIds.every(aware)) {
         return say("escalated_started_aware", level, names);
       }
-      return say(`escalated_${entry.reason}`, level, names);
+      // Every push of a level failed, so the next one was paged before its timeout.
+      if (entry.reason === "undelivered" && entry.unreached !== undefined) {
+        return m.escalation_early({ from: String(entry.unreached), level, who: names });
+      }
+      // A reason this client has no words for (a newer server's) reads as a plain page of the level, never as
+      // "changed the incident".
+      const known = ["started", "timeout", "unreachable", "undelivered"].includes(entry.reason);
+      return say(known ? `escalated_${entry.reason}` : "escalated_started", level, names);
     }
     case "escalation_exhausted":
       return say("escalation_exhausted");

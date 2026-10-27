@@ -471,6 +471,7 @@
         "field=timeout": "Use de 1 a 30 segundos, e não mais que o intervalo.",
         "field=grace": "Use segundos inteiros, de 0 a 86.400 (24 horas).",
         "field=regions": "Escolha pelo menos uma região.",
+        "field=policy": "Essa política não existe mais. Escolha outra.",
         "field=*": "Confira este valor."
       }
     }
@@ -492,6 +493,7 @@
         "field=interval": "A cada (segundos)",
         "field=timeout": "Tempo limite (segundos)",
         "field=grace": "Tolerância (segundos)",
+        "field=policy": "Política de escalonamento",
         "field=*": "Verificar de"
       }
     }
@@ -507,6 +509,7 @@
         "field=port": "Qualquer porta menos a 25.",
         "field=timeout": "Quanto tempo uma verificação pode levar.",
         "field=timeout_tcp": "Quanto tempo a conexão pode levar para abrir.",
+        "field=policy": "Um incidente aberto por este monitor chama por esta política.",
         "field=*": "Quanto um sinal pode atrasar antes de contar como perdido."
       }
     }
@@ -604,6 +607,20 @@
     }
   ],
   "monitor_gone": "Ele foi excluído.",
+  "monitor_policy": [
+    {
+      "declarations": ["input kind", "input name"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=own": "Chama pela política {name}",
+        "kind=default": "Chama pela política {name} (padrão)",
+        "kind=none": "Sem política de escalonamento",
+        "kind=option_default": "Padrão do workspace ({name})",
+        "kind=option_none": "Padrão do workspace (nenhuma definida)",
+        "kind=*": "{name}"
+      }
+    }
+  ],
   "monitor_discard": [
     {
       "declarations": ["input part", "input name"],
@@ -715,6 +732,7 @@
         "kind=escalated_started": "Nível {a} chamado: {b}",
         "kind=escalated_timeout": "Ninguém confirmou, então o nível {a} foi chamado: {b}",
         "kind=escalated_unreachable": "Os níveis anteriores não alcançaram ninguém, então o nível {a} foi chamado: {b}",
+        "kind=escalated_undelivered": "Ninguém no nível anterior pôde ser alcançado, então o nível {a} foi chamado na hora: {b}",
         "kind=escalated_everyone": "Nenhum nível alcançou ninguém, então todos que podem responder foram chamados",
         "kind=escalated_everyone_later": "Nenhum nível seguinte alcançou ninguém, então todos que podem responder foram chamados",
         "kind=escalated_started_aware": "Nível {a}: {b}",
@@ -1172,7 +1190,7 @@
         "text=title": "Escalonamento",
         "text=empty": "Ainda não há políticas de escalonamento. Sem uma política padrão, as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
         "text=no_default": "Nenhuma política padrão: as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
-        "text=default_note": "Toda chamada, de um monitor ou declarada à mão, passa pela política padrão.",
+        "text=default_note": "Toda chamada passa pela política padrão, a não ser que o monitor que abriu o incidente indique a sua própria.",
         "text=default_badge": "Padrão",
         "text=level": "Nível {level}",
         "text=level_empty": "Ninguém para chamar neste nível: ele é pulado até alguém ser adicionado",
@@ -1203,6 +1221,9 @@
         "text=declarer_you_object": "você (declarou)",
         "text=replaces_default": "Substitui {name} como padrão.",
         "text=level_empty_draft": "Ninguém para chamar ainda: adicione uma escala ou uma pessoa, ou remova este nível.",
+        "text=policy_default": "Política: {name}, a padrão do workspace",
+        "text=policy_monitor": "Política: {name}, definida no monitor {who}",
+        "text=early": "Chamado na hora: ninguém no nível {level} pôde ser alcançado",
         "text=*": "Escalonamento"
       }
     }
@@ -1312,6 +1333,7 @@
       }
     }
   ],
+  "escalation_early": "Ninguém no nível {from} pôde ser alcançado, então o nível {level} foi chamado na hora: {who}",
   "escalation_miss": [
     {
       "declarations": ["input reason", "input name"],

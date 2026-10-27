@@ -36,8 +36,9 @@ without a policy keeps the interim rule (commander, then every owner, admin and 
 
 - Should SEV3 and SEV4 escalate at all (today a run starts for every declared incident, at `high` urgency below
   SEV2), or should a policy say from which severity it runs?
-- Should a monitor (and later an alert route) pick its own policy? Runs already record theirs; only the default is
-  used in this slice.
+- A monitor now picks its own policy (RFC 0003 "Escalation policies"); deleting a policy a monitor names puts it back
+  on the default. Still open: alert routes (Phase 3) picking one, and whether a member declaring by hand should be
+  able to pick one.
 - A failed page is surfaced on the timeline, in logs and now by email (RFC 0005 "Email"): a member a SEV1 or SEV2
   page missed is told once per incident, and the owners are told when a page reached nobody and nothing else will
   page on its own; both on by default, `workspace.setEmail` turns either off. Still open: a dashboard switch for it;
@@ -45,11 +46,11 @@ without a policy keeps the interim rule (commander, then every owner, admin and 
   email should also go to admins, or skip an owner who declared the incident; and whether the external dead-man
   switch should hear of it too. Email verification gates these emails now: only verified addresses get them (RFC
   0005 "Email", "Abuse"); the caps on them and on account emails are Q21's.
-- Should a level whose pushes all fail escalate before its timeout? Delivery receipts now say per device whether
-  APNs refused a push and whether the phone opened it (RFC 0006 "Delivery receipts"), but a missing receipt is not
-  proof a page was not shown (receipts are best effort), so only refusals could trigger it. An exhausted run
-  already falls back to everyone who can respond once (RFC 0006 "Who is paged"); should a workspace be able to turn
-  that off, or point it at a smaller group?
+- A level whose pushes all fail now escalates before its timeout, to the next level of its round only (RFC 0006 "Who
+  is paged"): only refusals and failures with retries spent count, never a missing receipt. Still open: should a level whose members were all
+  pushed but never opened it (no receipt within a minute or two) escalate early too, given receipts are best effort?
+  And an exhausted run already falls back to everyone who can respond once; should a workspace be able to turn that
+  off, or point it at a smaller group?
 - Every member without a device the page was for still gets their own "Couldn't page …" line: right for a small
   team, noisy for a large one where most never install the app. The same members are emailed (SEV1 and SEV2, once
   per incident), which is the point for those who never install it, and the same noise for those who do not want it.

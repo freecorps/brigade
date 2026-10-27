@@ -13,6 +13,7 @@ export type Monitor_Field_HintInputs = {
 * | "port" | "Any port but 25." |
 * | "timeout" | "How long one check may take." |
 * | "timeout_tcp" | "How long the connection may take to open." |
+* | "policy" | "An incident this monitor opens pages through this policy." |
 * | * | "How late a ping may be before it counts as missed." |
 *
 * @param {Monitor_Field_HintInputs} inputs

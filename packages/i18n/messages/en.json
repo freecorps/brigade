@@ -471,6 +471,7 @@
         "field=timeout": "Use 1 to 30 seconds, and no more than the interval.",
         "field=grace": "Use whole seconds, from 0 to 86,400 (24 hours).",
         "field=regions": "Pick at least one region.",
+        "field=policy": "That policy no longer exists. Pick another.",
         "field=*": "Check this value."
       }
     }
@@ -492,6 +493,7 @@
         "field=interval": "Every (seconds)",
         "field=timeout": "Timeout (seconds)",
         "field=grace": "Grace (seconds)",
+        "field=policy": "Escalation policy",
         "field=*": "Check from"
       }
     }
@@ -507,6 +509,7 @@
         "field=port": "Any port but 25.",
         "field=timeout": "How long one check may take.",
         "field=timeout_tcp": "How long the connection may take to open.",
+        "field=policy": "An incident this monitor opens pages through this policy.",
         "field=*": "How late a ping may be before it counts as missed."
       }
     }
@@ -604,6 +607,20 @@
     }
   ],
   "monitor_gone": "It was deleted.",
+  "monitor_policy": [
+    {
+      "declarations": ["input kind", "input name"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=own": "Pages through {name}",
+        "kind=default": "Pages through {name} (default)",
+        "kind=none": "No escalation policy",
+        "kind=option_default": "Workspace default ({name})",
+        "kind=option_none": "Workspace default (none set)",
+        "kind=*": "{name}"
+      }
+    }
+  ],
   "monitor_discard": [
     {
       "declarations": ["input part", "input name"],
@@ -715,6 +732,7 @@
         "kind=escalated_started": "Paged level {a}: {b}",
         "kind=escalated_timeout": "Nobody acknowledged, so level {a} was paged: {b}",
         "kind=escalated_unreachable": "Earlier levels couldn't reach anyone, so level {a} was paged: {b}",
+        "kind=escalated_undelivered": "Nobody on the level before could be reached, so level {a} was paged now: {b}",
         "kind=escalated_everyone": "No level could reach anyone, so everyone who can respond was paged",
         "kind=escalated_everyone_later": "No later level could reach anyone, so everyone who can respond was paged",
         "kind=escalated_started_aware": "Level {a}: {b}",
@@ -1172,7 +1190,7 @@
         "text=title": "Escalation",
         "text=empty": "No escalation policies yet. Without a default policy, pages go to the incident's commander, or to everyone who can respond.",
         "text=no_default": "No default policy: pages go to the incident's commander, or to everyone who can respond.",
-        "text=default_note": "Every page, from a monitor or declared by hand, goes through the default policy.",
+        "text=default_note": "Every page goes through the default policy, unless the monitor that opened the incident names its own.",
         "text=default_badge": "Default",
         "text=level": "Level {level}",
         "text=level_empty": "Nobody to page at this level: it is skipped until someone is added",
@@ -1203,6 +1221,9 @@
         "text=declarer_you_object": "you (declared it)",
         "text=replaces_default": "Replaces {name} as the default.",
         "text=level_empty_draft": "Nobody to page yet: add a schedule or a person, or remove this level.",
+        "text=policy_default": "Policy: {name}, the workspace default",
+        "text=policy_monitor": "Policy: {name}, set on the monitor {who}",
+        "text=early": "Paged now: nobody on level {level} could be reached",
         "text=*": "Escalation"
       }
     }
@@ -1312,6 +1333,7 @@
       }
     }
   ],
+  "escalation_early": "Nobody on level {from} could be reached, so level {level} was paged now: {who}",
   "escalation_miss": [
     {
       "declarations": ["input reason", "input name"],

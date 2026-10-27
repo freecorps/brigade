@@ -10,6 +10,7 @@ import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { Link, useRouter } from "@tanstack/react-router";
 import { cn } from "cn";
 import {
+  BellRingIcon,
   CheckIcon,
   CircleCheckIcon,
   CircleDashedIcon,
@@ -53,6 +54,7 @@ import {
   formatLatency,
   formatSeconds,
   monitorActions,
+  monitorPolicy,
   monitorBadge,
   monitorsFull,
   monitorRefusal,
@@ -62,6 +64,7 @@ import {
   type CheckedDraft,
   type CheckedEdit,
   type MonitorAction,
+  type MonitorPolicy,
   type MonitorBadge,
   type SourceChip,
 } from "@/lib/monitors";
@@ -91,6 +94,7 @@ export function MonitorsCard() {
   // Owners and admins; everyone else reads.
   const manage = can(role, "monitor:manage");
   const { rows, status, error } = useQuery("monitors.all", {});
+  const policies = useQuery("escalationPolicies.all", {}).rows;
   const createHttp = useMutation("monitor.createHttp");
   const createTcp = useMutation("monitor.createTcp");
   const createHeartbeat = useMutation("monitor.createHeartbeat");
@@ -328,6 +332,7 @@ export function MonitorsCard() {
         {adding ? (
           <MonitorForm
             mode={{ kind: "create", full: monitorsFull(rows.length), onCreate }}
+            policies={policies}
             onCancel={close}
             onChanged={onChanged}
             discard={discard}
@@ -367,6 +372,7 @@ export function MonitorsCard() {
                 locale={locale}
                 now={now}
                 userId={userId}
+                policy={monitorPolicy(row, policies)}
                 actions={monitorActions(role, row)}
                 onPause={onPause}
                 onEdit={onEdit}
@@ -374,6 +380,7 @@ export function MonitorsCard() {
                   editing === row.id ? (
                     <MonitorForm
                       mode={editMode(row)}
+                      policies={policies}
                       onCancel={() => closeEdit(row.id)}
                       onChanged={onChanged}
                       discard={discard}
@@ -414,6 +421,7 @@ function MonitorItem({
   locale,
   now,
   userId,
+  policy,
   actions,
   onPause,
   onEdit,
@@ -423,6 +431,8 @@ function MonitorItem({
   locale: Locale;
   now: number;
   userId: string;
+  /** Which escalation policy its incidents page through (`monitorPolicy`). */
+  policy: MonitorPolicy;
   /** What this member may do here (`monitorActions`): none for responders and viewers. */
   actions: readonly MonitorAction[];
   onPause: (row: MonitorRow) => void;
@@ -521,6 +531,15 @@ function MonitorItem({
             {m.monitor_heartbeat_every({ interval: formatSeconds(row.intervalSeconds, locale) })}
           </p>
         )}
+        <p className="flex min-w-0 items-start gap-1.5 text-sm text-muted-foreground">
+          <BellRingIcon aria-hidden className="mt-0.5 size-3.5 shrink-0 opacity-70" />
+          <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]">
+            {m.monitor_policy({
+              kind: policy.kind,
+              name: policy.kind === "none" ? "" : policy.name,
+            })}
+          </span>
+        </p>
       </div>
       <div className="col-span-2 row-start-3 flex min-w-0 flex-col gap-1 text-sm md:col-span-1 md:row-start-1">
         {row.paused ? null : (

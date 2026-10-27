@@ -10,6 +10,7 @@ import {
   isRole,
   MAX_EXPORT_BYTES,
   newId,
+  nextMaintenanceAt,
   STATUS_PAGE_ID,
   type Actor,
   type EmailAbout,
@@ -62,6 +63,7 @@ import { Receipts, type ReceiptResult } from "./receipts.ts";
 import { AlertIntake, type AlertIntakeResult } from "./alert-intake.ts";
 import { SlackDesk, type SlackPlan, type SlackShardAction } from "./slack.ts";
 import { StatusPublisher, type StatusConfigureResult } from "./status-page.ts";
+import { StatusMailer, type StatusEmailPlan, type StatusEmailReport } from "./status-mail.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
 import {
   WebhookDesk,
@@ -205,6 +207,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly membership: Membership;
   private readonly invitations: Invitations;
   private readonly status: StatusPublisher;
+  private readonly statusMail: StatusMailer;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -220,6 +223,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       onOutbox: () => {
         this.armDrain();
         this.armStatus();
+        this.armMaintenance();
       },
     });
     // TEST ONLY: the API's own tests (vite.config.ts) read events from the outbox, so they pause the drain; the
@@ -318,8 +322,17 @@ export class WorkspaceDO extends DurableObject<Env> {
       committed: (version, changes) => this.broadcast(version, changes, undefined),
       wake: (at) => this.wake(at, "status page push"),
     });
-    // Likewise a snapshot still to push (a failed push, a restart before the alarm ran).
+    // The status page's emails (RFC 0012 "Email subscriptions"): its ledger; the addresses are in D1.
+    this.statusMail = new StatusMailer({
+      shard: this.shard,
+      sql: ctx.storage.sql,
+      log: (message, fields) => this.log(message, fields),
+      carryOn: (eventId) => this.serverMutation("statusEmail.continue", { eventId }),
+    });
+    // Likewise a snapshot still to push (a failed push, a restart before the alarm ran), and a maintenance window that
+    // starts or ends.
     this.armStatus();
+    this.armMaintenance();
     // Events left in the outbox (an alarm that failed to arm, a restart) arm the drain again whenever the object
     // wakes, so a backlog never waits for an unrelated change.
     try {
@@ -520,6 +533,77 @@ export class WorkspaceDO extends DurableObject<Env> {
       return { ok: false, code: "not_a_member" };
     }
     return this.status.configure(workspaceId, actor, args);
+  }
+
+  /**
+   * A change to a status page subscription (RPC from src/status-subscribers.ts, after the subscriber's row changed in
+   * D1): its event through the outbox, with the subscriber's id and never the address. A visitor's change runs as
+   * `ACCOUNT_ACTOR`; an owner's or admin's deletion as them (the route checked `status:manage` in D1).
+   */
+  statusSubscription(
+    workspaceId: string,
+    change:
+      | { action: "request"; subscriberId: string; send: number }
+      | { action: "confirm"; subscriberId: string }
+      | { action: "remove"; subscriberId: string; reason: "unsubscribed" | "deleted" | "expired" },
+    actor: Actor = ACCOUNT_ACTOR,
+  ): { ok: true } | { ok: false; code: string } {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    // A subscriber is confirmed and removed once: the route runs this before its D1 write and runs it again when
+    // asked again after a failure, so a second call only says it is done.
+    const once = change.action === "request" ? null : `${change.action}:${change.subscriberId}`;
+    if (once !== null && this.statusMail.seen(once)) return { ok: true };
+    const { action, ...args } = change;
+    const now = Date.now();
+    const { result, changes } = this.shard.mutate({
+      clientId: "status-subscribers",
+      mutationId: newId("mut", now, (length) => crypto.getRandomValues(new Uint8Array(length))),
+      actor,
+      name: `statusSubscriber.${action}`,
+      args,
+      now,
+      internal: true,
+    });
+    if (!result.ok) return { ok: false, code: result.error.code };
+    if (once !== null) this.statusMail.remember(once, now);
+    this.broadcast(result.version, changes, undefined);
+    return { ok: true };
+  }
+
+  /**
+   * Pending subscribers whose confirmation link expired (RPC from the API's cron, src/status-subscribers.ts
+   * `sweepSubscribers`, before it deletes their rows): a `status_subscriber.removed` event each, `expired`.
+   */
+  expireStatusSubscribers(
+    workspaceId: string,
+    subscriberIds: string[],
+  ): { ok: true } | { ok: false; code: string } {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    for (const subscriberId of subscriberIds) {
+      const result = this.statusSubscription(workspaceId, {
+        action: "remove",
+        subscriberId,
+        reason: "expired",
+      });
+      if (!result.ok) return result;
+    }
+    return { ok: true };
+  }
+
+  /** What a status page email event asks for (RPC from the queue consumer, src/notify-status.ts). */
+  planStatusEmail(event: BrigadeEvent): StatusEmailPlan {
+    if (this.shard.workspace() !== event.workspaceId) return { send: false, reason: "nothing" };
+    return this.statusMail.plan(event, Date.now());
+  }
+
+  /** What a batch of status page emails did (RPC from the queue consumer). */
+  recordStatusEmail(
+    event: BrigadeEvent,
+    key: string,
+    report: StatusEmailReport,
+  ): { retry: boolean } {
+    if (this.shard.workspace() !== event.workspaceId) return { retry: false };
+    return this.statusMail.record(key, report, Date.now());
   }
 
   /**
@@ -1132,6 +1216,9 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("webhook redrive failed", { error });
     }
+    // Maintenance windows that started or ended (RFC 0012 "Scheduled maintenance"): their events go out with the drain
+    // below, and the push after it shows them.
+    this.advanceMaintenance(Date.now());
     await this.drainOutbox();
     // The status page after the outbox: a page never waits on KV. Never throws; KV calls have no deadline of their
     // own, so past `STATUS_PUSH_BUDGET_MS` the push carries on in the background, the push backs off (the alarm does
@@ -1215,8 +1302,17 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("reading the webhook retries failed", { error });
     }
+    let maintenanceAt: number | null = null;
+    try {
+      const at = nextMaintenanceAt(this.shard.store.scan("status_maintenance"));
+      // One that could not move on is tried again a tick later, not in a loop.
+      maintenanceAt =
+        at === null ? null : Math.max(at, Date.now() + (at <= now ? MONITOR_TICK_MS : 0));
+    } catch (error) {
+      this.log("reading the maintenance windows failed", { error });
+    }
     const next = earliest(
-      earliest(earliest(monitors, escalationAt), earliest(repair, armed)),
+      earliest(earliest(monitors, escalationAt), earliest(repair, earliest(armed, maintenanceAt))),
       earliest(
         earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
         webhookAt,
@@ -1267,6 +1363,33 @@ export class WorkspaceDO extends DurableObject<Env> {
       return;
     }
     this.wake(at, "outbox drain");
+  }
+
+  /** Moves every maintenance window whose start or end passed on (`maintenance.advance`). Never throws. */
+  private advanceMaintenance(now: number): void {
+    try {
+      for (const row of this.shard.store.scan("status_maintenance")) {
+        const at =
+          row.phase === "scheduled"
+            ? row.startsAt
+            : row.phase === "in_progress"
+              ? row.endsAt
+              : null;
+        if (at !== null && at <= now) this.serverMutation("maintenance.advance", { id: row.id });
+      }
+    } catch (error) {
+      this.log("moving maintenance windows on failed", { error });
+    }
+  }
+
+  /** Brings the alarm forward for the next maintenance window to start or end. Never throws. */
+  private armMaintenance(): void {
+    try {
+      const at = nextMaintenanceAt(this.shard.store.scan("status_maintenance"));
+      if (at !== null) this.wake(at, "maintenance window");
+    } catch (error) {
+      this.log("arming the maintenance window failed", { error: String(error) });
+    }
   }
 
   /** Brings the alarm forward for a status page push that is due. Never throws. */

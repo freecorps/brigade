@@ -7,6 +7,7 @@ import type { Locale } from "@freecorps/brigade-i18n";
 import {
   email_invite,
   email_reset,
+  email_status,
   email_text,
   email_verify,
   email_webhook_disabled,
@@ -16,6 +17,7 @@ import {
   severity_sev2,
   severity_sev3,
   severity_sev4,
+  status_text,
 } from "@freecorps/brigade-i18n/messages";
 import {
   formatIncidentNumber,
@@ -24,6 +26,7 @@ import {
   type Severity,
 } from "@freecorps/brigade-schema";
 import { singleLine, type OutgoingEmail } from "./email.ts";
+import type { StatusEmailContent } from "./status-mail.ts";
 
 /** What an email says about the incident: all of it user content except the severity and number. */
 export type EmailIncident = {
@@ -160,17 +163,20 @@ function renderMessage(
     link?: { label: string; url: string };
     after: string[];
     footer: string;
+    /** Links under the footer (manage, unsubscribe). */
+    footerLinks?: { label: string; url: string }[];
   },
   to: { email: string; name?: string },
   locale: Locale,
 ): OutgoingEmail {
-  const { subject, lines, link, after, footer } = parts;
+  const { subject, lines, link, after, footer, footerLinks = [] } = parts;
   const textBody = [
     ...lines,
     ...(link ? [`${link.label}: ${link.url}`] : []),
     ...after,
     "--",
     footer,
+    ...footerLinks.map((one) => `${one.label}: ${one.url}`),
   ].join("\n\n");
   const paragraph = (line: string, style = "") =>
     `<p style="margin:0 0 16px${style}">${escapeHtml(line)}</p>`;
@@ -185,6 +191,16 @@ function renderMessage(
       : []),
     ...after.map((line) => paragraph(line)),
     paragraph(footer, ";color:#666;font-size:13px"),
+    ...(footerLinks.length
+      ? [
+          `<p style="margin:0 0 16px;color:#666;font-size:13px">${footerLinks
+            .map(
+              (one) =>
+                `<a href="${escapeHtml(one.url)}" style="color:#666">${escapeHtml(one.label)}</a>`,
+            )
+            .join(" &nbsp; ")}</p>`,
+        ]
+      : []),
     "</body></html>",
   ].join("\n");
   return {
@@ -300,6 +316,135 @@ export function renderWebhookDisabledEmail(
     },
     to,
     locale,
+  );
+}
+
+/** The public page's links a status page email carries. */
+export type StatusEmailLinks = { page: string; manage?: string; unsubscribe?: string };
+
+const UTC_TIME = (locale: Locale, at: number) =>
+  new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(at);
+
+/**
+ * The confirmation email of a status page subscription (RFC 0012 "Email subscriptions"): the one email an address
+ * nobody proved yet gets. It names the page (what its owners typed) and nothing the visitor typed but the address.
+ */
+export function renderStatusConfirmEmail(
+  page: string,
+  to: { email: string },
+  url: string,
+  locale: Locale,
+): OutgoingEmail {
+  const text = (part: string) => statusText(part, { page }, locale);
+  return {
+    ...renderMessage(
+      {
+        subject: text("confirm_subject"),
+        lines: [text("confirm_intro")],
+        link: { label: text("confirm_open"), url },
+        after: [text("confirm_after")],
+        footer: text("confirm_footer"),
+      },
+      to,
+      locale,
+    ),
+    headers: { "Auto-Submitted": "auto-generated", "Content-Language": locale },
+  };
+}
+
+/**
+ * A notification to a page's subscriber: an incident published, updated or resolved, or a maintenance window
+ * scheduled, started, ended or called off, in the page's language. Every email links the page, its manage page and,
+ * on an https origin, carries RFC 8058's one-click unsubscribe headers (Email Sending refuses an http one).
+ */
+export function renderStatusEmail(
+  page: string,
+  content: StatusEmailContent,
+  to: { email: string },
+  links: StatusEmailLinks,
+  locale: Locale,
+): OutgoingEmail {
+  const facts = { page, title: content.title };
+  const text = (part: string, extra: Record<string, string> = {}) =>
+    statusText(part, { ...facts, ...extra }, locale);
+  const lines: string[] = [];
+  if ("status" in content) {
+    lines.push(
+      text("status", {
+        status: status_text({ part: `public_${content.status}`, time: "", list: "" }, { locale }),
+      }),
+    );
+  } else {
+    const window = {
+      time: UTC_TIME(locale, content.startsAt),
+      until: UTC_TIME(locale, content.endsAt),
+    };
+    if (content.kind === "maintenance_started") lines.push(text("started", window));
+    else if (content.kind === "maintenance_ended") lines.push(text("ended"));
+    else if (content.kind === "maintenance_cancelled")
+      lines.push(text("cancelled"), text("window", window));
+    else lines.push(text("window", window));
+  }
+  if (content.components.length)
+    lines.push(text("affects", { list: content.components.join(", ") }));
+  // One paragraph per paragraph the team wrote, so its line breaks survive in the HTML too.
+  if (content.body) lines.push(...content.body.split(/\n\s*\n|\n/).filter((line) => line.trim()));
+  const footerLinks = [
+    ...(links.manage ? [{ label: text("manage"), url: links.manage }] : []),
+    ...(links.unsubscribe ? [{ label: text("unsubscribe"), url: links.unsubscribe }] : []),
+  ];
+  const headers: Record<string, string> = {
+    "Auto-Submitted": "auto-generated",
+    "Content-Language": locale,
+  };
+  if (links.unsubscribe?.startsWith("https://")) {
+    headers["List-Unsubscribe"] = `<${links.unsubscribe}>`;
+    headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+  }
+  return {
+    ...renderMessage(
+      {
+        subject: text(`${content.kind}_subject`),
+        lines: [content.title, ...lines],
+        link: { label: text("open"), url: links.page },
+        after: [],
+        footer: text("footer"),
+        footerLinks,
+      },
+      to,
+      locale,
+    ),
+    headers,
+  };
+}
+
+function statusText(
+  part: string,
+  args: {
+    page: string;
+    title?: string;
+    status?: string;
+    time?: string;
+    until?: string;
+    list?: string;
+  },
+  locale: Locale,
+): string {
+  return email_status(
+    {
+      part,
+      page: args.page,
+      title: args.title ?? "",
+      status: args.status ?? "",
+      time: args.time ?? "",
+      until: args.until ?? "",
+      list: args.list ?? "",
+    },
+    { locale },
   );
 }
 

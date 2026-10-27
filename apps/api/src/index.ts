@@ -36,6 +36,12 @@ import { consumeDeadLetters, consumeEvents, type NotifyEnv } from "./notify.ts";
 import { receiptWorkspace } from "./receipts.ts";
 import { beginSlackInstall } from "./slack-bridge.ts";
 import { configureStatusPage, serveStatusPage } from "./status-route.ts";
+import {
+  serveSubscribers,
+  serveSubscription,
+  sweepSubscribers,
+  type SubscriptionAction,
+} from "./status-subscribers.ts";
 import { createExport, downloadExport, features, sweepExports } from "./exports.ts";
 import { requestDraftRoute } from "./postmortem.ts";
 
@@ -69,11 +75,16 @@ const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
 const ALERTS_PATH = /^\/alerts\/([^/]+)$/;
 const STATUS_PAGE_PATH = /^\/workspaces\/([^/]+)\/status-page$/;
+const SUBSCRIBERS_PATH = /^\/workspaces\/([^/]+)\/status-page\/subscribers(\/export)?$/;
+/** `/status/<slug>/<action>`: subscribing to a page by email (RFC 0012 "Email subscriptions"). */
+const SUBSCRIPTION_PATH = /^\/status\/([^/]+)\/(subscribe|confirm|manage|unsubscribe)$/;
 const DRAFT_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/postmortem\/draft$/;
 const EXPORTS_PATH = /^\/workspaces\/([^/]+)\/exports$/;
 const EXPORT_PATH = /^\/workspaces\/([^/]+)\/exports\/([^/]+)$/;
 /** Minute of the hour the cron sweeps expired exports (src/exports.ts). */
 const EXPORT_SWEEP_MINUTE = 17;
+/** Minute of the hour the cron deletes status page subscribers who never confirmed (src/status-subscribers.ts). */
+const SUBSCRIBER_SWEEP_MINUTE = 37;
 /** `/status/<slug>`; `/status` and `/status/` alone are the page's 404 (no slug). */
 const PUBLIC_STATUS_PATH = /^\/status(?:\/([^/]*))?$/;
 const READ_METHODS = ["GET", "HEAD"];
@@ -168,6 +179,20 @@ export default {
     if (pathname === "/features") return features(request, env, auth);
     const statusPage = STATUS_PAGE_PATH.exec(pathname)?.[1];
     if (statusPage !== undefined) return configureStatusPage(request, env, auth, statusPage);
+    const subscribers = SUBSCRIBERS_PATH.exec(pathname);
+    if (subscribers)
+      return serveSubscribers(request, env, auth, subscribers[1]!, subscribers[2] ?? "");
+    // Subscribing to the public page: rate-limited, then D1; the shard only for an outbox event.
+    const subscription = SUBSCRIPTION_PATH.exec(pathname);
+    if (subscription) {
+      return serveSubscription(
+        request,
+        env,
+        ctx,
+        subscription[1]!,
+        subscription[2] as SubscriptionAction,
+      );
+    }
     // The public status page (RFC 0012): no session, read from KV, never from the shard.
     const publicStatus = PUBLIC_STATUS_PATH.exec(pathname);
     if (publicStatus) return serveStatusPage(request, env, ctx, publicStatus[1] ?? "");
@@ -211,6 +236,13 @@ export default {
     if (bucket && new Date(controller.scheduledTime).getUTCMinutes() === EXPORT_SWEEP_MINUTE) {
       const sweep = sweepExports(bucket, Date.now()).catch((error: unknown) =>
         console.error(JSON.stringify({ message: "export sweep failed", error: String(error) })),
+      );
+      ctx?.waitUntil(sweep);
+    }
+    // Status page subscribers who never confirmed (RFC 0012 "Email subscriptions"), once an hour, likewise.
+    if (new Date(controller.scheduledTime).getUTCMinutes() === SUBSCRIBER_SWEEP_MINUTE) {
+      const sweep = sweepSubscribers(env, Date.now()).catch((error: unknown) =>
+        console.error(JSON.stringify({ message: "subscriber sweep failed", error: String(error) })),
       );
       ctx?.waitUntil(sweep);
     }

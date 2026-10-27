@@ -337,11 +337,18 @@ Validate the risky assumptions before writing product code. Each spike produces 
     with backoff), and `GET /status/:slug` renders it as HTML with no script or session from KV behind the edge
     cache, so no visitor wakes a shard; 90 days of history. The dashboard's Status page card and the incident
     page's Status page panel.
-  - Left: staging's and production's KV namespaces (`dev` binds `brigade-status-dev`), applying migration 0008 to
-    staging's and production's databases (owner's call, apps/api README "Status page"); email
-    subscriptions with double opt-in (slice 3); custom domains; uptime bars from monitors; scheduled maintenance;
-    reordering components; local times on the page; a JSON or RSS feed; the mobile app's publish action; polish of
-    the card (slice 2); Q23.
+  - Done (slice 2): email subscriptions from a plain form on the page, double opt-in with signed expiring links,
+    one-click unsubscribe (RFC 8058) and a manage link in every email, subscribers in D1 (never the shard or the
+    snapshot), counts, CSV export and removal for owners and admins; rate limits per caller and per page, a honeypot,
+    the same answer for every address, confirmation caps per address and a daily cap per page; notifications for
+    published incidents and maintenance from the queue in batches with their own budget, in the page's language;
+    uptime bars (90 daily buckets from linked monitors' alerts, with a text alternative); scheduled maintenance
+    (planned by responders and up, started and ended by the shard's alarm, shown on the page and the components). The
+    dashboard's Scheduled maintenance card.
+  - Left: staging's and production's KV namespaces (`dev` binds `brigade-status-dev`), applying migrations 0008 and
+    0009 to staging's and production's databases (owner's call, apps/api README "Status page"); custom domains;
+    reordering components; local times on the page; a JSON or RSS feed; per-component subscriptions; the mobile app's
+    publish and maintenance actions; Q23.
 - [ ] Outbound webhooks; OpenAPI reference; `packages/sdk` published
   - Done: outbound webhooks (RFC 0005 "Outbound webhooks"): owners and admins register up to 20 endpoints per
     workspace on the dashboard's Webhooks card (URL, description, event filter from the public catalog, on and off),

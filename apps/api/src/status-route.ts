@@ -5,13 +5,14 @@ import {
   COMPONENT_STATUSES,
   PUBLIC_STATUSES,
   STATUS_LOCALES,
-  STATUS_SNAPSHOT_VERSION,
   STATUS_SLUG,
+  UPTIME_STATES,
   type StatusSnapshot,
 } from "@freecorps/brigade-schema";
 import type { Auth } from "./auth.ts";
 import { memberRole } from "./actor.ts";
 import { readBounded } from "./body.ts";
+import { emailSender } from "./email.ts";
 import { renderStatusMessage, renderStatusPage } from "./status-html.ts";
 import { statusKey, type StatusConfigureCode, type StatusConfigureResult } from "./status-page.ts";
 import { ORGANIZATION_ID } from "./workspace.ts";
@@ -23,14 +24,24 @@ export const STATUS_MISSING_MAX_AGE_S = 60;
 /** The largest settings body read. */
 const MAX_BODY_LENGTH = 4096;
 
-/** No script, nothing loaded from elsewhere, not framed: the page is text and inline style. */
+/**
+ * No script, nothing loaded from elsewhere, not framed: the page is text and inline style. Its only form (subscribing
+ * by email) posts to its own origin.
+ */
 const STATUS_HEADERS = {
   "Content-Type": "text/html; charset=utf-8",
   "Content-Security-Policy":
-    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "no-referrer",
 };
+
+/** The page's headers with `Cache-Control` set: `no-store`, or a `max-age` in seconds. */
+export function statusPageHeaders(cache: "no-store" | number): Headers {
+  const headers = new Headers(STATUS_HEADERS);
+  headers.set("Cache-Control", cache === "no-store" ? "no-store" : `public, max-age=${cache}`);
+  return headers;
+}
 
 /**
  * `GET /status/:slug`: the public page, no session. The snapshot comes from KV (`cacheTtl`) behind the edge's own
@@ -73,7 +84,9 @@ export async function serveStatusPage(
     response = unavailable();
   } else {
     try {
-      response = page(renderStatusPage(stored), 200, STATUS_MAX_AGE_S);
+      // The subscribe form only where email can be sent: a page whose emails never go out promises nothing.
+      const subscribe = emailSender(env) !== undefined;
+      response = page(renderStatusPage(stored, { slug, subscribe }), 200, STATUS_MAX_AGE_S);
     } catch (error) {
       console.error(
         JSON.stringify({ message: "rendering a status page failed", slug, error: String(error) }),
@@ -118,15 +131,45 @@ const isIncident = (value: unknown) =>
       isString(update.body),
   );
 
+const isWindow = (value: unknown) =>
+  isRecord(value) &&
+  isString(value.title) &&
+  isString(value.body) &&
+  isArrayOf(value.components, isString) &&
+  isTime(value.startsAt) &&
+  isTime(value.endsAt);
+
+const isUptime = (value: unknown) =>
+  value === undefined ||
+  (isRecord(value) &&
+    (value.percent === null ||
+      (typeof value.percent === "number" && value.percent >= 0 && value.percent <= 100)) &&
+    isArrayOf(
+      value.days,
+      (day) =>
+        isRecord(day) &&
+        typeof day.date === "string" &&
+        /^\d{4}-\d{2}-\d{2}$/.test(day.date) &&
+        isOneOf(UPTIME_STATES, day.state) &&
+        typeof day.down === "number" &&
+        Number.isSafeInteger(day.down) &&
+        day.down >= 0,
+    ));
+
+/** Component statuses a page shows: the scale, and `maintenance` from version 2. */
+const SHOWN_STATUSES: readonly string[] = [...COMPONENT_STATUSES, "maintenance"];
+
 /**
- * Whether a value read from KV is a snapshot this Worker can render: the version it knows, every status and the
- * language one it has words for, every time a date. KV holds what the shard wrote, but a Worker older or newer than
- * the shard, or a damaged value, must answer the 503 page, never a page with blanks or a thrown error.
+ * Whether a value read from KV is a snapshot this Worker can render: a version it knows (1, or 2 with uptime bars and
+ * maintenance), every status and the language one it has words for, every time a date. KV holds what the shard
+ * wrote, but a Worker older or newer than the shard, or a damaged value, must answer the 503 page, never a page with
+ * blanks or a thrown error.
  */
 export function isSnapshot(value: unknown): value is StatusSnapshot {
+  const v2 = isRecord(value) && value.v === 2;
   return (
     isRecord(value) &&
-    value.v === STATUS_SNAPSHOT_VERSION &&
+    (value.v === 1 || v2) &&
     isString(value.title) &&
     isOneOf(STATUS_LOCALES, value.locale) &&
     isTime(value.generatedAt) &&
@@ -141,18 +184,20 @@ export function isSnapshot(value: unknown): value is StatusSnapshot {
           (component) =>
             isRecord(component) &&
             isString(component.name) &&
-            isOneOf(COMPONENT_STATUSES, component.status),
+            isOneOf(v2 ? SHOWN_STATUSES : COMPONENT_STATUSES, component.status) &&
+            (v2 ? isUptime(component.uptime) : component.uptime === undefined),
         ),
     ) &&
     isArrayOf(value.active, isIncident) &&
-    isArrayOf(value.history, isIncident)
+    isArrayOf(value.history, isIncident) &&
+    (v2
+      ? isArrayOf(value.maintenance, isWindow) && isArrayOf(value.upcoming, isWindow)
+      : value.maintenance === undefined && value.upcoming === undefined)
   );
 }
 
 function page(html: string, status: number, maxAge?: number): Response {
-  const headers = new Headers(STATUS_HEADERS);
-  headers.set("Cache-Control", maxAge === undefined ? "no-store" : `public, max-age=${maxAge}`);
-  return new Response(html, { status, headers });
+  return new Response(html, { status, headers: statusPageHeaders(maxAge ?? "no-store") });
 }
 
 const CONFIGURE_STATUS: Record<StatusConfigureCode | "not_a_member", number> = {

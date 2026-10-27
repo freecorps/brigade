@@ -8,6 +8,11 @@ export type OutgoingEmail = {
   subject: string;
   text: string;
   html: string;
+  /**
+   * Extra headers, only ones Email Sending allows (`List-Unsubscribe`, `List-Unsubscribe-Post`, `Auto-Submitted`,
+   * `Content-Language`, ...): it refuses the whole email for any other.
+   */
+  headers?: Record<string, string>;
 };
 
 /**
@@ -69,6 +74,7 @@ export class CloudflareEmailSender implements EmailSender {
           subject: email.subject,
           text: email.text,
           html: email.html,
+          ...(email.headers ? { headers: email.headers } : {}),
         }),
         EMAIL_TIMEOUT_MS,
       );

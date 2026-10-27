@@ -1918,6 +1918,8 @@
         "part=unavailable_title": "Página de status indisponível",
         "part=unavailable_body": "A página de status não pode ser exibida agora. Tente de novo em um minuto.",
         "part=powered": "Página de status do Brigade",
+        "part=component_maintenance": "Em manutenção",
+        "part=overall_maintenance": "Manutenção programada em andamento",
         "part=*": "Status"
       }
     }
@@ -2001,6 +2003,11 @@
         "part=withdrawn": "Tirado da página. Visitantes podem ainda vê-lo por cerca de 2 minutos.",
         "part=corrected": "Corrigido. Visitantes podem ainda ver a versão anterior por cerca de 2 minutos.",
         "part=correct_failed": "Não foi possível alterar a página de status. Tente de novo.",
+        "part=uptime_label": "Barra de disponibilidade a partir de monitores",
+        "part=uptime_hint": "A página mostra 90 dias de disponibilidade destes monitores, desde quando foram criados. Deixe todos desmarcados para não ter barra.",
+        "part=uptime_no_monitors": "Ainda não há monitores. Adicione um em Monitores para mostrar uma barra de disponibilidade.",
+        "part=uptime_from": "Disponibilidade de {name}",
+        "part=uptime_limit": "No máximo 5 monitores por componente.",
         "part=*": "Página de status"
       }
     }
@@ -2632,6 +2639,173 @@
         "part=too_large": "Alerta ilegível de {name} (conteúdo grande demais)",
         "part=capacity": "Capacidade de alertas atingida",
         "part=*": "Alerta ilegível de {name}"
+      }
+    }
+  ],
+  "status_uptime": [
+    {
+      "declarations": ["input part", "input percent", "input date", "input minutes"],
+      "selectors": ["part"],
+      "match": {
+        "part=summary": "{percent}% de disponibilidade nos últimos 90 dias",
+        "part=no_data": "Ainda sem dados de disponibilidade",
+        "part=day_up": "{date}: sem indisponibilidade",
+        "part=day_degraded": "{date}: {minutes} min de indisponibilidade",
+        "part=day_down": "{date}: fora do ar por {minutes} min",
+        "part=day_none": "{date}: sem dados",
+        "part=start": "90 dias atrás",
+        "part=end": "Hoje",
+        "part=*": "Disponibilidade"
+      }
+    }
+  ],
+  "status_maintenance": [
+    {
+      "declarations": ["input part", "input time", "input until"],
+      "selectors": ["part"],
+      "match": {
+        "part=active_title": "Manutenção em andamento",
+        "part=upcoming_title": "Manutenção programada",
+        "part=window_upcoming": "De {time} a {until} UTC",
+        "part=window_active": "Até {until} UTC",
+        "part=*": "Manutenção"
+      }
+    }
+  ],
+  "status_subscribe": [
+    {
+      "declarations": ["input part", "input email", "input page"],
+      "selectors": ["part"],
+      "match": {
+        "part=form_title": "Receba atualizações por email",
+        "part=form_hint": "Enviamos um email quando um incidente for publicado aqui ou uma manutenção for programada. Você confirma pela sua caixa de entrada e pode cancelar quando quiser.",
+        "part=email_label": "Endereço de email",
+        "part=submit": "Inscrever-se",
+        "part=honeypot": "Deixe este campo vazio",
+        "part=check_title": "Confira sua caixa de entrada",
+        "part=check_body": "Se {email} ainda não estiver inscrito em {page}, enviamos um link para confirmar. O link expira em 48 horas.",
+        "part=invalid_title": "Confira o endereço",
+        "part=invalid_body": "Isso não parece um endereço de email. Volte e tente de novo.",
+        "part=limited_title": "Pedidos demais",
+        "part=limited_body": "Pediram inscrições demais agora há pouco. Tente de novo em um minuto.",
+        "part=confirm_title": "Confirme sua inscrição",
+        "part=confirm_body": "Confirme para receber atualizações de {page} por email.",
+        "part=confirm_button": "Confirmar inscrição",
+        "part=confirmed_title": "Inscrição confirmada",
+        "part=confirmed_body": "Você vai receber um email quando {page} publicar um incidente ou programar uma manutenção. Todo email tem um link para cancelar a inscrição.",
+        "part=expired_title": "Este link expirou",
+        "part=expired_body": "Inscreva-se de novo pela página de status para receber um novo link.",
+        "part=manage_title": "Atualizações por email",
+        "part=manage_body": "{email} recebe atualizações de {page} por email.",
+        "part=unsubscribe_button": "Cancelar inscrição",
+        "part=unsubscribed_title": "Inscrição cancelada",
+        "part=unsubscribed_body": "Você não vai receber mais emails de {page}.",
+        "part=back": "Voltar para a página de status",
+        "part=*": "Atualizações por email"
+      }
+    }
+  ],
+  "email_status": [
+    {
+      "declarations": [
+        "input part",
+        "input page",
+        "input title",
+        "input status",
+        "input time",
+        "input until",
+        "input list"
+      ],
+      "selectors": ["part"],
+      "match": {
+        "part=confirm_subject": "Confirme sua inscrição em {page}",
+        "part=confirm_intro": "Alguém, provavelmente você, pediu para receber neste endereço as atualizações da página de status de {page}.",
+        "part=confirm_open": "Confirmar inscrição",
+        "part=confirm_after": "O link expira em 48 horas. Se não foi você, ignore este email: você não vai receber mais nada.",
+        "part=confirm_footer": "Você recebeu este email porque este endereço foi informado na página de status de {page}.",
+        "part=incident_created_subject": "{page}: {title}",
+        "part=incident_updated_subject": "{page}, atualização: {title}",
+        "part=incident_resolved_subject": "{page}, resolvido: {title}",
+        "part=maintenance_scheduled_subject": "{page}, manutenção programada: {title}",
+        "part=maintenance_started_subject": "{page}, manutenção iniciada: {title}",
+        "part=maintenance_ended_subject": "{page}, manutenção concluída: {title}",
+        "part=maintenance_cancelled_subject": "{page}, manutenção cancelada: {title}",
+        "part=status": "Status: {status}",
+        "part=affects": "Afeta {list}",
+        "part=window": "De {time} a {until} UTC",
+        "part=started": "A manutenção começou. A previsão de término é {until} UTC.",
+        "part=ended": "A manutenção terminou.",
+        "part=cancelled": "Esta manutenção não vai acontecer.",
+        "part=open": "Ver a página de status",
+        "part=footer": "Você recebeu este email porque se inscreveu nas atualizações de {page}.",
+        "part=manage": "Gerenciar inscrição",
+        "part=unsubscribe": "Cancelar inscrição",
+        "part=*": "{page}"
+      }
+    }
+  ],
+  "status_subscribers": [
+    {
+      "declarations": ["input part", "input confirmed", "input pending", "input email"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Inscritos por email",
+        "part=hint": "Visitantes se inscrevem na página pública e confirmam por email. Só owners e admins veem isto, e os endereços nunca aparecem na página.",
+        "part=count": "{confirmed} confirmados, {pending} aguardando confirmação",
+        "part=load_failed": "Não foi possível carregar os inscritos.",
+        "part=retry": "Tentar de novo",
+        "part=export": "Exportar CSV",
+        "part=remove_label": "Remover um inscrito",
+        "part=remove_hint": "O endereço da pessoa. Ela não recebe email sobre isso.",
+        "part=remove": "Remover",
+        "part=removing": "Removendo…",
+        "part=removed": "{email} foi removido.",
+        "part=not_found": "Nenhum inscrito tem esse endereço.",
+        "part=remove_failed": "Não foi possível remover. Tente de novo.",
+        "part=*": "Inscritos"
+      }
+    }
+  ],
+  "maintenance_card": [
+    {
+      "declarations": ["input part", "input name", "input time", "input until"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Manutenção programada",
+        "part=description": "Avise os clientes sobre trabalhos planejados. Aparece na página de status, e os inscritos recebem um email quando é programada, quando começa e quando termina.",
+        "part=empty": "Nenhuma manutenção programada.",
+        "part=schedule": "Programar manutenção",
+        "part=title_label": "Título público",
+        "part=body_label": "O que o público deve saber",
+        "part=components_label": "Componentes afetados",
+        "part=starts_label": "Início",
+        "part=ends_label": "Fim",
+        "part=times_hint": "No seu fuso horário ({name}). A página pública mostra UTC.",
+        "part=save": "Programar",
+        "part=saving": "Salvando…",
+        "part=update": "Salvar",
+        "part=failed": "Não foi possível salvar. Tente de novo.",
+        "part=title_required": "O público precisa de um título.",
+        "part=body_required": "Escreva o que o público deve saber.",
+        "part=times_required": "Escolha quando começa e quando termina.",
+        "part=ends_before": "A janela precisa terminar depois de começar.",
+        "part=too_long": "Uma janela dura no máximo 14 dias.",
+        "part=ended": "Essa janela já terminou.",
+        "part=limit": "No máximo 20 janelas podem estar programadas ao mesmo tempo.",
+        "part=phase_scheduled": "Programada",
+        "part=phase_in_progress": "Em andamento",
+        "part=phase_completed": "Concluída",
+        "part=window": "De {time} a {until}",
+        "part=edit": "Editar",
+        "part=cancel": "Cancelar",
+        "part=end_now": "Encerrar agora",
+        "part=call_off": "Cancelar manutenção",
+        "part=call_off_confirm": "Cancelar {name}? Ela sai da página de status e os inscritos recebem um email avisando.",
+        "part=keep": "Manter",
+        "part=not_set_up": "Configure a página de status primeiro para programar manutenções nela.",
+        "part=viewer": "Owners, admins e responders podem programar manutenções.",
+        "part=past_title": "Concluídas",
+        "part=*": "Manutenção"
       }
     }
   ]

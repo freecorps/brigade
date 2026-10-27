@@ -91,9 +91,7 @@ const member = (id: string, name: string | null, memberRole: Role = "responder")
 async function mount(path: string, locale: "en" | "pt-BR" = "en") {
   void setI18nLocale(locale);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
-    input === "/api/features"
-      ? Response.json(features)
-      : Promise.reject(new TypeError("offline")),
+    input === "/api/features" ? Response.json(features) : Promise.reject(new TypeError("offline")),
   );
   resetFeatures();
   const dev: Actor = { kind: "user", id: "usr_dev", role };

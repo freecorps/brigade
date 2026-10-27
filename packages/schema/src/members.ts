@@ -4,7 +4,11 @@
 // first, then runs these, so they never decide a change on their own (apps/api/src/members.ts).
 
 import { allows, can, ROLES, type Role } from "./access.ts";
-import { forgetMemberSettings } from "./calls.ts";
+import {
+  DEFAULT_CALL_CHOICE,
+  forgetMemberSettings,
+  type MemberCallsChanged,
+} from "./calls.ts";
 import { dropDevices } from "./devices.ts";
 import { defineMutation, fail, ok, type Actor, type DomainEvent } from "./mutation.ts";
 import { dropFromSchedules } from "./schedules.ts";
@@ -230,6 +234,17 @@ export const reconcileMembers = defineMutation({
         .filter((userId) => !roles.has(userId)),
     );
     for (const userId of orphans) events.push(...dropDevices(store, userId, "member_removed"));
+    // Settings of someone with no copy, likewise: a member who rejoins starts from the defaults.
+    for (const settings of store.scan("member_settings")) {
+      if (roles.has(settings.id)) continue;
+      forgetMemberSettings(store, settings.id);
+      const event: MemberCallsChanged = {
+        type: "member.calls_changed",
+        subject: settings.id,
+        data: { userId: settings.id, calls: DEFAULT_CALL_CHOICE },
+      };
+      events.push(event);
+    }
     if (events.length === 0) return fail("conflict", "Members are up to date");
     return ok(...events);
   },

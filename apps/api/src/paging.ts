@@ -547,7 +547,7 @@ export class Pager {
       call:
         rings &&
         target.platform === "ios" &&
-        target.voipToken !== null &&
+        Boolean(target.voipToken) &&
         wantsCall(callChoiceOf(settings, target.userId), incident.severity),
     }));
     this.planStep(event, incident.id, now);

@@ -406,7 +406,7 @@ describe("API tokens on these routes", () => {
       },
     );
     expect(posted.status).toBe(201);
-    expect(await posted.json()).toEqual({ ok: true });
+    expect(await posted.json()).toEqual({ ok: true, entryId: expect.stringMatching(/:\d+$/) });
 
     const both = await mint(t, t.ana, ["incident:update", "incident:read"]);
     const changed = await call(`/workspaces/${t.id}/incidents/${incident}`, both.token, {
@@ -725,6 +725,316 @@ describe("changing an incident", () => {
       body: { severity: "sev1" },
     });
     expect(missing.status).toBe(404);
+  });
+});
+
+describe("renaming and incident roles", () => {
+  test("title and roles in the PATCH: renamed first, roles after the fields, each with its event and entry", async () => {
+    const t = await team();
+    const caio: Actor = { kind: "user", id: t.caio.id, role: "responder" };
+    await t.run("member.sync", { id: caio.id, name: "Caio", role: caio.role }, caio, true);
+    const incident = newId("inc", Date.now(), random);
+    await t.run("incident.declare", { id: incident, title: "Checkout slow", severity: "sev3" });
+    const path = `/workspaces/${t.id}/incidents/${incident}`;
+    const response = await call(path, t.caio, {
+      method: "PATCH",
+      body: {
+        status: "investigating",
+        roles: { commander: t.caio.id },
+        title: "Checkout errors in eu-west",
+      },
+    });
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { incident: PublicIncident }).incident).toMatchObject({
+      title: "Checkout errors in eu-west",
+      roles: { commander: t.caio.id },
+      status: "investigating",
+    });
+    const events = (await outbox(t)).filter((event) => event.subject === incident);
+    expect(events.map((event) => event.type)).toEqual([
+      "incident.declared",
+      "incident.renamed",
+      "incident.role_assigned",
+      "incident.status_changed",
+    ]);
+    expect(events[1]).toMatchObject({
+      actor: { id: t.caio.id },
+      data: { from: "Checkout slow", to: "Checkout errors in eu-west" },
+    });
+    const timeline = await t.withShard((shard) =>
+      shard.store.scan("timeline").filter((entry) => entry.incidentId === incident),
+    );
+    expect(timeline[1]).toMatchObject({
+      kind: "renamed",
+      from: "Checkout slow",
+      to: "Checkout errors in eu-west",
+      actor: t.caio.id,
+    });
+
+    // The same title and holder again change nothing; `null` leaves the role empty.
+    const again = await call(path, t.caio, {
+      method: "PATCH",
+      body: { title: "Checkout errors in eu-west", roles: { commander: t.caio.id } },
+    });
+    expect(again.status).toBe(200);
+    const cleared = await call(path, t.caio, {
+      method: "PATCH",
+      body: { roles: { commander: null } },
+    });
+    expect(((await cleared.json()) as { incident: PublicIncident }).incident.roles).toEqual({});
+    expect((await outbox(t)).filter((event) => event.subject === incident)).toHaveLength(5);
+  });
+
+  test("a refused role stops the rest, the rename before it stays; a bad title or role id is 400", async () => {
+    const t = await team();
+    const duda: Actor = { kind: "user", id: t.duda.id, role: "viewer" };
+    await t.run("member.sync", { id: duda.id, name: "Duda", role: duda.role }, duda, true);
+    const incident = newId("inc", Date.now(), random);
+    await t.run("incident.declare", { id: incident, title: "Checkout slow", severity: "sev3" });
+    const path = `/workspaces/${t.id}/incidents/${incident}`;
+    const refused = await call(path, t.caio, {
+      method: "PATCH",
+      body: { title: "Checkout down", roles: { commander: t.duda.id }, severity: "sev1" },
+    });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({
+      error: "invalid_args",
+      issues: [{ path: "userId" }],
+    });
+    const row = await t.withShard((shard) => shard.store.get("incidents", incident));
+    expect(row).toMatchObject({ title: "Checkout down", severity: "sev3", roles: {} });
+    for (const body of [
+      { title: "" },
+      { title: "x".repeat(201) },
+      { roles: { "not a role": t.caio.id } },
+      { roles: { commander: 7 } },
+    ]) {
+      const response = await call(path, t.caio, { method: "PATCH", body });
+      expect(response.status, JSON.stringify(body)).toBe(400);
+    }
+    const viewer = await call(path, t.duda, { method: "PATCH", body: { title: "Mine now" } });
+    expect(viewer.status).toBe(403);
+    expect((await t.withShard((shard) => shard.store.get("incidents", incident)))?.title).toBe(
+      "Checkout down",
+    );
+  });
+});
+
+describe("editing and removing a written update", () => {
+  /** An incident with an update by Caio (a session) and one by Ana; their entry ids. */
+  async function withUpdates(t: Team) {
+    const incident = newId("inc", Date.now(), random);
+    await t.run("incident.declare", { id: incident, title: "Checkout down", severity: "sev3" });
+    const path = `/workspaces/${t.id}/incidents/${incident}`;
+    const post = async (by: Person | string, body: string) => {
+      const response = await call(`${path}/updates`, by, { method: "POST", body: { body } });
+      expect(response.status).toBe(201);
+      return ((await response.json()) as { entryId: string }).entryId;
+    };
+    const caios = await post(t.caio, "Rolling back.");
+    const anas = await post(t.ana, "Paging the database team.");
+    return { incident, path, post, caios, anas };
+  }
+
+  /** A token Caio minted as an admin, back to a responder since. */
+  async function caioMints(t: Team, scopes: Permission[]) {
+    await setRole(t, "admin");
+    const minted = await mint(t, t.caio, scopes);
+    await setRole(t, "responder");
+    forgetAllTokens();
+    return minted;
+  }
+
+  const setRole = async (t: Team, to: string) => {
+    const response = await api(`/workspaces/${t.id}/members/${t.caio.id}`, {
+      method: "PATCH",
+      headers: { Cookie: t.ana.cookie },
+      body: { role: to },
+    });
+    expect(response.status).toBe(200);
+  };
+
+  const entry = (t: Team, id: string) =>
+    t.withShard((shard) => shard.store.get("timeline", id) as Record<string, unknown> | undefined);
+
+  test("its author edits it, anyone else is 403; the author, an owner or an admin removes it", async () => {
+    const t = await team();
+    const { incident, path, caios, anas } = await withUpdates(t);
+    expect(caios).toBe(`${incident}:2`);
+    const edit = (by: Person, id: string, body: string, key?: string) =>
+      call(`${path}/updates/${id}`, by, { method: "PATCH", body: { body }, key });
+
+    const edited = await edit(t.caio, caios, "Rolled back.");
+    expect(edited.status).toBe(200);
+    expect(await edited.json()).toEqual({ ok: true });
+    expect(await entry(t, caios)).toMatchObject({
+      body: "Rolled back.",
+      edited: { by: t.caio.id, count: 1, previous: "Rolling back." },
+    });
+    // The same text again changes nothing.
+    expect((await edit(t.caio, caios, "Rolled back.")).status).toBe(200);
+    // Not the author: the owner included.
+    for (const [by, id] of [
+      [t.ana, caios],
+      [t.caio, anas],
+    ] as const) {
+      const response = await edit(by, id, "Not mine.");
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: "forbidden" });
+    }
+    const removeOwn = await call(`${path}/updates/${anas}`, t.caio, { method: "DELETE" });
+    expect(removeOwn.status).toBe(403);
+    // The colon may come percent-encoded.
+    const removed = await call(`${path}/updates/${encodeURIComponent(caios)}`, t.ana, {
+      method: "DELETE",
+    });
+    expect(removed.status).toBe(200);
+    expect(await entry(t, caios)).toMatchObject({ body: "", removed: { by: t.ana.id } });
+    // Removed: neither edited nor removed again.
+    expect((await edit(t.caio, caios, "Back.")).status).toBe(409);
+    expect((await call(`${path}/updates/${caios}`, t.ana, { method: "DELETE" })).status).toBe(409);
+
+    const events = (await outbox(t)).filter((event) => event.subject === incident);
+    expect(events.map((event) => event.type)).toEqual([
+      "incident.declared",
+      "incident.update_posted",
+      "incident.update_posted",
+      "incident.update_edited",
+      "incident.update_deleted",
+    ]);
+    expect(events[3]).toMatchObject({
+      data: { entryId: caios, body: "Rolled back.", previous: "Rolling back." },
+    });
+    expect(events[4]).toMatchObject({ actor: { id: t.ana.id }, data: { entryId: caios } });
+  });
+
+  test("no such update on this incident is 404: another incident's, another kind, a bad id, another workspace", async () => {
+    const t = await team();
+    const { path, caios } = await withUpdates(t);
+    const other = await withUpdates(t);
+    for (const id of [other.caios, `${caios.split(":")[0]}:1`, `${caios}0`, "nope", `${caios}:1`]) {
+      const response = await call(`${path}/updates/${id}`, t.caio, {
+        method: "PATCH",
+        body: { body: "Edited." },
+      });
+      expect(response.status, id).toBe(404);
+    }
+    // Another workspace's incident, by a member of this one: not found.
+    const elsewhere = await team();
+    const across = await call(
+      `/workspaces/${elsewhere.id}/incidents/${caios.split(":")[0]}/updates/${caios}`,
+      elsewhere.ana,
+      { method: "DELETE" },
+    );
+    expect(across.status).toBe(404);
+    expect(
+      (await call(`${path}/updates/${caios}`, elsewhere.ana, { method: "DELETE" })).status,
+    ).toBe(403);
+    expect((await call(`${path}/updates/${caios}`, t.caio, { method: "PUT" })).status).toBe(405);
+    expect(await entry(t, caios)).toMatchObject({ body: "Rolling back." });
+  });
+
+  test("a token is the author of what it or its creator posted; it needs incident:update", async () => {
+    const t = await team();
+    const { path, post, anas, caios } = await withUpdates(t);
+    const anaToken = await mint(t, t.ana, ["incident:update"]);
+    const tokens = await post(anaToken.token, "Posted by a script.");
+    const edit = (by: string, id: string) =>
+      call(`${path}/updates/${id}`, by, { method: "PATCH", body: { body: `Edited ${id}.` } });
+    // Its own, and its creator's.
+    expect((await edit(anaToken.token, tokens)).status).toBe(200);
+    expect((await edit(anaToken.token, anas)).status).toBe(200);
+    expect(await entry(t, tokens)).toMatchObject({ edited: { by: anaToken.id } });
+    // Another member's: an owner's token edits no one else's, though it may remove it.
+    expect((await edit(anaToken.token, caios)).status).toBe(403);
+    // Caio's token: not the author of Ana's, nor of Ana's token's.
+    const caioToken = await caioMints(t, ["incident:update"]);
+    for (const id of [anas, tokens]) {
+      expect((await edit(caioToken.token, id)).status).toBe(403);
+      const remove = await call(`${path}/updates/${id}`, caioToken.token, { method: "DELETE" });
+      expect(remove.status).toBe(403);
+    }
+    expect((await edit(caioToken.token, caios)).status).toBe(200);
+
+    // Without the scope: 403, nothing changed.
+    const readOnly = await caioMints(t, ["incident:read"]);
+    expect((await edit(readOnly.token, caios)).status).toBe(403);
+    const noScope = await call(`${path}/updates/${caios}`, readOnly.token, { method: "DELETE" });
+    expect(noScope.status).toBe(403);
+    expect(await noScope.json()).toEqual({ error: "forbidden" });
+    expect(await entry(t, caios)).toMatchObject({ body: `Edited ${caios}.` });
+    expect(
+      (await call(`${path}/updates/${anas}`, anaToken.token, { method: "DELETE" })).status,
+    ).toBe(200);
+  });
+
+  test("a revoked token is 401, a demoted creator's is 403, and nothing changes", async () => {
+    const t = await team();
+    const { path, caios } = await withUpdates(t);
+    const demoted = await caioMints(t, ["incident:update"]);
+    const revoked = await caioMints(t, ["incident:update"]);
+    expect(
+      (
+        await api(`/workspaces/${t.id}/api-tokens/${revoked.id}`, {
+          method: "DELETE",
+          headers: { Cookie: t.ana.cookie },
+        })
+      ).status,
+    ).toBe(200);
+    await setRole(t, "viewer");
+    forgetAllTokens();
+    const gone = await call(`${path}/updates/${caios}`, revoked.token, {
+      method: "PATCH",
+      body: { body: "Edited." },
+    });
+    expect(gone.status).toBe(401);
+    expect(await gone.json()).toEqual({ error: "unauthenticated" });
+    for (const method of ["PATCH", "DELETE"]) {
+      const response = await call(`${path}/updates/${caios}`, demoted.token, {
+        method,
+        ...(method === "PATCH" ? { body: { body: "Edited." } } : {}),
+      });
+      expect(response.status, method).toBe(403);
+    }
+    expect(await entry(t, caios)).toMatchObject({ body: "Rolling back." });
+  });
+
+  test("Idempotency-Key: the same edit or removal again runs once; the key with another body is 422", async () => {
+    const t = await team();
+    const { incident, path, caios, anas } = await withUpdates(t);
+    const events = async () =>
+      (await outbox(t)).filter((event) => event.subject === incident).map((event) => event.type);
+    const before = await events();
+    const edit = (body: string, key: string, id = caios) =>
+      call(`${path}/updates/${id}`, t.caio, { method: "PATCH", key, body: { body } });
+    expect((await edit("Rolled back.", "e-1")).status).toBe(200);
+    expect((await edit("Rolled back.", "e-1")).status).toBe(200);
+    expect(await events()).toEqual([...before, "incident.update_edited"]);
+    for (const response of [
+      await edit("Something else.", "e-1"),
+      await edit("Rolled back.", "e-1", anas),
+      await call(`${path}/updates/${caios}`, t.caio, { method: "DELETE", key: "e-1" }),
+    ]) {
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({ error: "idempotency_key_reused" });
+    }
+    const remove = () => call(`${path}/updates/${caios}`, t.caio, { method: "DELETE", key: "d-1" });
+    expect((await remove()).status).toBe(200);
+    // The retry answers what the first did, not "removed already".
+    expect((await remove()).status).toBe(200);
+    expect(await events()).toEqual([
+      ...before,
+      "incident.update_edited",
+      "incident.update_deleted",
+    ]);
+    expect((await entry(t, caios))?.body).toBe("");
+    // A retried post answers the same entry.
+    const post = () =>
+      call(`${path}/updates`, t.caio, { method: "POST", key: "u-1", body: { body: "Done." } });
+    const first = (await (await post()).json()) as { entryId: string };
+    const second = (await (await post()).json()) as { entryId: string };
+    expect(second.entryId).toBe(first.entryId);
+    expect(first.entryId).toBe(`${incident}:4`);
   });
 });
 

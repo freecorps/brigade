@@ -461,7 +461,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     `GET /api/openapi.json` (RFC 0002 "Public HTTP API").
   - The reference's `webhooks` section: one entry per payload type, converted from the schema package's payload
     validators (`WEBHOOK_PAYLOADS`), checked against what the API signs.
-  - `packages/sdk` (`@freecorps/brigade-sdk`, MIT, ready to publish; 0.2.0 below): `verifyWebhook` (Standard Webhooks on Web
+  - `packages/sdk` (`@freecorps/brigade-sdk`, MIT, published on npm; 0.2.0 and 0.3.0 below): `verifyWebhook` (Standard Webhooks on Web
     Crypto, typed payloads and errors), a typed client for the reference's operations, and the payload types; no
     runtime dependencies (RFC 0002 "Public HTTP API").
   - Done: replaying a delivery from the endpoint's log on the Webhooks card (`webhook.replay`: any of the last 10,
@@ -469,7 +469,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     and 10 an hour per endpoint; refused while the endpoint is off), and up to 5 custom headers per endpoint (set on
     create and with `PUT …/webhooks/:id/headers`, reserved and hop-by-hop names refused, `Authorization` allowed,
     values sealed under `WEBHOOK_SECRET_KEY` and never shown back) (RFC 0005 "Outbound webhooks").
-  - Left: publish `@freecorps/brigade-sdk` to npm (owner); setting `WEBHOOK_SECRET_KEY` on the deployed environments
+  - Left: setting `WEBHOOK_SECRET_KEY` on the deployed environments
     (owner's call, apps/api/README.md).
   - Done (RFC 0014): API tokens. Per workspace, minted by owners and admins in the dashboard's API tokens card (name,
     scopes, expiry; shown once), hashed in D1 (`API_TOKEN_KEY` optional), sent as `Authorization: Bearer` on the
@@ -486,7 +486,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     roles (`roles`, a user id or `null` by role id, each an `incident.assignRole`), with the same partial
     application; written updates edited and removed (`editIncidentUpdate`, `deleteIncidentUpdate`, the same author,
     owner and admin rules as the apps); `postIncidentUpdate` answers the update's `entryId`.
-  - Left: publishing the SDK to npm (owner).
+  - `@freecorps/brigade-sdk` 0.3.0 is published on npm (2026-10-27).
   - Done: API tokens on the dashboard's routes that need the server, now in the reference and the SDK: creating a
     webhook, rotating its secret and setting its headers (`webhook:manage`), the status page's settings
     (`status:manage`), making and downloading exports (`data:export`) and AI postmortem drafts (`incident:update`),

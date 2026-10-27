@@ -92,6 +92,18 @@ describe("the step-by-step view", () => {
     );
   });
 
+  test("a phone APNs refused says so, not that none was ever registered", () => {
+    const why = {
+      verdict: "missed" as const,
+      pages: [page(1, { misses: [{ reason: "token_invalid", at: T, schedule: null }] })],
+    };
+    expect(verdictText(why, "you")).toBe(
+      "Brigade couldn't page you: Apple refused this phone's token, so it was removed. Opening the Brigade app registers it again",
+    );
+    void setLocale("pt-BR");
+    expect(verdictText(why, "Inês")).toContain("a Apple recusou o token deste celular");
+  });
+
   test("twenty pages with the same outcome read as one per level, the latest", () => {
     // Twenty rounds alternating levels 1 and 2, as a repeating policy pages them.
     const pages = Array.from({ length: 20 }, (_, index) =>

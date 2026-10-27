@@ -476,7 +476,7 @@ async function pushOne(
     answer.reason === "Unregistered" ||
     answer.reason === "DeviceTokenNotForTopic"
   ) {
-    return failed("undelivered", "token_invalid", { expired: true, retry: true, apnsReason });
+    return failed("token_invalid", "token_invalid", { expired: true, retry: true, apnsReason });
   }
   // A request the relay or APNs will refuse again (bad body, bad credentials, a wrong relay URL) is not retried, so
   // the failure reaches the timeline at once; the relay being unreachable, APNs throttling or failing, or anything

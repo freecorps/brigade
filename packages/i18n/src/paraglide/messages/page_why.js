@@ -96,6 +96,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "pages_show_all" | "Show all {detail} pages" |
 * | "miss_no_devices" | "no phone registered" |
 * | "miss_undelivered" | "the page didn't go through" |
+* | "miss_token_invalid" | "Apple refused this phone's token, so it was removed. Opening the Brigade app registers it again" |
 * | "miss_unsupported" | "Brigade can't page Android phones yet" |
 * | "miss_not_configured" | "notifications aren't set up on this server" |
 * | "miss_over_limit" | "the page went to too many phones" |
@@ -200,6 +201,7 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "pages_show_all") return /** @type {LocalizedString} */ (`Mostrar todos os ${i?.detail} acionamentos`);
 		if (i?.text === "miss_no_devices") return /** @type {LocalizedString} */ (`nenhum celular registrado`);
 		if (i?.text === "miss_undelivered") return /** @type {LocalizedString} */ (`o acionamento não foi entregue`);
+		if (i?.text === "miss_token_invalid") return /** @type {LocalizedString} */ (`a Apple recusou o token deste celular, então ele foi removido. Abrir o app do Brigade registra o celular de novo`);
 		if (i?.text === "miss_unsupported") return /** @type {LocalizedString} */ (`o Brigade ainda não aciona celulares Android`);
 		if (i?.text === "miss_not_configured") return /** @type {LocalizedString} */ (`as notificações não estão configuradas neste servidor`);
 		if (i?.text === "miss_over_limit") return /** @type {LocalizedString} */ (`o acionamento foi para celulares demais`);
@@ -298,6 +300,7 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "pages_show_all") return /** @type {LocalizedString} */ (`Show all ${i?.detail} pages`);
 		if (i?.text === "miss_no_devices") return /** @type {LocalizedString} */ (`no phone registered`);
 		if (i?.text === "miss_undelivered") return /** @type {LocalizedString} */ (`the page didn't go through`);
+		if (i?.text === "miss_token_invalid") return /** @type {LocalizedString} */ (`Apple refused this phone's token, so it was removed. Opening the Brigade app registers it again`);
 		if (i?.text === "miss_unsupported") return /** @type {LocalizedString} */ (`Brigade can't page Android phones yet`);
 		if (i?.text === "miss_not_configured") return /** @type {LocalizedString} */ (`notifications aren't set up on this server`);
 		if (i?.text === "miss_over_limit") return /** @type {LocalizedString} */ (`the page went to too many phones`);

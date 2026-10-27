@@ -16,6 +16,7 @@ export type Email_TextInputs = {
 * | "unpaged_intro" | "Brigade tried to page you about {incident} in {workspace}, but the page didn't reach your phone: {reason}." |
 * | "unpaged_reason_no_devices" | "you have no phone registered with Brigade" |
 * | "unpaged_reason_undelivered" | "the push notification didn't go through" |
+* | "unpaged_reason_token_invalid" | "Apple refused your phone's token, so Brigade removed that phone" |
 * | "unpaged_reason_unsupported" | "Brigade can't send pages to Android phones yet" |
 * | "unpaged_reason_not_configured" | "push notifications aren't set up on this Brigade server" |
 * | "unpaged_reason_over_limit" | "the page went to more phones than one page can reach" |

@@ -19,6 +19,7 @@ import {
   type DevicePlatform,
   type IncidentRow,
   type PageFailure,
+  prefixRange,
   type PushEnvironment,
   type Severity,
   type Store,
@@ -101,7 +102,10 @@ export type PagePlan =
     };
 
 /** Why one device's push failed, as the notifier reports it. */
-export type SendFailure = Extract<PageFailure, "undelivered" | "unsupported" | "not_configured">;
+export type SendFailure = Extract<
+  PageFailure,
+  "undelivered" | "token_invalid" | "unsupported" | "not_configured"
+>;
 
 /**
  * What the relay's answer says about one device, for its delivery row (RFC 0006 "Delivery receipts"): `ms` is how
@@ -601,12 +605,15 @@ export class Pager {
     }
     const missed: SkippedMember[] = [...failures].map(([userId, reasons]) => ({
       userId,
-      // The most telling reason: a missing relay or an unsupported platform explains more than "undelivered".
+      // The most telling reason: a missing relay, an unsupported platform or a refused token explains more than
+      // "undelivered".
       reason: reasons.includes("not_configured")
         ? "not_configured"
         : reasons.every((r) => r === "unsupported")
           ? "unsupported"
-          : "undelivered",
+          : reasons.every((r) => r === "token_invalid")
+            ? "token_invalid"
+            : "undelivered",
     }));
     for (const one of skipped) {
       if (one.userId === null || !failures.has(one.userId)) missed.push(one);
@@ -694,13 +701,31 @@ export class Pager {
         .map((row) => row.user_id),
     );
     const seen = new Set<string>();
+    const refused = this.refused(incidentId);
     for (const { userId, reason, scheduleId, schedule } of missed) {
       if (userId !== null && (reached.has(userId) || seen.has(userId))) continue;
       if (userId !== null) seen.add(userId);
       const where =
         scheduleId === undefined ? undefined : { id: scheduleId ?? null, name: schedule ?? null };
-      this.fail(event, incidentId, userId, reason, now, where);
+      // No device left because the push service refused the one this incident paged (the retry after a
+      // `BadDeviceToken`, or a later level): say that, not that they never registered one.
+      const why =
+        reason === "no_devices" && userId !== null && refused.has(userId)
+          ? "token_invalid"
+          : reason;
+      this.fail(event, incidentId, userId, why, now, where);
     }
+  }
+
+  /** The members a page of the incident went to a device of that the push service refused as gone (`token_invalid`). */
+  private refused(incidentId: string): Set<string> {
+    const { from, to } = prefixRange(`${incidentId}:`);
+    return new Set(
+      this.options.shard.store
+        .range("deliveries", from, to)
+        .filter((row) => row.error === "token_invalid")
+        .map((row) => row.userId),
+    );
   }
 
   private fail(

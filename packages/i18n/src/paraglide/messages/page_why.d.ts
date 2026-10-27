@@ -96,6 +96,7 @@ export type Page_WhyInputs = {
 * | "pages_show_all" | "Show all {detail} pages" |
 * | "miss_no_devices" | "no phone registered" |
 * | "miss_undelivered" | "the page didn't go through" |
+* | "miss_token_invalid" | "Apple refused this phone's token, so it was removed. Opening the Brigade app registers it again" |
 * | "miss_unsupported" | "Brigade can't page Android phones yet" |
 * | "miss_not_configured" | "notifications aren't set up on this server" |
 * | "miss_over_limit" | "the page went to too many phones" |

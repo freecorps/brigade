@@ -25,6 +25,9 @@ const pageRef: Validator<{ run: string; step: number } | undefined> = (input, pa
  * Why a page reached nobody (or not one member):
  * - `no_devices`: the member has no device registered (with `userId: null`, no one the page was for has one);
  * - `undelivered`: the relay or the push service kept failing for every device of the member;
+ * - `token_invalid`: the push service refused the member's phone token (APNs `BadDeviceToken`, `Unregistered`), so
+ *   the phone was dropped and they have none left; recorded instead of `no_devices` when a page of this incident
+ *   dropped it;
  * - `unsupported`: the member's devices are all on a platform the relay cannot reach yet (Android until FCM);
  * - `not_configured`: this instance has no push relay set up;
  * - `over_limit`: the page went to more devices than one page sends to (`MAX_PAGE_DEVICES`), and none of the
@@ -41,6 +44,7 @@ const pageRef: Validator<{ run: string; step: number } | undefined> = (input, pa
 export const PAGE_FAILURES = [
   "no_devices",
   "undelivered",
+  "token_invalid",
   "unsupported",
   "not_configured",
   "over_limit",

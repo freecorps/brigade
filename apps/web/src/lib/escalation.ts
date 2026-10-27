@@ -277,6 +277,7 @@ export function runStatus(
 /** Failures that mean a reached member's push did not arrive (as opposed to a target that could not be paged). */
 const DELIVERY_FAILURES: readonly PageFailure[] = [
   "undelivered",
+  "token_invalid",
   "unsupported",
   "not_configured",
   "over_limit",

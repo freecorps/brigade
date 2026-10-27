@@ -7,8 +7,10 @@ Routes: `/sign-up` (an account and its first workspace), `/sign-in`, and `/`, th
 members only: `components/session.tsx` sends everyone else to `/sign-in`, asks a user without a workspace to
 create one, and opens the workspace's shard as the member (their role is the optimistic actor's). The header shows
 the workspace and an account menu with Sign out. Better Auth's client (`src/lib/auth.ts`) talks to `/api/auth/*`
-on the same origin. The dashboard has the incidents card, a "Local stack" check (the API Worker and a
-`WorkspaceDO` round trip) and the severity and status legend.
+on the same origin. The dashboard has the incidents card, a stack check (the API Worker and a
+`WorkspaceDO` round trip) and the severity and status legend. The header's environment badge and the overview's
+wording follow the build (`src/lib/build-environment.ts`): "Local" under `vp dev`, "Dev" or "Staging" for
+`build:dev` / `build:staging`, and no badge in production.
 
 ## Run it
 

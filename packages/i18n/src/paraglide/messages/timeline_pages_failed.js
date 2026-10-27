@@ -15,6 +15,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "no_devices" | * | "Couldn't page {countFormatted} people: no registered device" |
 * | "undelivered" | "one" | "Couldn't page {countFormatted} person: the push didn't go through" |
 * | "undelivered" | * | "Couldn't page {countFormatted} people: the push didn't go through" |
+* | "token_invalid" | "one" | "Couldn't page {countFormatted} person: Apple refused their phone's token, so it was removed" |
+* | "token_invalid" | * | "Couldn't page {countFormatted} people: Apple refused their phones' tokens, so they were removed" |
 * | "unsupported" | "one" | "Couldn't page {countFormatted} person: Brigade can't push to Android phones yet" |
 * | "unsupported" | * | "Couldn't page {countFormatted} people: Brigade can't push to Android phones yet" |
 * | "not_configured" | "one" | "Couldn't page {countFormatted} person: push notifications aren't set up on this server" |
@@ -37,12 +39,14 @@ export const timeline_pages_failed = /** @type {((inputs: Timeline_Pages_FailedI
 		const countFormatted = registry.number("pt-BR", i?.count, {}, true);
 		if (i?.reason === "no_devices" && countPlural === "one") return /** @type {LocalizedString} */ (`Não foi possível chamar ${countFormatted} pessoa: nenhum aparelho registrado`);
 		if (i?.reason === "undelivered" && countPlural === "one") return /** @type {LocalizedString} */ (`Não foi possível chamar ${countFormatted} pessoa: o push não foi entregue`);
+		if (i?.reason === "token_invalid" && countPlural === "one") return /** @type {LocalizedString} */ (`Não foi possível chamar ${countFormatted} pessoa: a Apple recusou o token do celular dela, então ele foi removido`);
 		if (i?.reason === "unsupported" && countPlural === "one") return /** @type {LocalizedString} */ (`Não foi possível chamar ${countFormatted} pessoa: o Brigade ainda não envia pushes para Android`);
 		if (i?.reason === "not_configured" && countPlural === "one") return /** @type {LocalizedString} */ (`Não foi possível chamar ${countFormatted} pessoa: as notificações push não estão configuradas neste servidor`);
 		if (i?.reason === "over_limit" && countPlural === "one") return /** @type {LocalizedString} */ (`Não foi possível chamar ${countFormatted} pessoa: a chamada foi para celulares demais`);
 		if (i?.reason === "not_a_member" && countPlural === "one") return /** @type {LocalizedString} */ (`Não foi possível chamar ${countFormatted} pessoa: não é mais alguém que pode responder`);
 		if (i?.reason === "no_devices") return /** @type {LocalizedString} */ (`Não foi possível chamar ${countFormatted} pessoas: nenhum aparelho registrado`);
 		if (i?.reason === "undelivered") return /** @type {LocalizedString} */ (`Não foi possível chamar ${countFormatted} pessoas: o push não foi entregue`);
+		if (i?.reason === "token_invalid") return /** @type {LocalizedString} */ (`Não foi possível chamar ${countFormatted} pessoas: a Apple recusou os tokens dos celulares delas, então eles foram removidos`);
 		if (i?.reason === "unsupported") return /** @type {LocalizedString} */ (`Não foi possível chamar ${countFormatted} pessoas: o Brigade ainda não envia pushes para Android`);
 		if (i?.reason === "not_configured") return /** @type {LocalizedString} */ (`Não foi possível chamar ${countFormatted} pessoas: as notificações push não estão configuradas neste servidor`);
 		if (i?.reason === "over_limit") return /** @type {LocalizedString} */ (`Não foi possível chamar ${countFormatted} pessoas: a chamada foi para celulares demais`);
@@ -55,12 +59,14 @@ export const timeline_pages_failed = /** @type {((inputs: Timeline_Pages_FailedI
 		const countFormatted = registry.number("en", i?.count, {}, true);
 		if (i?.reason === "no_devices" && countPlural === "one") return /** @type {LocalizedString} */ (`Couldn't page ${countFormatted} person: no registered device`);
 		if (i?.reason === "undelivered" && countPlural === "one") return /** @type {LocalizedString} */ (`Couldn't page ${countFormatted} person: the push didn't go through`);
+		if (i?.reason === "token_invalid" && countPlural === "one") return /** @type {LocalizedString} */ (`Couldn't page ${countFormatted} person: Apple refused their phone's token, so it was removed`);
 		if (i?.reason === "unsupported" && countPlural === "one") return /** @type {LocalizedString} */ (`Couldn't page ${countFormatted} person: Brigade can't push to Android phones yet`);
 		if (i?.reason === "not_configured" && countPlural === "one") return /** @type {LocalizedString} */ (`Couldn't page ${countFormatted} person: push notifications aren't set up on this server`);
 		if (i?.reason === "over_limit" && countPlural === "one") return /** @type {LocalizedString} */ (`Couldn't page ${countFormatted} person: this page went to too many phones`);
 		if (i?.reason === "not_a_member" && countPlural === "one") return /** @type {LocalizedString} */ (`Couldn't page ${countFormatted} person: no longer someone who can respond`);
 		if (i?.reason === "no_devices") return /** @type {LocalizedString} */ (`Couldn't page ${countFormatted} people: no registered device`);
 		if (i?.reason === "undelivered") return /** @type {LocalizedString} */ (`Couldn't page ${countFormatted} people: the push didn't go through`);
+		if (i?.reason === "token_invalid") return /** @type {LocalizedString} */ (`Couldn't page ${countFormatted} people: Apple refused their phones' tokens, so they were removed`);
 		if (i?.reason === "unsupported") return /** @type {LocalizedString} */ (`Couldn't page ${countFormatted} people: Brigade can't push to Android phones yet`);
 		if (i?.reason === "not_configured") return /** @type {LocalizedString} */ (`Couldn't page ${countFormatted} people: push notifications aren't set up on this server`);
 		if (i?.reason === "over_limit") return /** @type {LocalizedString} */ (`Couldn't page ${countFormatted} people: this page went to too many phones`);

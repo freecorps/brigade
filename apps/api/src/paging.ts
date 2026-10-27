@@ -730,7 +730,7 @@ export class Pager {
     const { store } = this.options.shard;
     const open = sql
       .exec<{ event_id: string; device_id: string; incident_id: string; at: number }>(
-        "select event_id, device_id, incident_id, at from page_held where state = 'held' order by at limit ?",
+        "select event_id, device_id, incident_id, at from page_held where state = 'held' order by at, event_id limit ?",
         RELEASE_BATCH,
       )
       .toArray();

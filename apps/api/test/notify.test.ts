@@ -1446,7 +1446,7 @@ describe("lower-urgency pushes behind a page", () => {
     ws.withShard((_shard, sql) =>
       sql
         .exec<{ event_id: string; device_id: string; state: string }>(
-          "select event_id, device_id, state from page_held order by event_id",
+          "select event_id, device_id, state from page_held order by at, event_id",
         )
         .toArray(),
     );
@@ -1478,6 +1478,8 @@ describe("lower-urgency pushes behind a page", () => {
     await deliver(event, fake.send);
     await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
     const first = another(event);
+    // Held a moment later: the latest is the one planned last.
+    await new Promise((resolve) => setTimeout(resolve, 5));
     const latest = another(event);
     await deliver(first, fake.send);
     await deliver(latest, fake.send);

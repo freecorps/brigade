@@ -86,9 +86,14 @@ async function addMember(workspaceId: string, userId: string, role: string) {
     .run();
 }
 
-/** Ana owns a workspace; Caio is a responder there, Eva an outsider. */
-async function team() {
-  const [ana, caio, eva] = await Promise.all(["Ana", "Caio", "Eva"].map((name) => signUp(name)));
+/**
+ * Ana owns a workspace; Caio is a responder there, Eva an outsider. `crew` casts people signed up earlier in those
+ * parts: signing up hashes passwords, the slowest part of a team.
+ */
+async function team(crew?: { ana: Person; caio: Person; eva: Person }) {
+  const [ana, caio, eva] = crew
+    ? [crew.ana, crew.caio, crew.eva]
+    : await Promise.all(["Ana", "Caio", "Eva"].map((name) => signUp(name)));
   const id = await workspace(ana!);
   await addMember(id, caio!.id, "responder");
   const stub = env.WORKSPACE.getByName(id);
@@ -276,7 +281,8 @@ describe("PUT /workspaces/:id/status-page", () => {
 
   test("a slug another workspace holds is taken", async () => {
     const a = await team();
-    const b = await team();
+    // Owned by Eva, an outsider of the first.
+    const b = await team({ ana: a.eva, caio: a.caio, eva: a.ana });
     const address = slug();
     expect((await configure(a, a.ana, settings(address))).status).toBe(200);
     const response = await configure(b, b.ana, settings(address));
@@ -377,7 +383,7 @@ describe("the snapshot", () => {
 
   test("a new slug deletes the old snapshot, and D1 releases the old slug only after the caches' grace", async () => {
     const t = await team();
-    const other = await team();
+    const other = await team({ ana: t.eva, caio: t.caio, eva: t.ana });
     const first = slug();
     const second = slug();
     await configure(t, t.ana, settings(first));
@@ -636,6 +642,8 @@ describe("the snapshot", () => {
   test("a push hung on KV backs the alarm off, holds nothing else, and the page can still be configured", async () => {
     const t = await team();
     const address = slug();
+    // Only the hanging publisher below pushes: the shard's own, run by the alarm configuring arms, would push first.
+    await parkStatus(t);
     await configure(t, t.ana, settings(address));
     const logs: string[] = [];
     const result = await runInDurableObject(t.stub, async (instance: WorkspaceDO, state) => {
@@ -766,6 +774,8 @@ describe("the snapshot", () => {
     const first = slug();
     const second = slug();
     const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    // Only the publisher below releases `first`: the shard's own, run by the alarm configuring arms, would do it first.
+    await parkStatus(t);
     await configure(t, t.ana, settings(first));
     await configure(t, t.ana, settings(second));
     await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {

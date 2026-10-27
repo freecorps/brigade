@@ -60,6 +60,9 @@ export default defineConfig(async ({ command, mode }) => ({
           workspaceSource(),
         ],
   test: {
+    // Most tests sign people up through Better Auth first, which hashes each password (scrypt): two to four per
+    // test, seconds of setup on a loaded runner (CI, or the whole monorepo's tests at once), past the default 5 s.
+    testTimeout: 15_000,
     setupFiles: ["./test/apply-migrations.ts"],
     // A loopback TCP listener for the TCP check's real-socket test.
     globalSetup: ["./test/setup/tcp-listener.ts"],

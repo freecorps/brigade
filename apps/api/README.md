@@ -145,15 +145,15 @@ synchronous, so frames are handled strictly in arrival order. The details and th
 RFC 0005 "Notifiers", RFC 0006 "Who is paged". The Worker's `queue` handler consumes `brigade-events`
 (`src/notify.ts`). For an event that pages (`incident.declared`, a severity raised into SEV1 or SEV2) it asks the
 shard for a plan (`WorkspaceDO.planPage`: the incident, the urgency and the devices still to reach), seals one push
-per device with its key (`packages/push`), posts it to the relay's `POST /send` (`RELAY_URL`, `RELAY_SEND_TOKEN`,
-both secrets, both optional) and reports back (`WorkspaceDO.recordPage`). A relay that is unreachable or answers
-5xx is retried (5, 10, 20, 40 s); after 5 attempts, or at once when retrying cannot help (no relay configured,
-Android, a refused request), each member reached on none of their devices gets a `page_failed` timeline entry and a
-`notification.failed` event, written by `sys_notifier`; so does each member the page was for without a device
-(`no_devices`) or past the 200-device cap (`over_limit`). A token APNs calls gone (410, `BadDeviceToken`,
-`Unregistered`) drops the device (`device.expire`, unless it was registered again with another token meanwhile).
-Devices are a server-only table (`devices`), written by `device.register` and `device.unregister` (any member, their
-own devices only).
+per device with its key (`packages/push`), posts it to the relay's `POST /send` (through the `RELAY` service binding
+when bound, otherwise at `RELAY_URL`; `RELAY_SEND_TOKEN` either way; all optional) and reports back
+(`WorkspaceDO.recordPage`). A relay that is unreachable or answers 5xx is retried (5, 10, 20, 40 s); after 5
+attempts, or at once when retrying cannot help (no relay configured, Android, a refused request), each member
+reached on none of their devices gets a `page_failed` timeline entry and a `notification.failed` event, written by
+`sys_notifier`; so does each member the page was for without a device (`no_devices`) or past the 200-device cap
+(`over_limit`). A token APNs calls gone (410, `BadDeviceToken`, `Unregistered`) drops the device (`device.expire`,
+unless it was registered again with another token meanwhile). Devices are a server-only table (`devices`), written
+by `device.register` and `device.unregister` (any member, their own devices only).
 
 A message the shard fails on every time (unreachable, throwing) is retried up to `max_retries` (10); the last
 delivery logs `page dead-lettered` and it goes to `brigade-events-dlq`, which the same handler consumes
@@ -348,12 +348,17 @@ In order, from `apps/api` unless noted:
    | Secret               | Needed for                                                                                                                   |
    | -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
    | `BETTER_AUTH_SECRET` | Required: sessions (`openssl rand -base64 32`)                                                                               |
-   | `RELAY_URL`          | Push: `brigade-relay-dev`'s URL; without it every page is recorded as failed                                                 |
-   | `RELAY_SEND_TOKEN`   | Push: the relay's send token (apps/relay)                                                                                    |
+   | `RELAY_SEND_TOKEN`   | Push: the relay's send token (apps/relay); without it every page is recorded as failed                                       |
    | `DASHBOARD_URL`      | Links in emails and Slack: `https://brigade-web-dev.<subdomain>.workers.dev`                                                 |
    | `EMAIL_FROM`         | Optional: the email sender ("Email" above); without it no email goes out, so addresses cannot be verified or passwords reset |
    | `SLACK_TOKEN_KEY`    | Optional until Slack: seals bot tokens ("Slack" below)                                                                       |
    | `DEAD_MAN_URL`       | Optional: the external dead-man check's ping URL ("Dead-man switch" above)                                                   |
+
+   No `RELAY_URL`: the `dev` environment reaches `brigade-relay-dev` through its `RELAY` service binding
+   (wrangler.jsonc). A Worker's fetch to another workers.dev Worker on the same account is answered 404, so the
+   relay's public URL only works from outside the account (a phone, `curl`, a self-hosted instance); a `RELAY_URL`
+   secret left from before is ignored while the binding is there. Deploy the relay before the API: a binding to a
+   Worker that does not exist fails the deploy.
 
 3. **API.** `vp run build:dev`, then `wrangler deploy` (the built config already names `brigade-api-dev`).
 4. **Web**, from `apps/web`: `vp run build:dev`, then `wrangler deploy`. It needs no secrets; its `dev` environment

@@ -50,6 +50,10 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   iOS terminates an app that receives a VoIP push and reports no call. Devices register a separate PushKit token for
   calls (spike S6, [write-up](../spikes/s6-voip-call-screen.md)).
 - **The relay is part of this repo** (`apps/relay`). Anyone can run their own with their own store credentials.
+- **How the instance reaches it.** An instance whose relay runs on the same Cloudflare account binds it as a service
+  (`RELAY`, apps/api wrangler.jsonc): Cloudflare answers a Worker's fetch to another workers.dev Worker on the same
+  account with 404. Any other instance, such as a self-hosted one using Freecorps' hosted relay, posts to `RELAY_URL`
+  over the internet. Either way every send carries the bearer token.
 
 ## Device registration
 

@@ -75,7 +75,9 @@
     { "name": "RECEIPT_LIMIT", "namespace_id": "4101", "simple": { "limit": 120, "period": 60 } },
   ],
   // Set with `wrangler secret put` (deployed) or apps/api/.dev.vars (local, gitignored); never in this file.
-  // RELAY_URL and RELAY_SEND_TOKEN (src/notify.ts) are optional: without them every page is recorded as failed.
+  // RELAY_SEND_TOKEN (src/notify.ts) is optional: paging needs it and the relay, reached through the `RELAY` service
+  // binding (per environment, below) or, unbound, at the RELAY_URL secret (a self-hosted instance using Freecorps'
+  // hosted relay, RFC 0006). Without them every page is recorded as failed.
   // DEAD_MAN_URL (src/watchdog.ts) is optional too: the external check's ping URL; without it nothing is pinged.
   // EMAIL_FROM and DASHBOARD_URL (src/email.ts, src/notify-email.ts) are optional: the sender of the email notifier
   // and the dashboard's origin for links in it; without EMAIL_FROM no email is sent.
@@ -83,7 +85,8 @@
   // it Slack is off (no install, no messages). The Slack Worker binds to this one's SlackBridge entrypoint (RFC 0011);
   // its D1 table is migrations/0006_slack_team.sql.
   "secrets": { "required": ["BETTER_AUTH_SECRET"] },
-  // Durable Object, D1, Queue, email, rate limit and secrets settings are not inherited, so each environment repeats them.
+  // Durable Object, D1, Queue, email, rate limit, service and secrets settings are not inherited, so each environment
+  // repeats them.
   // No `vars` anywhere: no deployed environment may set SYNC_DEV_ACTOR (src/actor.ts); only local runs and the
   // tests do, in their Vite configs.
   "env": {
@@ -125,6 +128,11 @@
         },
       ],
       "secrets": { "required": ["BETTER_AUTH_SECRET"] },
+      // The relay on this account (apps/relay). A Worker's fetch to another workers.dev Worker on the same account is
+      // answered 404, so the API reaches it through this binding and RELAY_URL is not used. Only `dev` has one: a
+      // binding to a Worker that does not exist fails the deploy, so production and staging add theirs with their
+      // relay's first deploy. Locally and in the tests it is unbound.
+      "services": [{ "binding": "RELAY", "service": "brigade-relay-dev" }],
     },
     "staging": {
       "durable_objects": {

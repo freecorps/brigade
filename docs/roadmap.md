@@ -182,7 +182,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     with `device.register` (server-only, own devices only) and the app registers the phone on sign-in
     (RFC 0005 "Notifiers", RFC 0006 "Device registration", "Who is paged"). Queue `brigade-events-dev` and its
     dead-letter queue `brigade-events-dlq-dev` exist; the dead-letter consumer is created on the next deploy.
-  - Left: the production and staging queues (owner approval); `RELAY_URL` and `RELAY_SEND_TOKEN` on the deployed API;
+  - Left: the production and staging queues (owner approval); `RELAY_SEND_TOKEN` on the deployed API (dev reaches
+    its relay through the `RELAY` service binding; production and staging add theirs with their relay's first deploy);
     a real push end to end from the deployed API to a device; VoIP call pages (`kind: "call"`, Phase 2 with RFC 0010); FCM for Android
     (Android devices are recorded as `unsupported`); replaying dead-lettered pages (today they are recorded, not
     re-sent); a member removed or demoted in D1 outside Brigade is still paged until the next sync upgrade

@@ -10,8 +10,9 @@
 import { sealPush, type PushContent, type PushReceipt } from "@freecorps/brigade-push";
 import { formatIncidentNumber, type DeliveryError } from "@freecorps/brigade-schema";
 import { emailSender, type EmailEnv, type EmailSender } from "./email.ts";
-import { asksForEmail } from "./mailer.ts";
+import { asksForEmail, asksForReminder } from "./mailer.ts";
 import { emailRetryDelay, notifyEmail, type EmailNotifyEnv } from "./notify-email.ts";
+import { notifyReminder } from "./notify-reminder.ts";
 import { asksForInvitation, notifyInvitation } from "./notify-invite.ts";
 import { notifySlack, type SlackNotifyEnv } from "./notify-slack.ts";
 import { notifyStatus, type StatusNotifyEnv } from "./notify-status.ts";
@@ -149,8 +150,11 @@ export async function consumeEvents(
       const invitation = asksForInvitation(event);
       const webhookEmail = asksForWebhookEmail(event);
       const statusEmail = asksForStatusEmail(event);
+      const reminder = asksForReminder(event);
       const delay =
-        email || invitation || webhookEmail || statusEmail ? emailRetryDelay : retryDelay;
+        email || invitation || webhookEmail || statusEmail || reminder
+          ? emailRetryDelay
+          : retryDelay;
       // Slack and webhooks run alongside push, never before it, each within its own budget, and their failures stay
       // their own: an outage or a shard error on their side only asks for a later delivery, which the page ledger makes
       // a no-op for push. Webhooks never ask for one past their budget: their retries are the shard's.
@@ -194,9 +198,11 @@ export async function consumeEvents(
               ? await notifyWebhookDisabled(event, message.attempts, env, mail)
               : statusEmail
                 ? await notifyStatus(event, message.attempts, env, mail, slots, waitUntil)
-                : (await notifyPush(event, message.attempts, env, send))
-                  ? retryDelay(message.attempts)
-                  : undefined;
+                : reminder
+                  ? await notifyReminder(event, message.attempts, env, mail)
+                  : (await notifyPush(event, message.attempts, env, send))
+                    ? retryDelay(message.attempts)
+                    : undefined;
         // Slack's and the webhooks' work always finishes (within its budget) before the message is settled. A page's
         // own retry comes first: never put off behind their backoff, and an early retry only finds their work held.
         const [slackSeconds, webhookSeconds] = await sides;

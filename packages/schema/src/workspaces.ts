@@ -190,3 +190,12 @@ export const allMembers = defineQuery({
   filter: () => true,
   sort: byName,
 });
+
+/** The workspace's own row: its name and settings (who is emailed when paging fails). */
+export const currentWorkspace = defineQuery({
+  name: "workspace.current",
+  args: v.object({}),
+  permission: "workspace:read",
+  table: "workspace",
+  filter: () => true,
+});

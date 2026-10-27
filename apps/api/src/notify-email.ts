@@ -166,7 +166,12 @@ async function sendJob(
   return { outcomes, unread: false };
 }
 
-type Recipient = { userId: string; email: string; name: string | null; locale: string | null };
+export type Recipient = {
+  userId: string;
+  email: string;
+  name: string | null;
+  locale: string | null;
+};
 
 /**
  * The recipients' addresses, names and locales from D1, for members of the workspace whose address is verified
@@ -174,7 +179,7 @@ type Recipient = { userId: string; email: string; name: string | null; locale: s
  * recorded for them: there is no email to retry). D1 is the authority for addresses (the shard keeps none) and for who the owners
  * are (the shard's list has only those who opened Brigade).
  */
-async function lookUp(
+export async function lookUp(
   db: D1Database | undefined,
   workspaceId: string,
   to: EmailJob["to"],

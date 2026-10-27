@@ -432,7 +432,24 @@ export type MemberSettingsRow = {
   id: string; // the member's user id
   /** Which pages ring their phones as a call (RFC 0010); the alert push is sent either way. */
   calls: CallChoice;
+  /** Whether they are emailed when a SEV1 or SEV2 page missed them (`member.setEmail`); absent: yes. */
+  missedPageEmail?: boolean;
+  /** Whether they get the daily email of their follow-ups due (`member.setEmail`); absent: yes. */
+  followUpReminders?: boolean;
+  /** The IANA time zone their reminders follow (`member.setTimeZone`, sent by their devices); absent: UTC. */
+  timeZone?: string;
   updatedAt: number;
+};
+
+/**
+ * The last day each member was reminded of their follow-ups due (RFC 0013 "Reminders"), server only: at most one
+ * reminder per member per day.
+ */
+export type FollowUpReminderRow = {
+  id: string; // the member's user id
+  /** Their calendar day (`YYYY-MM-DD`, in their time zone) the last reminder was for. */
+  date: string;
+  at: number;
 };
 
 /** The workspace a shard serves: one row, written by `workspace.create` (RFC 0003). */
@@ -1207,6 +1224,7 @@ export type BrigadeTables = {
   incident_roles: IncidentRoleRow;
   catalog_deleted: CatalogDeletedRow;
   follow_ups: FollowUpRow;
+  follow_up_reminders: FollowUpReminderRow;
   postmortems: PostmortemRow;
   ai_drafts: AiDraftRow;
   exports: ExportRow;
@@ -1257,6 +1275,7 @@ export const TABLES = {
   incident_roles: { serverOnly: false },
   catalog_deleted: { serverOnly: true },
   follow_ups: { serverOnly: false },
+  follow_up_reminders: { serverOnly: true },
   postmortems: { serverOnly: false },
   ai_drafts: { serverOnly: true },
   exports: { serverOnly: false },

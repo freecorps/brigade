@@ -5,7 +5,7 @@ import { env } from "cloudflare:workers";
 import { createExecutionContext, createMessageBatch, getQueueResult } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
 import { generateRecipient, toBase64url } from "@freecorps/brigade-push";
-import { MONITOR_ACTOR, newId, type Actor, type Role } from "@freecorps/brigade-schema";
+import { localDate, MONITOR_ACTOR, newId, type Actor, type Role } from "@freecorps/brigade-schema";
 import {
   CloudflareEmailSender,
   emailSender,
@@ -21,13 +21,15 @@ import {
   EMAIL_CLAIM_MS,
   EMAIL_USER_HOURLY_CAP,
   EMAIL_WORKSPACE_DAILY_CAP,
+  REMINDER_USER_DAILY_CAP,
+  REMINDER_WORKSPACE_DAILY_CAP,
 } from "../src/mailer.ts";
 import { consumeEvents, type Fetch, type NotifyEnv } from "../src/notify.ts";
 import { emailRetryDelay, MAX_EMAIL_ATTEMPTS } from "../src/notify-email.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 
 const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
 
@@ -1002,5 +1004,266 @@ describe("push is never held up by email", () => {
     await deliver(await ws.failures(), mail.sender, { relay });
     await deliver(await ws.events("notification.failed"), mail.sender, { relay });
     expect(pushed).toBe(0);
+  });
+});
+
+describe("a member's own email choices", () => {
+  test("a member who turned missed-page emails off gets none; the owners' email still reaches every owner", async () => {
+    const ws = await workspace();
+    // Ana is an owner: her own choice takes her email away, never the owners' one.
+    await ws.run(ws.people.ana, "member.setEmail", { missedPages: false, followUpReminders: true });
+    await ws.run(ws.people.bia, "member.setEmail", { missedPages: false, followUpReminders: true });
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    await deliver([event], undefined);
+    const failures = await ws.failures();
+    const mail = recorder();
+    await deliver(failures, mail.sender);
+    await deliver(failures, mail.sender, { attempts: 2 });
+    expect(mail.sent.length).toBeGreaterThan(0);
+    expect(mail.sent.every((one) => one.subject.startsWith("Nobody"))).toBe(true);
+    expect(mail.to()).toEqual([ws.address(ws.people.ana), ws.address(ws.people.olga)].sort());
+  });
+});
+
+describe("reminders of follow-ups due", () => {
+  /** A time zone where it is about noon now, so the reminder hour has passed there today. */
+  const noonZone = () => {
+    const offset = 12 - new Date().getUTCHours();
+    return offset === 0 ? "UTC" : `Etc/GMT${offset > 0 ? "-" : "+"}${Math.abs(offset)}`;
+  };
+  /** Runs the shard's alarm now (set a minute ahead, so the runtime does not run it first on its own). */
+  const alarm = async (ws: Awaited<ReturnType<typeof workspace>>) => {
+    const stub = env.WORKSPACE.getByName(ws.id);
+    await runInDurableObject(stub, (_instance: WorkspaceDO, state) =>
+      state.storage.setAlarm(Date.now() + 60_000),
+    );
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+  };
+  /** Ledger rows as if `count` emails keyed `<key>:<i>` had gone to `userId` (or to as many users) `ago` ms back. */
+  const seedSends = (
+    ws: Awaited<ReturnType<typeof workspace>>,
+    count: number,
+    ago: number,
+    { userId, key = "seed" }: { userId?: string; key?: string } = {},
+  ) =>
+    ws.withShard((_shard, sql) => {
+      for (let i = 0; i < count; i++) {
+        sql.exec(
+          "insert into email_sends (key, user_id, at) values (?, ?, ?)",
+          `${key}:${i}`,
+          userId ?? `usr_seed${i}`,
+          Date.now() - ago,
+        );
+      }
+    });
+  /** A workspace where Bia (pt-BR) owns a follow-up due today and an overdue one, on a clock past 09:00. */
+  async function setUp() {
+    const ws = await workspace({ [bia.id]: "pt-BR" });
+    const zone = noonZone();
+    const today = localDate(Date.now(), zone);
+    for (const person of [ws.people.ana, ws.people.bia]) {
+      await ws.run(person, "member.setTimeZone", { timeZone: zone });
+    }
+    const { incident } = await ws.declare(ws.people.ana, "sev3");
+    const add = (ownerId: string, title: string, dueDate: string) =>
+      ws.run(ws.people.ana, "followUp.create", {
+        id: newId("fup", Date.now(), random),
+        incidentId: incident,
+        title,
+        ownerId,
+        dueDate,
+        link: null,
+      });
+    await add(ws.people.bia.id, "<b>Rotate</b> the keys", today);
+    await add(ws.people.bia.id, "Add a retry budget", "2000-01-03");
+    await add(ws.people.ana.id, "Write the runbook", today);
+    return { ws, today };
+  }
+
+  test("each owner gets one email a day in their language, listing what is due, escaped, and never a page", async () => {
+    const { ws, today } = await setUp();
+    await alarm(ws);
+    const due = await ws.events("follow_up.reminder_due");
+    expect(
+      due.map((e) => e.data).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    ).toEqual(
+      [
+        { userId: ws.people.ana.id, date: today, count: 1 },
+        { userId: ws.people.bia.id, date: today, count: 2 },
+      ].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+    );
+    let pushed = 0;
+    const relay: Fetch = async (request) => {
+      await request.body?.cancel();
+      pushed++;
+      return Response.json({ status: 200 });
+    };
+    const mail = recorder();
+    expect((await deliver(due, mail.sender, { relay })).acked).toHaveLength(2);
+    expect(pushed).toBe(0);
+    expect(mail.to()).toEqual([ws.address(ws.people.ana), ws.address(ws.people.bia)].sort());
+    const bias = mail.sent.find((one) => one.to.email === ws.address(ws.people.bia))!;
+    expect(bias.subject).toBe("Ações de acompanhamento com prazo em Acme");
+    expect(bias.text).toContain("Você tem 2 ações de acompanhamento abertas");
+    // Overdue first, with the incident it came from.
+    expect(bias.text).toMatch(
+      /- Add a retry budget \(INC-1 Checkout is down\), atrasada desde .*2000/,
+    );
+    expect(bias.text).toContain("- <b>Rotate</b> the keys (INC-1 Checkout is down), prazo");
+    expect(bias.text).toContain("https://brigade.example.com/follow-ups");
+    expect(bias.text).toContain("Ajustes de email: https://brigade.example.com/#email");
+    expect(bias.html).not.toContain("<b>Rotate");
+    expect(bias.html).toContain("&lt;b&gt;Rotate&lt;/b&gt;");
+    const anas = mail.sent.find((one) => one.to.email === ws.address(ws.people.ana))!;
+    expect(anas.subject).toBe("Follow-ups due in Acme");
+    expect(anas.text).toContain("You have 1 open follow-up due today or overdue in Acme:");
+
+    // Redelivered, or the alarm again the same day: nothing more.
+    await deliver(due, mail.sender, { attempts: 2 });
+    await alarm(ws);
+    expect(await ws.events("follow_up.reminder_due")).toHaveLength(2);
+    expect(mail.sent).toHaveLength(2);
+  });
+
+  test("nothing once the member turned reminders off, or did what was due", async () => {
+    const { ws } = await setUp();
+    await alarm(ws);
+    const due = await ws.events("follow_up.reminder_due");
+    await ws.run(ws.people.bia, "member.setEmail", { missedPages: true, followUpReminders: false });
+    const followUps = await ws.withShard((shard) => shard.store.scan("follow_ups"));
+    for (const row of followUps.filter((one) => one.ownerId === ws.people.ana.id)) {
+      await ws.run(ws.people.ana, "followUp.setStatus", { id: row.id, status: "done" });
+    }
+    const mail = recorder();
+    expect((await deliver(due, mail.sender)).acked).toHaveLength(2);
+    expect(mail.sent).toEqual([]);
+  });
+
+  test("a failing send is retried like the other emails, then given up; the reminders' caps hold", async () => {
+    const { ws } = await setUp();
+    await alarm(ws);
+    const due = (await ws.events("follow_up.reminder_due")).filter(
+      (e) => (e.data as { userId: string }).userId === ws.people.bia.id,
+    );
+    const failing = recorder(() => ({ ok: false, retry: true, code: "E_RATE_LIMIT_EXCEEDED" }));
+    expect(await deliver(due, failing.sender)).toEqual({
+      acked: [],
+      retried: [{ msgId: "msg-0", delaySeconds: emailRetryDelay(1) }],
+    });
+    expect(await deliver(due, failing.sender, { attempts: MAX_EMAIL_ATTEMPTS })).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
+    const mail = recorder();
+    await deliver(due, mail.sender, { attempts: MAX_EMAIL_ATTEMPTS + 1 });
+    expect(mail.sent).toEqual([]);
+
+    // Ana got as many reminders as a day allows: hers is dropped, not retried.
+    const anas = (await ws.events("follow_up.reminder_due")).filter(
+      (e) => (e.data as { userId: string }).userId === ws.people.ana.id,
+    );
+    await seedSends(ws, REMINDER_USER_DAILY_CAP, 3 * 60 * 60_000, {
+      userId: ws.people.ana.id,
+      key: "reminder:seed",
+    });
+    expect(await deliver(anas, mail.sender)).toEqual({ acked: ["msg-0"], retried: [] });
+    expect(mail.sent).toEqual([]);
+  });
+
+  test("reminders have caps of their own: a day of page emails never holds one back, a day of reminders does", async () => {
+    const { ws } = await setUp();
+    await alarm(ws);
+    const due = await ws.events("follow_up.reminder_due");
+    const bias = due.filter((e) => (e.data as { userId: string }).userId === ws.people.bia.id);
+    const anas = due.filter((e) => (e.data as { userId: string }).userId === ws.people.ana.id);
+    // The paging emails' caps are spent, for the workspace and for Bia.
+    await seedSends(ws, EMAIL_WORKSPACE_DAILY_CAP, 60_000);
+    await seedSends(ws, EMAIL_USER_HOURLY_CAP, 60_000, {
+      userId: ws.people.bia.id,
+      key: "unpaged:seed",
+    });
+    const mail = recorder();
+    await deliver(bias, mail.sender);
+    expect(mail.to()).toEqual([ws.address(ws.people.bia)]);
+    // The reminders' own day is spent: Ana's is dropped.
+    await seedSends(ws, REMINDER_WORKSPACE_DAILY_CAP, 60_000, { key: "reminder:seed" });
+    expect(await deliver(anas, mail.sender)).toEqual({ acked: ["msg-0"], retried: [] });
+    expect(mail.to()).toEqual([ws.address(ws.people.bia)]);
+  });
+
+  test("a day of reminders never keeps a page's emails from going out", async () => {
+    const { ws } = await setUp();
+    await alarm(ws);
+    // Bia's reminder goes out at her 09:00 ...
+    const mail = recorder();
+    await deliver(
+      (await ws.events("follow_up.reminder_due")).filter(
+        (e) => (e.data as { userId: string }).userId === ws.people.bia.id,
+      ),
+      mail.sender,
+    );
+    expect(mail.to()).toEqual([ws.address(ws.people.bia)]);
+    // ... as do as many reminders as the workspace sends in a day, and Bia got all but one email an hour allows.
+    await seedSends(ws, REMINDER_WORKSPACE_DAILY_CAP, 60_000, { key: "reminder:seed" });
+    await seedSends(ws, EMAIL_USER_HOURLY_CAP - 1, 60_000, {
+      userId: ws.people.bia.id,
+      key: "unpaged:seed",
+    });
+    // Then a SEV1 page reaches nobody: Bia's missed-page email and the owners' "nobody" email both go out.
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    await deliver([event], undefined);
+    const failures = await ws.failures();
+    const paging = recorder();
+    await deliver(failures, paging.sender);
+    await deliver(failures, paging.sender, { attempts: 2 });
+    expect(paging.sent.some((one) => one.subject.startsWith("Nobody"))).toBe(true);
+    expect(
+      paging.sent.filter((one) => one.to.email === ws.address(ws.people.bia)).length,
+    ).toBeGreaterThan(0);
+    expect(paging.to()).toEqual(
+      expect.arrayContaining([
+        ws.address(ws.people.ana),
+        ws.address(ws.people.bia),
+        ws.address(ws.people.olga),
+      ]),
+    );
+  });
+
+  test("a page, an acknowledgement or an escalation never reads the follow-ups; a follow-up's change does", async () => {
+    const { ws } = await setUp();
+    const stub = env.WORKSPACE.getByName(ws.id);
+    await runInDurableObject(stub, (instance: WorkspaceDO) => {
+      const shard = (instance as unknown as { shard: Shard }).shard;
+      const scan = vi.spyOn(shard.store, "scan");
+      const reads = () =>
+        scan.mock.calls.filter(([table]) => table === "follow_ups" || table === "member_settings");
+      const run = (name: string, args: object, actor: Actor = ws.people.ana) =>
+        expect(
+          shard.mutate({
+            clientId: "test",
+            mutationId: `m${++mutations}`,
+            actor,
+            name,
+            args,
+            now: Date.now(),
+            internal: true,
+          }).result,
+          name,
+        ).toMatchObject({ ok: true });
+      const incident = newId("inc", Date.now(), random);
+      run("incident.declare", { id: incident, title: "Checkout is down", severity: "sev1" });
+      run("incident.ack", { id: incident });
+      expect(reads()).toEqual([]);
+      run("followUp.create", {
+        id: newId("fup", Date.now(), random),
+        incidentId: incident,
+        title: "Write the runbook",
+        ownerId: ws.people.bia.id,
+        dueDate: "2000-01-04",
+        link: null,
+      });
+      expect(reads().length).toBeGreaterThan(0);
+      scan.mockRestore();
+    });
   });
 });

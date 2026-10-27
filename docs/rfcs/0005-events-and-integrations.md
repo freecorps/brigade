@@ -289,11 +289,20 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
     next level fires. Neither is a dead-lettered page (paged again on its own event), a stalled level (everyone is
     paged after it) or a page only its declarer could answer. Owners come from D1, so one who never opened Brigade
     is told too; at most 50. Once per page.
-  - Neither once the incident is acknowledged or no longer active, or when the workspace turned it off.
+  - Neither once the incident is acknowledged or no longer active, or when the workspace turned it off. The
+    member's email neither when they turned it off themselves (below).
 - **Workspace settings.** `workspace.setEmail` (`workspace:manage`: owners and admins) sets both on or off; both are
   on by default (`DEFAULT_EMAIL_SETTINGS`), since the alternative is that nobody outside the incident hears of a page
-  that failed. The dashboard has no switch yet. Per-member opt-out is deferred: these emails say a page failed, so
-  turning them off is a workspace's decision for now; a member preference arrives with notification preferences.
+  that failed. The dashboard's "Email when paging fails" card (owners and admins only) has a switch for each, and
+  warns while the owners' email is off.
+- **A member's own choices.** `member.setEmail` (`device:register`, every role, only the member's own, never an API
+  token; `member.email_changed`) turns off the missed-page email for that member (and the follow-up reminders, RFC 0013
+  "Reminders"); both are on by default (`DEFAULT_MEMBER_EMAIL`), kept on their `member_settings` row next to their call
+  choice. The dashboard's Email card and the app's account settings set it. That row is synced to every member, so every
+  member can see every other member's email choices and time zone (RFC 0003 "A member's own settings"). **The owners' "a
+  page reached nobody" email has no per-member opt-out**: it is the fallback when paging fails, so only the workspace's
+  setting turns it off, and an owner who turned their own missed-page email off still gets it (tested). Both screens say
+  so.
 - **Addresses and language.** The shard keeps no email addresses. The consumer reads each recipient's address, name
   and `locale` from D1 (Better Auth's `user`, joined with `member` so a member removed since is not emailed). D1 is
   read only here, off the page path; a D1 failure is retried like a failed send, and given up after the last attempt
@@ -335,6 +344,9 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   from a workspace in a day (`EMAIL_WORKSPACE_DAILY_CAP`), counted from the emails that went out. Over either, the
   email is dropped, logged, and noted on the timeline (`email_failed`, `capped`) with `notification.failed`; it is
   not retried. The caps are read when the plan is made, so deliveries running at once can overshoot by a batch.
+  Reminders of follow-ups due (RFC 0013 "Reminders") have caps of their own (`REMINDER_WORKSPACE_DAILY_CAP`, 200 a
+  day per workspace; `REMINDER_USER_DAILY_CAP`, 2 a day per user) and never count toward these: a morning of
+  reminders can never drop an email about a page that failed (tested).
   Invitations are the one email to an address nobody proved, so they have their own bounds (RFC 0003
   "Invitations"): only a verified member may invite; per workspace, 30 invitation emails a day, 50 pending and one
   send per invitation per 5 minutes; and across every workspace, counted in D1, 3 a day to one address (its `+tags` counted as one), 50 a day

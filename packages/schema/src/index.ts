@@ -28,6 +28,8 @@ export * from "./escalation.ts";
 export * from "./devices.ts";
 export * from "./deliveries.ts";
 export * from "./calls.ts";
+export * from "./member-email.ts";
+export * from "./reminders.ts";
 export * from "./notifications.ts";
 export * from "./slack.ts";
 export * from "./status.ts";

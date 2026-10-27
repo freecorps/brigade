@@ -6,6 +6,9 @@
 import type { Locale } from "@freecorps/brigade-i18n";
 import {
   email_invite,
+  email_reminder,
+  email_reminder_intro,
+  email_reminder_more,
   email_reset,
   email_status,
   email_signup_attempt,
@@ -27,6 +30,7 @@ import {
   type Severity,
 } from "@freecorps/brigade-schema";
 import { singleLine, type OutgoingEmail } from "./email.ts";
+import type { ReminderItem } from "./mailer.ts";
 import type { StatusEmailContent } from "./status-mail.ts";
 
 /** What an email says about the incident: all of it user content except the severity and number. */
@@ -160,6 +164,8 @@ function renderMessage(
   parts: {
     subject: string;
     lines: string[];
+    /** Items after the lines, as a list. */
+    list?: string[];
     /** Absent: no link (the dashboard's origin is not configured). */
     link?: { label: string; url: string };
     after: string[];
@@ -170,9 +176,10 @@ function renderMessage(
   to: { email: string; name?: string },
   locale: Locale,
 ): OutgoingEmail {
-  const { subject, lines, link, after, footer, footerLinks = [] } = parts;
+  const { subject, lines, list = [], link, after, footer, footerLinks = [] } = parts;
   const textBody = [
     ...lines,
+    ...(list.length ? [list.map((item) => `- ${item}`).join("\n")] : []),
     ...(link ? [`${link.label}: ${link.url}`] : []),
     ...after,
     "--",
@@ -185,6 +192,11 @@ function renderMessage(
     `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><title>${escapeHtml(singleLine(subject))}</title></head>`,
     `<body style="margin:0;padding:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:15px;line-height:1.5;color:#111">`,
     ...lines.map((line) => paragraph(line)),
+    ...(list.length
+      ? [
+          `<ul style="margin:0 0 16px;padding-left:20px">${list.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`,
+        ]
+      : []),
     ...(link
       ? [
           `<p style="margin:0 0 16px"><a href="${escapeHtml(link.url)}" style="display:inline-block;padding:10px 16px;border-radius:6px;background:#111;color:#fff;text-decoration:none">${escapeHtml(link.label)}</a></p>`,
@@ -341,6 +353,58 @@ export function renderWebhookDisabledEmail(
     },
     to,
     locale,
+  );
+}
+
+/**
+ * The daily reminder of a member's follow-ups due (RFC 0013 "Reminders"): each open follow-up due on `date` or before
+ * it, with its incident, up to `REMINDER_MAX_LISTED` (the rest counted), and how to turn reminders off, with a link to
+ * the dashboard's Email card. Titles and the workspace's name are what members typed. A due date is a calendar day, written in the recipient's language.
+ */
+export function renderReminderEmail(
+  facts: { workspace: string; items: ReminderItem[]; total: number },
+  to: { email: string; name?: string },
+  url: string | undefined,
+  locale: Locale,
+  /** The dashboard's Email card, where reminders are turned off; absent without a dashboard origin. */
+  settingsUrl?: string,
+): OutgoingEmail {
+  const text = (part: string, item?: ReminderItem) =>
+    email_reminder(
+      {
+        part,
+        workspace: facts.workspace,
+        title: item?.title ?? "",
+        incident: item
+          ? [formatIncidentNumber(item.incidentNumber), item.incidentTitle]
+              .filter(Boolean)
+              .join(" ")
+          : "",
+        date: item ? calendarDay(item.dueDate, locale) : "",
+      },
+      { locale },
+    );
+  const more = facts.total - facts.items.length;
+  return renderMessage(
+    {
+      subject: text("subject"),
+      lines: [email_reminder_intro({ count: facts.total, workspace: facts.workspace }, { locale })],
+      list: facts.items.map((item) => text(item.overdue ? "item_overdue" : "item", item)),
+      ...(url ? { link: { label: text("open"), url } } : {}),
+      after: [...(more > 0 ? [email_reminder_more({ count: more }, { locale })] : []), text("off")],
+      footer: text("footer"),
+      ...(settingsUrl ? { footerLinks: [{ label: text("settings"), url: settingsUrl }] } : {}),
+    },
+    to,
+    locale,
+  );
+}
+
+/** A calendar day (`YYYY-MM-DD`) as the locale writes it, never shifted by a time zone. */
+function calendarDay(date: string, locale: Locale): string {
+  const [year, month, day] = date.split("-").map(Number) as [number, number, number];
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" }).format(
+    Date.UTC(year, month - 1, day),
   );
 }
 

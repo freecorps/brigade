@@ -3313,5 +3313,101 @@
         "part=*": "Calls"
       }
     }
+  ],
+  "email_reminder": [
+    {
+      "declarations": [
+        "input part",
+        "input workspace",
+        "input title",
+        "input incident",
+        "input date"
+      ],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "Follow-ups due in {workspace}",
+        "part=item": "{title} ({incident}), due {date}",
+        "part=item_overdue": "{title} ({incident}), overdue since {date}",
+        "part=open": "Open your follow-ups",
+        "part=off": "To stop these reminders, turn off Follow-up reminders in the Email card on the dashboard, or under Email in the Brigade app's account settings.",
+        "part=settings": "Email settings",
+        "part=footer": "You get this email because you own follow-ups in {workspace} on Brigade.",
+        "part=*": "Follow-ups due in {workspace}"
+      }
+    }
+  ],
+  "email_reminder_intro": [
+    {
+      "declarations": [
+        "input count",
+        "input workspace",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "You have {countFormatted} open follow-up due today or overdue in {workspace}:",
+        "countPlural=*": "You have {countFormatted} open follow-ups due today or overdue in {workspace}:"
+      }
+    }
+  ],
+  "email_reminder_more": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "And {countFormatted} more.",
+        "countPlural=*": "And {countFormatted} more."
+      }
+    }
+  ],
+  "member_email_settings": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Email",
+        "part=description": "What Brigade emails you about in this workspace.",
+        "part=missed": "Missed pages",
+        "part=missed_hint": "When a SEV1 or SEV2 page doesn't reach your phone, Brigade emails you, once per incident.",
+        "part=missed_workspace_off": "Your workspace has turned these emails off for everyone.",
+        "part=reminders": "Follow-up reminders",
+        "part=reminders_hint": "Each morning at 9:00 in your time zone, a list of your open follow-ups due that day or overdue. At most one email a day.",
+        "part=owners_note": "Owners always get the email when a page reached nobody, whatever they choose here: it's the fallback when paging fails.",
+        "part=saving": "Saving…",
+        "part=saved": "Saved",
+        "part=failed": "Couldn't save your choice. Try again.",
+        "part=loading": "Loading your choices…",
+        "part=load_failed": "Couldn't load your choices.",
+        "part=on": "On",
+        "part=off": "Off",
+        "part=*": "Email"
+      }
+    }
+  ],
+  "workspace_email_settings": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Email when paging fails",
+        "part=description": "Who Brigade emails when a page doesn't get through. Both are on by default.",
+        "part=unpaged": "Tell members a page missed them",
+        "part=unpaged_hint": "Email a member when a SEV1 or SEV2 page didn't reach their phone, once per incident. Each member can also turn this off for themselves.",
+        "part=nobody": "Tell owners when a page reached nobody",
+        "part=nobody_hint": "Email the owners when a page reached nobody and nothing else will page. It's the fallback when paging fails, so members can't turn it off for themselves.",
+        "part=nobody_off": "While this is off, nobody hears of a page that reached nobody until they open Brigade.",
+        "part=saving": "Saving…",
+        "part=saved": "Saved",
+        "part=failed": "Couldn't save the setting. Try again.",
+        "part=loading": "Loading the settings…",
+        "part=load_failed": "Couldn't load the settings.",
+        "part=*": "Email when paging fails"
+      }
+    }
   ]
 }

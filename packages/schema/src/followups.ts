@@ -286,7 +286,8 @@ const byCreation = (a: FollowUpRow, b: FollowUpRow) =>
   a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /** Soonest due first; no due date last. */
-const byDue = (a: FollowUpRow, b: FollowUpRow) => {
+/** Soonest due first, no due date last, then in the order added. */
+export const byDue = (a: FollowUpRow, b: FollowUpRow) => {
   if (a.dueDate !== b.dueDate) {
     if (a.dueDate === null) return 1;
     if (b.dueDate === null) return -1;

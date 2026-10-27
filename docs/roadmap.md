@@ -290,10 +290,12 @@ Validate the risky assumptions before writing product code. Each spike produces 
     reset and invitations (RFC 0005 "Email", "Abuse").
   - Left: onboarding a sending domain and setting `EMAIL_FROM` (and `DASHBOARD_URL`) per environment, and applying
     migrations 0003, 0004 and 0005 to the deployed databases (owner's call, apps/api/README.md "Email"); verification no
-    longer blocks it. A dashboard switch for the two settings; a per-member opt-out; the mobile app sending the
-    user's language. Next on the same sender: an email to operators
+    longer blocks it. Next on the same sender: an email to operators
     when the paging pipeline degrades (Q19) and to owners when rotations change (Q20). The PSTN notifier is still to
     come.
+  - Done since: the dashboard's switch for the two workspace settings (owners and admins); a per-member opt-out of
+    the missed-page email (`member.setEmail`, dashboard and app), while the owners' "a page reached nobody" email stays
+    on for owners as the fallback; the mobile app sending the user's language (RFC 0005 "Email", RFC 0008).
   - Done: in-app VoIP call paging on iOS (RFC 0010 "When a page rings"): a SEV1 page, and an escalation level of a
     SEV1 or SEV2, rings as a call after its alert push, on every iOS device that registered a PushKit token. The
     queue consumer sends the call through the relay (`kind: "call"`, a call id derived from the page's event) only
@@ -372,9 +374,12 @@ Validate the risky assumptions before writing product code. Each spike produces 
     exports of an incident or a date range to R2 (`EXPORTS`, `workspaces/<id>/`), owners and admins only, downloaded
     through an authenticated route, expiring after 7 days (refused and deleted on download, swept hourly, lifecycle
     rule as the backstop). Without either binding the feature is hidden and its route answers 503.
+  - Done since: a daily email to each follow-up owner listing their open follow-ups due today or overdue, at 09:00
+    in their time zone (else UTC), at most one a day, through the outbox and the email path, with a per-member opt-out
+    (RFC 0013 "Reminders").
   - Left: the `brigade-exports-dev` bucket and its `dev` binding, and the `AI` binding in `dev` (manager's call,
     apps/api/README.md "Deploying dev"); staging and production buckets; the mobile app's follow-ups and postmortem;
-    reminders for follow-ups due; revision history (Q24); issue-tracker sync; postmortem templates per type.
+    revision history (Q24); issue-tracker sync; postmortem templates per type.
 - [ ] Public status page with email subscriptions
   - Done (RFC 0012): one page per workspace with a name, an address (`/status/<slug>`, unique across the instance,
     claimed in D1) and a language (en, pt-BR), public or a draft; components in optional groups with a status set by

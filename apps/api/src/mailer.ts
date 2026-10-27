@@ -8,6 +8,10 @@
 import {
   emailSettings,
   isActive,
+  followUpsDue,
+  memberEmailOf,
+  REMINDER_MAX_LISTED,
+  type FollowUpReminderDue,
   NOTIFIER_ACTOR,
   type EmailAbout,
   type EmailFailure,
@@ -36,6 +40,13 @@ export const EMAIL_CLAIM_MS = 60_000;
  */
 export const EMAIL_USER_HOURLY_CAP = 5;
 export const EMAIL_WORKSPACE_DAILY_CAP = 200;
+/**
+ * Reminders of follow-ups due have caps of their own (RFC 0013 "Reminders"): the most a workspace sends in a day, and
+ * one user gets in a day. They never count toward the caps above and never spend them, so reminders can never crowd
+ * out an email about a page that failed.
+ */
+export const REMINDER_WORKSPACE_DAILY_CAP = 200;
+export const REMINDER_USER_DAILY_CAP = 2;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -99,6 +110,44 @@ export type EmailPlan =
    */
   | { send: false; reason: "not_an_email" | "not_found" | "moved_on" | "nothing" };
 
+/** One follow-up a reminder lists: what members typed, and its due date (`YYYY-MM-DD`). */
+export type ReminderItem = {
+  title: string;
+  incidentNumber: number | null;
+  incidentTitle: string;
+  dueDate: string;
+  /** Due before the reminder's day. */
+  overdue: boolean;
+};
+
+export type ReminderPlan =
+  | {
+      send: true;
+      workspace: string;
+      userId: string;
+      /** The member's calendar day it is for. */
+      date: string;
+      /** At most `REMINDER_MAX_LISTED`, soonest due first. */
+      items: ReminderItem[];
+      /** How many are due in all. */
+      total: number;
+      budget: EmailBudget;
+    }
+  | { send: false; reason: "held"; until: number }
+  | { send: false; reason: "not_a_reminder" | "not_found" | "nothing" };
+
+/** Whether `event` asks for a reminder of follow-ups due (`follow_up.reminder_due`, from `followUp.remind`). */
+export function asksForReminder(event: BrigadeEvent): boolean {
+  if (event.type !== "follow_up.reminder_due") return false;
+  const data = event.data as Partial<FollowUpReminderDue["data"]> | null;
+  return typeof data?.userId === "string" && typeof data.date === "string";
+}
+
+/** A reminder's key in the email ledger: one per member and day. Its prefix keeps reminders out of the paging caps. */
+const reminderKey = (userId: string, date: string) => `reminder:${userId}:${date}`;
+/** Ledger rows that are reminders (`reminderKey`), in SQL. */
+const IS_REMINDER = "substr(key, 1, 9) = 'reminder:'";
+
 /**
  * What one recipient's send did, as the consumer reports it. `capped`: not sent, because the recipient or the
  * workspace was over its cap; final at once, and never retried.
@@ -136,7 +185,8 @@ export class Mailer {
    *   own: no escalation run (the interim rule was the page), or the page was the last of a run that ended
    *   (everyone who can respond, after nobody acknowledged). A level that missed everyone is not it: the next level
    *   fires (at once when it was unreachable, at its timeout when its pushes failed).
-   * Neither once the incident is acknowledged or no longer active, nor when the workspace turned it off.
+   * Neither once the incident is acknowledged or no longer active, nor when the workspace turned it off; the member's
+   * email neither when they turned it off themselves (`member.setEmail`). The owners' email has no such opt-out.
    */
   plan(event: BrigadeEvent, now: number): EmailPlan {
     this.prune(now);
@@ -151,9 +201,11 @@ export class Mailer {
     }
     const settings = emailSettings(workspace);
     const wanted: Omit<EmailJob, "sent">[] = [];
+    // The member's own opt-out applies to their email only: the owners' below is the fallback when paging fails.
     if (
       settings.unpaged &&
       data.userId !== null &&
+      memberEmailOf(store.scan("member_settings"), data.userId).missedPages &&
       isUnpagedReason(data.reason) &&
       PAGING_SEVERITIES.includes(incident.severity)
     ) {
@@ -171,26 +223,12 @@ export class Mailer {
     const jobs: EmailJob[] = [];
     let heldUntil: number | undefined;
     for (const job of wanted) {
-      const claim = this.options.storage.sql
-        .exec<{ done: number; claimed_until: number }>(
-          "select done, claimed_until from email_keys where key = ?",
-          job.key,
-        )
-        .toArray()[0];
-      if (claim?.done) continue;
-      if (claim && claim.claimed_until > now) {
-        heldUntil = Math.max(heldUntil ?? 0, claim.claimed_until);
+      const claim = this.claim(job.key, now);
+      if (claim === "done") continue;
+      if (claim !== "claimed") {
+        heldUntil = Math.max(heldUntil ?? 0, claim.until);
         continue;
       }
-      // `at` is when the email was first asked for and is not refreshed by a later claim: the ledger is pruned from
-      // it, and `LEDGER_RETENTION_MS` outlasts every retry of an email by far.
-      this.options.storage.sql.exec(
-        `insert into email_keys (key, done, claimed_until, at) values (?, 0, ?, ?)
-         on conflict (key) do update set claimed_until = excluded.claimed_until`,
-        job.key,
-        now + EMAIL_CLAIM_MS,
-        now,
-      );
       jobs.push({ ...job, sent: this.sent(job.key) });
     }
     if (jobs.length === 0) {
@@ -208,7 +246,7 @@ export class Mailer {
       },
       workspace: workspace.name,
       jobs,
-      budget: this.budget(now),
+      budget: this.budget(now, "paging"),
       ...(heldUntil === undefined ? {} : { heldUntil }),
     };
   }
@@ -272,6 +310,107 @@ export class Mailer {
     sql.exec("update email_keys set done = 1, claimed_until = 0 where key = ?", key);
   }
 
+  /**
+   * The reminder `event` asks for (RFC 0013 "Reminders"), claimed for the caller until `EMAIL_CLAIM_MS` from `now`
+   * like the notifier's emails: the member's open follow-ups due on its day or before, read now, so one done since
+   * the alarm asked is left out (and none left is nothing to send). Nothing either when the member turned reminders
+   * off meanwhile.
+   */
+  planReminder(event: BrigadeEvent, now: number): ReminderPlan {
+    this.prune(now);
+    if (!asksForReminder(event)) return { send: false, reason: "not_a_reminder" };
+    const { userId, date } = event.data as FollowUpReminderDue["data"];
+    const { store } = this.options.shard;
+    const [workspace] = store.scan("workspace");
+    if (!workspace) return { send: false, reason: "not_found" };
+    if (!memberEmailOf(store.scan("member_settings"), userId).followUpReminders) {
+      return { send: false, reason: "nothing" };
+    }
+    const due = followUpsDue(store.scan("follow_ups"), userId, date);
+    if (due.length === 0) return { send: false, reason: "nothing" };
+    const key = reminderKey(userId, date);
+    const claim = this.claim(key, now);
+    if (claim === "done") return { send: false, reason: "nothing" };
+    if (claim !== "claimed") return { send: false, reason: "held", until: claim.until };
+    return {
+      send: true,
+      workspace: workspace.name,
+      userId,
+      date,
+      items: due.slice(0, REMINDER_MAX_LISTED).map((row) => ({
+        title: row.title,
+        incidentNumber: row.incidentNumber,
+        incidentTitle: row.incidentTitle,
+        dueDate: row.dueDate!,
+        overdue: row.dueDate! < date,
+      })),
+      total: due.length,
+      budget: this.budget(now, "reminder"),
+    };
+  }
+
+  /**
+   * Records what a reminder's send did: sent (in the ledger, counted toward the caps) or capped (in the ledger, not
+   * counted, logged) is done; a failure is done when `final` (logged: a reminder has no incident to put it on) and
+   * otherwise lets its claim go, so the retry can take it at once.
+   */
+  recordReminder(event: BrigadeEvent, outcome: EmailOutcome, final: boolean, now: number): void {
+    if (!asksForReminder(event)) return;
+    const { userId, date } = event.data as FollowUpReminderDue["data"];
+    const key = reminderKey(userId, date);
+    const { sql } = this.options.storage;
+    const claim = sql
+      .exec<{ done: number }>("select done from email_keys where key = ?", key)
+      .toArray()[0];
+    if (!claim || claim.done) return;
+    if (outcome.ok || outcome.capped) {
+      sql.exec(
+        "insert into email_sends (key, user_id, at, capped) values (?, ?, ?, ?) on conflict do nothing",
+        key,
+        userId,
+        now,
+        outcome.ok ? 0 : 1,
+      );
+    }
+    if (!outcome.ok && (outcome.capped || final)) {
+      this.options.log(outcome.capped ? "reminder capped" : "reminder failed", {
+        event: event.id,
+        recipient: recipientHash(key, userId),
+      });
+    }
+    if (outcome.ok || outcome.capped || final) {
+      sql.exec("update email_keys set done = 1, claimed_until = 0 where key = ?", key);
+    } else {
+      sql.exec("update email_keys set claimed_until = 0 where key = ?", key);
+    }
+  }
+
+  /**
+   * Takes `key` for the caller until `EMAIL_CLAIM_MS` from `now`: `claimed`, or `done` (sent or given up), or held by
+   * another delivery until `until`.
+   */
+  private claim(key: string, now: number): "claimed" | "done" | { until: number } {
+    const { sql } = this.options.storage;
+    const claim = sql
+      .exec<{ done: number; claimed_until: number }>(
+        "select done, claimed_until from email_keys where key = ?",
+        key,
+      )
+      .toArray()[0];
+    if (claim?.done) return "done";
+    if (claim && claim.claimed_until > now) return { until: claim.claimed_until };
+    // `at` is when the email was first asked for and is not refreshed by a later claim: the ledger is pruned from
+    // it, and `LEDGER_RETENTION_MS` outlasts every retry of an email by far.
+    sql.exec(
+      `insert into email_keys (key, done, claimed_until, at) values (?, 0, ?, ?)
+       on conflict (key) do update set claimed_until = excluded.claimed_until`,
+      key,
+      now + EMAIL_CLAIM_MS,
+      now,
+    );
+    return "claimed";
+  }
+
   /** `email_failed` on the incident's timeline and `notification.failed` (`channel: "email"`), once per recipient. */
   private fail(
     event: BrigadeEvent,
@@ -290,23 +429,30 @@ export class Mailer {
     );
   }
 
-  /** What the caps leave now (see `EmailBudget`); capped recipients do not count. */
-  private budget(now: number): EmailBudget {
+  /**
+   * What the caps leave now (see `EmailBudget`); capped recipients do not count. `paging`: the emails about pages
+   * (`EMAIL_WORKSPACE_DAILY_CAP`, `EMAIL_USER_HOURLY_CAP`, `users` over the last hour), reminders left out;
+   * `reminder`: the reminders' own (`REMINDER_WORKSPACE_DAILY_CAP`, `REMINDER_USER_DAILY_CAP`, `users` over the last
+   * day), nothing else counted.
+   */
+  private budget(now: number, kind: "paging" | "reminder"): EmailBudget {
     const { sql } = this.options.storage;
+    const which = kind === "reminder" ? IS_REMINDER : `not ${IS_REMINDER}`;
     const today = sql
       .exec<{ sends: number }>(
-        "select count(*) as sends from email_sends where capped = 0 and at > ?",
+        `select count(*) as sends from email_sends where capped = 0 and at > ? and ${which}`,
         now - DAY_MS,
       )
       .one().sends;
     const users: Record<string, number> = {};
     for (const row of sql.exec<{ user_id: string; sends: number }>(
-      "select user_id, count(*) as sends from email_sends where capped = 0 and at > ? group by user_id",
-      now - HOUR_MS,
+      `select user_id, count(*) as sends from email_sends where capped = 0 and at > ? and ${which} group by user_id`,
+      now - (kind === "reminder" ? DAY_MS : HOUR_MS),
     )) {
       users[row.user_id] = row.sends;
     }
-    return { workspace: Math.max(0, EMAIL_WORKSPACE_DAILY_CAP - today), users };
+    const cap = kind === "reminder" ? REMINDER_WORKSPACE_DAILY_CAP : EMAIL_WORKSPACE_DAILY_CAP;
+    return { workspace: Math.max(0, cap - today), users };
   }
 
   /**

@@ -10,6 +10,7 @@ import {
   type BrigadeTables,
   type DeviceRow,
   type MutationContext,
+  type Permission,
   type Role,
 } from "../src/index.ts";
 
@@ -403,5 +404,87 @@ describe("member.changeRole, member.remove, member.reconcile", () => {
       runMutation(serverMutations, "member.reconcile", { members: [] }, store, system),
     ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
     expect(store.scan("members")).toHaveLength(4);
+  });
+});
+
+describe("an API token (RFC 0014)", () => {
+  const token = (role: Role, scopes: Permission[] = ["members:manage"]): MutationContext => ({
+    actor: { kind: "token", id: "tok_1", role, by: "usr_ana", scopes },
+    now: T,
+    server: true,
+  });
+
+  test("never makes, changes or removes an owner or admin, whatever its creator's role", () => {
+    const owner = { id: "usr_ana", role: "owner" as const, kind: "token" as const };
+    const admin = { id: "usr_bia", role: "admin" as const };
+    const owner2 = { id: "usr_eva", role: "owner" as const };
+    const responder = { id: "usr_caio", role: "responder" as const };
+    const forbidden = { ok: false, code: "forbidden" };
+    expect(checkMemberChange(owner, responder, { kind: "role", role: "admin" }, 2)).toEqual(
+      forbidden,
+    );
+    expect(checkMemberChange(owner, responder, { kind: "role", role: "owner" }, 2)).toEqual(
+      forbidden,
+    );
+    for (const target of [admin, owner2]) {
+      expect(checkMemberChange(owner, target, { kind: "role", role: "viewer" }, 2)).toEqual(
+        forbidden,
+      );
+      expect(checkMemberChange(owner, target, { kind: "remove" }, 2)).toEqual(forbidden);
+    }
+    expect(checkMemberChange(owner, responder, { kind: "role", role: "viewer" }, 2)).toEqual({
+      ok: true,
+    });
+    expect(checkMemberChange(owner, responder, { kind: "remove" }, 2)).toEqual({ ok: true });
+    // The same change by its creator in person is allowed.
+    expect(checkMemberChange({ ...owner, kind: "user" }, admin, { kind: "remove" }, 2)).toEqual({
+      ok: true,
+    });
+  });
+
+  test("member.remove needs members:manage in its scopes, not workspace:read, and only removes", () => {
+    const store = shard();
+    const remove = (context: MutationContext, role: Role, reason = "removed") =>
+      runMutation(
+        serverMutations,
+        "member.remove",
+        { id: role === "admin" ? "usr_bia" : "usr_caio", role, reason },
+        store,
+        context,
+      );
+    expect(remove(token("owner", ["incident:ack"]), "responder")).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
+    expect(remove(token("owner"), "responder", "left")).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
+    expect(remove(token("owner"), "admin")).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
+    const removed = remove(token("owner"), "responder");
+    expect(removed.ok && removed.events[0]).toMatchObject({
+      type: "member.removed",
+      data: { userId: "usr_caio", reason: "removed" },
+    });
+    expect(store.get("members", "usr_caio")).toBeUndefined();
+    expect(store.scan("devices").filter((row) => row.userId === "usr_caio")).toEqual([]);
+  });
+
+  test("member.changeRole never moves anyone to or from owner or admin", () => {
+    const store = shard();
+    const change = (id: string, from: Role, to: Role) =>
+      runMutation(serverMutations, "member.changeRole", { id, from, to }, store, token("owner"));
+    expect(change("usr_caio", "responder", "admin")).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
+    expect(change("usr_bia", "admin", "viewer")).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
+    expect(change("usr_caio", "responder", "viewer")).toMatchObject({ ok: true });
   });
 });

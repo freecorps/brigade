@@ -20,6 +20,8 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
   ).all<{ type: string; name: string }>();
   expect(results.filter((row) => row.type === "table").map((row) => row.name)).toEqual([
     "account",
+    // migrations/0011_api_token.sql (RFC 0014).
+    "api_token",
     "d1_migrations",
     "invitation",
     "invitation_send",
@@ -43,5 +45,6 @@ test("every Brigade table is there, with the indexes the actor lookup uses", asy
   ]);
   expect(results.map((row) => row.name)).toContain("member_organizationId_idx");
   expect(results.map((row) => row.name)).toContain("rateLimit_lastRequest_idx");
+  expect(results.map((row) => row.name)).toContain("api_token_workspace_id_idx");
   expect(results.map((row) => row.name)).toContain("status_subscriber_inbox_idx");
 });

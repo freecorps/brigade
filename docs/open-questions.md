@@ -194,6 +194,13 @@ the email Slack confirmed for one of the connected team's own users (RFC 0011 "W
 - The draft's language is the status page's, else the asker's. Should workspaces get their own language setting?
 - Exports last 7 days and only owners and admins make them. Should responders export the incidents they ran?
 
+## Q25 — API tokens to confirm (RFC 0014)
+
+- A token whose creator leaves stays disabled for good, even if they come back. Should an owner be able to hand a
+  token over to another member instead of minting a new one?
+- Every member can see the token list (names, scopes, last use), not the tokens. Should it be owners and admins only?
+- 300 requests a minute per token. Enough for CI and integrations, or should a workspace set its own limit?
+
 # Decided
 
 | #   | Question                       | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |

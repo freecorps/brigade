@@ -11,6 +11,7 @@ import {
   runQuery,
   serverMutations,
   TABLES,
+  toJsonSchema,
   WEBHOOK_DISABLE_AFTER_MS,
   WEBHOOK_DISABLE_FAILURES,
   WEBHOOK_LOG_SIZE,
@@ -608,5 +609,29 @@ describe("payload validators", () => {
     expect(webhookPayloadValidator({ ...added, workspaceId: "nope" }).ok).toBe(false);
     expect(webhookPayloadValidator({ ...added, type: "" }).ok).toBe(false);
     expect(webhookPayloadValidator({ ...added, type: 1 }).ok).toBe(false);
+  });
+
+  test("name an API token as the actor (`token`, `tok_…`), and as `by` when it acknowledged", () => {
+    const token = "tok_01JB0000000000000000000001";
+    const payload = webhookPayload(
+      {
+        id: at(1),
+        type: "incident.acknowledged",
+        time: new Date(T).toISOString(),
+        workspaceId: newId("ws", T, random),
+        actor: { kind: "token", id: token },
+        subject: incident.id,
+        data: { by: token },
+      },
+      { incident },
+    )!;
+    expect(payload).toMatchObject({ actor: { kind: "token", id: token }, data: { by: token } });
+    const parsed = webhookPayloadValidator(JSON.parse(JSON.stringify(payload)));
+    expect(parsed.ok && isKnownWebhookPayload(parsed.value)).toBe(true);
+    expect(parsed.ok && parsed.value.actor.kind).toBe("token");
+    // The reference lists it among the known kinds, so a receiver's generated types have it.
+    expect(JSON.stringify(toJsonSchema(WEBHOOK_PAYLOADS["incident.acknowledged"]))).toContain(
+      '"token"',
+    );
   });
 });

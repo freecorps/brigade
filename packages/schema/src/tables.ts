@@ -1,4 +1,4 @@
-import type { Role } from "./access.ts";
+import type { Permission, Role } from "./access.ts";
 import type { AlertOutcome, AlertRouteReason } from "./alert-sources.ts";
 import type { AlertSeverity, AlertSourceKind } from "./alert-normalize.ts";
 import type { DeliveryError } from "./deliveries.ts";
@@ -951,6 +951,24 @@ export type IncidentRouteRow = {
   policyId: string | null;
 };
 
+/**
+ * An API token (RFC 0014) as the workspace lists it: never the token or its digest, which only D1 holds. A token whose
+ * creator is no longer a member is disabled (`apiTokenState`).
+ */
+export type ApiTokenRow = {
+  id: string; // tok_<ULID>, made by the API Worker
+  name: string;
+  scopes: Permission[];
+  createdBy: string;
+  createdAt: number;
+  /** null: until revoked. */
+  expiresAt: number | null;
+  /** To within a few minutes; null: never used. */
+  lastUsedAt: number | null;
+  revokedAt: number | null;
+  revokedBy: string | null;
+};
+
 /** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only. */
 export type CounterRow = { id: string; value: number };
 
@@ -994,6 +1012,7 @@ export type BrigadeTables = {
   source_alerts: SourceAlertRow;
   alert_resolve_markers: AlertResolveMarkerRow;
   incident_routes: IncidentRouteRow;
+  api_tokens: ApiTokenRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -1039,6 +1058,7 @@ export const TABLES = {
   source_alerts: { serverOnly: false },
   alert_resolve_markers: { serverOnly: true },
   incident_routes: { serverOnly: true },
+  api_tokens: { serverOnly: false },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

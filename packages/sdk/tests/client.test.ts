@@ -156,6 +156,22 @@ describe("requests", () => {
     expect([first!.headers.get("X-Request"), second!.headers.get("X-Request")]).toEqual(["1", "2"]);
   });
 
+  test("a token goes as Authorization: Bearer, over a header the hook set", async () => {
+    const requests: Request[] = [];
+    const client = createClient({
+      baseUrl: "https://brigade.example.com/api",
+      token: "brg_example",
+      headers: () => ({ Authorization: "Basic nope" }),
+      fetch: async (request) => {
+        requests.push(request);
+        return Response.json({ ok: true });
+      },
+    });
+    await client.acknowledgeIncident(WS, INC);
+    expect(requests[0]!.headers.get("Authorization")).toBe("Bearer brg_example");
+    expect(requests[0]!.headers.get("Cookie")).toBeNull();
+  });
+
   test("an ack sends a fresh Idempotency-Key unless given one, within the API's pattern", async () => {
     const { client, requests } = recorder();
     await client.acknowledgeIncident(WS, INC);

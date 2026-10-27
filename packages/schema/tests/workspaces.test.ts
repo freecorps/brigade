@@ -72,6 +72,9 @@ describe("workspace.create", () => {
       "alert.ingest",
       "alert.reroute",
       "alertSource.takeOver",
+      "apiToken.create",
+      "apiToken.revoke",
+      "apiToken.touch",
     ]);
     const result = runMutation(
       mutations,

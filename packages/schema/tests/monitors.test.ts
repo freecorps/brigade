@@ -925,6 +925,7 @@ describe("monitor.report: quorum → alert → incident", () => {
       "webhook.record",
       "export.reserve",
       "alert.ingest",
+      "apiToken.touch",
     ]);
   });
 

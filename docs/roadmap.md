@@ -367,8 +367,14 @@ Validate the risky assumptions before writing product code. Each spike produces 
     Crypto, typed payloads and errors), a typed client for the reference's operations, and the payload types; no
     runtime dependencies (RFC 0002 "Public HTTP API").
   - Left: publish `@freecorps/brigade-sdk` to npm (owner); setting `WEBHOOK_SECRET_KEY` on the deployed environments
-    (owner's call, apps/api/README.md); API tokens (their own design first); replaying a given-up delivery; custom
-    headers per endpoint.
+    (owner's call, apps/api/README.md); replaying a given-up delivery; custom headers per endpoint.
+  - Done (RFC 0014): API tokens. Per workspace, minted by owners and admins in the dashboard's API tokens card (name,
+    scopes, expiry; shown once), hashed in D1 (`API_TOKEN_KEY` optional), sent as `Authorization: Bearer` on the
+    members, invitations, ack and sync routes, acting with the creator's current role within their scopes, rate
+    limited per token, revoked at once, `apiToken.created` / `apiToken.revoked` through the outbox; `bearerAuth` in
+    the reference and `token` in the SDK.
+  - Left: tokens on the dashboard's internal routes (webhooks, status page, exports, drafts); GitHub secret scanning
+    partner registration for `brg_` (owner); setting `API_TOKEN_KEY` on deployed environments (owner).
 
 ## Phase 4 — Open source launch (ongoing)
 

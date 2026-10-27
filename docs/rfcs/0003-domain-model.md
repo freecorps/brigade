@@ -459,6 +459,9 @@ server-only mutations (`postmortem.requestDraft` as the member, `.writeDraft` an
 - Alert sources and routes (`alert:read`, `alert:manage`; RFC 0005 "Alert sources"): owners and admins create sources
   (secret URLs) and routes; everyone reads them and the recent alerts. A source's token, header value and signing
   secret are never in a synced row.
+- API tokens (`token:manage`; RFC 0014): owners and admins mint and revoke them. A token acts as a `token` actor
+  with its creator's current role and its own scopes (`allows`: both must grant a permission), never `token:manage`,
+  `workspace:create` or `device:register`. Every role reads the list (`apiToken.all`, `workspace:read`).
 - Workspace-defined custom roles can come later via Better Auth dynamic access control.
 - Every DO key is prefixed by the organization id; a shard never serves data of another workspace.
 

@@ -1,7 +1,8 @@
 // Who a sync socket acts as (RFC 0004 "Socket topology"): the Worker authenticates the upgrade with the Better
 // Auth session, checks the user's membership and role in the workspace, and hands the shard a verified actor.
 
-import { isRole, type Actor } from "@freecorps/brigade-schema";
+import { isRole, TOKEN_SCOPES, type Actor, type Permission } from "@freecorps/brigade-schema";
+import { bearerToken, resolveBearer, type ApiTokenEnv } from "./api-tokens.ts";
 import type { Auth } from "./auth.ts";
 import { DEV_ACTOR, DEV_ACTOR_VAR } from "./dev-actor.ts";
 
@@ -56,14 +57,22 @@ export function devActorEnabled(env: object, request: Request): boolean {
 
 /**
  * The actor for a sync upgrade to `workspaceId`: 403 for a cross-site `Origin`, 401 without a session (unless
- * the dev actor is on), 403 when the user is not a member with a Brigade role.
+ * the dev actor is on), 403 when the user is not a member with a Brigade role. With `Authorization: Bearer`, the API
+ * token alone (RFC 0014): no `Origin` check, since a page cannot set that header on a WebSocket upgrade, and the same
+ * 401 for every token refused.
  */
 export async function resolveActor(
   request: Request,
-  env: { DB: D1Database },
+  env: ApiTokenEnv,
   auth: () => Auth,
   workspaceId: string,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<ActorResult> {
+  const token = bearerToken(request);
+  if (token !== undefined) {
+    const result = await resolveBearer(token, env, workspaceId, waitUntil);
+    return result.ok ? { ok: true, actor: result.actor } : result;
+  }
   // Browsers send cookies on a cross-site WebSocket upgrade and CORS does not apply to it, so a page on another
   // site could open a socket as the signed-in user (cross-site WebSocket hijacking). A browser always sends the
   // page's Origin on an upgrade, so this refuses every other site. The mobile app is no browser: it sets the
@@ -122,9 +131,17 @@ export function readActor(headers: Headers): Actor | undefined {
     return undefined;
   }
   if (typeof value !== "object" || value === null) return undefined;
-  const { kind, id, role } = value as Record<string, unknown>;
-  if (kind !== "user" && kind !== "system" && kind !== "integration") return undefined;
+  const { kind, id, role, by, scopes } = value as Record<string, unknown>;
   if (typeof id !== "string" || id.length === 0 || !isRole(role)) return undefined;
+  // An API token (RFC 0014): its creator and its scopes, both required.
+  if (kind === "token") {
+    if (typeof by !== "string" || by.length === 0 || !Array.isArray(scopes)) return undefined;
+    if (!scopes.every((scope) => (TOKEN_SCOPES as readonly unknown[]).includes(scope))) {
+      return undefined;
+    }
+    return { kind, id, role, by, scopes: scopes as Permission[] };
+  }
+  if (kind !== "user" && kind !== "system" && kind !== "integration") return undefined;
   return { kind, id, role };
 }
 

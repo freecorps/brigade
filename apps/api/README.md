@@ -376,15 +376,16 @@ In order, from `apps/api` unless noted:
    applied to `brigade-db-dev`).
 2. **API secrets**, each with `wrangler secret put <NAME> --env dev`:
 
-   | Secret               | Needed for                                                                                                                                      |
-   | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-   | `BETTER_AUTH_SECRET` | Required: sessions (`openssl rand -base64 32`)                                                                                                  |
-   | `RELAY_SEND_TOKEN`   | Push: the relay's send token (apps/relay); without it every page is recorded as failed                                                          |
-   | `DASHBOARD_URL`      | Links in emails and Slack: `https://brigade-web-dev.<subdomain>.workers.dev`                                                                    |
-   | `EMAIL_FROM`         | Optional: the email sender ("Email" above); without it no email goes out, so addresses cannot be verified or passwords reset                    |
-   | `SLACK_TOKEN_KEY`    | Optional until Slack: seals bot tokens ("Slack" below)                                                                                          |
-   | `WEBHOOK_SECRET_KEY` | Optional: seals webhook signing secrets ("Webhooks" below, `openssl rand 32 \| base64 \| tr '+/' '-_' \| tr -d =`); without it webhooks are off |
-   | `DEAD_MAN_URL`       | Optional: the external dead-man check's ping URL ("Dead-man switch" above)                                                                      |
+   | Secret               | Needed for                                                                                                                                                                                                                                                                                                                                                                    |
+   | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `BETTER_AUTH_SECRET` | Required: sessions (`openssl rand -base64 32`)                                                                                                                                                                                                                                                                                                                                |
+   | `RELAY_SEND_TOKEN`   | Push: the relay's send token (apps/relay); without it every page is recorded as failed                                                                                                                                                                                                                                                                                        |
+   | `DASHBOARD_URL`      | Links in emails and Slack: `https://brigade-web-dev.<subdomain>.workers.dev`                                                                                                                                                                                                                                                                                                  |
+   | `EMAIL_FROM`         | Optional: the email sender ("Email" above); without it no email goes out, so addresses cannot be verified or passwords reset                                                                                                                                                                                                                                                  |
+   | `SLACK_TOKEN_KEY`    | Optional until Slack: seals bot tokens ("Slack" below)                                                                                                                                                                                                                                                                                                                        |
+   | `WEBHOOK_SECRET_KEY` | Optional: seals webhook signing secrets ("Webhooks" below, `openssl rand 32 \| base64 \| tr '+/' '-_' \| tr -d =`); without it webhooks are off                                                                                                                                                                                                                               |
+   | `DEAD_MAN_URL`       | Optional: the external dead-man check's ping URL ("Dead-man switch" above)                                                                                                                                                                                                                                                                                                    |
+   | `API_TOKEN_KEY`      | Optional: the HMAC key API tokens are hashed under ("API tokens" below, `openssl rand 32 \| base64 \| tr '+/' '-_' \| tr -d =`); without it they are hashed with SHA-256 alone. Setting it later keeps every token: one minted without it is found by its SHA-256 once and its row moved to the keyed digest. Changing or removing it invalidates every token hashed under it |
 
    No `RELAY_URL`: the `dev` environment reaches `brigade-relay-dev` through its `RELAY` service binding
    (wrangler.jsonc). A Worker's fetch to another workers.dev Worker on the same account is answered 404, so the
@@ -509,6 +510,19 @@ follow-ups, with members by name. It never reads addresses, devices or deliverie
 `AI` binding is in no environment yet: add `"ai": { "binding": "AI" }` to an environment ("Deploying dev", step 6).
 Locally, the binding would call the real Workers AI on your account, so leave it out of the top level; the tests use a
 fake model.
+
+## API tokens
+
+RFC 0014. Owners and admins mint tokens in the dashboard's API tokens card (`POST /workspaces/:id/api-tokens`, cookie
+only, `src/api-tokens.ts`): the token (`brg_` and 32 random bytes, base64url) is answered once, and D1's `api_token`
+(`migrations/0011_api_token.sql`) keeps only its HMAC-SHA-256 under `API_TOKEN_KEY` (or its SHA-256 without one; a token minted before the key was set
+is found by its SHA-256 on its next use and its row moved to the HMAC).
+Requests send it as `Authorization: Bearer`; the Worker looks the digest up (the row cached 10 s per isolate), reads
+the creator's membership and role in D1, and hands the shard a `token` actor. Each token is limited to 300 requests a
+minute (`API_TOKEN_LIMIT`, namespaces 4141, 4142 staging, 4143 dev) and its last use is written at most every 5
+minutes. `DELETE /workspaces/:id/api-tokens/:tokenId` revokes one: D1 first, then the shard, which refuses it at once
+and closes its sockets. For GitHub secret scanning, add a custom pattern `brg_[A-Za-z0-9_-]{43}` (RFC 0014 "The
+token").
 
 ## Exports
 

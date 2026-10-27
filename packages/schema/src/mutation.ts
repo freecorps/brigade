@@ -1,13 +1,29 @@
 // Named mutations (RFC 0004 "Shared core"): the same `apply` runs optimistically on clients and
 // authoritatively, with RBAC, in the server's Durable Object.
 
-import { can, isRole, type Permission, type Role } from "./access.ts";
+import { allows, type Permission, type Role } from "./access.ts";
 import type { Store } from "./store.ts";
 import type { BrigadeTables } from "./tables.ts";
 import { clip } from "./text.ts";
 import { MAX_ISSUES, type Infer, type Issue, type Validator } from "./validate.ts";
 
-export type Actor = { kind: "user" | "system" | "integration"; id: string; role: Role };
+/**
+ * Who runs a mutation. An API token (RFC 0014) is `kind: "token"` with its id (`tok_…`), its creator's current role,
+ * the creator's user id (`by`) and its `scopes`: it may use a permission only when both the role and the scopes grant
+ * it (`allows`).
+ */
+export type Actor = {
+  kind: "user" | "system" | "integration" | "token";
+  id: string;
+  role: Role;
+  by?: string;
+  scopes?: readonly Permission[];
+};
+
+/** The member an actor acts for: themselves, or an API token's creator (RFC 0014). */
+export function actingMember(actor: Actor): string {
+  return actor.kind === "token" && actor.by !== undefined ? actor.by : actor.id;
+}
 
 export type MutationContext = {
   actor: Actor;
@@ -59,6 +75,12 @@ export type MutationDef<Name extends string = string, Args = unknown> = {
   args: Validator<Args>;
   permission: Permission;
   /**
+   * What an API token (RFC 0014) needs instead of `permission`, when a token's only use of the mutation needs more or
+   * other than a member's: `member.remove` is a leave (`workspace:read`) for a member, and only ever a removal
+   * (`members:manage`) for a token, which never leaves.
+   */
+  tokenPermission?: Permission;
+  /**
    * May succeed without events. Only for a write that refreshes observed values (a monitor's latency, colo and
    * check time), or keeps a server-only count (a rate limit's ledger), and is no domain event: it is synced like any
    * change but writes nothing to the outbox (RFC 0005).
@@ -77,6 +99,7 @@ export function defineMutation<const Name extends string, V extends Validator<an
   name: Name;
   args: V;
   permission: Permission;
+  tokenPermission?: Permission;
   silent?: boolean;
   apply(store: MutationStore, args: Infer<V>, ctx: MutationContext): MutationResult;
 }): MutationDef<Name, Infer<V>> {
@@ -166,7 +189,9 @@ export function runMutation(
     if (!Number.isSafeInteger(ctx.now) || ctx.now < 0) {
       throw new RangeError("ctx.now must be a safe non-negative integer");
     }
-    if (!isRole(ctx.actor.role) || !can(ctx.actor.role, def.permission)) {
+    const permission =
+      ctx.actor.kind === "token" ? (def.tokenPermission ?? def.permission) : def.permission;
+    if (!allows(ctx.actor, permission)) {
       return fail("forbidden", `Not allowed to run ${def.name}`);
     }
     // Validators only read `rawArgs`, but a hostile value (a proxy, a throwing getter) must not escape either.

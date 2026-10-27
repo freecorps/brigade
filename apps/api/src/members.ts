@@ -29,6 +29,7 @@ import {
   MAX_RECONCILED_MEMBERS,
   MEMBERS_ACTOR,
   newId,
+  tokenReaches,
   type Actor,
   type MemberChange,
   type RandomBytes,
@@ -144,10 +145,17 @@ export type MemberChangeResult =
     };
 
 /**
- * Why the shard closes a member's sockets: they are no longer a member, their role changed, or their password was
- * reset, which ended every session (`signOutUser` in src/workspace.ts).
+ * Why the shard closes a member's sockets: they are no longer a member, their role changed, their password was
+ * reset, which ended every session (`signOutUser` in src/workspace.ts), or the API token it acts as (RFC 0014) is no
+ * longer backed by this shard (expired or revoked).
  */
-export type SocketVerdict = "removed" | "role_changed" | "signed_out";
+export type SocketVerdict = "removed" | "role_changed" | "signed_out" | "token_ended";
+
+/** The member a socket acts for: a member's own, or an API token's creator (RFC 0014); undefined for the rest. */
+function actingFor(actor: Actor): string | undefined {
+  if (actor.kind === "user") return actor.id;
+  return actor.kind === "token" ? actor.by : undefined;
+}
 
 /** After a `not_applied`, the shard's alarm reconciles the members this soon, whether or not anyone connects. */
 export const MEMBER_REPAIR_DELAY_MS = 10 * 1000;
@@ -220,9 +228,10 @@ export class Membership {
     actorId: string,
     targetId: string,
     change: MemberChange,
+    token?: Actor,
   ): Promise<MemberChangeResult> {
     return this.exclusive(async () => {
-      const result = await this.decide(workspaceId, actorId, targetId, change);
+      const result = await this.decide(workspaceId, actorId, targetId, change, token);
       if (!result.ok && result.code === "not_applied") this.armRepair(Date.now(), targetId);
       return result;
     });
@@ -246,11 +255,18 @@ export class Membership {
     );
   }
 
+  /**
+   * `token`: the API token (RFC 0014) `actorId` (its creator) made the request through. The rules are the creator's,
+   * with their role as D1 has it now, and a token's own (never an owner or admin, `checkMemberChange`); the mutation
+   * runs as the token with the creator's role and the scopes the Worker checked (`members:manage`, which is all
+   * `member.remove` and `member.changeRole` ask of a token), so its events name it.
+   */
   private async decide(
     workspaceId: string,
     actorId: string,
     targetId: string,
     change: MemberChange,
+    token?: Actor,
   ): Promise<MemberChangeResult> {
     const { db, shard, log } = this.options;
     let directory: DirectoryMember[];
@@ -293,14 +309,21 @@ export class Membership {
       // Gone from D1 already: a retry after the shard step failed, or an edit made outside Brigade. Only someone who
       // could have removed them may have the shard catch up, and only a real leftover answers anything but 404.
       const allowed =
-        can(actor.role, "members:manage") && (copy?.role !== "owner" || actor.role === "owner");
+        can(actor.role, "members:manage") &&
+        (copy?.role !== "owner" || actor.role === "owner") &&
+        (!token || tokenReaches(copy?.role ?? null));
       if (!allowed) return { ok: false, code: "forbidden" };
       if (change.kind === "role" || !leftovers) return { ok: false, code: "not_found" };
       return this.catchUp(targetId, members);
     }
 
     const owners = members.filter((member) => member.role === "owner").length;
-    const check = checkMemberChange(actor, target, change, owners);
+    const check = checkMemberChange(
+      { ...actor, kind: token ? "token" : "user" },
+      target,
+      change,
+      owners,
+    );
     if (!check.ok && check.code !== "conflict") return check;
     // D1 already has the role (a retry): bring the shard's copy along if it lags.
     if (!check.ok) return this.catchUp(targetId, members);
@@ -318,7 +341,9 @@ export class Membership {
     if (!written) return { ok: false, code: "conflict" };
     if (change.kind === "remove") this.tombstone(targetId);
 
-    const by: Actor = { kind: "user", id: actor.id, role: actor.role };
+    const by: Actor = token
+      ? { ...token, role: actor.role }
+      : { kind: "user", id: actor.id, role: actor.role };
     return change.kind === "role"
       ? this.apply(by, "member.changeRole", targetId, {
           id: targetId,
@@ -390,8 +415,9 @@ export class Membership {
       log("member change not applied to the shard", { name, error });
       return { ok: false, code: "not_applied" };
     }
+    // The target's own sockets, and their API tokens' (RFC 0014): a token acts with its creator's role.
     this.options.closeSockets((socketActor) =>
-      socketActor.kind === "user" && socketActor.id === targetId
+      actingFor(socketActor) === targetId
         ? name === "member.remove"
           ? "removed"
           : "role_changed"
@@ -433,11 +459,15 @@ export class Membership {
     }
     const byId = new Map(members.map((member) => [member.id, member]));
     this.options.closeSockets((actor, openedAt) => {
-      if (actor.kind !== "user") return undefined;
-      const member = byId.get(actor.id);
+      const userId = actingFor(actor);
+      if (userId === undefined) return undefined;
+      const member = byId.get(userId);
       if (member === undefined) return "removed";
-      // Opened before the password reset that ended its session: its own close may have failed (RFC 0002 "Auth").
-      if (member.resetAt !== null && openedAt < member.resetAt) return "signed_out";
+      // Opened before the password reset that ended its session: its own close may have failed (RFC 0002 "Auth"). An
+      // API token is no session: a reset leaves it working.
+      if (actor.kind === "user" && member.resetAt !== null && openedAt < member.resetAt) {
+        return "signed_out";
+      }
       return member.role === actor.role ? undefined : "role_changed";
     });
     return outcome;

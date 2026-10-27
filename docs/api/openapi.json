@@ -3,7 +3,7 @@
   "info": {
     "title": "Brigade API",
     "version": "0.1.0",
-    "description": "Brigade's public HTTP API: what an integration may call. Everything else (incidents, monitors,\nschedules, escalation policies, devices) is read and changed over Brigade Sync, the WebSocket `openSync` opens\n(RFC 0004). Routes not listed here are internal and may change without notice.\n\n**Auth.** A Better Auth session: sign in with `POST /api/auth/sign-in/email` (`{ \"email\", \"password\" }`) and send\nthe cookie it sets. Writes that carry a cookie refuse another site's `Origin` (`403 forbidden_origin`); a request\nwithout `Origin` is not refused for it. API tokens do not exist yet (see RFC 0002 \"Public HTTP API\").\n\n**Errors.** Every refusal is JSON, `{ \"error\": \"<code>\" }`, with the codes each operation lists. Any other method on\na listed path answers `405` with `Allow`; an unknown path `404 not_found`.\n\n**Webhooks.** What Brigade sends to the endpoints a workspace registers: a signed `POST` per event, as the Standard\nWebhooks specification has it (`@freecorps/brigade-sdk`'s `verifyWebhook`, or any of its libraries, verifies\nit). Each payload is `version: 1`; fields may be added to it, so ignore the ones you do not know. A change that\nis not purely additive is a new version. See RFC 0005 \"Outbound webhooks\".",
+    "description": "Brigade's public HTTP API: what an integration may call. Everything else (incidents, monitors,\nschedules, escalation policies, devices) is read and changed over Brigade Sync, the WebSocket `openSync` opens\n(RFC 0004). Routes not listed here are internal and may change without notice.\n\n**Auth.** A Better Auth session: sign in with `POST /api/auth/sign-in/email` (`{ \"email\", \"password\" }`) and send\nthe cookie it sets. Writes that carry a cookie refuse another site's `Origin` (`403 forbidden_origin`); a request\nwithout `Origin` is not refused for it. Operations marked with `bearerAuth` also take an API token (RFC 0014): an\nowner or admin mints one in the dashboard for one workspace, with scopes, and sends it as `Authorization: Bearer\nbrg_…`. A token acts with its creator's role as it is now and only within its scopes (`403 forbidden` otherwise);\nevery refused token (wrong, revoked, expired, its creator gone) is the same `401 unauthenticated`; a token's requests\nare limited (`429 rate_limited`, `Retry-After`). A bearer request skips the `Origin` check and ignores any cookie.\n\n**Errors.** Every refusal is JSON, `{ \"error\": \"<code>\" }`, with the codes each operation lists. Any other method on\na listed path answers `405` with `Allow`; an unknown path `404 not_found`.\n\n**Webhooks.** What Brigade sends to the endpoints a workspace registers: a signed `POST` per event, as the Standard\nWebhooks specification has it (`@freecorps/brigade-sdk`'s `verifyWebhook`, or any of its libraries, verifies\nit). Each payload is `version: 1`; fields may be added to it, so ignore the ones you do not know. A change that\nis not purely additive is a new version. See RFC 0005 \"Outbound webhooks\".",
     "license": {
       "name": "AGPL-3.0-only",
       "identifier": "AGPL-3.0-only"
@@ -479,10 +479,13 @@
           "Members"
         ],
         "summary": "Change a member's role",
-        "description": "Owners and admins, by the rules of RFC 0003 \"Members\". `409 conflict`: the members changed meanwhile, reload and retry. `503 not_applied`: the change is made and the workspace is catching up; sending it again finishes it sooner.",
+        "description": "Owners and admins, by the rules of RFC 0003 \"Members\". `409 conflict`: the members changed meanwhile, reload and retry. `503 not_applied`: the change is made and the workspace is catching up; sending it again finishes it sooner. With an API token: the `members:manage` scope.",
         "security": [
           {
             "session": []
+          },
+          {
+            "bearerAuth": []
           }
         ],
         "parameters": [
@@ -565,7 +568,7 @@
             }
           },
           "401": {
-            "description": "No session.",
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
             "content": {
               "application/json": {
                 "schema": {
@@ -586,7 +589,7 @@
             }
           },
           "403": {
-            "description": "Refused: another site's `Origin`, not a member, or not allowed.",
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
             "content": {
               "application/json": {
                 "schema": {
@@ -641,6 +644,27 @@
                       "enum": [
                         "last_owner",
                         "conflict"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
                       ]
                     }
                   },
@@ -702,10 +726,13 @@
           "Members"
         ],
         "summary": "Remove a member, or leave",
-        "description": "Removes the member and their devices; with your own user id, leaves the workspace. `409 last_owner`: a workspace keeps at least one owner.",
+        "description": "Removes the member and their devices; with your own user id, leaves the workspace. `409 last_owner`: a workspace keeps at least one owner. With an API token: the `members:manage` scope.",
         "security": [
           {
             "session": []
+          },
+          {
+            "bearerAuth": []
           }
         ],
         "parameters": [
@@ -763,7 +790,7 @@
             }
           },
           "401": {
-            "description": "No session.",
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
             "content": {
               "application/json": {
                 "schema": {
@@ -784,7 +811,7 @@
             }
           },
           "403": {
-            "description": "Refused: another site's `Origin`, not a member, or not allowed.",
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
             "content": {
               "application/json": {
                 "schema": {
@@ -839,6 +866,27 @@
                       "enum": [
                         "last_owner",
                         "conflict"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
                       ]
                     }
                   },
@@ -902,10 +950,13 @@
           "Invitations"
         ],
         "summary": "List pending invitations",
-        "description": "Owners and admins. Newest first, those that ran out included (resending brings one back).",
+        "description": "Owners and admins. Newest first, those that ran out included (resending brings one back). With an API token: the `members:manage` scope.",
         "security": [
           {
             "session": []
+          },
+          {
+            "bearerAuth": []
           }
         ],
         "parameters": [
@@ -964,7 +1015,7 @@
             }
           },
           "401": {
-            "description": "No session.",
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
             "content": {
               "application/json": {
                 "schema": {
@@ -985,7 +1036,7 @@
             }
           },
           "403": {
-            "description": "Refused: another site's `Origin`, not a member, or not allowed.",
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
             "content": {
               "application/json": {
                 "schema": {
@@ -997,6 +1048,27 @@
                         "forbidden_origin",
                         "not_a_member",
                         "forbidden"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
                       ]
                     }
                   },
@@ -1036,10 +1108,13 @@
           "Invitations"
         ],
         "summary": "Invite someone by email",
-        "description": "Owners and admins, with a verified address; an admin cannot invite an owner. Brigade emails the invitation. Limited per workspace, inviter and address (`429`, or `409 send_limit` past the workspace's daily cap).",
+        "description": "Owners and admins, with a verified address; an admin cannot invite an owner. Brigade emails the invitation. Limited per workspace, inviter and address (`429`, or `409 send_limit` past the workspace's daily cap). With an API token: the `members:manage` scope.",
         "security": [
           {
             "session": []
+          },
+          {
+            "bearerAuth": []
           }
         ],
         "parameters": [
@@ -1130,7 +1205,7 @@
             }
           },
           "401": {
-            "description": "No session.",
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1151,7 +1226,7 @@
             }
           },
           "403": {
-            "description": "Refused: another site's `Origin`, not a member, or not allowed.",
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1245,7 +1320,7 @@
             }
           },
           "429": {
-            "description": "Too many requests.",
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1321,10 +1396,13 @@
           "Invitations"
         ],
         "summary": "Revoke a pending invitation",
-        "description": "Owners and admins; an admin cannot touch an invitation to be an owner.",
+        "description": "Owners and admins; an admin cannot touch an invitation to be an owner. With an API token: the `members:manage` scope.",
         "security": [
           {
             "session": []
+          },
+          {
+            "bearerAuth": []
           }
         ],
         "parameters": [
@@ -1382,7 +1460,7 @@
             }
           },
           "401": {
-            "description": "No session.",
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1403,7 +1481,7 @@
             }
           },
           "403": {
-            "description": "Refused: another site's `Origin`, not a member, or not allowed.",
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1497,7 +1575,7 @@
             }
           },
           "429": {
-            "description": "Too many requests.",
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1573,10 +1651,13 @@
           "Invitations"
         ],
         "summary": "Send an invitation again, with a new expiry",
-        "description": "At most once every five minutes per invitation, within the workspace's daily cap.",
+        "description": "At most once every five minutes per invitation, within the workspace's daily cap. With an API token: the `members:manage` scope.",
         "security": [
           {
             "session": []
+          },
+          {
+            "bearerAuth": []
           }
         ],
         "parameters": [
@@ -1634,7 +1715,7 @@
             }
           },
           "401": {
-            "description": "No session.",
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1655,7 +1736,7 @@
             }
           },
           "403": {
-            "description": "Refused: another site's `Origin`, not a member, or not allowed.",
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1749,7 +1830,7 @@
             }
           },
           "429": {
-            "description": "Too many requests.",
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2419,10 +2500,13 @@
           "Incidents"
         ],
         "summary": "Acknowledge an incident",
-        "description": "As the signed-in member (responders and up), with the same rules and event as acknowledging in the app. The same `Idempotency-Key` again answers what the first request did. `409 conflict`: already acknowledged; `409 invalid_transition`: no longer active.",
+        "description": "As the signed-in member (responders and up), with the same rules and event as acknowledging in the app. The same `Idempotency-Key` again answers what the first request did. `409 conflict`: already acknowledged; `409 invalid_transition`: no longer active. With an API token: the `incident:ack` scope.",
         "security": [
           {
             "session": []
+          },
+          {
+            "bearerAuth": []
           }
         ],
         "parameters": [
@@ -2491,7 +2575,7 @@
             }
           },
           "401": {
-            "description": "No session.",
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2512,7 +2596,7 @@
             }
           },
           "403": {
-            "description": "Refused: another site's `Origin`, not a member, or not allowed.",
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2577,6 +2661,27 @@
               }
             }
           },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
           "500": {
             "description": "Failed. Not retried by itself.",
             "content": {
@@ -2629,10 +2734,13 @@
           "Sync"
         ],
         "summary": "Open a Brigade Sync WebSocket",
-        "description": "Incidents, monitors, schedules and the rest are read and changed over Brigade Sync (RFC 0004), not REST: this upgrade opens it, as the signed-in member. The frames are not modeled here; see `@freecorps/brigade-sync/protocol`.",
+        "description": "Incidents, monitors, schedules and the rest are read and changed over Brigade Sync (RFC 0004), not REST: this upgrade opens it, as the signed-in member. The frames are not modeled here; see `@freecorps/brigade-sync/protocol`. With an API token, each query and mutation needs its permission among the token's scopes.",
         "security": [
           {
             "session": []
+          },
+          {
+            "bearerAuth": []
           }
         ],
         "parameters": [
@@ -2673,7 +2781,7 @@
             }
           },
           "401": {
-            "description": "No session.",
+            "description": "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2694,7 +2802,7 @@
             }
           },
           "403": {
-            "description": "Refused: another site's `Origin`, not a member, or not allowed.",
+            "description": "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2726,6 +2834,27 @@
                       "type": "string",
                       "enum": [
                         "upgrade_required"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "rate_limited"
                       ]
                     }
                   },
@@ -2854,7 +2983,8 @@
                             "enum": [
                               "user",
                               "system",
-                              "integration"
+                              "integration",
+                              "token"
                             ]
                           },
                           {
@@ -3068,7 +3198,8 @@
                             "enum": [
                               "user",
                               "system",
-                              "integration"
+                              "integration",
+                              "token"
                             ]
                           },
                           {
@@ -3324,7 +3455,8 @@
                             "enum": [
                               "user",
                               "system",
-                              "integration"
+                              "integration",
+                              "token"
                             ]
                           },
                           {
@@ -3576,7 +3708,8 @@
                             "enum": [
                               "user",
                               "system",
-                              "integration"
+                              "integration",
+                              "token"
                             ]
                           },
                           {
@@ -3796,7 +3929,8 @@
                             "enum": [
                               "user",
                               "system",
-                              "integration"
+                              "integration",
+                              "token"
                             ]
                           },
                           {
@@ -4016,7 +4150,8 @@
                             "enum": [
                               "user",
                               "system",
-                              "integration"
+                              "integration",
+                              "token"
                             ]
                           },
                           {
@@ -4274,7 +4409,8 @@
                             "enum": [
                               "user",
                               "system",
-                              "integration"
+                              "integration",
+                              "token"
                             ]
                           },
                           {
@@ -4484,7 +4620,8 @@
                             "enum": [
                               "user",
                               "system",
-                              "integration"
+                              "integration",
+                              "token"
                             ]
                           },
                           {
@@ -4707,7 +4844,8 @@
                             "enum": [
                               "user",
                               "system",
-                              "integration"
+                              "integration",
+                              "token"
                             ]
                           },
                           {
@@ -4945,7 +5083,8 @@
                             "enum": [
                               "user",
                               "system",
-                              "integration"
+                              "integration",
+                              "token"
                             ]
                           },
                           {
@@ -5211,7 +5350,8 @@
                             "enum": [
                               "user",
                               "system",
-                              "integration"
+                              "integration",
+                              "token"
                             ]
                           },
                           {
@@ -5276,6 +5416,12 @@
         "in": "cookie",
         "name": "__Secure-better-auth.session_token",
         "description": "Better Auth's session cookie (without the `__Secure-` prefix over plain HTTP, as in local development)."
+      },
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "brg_ and 43 base64url characters",
+        "description": "An API token for one workspace (RFC 0014), shown once when an owner or admin mints it. Each operation names the scope it needs."
       }
     },
     "schemas": {

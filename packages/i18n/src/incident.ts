@@ -6,6 +6,7 @@ import {
   formatIncidentNumber,
   ALERTS_ACTOR,
   MONITOR_ACTOR,
+  type ApiTokenRow,
   type IncidentRole,
   type IncidentStatus,
   type MemberRow,
@@ -43,10 +44,23 @@ export function entryTime(at: number, now: number, locale: Locale, timeZone: str
 }
 
 /** Names for ids, from the shard's member list; `self` is the signed-in member. */
-export type People = { self: string; members: ReadonlyMap<string, MemberRow> };
+/** `tokens`: the workspace's API tokens (RFC 0014), so what one did reads "API token CI (by Ana)". */
+export type People = {
+  self: string;
+  members: ReadonlyMap<string, MemberRow>;
+  tokens?: ReadonlyMap<string, Pick<ApiTokenRow, "name" | "createdBy">>;
+};
 
-export function people(self: string, members: readonly MemberRow[]): People {
-  return { self, members: new Map(members.map((member) => [member.id, member])) };
+export function people(
+  self: string,
+  members: readonly MemberRow[],
+  tokens: readonly Pick<ApiTokenRow, "id" | "name" | "createdBy">[] = [],
+): People {
+  return {
+    self,
+    members: new Map(members.map((member) => [member.id, member])),
+    tokens: new Map(tokens.map((token) => [token.id, token])),
+  };
 }
 
 /**
@@ -62,6 +76,11 @@ export function personName(
   if (id === who.self) return m.incident_page({ part: place === "subject" ? "you" : "you_object" });
   if (id === MONITOR_ACTOR.id) return m.incident_page({ part: "monitors" });
   if (id === ALERTS_ACTOR.id) return m.incident_page({ part: "alerts" });
+  if (id.startsWith("tok_")) {
+    const token = who.tokens?.get(id);
+    if (!token) return m.incident_page({ part: "api_token" });
+    return m.api_token_actor({ name: token.name, by: personName(token.createdBy, who, "object") });
+  }
   const member = who.members.get(id);
   if (!member) return m.incident_page({ part: "teammate" });
   return member.name ?? m.incident_page({ part: "unnamed" });

@@ -3,7 +3,13 @@
 // sides of a failure (D1 failing, the shard failing after D1 committed) with their repair.
 import { env, exports } from "cloudflare:workers";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { MAX_RECONCILED_MEMBERS, newId, type Actor, type Role } from "@freecorps/brigade-schema";
+import {
+  MAX_RECONCILED_MEMBERS,
+  newId,
+  type Actor,
+  type MemberChange,
+  type Role,
+} from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, describe, expect, test } from "vite-plus/test";
 import { ACTOR_HEADER, MEMBER_NAME_HEADER } from "../src/actor.ts";
@@ -1117,5 +1123,102 @@ describe("edits made outside Brigade", () => {
     });
     await t.stub.reconcileMembers();
     expect(await closed).toBe(1012);
+  });
+});
+
+describe("through an API token (RFC 0014)", () => {
+  /** Ana's token holding only `members:manage`, as the Worker resolves it. */
+  const token = (t: Team): Actor => ({
+    kind: "token",
+    id: newId("tok", Date.now(), random),
+    role: "owner",
+    by: t.ana.id,
+    scopes: ["members:manage"],
+  });
+
+  test("a members-only token removes a member: their devices go and they are no longer paged", async () => {
+    const t = await team();
+    const caio = await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    const by = token(t);
+    const result = await runInDurableObject(t.stub, (_instance: WorkspaceDO, state) =>
+      membership(t, state).change(t.id, t.ana.id, t.caio.id, { kind: "remove" }, by),
+    );
+    expect(result).toEqual({ ok: true });
+    expect(await roleIn(t.id, t.caio.id)).toBeNull();
+    expect(await paged(t)).toEqual([]);
+    expect(await events(t, "member.removed")).toMatchObject([
+      { actor: { kind: "token", id: by.id }, data: { userId: t.caio.id, reason: "removed" } },
+    ]);
+    // The test's Membership closes no sockets; the reconcile does, as the shard's own would.
+    await t.stub.reconcileMembers();
+    expect(await caio.closed).toBe(1008);
+  });
+
+  test("a members-only token changes a role in D1 and the shard", async () => {
+    const t = await team();
+    await connect(t, t.duda);
+    const by = token(t);
+    const result = await runInDurableObject(t.stub, (_instance: WorkspaceDO, state) =>
+      membership(t, state).change(
+        t.id,
+        t.ana.id,
+        t.duda.id,
+        { kind: "role", role: "responder" },
+        by,
+      ),
+    );
+    expect(result).toEqual({ ok: true });
+    expect(await roleIn(t.id, t.duda.id)).toBe("responder");
+    expect(await t.withShard((shard) => shard.store.get("members", t.duda.id)?.role)).toBe(
+      "responder",
+    );
+    expect(await events(t, "member.role_changed")).toMatchObject([
+      { actor: { kind: "token", id: by.id }, data: { from: "viewer", to: "responder" } },
+    ]);
+  });
+
+  test("a token's removal whose shard step fails is repaired by the alarm, so the member stops being paged", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    const result = await runInDurableObject(t.stub, (_instance: WorkspaceDO, state) =>
+      membership(t, state, { shardFails: true }).change(
+        t.id,
+        t.ana.id,
+        t.caio.id,
+        { kind: "remove" },
+        token(t),
+      ),
+    );
+    expect(result).toEqual({ ok: false, code: "not_applied" });
+    expect(await roleIn(t.id, t.caio.id)).toBeNull();
+    expect(await paged(t)).toEqual([t.caio.id]);
+    expect(await t.withShard((_shard, state) => state.storage.getAlarm())).not.toBeNull();
+
+    await repairNow(t);
+    expect(await paged(t)).toEqual([]);
+    expect(await events(t, "member.removed")).toMatchObject([
+      { actor: { id: "sys_members" }, data: { userId: t.caio.id, reason: "reconciled" } },
+    ]);
+  });
+
+  test("a token never touches an owner or admin, nor makes one, whatever its creator's role", async () => {
+    const t = await team();
+    const by = token(t);
+    const changes: [Person, MemberChange][] = [
+      [t.bia, { kind: "role", role: "responder" }],
+      [t.bia, { kind: "remove" }],
+      [t.caio, { kind: "role", role: "admin" }],
+      [t.caio, { kind: "role", role: "owner" }],
+    ];
+    for (const [target, change] of changes) {
+      const result = await runInDurableObject(t.stub, (_instance: WorkspaceDO, state) =>
+        membership(t, state).change(t.id, t.ana.id, target.id, change, by),
+      );
+      expect(result).toEqual({ ok: false, code: "forbidden" });
+    }
+    expect(await roleIn(t.id, t.bia.id)).toBe("admin");
+    expect(await roleIn(t.id, t.caio.id)).toBe("responder");
   });
 });

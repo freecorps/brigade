@@ -953,6 +953,47 @@ describe("replaying a delivery", () => {
     expect(hook.received).toHaveLength(1);
   }, 30_000);
 
+  test("never sends a removed update's text again: refused once removed, dropped if removed after the replay was asked", async () => {
+    const t = await team();
+    const { id } = await endpoint(t, ["incident.update_posted", "incident.update_edited"]);
+    const declared = await declare(t, owner(t));
+    const incidentId = declared.subject!;
+    await t.run("incident.postUpdate", { id: incidentId, body: "Secret text" }, owner(t));
+    const [posted] = await eventsOf(t, "incident.update_posted");
+    const entryId = String(Reflect.get(Object(posted!.data), "entryId"));
+    await t.run("incident.editUpdate", { id: incidentId, entryId, body: "Fixed" }, owner(t));
+    const [edited] = await eventsOf(t, "incident.update_edited");
+    const hook = receiver();
+    await deliver([posted!, edited!], hook.send);
+    expect(hook.received).toHaveLength(2);
+    expect((await row(t, id)).recent.map((one) => one.entryId)).toEqual([entryId, entryId]);
+
+    // Asked for while the update stands, then removed before the replay is delivered: nothing is sent.
+    const start = Date.now();
+    expect(
+      await attempt(t, "webhook.replay", { id, eventId: posted!.id }, owner(t), start),
+    ).toMatchObject({ ok: true });
+    const [replay] = await eventsOf(t, "webhook.replay");
+    await t.run("incident.deleteUpdate", { id: incidentId, entryId }, owner(t));
+    expect(await deliver([replay!], hook.send)).toMatchObject({ retryMessages: [] });
+    expect(hook.received).toHaveLength(2);
+    expect((await row(t, id)).recent[0]).toMatchObject({
+      eventId: posted!.id,
+      ok: false,
+      error: "removed",
+      replay: true,
+    });
+    expect((await row(t, id)).failures).toBe(0);
+
+    // Once removed, the replay itself is refused, for the post and for the edit.
+    for (const [n, event] of [posted!, edited!].entries()) {
+      const later = start + (n + 1) * WEBHOOK_REPLAY_EVERY_MS;
+      expect(
+        await attempt(t, "webhook.replay", { id, eventId: event.id }, owner(t), later),
+      ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    }
+  }, 30_000);
+
   test("a failed replay is one attempt, never retried by itself; one the consumer put off comes back", async () => {
     const t = await team();
     const { id, event } = await givenUp(t);

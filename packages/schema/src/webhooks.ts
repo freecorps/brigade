@@ -107,7 +107,7 @@ export function isWebhookEventType(type: unknown): type is WebhookEventType {
  * Why a delivery attempt failed: `timeout` (no answer in time), `network` (no connection), `status` (an answer other
  * than 2xx), `redirect` (a 3xx: never followed), `blocked` (the URL breaks the target rules now), `secret` (the
  * signing secret could not be opened: `WEBHOOK_SECRET_KEY` changed), `expired` (a replay whose payload the shard no
- * longer keeps: nothing was sent).
+ * longer keeps: nothing was sent), `removed` (a replay of an update removed since: nothing was sent).
  */
 export const WEBHOOK_ERRORS = [
   "timeout",
@@ -117,6 +117,7 @@ export const WEBHOOK_ERRORS = [
   "blocked",
   "secret",
   "expired",
+  "removed",
 ] as const;
 export type WebhookError = (typeof WEBHOOK_ERRORS)[number];
 
@@ -636,7 +637,8 @@ const replaySlot = (index: number) => `webhook_replay.${index}`;
  * "Replay" a delivery from the endpoint's log: a `webhook.replay` event through the outbox, which the consumer delivers
  * to this endpoint once, with the event's kept body and its own id as `webhook-id` (so a receiver that has it already
  * de-duplicates), signed afresh. Any event in the log (`recent`), given up or not, while its payload is kept
- * (`webhookReplayableUntil`). Only an endpoint that is on: turn it back on first. At most one replay per endpoint per
+ * (`webhookReplayableUntil`), and not one about a written update removed since. Only an endpoint that is on: turn it
+ * back on first. At most one replay per endpoint per
  * `WEBHOOK_REPLAY_EVERY_MS`, `WEBHOOK_REPLAYS_PER_HOUR` an hour per endpoint and `WEBHOOK_WORKSPACE_REPLAYS_PER_HOUR` an
  * hour across the workspace (counted on the server, in `counters`, so deleting an endpoint does not reset it).
  */
@@ -654,6 +656,12 @@ export const replayWebhook = defineMutation({
     if (logged.length === 0) return fail("not_found", "That delivery is not in the endpoint's log");
     if (ctx.now > webhookReplayableUntil(args.eventId)) {
       return fail("not_found", "That delivery's payload is no longer kept");
+    }
+    // An update removed since is never sent again with its text (RFC 0003 "Editing and removing an update").
+    const entryId = logged.find((attempt) => attempt.entryId)?.entryId;
+    const entry = entryId ? store.get("timeline", entryId) : undefined;
+    if (entry?.kind === "update" && entry.removed) {
+      return fail("conflict", "That update was removed: its text is not sent again");
     }
     const replays = (current.replays ?? []).filter((at) => ctx.now - at < WEBHOOK_REPLAY_WINDOW_MS);
     const last = replays.length ? Math.max(...replays) : null;
@@ -717,6 +725,7 @@ export const sendWebhookTest = defineMutation({
 const attemptArgs = v.object({
   eventId: v.id("evt"),
   type: v.string({ min: 1, max: 64 }),
+  entryId: v.omittable(v.string({ min: 1, max: 64 })),
   attempt: v.integer({ min: 1, max: 100 }),
   at: v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }),
   ok: v.boolean(),
@@ -750,8 +759,9 @@ export const recordWebhookAttempt = defineMutation({
       store.update("webhooks", args.id, { recent, failures: 0, failingSince: null });
       return ok();
     }
-    // A replay whose payload was gone never reached the receiver: shown in the log, not counted against it.
-    if (args.attempt.error === "expired") {
+    // A replay whose payload was gone, or whose update was removed, never reached the receiver: shown in the log, not
+    // counted against it.
+    if (args.attempt.error === "expired" || args.attempt.error === "removed") {
       store.update("webhooks", args.id, { recent });
       return ok();
     }

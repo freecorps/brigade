@@ -1322,8 +1322,12 @@ export class SlackDesk {
           .exec("select entry_id from slack_inbound where entry_id = ?", String(data.entryId))
           .toArray();
         // Posted from a Slack message: it is in the channel already.
-        if (inbound || typeof data.body !== "string") return null;
-        return { kind: "update", by, body: data.body };
+        if (inbound) return null;
+        // The entry as it reads when the post is sent, not the event's copy: one removed while the post waited (or
+        // before it was planned) is never posted, one edited is posted with its text now (RFC 0003 "Update").
+        const now = this.options.shard.store.get("timeline", String(data.entryId));
+        if (!now || now.kind !== "update" || now.removed) return null;
+        return { kind: "update", by, body: now.body };
       }
       case "incident.role_assigned": {
         const id = typeof data.roleId === "string" ? data.roleId : String(data.role);

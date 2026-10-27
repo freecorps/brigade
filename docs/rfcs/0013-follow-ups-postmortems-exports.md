@@ -188,7 +188,8 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
 - **Who and what.** Owners and admins (`data:export`, a new permission) export one incident from its page, or the
   incidents declared in a range of UTC days (both ends included, up to 366 days, at most 500 incidents, at most
   25 MiB; more is refused, 413, to be split). The file (`buildExport`, format `brigade.export` version 1) holds, per
-  incident, the incident row (without its escalation run's internals), its whole timeline, its written updates (the text as it reads now, with `edited`, or `removed` and no text), what
+  incident, the incident row (without its escalation run's internals), its whole timeline, its written updates (the text as it reads now, with `edited`, or `removed` and no text; an edited, not removed,
+  update's timeline entry keeps `edited.previous`, the text its last edit replaced), what
   the status page published, its follow-ups and its postmortem (its `sections` in the postmortem's own order, and
   `layout`, the keys with their titles, null for a built-in under its own name), plus the workspace's name and the members' ids and
   names, so the ids in it read. **Never** an email address, a device, a token or a delivery receipt.

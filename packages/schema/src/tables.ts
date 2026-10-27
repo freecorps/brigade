@@ -906,6 +906,8 @@ export type WebhookAttempt = {
   /** The event delivered, also the `webhook-id` header. */
   eventId: string;
   type: string;
+  /** The written update an `incident.update_posted` or `_edited` is about, so a replay of one removed since is refused. */
+  entryId?: string;
   /** 1 for the first try of this event at this endpoint. */
   attempt: number;
   at: number;

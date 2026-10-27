@@ -66,16 +66,34 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   `incident.update_edited` and `incident.update_deleted`). Only its **author** edits an update (the member, or an API
   token that posted it or acts for the member who did): an owner or admin rewriting someone's words would put words in
   their name, so they cannot. The author, an **owner** or an **admin** removes one (a pasted secret, a wrong channel),
-  anyone's. Both change the entry in place, so it keeps its number, time and author and the timeline's order never
+  anyone's. Like posting, both are allowed in **any incident status**, a resolved incident included. Both change the
+  entry in place, so it keeps its number, time and author and the timeline's order never
   changes, and never silently: an edited entry keeps its last edit (`edited`: when, by whom, how many edits, and the
   text it replaced as `previous`) and reads "edited" with the time; `incident.update_edited` carries both texts, so
-  webhooks and the event log keep every version. A removed entry becomes a tombstone (`removed`: when and by whom; the
+  webhook receivers get every version. A removed entry becomes a tombstone (`removed`: when and by whom; the
   text and `previous` emptied) that reads "<author> posted an update, removed by <who>"; `incident.update_deleted`
   names the entry and its author, never the text. A removed update can be neither edited nor removed again
   (`conflict`), nor can an edit that changes nothing; another kind of entry is `not_found`. Editing never touches the
   status page, whose published text is a separate copy corrected on its own (RFC 0012 "Corrections"). Exports carry
-  the current text with `edited` or `removed`, and the AI postmortem draft reads the current text, leaving removed
-  updates out (RFC 0013). A mirrored update's Slack message follows (RFC 0011 "Timeline mirror").
+  the current text with `edited` or `removed` (and an edited one's `edited.previous` in the timeline), and the AI
+  postmortem draft reads the current text, leaving removed updates out (RFC 0013). A mirrored update's Slack message
+  follows (RFC 0011 "Timeline mirror"); a post still waiting (to be planned, or to retry) reads the entry when it is
+  sent, so a removed update is never posted and an edited one is posted as it reads then.
+- **Where a removed update's text still exists.** Removing empties the entry in the shard; it does not recall
+  copies made before it. The text (and an edit's `previous`) still exists, until:
+  - **The webhook ledger** (`webhook_events.body`, the payload of `incident.update_posted`/`_edited` kept for
+    retries and replays): 15 days after the event (`LEDGER_RETENTION_MS`). A replay (`webhook.replay`) of such a
+    delivery is refused once the update is removed (`conflict`), and one asked for before the removal is dropped
+    when it is delivered (logged as `removed`); the payload can be replayed for 14 days at most anyway
+    (`WEBHOOK_REPLAY_MAX_AGE_MS`).
+  - **Webhook receivers** that already got `incident.update_posted` or `incident.update_edited`: theirs to delete;
+    `incident.update_deleted` tells them to.
+  - **The outbox and the Queue**: an event not yet drained or consumed carries the text until it is (RFC 0005).
+  - **Exports already written to R2**: until they expire (7 days, RFC 0013 "Exports").
+  - **AI postmortem drafts already saved** that quoted it: in the postmortem until someone edits it out.
+  - **Slack**: the mirrored message is deleted best effort (RFC 0011 "Timeline mirror"): a failed delete, a message
+    copied or quoted elsewhere, an update written in Slack (the person's own message) and Slack's own retention are
+    out of Brigade's reach.
 - **Roles** (`incident.assignRole`, `incident:update`, event `incident.role_assigned`): the built-ins `commander`,
   `communications` and `operations` plus the workspace's own ("Role definitions" below), at most one member each,
   stored on the incident by role id (`roles`). `userId: null` unassigns. The assignee must be in the shard's member

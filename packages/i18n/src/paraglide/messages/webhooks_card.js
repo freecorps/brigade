@@ -111,6 +111,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "headers_dropped" | "Saving with an address on another host removes this endpoint's custom headers. Enter them again afterwards." |
 * | "replay_off" | "Turn this endpoint on to replay a delivery." |
 * | "replay_gone" | "Brigade no longer keeps this delivery, so it can't be replayed." |
+* | "replay_removed" | "This update was removed, so its text isn't sent again." |
 * | "replay_failed" | "Couldn't replay it. Try again." |
 * | "replayed" | "Replay" |
 * | * | "Webhooks" |
@@ -223,6 +224,7 @@ export const webhooks_card = /** @type {((inputs: Webhooks_CardInputs, options?:
 		if (i?.part === "headers_dropped") return /** @type {LocalizedString} */ (`Salvar com um endereço em outro host remove os cabeçalhos personalizados deste endpoint. Informe-os de novo depois.`);
 		if (i?.part === "replay_off") return /** @type {LocalizedString} */ (`Ligue este endpoint para reenviar uma entrega.`);
 		if (i?.part === "replay_gone") return /** @type {LocalizedString} */ (`O Brigade não guarda mais esta entrega, então ela não pode ser reenviada.`);
+		if (i?.part === "replay_removed") return /** @type {LocalizedString} */ (`Esta atualização foi removida, então o texto dela não é enviado de novo.`);
 		if (i?.part === "replay_failed") return /** @type {LocalizedString} */ (`Não foi possível reenviar. Tente de novo.`);
 		if (i?.part === "replayed") return /** @type {LocalizedString} */ (`Reenvio`);
 		return /** @type {LocalizedString} */ (`Webhooks`)
@@ -329,6 +331,7 @@ export const webhooks_card = /** @type {((inputs: Webhooks_CardInputs, options?:
 		if (i?.part === "headers_dropped") return /** @type {LocalizedString} */ (`Saving with an address on another host removes this endpoint's custom headers. Enter them again afterwards.`);
 		if (i?.part === "replay_off") return /** @type {LocalizedString} */ (`Turn this endpoint on to replay a delivery.`);
 		if (i?.part === "replay_gone") return /** @type {LocalizedString} */ (`Brigade no longer keeps this delivery, so it can't be replayed.`);
+		if (i?.part === "replay_removed") return /** @type {LocalizedString} */ (`This update was removed, so its text isn't sent again.`);
 		if (i?.part === "replay_failed") return /** @type {LocalizedString} */ (`Couldn't replay it. Try again.`);
 		if (i?.part === "replayed") return /** @type {LocalizedString} */ (`Replay`);
 		return /** @type {LocalizedString} */ (`Webhooks`)

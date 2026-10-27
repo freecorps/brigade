@@ -722,7 +722,10 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   logged and not retried by itself (replay it again). Refused for an endpoint that is off (`invalid_transition`:
   decided, turn it back on first, since an endpoint is off because its receiver is broken or unwanted) or deleted
   (`not_found`); one turned off after it was asked is dropped. A payload the shard no longer has when the consumer
-  plans it is a failed attempt in the log (`expired`, not counted towards auto-disable), never a silent drop. At most
+  plans it is a failed attempt in the log (`expired`, not counted towards auto-disable), never a silent drop. A
+  delivery of `incident.update_posted` or `incident.update_edited` whose update was removed since is refused
+  (`conflict`; the log keeps the attempt's `entryId` for that), and one removed after the replay was asked is a failed
+  attempt (`removed`, not counted either): a removed update's text is never sent again (RFC 0003). At most
   one replay per endpoint per 10 s (`WEBHOOK_REPLAY_EVERY_MS`), 10 an hour per endpoint (`WEBHOOK_REPLAYS_PER_HOUR`)
   and 30 an hour across the workspace (`WEBHOOK_WORKSPACE_REPLAYS_PER_HOUR`, counted in server-only counters, so
   deleting an endpoint gives none back; `limit_reached`), so replays add at most 30 requests an hour to a receiver,

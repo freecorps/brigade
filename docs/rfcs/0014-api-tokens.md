@@ -66,7 +66,8 @@ copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving
   removes its own creator, see "Members" below), listing, sending, revoking and resending invitations (`members:manage`; sending also
   needs the creator's address verified, and the invitation is from the creator), acknowledging an incident
   (`incident:ack`), incidents (`incident:read` to list and read them, `incident:declare` to declare,
-  `incident:update` to change their type, services, fields, severity and status and to post updates), the catalog
+  `incident:update` to change their type, services, fields, severity and status and to post updates, and to edit or remove them, over the sync WebSocket only: no REST route
+  for that yet, RFC 0003 "Editing and removing an update"), the catalog
   (`catalog:read` to list and read services, incident types and custom fields, `catalog:manage` to make, change and
   remove them; RFC 0002 "Public HTTP API"), the dashboard's own routes that need the server (outbound webhooks:
   creating one, rotating its secret and setting its custom headers, `webhook:manage`; the status page's settings,

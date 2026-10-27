@@ -2563,6 +2563,7 @@
         "part=headers_dropped": "Salvar com um endereço em outro host remove os cabeçalhos personalizados deste endpoint. Informe-os de novo depois.",
         "part=replay_off": "Ligue este endpoint para reenviar uma entrega.",
         "part=replay_gone": "O Brigade não guarda mais esta entrega, então ela não pode ser reenviada.",
+        "part=replay_removed": "Esta atualização foi removida, então o texto dela não é enviado de novo.",
         "part=replay_failed": "Não foi possível reenviar. Tente de novo.",
         "part=replayed": "Reenvio",
         "part=*": "Webhooks"
@@ -2603,6 +2604,7 @@
         "error=blocked": "Bloqueado: não é uma URL https pública",
         "error=secret": "Segredo ilegível no servidor",
         "error=expired": "Não enviado: conteúdo não é mais guardado",
+        "error=removed": "Não enviado: a atualização foi removida",
         "error=*": "Tempo esgotado"
       }
     }

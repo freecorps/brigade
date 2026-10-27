@@ -110,6 +110,7 @@ export type Webhooks_CardInputs = {
 * | "headers_dropped" | "Saving with an address on another host removes this endpoint's custom headers. Enter them again afterwards." |
 * | "replay_off" | "Turn this endpoint on to replay a delivery." |
 * | "replay_gone" | "Brigade no longer keeps this delivery, so it can't be replayed." |
+* | "replay_removed" | "This update was removed, so its text isn't sent again." |
 * | "replay_failed" | "Couldn't replay it. Try again." |
 * | "replayed" | "Replay" |
 * | * | "Webhooks" |

@@ -272,7 +272,7 @@ export function dropsHeaders(draft: Pick<WebhookDraft, "url">, row: WebhookRow):
   );
 }
 
-export type ReplayOutcome = "sent" | "too_soon" | "off" | "gone" | "failed";
+export type ReplayOutcome = "sent" | "too_soon" | "off" | "gone" | "removed" | "failed";
 
 /** What a refused `webhook.replay` means on the card. */
 export function replayOutcome(code: string | undefined): ReplayOutcome {
@@ -280,6 +280,8 @@ export function replayOutcome(code: string | undefined): ReplayOutcome {
   if (code === "limit_reached") return "too_soon";
   if (code === "invalid_transition") return "off";
   if (code === "not_found") return "gone";
+  // An update removed since: its text is not sent again.
+  if (code === "conflict") return "removed";
   return "failed";
 }
 

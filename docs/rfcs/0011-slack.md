@@ -334,7 +334,9 @@ job). The shard keeps which message mirrored each written update (`slack_mirrore
 its author edits it (RFC 0003 "Editing and removing an update") the message is rewritten with `chat.update` (Slack
 marks it "edited") and when it is removed the message is deleted with `chat.delete`. Best effort and never blocking:
 a message, or channel, already gone or archived counts as done, other failures are retried like any job and then only
-logged, never a `slack_failed` entry. An update that came from a Slack message follows the same rules in Brigade (only
+logged, never a `slack_failed` entry. The update's own post reads the entry when it is sent, not the event's copy:
+one removed while it waited (to be planned, or to retry) is never posted, one edited is posted as it reads then. An
+update that came from a Slack message follows the same rules in Brigade (only
 its author edits it, the author, owners and admins remove it), but its Slack message is the person's own, which the
 bot cannot change: it is left as is. Editing a message in Slack does not edit the update. The kept messages go with
 their incident's other Slack rows once it has been closed for the ledger's retention.

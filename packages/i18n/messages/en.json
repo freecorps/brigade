@@ -2563,6 +2563,7 @@
         "part=headers_dropped": "Saving with an address on another host removes this endpoint's custom headers. Enter them again afterwards.",
         "part=replay_off": "Turn this endpoint on to replay a delivery.",
         "part=replay_gone": "Brigade no longer keeps this delivery, so it can't be replayed.",
+        "part=replay_removed": "This update was removed, so its text isn't sent again.",
         "part=replay_failed": "Couldn't replay it. Try again.",
         "part=replayed": "Replay",
         "part=*": "Webhooks"
@@ -2603,6 +2604,7 @@
         "error=blocked": "Blocked: not a public https URL",
         "error=secret": "Secret unreadable on the server",
         "error=expired": "Not sent: payload no longer kept",
+        "error=removed": "Not sent: the update was removed",
         "error=*": "Timed out"
       }
     }

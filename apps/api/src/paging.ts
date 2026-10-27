@@ -18,9 +18,12 @@ import {
   type EscalationPaged,
   type DevicePlatform,
   incidentPolicy,
+  type IncidentPagedAgain,
   type IncidentRow,
   type IncidentSeverityChanged,
   type IncidentStatus,
+  MAX_RELEASED_DEVICES,
+  type NotificationReleased,
   type PageFailure,
   prefixRange,
   type PushEnvironment,
@@ -40,6 +43,34 @@ export const LEDGER_RETENTION_MS = 15 * 24 * 60 * 60 * 1000;
  * logged, and a member none of whose devices fit is recorded as not paged (`over_limit`).
  */
 export const MAX_PAGE_DEVICES = 200;
+/**
+ * How long a `page` push APNs accepted may still be waiting for a phone that is offline: the relay's `apns-expiration`
+ * for a page (15 minutes). Until the phone confirms it (its delivery receipt), a lower-urgency push for the same
+ * incident is held back from that phone (`Pager.plan`), since APNs keeps only the latest push for a phone it cannot
+ * reach and the later one would replace the page (RFC 0006 "Offline phones"). Held, not dropped: the latest push held
+ * goes out once the receipt comes or the hold runs out (`Pager.releaseDue`).
+ */
+export const PAGE_HOLD_MS = 15 * 60 * 1000;
+/**
+ * How long a `page` push planned but not yet answered by the relay counts as on its way to a phone, so a
+ * lower-urgency push planned meanwhile (another message of the same batch) is held back behind it too: past the
+ * relay's timeout for the alert, its time-sensitive fallback and the call (`RELAY_TIMEOUT_MS` each). A page the relay
+ * refused stops counting when its outcome is recorded.
+ */
+export const PAGE_IN_FLIGHT_MS = 60 * 1000;
+/**
+ * How long after a lost SEV1 or SEV2 declaration (the Queue gave up on it) the shard pages it again on its own, once
+ * (`incident.pageAgain` as `sys_notifier`): long enough for whatever stopped it to pass, short enough to matter.
+ */
+export const PAGE_REPLAY_DELAY_MS = 30 * 1000;
+/** A page again that could not run (storage) is tried again this much later. */
+export const PAGE_REPLAY_RETRY_MS = 60 * 1000;
+/** The event type of a failed page paged again (`incident.pageAgain`). */
+export const PAGED_AGAIN = "incident.paged_again";
+/** The event type of a held-back push released (`notification.release`). */
+export const RELEASED = "notification.released";
+/** Held-back pushes looked at per release (the alarm's, or a receipt's); the rest wait for the next alarm. */
+const RELEASE_BATCH = 500;
 
 const SCHEMA = `
   create table if not exists page_deliveries (
@@ -60,7 +91,42 @@ const SCHEMA = `
   create index if not exists page_events_at on page_events (at);
   create index if not exists page_steps_run on page_steps (run, step);
   create index if not exists page_steps_at on page_steps (at);
+  create table if not exists page_urgent (
+    event_id text not null,
+    device_id text not null,
+    incident_id text not null,
+    planned_at integer not null,
+    accepted_at integer,
+    primary key (event_id, device_id)
+  ) without rowid;
+  create index if not exists page_urgent_incident on page_urgent (incident_id, device_id);
+  create index if not exists page_urgent_at on page_urgent (planned_at);
+  create table if not exists page_replays (
+    event_id text primary key,
+    incident_id text not null,
+    entry text not null,
+    caused_by text not null,
+    at integer not null
+  ) without rowid;
+  create table if not exists page_held (
+    event_id text not null,
+    device_id text not null,
+    incident_id text not null,
+    user_id text not null,
+    at integer not null,
+    state text not null default 'held',
+    primary key (event_id, device_id)
+  ) without rowid;
+  create index if not exists page_held_state on page_held (state, at);
+  create index if not exists page_held_at on page_held (at);
 `;
+
+/**
+ * A held-back push's state (`page_held`): `held` waits for the page in its way; `released` went out on a
+ * `notification.released` event; `superseded` was not sent because a later push for the same incident and phone was
+ * (only the latest is); `dropped` was not sent because the incident was acknowledged, resolved or gone by then.
+ */
+type HeldState = "held" | "released" | "superseded" | "dropped";
 
 export type Urgency = "high" | "page";
 
@@ -121,7 +187,8 @@ export type PagePlan =
         | "acknowledged"
         | "inactive"
         | "stale"
-        | "nobody";
+        | "nobody"
+        | "held";
     };
 
 /** Why one device's push failed, as the notifier reports it. */
@@ -159,11 +226,14 @@ export type DeviceOutcome =
  * `incident.declared` as `sys_monitors` (SEV2), so they page through the same rule. An incident reopened by the
  * alerts' actor pages too: its alert fired again soon after it resolved by itself, unacknowledged (RFC 0005 "Alert
  * sources", flapping); a reopen by a member does not. The severity that reopen raised it to first (`reopening`) is
- * paged by the reopen, so it asks for nothing more.
+ * paged by the reopen, so it asks for nothing more. A failed page paged again (`incident.paged_again`) is a page of
+ * its own, and so is a push held back behind a page and released since (`notification.released`).
  */
 export function asksForPage(event: BrigadeEvent): boolean {
   if (event.subject === undefined) return false;
-  if (event.type === "incident.declared") return true;
+  if (event.type === "incident.declared" || event.type === PAGED_AGAIN || event.type === RELEASED) {
+    return true;
+  }
   if (event.type === "incident.status_changed") {
     const { from, to } = (event.data ?? {}) as { from?: IncidentStatus; to?: IncidentStatus };
     return (
@@ -227,7 +297,8 @@ const rank = (severity: Severity) => ["sev1", "sev2", "sev3", "sev4"].indexOf(se
  *
  * Members are the shard's member list (`member.sync`), never D1, so a D1 outage cannot delay a page. Member changes
  * made through Brigade update it with D1 (`member.changeRole`, `member.remove`: row and devices); one made outside
- * Brigade reaches it on the next sync upgrade into the workspace (`member.reconcile`, RFC 0006 "Who is paged").
+ * Brigade reaches it on the next sync upgrade into the workspace, the alarm's periodic reconcile, or the check before
+ * a page whose copy is stale (`member.reconcile`, RFC 0006 "Who is paged").
  */
 export function pageTargets(
   store: Store<BrigadeTables>,
@@ -348,6 +419,7 @@ export class Pager {
     if (!incident) return { send: false, reason: "not_found" };
     if (!isActive(incident.status)) return { send: false, reason: "inactive" };
     if (incident.acknowledgedAt != null) return { send: false, reason: "acknowledged" };
+    if (event.type === RELEASED) return this.released(event, incident, now);
     if (event.type === "escalation.paged" && !current(event, incident)) {
       // Acknowledged and then reopened, or a new run since: this page belongs to a run that stopped.
       this.finish(event.id, now);
@@ -367,6 +439,7 @@ export class Pager {
     }
 
     const recipients =
+      (event.type === PAGED_AGAIN ? this.again(event, incident) : undefined) ??
       this.escalated(event, incident, now) ??
       ({
         ...pageTargets(this.options.shard.store, incident, event.actor.id),
@@ -381,7 +454,8 @@ export class Pager {
       // Each member the page was for is told apart; with none at all, a member who declared it by hand knows, and a
       // monitor's incident says nobody was paged.
       if (skipped.length > 0) this.settle(event, incident.id, skipped, now);
-      else if (event.actor.kind !== "user") {
+      else if (event.actor.kind !== "user" || event.type === PAGED_AGAIN) {
+        // A page asked for again by hand too: its `paged_again` line must not stand alone when nobody was paged.
         this.fail(
           event,
           incident.id,
@@ -400,17 +474,37 @@ export class Pager {
       event.type === "escalation.paged"
         ? (event.data as Partial<EscalationPaged["data"]> | null)?.lost
         : undefined;
+    // Reached, or held back and since released (or passed over for a later push): never pushed again on this event.
     const delivered = new Set(
       sql
         .exec<{ device_id: string }>(
-          "select device_id from page_deliveries where event_id in (?, ?)",
+          `select device_id from page_deliveries where event_id in (?, ?)
+           union select device_id from page_held where event_id = ? and state != 'held'`,
           event.id,
           lost ?? event.id,
+          event.id,
         )
         .toArray()
         .map((row) => row.device_id),
     );
-    const pending = all.filter((target) => !delivered.has(target.deviceId));
+    const urgency: Urgency = PAGING_SEVERITIES.includes(incident.severity) ? "page" : "high";
+    // A lower-urgency push never replaces a page of the same incident a phone may still be waiting for: it waits.
+    const holding = urgency === "page" ? new Map<string, number>() : this.holding(incident.id, now);
+    const kept = this.hold(
+      event,
+      incident.id,
+      all.filter((target) => holding.has(target.deviceId) && !delivered.has(target.deviceId)),
+      now,
+    );
+    const pending = all.filter(
+      (target) => !delivered.has(target.deviceId) && !kept.has(target.deviceId),
+    );
+    if (pending.length === 0 && kept.size > 0) {
+      // Every phone left is held back behind the page itself: each gets this push once its hold ends (`releaseDue`).
+      if (skipped.length > 0) this.settle(event, incident.id, skipped, now);
+      this.finish(event.id, now);
+      return { send: false, reason: "held" };
+    }
     const targets = pending.slice(0, MAX_PAGE_DEVICES);
     if (pending.length > MAX_PAGE_DEVICES) {
       const sent = new Set(targets.map((target) => target.userId));
@@ -427,6 +521,7 @@ export class Pager {
     }
     this.planStep(event, incident.id, now);
     this.planDeliveries(event, incident.id, targets, now);
+    if (urgency === "page") this.planUrgent(event, incident.id, targets, now);
     return {
       send: true,
       incident: {
@@ -435,7 +530,7 @@ export class Pager {
         title: incident.title,
         severity: incident.severity,
       },
-      urgency: PAGING_SEVERITIES.includes(incident.severity) ? "page" : "high",
+      urgency,
       call: ringsAsCall(event, incident.severity),
       targets,
       skipped,
@@ -460,6 +555,401 @@ export class Pager {
       );
     } catch (error) {
       this.options.log("recording a page's step failed", {
+        event: event.id,
+        incident: incidentId,
+        error: String(error),
+      });
+    }
+  }
+
+  /**
+   * Who a failed page paged again goes to (`incident.paged_again`): the members its entries named, and with
+   * `everyone` the interim rule as well (commander, else everyone who can respond), each on every device. The interim
+   * rule leaves out whoever caused the lost page (`causedBy`: who declared it knows, whoever asks for it again), as
+   * the lost page did; a member named is paged even when they asked (an owner paging their own phone again). A member
+   * named who left or became a viewer since is recorded as not paged (`not_a_member`), so the `paged_again` line is
+   * never the last word on them. Never starts or moves an escalation run.
+   */
+  private again(event: BrigadeEvent, incident: IncidentRow): Recipients {
+    const data = event.data as Partial<IncidentPagedAgain["data"]> | null;
+    const causedBy = data?.causedBy ?? event.actor.id;
+    const userIds = data?.userIds ?? [];
+    const named = this.devicesOf(userIds, null);
+    const { store } = this.options.shard;
+    const skipped = [...new Set(userIds)]
+      .filter((userId) => {
+        const member = store.get("members", userId);
+        return !member || member.role === "viewer";
+      })
+      .map((userId): SkippedMember => ({ userId, reason: "not_a_member" }));
+    if (!data?.everyone) return { ...named, skipped };
+    const interim = pageTargets(this.options.shard.store, incident, causedBy);
+    const seen = new Set(named.targets.map((target) => target.deviceId));
+    return {
+      targets: [
+        ...named.targets,
+        ...interim.targets.filter((target) => !seen.has(target.deviceId)),
+      ],
+      noDevices: [...new Set([...named.noDevices, ...interim.noDevices])],
+      skipped,
+    };
+  }
+
+  /**
+   * The phones that may still be waiting for a `page` push of this incident (RFC 0006 "Offline phones"), each with
+   * when that ends: APNs took it within `PAGE_HOLD_MS` and the phone has not confirmed it (no delivery receipt), or it
+   * is on its way to the relay (planned within `PAGE_IN_FLIGHT_MS`, no outcome yet). A delivery row that could not be
+   * written counts as unconfirmed. Never in the page's way: a failure holds nothing back.
+   */
+  private holding(incidentId: string, now: number): Map<string, number> {
+    try {
+      const { store } = this.options.shard;
+      const rows = this.options.storage.sql
+        .exec<{
+          event_id: string;
+          device_id: string;
+          planned_at: number;
+          accepted_at: number | null;
+        }>(
+          `select event_id, device_id, planned_at, accepted_at from page_urgent
+           where incident_id = ? and (accepted_at >= ? or (accepted_at is null and planned_at >= ?))`,
+          incidentId,
+          now - PAGE_HOLD_MS,
+          now - PAGE_IN_FLIGHT_MS,
+        )
+        .toArray();
+      const holding = new Map<string, number>();
+      for (const row of rows) {
+        const delivery = store.get(
+          "deliveries",
+          deliveryId(incidentId, row.event_id, row.device_id),
+        );
+        if (delivery?.deliveredAt != null) continue;
+        const until =
+          row.accepted_at === null
+            ? row.planned_at + PAGE_IN_FLIGHT_MS
+            : row.accepted_at + PAGE_HOLD_MS;
+        holding.set(row.device_id, Math.max(holding.get(row.device_id) ?? 0, until));
+      }
+      return holding;
+    } catch (error) {
+      this.options.log("reading the pages phones wait for failed", {
+        incident: incidentId,
+        error: String(error),
+      });
+      return new Map();
+    }
+  }
+
+  /**
+   * Holds a lower-urgency push back from phones a page of the same incident may still be waiting on: each is pending
+   * in `page_held`, not reached, until the page's receipt comes or its hold ends, and then gets the latest push held
+   * for it (`releaseDue`); the alarm is brought forward to that end. Its member is not recorded as missed meanwhile.
+   * Fails open: when the hold cannot be written, the push goes now (the page may be replaced, but nothing is lost).
+   * Returns the devices held.
+   */
+  private hold(
+    event: BrigadeEvent,
+    incidentId: string,
+    targets: readonly PageTarget[],
+    now: number,
+  ): Set<string> {
+    if (targets.length === 0) return new Set();
+    try {
+      for (const target of targets) {
+        this.options.storage.sql.exec(
+          `insert into page_held (event_id, device_id, incident_id, user_id, at) values (?, ?, ?, ?, ?)
+           on conflict do nothing`,
+          event.id,
+          target.deviceId,
+          incidentId,
+          target.userId,
+          now,
+        );
+      }
+    } catch (error) {
+      this.options.log("holding a push back failed, sending it now", {
+        event: event.id,
+        incident: incidentId,
+        error: String(error),
+      });
+      return new Set();
+    }
+    this.options.log("push held back behind a page the phone may still be waiting for", {
+      event: event.id,
+      incident: incidentId,
+      devices: targets.length,
+    });
+    this.wakeForRelease(now);
+    return new Set(targets.map((target) => target.deviceId));
+  }
+
+  /** Brings the alarm forward to the next held-back push's release (`releaseAt`). Never throws. */
+  private wakeForRelease(now: number): void {
+    try {
+      const at = this.releaseAt(now);
+      if (at !== null) this.options.wake(at);
+    } catch (error) {
+      this.options.log("arming the release of held pushes failed", { error: String(error) });
+    }
+  }
+
+  /**
+   * When the next held-back push is due to go out: the earliest end of the holds in its way (`holding`), now for one
+   * with nothing in its way any more. Null with nothing held.
+   */
+  releaseAt(now: number): number | null {
+    let at: number | null = null;
+    const holds = new Map<string, Map<string, number>>();
+    for (const row of this.heldPhones(now)) {
+      let holding = holds.get(row.incident_id);
+      if (!holding) holds.set(row.incident_id, (holding = this.holding(row.incident_id, now)));
+      const until = holding.get(row.device_id) ?? now;
+      at = at === null ? until : Math.min(at, until);
+    }
+    return at;
+  }
+
+  /**
+   * Up to `RELEASE_BATCH` phones with a push held back for an incident, the soonest due first: by when the pages in
+   * their way stop holding by time alone (0 with none left, so already due), then by their oldest held push. Phones
+   * still held back behind a page for a long while never keep due ones waiting. A page confirmed by its receipt ends
+   * its hold sooner than this order says (`holding` reads the receipts): with more phones held than a batch, such a
+   * phone may wait until its place comes, at most until the hold would have run out.
+   */
+  private heldPhones(now: number): { incident_id: string; device_id: string }[] {
+    return this.options.storage.sql
+      .exec<{ incident_id: string; device_id: string }>(
+        `select h.incident_id, h.device_id, coalesce((
+           select max(case when u.accepted_at is null then u.planned_at + ? else u.accepted_at + ? end)
+           from page_urgent u
+           where u.incident_id = h.incident_id and u.device_id = h.device_id
+             and (u.accepted_at >= ? or (u.accepted_at is null and u.planned_at >= ?))
+         ), 0) as until
+         from page_held h where h.state = 'held'
+         group by h.incident_id, h.device_id
+         order by until, min(h.at), h.incident_id, h.device_id limit ?`,
+        PAGE_IN_FLIGHT_MS,
+        PAGE_HOLD_MS,
+        now - PAGE_HOLD_MS,
+        now - PAGE_IN_FLIGHT_MS,
+        RELEASE_BATCH,
+      )
+      .toArray();
+  }
+
+  /**
+   * Sends the pushes held back from phones whose page is no longer in the way (RFC 0006 "Offline phones"): the
+   * page's receipt came, or its hold ran out (`PAGE_HOLD_MS` after APNs took it, `PAGE_IN_FLIGHT_MS` after it was
+   * planned when it never got an answer). Per phone and incident only the latest push held goes out, on a
+   * `notification.released` event of its own (`notification.release`, through the outbox), and the older ones are
+   * passed over (`superseded`); for an incident acknowledged, resolved or gone by then, nothing goes (`dropped`). Each
+   * held push is released once: its row leaves `held` in the same write as the mutation. From the shard's alarm and
+   * after a delivery receipt. Returns how many events went.
+   */
+  releaseDue(now: number): number {
+    const { sql } = this.options.storage;
+    const { store } = this.options.shard;
+    type Held = { event_id: string; device_id: string; incident_id: string };
+    const holds = new Map<string, Map<string, number>>();
+    // Per incident and phone, the latest push held for it; every one of the phone's held pushes is read, so an older
+    // one is never released on its own.
+    const latest: Held[] = [];
+    const passed: Held[] = [];
+    for (const phone of this.heldPhones(now)) {
+      let holding = holds.get(phone.incident_id);
+      if (!holding) holds.set(phone.incident_id, (holding = this.holding(phone.incident_id, now)));
+      if (holding.has(phone.device_id)) continue;
+      const rows = sql
+        .exec<Held>(
+          `select event_id, device_id, incident_id from page_held
+           where incident_id = ? and device_id = ? and state = 'held' order by at, event_id`,
+          phone.incident_id,
+          phone.device_id,
+        )
+        .toArray();
+      const last = rows.pop();
+      if (!last) continue;
+      passed.push(...rows);
+      latest.push(last);
+    }
+    const mark = (rows: readonly { event_id: string; device_id: string }[], state: HeldState) => {
+      for (const row of rows) {
+        sql.exec(
+          "update page_held set state = ? where event_id = ? and device_id = ? and state = 'held'",
+          state,
+          row.event_id,
+          row.device_id,
+        );
+      }
+    };
+    mark(passed, "superseded");
+    const groups = new Map<string, { incidentId: string; eventId: string; deviceIds: string[] }>();
+    for (const row of latest) {
+      const incident = store.get("incidents", row.incident_id);
+      if (!incident || !isActive(incident.status) || incident.acknowledgedAt != null) {
+        mark([row], "dropped");
+        continue;
+      }
+      const group = groups.get(row.event_id) ?? {
+        incidentId: row.incident_id,
+        eventId: row.event_id,
+        deviceIds: [],
+      };
+      group.deviceIds.push(row.device_id);
+      groups.set(row.event_id, group);
+    }
+    let sent = 0;
+    for (const { incidentId, eventId, deviceIds } of groups.values()) {
+      for (let i = 0; i < deviceIds.length; i += MAX_RELEASED_DEVICES) {
+        const some = deviceIds.slice(i, i + MAX_RELEASED_DEVICES);
+        const rows = some.map((device_id) => ({ event_id: eventId, device_id }));
+        try {
+          // The mutation and the rows leaving `held` commit together, or neither does: a push is released once.
+          const ok = this.run(
+            NOTIFIER_ACTOR,
+            "notifier",
+            `release:${eventId}:${some[0]}:${now}`,
+            "notification.release",
+            { incidentId, eventId, deviceIds: some },
+            now,
+            (ok) => mark(rows, ok ? "released" : "dropped"),
+          );
+          if (ok) sent++;
+        } catch (error) {
+          // Left held, and nothing released: the alarm tries again (`releaseAt` says it is due).
+          this.options.log("releasing held pushes failed", {
+            event: eventId,
+            incident: incidentId,
+            error: String(error),
+          });
+        }
+      }
+    }
+    return sent;
+  }
+
+  /**
+   * The plan for a held-back push released (`notification.released`): the incident as it is now, to the devices it
+   * names that are still registered to the members they were held for (a phone signed in to another account since
+   * gets nothing), who can still respond and have not had it. A page of the incident in the way
+   * again holds it back again (the same row, `held` once more). No call, and nothing to escalate.
+   */
+  private released(event: BrigadeEvent, incident: IncidentRow, now: number): PagePlan {
+    const { store } = this.options.shard;
+    const data = event.data as Partial<NotificationReleased["data"]> | null;
+    const eventId = data?.eventId;
+    // Each device's member when its push was held back: the push was for them.
+    const owners = new Map(
+      eventId === undefined
+        ? []
+        : this.options.storage.sql
+            .exec<{ device_id: string; user_id: string }>(
+              "select device_id, user_id from page_held where event_id = ?",
+              eventId,
+            )
+            .toArray()
+            .filter((row) => (data?.deviceIds ?? []).includes(row.device_id))
+            .map((row) => [row.device_id, row.user_id] as const),
+    );
+    const owned = store.scan("devices").filter((d) => owners.get(d.id) === d.userId);
+    const wanted = new Set(owned.map((d) => d.id));
+    const sent = new Set(
+      this.options.storage.sql
+        .exec<{ device_id: string }>(
+          "select device_id from page_deliveries where event_id = ?",
+          event.id,
+        )
+        .toArray()
+        .map((row) => row.device_id),
+    );
+    const all = this.devicesOf([...new Set(owned.map((d) => d.userId))], null).targets.filter(
+      (target) => wanted.has(target.deviceId) && !sent.has(target.deviceId),
+    );
+    const urgency: Urgency = PAGING_SEVERITIES.includes(incident.severity) ? "page" : "high";
+    const holding = urgency === "page" ? new Map<string, number>() : this.holding(incident.id, now);
+    const again = all.filter((target) => holding.has(target.deviceId));
+    if (again.length > 0 && eventId !== undefined) {
+      try {
+        for (const target of again) {
+          this.options.storage.sql.exec(
+            "update page_held set state = 'held' where event_id = ? and device_id = ?",
+            eventId,
+            target.deviceId,
+          );
+        }
+        this.wakeForRelease(now);
+      } catch (error) {
+        this.options.log("holding a released push back again failed", {
+          event: event.id,
+          error: String(error),
+        });
+      }
+    }
+    const targets = all
+      .filter((target) => !holding.has(target.deviceId))
+      .slice(0, MAX_PAGE_DEVICES);
+    if (targets.length === 0) {
+      this.finish(event.id, now);
+      return { send: false, reason: again.length > 0 ? "held" : "nobody" };
+    }
+    this.planDeliveries(event, incident.id, targets, now);
+    if (urgency === "page") this.planUrgent(event, incident.id, targets, now);
+    return {
+      send: true,
+      incident: {
+        id: incident.id,
+        number: incident.number,
+        title: incident.title,
+        severity: incident.severity,
+      },
+      urgency,
+      call: false,
+      targets,
+      skipped: [],
+    };
+  }
+
+  /** Forgets a `page` push the relay did not take, so it holds nothing back. Never throws. */
+  private unplanUrgent(event: BrigadeEvent, deviceId: string): void {
+    try {
+      this.options.storage.sql.exec(
+        "delete from page_urgent where event_id = ? and device_id = ? and accepted_at is null",
+        event.id,
+        deviceId,
+      );
+    } catch (error) {
+      this.options.log("forgetting a page the relay did not take failed", {
+        event: event.id,
+        error: String(error),
+      });
+    }
+  }
+
+  /**
+   * Remembers each phone a `page` push is about to go to, before the relay is called, for `holding`: a lower-urgency
+   * push planned while it is on its way (another message of the same batch) is held back behind it. Never in the
+   * page's way.
+   */
+  private planUrgent(
+    event: BrigadeEvent,
+    incidentId: string,
+    targets: readonly PageTarget[],
+    now: number,
+  ): void {
+    try {
+      for (const target of targets) {
+        this.options.storage.sql.exec(
+          `insert into page_urgent (event_id, device_id, incident_id, planned_at) values (?, ?, ?, ?)
+           on conflict do nothing`,
+          event.id,
+          target.deviceId,
+          incidentId,
+          now,
+        );
+      }
+    } catch (error) {
+      this.options.log("recording a page's phones failed", {
         event: event.id,
         incident: incidentId,
         error: String(error),
@@ -621,13 +1111,19 @@ export class Pager {
   }
 
   /**
-   * Whether an escalation's page to everyone who can respond found nobody because the only member who can respond is
-   * whoever caused the run's first page (they declared it, and know).
+   * Whether a page to everyone who can respond found nobody because the only member who can respond is whoever caused
+   * it: the run's first page for an escalation's (they declared it, and know), the lost page's for one paged again.
    */
   private nobodyElse(event: BrigadeEvent, incident: IncidentRow): boolean {
-    if (event.type !== "escalation.paged") return false;
-    if ((event.data as Partial<EscalationPaged["data"]> | null)?.level !== null) return false;
-    const causedBy = incident.escalation?.causedBy;
+    let causedBy: string | undefined;
+    if (event.type === PAGED_AGAIN) {
+      const data = event.data as Partial<IncidentPagedAgain["data"]> | null;
+      if (!data?.everyone) return false;
+      causedBy = data.causedBy;
+    } else if (event.type === "escalation.paged") {
+      if ((event.data as Partial<EscalationPaged["data"]> | null)?.level !== null) return false;
+      causedBy = incident.escalation?.causedBy;
+    } else return false;
     const member =
       causedBy === undefined ? undefined : this.options.shard.store.get("members", causedBy);
     return member !== undefined && member.role !== "viewer";
@@ -691,7 +1187,17 @@ export class Pager {
           outcome.userId,
           now,
         );
-      } else if (outcome.expiredToken !== undefined) {
+        sql.exec(
+          "update page_urgent set accepted_at = ? where event_id = ? and device_id = ?",
+          now,
+          event.id,
+          outcome.deviceId,
+        );
+        continue;
+      }
+      // A page the relay did not take is not on its way: it holds nothing back (`holding`).
+      this.unplanUrgent(event, outcome.deviceId);
+      if (outcome.expiredToken !== undefined) {
         this.run(
           NOTIFIER_ACTOR,
           "notifier",
@@ -703,9 +1209,12 @@ export class Pager {
       }
     }
     if (!final) return;
+    // A member with a phone this push is held back from is pending, not missed: what happens to the push released to
+    // it says (its own `record`), so nobody is told they were not paged while it may still reach them.
+    const pending = this.heldFor(event);
     const failures = new Map<string, SendFailure[]>();
     for (const outcome of outcomes) {
-      if (outcome.ok) continue;
+      if (outcome.ok || pending.has(outcome.userId)) continue;
       failures.set(outcome.userId, [...(failures.get(outcome.userId) ?? []), outcome.reason]);
     }
     const missed: SkippedMember[] = [...failures].map(([userId, reasons]) => ({
@@ -721,7 +1230,9 @@ export class Pager {
             : "undelivered",
     }));
     for (const one of skipped) {
-      if (one.userId === null || !failures.has(one.userId)) missed.push(one);
+      if (one.userId === null || (!failures.has(one.userId) && !pending.has(one.userId))) {
+        missed.push(one);
+      }
     }
     this.settle(event, event.subject!, missed, now);
     this.finish(event.id, now);
@@ -751,6 +1262,8 @@ export class Pager {
       const first = run.paged === 1 || (run.paged === 2 && last.again === true);
       if (first && run.pages[0]?.userIds.includes(run.causedBy)) return;
       if (this.reached(event, incidentId, run.eventId, run.paged)) return;
+      // A push held back behind a page the phone may still be waiting for is pending, not missed.
+      if (this.pending(event)) return;
       this.run(
         ESCALATION_ACTOR,
         "escalation",
@@ -768,6 +1281,39 @@ export class Pager {
         error: String(error),
       });
     }
+  }
+
+  /** The members a push of `event` is held back from a phone of, or was released to one of since. Never throws. */
+  private heldFor(event: BrigadeEvent): Set<string> {
+    try {
+      return new Set(
+        this.options.storage.sql
+          .exec<{ user_id: string }>(
+            "select distinct user_id from page_held where event_id = ? and state in ('held', 'released')",
+            event.id,
+          )
+          .toArray()
+          .map((row) => row.user_id),
+      );
+    } catch (error) {
+      this.options.log("reading the pushes held back failed", {
+        event: event.id,
+        error: String(error),
+      });
+      return new Set();
+    }
+  }
+
+  /** Whether a push of `event` is held back from a phone, or was released to it since. */
+  private pending(event: BrigadeEvent): boolean {
+    return (
+      this.options.storage.sql
+        .exec(
+          "select 1 from page_held where event_id = ? and state in ('held', 'released') limit 1",
+          event.id,
+        )
+        .toArray().length > 0
+    );
   }
 
   /** The step of `run` that `event` is the own page of: a level's event, or the event that started the run (1). */
@@ -822,6 +1368,13 @@ export class Pager {
   deadLettered(event: BrigadeEvent, now: number): DeadLetterResult {
     if (!asksForPage(event)) return "not_a_page";
     if (this.done(event.id)) return "settled";
+    if (event.type === RELEASED) {
+      // A lower-urgency push released after a hold: the page it waited behind went out, and the incident's next push
+      // carries the same news. Logged, not paged again.
+      this.options.log("a released push was lost", { event: event.id, incident: event.subject });
+      this.finish(event.id, now);
+      return "closed";
+    }
     const incident = this.options.shard.store.get("incidents", event.subject!);
     if (!incident) return "no_incident";
     const open = isActive(incident.status) && incident.acknowledgedAt == null;
@@ -829,13 +1382,20 @@ export class Pager {
     if (
       open &&
       event.type !== "escalation.paged" &&
+      event.type !== PAGED_AGAIN &&
       run?.eventId !== event.id &&
       run?.status !== "running" &&
       !superseded(event, run)
     ) {
       this.start(event, incident, now);
     }
-    if (open) this.fail(event, incident.id, null, "dead_lettered", now);
+    // Who caused the lost page: for a page again (one the shard ran on its own included), who caused the page it was
+    // made for, so paging it again by hand still leaves them out.
+    const causedBy =
+      (event.type === PAGED_AGAIN
+        ? (event.data as Partial<IncidentPagedAgain["data"]> | null)?.causedBy
+        : undefined) ?? event.actor.id;
+    if (open) this.fail(event, incident.id, null, "dead_lettered", now, undefined, causedBy);
     // The lost page is still the run's last: nothing would page its members until the next level's timeout, or ever,
     // when the run ended on it (everyone who can respond). It is paged again, on an event of its own, once: that
     // event lost too is only recorded (`lastPage`).
@@ -852,8 +1412,114 @@ export class Pager {
         now,
       );
     }
+    // A lost SEV1 or SEV2 declaration the interim rule paged (no run to page it again): paged again once, shortly.
+    if (
+      open &&
+      !after &&
+      event.type === "incident.declared" &&
+      PAGING_SEVERITIES.includes(incident.severity)
+    ) {
+      this.queueReplay(event, incident.id, now);
+    }
     this.finish(event.id, now);
     return open ? "recorded" : "closed";
+  }
+
+  /**
+   * Queues the page again of a lost declaration (`deadLettered`) for `PAGE_REPLAY_DELAY_MS` from now, once per event,
+   * answering its `dead_lettered` entry. Never throws: the entry stays on the timeline, and an owner or admin can page
+   * it again by hand.
+   */
+  private queueReplay(event: BrigadeEvent, incidentId: string, now: number): void {
+    try {
+      const { store } = this.options.shard;
+      const seq = store.get("incidents", incidentId)?.timelineSeq;
+      const entry = seq === undefined ? undefined : store.get("timeline", `${incidentId}:${seq}`);
+      if (entry?.kind !== "page_failed" || entry.reason !== "dead_lettered") {
+        this.options.log("paging a lost page again found no entry", {
+          event: event.id,
+          incident: incidentId,
+        });
+        return;
+      }
+      const at = now + PAGE_REPLAY_DELAY_MS;
+      this.options.storage.sql.exec(
+        `insert into page_replays (event_id, incident_id, entry, caused_by, at) values (?, ?, ?, ?, ?)
+         on conflict do nothing`,
+        event.id,
+        incidentId,
+        entry.id,
+        event.actor.id,
+        at,
+      );
+      this.options.wake(at);
+    } catch (error) {
+      this.options.log("queueing a lost page to page again failed", {
+        event: event.id,
+        incident: incidentId,
+        error: String(error),
+      });
+    }
+  }
+
+  /** When the next queued page again is due; null with none. */
+  replayAt(): number | null {
+    const row = this.options.storage.sql
+      .exec<{ at: number | null }>("select min(at) as at from page_replays")
+      .toArray()[0];
+    return row?.at ?? null;
+  }
+
+  /**
+   * From the shard's alarm: pages again each lost declaration that is due (`incident.pageAgain` as `sys_notifier`,
+   * de-duplicated by the lost event, so a repeated alarm pages it once), whatever it answers: an incident acknowledged
+   * or resolved meanwhile, or paged again by hand already, is refused and dropped. So is one whose incident started an
+   * escalation run since (a severity raise, a policy): the run pages it, and a page again on top would page twice.
+   * Returns how many ran.
+   */
+  replayDue(now: number): number {
+    const { sql } = this.options.storage;
+    const due = sql
+      .exec<{ event_id: string; incident_id: string; entry: string; caused_by: string }>(
+        "select event_id, incident_id, entry, caused_by from page_replays where at <= ? order by at limit 50",
+        now,
+      )
+      .toArray();
+    for (const row of due) {
+      try {
+        if (this.options.shard.store.get("incidents", row.incident_id)?.escalation) {
+          this.options.log("paging a lost page again dropped: an escalation run pages it", {
+            event: row.event_id,
+            incident: row.incident_id,
+          });
+          sql.exec("delete from page_replays where event_id = ?", row.event_id);
+          continue;
+        }
+        this.run(
+          NOTIFIER_ACTOR,
+          "notifier",
+          `replay:${row.event_id}`,
+          "incident.pageAgain",
+          { id: row.incident_id, entries: [row.entry], causedBy: row.caused_by },
+          now,
+        );
+      } catch (error) {
+        // Tried again a minute later, not in a loop; the `dead_lettered` entry stays for a member to page by hand.
+        this.options.log("paging a lost page again failed", {
+          event: row.event_id,
+          incident: row.incident_id,
+          error: String(error),
+        });
+        sql.exec(
+          "update page_replays set at = ? where event_id = ?",
+          now + PAGE_REPLAY_RETRY_MS,
+          row.event_id,
+        );
+        continue;
+      }
+      sql.exec("delete from page_replays where event_id = ?", row.event_id);
+    }
+    return due.length;
   }
 
   /**
@@ -925,6 +1591,8 @@ export class Pager {
     reason: PageFailure,
     now: number,
     schedule?: { id: string | null; name: string | null },
+    /** For a lost page: who caused it, kept on its entry for paging it again. */
+    causedBy?: string,
   ): void {
     this.options.log("page failed", { event: event.id, incident: incidentId, userId, reason });
     // One entry per member, and per schedule nobody was on call for.
@@ -942,6 +1610,7 @@ export class Pager {
         reason,
         ...(schedule ? { schedule: schedule.name } : {}),
         ...(page && { page }),
+        ...(causedBy !== undefined && { causedBy }),
       },
       now,
     );
@@ -974,7 +1643,10 @@ export class Pager {
     return undefined;
   }
 
-  /** A server-only mutation as `actor`, de-duplicated by `mutationId`. */
+  /**
+   * A server-only mutation as `actor`, de-duplicated by `mutationId`. Whether it committed (now, or the first time).
+   * `also` writes what goes with its answer in the same transaction: when it throws, the mutation rolls back too.
+   */
   private run(
     actor: Actor,
     clientId: string,
@@ -982,22 +1654,40 @@ export class Pager {
     name: string,
     args: unknown,
     now: number,
-  ): void {
+    also?: (ok: boolean) => void,
+  ): boolean {
     const { shard } = this.options;
-    if (shard.storedResult(actor.id, clientId, mutationId, now)) return;
-    const { result, changes } = shard.mutate({
-      clientId,
-      mutationId,
-      actor,
-      name,
-      args,
-      now,
-      internal: true,
-    });
-    if (result.ok) this.options.committed(result.version, changes);
-    else if (result.error.code !== "not_found") {
-      this.options.log(`${clientId} mutation refused`, { mutation: name, code: result.error.code });
-    }
+    // A box, because TypeScript does not see assignments made inside the callback.
+    const done: { committed?: { version: number; changes: readonly RowChange[] } } = {};
+    const once = (): boolean => {
+      const stored = shard.storedResult(actor.id, clientId, mutationId, now);
+      if (stored) {
+        also?.(stored.ok);
+        return stored.ok;
+      }
+      const { result, changes } = shard.mutate({
+        clientId,
+        mutationId,
+        actor,
+        name,
+        args,
+        now,
+        internal: true,
+      });
+      if (result.ok) done.committed = { version: result.version, changes };
+      else if (result.error.code !== "not_found") {
+        this.options.log(`${clientId} mutation refused`, {
+          mutation: name,
+          code: result.error.code,
+        });
+      }
+      also?.(result.ok);
+      return result.ok;
+    };
+    const ok = also ? this.options.storage.transactionSync(once) : once();
+    // Only once it committed: a rollback must not reach the clients.
+    if (done.committed) this.options.committed(done.committed.version, done.committed.changes);
+    return ok;
   }
 
   private done(eventId: string): boolean {
@@ -1023,6 +1713,8 @@ export class Pager {
       sql.exec("delete from page_deliveries where at < ?", before);
       sql.exec("delete from page_events where at < ?", before);
       sql.exec("delete from page_steps where at < ?", before);
+      sql.exec("delete from page_urgent where planned_at < ?", now - 2 * PAGE_HOLD_MS);
+      sql.exec("delete from page_held where at < ? and state != 'held'", before);
     } catch (error) {
       this.options.log("pruning the page ledger failed", { error });
     }

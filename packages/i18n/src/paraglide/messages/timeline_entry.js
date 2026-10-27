@@ -42,6 +42,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "escalated_started_aware" | "Level {a}: {b}" |
 * | "escalated_again" | "Level {a} paged again: the earlier page was lost" |
 * | "escalated_everyone_again" | "Everyone who can respond paged again: the earlier page was lost" |
+* | "paged_again" | "{actor} paged {a} again" |
+* | "paged_again_everyone" | "{actor} paged everyone who can respond again" |
+* | "paged_again_auto" | "The page was lost, so Brigade paged it again" |
 * | "page_nobody_else" | "Nobody else was paged: only the person who declared it can respond" |
 * | "escalation_exhausted" | "Nobody acknowledged after every level, so everyone who can respond was paged" |
 * | "escalated_everyone_stalled" | "An escalation level kept failing to fire, so everyone who can respond was paged" |
@@ -117,6 +120,9 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "escalated_started_aware") return /** @type {LocalizedString} */ (`Nível ${i?.a}: ${i?.b}`);
 		if (i?.kind === "escalated_again") return /** @type {LocalizedString} */ (`Nível ${i?.a} chamado de novo: a chamada anterior se perdeu`);
 		if (i?.kind === "escalated_everyone_again") return /** @type {LocalizedString} */ (`Todos que podem responder chamados de novo: a chamada anterior se perdeu`);
+		if (i?.kind === "paged_again") return /** @type {LocalizedString} */ (`${i?.actor} chamou ${i?.a} de novo`);
+		if (i?.kind === "paged_again_everyone") return /** @type {LocalizedString} */ (`${i?.actor} chamou de novo todos que podem responder`);
+		if (i?.kind === "paged_again_auto") return /** @type {LocalizedString} */ (`A chamada se perdeu, então o Brigade chamou de novo`);
 		if (i?.kind === "page_nobody_else") return /** @type {LocalizedString} */ (`Ninguém mais foi chamado: só quem declarou pode responder`);
 		if (i?.kind === "escalation_exhausted") return /** @type {LocalizedString} */ (`Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados`);
 		if (i?.kind === "escalated_everyone_stalled") return /** @type {LocalizedString} */ (`Um nível de escalonamento continuou falhando, então todos que podem responder foram chamados`);
@@ -186,6 +192,9 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "escalated_started_aware") return /** @type {LocalizedString} */ (`Level ${i?.a}: ${i?.b}`);
 		if (i?.kind === "escalated_again") return /** @type {LocalizedString} */ (`Level ${i?.a} paged again: the earlier page was lost`);
 		if (i?.kind === "escalated_everyone_again") return /** @type {LocalizedString} */ (`Everyone who can respond paged again: the earlier page was lost`);
+		if (i?.kind === "paged_again") return /** @type {LocalizedString} */ (`${i?.actor} paged ${i?.a} again`);
+		if (i?.kind === "paged_again_everyone") return /** @type {LocalizedString} */ (`${i?.actor} paged everyone who can respond again`);
+		if (i?.kind === "paged_again_auto") return /** @type {LocalizedString} */ (`The page was lost, so Brigade paged it again`);
 		if (i?.kind === "page_nobody_else") return /** @type {LocalizedString} */ (`Nobody else was paged: only the person who declared it can respond`);
 		if (i?.kind === "escalation_exhausted") return /** @type {LocalizedString} */ (`Nobody acknowledged after every level, so everyone who can respond was paged`);
 		if (i?.kind === "escalated_everyone_stalled") return /** @type {LocalizedString} */ (`An escalation level kept failing to fire, so everyone who can respond was paged`);

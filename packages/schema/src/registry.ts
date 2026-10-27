@@ -25,7 +25,7 @@ import {
   touchDevice,
   unregisterDevice,
 } from "./devices.ts";
-import { failEmail, failNotification } from "./notifications.ts";
+import { failEmail, failNotification, pageAgain, releaseNotification } from "./notifications.ts";
 import {
   allMonitors,
   evaluateMonitor,
@@ -98,6 +98,7 @@ export const mutations = defineRegistry([
   acknowledgeIncident,
   postIncidentUpdate,
   assignIncidentRole,
+  pageAgain,
   ...monitorMutations,
   ...scheduleMutations,
   ...policyMutations,
@@ -155,6 +156,7 @@ export const serverMutations = defineRegistry([
   acknowledgeIncident,
   postIncidentUpdate,
   assignIncidentRole,
+  pageAgain,
   ...monitorMutations,
   ...scheduleMutations,
   ...policyMutations,
@@ -186,6 +188,7 @@ export const serverMutations = defineRegistry([
   takeOverMonitors,
   failNotification,
   failEmail,
+  releaseNotification,
   planDeliveries,
   reportDeliveries,
   confirmDelivery,

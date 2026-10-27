@@ -170,7 +170,9 @@ by `device.register` and `device.unregister` (any member, their own devices only
 A message the shard fails on every time (unreachable, throwing) is retried up to `max_retries` (10); the last
 delivery logs `page dead-lettered` and it goes to `brigade-events-dlq`, which the same handler consumes
 (`consumeDeadLetters`): it asks the shard once to record the page as `dead_lettered` on the incident's timeline
-(`WorkspaceDO.recordDeadLetter`) and acks, whether or not that worked.
+(`WorkspaceDO.recordDeadLetter`) and acks, whether or not that worked. A lost SEV1 or SEV2 declaration with no
+escalation run to page it again is paged again once, 30 s later, from the shard's alarm (`incident.pageAgain` as
+`sys_notifier`); owners and admins can page any failed page again from the incident page (RFC 0005 "Notifiers").
 
 - **Limits:** client frames up to 64 KiB of text (binary frames are refused); 32 subscriptions per socket and
   about 8 KiB of attachment state (measured as JSON).

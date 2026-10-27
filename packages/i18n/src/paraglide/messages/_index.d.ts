@@ -122,6 +122,7 @@ export * from './incident_label.js';
 export * from './incident_move_failed.js';
 export * from './incident_move_failed_here.js';
 export * from './incident_page.js';
+export * from './incident_page_again.js';
 export * from './incident_quoted_title.js';
 export * from './incident_role.js';
 export * from './incident_severity_failed.js';

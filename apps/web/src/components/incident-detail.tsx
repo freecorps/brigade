@@ -6,6 +6,7 @@ import {
   incidentRoleList,
   isActive,
   missingRoles,
+  PAGE_AGAIN_CONFLICTS,
   UPDATE_BODY_MAX,
   type IncidentRow,
   type IncidentStatus,
@@ -38,6 +39,7 @@ import {
   MailWarningIcon,
   MessageSquareWarningIcon,
   PencilLineIcon,
+  PhoneCallIcon,
   PhoneMissedIcon,
   SendIcon,
   SquarePenIcon,
@@ -100,6 +102,7 @@ import {
   checkUpdate,
   entryTime,
   itemText,
+  pageAgainEntries,
   pagesFailedNames,
   people,
   personName,
@@ -307,6 +310,8 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
   const acked = row.acknowledgedAt != null && row.acknowledgedBy != null;
   const canAck = can(member.role, "incident:ack") && isActive(row.status) && !acked;
   const escalating = row.escalation?.status === "running" && !acked;
+  // Owners and admins page a failed page again while the incident still waits for someone (RFC 0005 "Notifiers").
+  const canPageAgain = can(member.role, "escalation:manage") && isActive(row.status) && !acked;
   const paging: PagingData = {
     incident: row,
     members: members.rows,
@@ -436,6 +441,7 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
               who={who}
               locale={locale}
               now={now}
+              pageAgain={canPageAgain ? row.id : undefined}
             />
           </CardContent>
         </Card>
@@ -794,6 +800,7 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
   status_published: GlobeIcon,
   status_corrected: PencilLineIcon,
   escalated: BellRingIcon,
+  paged_again: PhoneCallIcon,
   escalation_exhausted: TimerOffIcon,
   type_changed: TagIcon,
   services_changed: LayersIcon,
@@ -813,12 +820,15 @@ function Timeline({
   who,
   locale,
   now,
+  pageAgain,
 }: {
   rows: readonly TimelineRow[];
   ready: boolean;
   who: People;
   locale: Locale;
   now: number;
+  /** The incident's id when the member may page a failed page again; undefined offers nothing. */
+  pageAgain?: string;
 }) {
   const announcements = useAnnouncements(rows, ready, who);
   const announcer = (
@@ -888,6 +898,9 @@ function Timeline({
                   <UpdateBody body={entry.body} />
                 ) : null}
                 {item.kind === "pages_failed" ? <FailedNames item={item} who={who} /> : null}
+                {pageAgain === undefined ? null : (
+                  <PageAgain incidentId={pageAgain} entries={pageAgainEntries(item, rows)} />
+                )}
               </div>
             </li>
           );
@@ -896,6 +909,60 @@ function Timeline({
     </>
   );
 }
+
+/**
+ * "Page again" under a failed page (`incident.pageAgain`): a new page to the members it missed, or to whoever the lost
+ * page was for. Gone once the shard's `paged_again` entry lands; a refusal says why, next to the button.
+ */
+function PageAgain({ incidentId, entries }: { incidentId: string; entries: string[] }) {
+  const pageAgain = useMutation("incident.pageAgain");
+  const [pending, setPending] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
+  if (entries.length === 0) return null;
+  const onClick = () => {
+    setPending(true);
+    setRefused(null);
+    void pageAgain({ id: incidentId, entries }).then((outcome) => {
+      setPending(false);
+      if (outcome.ok) return;
+      const conflict =
+        outcome.error.code === "conflict" ? CONFLICT_PARTS[outcome.error.message] : undefined;
+      setRefused(
+        conflict !== undefined
+          ? m.incident_page_again({ part: conflict, reason: "" })
+          : m.incident_page_again({
+              part: "failed",
+              reason: mutationErrorReason(outcome.error.code),
+            }),
+      );
+    });
+  };
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <Button variant="outline" disabled={pending} onClick={onClick}>
+        {pending ? (
+          <LoaderCircleIcon aria-hidden className="animate-spin" />
+        ) : (
+          <PhoneCallIcon aria-hidden />
+        )}
+        {m.incident_page_again({ part: pending ? "pending" : "action", reason: "" })}
+      </Button>
+      {refused ? (
+        <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive">
+          <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <span className="min-w-0">{refused}</span>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** What each of `incident.pageAgain`'s refusals says (`PAGE_AGAIN_CONFLICTS`, its error messages). */
+const CONFLICT_PARTS: Partial<Record<string, "already" | "acked" | "resolved">> = {
+  [PAGE_AGAIN_CONFLICTS.answered]: "already",
+  [PAGE_AGAIN_CONFLICTS.acknowledged]: "acked",
+  [PAGE_AGAIN_CONFLICTS.inactive]: "resolved",
+};
 
 /** Who a group of failed pages was for, behind Show names. */
 function FailedNames({

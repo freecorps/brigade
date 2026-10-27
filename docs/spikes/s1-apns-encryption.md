@@ -1,6 +1,6 @@
 # Spike S1 — APNs from a Worker and payload encryption
 
-- Status: Done on the iOS Simulator; left: verify on a real iPhone
+- Status: Done, on the iOS Simulator and on a real iPhone (2026-10-27); left: the `pt-BR` fallback on a phone
 - Roadmap: Phase 0, S1
 - Settles: RFC 0006 "Risk: APNs requires HTTP/2" and the encryption choice ("HPKE or Web Push encryption")
 
@@ -182,6 +182,30 @@ Not verified: the `pt-BR` fallback on screen (the strings files are generated an
 have both, but the Simulator ran in English); `xcrun simctl push` with a sealed payload (the real APNs path made it
 unnecessary); a cold extension on a locked device (the Keychain item's accessibility is meant for it).
 
+### Real iPhone
+
+On 2026-10-27, on the deployed `dev` environment (`brigade-api-dev`, `brigade-web-dev`, and `brigade-relay-dev`
+redeployed from `main`), with an EAS preview build (ad hoc, so production APNs tokens) on a real iPhone:
+
+- **A page reached a locked phone, decrypted.** A heartbeat monitor opened a SEV2 incident; the push went from the
+  API through the relay to APNs and arrived with the app not open and the phone **locked**, as a Time Sensitive
+  notification titled "SEV2 · INC-n" with the monitor's title as its text. That text only exists inside the sealed
+  envelope, so the Notification Service Extension read the device key from the Keychain while locked and decrypted
+  it.
+- **Acknowledge from the notification worked on the locked phone**: Face ID or the passcode, then the quiet
+  confirmation, and the incident was acknowledged. The page's delivery receipt reached "opened on the phone".
+- **Two deployment lessons.** A Worker's subrequest to another workers.dev Worker on the same account answers 404,
+  so the API reaches the relay through the `RELAY` service binding (#53). The relay deployed before had predated
+  per-device APNs environments and sent the production token to the sandbox, which answered `BadDeviceToken`;
+  Brigade removed the device, as it should for that answer, and redeploying the relay from `main` fixed it.
+- **Testing alone needs a monitor.** The person who declares an incident is never paged for it (`apps/api/src/paging.ts`
+  leaves out the actor), so a solo test pages itself only through a monitor.
+
+Not verified on the device: the phone in `pt-BR` (it ran in English: the system label read "TIME SENSITIVE" and
+the text was the monitor's title, which is not translated), so the `pt-BR` fallback is still unseen; the Acknowledge
+action from a cold background launch (the app not running at all); VoIP and CallKit (S6), which the API does not
+send yet.
+
 ### Building locally
 
 No EAS cloud build was used. From `apps/mobile`:
@@ -213,14 +237,9 @@ For a device, use `-destination 'generic/platform=iOS'`. Automatic signing then 
 - **The extension** is built by our own config plugin (no community plugin), with fallback strings generated from
   `packages/i18n`.
 
-Left for the real iPhone (needs the device):
-
-1. Register it (`bunx eas-cli@latest device:create`, or let Xcode's automatic signing add it), build with
-   `-destination 'generic/platform=iOS' -allowProvisioningUpdates`, and install.
-2. Repeat the end-to-end run with the device's sandbox token, the app in the background and the phone **locked**.
-   The extension must read the Keychain item while locked, and the banner must break through a Focus mode
-   (time-sensitive).
-3. Check the `pt-BR` fallback with the phone in Portuguese.
+Verified on a real iPhone (see "Real iPhone" above): a page sent by the deployed API, locked phone, decrypted by
+the extension, time-sensitive. Left: the `pt-BR` fallback with the phone in Portuguese, and a banner breaking through
+a Focus mode.
 
 ## Open questions
 

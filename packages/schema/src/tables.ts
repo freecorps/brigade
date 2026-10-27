@@ -316,6 +316,18 @@ export type TimelineEntry =
       /** For `undelivered`: the level none of whose pushes any device took, so this one was paged at once. */
       unreached?: number;
     }
+  /**
+   * A failed page was paged again (`incident.pageAgain`, RFC 0005 "Notifiers"): `entries` are the `page_failed`
+   * entries it answers; `userIds` the members it went to, and `everyone` when it went to the interim rule (a page that
+   * failed for nobody in particular). `auto`: Brigade did it on its own, for a lost SEV1 or SEV2 declaration.
+   */
+  | {
+      kind: "paged_again";
+      entries: string[];
+      userIds: string[];
+      everyone: boolean;
+      auto?: boolean;
+    }
   /** Every level and repeat was paged and nobody acknowledged, so everyone who can respond was paged. */
   | {
       kind: "escalation_exhausted";

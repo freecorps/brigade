@@ -24,6 +24,7 @@ import {
   type PageTarget,
   type SendFailure,
   sendsCritical,
+  type Urgency,
 } from "./paging.ts";
 import { SideConnections } from "./side-connections.ts";
 import { asksForSlack } from "./slack.ts";
@@ -425,6 +426,14 @@ export async function callIdOf(eventId: string): Promise<string> {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/**
+ * A push's `apns-collapse-id`: the incident id for a page, so its repeats replace each other on screen, and apart from
+ * it for anything less urgent, so a later SEV3 push about the same incident never takes a page's place.
+ */
+export function collapseIdOf(incidentId: string, urgency: Urgency): string {
+  return urgency === "page" ? incidentId : `${incidentId}:${urgency}`;
+}
+
 /** APNs' reasons for a token that will never work again: the device is dropped. */
 const TOKEN_GONE: readonly string[] = ["BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"];
 
@@ -511,8 +520,9 @@ async function pushOne(
         envelope,
         urgency: plan.urgency,
         environment: target.environment,
-        // A redelivered page replaces the one on screen instead of stacking.
-        collapseId: incident.id,
+        // A redelivered page replaces the one on screen instead of stacking; a lower-urgency push never replaces a
+        // page (RFC 0006 "Offline phones"; the shard also holds it back while the page may be undelivered).
+        collapseId: collapseIdOf(incident.id, plan.urgency),
         // Rings through silent mode (RFC 0006 "Critical Alerts"); only sent when true.
         ...(critical ? { critical: true } : {}),
       }),

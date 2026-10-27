@@ -2,7 +2,10 @@
 // incident's timeline, where responders look, and out as `notification.failed`, like every change. So is an email
 // about it that could not be sent (RFC 0005 "Email").
 
+import { isActive } from "./lifecycle.ts";
 import { defineMutation, fail, ok, type DomainEvent } from "./mutation.ts";
+import { prefixRange } from "./query.ts";
+import type { TimelineRow } from "./tables.ts";
 import { appendTimeline } from "./timeline.ts";
 import { v, type Validator } from "./validate.ts";
 
@@ -181,6 +184,135 @@ export const failEmail = defineMutation({
         userId: args.userId,
         reason: args.reason,
         about: args.about,
+      },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * The failed pages `incident.pageAgain` takes: a page that may not have gone out (`dead_lettered`), or one whose
+ * pushes failed until the notifier gave up or that found no phone (`undelivered`, `token_invalid`, `not_configured`,
+ * `no_devices`; the member may have fixed it since). Not the escalation's own misses (nobody on call, a deleted
+ * schedule, a member gone), which paging again cannot change.
+ */
+export const PAGE_AGAIN_REASONS = [
+  "dead_lettered",
+  "undelivered",
+  "token_invalid",
+  "not_configured",
+  "no_devices",
+] as const satisfies readonly PageFailure[];
+
+/** At most this many `page_failed` entries in one `incident.pageAgain` (a grouped line on the timeline). */
+export const MAX_PAGE_AGAIN_ENTRIES = 50;
+
+/** Whether `entry` is a failed page `incident.pageAgain` takes. */
+export function pagesAgain(
+  entry: TimelineRow,
+): entry is Extract<TimelineRow, { kind: "page_failed" }> {
+  return (
+    entry.kind === "page_failed" &&
+    (PAGE_AGAIN_REASONS as readonly PageFailure[]).includes(entry.reason)
+  );
+}
+
+export type IncidentPagedAgain = DomainEvent<
+  "incident.paged_again",
+  {
+    incidentId: string;
+    /** The `page_failed` entries it answers. */
+    entries: string[];
+    /** The members the failed pages were for. */
+    userIds: string[];
+    /** Also the interim rule (commander, else everyone who can respond): a failed page for nobody in particular. */
+    everyone: boolean;
+    /** Not pushed, as for the first page: who asked for it (or, done by Brigade, who caused the page that was lost). */
+    causedBy: string;
+  }
+>;
+
+/**
+ * "Page again" on a failed page (RFC 0005 "Notifiers"): an owner or admin (`escalation:manage`) asks for the
+ * `page_failed` entries `entries` to be paged once more, as a new page with its own event (`incident.paged_again`),
+ * never by replaying the old one. It goes to the members those entries name; an entry for nobody in particular (a page
+ * the Queue gave up on) goes to the escalation level it belonged to when the incident row still has it, else to the
+ * interim rule. Each entry is paged again once (`conflict` after); only while the incident is active and
+ * unacknowledged (`conflict`). The shard runs it on its own once, as `sys_notifier`, for a lost SEV1 or SEV2
+ * declaration (`causedBy`: who declared it, still not pushed); a member's `causedBy` is always themselves.
+ */
+export const pageAgain = defineMutation({
+  name: "incident.pageAgain",
+  args: v.object({
+    id: v.id("inc"),
+    entries: v.array(v.string({ min: 1, max: 64 }), {
+      min: 1,
+      max: MAX_PAGE_AGAIN_ENTRIES,
+      unique: true,
+    }),
+    causedBy: v.omittable(v.string({ min: 1, max: 64 })),
+  }),
+  permission: "escalation:manage",
+  apply(store, args, ctx) {
+    const incident = store.get("incidents", args.id);
+    if (!incident) return fail("not_found", "Incident not found");
+    if (!isActive(incident.status) || incident.acknowledgedAt != null) {
+      return fail("conflict", "Incident is not waiting for a page");
+    }
+    const failed = [];
+    for (const id of args.entries) {
+      const entry = store.get("timeline", id);
+      if (!entry || entry.incidentId !== incident.id || !pagesAgain(entry)) {
+        return fail("not_found", "No such failed page");
+      }
+      failed.push(entry);
+    }
+    const { from, to } = prefixRange(`${incident.id}:`);
+    const asked = new Set(args.entries);
+    for (const entry of store.range("timeline", from, to)) {
+      if (entry.kind === "paged_again" && entry.entries.some((id) => asked.has(id))) {
+        return fail("conflict", "Already paged again");
+      }
+    }
+    const run = incident.escalation;
+    const userIds = new Set<string>();
+    let everyone = false;
+    for (const entry of failed) {
+      if (entry.userId !== null) {
+        userIds.add(entry.userId);
+        continue;
+      }
+      // A lost escalation page: the level's members, while the row still keeps that page.
+      const kept = run && entry.run === run.eventId && entry.step !== undefined;
+      const page = kept ? run.pages[run.pages.length - 1 - (run.paged - entry.step!)] : undefined;
+      if (page && page.level !== null) {
+        for (const id of page.userIds) if (id !== run!.causedBy) userIds.add(id);
+      } else everyone = true;
+    }
+    const auto = ctx.actor.kind === "system";
+    const causedBy = auto ? (args.causedBy ?? ctx.actor.id) : ctx.actor.id;
+    store.update("incidents", incident.id, { updatedAt: ctx.now });
+    appendTimeline(
+      store,
+      incident,
+      {
+        kind: "paged_again",
+        entries: args.entries,
+        userIds: [...userIds],
+        everyone,
+        ...(auto && { auto }),
+      },
+      ctx,
+    );
+    const event: IncidentPagedAgain = {
+      type: "incident.paged_again",
+      subject: incident.id,
+      data: {
+        incidentId: incident.id,
+        entries: args.entries,
+        userIds: [...userIds],
+        everyone,
+        causedBy,
       },
     };
     return ok(event);

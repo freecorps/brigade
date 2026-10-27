@@ -182,7 +182,8 @@ Decided with the drain (`apps/api/src/outbox.ts`):
 - **Consumer settings.** Batches of up to 10, waiting at most 1 s (pages are urgent), `max_retries` 10, then the
   dead-letter queue `brigade-events-dlq` (`-dev`, `-staging`). Consumers decide when to give up on their own
   (`MAX_PAGE_ATTEMPTS`, below the Queue's retries) so a failure is recorded, not dropped; the dead-letter queue only
-  catches what still fails (a bug). Nothing reads it yet: inspect and replay it by hand.
+  catches what still fails (a bug). The API Worker consumes it for pages ("Notifiers" below); anything else in it is
+  inspected by hand.
 
 ## Notifiers
 
@@ -192,8 +193,9 @@ bindings (the shards, D1) and is small; RFC 0002's notifier Worker splits off wi
 or dependencies should not share the API's.
 
 - **What pages**: `incident.declared` (urgency `page` for SEV1 and SEV2, `high` otherwise),
-  `incident.severity_changed` raised into SEV1 or SEV2 (`page`), and `escalation.paged` for a level the shard's
-  alarm fired (urgency from the incident's severity). With a default escalation policy the first of those starts a
+  `incident.severity_changed` raised into SEV1 or SEV2 (`page`), `escalation.paged` for a level the shard's
+  alarm fired, and `incident.paged_again` for a failed page paged again ("Page again" below; both with urgency from
+  the incident's severity). With a default escalation policy the first of those starts a
   run and pages its first level (RFC 0006 "Who is paged"). Monitors open incidents with
   `incident.declared` as `sys_monitors` (SEV2), and alert sources as `sys_alerts` (their route's severity), so they
   page through the same rule. A page is not sent for an
@@ -218,9 +220,24 @@ or dependencies should not share the API's.
   message goes to `brigade-events-dlq`. The same Worker consumes that queue: for a page not already settled, on an
   incident still active and unacknowledged, it records `notification.failed` with `userId: null` and
   `dead_lettered` ("A page may not have gone out"), closes the page in the ledger, and acks; a lost page that is
-  still its escalation run's last is paged again on an event of its own (RFC 0006 "A lost page"). If the shard
-  still cannot be reached it logs `dead-lettered page could not be recorded` and retries in 2 minutes, up to 5
-  times (`max_retries: 5`, no dead-letter queue of its own, so spent retries delete the message: nothing loops).
+  still its escalation run's last is paged again on an event of its own (RFC 0006 "A lost page"). A lost SEV1 or
+  SEV2 `incident.declared` the interim rule paged (no escalation run on the incident, so nothing else would page it
+  again) is paged again once, `PAGE_REPLAY_DELAY_MS` (30 s) later, from the shard's alarm: `incident.pageAgain` as
+  `sys_notifier`, de-duplicated by the lost event (`replay:<event id>`), refused once the incident was acknowledged,
+  resolved or paged again by hand, and whoever declared it still not pushed. Its own page lost too is only recorded.
+  If the shard still cannot be reached it logs `dead-lettered page could not be recorded` and retries in 2 minutes,
+  up to 5 times (`max_retries: 5`, no dead-letter queue of its own, so spent retries delete the message: nothing
+  loops).
+- **Page again (decided).** An owner or admin (`escalation:manage`) can page a failed page again from the incident
+  page: "Page again" under a `page_failed` entry (or a grouped line of them) whose reason paging again can help
+  (`dead_lettered`, `undelivered`, `token_invalid`, `not_configured`, `no_devices`; not an escalation's own misses).
+  It is a named mutation, `incident.pageAgain` (`packages/schema`), with RBAC and a `paged_again` timeline entry, and
+  it pages through the outbox on an event of its own, `incident.paged_again`: the old event is never replayed (its
+  ledger stays closed). It goes to the members the entries name; an entry for nobody in particular (a lost page)
+  goes to the escalation level it belonged to while the incident row keeps that page, else to the interim rule. It
+  never starts or moves an escalation run, each entry is paged again once (`conflict` after), and only while the
+  incident is active and unacknowledged. Tests: `apps/api/test/notify.test.ts` ("paging a failed page again",
+  "paging a lost declaration again on its own"), `packages/schema/tests/escalation.test.ts` ("incident.pageAgain").
 - **The outbox.** A row the drain cannot read (not JSON) or too large for the Queue is logged and dropped, so it
   never blocks the events after it; any drain that throws (storage) backs off like a failed send.
 - **Delivery receipts.** Each page records a row per device, from planned to accepted by APNs, and the phone reports

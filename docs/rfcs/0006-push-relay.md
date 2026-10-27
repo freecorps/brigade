@@ -41,9 +41,17 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   pushes, then authenticate the sender (HPKE auth mode or the instance's Ed25519 signature).
 - **Offline phones:** pushes carry an `apns-expiration` by urgency (pages 15 minutes; the relay refuses "try once"
   for a page). APNs keeps only the latest undelivered push per app and device, so a later push (even a `low`
-  status update) replaces a stored page. Before production: the app re-syncs open pages when it reconnects or comes
-  to the foreground, and the instance holds back lower-urgency pushes to a device while a page to it may be
-  undelivered (or re-sends the page after them). This is a paging path: it needs a fallback and a test.
+  status update) replaces a stored page. Decided for the same incident: a page's `apns-collapse-id` is the incident
+  id and anything less urgent gets its own (`<incident id>:high`), so a lower-urgency push never takes a page's place
+  on screen; and the shard holds a lower-urgency push for an incident back from each phone a `page` push of that
+  incident may still be waiting on (APNs took it within `PAGE_HOLD_MS`, the page's 15-minute expiration, and the
+  phone has not sent its delivery receipt; a missing delivery row counts as unconfirmed). The shard plans every push
+  one at a time, so whichever is planned second sees the first: a page is never held back, and a page APNs never took
+  (still retrying, or failed) holds nothing back. A phone held back counts as reached on that push (its member was
+  paged for this incident already, more urgently), so it is never recorded as missed nor retried. Tests:
+  `apps/api/test/notify.test.ts` ("lower-urgency pushes behind a page"). Still open: a lower-urgency push for
+  **another** incident can still replace a stored page (holding it back would delay another incident); the app
+  re-syncing open pages when it reconnects or comes to the foreground is the fallback for that, before production.
 - **Calls (RFC 0010).** `POST /send` with `kind: "call"` sends a PushKit VoIP push (`apns-push-type: voip`, topic
   `<bundle id>.voip`, priority 10) whose body is only `{ call: { id }, brigade: <envelope> }`. The relay refuses a call
   that is not a `page` or has no lowercase UUID id, and keeps it 60 seconds by default (at most 5 minutes), because
@@ -249,8 +257,9 @@ paged instead. Every member the page was for who has no device (the commander in
 (`over_limit`); RFC 0005 "Notifiers".
 
 Members are the shard's member list (RFC 0003), a copy of D1's that `member.sync` fills when a member opens a sync
-socket, so someone who never opened Brigade is not paged (they have no device either). The page path never reads
-D1: a D1 outage must not become a reason a page is late or missing. How the copy follows D1 (RFC 0003 "Members"):
+socket, so someone who never opened Brigade is not paged (they have no device either). A D1 outage must never become
+a reason a page is late or missing: the page path reads D1 only for the bounded check below, and pages with the
+shard's copy whenever that check fails. How the copy follows D1 (RFC 0003 "Members"):
 
 - **Through Brigade** (the dashboard's Members section): D1 first, then, in one shard transaction, the role changes
   (`member.role_changed`; demoted to viewer, they are no longer paged) or the member's row and every device of theirs
@@ -278,7 +287,21 @@ D1: a D1 outage must not become a reason a page is late or missing. How the copy
   the upgrade is refused (503) and the repair alarm is armed.
 - **Edits made outside Brigade** (straight in D1): reconciled on the next sync upgrade into the workspace by anyone
   (`member.reconcile`): a removed member's row and devices go, a changed role is copied, and their open sockets
-  close. Until somebody opens Brigade, a member removed or demoted outside it is still paged (Q18).
+  close. Without anyone opening Brigade (decided, Q18), two more things catch up:
+  - **Periodically, from the shard's alarm.** The first change with events since the member list last agreed with
+    D1 records the shard as active and sets the alarm for `MEMBER_RECONCILE_PERIOD_MS` (10 minutes) after that last
+    reconcile; the alarm then asks for the member repair, which reconciles (retrying every 30 s while D1 fails). An
+    idle shard reads nothing, an active one D1 once per period at most. A shard never reconciled since this shipped
+    waits a period from its first activity.
+  - **Just before a page.** When the list last agreed with D1 more than `MEMBER_STALE_MS` (5 minutes) ago, the
+    shard reconciles before planning the page (`Membership.fresh`). It fails open: the page waits at most
+    `MEMBER_CHECK_BUDGET_MS` (1.5 s; the reconcile finishes in the background), and a D1 that fails or is late leaves
+    the page to the shard's copy, logged (`paging with the shard's member list`), with the check skipped for 30 s
+    so an outage does not cost every page its wait, and the repair alarm armed.
+  So a member removed or demoted outside Brigade is still paged for at most a period of activity, never past a page
+  planned while D1 answers. Tests: `apps/api/test/members.test.ts` ("a member deleted in D1 stops being paged at the
+  next periodic reconcile", "a page checks a member list not checked against D1 lately first", "a page whose check
+  D1 fails or hangs goes with the shard's copy").
 - Tests: `apps/api/test/members.test.ts` ("a removed member is deleted from D1 and the shard with every device, and is
   no longer paged", "a demoted member stops being paged at once", the "when one side fails" cases (among them "a
   failed leave: the leaver's own retry stops their pages", "a failed change is repaired by the shard's alarm" and "an
@@ -336,12 +359,12 @@ D1: a D1 outage must not become a reason a page is late or missing. How the copy
     kept, revoking the session on the way out, which bounds both the record (one of the 10) and the removed
     member's credential. Meanwhile the app shows the next member "taken" although the shard would accept them;
     treating a 403 `not_a_member` as finished (the device is gone with the membership) would end that sooner and
-    is left for the app. A removal made outside Brigade takes effect at the next sync upgrade into the workspace.
+    is left for the app. A removal made outside Brigade takes effect at the next reconcile (above).
 
 Content: title `SEV1 · INC-142` (codes, so no locale is needed), body the incident's title, the incident id, its
 workspace id (for the Acknowledge action) and the page's receipt token and URL ("Delivery receipts"), sealed per
-device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id, so a repeat replaces
-the notification. What happens when a page fails is RFC 0005 "Notifiers".
+device; urgency `page` for SEV1 and SEV2; `apns-collapse-id` is the incident id for a page, so a repeat replaces
+the notification, and `<incident id>:high` for anything less urgent, so it never replaces a page ("Offline phones"). What happens when a page fails is RFC 0005 "Notifiers".
 
 ## Acting from the notification
 

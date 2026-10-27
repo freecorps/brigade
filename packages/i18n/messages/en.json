@@ -825,6 +825,9 @@
         "kind=escalated_started_aware": "Level {a}: {b}",
         "kind=escalated_again": "Level {a} paged again: the earlier page was lost",
         "kind=escalated_everyone_again": "Everyone who can respond paged again: the earlier page was lost",
+        "kind=paged_again": "{actor} paged {a} again",
+        "kind=paged_again_everyone": "{actor} paged everyone who can respond again",
+        "kind=paged_again_auto": "The page was lost, so Brigade paged it again",
         "kind=page_nobody_else": "Nobody else was paged: only the person who declared it can respond",
         "kind=escalation_exhausted": "Nobody acknowledged after every level, so everyone who can respond was paged",
         "kind=escalated_everyone_stalled": "An escalation level kept failing to fire, so everyone who can respond was paged",
@@ -1460,6 +1463,19 @@
         "reason=not_a_member": "{name} (can no longer respond)",
         "reason=failed": "{name} (push failed)",
         "reason=*": "{name}"
+      }
+    }
+  ],
+  "incident_page_again": [
+    {
+      "declarations": ["input part", "input reason"],
+      "selectors": ["part"],
+      "match": {
+        "part=action": "Page again",
+        "part=pending": "Paging again…",
+        "part=already": "Someone already paged this again.",
+        "part=failed": "Couldn't page again. {reason}",
+        "part=*": "Page again"
       }
     }
   ],

@@ -18,6 +18,7 @@ import {
   type EscalationPaged,
   type DevicePlatform,
   incidentPolicy,
+  type IncidentPagedAgain,
   type IncidentRow,
   type IncidentSeverityChanged,
   type IncidentStatus,
@@ -40,6 +41,22 @@ export const LEDGER_RETENTION_MS = 15 * 24 * 60 * 60 * 1000;
  * logged, and a member none of whose devices fit is recorded as not paged (`over_limit`).
  */
 export const MAX_PAGE_DEVICES = 200;
+/**
+ * How long a `page` push APNs accepted may still be waiting for a phone that is offline: the relay's `apns-expiration`
+ * for a page (15 minutes). Until the phone confirms it (its delivery receipt), a lower-urgency push for the same
+ * incident is held back from that phone (`Pager.plan`), since APNs keeps only the latest push for a phone it cannot
+ * reach and the later one would replace the page (RFC 0006 "Offline phones").
+ */
+export const PAGE_HOLD_MS = 15 * 60 * 1000;
+/**
+ * How long after a lost SEV1 or SEV2 declaration (the Queue gave up on it) the shard pages it again on its own, once
+ * (`incident.pageAgain` as `sys_notifier`): long enough for whatever stopped it to pass, short enough to matter.
+ */
+export const PAGE_REPLAY_DELAY_MS = 30 * 1000;
+/** A page again that could not run (storage) is tried again this much later. */
+export const PAGE_REPLAY_RETRY_MS = 60 * 1000;
+/** The event type of a failed page paged again (`incident.pageAgain`). */
+export const PAGED_AGAIN = "incident.paged_again";
 
 const SCHEMA = `
   create table if not exists page_deliveries (
@@ -60,6 +77,23 @@ const SCHEMA = `
   create index if not exists page_events_at on page_events (at);
   create index if not exists page_steps_run on page_steps (run, step);
   create index if not exists page_steps_at on page_steps (at);
+  create table if not exists page_urgent (
+    event_id text not null,
+    device_id text not null,
+    incident_id text not null,
+    planned_at integer not null,
+    accepted_at integer,
+    primary key (event_id, device_id)
+  ) without rowid;
+  create index if not exists page_urgent_incident on page_urgent (incident_id, device_id);
+  create index if not exists page_urgent_at on page_urgent (planned_at);
+  create table if not exists page_replays (
+    event_id text primary key,
+    incident_id text not null,
+    entry text not null,
+    caused_by text not null,
+    at integer not null
+  ) without rowid;
 `;
 
 export type Urgency = "high" | "page";
@@ -121,7 +155,8 @@ export type PagePlan =
         | "acknowledged"
         | "inactive"
         | "stale"
-        | "nobody";
+        | "nobody"
+        | "held";
     };
 
 /** Why one device's push failed, as the notifier reports it. */
@@ -159,11 +194,12 @@ export type DeviceOutcome =
  * `incident.declared` as `sys_monitors` (SEV2), so they page through the same rule. An incident reopened by the
  * alerts' actor pages too: its alert fired again soon after it resolved by itself, unacknowledged (RFC 0005 "Alert
  * sources", flapping); a reopen by a member does not. The severity that reopen raised it to first (`reopening`) is
- * paged by the reopen, so it asks for nothing more.
+ * paged by the reopen, so it asks for nothing more. A failed page paged again (`incident.paged_again`) is a page of
+ * its own.
  */
 export function asksForPage(event: BrigadeEvent): boolean {
   if (event.subject === undefined) return false;
-  if (event.type === "incident.declared") return true;
+  if (event.type === "incident.declared" || event.type === PAGED_AGAIN) return true;
   if (event.type === "incident.status_changed") {
     const { from, to } = (event.data ?? {}) as { from?: IncidentStatus; to?: IncidentStatus };
     return (
@@ -227,7 +263,8 @@ const rank = (severity: Severity) => ["sev1", "sev2", "sev3", "sev4"].indexOf(se
  *
  * Members are the shard's member list (`member.sync`), never D1, so a D1 outage cannot delay a page. Member changes
  * made through Brigade update it with D1 (`member.changeRole`, `member.remove`: row and devices); one made outside
- * Brigade reaches it on the next sync upgrade into the workspace (`member.reconcile`, RFC 0006 "Who is paged").
+ * Brigade reaches it on the next sync upgrade into the workspace, the alarm's periodic reconcile, or the check before
+ * a page whose copy is stale (`member.reconcile`, RFC 0006 "Who is paged").
  */
 export function pageTargets(
   store: Store<BrigadeTables>,
@@ -367,6 +404,7 @@ export class Pager {
     }
 
     const recipients =
+      (event.type === PAGED_AGAIN ? this.again(event, incident) : undefined) ??
       this.escalated(event, incident, now) ??
       ({
         ...pageTargets(this.options.shard.store, incident, event.actor.id),
@@ -410,7 +448,22 @@ export class Pager {
         .toArray()
         .map((row) => row.device_id),
     );
-    const pending = all.filter((target) => !delivered.has(target.deviceId));
+    const urgency: Urgency = PAGING_SEVERITIES.includes(incident.severity) ? "page" : "high";
+    // A lower-urgency push never replaces a page of the same incident a phone may still be waiting for.
+    const held = urgency === "page" ? new Set<string>() : this.holding(incident.id, now);
+    const kept = all.filter(
+      (target) => held.has(target.deviceId) && !delivered.has(target.deviceId),
+    );
+    if (kept.length > 0) this.hold(event, incident.id, kept, now);
+    const pending = all.filter(
+      (target) => !delivered.has(target.deviceId) && !held.has(target.deviceId),
+    );
+    if (pending.length === 0 && kept.length > 0) {
+      // Every phone left has the page itself waiting: the members it is for were paged for this incident already.
+      if (skipped.length > 0) this.settle(event, incident.id, skipped, now);
+      this.finish(event.id, now);
+      return { send: false, reason: "held" };
+    }
     const targets = pending.slice(0, MAX_PAGE_DEVICES);
     if (pending.length > MAX_PAGE_DEVICES) {
       const sent = new Set(targets.map((target) => target.userId));
@@ -427,6 +480,7 @@ export class Pager {
     }
     this.planStep(event, incident.id, now);
     this.planDeliveries(event, incident.id, targets, now);
+    if (urgency === "page") this.planUrgent(event, incident.id, targets, now);
     return {
       send: true,
       incident: {
@@ -435,7 +489,7 @@ export class Pager {
         title: incident.title,
         severity: incident.severity,
       },
-      urgency: PAGING_SEVERITIES.includes(incident.severity) ? "page" : "high",
+      urgency,
       call: ringsAsCall(event, incident.severity),
       targets,
       skipped,
@@ -460,6 +514,118 @@ export class Pager {
       );
     } catch (error) {
       this.options.log("recording a page's step failed", {
+        event: event.id,
+        incident: incidentId,
+        error: String(error),
+      });
+    }
+  }
+
+  /**
+   * Who a failed page paged again goes to (`incident.paged_again`): the members its entries named, and with
+   * `everyone` the interim rule as well (commander, else everyone who can respond), each on every device. The interim
+   * rule leaves out whoever asked for it (or caused the lost page), as for any page; a member named is paged even when
+   * they asked (an owner paging their own phone again). Never starts or moves an escalation run.
+   */
+  private again(event: BrigadeEvent, incident: IncidentRow): Recipients {
+    const data = event.data as Partial<IncidentPagedAgain["data"]> | null;
+    const causedBy = data?.causedBy ?? event.actor.id;
+    const named = this.devicesOf(data?.userIds ?? [], null);
+    if (!data?.everyone) return { ...named, skipped: [] };
+    const interim = pageTargets(this.options.shard.store, incident, causedBy);
+    const seen = new Set(named.targets.map((target) => target.deviceId));
+    return {
+      targets: [
+        ...named.targets,
+        ...interim.targets.filter((target) => !seen.has(target.deviceId)),
+      ],
+      noDevices: [...new Set([...named.noDevices, ...interim.noDevices])],
+      skipped: [],
+    };
+  }
+
+  /**
+   * The phones that may still be waiting for a `page` push of this incident (RFC 0006 "Offline phones"): APNs took it
+   * within `PAGE_HOLD_MS` and the phone has not confirmed it (no delivery receipt). A delivery row that could not be
+   * written counts as unconfirmed. Never in the page's way: a failure holds nothing back.
+   */
+  private holding(incidentId: string, now: number): Set<string> {
+    try {
+      const { store } = this.options.shard;
+      const rows = this.options.storage.sql
+        .exec<{ event_id: string; device_id: string }>(
+          `select event_id, device_id from page_urgent
+           where incident_id = ? and accepted_at is not null and accepted_at >= ?`,
+          incidentId,
+          now - PAGE_HOLD_MS,
+        )
+        .toArray();
+      const held = new Set<string>();
+      for (const row of rows) {
+        const delivery = store.get(
+          "deliveries",
+          deliveryId(incidentId, row.event_id, row.device_id),
+        );
+        if (delivery?.deliveredAt == null) held.add(row.device_id);
+      }
+      return held;
+    } catch (error) {
+      this.options.log("reading the pages phones wait for failed", {
+        incident: incidentId,
+        error: String(error),
+      });
+      return new Set();
+    }
+  }
+
+  /**
+   * Holds a lower-urgency push back from phones a page of the same incident may still be waiting on: each counts as
+   * reached in the ledger (the page itself is the newer word on this incident), so a retry skips it and its member is
+   * not recorded as missed.
+   */
+  private hold(
+    event: BrigadeEvent,
+    incidentId: string,
+    targets: readonly PageTarget[],
+    now: number,
+  ): void {
+    for (const target of targets) {
+      this.options.storage.sql.exec(
+        `insert into page_deliveries (event_id, device_id, user_id, at) values (?, ?, ?, ?)
+         on conflict do nothing`,
+        event.id,
+        target.deviceId,
+        target.userId,
+        now,
+      );
+    }
+    this.options.log("push held back behind a page the phone may still be waiting for", {
+      event: event.id,
+      incident: incidentId,
+      devices: targets.length,
+    });
+  }
+
+  /** Remembers each phone a `page` push is about to go to, for `holding`. Never in the page's way. */
+  private planUrgent(
+    event: BrigadeEvent,
+    incidentId: string,
+    targets: readonly PageTarget[],
+    now: number,
+  ): void {
+    try {
+      for (const target of targets) {
+        this.options.storage.sql.exec(
+          `insert into page_urgent (event_id, device_id, incident_id, planned_at) values (?, ?, ?, ?)
+           on conflict do nothing`,
+          event.id,
+          target.deviceId,
+          incidentId,
+          now,
+        );
+      }
+    } catch (error) {
+      this.options.log("recording a page's phones failed", {
         event: event.id,
         incident: incidentId,
         error: String(error),
@@ -691,6 +857,12 @@ export class Pager {
           outcome.userId,
           now,
         );
+        sql.exec(
+          "update page_urgent set accepted_at = ? where event_id = ? and device_id = ?",
+          now,
+          event.id,
+          outcome.deviceId,
+        );
       } else if (outcome.expiredToken !== undefined) {
         this.run(
           NOTIFIER_ACTOR,
@@ -829,6 +1001,7 @@ export class Pager {
     if (
       open &&
       event.type !== "escalation.paged" &&
+      event.type !== PAGED_AGAIN &&
       run?.eventId !== event.id &&
       run?.status !== "running" &&
       !superseded(event, run)
@@ -852,8 +1025,104 @@ export class Pager {
         now,
       );
     }
+    // A lost SEV1 or SEV2 declaration the interim rule paged (no run to page it again): paged again once, shortly.
+    if (
+      open &&
+      !after &&
+      event.type === "incident.declared" &&
+      PAGING_SEVERITIES.includes(incident.severity)
+    ) {
+      this.queueReplay(event, incident.id, now);
+    }
     this.finish(event.id, now);
     return open ? "recorded" : "closed";
+  }
+
+  /**
+   * Queues the page again of a lost declaration (`deadLettered`) for `PAGE_REPLAY_DELAY_MS` from now, once per event,
+   * answering its `dead_lettered` entry. Never throws: the entry stays on the timeline, and an owner or admin can page
+   * it again by hand.
+   */
+  private queueReplay(event: BrigadeEvent, incidentId: string, now: number): void {
+    try {
+      const { store } = this.options.shard;
+      const seq = store.get("incidents", incidentId)?.timelineSeq;
+      const entry = seq === undefined ? undefined : store.get("timeline", `${incidentId}:${seq}`);
+      if (entry?.kind !== "page_failed" || entry.reason !== "dead_lettered") {
+        this.options.log("paging a lost page again found no entry", {
+          event: event.id,
+          incident: incidentId,
+        });
+        return;
+      }
+      const at = now + PAGE_REPLAY_DELAY_MS;
+      this.options.storage.sql.exec(
+        `insert into page_replays (event_id, incident_id, entry, caused_by, at) values (?, ?, ?, ?, ?)
+         on conflict do nothing`,
+        event.id,
+        incidentId,
+        entry.id,
+        event.actor.id,
+        at,
+      );
+      this.options.wake(at);
+    } catch (error) {
+      this.options.log("queueing a lost page to page again failed", {
+        event: event.id,
+        incident: incidentId,
+        error: String(error),
+      });
+    }
+  }
+
+  /** When the next queued page again is due; null with none. */
+  replayAt(): number | null {
+    const row = this.options.storage.sql
+      .exec<{ at: number | null }>("select min(at) as at from page_replays")
+      .toArray()[0];
+    return row?.at ?? null;
+  }
+
+  /**
+   * From the shard's alarm: pages again each lost declaration that is due (`incident.pageAgain` as `sys_notifier`,
+   * de-duplicated by the lost event, so a repeated alarm pages it once), whatever it answers: an incident acknowledged
+   * or resolved meanwhile, or paged again by hand already, is refused and dropped. Returns how many ran.
+   */
+  replayDue(now: number): number {
+    const { sql } = this.options.storage;
+    const due = sql
+      .exec<{ event_id: string; incident_id: string; entry: string; caused_by: string }>(
+        "select event_id, incident_id, entry, caused_by from page_replays where at <= ? order by at limit 50",
+        now,
+      )
+      .toArray();
+    for (const row of due) {
+      try {
+        this.run(
+          NOTIFIER_ACTOR,
+          "notifier",
+          `replay:${row.event_id}`,
+          "incident.pageAgain",
+          { id: row.incident_id, entries: [row.entry], causedBy: row.caused_by },
+          now,
+        );
+      } catch (error) {
+        // Tried again a minute later, not in a loop; the `dead_lettered` entry stays for a member to page by hand.
+        this.options.log("paging a lost page again failed", {
+          event: row.event_id,
+          incident: row.incident_id,
+          error: String(error),
+        });
+        sql.exec(
+          "update page_replays set at = ? where event_id = ?",
+          now + PAGE_REPLAY_RETRY_MS,
+          row.event_id,
+        );
+        continue;
+      }
+      sql.exec("delete from page_replays where event_id = ?", row.event_id);
+    }
+    return due.length;
   }
 
   /**
@@ -1023,6 +1292,7 @@ export class Pager {
       sql.exec("delete from page_deliveries where at < ?", before);
       sql.exec("delete from page_events where at < ?", before);
       sql.exec("delete from page_steps where at < ?", before);
+      sql.exec("delete from page_urgent where planned_at < ?", now - 2 * PAGE_HOLD_MS);
     } catch (error) {
       this.options.log("pruning the page ledger failed", { error });
     }

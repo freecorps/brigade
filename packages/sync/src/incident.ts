@@ -6,7 +6,9 @@ import {
   canTransition,
   INCIDENT_STATUSES,
   lookup,
+  MAX_PAGE_AGAIN_ENTRIES,
   mutations,
+  pagesAgain,
   trimSpace,
   UPDATE_BODY_MAX,
   type IncidentRow,
@@ -184,4 +186,21 @@ export function timelineItems(entries: readonly TimelineRow[]): TimelineItem[] {
   }
   flush();
   return items;
+}
+
+/**
+ * The failed pages a timeline line offers to page again (`incident.pageAgain`, RFC 0005 "Notifiers"): its
+ * `page_failed` entries of a kind paging again can help (`pagesAgain`) that no `paged_again` entry in `timeline`
+ * answered yet. Empty: the line offers nothing. Who may, and whether the incident still waits for a page, is the
+ * caller's to check.
+ */
+export function pageAgainEntries(item: TimelineItem, timeline: readonly TimelineRow[]): string[] {
+  const answered = new Set(
+    timeline.flatMap((entry) => (entry.kind === "paged_again" ? entry.entries : [])),
+  );
+  const entries = item.kind === "entry" ? [item.entry] : item.entries;
+  return entries
+    .filter((entry) => pagesAgain(entry) && !answered.has(entry.id))
+    .slice(0, MAX_PAGE_AGAIN_ENTRIES)
+    .map((entry) => entry.id);
 }

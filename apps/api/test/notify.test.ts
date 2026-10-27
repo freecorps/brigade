@@ -6,6 +6,7 @@ import {
   createExecutionContext,
   createMessageBatch,
   getQueueResult,
+  runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
@@ -18,7 +19,9 @@ import {
 } from "@freecorps/brigade-push";
 import {
   createMemoryStore,
+  deliveryId,
   MONITOR_ACTOR,
+  NOTIFIER_ACTOR,
   newId,
   type Actor,
   type BrigadeTables,
@@ -39,6 +42,7 @@ import type { BrigadeEvent } from "../src/outbox.ts";
 import {
   asksForPage,
   MAX_PAGE_DEVICES,
+  PAGE_REPLAY_DELAY_MS,
   pageTargets,
   ringsAsCall,
   sendsCritical,
@@ -1084,6 +1088,254 @@ describe("when paging fails (the paging path's fallback)", () => {
 
   test("retry delays double from 5 s and stop at a minute", () => {
     expect([1, 2, 3, 4, 5, 6, 9].map(retryDelay)).toEqual([5, 10, 20, 40, 60, 60, 60]);
+  });
+});
+
+/** Runs `name` as `actor` in the shard and answers its result, whatever it is. */
+async function attempt(
+  ws: Awaited<ReturnType<typeof workspace>>,
+  actor: Actor,
+  name: string,
+  args: object,
+) {
+  return ws.withShard((shard) => {
+    const { result } = shard.mutate({
+      clientId: "test",
+      mutationId: `m${++mutations}`,
+      actor,
+      name,
+      args,
+      now: Date.now(),
+      internal: true,
+    });
+    return result;
+  });
+}
+
+/** A relay that refuses every push for good (as for a request it will refuse again). */
+const refusing = () => relay(() => Response.json({ error: "invalid_body" }, { status: 400 }));
+
+// RFC 0005 "Notifiers": an owner or admin pages a failed page again, as a page of its own.
+describe("paging a failed page again", () => {
+  test("an owner pages a member a page missed again, on a new event, once", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    await deliver(event, refusing().send);
+    const failed = (await ws.timeline(incident)).find(
+      (row) => row.kind === "page_failed" && row.userId === bia.id,
+    )!;
+    expect(failed).toMatchObject({ reason: "undelivered" });
+
+    await ws.run(ana, "incident.pageAgain", { id: incident, entries: [failed.id] });
+    const again = (await ws.events(incident)).find((e) => e.type === "incident.paged_again")!;
+    // Never the old event replayed: a page of its own, with its own id, to the member it missed.
+    expect(again.id).not.toBe(event.id);
+    expect(again.data).toEqual({
+      incidentId: incident,
+      entries: [failed.id],
+      userIds: [bia.id],
+      everyone: false,
+      causedBy: ana.id,
+    });
+    expect(asksForPage(again)).toBe(true);
+    const fake = relay();
+    await deliver(again, fake.send);
+    expect(fake.requests.map((r) => r.body.deviceToken)).toEqual([phone.pushToken]);
+    expect(fake.requests[0]!.body).toMatchObject({ urgency: "page", collapseId: incident });
+    expect((await ws.timeline(incident)).at(-1)).toMatchObject({
+      kind: "paged_again",
+      actor: ana.id,
+      entries: [failed.id],
+      userIds: [bia.id],
+      everyone: false,
+    });
+    // Once per failed page; the old event stays closed.
+    expect(
+      await attempt(ws, ana, "incident.pageAgain", { id: incident, entries: [failed.id] }),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    const late = relay();
+    await deliver(event, late.send);
+    expect(late.requests).toHaveLength(0);
+  });
+
+  test("refused for a responder, an acknowledged incident, and a failure paging again cannot change", async () => {
+    const ws = await workspace([ana, bia, caio, user("usr_duda", "admin")]);
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    await deliver(event, refusing().send);
+    const failed = (await ws.timeline(incident)).find((row) => row.kind === "page_failed")!;
+    expect(
+      await attempt(ws, bia, "incident.pageAgain", { id: incident, entries: [failed.id] }),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    // Not a failed page: the declaration's own entry.
+    expect(
+      await attempt(ws, ana, "incident.pageAgain", { id: incident, entries: [`${incident}:1`] }),
+    ).toMatchObject({ ok: false, error: { code: "not_found" } });
+    await ws.run(bia, "incident.ack", { id: incident });
+    expect(
+      await attempt(ws, user("usr_duda", "admin"), "incident.pageAgain", {
+        id: incident,
+        entries: [failed.id],
+      }),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect((await ws.events(incident)).map((e) => e.type)).not.toContain("incident.paged_again");
+  });
+
+  test("a lost page goes to whoever it was for: the interim rule, leaving out who asked", async () => {
+    const ws = await workspace();
+    const anaPhone = await ws.device(ana);
+    const biaPhone = await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    const batch = createMessageBatch("brigade-events-dlq", [
+      { id: "dlq-0", timestamp: new Date(), attempts: 1, body: event },
+    ]);
+    await consumeDeadLetters(batch, { WORKSPACE: env.WORKSPACE });
+    const lost = (await ws.timeline(incident)).find((row) => row.kind === "page_failed")!;
+    expect(lost).toMatchObject({ reason: "dead_lettered", userId: null });
+    await ws.run(ana, "incident.pageAgain", { id: incident, entries: [lost.id] });
+    const again = (await ws.events(incident)).find((e) => e.type === "incident.paged_again")!;
+    expect(again.data).toMatchObject({ userIds: [], everyone: true, causedBy: ana.id });
+    const fake = relay();
+    await deliver(again, fake.send);
+    expect(fake.requests.map((r) => r.body.deviceToken)).toEqual([biaPhone.pushToken]);
+    expect(fake.requests.map((r) => r.body.deviceToken)).not.toContain(anaPhone.pushToken);
+  });
+});
+
+// RFC 0005 "Notifiers", "The shard failing": a lost SEV1 or SEV2 declaration is paged again once, on its own.
+describe("paging a lost declaration again on its own", () => {
+  async function deadLetter(event: BrigadeEvent) {
+    const batch = createMessageBatch("brigade-events-dlq", [
+      { id: "dlq-0", timestamp: new Date(), attempts: 1, body: event },
+    ]);
+    await consumeDeadLetters(batch, { WORKSPACE: env.WORKSPACE });
+  }
+  /** Makes the queued page again due, as if `PAGE_REPLAY_DELAY_MS` passed, and runs the shard's alarm. */
+  async function replay(ws: Awaited<ReturnType<typeof workspace>>) {
+    await runInDurableObject(ws.stub, async (_instance: WorkspaceDO, state) => {
+      state.storage.sql.exec("update page_replays set at = ?", Date.now() - 1);
+      await state.storage.setAlarm(Date.now() + 60_000);
+    });
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+  }
+
+  test("a lost SEV1 declared by a monitor pages everyone who can respond once, after a delay", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    await deadLetter(event);
+    // Not at once: the delay is for whatever stopped it to pass.
+    expect((await ws.events(incident)).map((e) => e.type)).not.toContain("incident.paged_again");
+    const queued = await ws.withShard((_shard, sql) =>
+      sql.exec<{ at: number }>("select at from page_replays").toArray(),
+    );
+    expect(queued).toHaveLength(1);
+    expect(queued[0]!.at).toBeGreaterThanOrEqual(Date.now() + PAGE_REPLAY_DELAY_MS - 5000);
+
+    await replay(ws);
+    const again = (await ws.events(incident)).filter((e) => e.type === "incident.paged_again");
+    expect(again).toHaveLength(1);
+    expect(again[0]!.id).not.toBe(event.id);
+    expect(again[0]).toMatchObject({
+      actor: { id: "sys_notifier" },
+      data: { everyone: true, userIds: [], causedBy: MONITOR_ACTOR.id },
+    });
+    expect((await ws.timeline(incident)).at(-1)).toMatchObject({
+      kind: "paged_again",
+      auto: true,
+      everyone: true,
+    });
+    const fake = relay();
+    await deliver(again[0]!, fake.send);
+    expect(fake.requests.map((r) => r.body.deviceToken)).toEqual([phone.pushToken]);
+
+    // Once: the same dead letter again, or the alarm again, adds nothing; nor does its own page being lost.
+    await deadLetter(event);
+    await ws.withShard((_shard, sql) =>
+      sql.exec("insert into page_replays values ('evt_x', ?, ?, 'sys_monitors', 0)", incident, "x"),
+    );
+    await replay(ws);
+    await deadLetter(again[0]!);
+    await ws.withShard(async (_shard, sql) => {
+      expect(sql.exec("select * from page_replays").toArray()).toEqual([]);
+    });
+    expect(
+      (await ws.events(incident)).filter((e) => e.type === "incident.paged_again"),
+    ).toHaveLength(1);
+  });
+
+  test("not for a SEV3, an incident acknowledged meanwhile, or a page a run pages again", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const low = await ws.declare(MONITOR_ACTOR, "sev3");
+    await deadLetter(low.event);
+    const acked = await ws.declare(MONITOR_ACTOR);
+    await deadLetter(acked.event);
+    await ws.run(bia, "incident.ack", { id: acked.incident });
+    await replay(ws);
+    for (const { incident } of [low, acked]) {
+      expect((await ws.events(incident)).map((e) => e.type)).not.toContain("incident.paged_again");
+      expect((await ws.timeline(incident)).map((row) => row.kind)).not.toContain("paged_again");
+    }
+  });
+});
+
+// RFC 0006 "Offline phones": APNs keeps only the latest push for a phone it cannot reach.
+describe("lower-urgency pushes behind a page", () => {
+  /** The same page asked for again by another event (as a later push for the incident would be). */
+  const another = (event: BrigadeEvent): BrigadeEvent => ({
+    ...event,
+    id: newId("evt", Date.now(), random),
+    time: new Date().toISOString(),
+  });
+
+  test("a SEV3 push waits out a page the phone has not confirmed, and never shares its collapse id", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    const fake = relay();
+    await deliver(event, fake.send);
+    expect(fake.requests.map((r) => r.body)).toMatchObject([
+      { urgency: "page", collapseId: incident },
+    ]);
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
+
+    // APNs took the page and the phone has not said it got it: the SEV3 push is held back, and Bia counts as paged.
+    const held = another(event);
+    expect(await deliver(held, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
+    expect(fake.requests).toHaveLength(1);
+    expect(logged()).toContainEqual(
+      expect.objectContaining({
+        message: "push held back behind a page the phone may still be waiting for",
+      }),
+    );
+    expect((await ws.timeline(incident)).map((row) => row.kind)).not.toContain("page_failed");
+
+    // Once the phone confirms the page, a later push goes out, under a collapse id of its own.
+    await ws.run(NOTIFIER_ACTOR, "delivery.confirm", {
+      id: deliveryId(incident, event.id, phone.deviceId),
+    });
+    await deliver(another(event), fake.send);
+    expect(fake.requests.map((r) => r.body)).toMatchObject([
+      { urgency: "page", collapseId: incident },
+      { urgency: "high", collapseId: `${incident}:high` },
+    ]);
+  });
+
+  test("a page APNs never took holds nothing back, and a page is never held back", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    await deliver(event, refusing().send);
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
+    const fake = relay();
+    await deliver(another(event), fake.send);
+    expect(fake.requests.map((r) => r.body.urgency)).toEqual(["high"]);
+    // Raised again: a page goes whatever came before it.
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev1" });
+    await deliver(another(event), fake.send);
+    expect(fake.requests.map((r) => r.body.urgency)).toEqual(["high", "page"]);
   });
 });
 

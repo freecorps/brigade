@@ -1320,3 +1320,97 @@ describe("escalating early (every push of a level failed)", () => {
     expect(run(store).paged).toBe(1);
   });
 });
+
+// RFC 0005 "Notifiers": "Page again" on a failed page.
+describe("incident.pageAgain", () => {
+  const fail = (store: MutationStore, args: Record<string, unknown>) =>
+    runMutation(
+      serverMutations,
+      "notification.fail",
+      { incidentId: INC, eventId: LOST, ...args },
+      store,
+      ctx("sys_notifier", "admin", T + MINUTE, "system"),
+    );
+  const entry = (store: MutationStore) => `${INC}:${store.get("incidents", INC)!.timelineSeq}`;
+  const pageAgain = (store: MutationStore, entries: string[], role: Role = "owner") =>
+    runMutation(
+      mutations,
+      "incident.pageAgain",
+      { id: INC, entries },
+      store,
+      ctx("usr_bia", role, T + 2 * MINUTE),
+    );
+
+  test("a lost escalation level goes to that level's members, leaving out who declared it", () => {
+    const store = withPolicy({
+      levels: [
+        level(LVL1, [
+          { kind: "schedule", id: SCH },
+          { kind: "member", id: "usr_ana" },
+        ]),
+        level(LVL2, [{ kind: "member", id: "usr_eva" }], 10),
+      ],
+    });
+    start(store);
+    fail(store, { userId: null, reason: "dead_lettered", page: { run: EVT, step: 1 } });
+    const lost = entry(store);
+    expect(pageAgain(store, [lost])).toMatchObject({
+      ok: true,
+      events: [
+        {
+          type: "incident.paged_again",
+          data: { entries: [lost], userIds: ["usr_caio"], everyone: false, causedBy: "usr_bia" },
+        },
+      ],
+    });
+    // Paging again moves nothing of the run.
+    expect(run(store)).toMatchObject({ status: "running", paged: 1 });
+    expect(timeline(store).at(-1)).toEqual({
+      kind: "paged_again",
+      actor: "usr_bia",
+      entries: [lost],
+      userIds: ["usr_caio"],
+      everyone: false,
+    });
+  });
+
+  test("one entry per failed member, each once; only owners and admins; only failures paging again can change", () => {
+    const store = shard();
+    fail(store, { userId: "usr_caio", reason: "undelivered" });
+    const caio = entry(store);
+    fail(store, { userId: "usr_eva", reason: "token_invalid" });
+    const eva = entry(store);
+    fail(store, { userId: null, reason: "nobody_on_call", schedule: "Primary" });
+    const nobody = entry(store);
+    for (const role of ["responder", "viewer"] as const) {
+      expect(pageAgain(store, [caio], role)).toMatchObject({
+        ok: false,
+        error: { code: "forbidden" },
+      });
+    }
+    expect(pageAgain(store, [nobody])).toMatchObject({ ok: false, error: { code: "not_found" } });
+    expect(pageAgain(store, [`${INC}:99`])).toMatchObject({
+      ok: false,
+      error: { code: "not_found" },
+    });
+    expect(pageAgain(store, [caio, eva], "admin")).toMatchObject({
+      ok: true,
+      events: [{ data: { userIds: ["usr_caio", "usr_eva"], everyone: false } }],
+    });
+    expect(pageAgain(store, [eva])).toMatchObject({ ok: false, error: { code: "conflict" } });
+  });
+
+  test("refused once the incident is acknowledged or resolved", () => {
+    const store = shard();
+    fail(store, { userId: "usr_caio", reason: "undelivered" });
+    const caio = entry(store);
+    store.update("incidents", INC, { acknowledgedAt: T, acknowledgedBy: "usr_caio" });
+    expect(pageAgain(store, [caio])).toMatchObject({ ok: false, error: { code: "conflict" } });
+    store.update("incidents", INC, {
+      acknowledgedAt: null,
+      acknowledgedBy: null,
+      status: "resolved",
+    });
+    expect(pageAgain(store, [caio])).toMatchObject({ ok: false, error: { code: "conflict" } });
+  });
+});

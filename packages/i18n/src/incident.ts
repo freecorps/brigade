@@ -180,6 +180,14 @@ export function entryText(entry: TimelineRow, who: People): string {
       const known = ["started", "timeout", "unreachable", "undelivered"].includes(entry.reason);
       return say(known ? `escalated_${entry.reason}` : "escalated_started", level, names);
     }
+    case "paged_again":
+      // Brigade's own, for a lost declaration: about the page, not who ran it.
+      if (entry.auto) return say("paged_again_auto");
+      if (entry.everyone || entry.userIds.length === 0) return say("paged_again_everyone");
+      return say(
+        "paged_again",
+        entry.userIds.map((id) => personName(id, who, "object")).join(", "),
+      );
     case "escalation_exhausted":
       return say("escalation_exhausted");
     case "email_failed":

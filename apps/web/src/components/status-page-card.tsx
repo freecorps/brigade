@@ -892,6 +892,7 @@ function Following({
     rows.push({ key, label: component.name, n: follows[key] ?? 0 });
   }
   const shown = rows.filter((row) => row.n > 0);
+  if (shown.length === 0) return null;
   return (
     <div className="flex w-full flex-col gap-2">
       <div className="flex flex-col gap-0.5">

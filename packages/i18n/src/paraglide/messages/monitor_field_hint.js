@@ -11,7 +11,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | field | output |
 * | --- | --- |
 * | "url" | "Everyone in the workspace, viewers too, can see this URL: keep tokens and passwords out of it." |
-* | "expected_status" | "Empty: any 2xx or 3xx. Or list them: 200, 204, 500-599. Redirects are not followed." |
+* | "expected_status" | "Empty: any 2xx or 3xx. Or list them: 200, 204, 301-302. Redirects are not followed." |
 * | "host" | "Passes when a connection to this host and port opens; nothing is sent. Hosts proxied by Cloudflare can't be checked over TCP." |
 * | "port" | "Any port but 25." |
 * | "timeout" | "How long one check may take." |
@@ -32,7 +32,7 @@ export const monitor_field_hint = /** @type {((inputs: Monitor_Field_HintInputs,
 	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
 	if (locale === "pt-BR") {
 		if (i?.field === "url") return /** @type {LocalizedString} */ (`Todos no workspace, inclusive leitores, veem esta URL: não coloque tokens nem senhas nela.`);
-		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Vazio: qualquer 2xx ou 3xx. Ou liste: 200, 204, 500-599. Redirecionamentos não são seguidos.`);
+		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Vazio: qualquer 2xx ou 3xx. Ou liste: 200, 204, 301-302. Redirecionamentos não são seguidos.`);
 		if (i?.field === "host") return /** @type {LocalizedString} */ (`Passa quando uma conexão com este host e porta abre; nada é enviado. Hosts com proxy da Cloudflare não podem ser verificados por TCP.`);
 		if (i?.field === "port") return /** @type {LocalizedString} */ (`Qualquer porta menos a 25.`);
 		if (i?.field === "timeout") return /** @type {LocalizedString} */ (`Quanto tempo uma verificação pode levar.`);
@@ -47,7 +47,7 @@ export const monitor_field_hint = /** @type {((inputs: Monitor_Field_HintInputs,
 	}
 	{
 		if (i?.field === "url") return /** @type {LocalizedString} */ (`Everyone in the workspace, viewers too, can see this URL: keep tokens and passwords out of it.`);
-		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Empty: any 2xx or 3xx. Or list them: 200, 204, 500-599. Redirects are not followed.`);
+		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Empty: any 2xx or 3xx. Or list them: 200, 204, 301-302. Redirects are not followed.`);
 		if (i?.field === "host") return /** @type {LocalizedString} */ (`Passes when a connection to this host and port opens; nothing is sent. Hosts proxied by Cloudflare can't be checked over TCP.`);
 		if (i?.field === "port") return /** @type {LocalizedString} */ (`Any port but 25.`);
 		if (i?.field === "timeout") return /** @type {LocalizedString} */ (`How long one check may take.`);

@@ -106,9 +106,9 @@ export function MonitorsCard() {
   const { rows, status, error } = useQuery("monitors.all", {});
   const policies = useQuery("escalationPolicies.all", {}).rows;
   const members = useQuery("members.all", {}).rows;
-  const [workspace] = useQuery("monitors.cap", {}).rows;
+  const [settings] = useQuery("monitors.cap", {}).rows;
   const instanceCap = useFeatures().maxMonitors;
-  const cap = workspaceMonitorCap(workspace, instanceCap);
+  const cap = workspaceMonitorCap(settings, instanceCap);
   // Owners only (`monitor.setCap`): the limit is the workspace's, not one admin's call.
   const ownsCap = role === "owner";
   const [cappingOpen, setCapping] = useState(false);
@@ -364,7 +364,7 @@ export function MonitorsCard() {
       <CardContent className="flex flex-col gap-5">
         {cappingOpen ? (
           <MonitorCapForm
-            current={workspace?.monitorCap ?? null}
+            current={settings?.cap ?? null}
             instance={instanceCap}
             count={rows.length}
             locale={locale}

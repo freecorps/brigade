@@ -517,7 +517,7 @@
         "field=host_underscore": "Host names can't contain underscores (_). Use a public host name or IP address.",
         "field=port": "Use a port from 1 to 65535.",
         "field=port_blocked": "Cloudflare blocks port 25. Use another port.",
-        "field=expected_status": "Use statuses from 100 to 599, like 200, 204 or 500-599, or leave it empty.",
+        "field=expected_status": "Use statuses from 100 to 599, like 200, 204 or 301-302, or leave it empty.",
         "field=keyword": "Use at most 200 characters.",
         "field=interval": "Use whole seconds, from 30 to 86,400 (24 hours).",
         "field=timeout": "Use 1 to 30 seconds, and no more than the interval.",
@@ -568,7 +568,7 @@
       "selectors": ["field"],
       "match": {
         "field=url": "Everyone in the workspace, viewers too, can see this URL: keep tokens and passwords out of it.",
-        "field=expected_status": "Empty: any 2xx or 3xx. Or list them: 200, 204, 500-599. Redirects are not followed.",
+        "field=expected_status": "Empty: any 2xx or 3xx. Or list them: 200, 204, 301-302. Redirects are not followed.",
         "field=host": "Passes when a connection to this host and port opens; nothing is sent. Hosts proxied by Cloudflare can't be checked over TCP.",
         "field=port": "Any port but 25.",
         "field=timeout": "How long one check may take.",
@@ -594,8 +594,20 @@
         "reason=status": "Got {got}, expected {expected}",
         "reason=status_any": "Got {got}, expected 2xx or 3xx",
         "reason=keyword": "Text not found",
+        "reason=pattern_slow": "Pattern too slow for this page",
         "reason=missed": "No ping in time",
         "reason=*": "Check failed"
+      }
+    }
+  ],
+  "monitor_form_note": [
+    {
+      "declarations": ["input kind", "input time"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=status_5xx": "A 5xx status means the server failed. Listed here, it counts as up, so this monitor won't page for it.",
+        "kind=quorum_all": "Every region must see it down: an outage only some regions see won't open an incident. A region that stops reporting is left out until it reports again.",
+        "kind=*": "Opens an incident after about {time} of failed checks."
       }
     }
   ],

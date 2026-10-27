@@ -14,7 +14,7 @@ export type Monitor_Field_InvalidInputs = {
 * | "host_underscore" | "Host names can't contain underscores (_). Use a public host name or IP address." |
 * | "port" | "Use a port from 1 to 65535." |
 * | "port_blocked" | "Cloudflare blocks port 25. Use another port." |
-* | "expected_status" | "Use statuses from 100 to 599, like 200, 204 or 500-599, or leave it empty." |
+* | "expected_status" | "Use statuses from 100 to 599, like 200, 204 or 301-302, or leave it empty." |
 * | "keyword" | "Use at most 200 characters." |
 * | "interval" | "Use whole seconds, from 30 to 86,400 (24 hours)." |
 * | "timeout" | "Use 1 to 30 seconds, and no more than the interval." |

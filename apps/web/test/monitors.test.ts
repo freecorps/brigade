@@ -20,6 +20,7 @@ import {
   formatLatency,
   formatSeconds,
   formatStatuses,
+  listsServerError,
   monitorActions,
   monitorBadge,
   monitorPolicy,
@@ -28,7 +29,9 @@ import {
   newHeartbeat,
   parseStatuses,
   pausedBy,
+  quorumIsEveryRegion,
   refusedHeaderRows,
+  secondsToDown,
   sourceChips,
   stalledRegions,
   stalePolicy,
@@ -766,10 +769,10 @@ test("Paused by names the member from the shard's list, and falls back when it h
 
 test("the workspace's monitor cap: its owner's, within the instance's", () => {
   expect(workspaceMonitorCap(undefined, undefined)).toBe(100);
-  expect(workspaceMonitorCap({ monitorCap: null }, 500)).toBe(500);
-  expect(workspaceMonitorCap({ monitorCap: 20 }, 500)).toBe(20);
+  expect(workspaceMonitorCap({ cap: null }, 500)).toBe(500);
+  expect(workspaceMonitorCap({ cap: 20 }, 500)).toBe(20);
   // A cap set before the operator lowered the instance's counts as the instance's.
-  expect(workspaceMonitorCap({ monitorCap: 300 }, 200)).toBe(200);
+  expect(workspaceMonitorCap({ cap: 300 }, 200)).toBe(200);
 });
 
 test("a region is stalled when every running monitor checked from it went quiet, not when one did", () => {
@@ -796,5 +799,33 @@ test("a region is stalled when every running monitor checked from it went quiet,
   expect(stalledRegions([row({ regions: ["weur"], restartedAt: quiet })], now)).toEqual(["weur"]);
   expect(m.monitor_stalled({ regions: "US East and Western Europe" }, { locale: "en" })).toBe(
     "Checks from US East and Western Europe stopped reporting. Monitors there show No data until they report again, and nobody is paged for it.",
+  );
+});
+
+test("the form warns when a 5xx would count as up, or every region must agree", () => {
+  expect(listsServerError("")).toBe(false);
+  expect(listsServerError("200, 204, 301-302")).toBe(false);
+  expect(listsServerError("200, 503")).toBe(true);
+  expect(listsServerError("200-599")).toBe(true);
+  // Not a list yet: the field's own error covers it.
+  expect(listsServerError("2xx")).toBe(false);
+  expect(m.monitor_form_note({ kind: "status_5xx", time: "" })).toMatch(/5xx/);
+
+  const regions = ["enam", "weur", "apac"] as ProbeRegion[];
+  expect(quorumIsEveryRegion({ quorum: "", regions })).toBe(false);
+  expect(quorumIsEveryRegion({ quorum: "2", regions })).toBe(false);
+  expect(quorumIsEveryRegion({ quorum: "3", regions })).toBe(true);
+  // One region is always "every region": nothing to warn about.
+  expect(quorumIsEveryRegion({ quorum: "1", regions: ["enam"] })).toBe(false);
+});
+
+test("the time to page is the failed checks in a row times the interval", () => {
+  expect(secondsToDown({ intervalSeconds: "60", consecutiveChecks: "" })).toBe(120);
+  expect(secondsToDown({ intervalSeconds: "300", consecutiveChecks: "5" })).toBe(1500);
+  expect(secondsToDown({ intervalSeconds: "10", consecutiveChecks: "" })).toBeUndefined();
+  expect(secondsToDown({ intervalSeconds: "60", consecutiveChecks: "11" })).toBeUndefined();
+  expect(secondsToDown({ intervalSeconds: "abc", consecutiveChecks: "" })).toBeUndefined();
+  expect(m.monitor_form_note({ kind: "time", time: formatSeconds(120, "en") })).toBe(
+    "Opens an incident after about 2 min of failed checks.",
   );
 });

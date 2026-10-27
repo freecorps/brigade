@@ -17,7 +17,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "host_underscore" | "Host names can't contain underscores (_). Use a public host name or IP address." |
 * | "port" | "Use a port from 1 to 65535." |
 * | "port_blocked" | "Cloudflare blocks port 25. Use another port." |
-* | "expected_status" | "Use statuses from 100 to 599, like 200, 204 or 500-599, or leave it empty." |
+* | "expected_status" | "Use statuses from 100 to 599, like 200, 204 or 301-302, or leave it empty." |
 * | "keyword" | "Use at most 200 characters." |
 * | "interval" | "Use whole seconds, from 30 to 86,400 (24 hours)." |
 * | "timeout" | "Use 1 to 30 seconds, and no more than the interval." |
@@ -44,7 +44,7 @@ export const monitor_field_invalid = /** @type {((inputs: Monitor_Field_InvalidI
 		if (i?.field === "host_underscore") return /** @type {LocalizedString} */ (`Nomes de host não podem ter sublinhado (_). Use um nome de host ou endereço IP público.`);
 		if (i?.field === "port") return /** @type {LocalizedString} */ (`Use uma porta de 1 a 65535.`);
 		if (i?.field === "port_blocked") return /** @type {LocalizedString} */ (`A Cloudflare bloqueia a porta 25. Use outra porta.`);
-		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Use status de 100 a 599, como 200, 204 ou 500-599, ou deixe vazio.`);
+		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Use status de 100 a 599, como 200, 204 ou 301-302, ou deixe vazio.`);
 		if (i?.field === "keyword") return /** @type {LocalizedString} */ (`Use no máximo 200 caracteres.`);
 		if (i?.field === "interval") return /** @type {LocalizedString} */ (`Use segundos inteiros, de 30 a 86.400 (24 horas).`);
 		if (i?.field === "timeout") return /** @type {LocalizedString} */ (`Use de 1 a 30 segundos, e não mais que o intervalo.`);
@@ -65,7 +65,7 @@ export const monitor_field_invalid = /** @type {((inputs: Monitor_Field_InvalidI
 		if (i?.field === "host_underscore") return /** @type {LocalizedString} */ (`Host names can't contain underscores (_). Use a public host name or IP address.`);
 		if (i?.field === "port") return /** @type {LocalizedString} */ (`Use a port from 1 to 65535.`);
 		if (i?.field === "port_blocked") return /** @type {LocalizedString} */ (`Cloudflare blocks port 25. Use another port.`);
-		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Use statuses from 100 to 599, like 200, 204 or 500-599, or leave it empty.`);
+		if (i?.field === "expected_status") return /** @type {LocalizedString} */ (`Use statuses from 100 to 599, like 200, 204 or 301-302, or leave it empty.`);
 		if (i?.field === "keyword") return /** @type {LocalizedString} */ (`Use at most 200 characters.`);
 		if (i?.field === "interval") return /** @type {LocalizedString} */ (`Use whole seconds, from 30 to 86,400 (24 hours).`);
 		if (i?.field === "timeout") return /** @type {LocalizedString} */ (`Use 1 to 30 seconds, and no more than the interval.`);

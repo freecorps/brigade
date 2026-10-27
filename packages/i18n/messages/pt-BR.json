@@ -517,7 +517,7 @@
         "field=host_underscore": "Nomes de host não podem ter sublinhado (_). Use um nome de host ou endereço IP público.",
         "field=port": "Use uma porta de 1 a 65535.",
         "field=port_blocked": "A Cloudflare bloqueia a porta 25. Use outra porta.",
-        "field=expected_status": "Use status de 100 a 599, como 200, 204 ou 500-599, ou deixe vazio.",
+        "field=expected_status": "Use status de 100 a 599, como 200, 204 ou 301-302, ou deixe vazio.",
         "field=keyword": "Use no máximo 200 caracteres.",
         "field=interval": "Use segundos inteiros, de 30 a 86.400 (24 horas).",
         "field=timeout": "Use de 1 a 30 segundos, e não mais que o intervalo.",
@@ -568,7 +568,7 @@
       "selectors": ["field"],
       "match": {
         "field=url": "Todos no workspace, inclusive leitores, veem esta URL: não coloque tokens nem senhas nela.",
-        "field=expected_status": "Vazio: qualquer 2xx ou 3xx. Ou liste: 200, 204, 500-599. Redirecionamentos não são seguidos.",
+        "field=expected_status": "Vazio: qualquer 2xx ou 3xx. Ou liste: 200, 204, 301-302. Redirecionamentos não são seguidos.",
         "field=host": "Passa quando uma conexão com este host e porta abre; nada é enviado. Hosts com proxy da Cloudflare não podem ser verificados por TCP.",
         "field=port": "Qualquer porta menos a 25.",
         "field=timeout": "Quanto tempo uma verificação pode levar.",
@@ -594,8 +594,20 @@
         "reason=status": "Recebeu {got}, esperava {expected}",
         "reason=status_any": "Recebeu {got}, esperava 2xx ou 3xx",
         "reason=keyword": "Texto não encontrado",
+        "reason=pattern_slow": "Padrão lento demais para esta página",
         "reason=missed": "Nenhum sinal a tempo",
         "reason=*": "A verificação falhou"
+      }
+    }
+  ],
+  "monitor_form_note": [
+    {
+      "declarations": ["input kind", "input time"],
+      "selectors": ["kind"],
+      "match": {
+        "kind=status_5xx": "Um status 5xx significa que o servidor falhou. Listado aqui, ele conta como no ar, e este monitor não vai chamar por ele.",
+        "kind=quorum_all": "Todas as regiões precisam vê-lo fora do ar: uma queda que só algumas regiões veem não abre incidente. Uma região que para de reportar fica de fora até reportar de novo.",
+        "kind=*": "Abre um incidente depois de cerca de {time} de verificações com falha."
       }
     }
   ],

@@ -26,11 +26,18 @@
   open, the rest queued (and a queued check's timeout would already be running). So a region whose targets all
   time out keeps its object busy, and billed for duration, for about
   `ceil(checks / 6) × timeout` per run instead of a few hundred milliseconds.
+- **CPU per alarm (built):** an alarm has 30 s of CPU by default (no `limits.cpu_ms` is set). A run takes at most
+  `MAX_CHECKS_PER_RUN` (50) due checks, the most overdue first; the rest stay due, and the next alarm comes a second
+  later, so a region with thousands of checks runs them across alarms instead of in one. Each check's CPU is bounded
+  too: a body pattern stops after a fixed number of steps per character of the 64 KiB read (below), at most a few
+  tens of milliseconds, so a run's CPU stays around a second at worst and its wall time (six at once, each within its
+  timeout) a few minutes.
 
 ## Check types (v1)
 
 - HTTP(S): status, latency, keyword/regex in body, headers, TLS expiry. Built: method `GET` or `HEAD`, the statuses
-  that count as up (up to 10 statuses or inclusive ranges, `200, 204, 500-599`; default any 2xx or 3xx), a keyword
+  that count as up (up to 10 statuses or inclusive ranges, `200, 204, 301-302`; default any 2xx or 3xx; the form
+  warns when the list includes a 5xx, which would count a server failure as up), a keyword
   (`GET` only) matched as plain text or as a pattern, up to 10 request headers, interval 30 s to 24 h, timeout 1 to
   30 s. TLS expiry cannot be built in Workers (below). Rows from before ranges keep their one `expectedStatus`, and a
   monitor that uses none of these options pushes its probes the same config as before them, so a deploy restarts no
@@ -43,9 +50,19 @@
     a Pike VM (every possible match followed in lockstep, one step per character, no backtracking), so a match costs
     at most the program's length times the body's. Bounds: a pattern of at most 200 characters, a program of at most
     256 instructions once repeats are expanded (`a{3}` is three), repeat counts up to 100, and the 64 KiB the probe
-    reads of any body. The worst case measured is about 0.2 s of CPU on a full 64 KiB body for an adversarial pattern
-    (`(?:a?){100}b`); an ordinary one takes a millisecond or less. Supported: literals, `.`, `\d \w \s` and their
-    negations, escaped punctuation, classes `[a-z]` and `[^…]`, `^` and `$` (start and end of what was read), groups
+    reads of any body. The program's size is computed before any repeat is expanded, so nested repeats
+    (`((a{100}){100}){100}`) are refused without building them, the compiler's own steps are counted, a repeat count is
+    read to its closing brace however many digits it has, and repeating something that matches only empty text
+    (`(){100}`) is refused. Matching is bounded per character as well: a match stops after `PATTERN_STEPS_PER_CHAR`
+    (64) steps per character of the body and the check fails as `pattern_slow` ("Pattern too slow for this page"),
+    so the probe pages for it like any failure and never stalls on one body. Classes are compiled to an ASCII table
+    and sorted ranges searched by halves, a character's cases are worked out once per match, the copies a repeat
+    makes share one class and ask it once per character, and the threads a match starts with mid-body are walked
+    once; the worst adversarial patterns measured on 64 KiB of non-ASCII text take about 20 ms of CPU, a pattern of
+    twenty alternative words about 16 ms, and an ordinary one a few milliseconds. A seeded test compares thousands of
+    patterns and bodies with JavaScript's `RegExp` (`u` flag, and `iu` for `(?i)`). Supported: literals, `.`,
+    `\d \w \s` and their negations, escaped punctuation, classes `[a-z]` and `[^…]` (ignoring case, `[^…]` matches
+    a character only when none of its cases is in the class), `^` and `$` (start and end of what was read), groups
     (they only group), `|`, `* + ?` and `{n,m}` (a lazy `?` after one is accepted and changes nothing), and `(?i)` at
     the very start to ignore case. Refused on save, with a reason: backreferences, lookahead and lookbehind, named
     groups and word boundaries, which a linear engine does not run. The same compiler checks a pattern in the
@@ -57,9 +74,13 @@
     in every probe, for a value the probe still sends in clear to a host the monitor names. Instead a check never
     sends `Host` (it would point the request at another site than the URL names), `Authorization`,
     `Proxy-Authorization`, `Cookie`, or a name that reads like a credential (`auth`, `token`, `secret`, `passw`,
-    `api-key`, `session`, `cookie` or `credential` anywhere in it); nor the headers the runtime sets (`Content-Length`,
-    `Connection`, `Transfer-Encoding`, …), `User-Agent` (checks name Brigade), `Forwarded`, `X-Forwarded-*`,
-    `X-Real-IP`, `Proxy-*` or `CF-*`. Values are printable ASCII, at most 512 characters; at most 10 headers, no name
+    `session`, `cookie`, `credential` or `signature` anywhere in it, `key` as a word, or `api`, `access`,
+    `subscription`, `private` or `client` joined to `key` by `-`, `_` or nothing, as in `X-Api-Key`, `access_key`,
+    `Ocp-Apim-Subscription-Key` or `X-Hub-Signature-256`); nor the headers the runtime sets (`Content-Length`,
+    `Connection`, `Transfer-Encoding`, …), `User-Agent` (checks name Brigade), the ones that claim another client
+    (`Forwarded`, `X-Forwarded`, `X-Forwarded-*`, `X-Real-IP`, `True-Client-IP`, `X-Client-IP`, `X-Originating-IP`,
+    `Via`, `Proxy-*`, `CF-*`), and the ones that make a proxy route the request elsewhere or as another method
+    (`X-Original-URL`, `X-Rewrite-URL`, `X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override`). Values are printable ASCII, at most 512 characters; at most 10 headers, no name
     twice (`headerProblem`, on save and in the probe). An endpoint that needs credentials gets an unauthenticated
     health path, or a heartbeat. The form says under the list who can read them.
   - **TLS certificate expiry (not built: Workers cannot read the certificate).** `fetch` exposes nothing of the
@@ -124,7 +145,9 @@
     10000; without it `MAX_MONITORS_PER_WORKSPACE`, 100), which the shard hands every mutation as
     `ctx.limits.monitors` and `GET /features` tells the dashboard as `maxMonitors`; and the workspace's own, set by an
     owner in the Monitors card (`monitor.setCap`: `workspace:manage` and the `owner` role, `monitor.cap_changed`), at
-    most the instance's, or none for the instance's. A workspace cap above an instance cap lowered later counts as the
+    most the instance's, or none for the instance's. It is stored in its own one-row synced table
+    (`monitor_settings`), which the `monitors.cap` query reads, so every member syncs the cap and nothing else of the
+    workspace row. A workspace cap above an instance cap lowered later counts as the
     instance's. A cap under the monitors a workspace already has is allowed: they keep running, and no new one is
     added until some are deleted (the form says so). A client's optimistic run does not know the instance's cap and
     leaves that check to the shard. Plans, when they exist, would set the workspace's value. `connect()` counts toward the six connections a Worker may have opening at once (the pool above);
@@ -177,11 +200,17 @@ results (a new monitor is up on its first success).
   monitor takes the defaults and an edit keeps what the monitor has, so rows from before, and clients that do not know
   the fields, behave as before. With a K, the status turns down when at least K fresh regions are down, and up when
   at least K are up and fewer than K are down; with K at most half the regions both can hold at once, and down wins,
-  so a monitor that pages on one region in three stays down while any region is down. At least
-  `max(freshFloor, K)` regions must be fresh, so a K above the regions still reporting is "No data" (no page, Q17),
-  never a guess. Changing K, M or the severity does not start the checks over: a new K applies at the next report or
-  the shard's next alarm (`monitor.evaluate` within a minute, when it changes the status), and a new M reaches the
-  probes with the next push, which starts each region's streak over but keeps the shard's results. A heartbeat has
+  so a monitor that pages on one region in three stays down while any region is down. Once the freshness floor is
+  met (`freshFloor`, below), the K used is `min(K, fresh regions)` (decided): with K equal to the regions, one region
+  that stops reporting would otherwise leave the monitor "No data" however down the others see it, and nothing would
+  page; now the regions still reporting decide, all of them having to agree. Below the floor it is still "No data",
+  so one region never speaks for three. A stored region this deploy no longer probes (one dropped from
+  `PROBE_REGIONS` after S2) counts toward nothing: neither the floor, nor the fresh results, nor the sources shown.
+  The form warns when K equals the regions (an outage only some regions see never pages) and says how long a region
+  takes to count an outage as down (M × the interval). Changing K, M or the severity does not start the checks over:
+  a new K applies at the next report or the shard's next alarm (`monitor.evaluate` within a minute, when it changes
+  the status), and a new M reaches the probes with the next push, which keeps each region's results, streak and
+  verdict (the next result is judged by the new M) and the shard's results. A heartbeat has
   one source, which is always its quorum. The probe reports a region's verdict to the workspace shard when
   it changes, and otherwise every 5 minutes, with the time of its latest check, so the latency, colo and check time stay
   fresh without a shard version per check. Those refreshes change the synced row but are no domain events: the

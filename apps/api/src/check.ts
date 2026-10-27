@@ -49,12 +49,15 @@ export type TcpCheckConfig = {
   consecutiveChecks?: number;
 };
 
-/** One check's outcome. `error` names why it failed; null when it passed. */
+/**
+ * One check's outcome. `error` names why it failed; null when it passed. `pattern_slow`: the body pattern gave up
+ * (`PATTERN_STEPS_PER_CHAR`) before finding or ruling out a match, which fails the check rather than hold the probe.
+ */
 export type CheckResult = {
   ok: boolean;
   latencyMs: number | null;
   httpStatus: number | null;
-  error: "blocked" | "timeout" | "network" | "status" | "keyword" | null;
+  error: "blocked" | "timeout" | "network" | "status" | "keyword" | "pattern_slow" | null;
 };
 
 /** Opens a TCP connection: `connect` from `cloudflare:sockets`; the tests replace it. */
@@ -184,7 +187,7 @@ export async function httpCheck(
     await response.body?.cancel().catch(() => undefined);
     return { ok: expected, latencyMs, httpStatus, error: expected ? null : "status" };
   }
-  let found: boolean;
+  let found: boolean | "too_slow";
   try {
     const body = await readPrefix(response, MAX_BODY_BYTES);
     found = pattern?.ok ? matchPattern(pattern.pattern, body) : body.includes(config.keyword);
@@ -192,6 +195,7 @@ export async function httpCheck(
     // The body stopped (or the timeout hit) mid-read.
     return { ok: false, latencyMs, httpStatus, error: signal.aborted ? "timeout" : "network" };
   }
+  if (found === "too_slow") return { ok: false, latencyMs, httpStatus, error: "pattern_slow" };
   return { ok: found, latencyMs, httpStatus, error: found ? null : "keyword" };
 }
 

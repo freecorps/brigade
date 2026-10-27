@@ -8,7 +8,7 @@ export type Monitor_Field_HintInputs = {
 * | field | output |
 * | --- | --- |
 * | "url" | "Everyone in the workspace, viewers too, can see this URL: keep tokens and passwords out of it." |
-* | "expected_status" | "Empty: any 2xx or 3xx. Or list them: 200, 204, 500-599. Redirects are not followed." |
+* | "expected_status" | "Empty: any 2xx or 3xx. Or list them: 200, 204, 301-302. Redirects are not followed." |
 * | "host" | "Passes when a connection to this host and port opens; nothing is sent. Hosts proxied by Cloudflare can't be checked over TCP." |
 * | "port" | "Any port but 25." |
 * | "timeout" | "How long one check may take." |

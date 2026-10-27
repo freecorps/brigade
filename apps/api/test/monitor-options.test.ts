@@ -14,7 +14,7 @@ import {
 } from "@freecorps/brigade-schema";
 import { httpCheck, MAX_BODY_BYTES, USER_AGENT, type HttpCheckConfig } from "../src/check.ts";
 import { instanceMonitorCap, toConfig } from "../src/monitors.ts";
-import { probeName, type ProbeDO } from "../src/probe.ts";
+import { MAX_CHECKS_PER_RUN, probeName, type ProbeDO } from "../src/probe.ts";
 import { Shard } from "../src/shard.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
 
@@ -125,6 +125,20 @@ describe("httpCheck with the monitor's options", () => {
       await httpCheck(fetcher, config({ keyword: "(a|aa)*b", keywordMode: "regex" })),
     ).toMatchObject({ ok: false, error: "keyword" });
     expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  test("a pattern that runs out of steps fails the check as pattern_slow, never stalls it", async () => {
+    // Non-ASCII, so every class is a binary search; `{100}` keeps about two hundred threads alive per character.
+    const body = "éжω字Ç".repeat(MAX_BODY_BYTES / 10);
+    const { fetcher } = fakeFetch(() => new Response(body));
+    const started = performance.now();
+    expect(
+      await httpCheck(
+        fetcher,
+        config({ keyword: "(?i)(?:[à-ÿ\\s\\w]?){100}x", keywordMode: "regex" }),
+      ),
+    ).toMatchObject({ ok: false, httpStatus: 200, error: "pattern_slow" });
+    expect(performance.now() - started).toBeLessThan(2000);
   });
 });
 
@@ -351,5 +365,88 @@ describe("a monitor's own quorum, streak and severity, end to end", () => {
       expect(shard.store.scan("alerts")).toEqual([expect.objectContaining({ status: "resolved" })]);
       expect(shard.store.scan("incidents")).toHaveLength(1);
     });
+  });
+});
+
+describe("the probe keeps its verdicts, and its alarms bounded", () => {
+  test("a new streak length keeps the region's results and verdict; a new target starts over", async () => {
+    const ws = await workspace();
+    const stub = probe(ws.id, "eeur");
+    let status = 200;
+    await runInDurableObject(stub, (instance: ProbeDO) => {
+      instance.fetcher = fakeFetch(() => new Response("x", { status })).fetcher;
+    });
+    const base = config({ consecutiveChecks: 3 });
+    await stub.configure(ws.id, "eeur", [base]);
+    await runProbe(stub);
+    status = 503;
+    await runProbe(stub);
+    await runProbe(stub);
+    const before = await runInDurableObject(stub, (instance: ProbeDO) => instance.rows());
+    // Up after the first success; two failures of the three needed so far.
+    expect(before[0]).toMatchObject({ verdict: 1, last_ok: 0, streak: 2 });
+
+    // Only the streak length changes: the results stay, and the next failure flips it at the new length.
+    await stub.configure(ws.id, "eeur", [{ ...base, consecutiveChecks: 2 }]);
+    const kept = await runInDurableObject(stub, (instance: ProbeDO) => instance.rows());
+    expect(kept[0]).toMatchObject({
+      verdict: 1,
+      last_ok: 0,
+      streak: 2,
+      result: before[0]!.result,
+      next_at: before[0]!.next_at,
+    });
+    expect(JSON.parse(kept[0]!.config)).toMatchObject({ consecutiveChecks: 2 });
+    await runProbe(stub);
+    expect(await runInDurableObject(stub, (instance: ProbeDO) => instance.rows())).toEqual([
+      expect.objectContaining({ verdict: 0, streak: 3 }),
+    ]);
+
+    // Back to the default length (no field at all): still the same check.
+    const { consecutiveChecks: _streak, ...plain } = base;
+    await stub.configure(ws.id, "eeur", [plain]);
+    expect(await runInDurableObject(stub, (instance: ProbeDO) => instance.rows())).toEqual([
+      expect.objectContaining({ verdict: 0, streak: 3 }),
+    ]);
+
+    // A new URL is another check: it starts over.
+    await stub.configure(ws.id, "eeur", [{ ...plain, url: "https://example.com/other" }]);
+    expect(await runInDurableObject(stub, (instance: ProbeDO) => instance.rows())).toEqual([
+      expect.objectContaining({ verdict: null, streak: 0, result: null }),
+    ]);
+  });
+
+  test("a region with many checks runs them across alarms, the most overdue first", async () => {
+    const ws = await workspace();
+    const stub = probe(ws.id, "apac");
+    const { fetcher, calls } = fakeFetch(() => new Response("ok"));
+    await runInDurableObject(stub, (instance: ProbeDO) => {
+      instance.fetcher = fetcher;
+    });
+    const total = 2 * MAX_CHECKS_PER_RUN + 7;
+    const checks = Array.from({ length: total }, (_, index) =>
+      config({ url: `https://example.com/${index}` }),
+    );
+    await stub.configure(ws.id, "apac", checks);
+    // Overdue by different amounts: the one overdue longest runs in the first alarm.
+    await runInDurableObject(stub, (_instance, state) => {
+      checks.forEach((check, index) =>
+        state.storage.sql.exec("update probe_checks set next_at = ? where id = ?", index, check.id),
+      );
+    });
+    const checked = () => calls.filter((call) => !call.url.endsWith("/cdn-cgi/trace"));
+    const started = Date.now();
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(checked()).toHaveLength(MAX_CHECKS_PER_RUN);
+    expect(checked().map((call) => call.url)).toContain("https://example.com/0");
+    expect(checked().map((call) => call.url)).not.toContain(`https://example.com/${total - 1}`);
+    // The rest are still due: the next alarm comes within seconds, not an interval later.
+    const next = await runInDurableObject(stub, (_i, state) => state.storage.getAlarm());
+    expect(next).toBeLessThanOrEqual(started + 5000);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(checked()).toHaveLength(total);
+    const rows = await runInDurableObject(stub, (instance: ProbeDO) => instance.rows());
+    expect(rows.every((row) => row.verdict === 1)).toBe(true);
   });
 });

@@ -11,6 +11,8 @@ import {
   MAX_MONITORS_PER_WORKSPACE,
   MONITOR_ACTOR,
   monitorCap,
+  monitorCapQuery,
+  MONITOR_SETTINGS_ID,
   monitorSettings,
   monitorStatus,
   mutations,
@@ -150,14 +152,48 @@ describe("quorum: how many regions must agree", () => {
     expect(monitorStatus(monitor, allDown, T)).toBe("down");
   });
 
-  test("a quorum above the fresh results is no data, never up and never down", () => {
+  test("3 of 3 with one region quiet: the fresh ones decide, so it still pages", () => {
     const monitor = probed(three, 3);
-    // One region went quiet: two fresh results cannot make three agree.
+    // One region stopped reporting: the quorum is capped at the two fresh results, and both are down.
     const stale = T - 60 * 60 * 1000;
-    const checks = [check("wnam", false), check("enam", false), check("weur", false, stale)];
-    expect(monitorStatus(monitor, checks, T)).toBe("unknown");
-    // The majority rule would still decide from two of three.
-    expect(monitorStatus(probed(three, null), checks, T)).toBe("down");
+    const checks = [check("wnam", false), check("enam", false), check("weur", true, stale)];
+    expect(monitorStatus(monitor, checks, T)).toBe("down");
+    // It recovers the same way, from the two that still report.
+    const back = [check("wnam", true), check("enam", true), check("weur", false, stale)];
+    expect(monitorStatus({ ...monitor, status: "down" }, back, T)).toBe("up");
+    // Split, the status holds.
+    const split = [check("wnam", true), check("enam", false), check("weur", false, stale)];
+    expect(monitorStatus(monitor, split, T)).toBe("up");
+    expect(monitorStatus({ ...monitor, status: "down" }, split, T)).toBe("down");
+  });
+
+  test("below the freshness floor it is still no data, whatever the quorum", () => {
+    const stale = T - 60 * 60 * 1000;
+    // One fresh result of three is below the floor (two): one region never speaks for three.
+    const checks = [check("wnam", false), check("enam", false, stale), check("weur", false, stale)];
+    expect(monitorStatus(probed(three, 3), checks, T)).toBe("unknown");
+    expect(monitorStatus(probed(three, 1), checks, T)).toBe("unknown");
+    expect(monitorStatus(probed(three, null), checks, T)).toBe("unknown");
+  });
+
+  test("a stored region this deploy no longer probes counts toward nothing", () => {
+    // `sam` was dropped from PROBE_REGIONS (spike S2); a row from before may still name it.
+    const monitor = probed(["wnam", "enam", "sam" as ProbeRegion], 3);
+    const checks = [check("wnam", false), check("enam", false)];
+    // Two known regions, both fresh and down: down, though the row's quorum is three.
+    expect(monitorStatus(monitor, checks, T)).toBe("down");
+    // A result from the removed region is ignored, not counted as fresh.
+    const withGone = [check("wnam", false), check("sam" as ProbeRegion, false)];
+    expect(monitorStatus(probed(["wnam", "enam", "sam" as ProbeRegion], 2), withGone, T)).toBe(
+      "down",
+    );
+    expect(
+      monitorStatus(probed(["wnam", "enam", "eeur", "sam" as ProbeRegion], 3), withGone, T),
+    ).toBe("unknown");
+    // Only removed regions: no source at all, so never up or down.
+    expect(
+      monitorStatus(probed(["sam" as ProbeRegion], 1), [check("sam" as ProbeRegion, false)], T),
+    ).toBe("unknown");
   });
 
   test("2 of 4: a split is down", () => {
@@ -321,6 +357,62 @@ describe("create and update", () => {
     ).toMatchObject({
       ok: false,
     });
+  });
+
+  test("headers that claim another client or route, and names that read like credentials, are refused", () => {
+    const set = "This header can't be set on a check";
+    const secret = "Headers are visible to every member: credentials can't go in them";
+    for (const name of [
+      "True-Client-IP",
+      "X-Client-IP",
+      "X-Originating-IP",
+      "Via",
+      "X-Forwarded",
+      "X-Original-URL",
+      "X-Rewrite-URL",
+      "X-HTTP-Method-Override",
+      "X-HTTP-Method",
+      "X-Method-Override",
+    ]) {
+      expect(headerProblem(name, "x"), name).toBe(set);
+      expect(headerProblem(name.toLowerCase(), "x"), name).toBe(set);
+    }
+    for (const name of [
+      "X-Api-Key",
+      "X_API_KEY",
+      "apikey",
+      "X-Access-Key",
+      "access_key",
+      "X-AccessKey",
+      "Ocp-Apim-Subscription-Key",
+      "subscriptionkey",
+      "X-Hub-Signature",
+      "X-Hub-Signature-256",
+      "X-Signature",
+      "X-Secret",
+      "Client_Secret",
+      "X-Token",
+      "X-Auth",
+      "X-Session-Id",
+      "sessionid",
+      "X-Key",
+      "Key",
+      "X-Private-Key",
+    ]) {
+      expect(headerProblem(name, "x"), name).toBe(secret);
+    }
+    // Ordinary names that only contain the letters of one.
+    for (const name of [
+      "Accept",
+      "Accept-Language",
+      "X-Tenant",
+      "X-Request-Id",
+      "X-Monkey",
+      "Keys-Ok",
+      "If-None-Match",
+    ]) {
+      expect(headerProblem(name, "x"), name).toBeNull();
+    }
   });
 
   test("an edit that leaves a new field out keeps the monitor's", () => {
@@ -527,10 +619,10 @@ describe("the workspace's monitor cap", () => {
     expect(types(setCap(db, 500, as("owner", T, { monitors: 1000 })))).toEqual([
       "monitor.cap_changed",
     ]);
-    expect(db.get("workspace", "ws_1")?.monitorCap).toBe(500);
+    expect(db.get("monitor_settings", MONITOR_SETTINGS_ID)?.cap).toBe(500);
     expect(types(setCap(db, 500, as("owner", T, { monitors: 1000 })))).toBe("conflict");
     expect(types(setCap(db, null, as("owner")))).toEqual(["monitor.cap_changed"]);
-    expect(db.get("workspace", "ws_1")?.monitorCap).toBeNull();
+    expect(db.get("monitor_settings", MONITOR_SETTINGS_ID)?.cap).toBeNull();
   });
 
   test("creating past the cap is limit_reached; the monitors past a lowered cap keep running", () => {
@@ -550,7 +642,7 @@ describe("the workspace's monitor cap", () => {
     fill(db, 3);
     // The operator lowered the instance's cap after the owner set theirs.
     expect(types(create(db, as("admin", T, { monitors: 3 })))).toBe("limit_reached");
-    expect(monitorCap({ monitorCap: 50 }, 3)).toBe(3);
+    expect(monitorCap({ cap: 50 }, 3)).toBe(3);
     expect(monitorCap(undefined, MAX_MONITORS_PER_WORKSPACE)).toBe(100);
   });
 
@@ -558,5 +650,13 @@ describe("the workspace's monitor cap", () => {
     const db = withWorkspace();
     const client: MutationContext = { ...as("owner"), server: false };
     expect(types(setCap(db, 5000, client))).toEqual(["monitor.cap_changed"]);
+  });
+
+  test("monitors.cap reads the settings row alone, never the workspace row", () => {
+    const db = withWorkspace();
+    db.update("workspace", "ws_1", { email: { unpaged: false, nobodyPaged: true } });
+    expect(evaluateQuery(monitorCapQuery, {}, db)).toEqual([]);
+    expect(types(setCap(db, 20, as("owner")))).toEqual(["monitor.cap_changed"]);
+    expect(evaluateQuery(monitorCapQuery, {}, db)).toEqual([{ id: MONITOR_SETTINGS_ID, cap: 20 }]);
   });
 });

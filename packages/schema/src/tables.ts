@@ -397,11 +397,19 @@ export type WorkspaceRow = {
   createdBy: string;
   /** Who is emailed when paging fails (`workspace.setEmail`); absent: `DEFAULT_EMAIL_SETTINGS`. */
   email?: EmailSettings;
+};
+
+/**
+ * The workspace's own monitor settings: one row, `MONITOR_SETTINGS_ID`, written by `monitor.setCap`. Its own table, so
+ * every member syncs the cap and nothing else of the workspace row.
+ */
+export type MonitorSettingsRow = {
+  id: string;
   /**
-   * The most monitors it may have, set by an owner (`monitor.setCap`); never above the instance's own cap
-   * (`MAX_MONITORS_PER_WORKSPACE`, or the API's `MAX_MONITORS` env var). Null or absent: the instance's cap.
+   * The most monitors it may have, set by an owner; never above the instance's own cap (`MAX_MONITORS_PER_WORKSPACE`,
+   * or the API's `MAX_MONITORS` env var). Null: the instance's cap.
    */
-  monitorCap?: number | null;
+  cap: number | null;
 };
 
 /**
@@ -1055,6 +1063,7 @@ export type BrigadeTables = {
   counters: CounterRow;
   workspace: WorkspaceRow;
   monitors: MonitorRow;
+  monitor_settings: MonitorSettingsRow;
   alerts: AlertRow;
   heartbeats: HeartbeatRow;
   timeline: TimelineRow;
@@ -1102,6 +1111,7 @@ export const TABLES = {
   counters: { serverOnly: true },
   workspace: { serverOnly: false },
   monitors: { serverOnly: false },
+  monitor_settings: { serverOnly: false },
   alerts: { serverOnly: false },
   heartbeats: { serverOnly: true },
   timeline: { serverOnly: false },

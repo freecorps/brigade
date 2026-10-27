@@ -4,13 +4,16 @@ import { formatNumber, m, type Locale } from "@freecorps/brigade-i18n";
 import { mutationErrorReason } from "@freecorps/brigade-i18n/incident";
 import {
   can,
+  CONSECUTIVE_CHECKS,
   createHeartbeatMonitor,
   createHttpMonitor,
   createTcpMonitor,
   heartbeatToken,
   isCloudflareAddress,
   isFresh,
+  MAX_CONSECUTIVE_CHECKS,
   MAX_MONITORS_PER_WORKSPACE,
+  MIN_INTERVAL_SECONDS,
   MONITOR_INCIDENT_SEVERITY,
   monitorCap,
   monitorSettings,
@@ -119,7 +122,7 @@ export function checkErrorReason(
   return check.error ?? "unknown";
 }
 
-/** Status ranges as people type them: `200, 204, 500-599`. */
+/** Status ranges as people type them: `200, 204, 301-302`. */
 export function formatStatuses(ranges: readonly StatusRange[] | null): string {
   if (ranges === null) return "";
   return ranges
@@ -145,6 +148,39 @@ export function parseStatuses(text: string): StatusRange[] | null | undefined {
     ranges.push({ min, max: found[2] === undefined ? min : Number(found[2]) });
   }
   return ranges;
+}
+
+/**
+ * Whether the statuses typed list a 5xx: a server failure that would count as up, which the monitor then never pages
+ * for. Allowed (a check may expect one on purpose), but the form warns.
+ */
+export function listsServerError(text: string): boolean {
+  return parseStatuses(text)?.some((range) => range.max >= 500) ?? false;
+}
+
+/**
+ * Whether the draft's quorum is every one of two or more regions: an outage only some regions see never pages, so
+ * the form warns. (A region that stops reporting does not silence it: `monitorStatus` then needs only the fresh ones.)
+ */
+export function quorumIsEveryRegion(draft: Pick<MonitorDraft, "quorum" | "regions">): boolean {
+  const regions = new Set(draft.regions).size;
+  const quorum = optionalNumber(draft.quorum);
+  return quorum !== null && regions > 1 && quorum >= regions;
+}
+
+/**
+ * How long a region takes to count an outage as down: its failed checks in a row times the interval (the first
+ * failure can come up to an interval after it starts). Undefined while either field is not a valid number.
+ */
+export function secondsToDown(
+  draft: Pick<MonitorDraft, "intervalSeconds" | "consecutiveChecks">,
+): number | undefined {
+  const interval = wholeNumber(draft.intervalSeconds);
+  const streak = optionalNumber(draft.consecutiveChecks) ?? CONSECUTIVE_CHECKS;
+  if (!(interval >= MIN_INTERVAL_SECONDS) || !(streak >= 1 && streak <= MAX_CONSECUTIVE_CHECKS)) {
+    return undefined;
+  }
+  return interval * streak;
 }
 
 /** A TCP monitor's host as it reads before `:port`: an IPv6 address in brackets (`[2001:db8::1]`). */

@@ -44,6 +44,13 @@ const random = (length: number) => crypto.getRandomValues(new Uint8Array(length)
  * their response headers or to open, and queues the rest, which would eat into the queued checks' timeouts.
  */
 const PARALLEL_CHECKS = 6;
+/**
+ * Checks run per alarm, at most: the most overdue first, and the rest on the next alarm a second later. A body
+ * pattern costs at most `PATTERN_STEPS_PER_CHAR` steps per character of the 64 KiB read (a few tens of milliseconds
+ * of CPU at worst), so a run stays far inside an alarm's 30 s of CPU however many monitors share the region, and
+ * its wall time (six at once, each within its timeout) stays within a few minutes.
+ */
+export const MAX_CHECKS_PER_RUN = 50;
 /** If an alarm run fails before it sets the real next alarm, the one set first fires after this. */
 const RETRY_MS = MIN_INTERVAL_SECONDS * 1000;
 
@@ -99,7 +106,9 @@ export class ProbeDO extends DurableObject<Env> {
 
   /**
    * Replaces this region's checks with `checks` (from the workspace shard). A new or changed check starts over
-   * and runs at once; an empty list stops the alarm. Refuses a workspace or region other than the first one.
+   * and runs at once; an empty list stops the alarm. A check whose only change is its streak length keeps its
+   * results, streak and verdict: the next result is judged by the new length. Refuses a workspace or region other
+   * than the first one.
    */
   async configure(
     workspaceId: string,
@@ -114,8 +123,11 @@ export class ProbeDO extends DurableObject<Env> {
     const now = Date.now();
     const wanted = new Map(checks.map((check) => [check.id, JSON.stringify(check)]));
     for (const row of this.rows()) {
-      if (wanted.get(row.id) !== row.config)
-        sql.exec("delete from probe_checks where id = ?", row.id);
+      const config = wanted.get(row.id);
+      if (config === row.config) continue;
+      if (config !== undefined && sameCheck(config, row.config)) {
+        sql.exec("update probe_checks set config = ? where id = ?", config, row.id);
+      } else sql.exec("delete from probe_checks where id = ?", row.id);
     }
     for (const [id, config] of wanted) {
       sql.exec(
@@ -149,7 +161,10 @@ export class ProbeDO extends DurableObject<Env> {
   private async run(now: number): Promise<void> {
     const region = this.meta("region") as ProbeRegion | undefined;
     const workspaceId = this.meta("workspace");
-    const due = this.rows().filter((row) => row.next_at <= now);
+    const due = this.rows()
+      .filter((row) => row.next_at <= now)
+      .sort((a, b) => a.next_at - b.next_at)
+      .slice(0, MAX_CHECKS_PER_RUN);
     if (due.length > 0 && region && workspaceId) {
       const colo = await observedColo(this.fetcher);
       const results = await mapLimited(due, PARALLEL_CHECKS, (row) =>
@@ -272,6 +287,13 @@ export class ProbeDO extends DurableObject<Env> {
       }),
     );
   }
+}
+
+/** Whether two configs run the same check, told apart only by their streak length (`consecutiveChecks`). */
+function sameCheck(a: string, b: string): boolean {
+  const { consecutiveChecks: _a, ...left } = JSON.parse(a) as CheckConfig;
+  const { consecutiveChecks: _b, ...right } = JSON.parse(b) as CheckConfig;
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 /** `fn` over `items`, at most `limit` at a time, results in order. */

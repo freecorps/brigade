@@ -33,6 +33,7 @@ import {
   PlusIcon,
   RefreshCwIcon,
   Trash2Icon,
+  TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
@@ -47,8 +48,12 @@ import {
   draftFromRow,
   editRestarts,
   EMPTY_DRAFT,
+  formatSeconds,
+  listsServerError,
   monitorLimitReached,
+  quorumIsEveryRegion,
   refusedHeaderRows,
+  secondsToDown,
   splitHostPort,
   stalePolicy,
   tcpFieldReason,
@@ -276,6 +281,7 @@ export function MonitorForm({
   /** Checked from the probe regions, with a timeout: HTTP and TCP. */
   const probed = http || tcp;
   const restarts = editing ? editRestarts(rebaseDraft(draft, initial, editing), editing) : false;
+  const toDown = probed ? secondsToDown(draft) : undefined;
   return (
     <form
       ref={formRef}
@@ -382,17 +388,23 @@ export function MonitorForm({
               </select>
             </div>
           </div>
-          <Field
-            label={m.monitor_field_label({ field: "expected_status" })}
-            hint={m.monitor_field_hint({ field: "expected_status" })}
-            inputMode="numeric"
-            placeholder="200, 204, 500-599"
-            maxLength={80}
-            autoComplete="off"
-            spellCheck={false}
-            className="sm:max-w-md"
-            {...text("expectedStatus")}
-          />
+          <div className="flex flex-col gap-1.5 sm:max-w-md">
+            <Field
+              label={m.monitor_field_label({ field: "expected_status" })}
+              hint={m.monitor_field_hint({ field: "expected_status" })}
+              inputMode="numeric"
+              placeholder="200, 204, 301-302"
+              maxLength={80}
+              autoComplete="off"
+              spellCheck={false}
+              {...text("expectedStatus")}
+            />
+            <Warning>
+              {listsServerError(draft.expectedStatus)
+                ? m.monitor_form_note({ kind: "status_5xx", time: "" })
+                : null}
+            </Warning>
+          </div>
           {draft.method === "GET" ? (
             // The text or pattern, and how it is matched next to it, as the URL has its method.
             <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
@@ -788,15 +800,27 @@ export function MonitorForm({
               <p id={quorumHintId} className="text-sm text-muted-foreground">
                 {m.monitor_field_hint({ field: "quorum" })}
               </p>
+              <Warning>
+                {quorumIsEveryRegion(draft)
+                  ? m.monitor_form_note({ kind: "quorum_all", time: "" })
+                  : null}
+              </Warning>
             </div>
-            <Field
-              label={m.monitor_field_label({ field: "consecutive" })}
-              hint={m.monitor_field_hint({ field: "consecutive" })}
-              inputMode="numeric"
-              placeholder="2"
-              maxLength={String(MAX_CONSECUTIVE_CHECKS).length}
-              {...text("consecutiveChecks")}
-            />
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <Field
+                label={m.monitor_field_label({ field: "consecutive" })}
+                hint={m.monitor_field_hint({ field: "consecutive" })}
+                inputMode="numeric"
+                placeholder="2"
+                maxLength={String(MAX_CONSECUTIVE_CHECKS).length}
+                {...text("consecutiveChecks")}
+              />
+              {toDown === undefined ? null : (
+                <p className="text-sm text-muted-foreground">
+                  {m.monitor_form_note({ kind: "time", time: formatSeconds(toDown, locale) })}
+                </p>
+              )}
+            </div>
           </div>
         ) : null}
       </fieldset>
@@ -837,6 +861,20 @@ export function MonitorForm({
         </div>
       </div>
     </form>
+  );
+}
+
+/** A choice the form allows but that can keep a monitor from paging; announced as it appears. */
+function Warning({ children }: { children: string | null }) {
+  return (
+    <div aria-live="polite">
+      {children === null ? null : (
+        <p className="flex items-start gap-1.5 text-sm text-amber-800 dark:text-amber-300">
+          <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <span className="min-w-0">{children}</span>
+        </p>
+      )}
+    </div>
   );
 }
 

@@ -26,7 +26,7 @@ import type {
   MonitorHeader,
   MonitorRow,
   StatusRange,
-  WorkspaceRow,
+  MonitorSettingsRow,
 } from "./tables.ts";
 import { appendTimeline } from "./timeline.ts";
 import { v, type Issue, type Validator } from "./validate.ts";
@@ -112,9 +112,13 @@ export function freshFloor(sources: number): number {
   return Math.ceil(sources / 2);
 }
 
-/** The sources a monitor's results come from. */
+/**
+ * The sources a monitor's results come from. A stored region this deploy no longer probes (one dropped from
+ * `PROBE_REGIONS`) is left out: it will never report, so it must not count toward the freshness floor or the quorum.
+ */
 export function monitorSources(monitor: Pick<MonitorRow, "kind" | "regions">): CheckSource[] {
-  return monitor.kind === "heartbeat" ? ["heartbeat"] : [...monitor.regions];
+  if (monitor.kind === "heartbeat") return ["heartbeat"];
+  return monitor.regions.filter((region) => (PROBE_REGIONS as readonly string[]).includes(region));
 }
 
 /**
@@ -138,14 +142,17 @@ export function isFresh(
 
 /**
  * The regions that must agree for a monitor's status to change: its own `quorum` (K of its regions), or with none a
- * majority of the `fresh` results. A heartbeat has one source, which is always its quorum.
+ * majority of the `fresh` results. A heartbeat has one source, which is always its quorum. K is capped at the fresh
+ * results: with K equal to the regions, one region that stops reporting would otherwise leave the monitor `unknown`
+ * however down the others see it, and nothing would page. The freshness floor (`freshFloor`) still has to be met
+ * first, so a single region never speaks for three.
  */
 export function neededAgreeing(
   monitor: Pick<MonitorRow, "kind" | "quorum">,
   fresh: number,
 ): number {
   if (monitor.kind === "heartbeat" || monitor.quorum == null) return quorum(fresh);
-  return monitor.quorum;
+  return Math.min(monitor.quorum, fresh);
 }
 
 /** Alike checks in a row before a region's verdict flips (the probe's streak rule): the monitor's own, or 2. */
@@ -155,9 +162,9 @@ export function consecutiveChecks(monitor: Pick<MonitorRow, "consecutiveChecks">
 
 /**
  * The monitor's status at `now` from its sources' results. Only fresh results count (`isFresh`), and at least
- * `freshFloor` sources must have one, and at least its `quorum` when it has one; otherwise the status is `unknown`
- * (or still `pending`, within the stale window after a restart). Among the fresh results it is down when the needed
- * number of them is down (`neededAgreeing`: a majority, or the monitor's quorum), up when that many are up and
+ * `freshFloor` of its sources must have one; otherwise the status is `unknown` (or still `pending`, within the stale
+ * window after a restart). Among the fresh results it is down when the needed number of them is down
+ * (`neededAgreeing`: a majority, or the monitor's quorum capped at the fresh results), up when that many are up and
  * fewer are down (recovery uses the same rule), and otherwise unchanged. With a quorum of at most half the regions
  * both can hold at once: down wins, so a monitor that pages on one region in three stays down while any is down.
  */
@@ -173,8 +180,7 @@ export function monitorStatus(
   const fresh = checks.filter(
     (check) => sources.includes(check.source) && isFresh(monitor, check, now),
   );
-  const own = monitor.kind === "heartbeat" ? 0 : (monitor.quorum ?? 0);
-  if (fresh.length < Math.max(freshFloor(sources.length), own)) {
+  if (fresh.length === 0 || fresh.length < freshFloor(sources.length)) {
     const starting =
       monitor.status === "pending" && now - monitor.restartedAt <= staleAfterMs(monitor);
     return starting ? "pending" : "unknown";
@@ -448,8 +454,10 @@ const tcpHost: Validator<string> = (input, path = "") => {
  * Request headers a check never sends (RFC 0007 "Check types"). `Host` would point the request at another site than
  * the URL names; `Authorization`, `Proxy-Authorization` and `Cookie`, and any name that reads like a credential, would
  * put a secret where every member, viewers too, can read it (headers are synced like the URL, never sealed). The rest
- * are the runtime's to set (`Content-Length`, `Connection`, …), `User-Agent` names Brigade to the site, and
- * `Forwarded`, `X-Forwarded-*`, `X-Real-IP` and `CF-*` would claim to be someone else.
+ * are the runtime's to set (`Content-Length`, `Connection`, …), `User-Agent` names Brigade to the site,
+ * `Forwarded`, `X-Forwarded`, `X-Forwarded-*`, `X-Real-IP`, `True-Client-IP`, `X-Client-IP`, `X-Originating-IP`, `Via`
+ * and `CF-*` would claim to be someone else, and `X-Original-URL`, `X-Rewrite-URL` and the method overrides would make
+ * a proxy route or treat the request as something other than the `GET` or `HEAD` the URL names.
  */
 const BLOCKED_HEADERS = new Set([
   "host",
@@ -466,9 +474,24 @@ const BLOCKED_HEADERS = new Set([
   "expect",
   "user-agent",
   "forwarded",
+  "x-forwarded",
   "x-real-ip",
+  "true-client-ip",
+  "x-client-ip",
+  "x-originating-ip",
+  "via",
+  "x-original-url",
+  "x-rewrite-url",
+  "x-http-method-override",
+  "x-http-method",
+  "x-method-override",
 ]);
-const CREDENTIAL_HEADER = /auth|token|secret|passw|api-?key|session|cookie|credential/i;
+/**
+ * A name that reads like a credential, with words joined by `-`, `_` or nothing (`X-Api-Key`, `api_key`, `apikey`,
+ * `Ocp-Apim-Subscription-Key`, `X-Hub-Signature-256`).
+ */
+const CREDENTIAL_HEADER =
+  /auth|token|secret|passw|session|cookie|credential|signature|(?:api|access|subscription|private|client)[-_]?key|(?:^|[-_])key(?:$|[-_])/i;
 /** A header name as HTTP defines it (a token). */
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 /** A header value a Worker's `fetch` takes: printable ASCII (Latin-1 bytes outside it are refused by `Headers`). */
@@ -826,23 +849,25 @@ function instanceCap(ctx: MutationContext): number {
   );
 }
 
+/** The id of the workspace's one `monitor_settings` row. */
+export const MONITOR_SETTINGS_ID = "monitors";
+
 /**
  * The most monitors a workspace may have: its owner's cap (`monitor.setCap`) when it is lower than the instance's
  * (`instance`: `MAX_MONITORS` in the API's env, or `MAX_MONITORS_PER_WORKSPACE`), else the instance's. A cap set
  * before the operator lowered the instance's counts as the instance's.
  */
 export function monitorCap(
-  workspace: Pick<WorkspaceRow, "monitorCap"> | undefined,
+  settings: Pick<MonitorSettingsRow, "cap"> | undefined,
   instance: number,
 ): number {
-  const own = workspace?.monitorCap;
+  const own = settings?.cap;
   return own == null ? instance : Math.min(own, instance);
 }
 
 /** `limit_reached` when the workspace has as many monitors as `monitorCap` allows. */
 function checkCap(store: MutationStore, ctx: MutationContext): MutationResult | undefined {
-  const [workspace] = store.scan("workspace");
-  const cap = monitorCap(workspace, instanceCap(ctx));
+  const cap = monitorCap(store.get("monitor_settings", MONITOR_SETTINGS_ID), instanceCap(ctx));
   if (store.scan("monitors").length < cap) return undefined;
   return fail("limit_reached", `At most ${cap} monitors in this workspace`);
 }
@@ -1375,8 +1400,10 @@ export const setMonitorCap = defineMutation({
         { path: "cap", message: `Expected at most ${instance}, this instance's cap` },
       ]);
     }
-    if ((workspace.monitorCap ?? null) === args.cap) return fail("conflict", "Nothing to change");
-    store.update("workspace", workspace.id, { monitorCap: args.cap });
+    const settings = store.get("monitor_settings", MONITOR_SETTINGS_ID);
+    if ((settings?.cap ?? null) === args.cap) return fail("conflict", "Nothing to change");
+    if (settings) store.update("monitor_settings", MONITOR_SETTINGS_ID, { cap: args.cap });
+    else store.insert("monitor_settings", { id: MONITOR_SETTINGS_ID, cap: args.cap });
     const event: MonitorCapChanged = {
       type: "monitor.cap_changed",
       subject: workspace.id,
@@ -1590,15 +1617,16 @@ export const allMonitors = defineQuery({
 });
 
 /**
- * The workspace's own row, for its monitor cap (`monitorCap`): the dashboard says how many monitors it may still add,
- * and an owner changes it there. Every member reads it, like the monitors.
+ * The workspace's monitor settings row, for its cap (`monitorCap`): the dashboard says how many monitors it may still
+ * add, and an owner changes it there. Every member reads it, like the monitors; it holds nothing else.
  */
 export const monitorCapQuery = defineQuery({
   name: "monitors.cap",
   args: v.object({}),
   permission: "monitor:read",
-  table: "workspace",
+  table: "monitor_settings",
   filter: () => true,
+  key: () => MONITOR_SETTINGS_ID,
 });
 
 /** What members may send. */

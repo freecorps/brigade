@@ -194,6 +194,7 @@ export * from './monitor_failure_title.js';
 export * from './monitor_field_hint.js';
 export * from './monitor_field_invalid.js';
 export * from './monitor_field_label.js';
+export * from './monitor_form_note.js';
 export * from './monitor_gone.js';
 export * from './monitor_header.js';
 export * from './monitor_heartbeat.js';

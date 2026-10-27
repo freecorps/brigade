@@ -2163,5 +2163,149 @@
         "kind=*, count=*, countPlural=*": "{countFormatted}"
       }
     }
+  ],
+  "webhooks_card": [
+    {
+      "declarations": ["input part", "input host", "input when"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Webhooks",
+        "part=description": "Envie JSON assinado para os seus próprios serviços quando incidentes, alertas e monitores mudam.",
+        "part=add": "Adicionar endpoint",
+        "part=manage_only": "Só proprietários e administradores podem ver e gerenciar webhooks.",
+        "part=empty": "Nenhum endpoint ainda. Adicione um para receber incidentes, alertas e mudanças de monitores como JSON assinado.",
+        "part=load_failed": "Não foi possível carregar os webhooks.",
+        "part=retry": "Tentar de novo",
+        "part=not_configured": "Os webhooks não estão configurados neste servidor do Brigade.",
+        "part=limit": "Um workspace pode ter no máximo 20 endpoints. Exclua um para adicionar outro.",
+        "part=url_label": "URL do endpoint",
+        "part=url_hint": "Só HTTPS, em um host público. O Brigade não segue redirecionamentos.",
+        "part=url_invalid": "Digite uma URL https:// em um host público, sem usuário nem senha.",
+        "part=description_label": "Descrição",
+        "part=description_hint": "Opcional. Aparece aqui no lugar do host.",
+        "part=description_invalid": "Use no máximo 200 caracteres visíveis.",
+        "part=events_label": "Eventos",
+        "part=events_none": "Escolha pelo menos um evento.",
+        "part=events_all": "Todos",
+        "part=group_incidents": "Incidentes",
+        "part=group_monitors": "Monitores e alertas",
+        "part=group_escalation": "Escalonamento",
+        "part=create": "Adicionar endpoint",
+        "part=creating": "Adicionando…",
+        "part=save": "Salvar",
+        "part=saving": "Salvando…",
+        "part=saved": "Salvo.",
+        "part=cancel": "Cancelar",
+        "part=save_failed": "Não foi possível salvar. Tente de novo.",
+        "part=exists": "Este endpoint já existe. Gere um novo segredo se você perdeu o primeiro.",
+        "part=status_on": "Ligado",
+        "part=status_off": "Desligado",
+        "part=status_failing": "Desligado: falhando",
+        "part=last_ok": "Entregue {when}",
+        "part=last_failed": "A última entrega falhou {when}",
+        "part=never": "Nenhuma entrega ainda",
+        "part=failing_since": "Falhando desde {when}",
+        "part=disabled_failing": "O Brigade desligou este endpoint {when}, depois que as entregas falharam por um dia. Corrija o endpoint e ligue-o de novo.",
+        "part=edit": "Editar",
+        "part=close_edit": "Concluir",
+        "part=turn_on": "Ligar",
+        "part=turn_off": "Desligar",
+        "part=toggle_failed": "Não foi possível mudar. Tente de novo.",
+        "part=test": "Enviar evento de teste",
+        "part=testing": "Enviando…",
+        "part=test_sent": "Evento de teste a caminho. Ele aparece em Entregas recentes.",
+        "part=test_too_soon": "Um evento de teste acabou de sair. Espere alguns segundos.",
+        "part=test_failed": "Não foi possível enviar um evento de teste. Tente de novo.",
+        "part=rotate": "Novo segredo",
+        "part=rotate_confirm": "Dar um novo segredo de assinatura a {host}? As entregas são assinadas com os dois por 24 horas, para o receptor fazer a troca.",
+        "part=rotate_go": "Gerar novo segredo",
+        "part=rotating": "Gerando…",
+        "part=rotate_failed": "Não foi possível gerar um novo segredo. Tente de novo.",
+        "part=keep": "Manter o atual",
+        "part=delete": "Excluir",
+        "part=delete_confirm": "Excluir {host}? As entregas param na hora e o histórico some.",
+        "part=delete_go": "Excluir endpoint",
+        "part=deleting": "Excluindo…",
+        "part=delete_failed": "Não foi possível excluir. Tente de novo.",
+        "part=secret_created": "Copie agora o segredo de assinatura de {host}: o Brigade não vai mostrá-lo de novo.",
+        "part=secret_rotated": "Novo segredo de assinatura de {host}. Copie agora: o Brigade não vai mostrá-lo de novo.",
+        "part=secret_label": "Segredo de assinatura",
+        "part=secret_verify": "Confira o cabeçalho webhook-signature com qualquer biblioteca do Standard Webhooks, usando este segredo.",
+        "part=copy": "Copiar",
+        "part=copied": "Copiado",
+        "part=copy_key": "Pressione Ctrl+C para copiar.",
+        "part=copy_key_apple": "Pressione ⌘C para copiar.",
+        "part=close_prompt": "Fechar sem copiar? Você teria que gerar um novo segredo.",
+        "part=keep_open": "Manter aberto",
+        "part=close": "Fechar",
+        "part=recent_title": "Entregas recentes",
+        "part=recent_empty": "Nada entregue ainda. Envie um evento de teste para experimentar o endpoint.",
+        "part=attempt": "Tentativa {when}",
+        "part=*": "Webhooks"
+      }
+    }
+  ],
+  "webhook_event": [
+    {
+      "declarations": ["input type"],
+      "selectors": ["type"],
+      "match": {
+        "type=incident.declared": "Incidente declarado",
+        "type=incident.status_changed": "Status alterado",
+        "type=incident.severity_changed": "Severidade alterada",
+        "type=incident.acknowledged": "Reconhecido",
+        "type=incident.update_posted": "Atualização publicada",
+        "type=incident.role_assigned": "Papel atribuído",
+        "type=alert.fired": "Alerta disparado",
+        "type=alert.resolved": "Alerta resolvido",
+        "type=monitor.status_changed": "Status do monitor alterado",
+        "type=escalation.paged": "Nível de escalonamento acionado",
+        "type=webhook.test": "Evento de teste",
+        "type=*": "Incidente declarado"
+      }
+    }
+  ],
+  "webhook_error": [
+    {
+      "declarations": ["input error", "input status"],
+      "selectors": ["error"],
+      "match": {
+        "error=timeout": "Tempo esgotado",
+        "error=network": "Não conectou",
+        "error=status": "HTTP {status}",
+        "error=redirect": "Redirecionamento {status}, não seguido",
+        "error=blocked": "Bloqueado: não é uma URL https pública",
+        "error=secret": "Segredo ilegível no servidor",
+        "error=*": "Tempo esgotado"
+      }
+    }
+  ],
+  "webhook_events_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} evento",
+        "countPlural=*": "{countFormatted} eventos"
+      }
+    }
+  ],
+  "email_webhook_disabled": [
+    {
+      "declarations": ["input part", "input workspace", "input webhook", "input failures"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "Um webhook em {workspace} foi desligado",
+        "part=intro": "O Brigade desligou o webhook {webhook} em {workspace}: as últimas {failures} entregas falharam, por mais de um dia.",
+        "part=how": "Corrija o endpoint e ligue-o de novo no cartão Webhooks do painel. Eventos de enquanto ele estava desligado não são enviados.",
+        "part=open": "Abrir o painel",
+        "part=footer": "Você recebe este email porque é proprietário de {workspace} no Brigade.",
+        "part=*": "Um webhook em {workspace} foi desligado"
+      }
+    }
   ]
 }

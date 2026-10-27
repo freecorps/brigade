@@ -14,6 +14,7 @@ import { RequireWorkspace } from "@/components/session";
 import { SlackCard } from "@/components/slack-card";
 import { StatusPageCard } from "@/components/status-page-card";
 import { StackCard } from "@/components/stack-card";
+import { WebhooksCard } from "@/components/webhooks-card";
 import { TakeoverNotice } from "@/components/takeover-notice";
 import { VerifyNotice } from "@/components/verify-notice";
 import { authClient } from "@/lib/auth";
@@ -58,6 +59,7 @@ function Overview() {
       <MembersCard />
       <StatusPageCard />
       <SlackCard />
+      <WebhooksCard />
       <StackCard />
       <LegendCard />
     </div>

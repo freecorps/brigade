@@ -322,11 +322,20 @@ Validate the risky assumptions before writing product code. Each spike produces 
     reordering components; local times on the page; a JSON or RSS feed; the mobile app's publish action; polish of
     the card (slice 2); Q23.
 - [ ] Outbound webhooks; OpenAPI reference; `packages/sdk` published
+  - Done: outbound webhooks (RFC 0005 "Outbound webhooks"): owners and admins register up to 20 endpoints per
+    workspace on the dashboard's Webhooks card (URL, description, event filter from the public catalog, on and off),
+    with a signing secret made on the server, shown once, sealed under `WEBHOOK_SECRET_KEY` and rotatable with a
+    24-hour overlap; deliveries from the queue consumer, signed per Standard Webhooks (`webhook-id` is the event id),
+    under the monitors' target rules plus https only, retried 5 times over about 5 hours by the shard's alarm, with a
+    delivery log of the last 10 attempts, "Send test event", and auto-disable after a day of failures with an email
+    to the owners. A slow receiver never holds back a page: not its time, its Queue retries or its connections.
+    Versioned payload types in `packages/schema`.
   - The OpenAPI 3.1 reference of the public HTTP routes is in `docs/api/openapi.json`, generated from the route list
     in `apps/api/src/openapi.ts` and the schema package's validators, kept honest by tests, and served at
     `GET /api/openapi.json` (RFC 0002 "Public HTTP API").
-  - Left: outbound webhooks, then a `webhooks` section in the reference for their payloads; API tokens (their own
-    design first); `packages/sdk` published.
+  - Left: setting `WEBHOOK_SECRET_KEY` on the deployed environments (owner's call, apps/api/README.md); a `webhooks`
+    section in the reference for their payloads; API tokens (their own design first); `packages/sdk` (payload types
+    and a signature verifier) published; replaying a given-up delivery; custom headers per endpoint.
 
 ## Phase 4 — Open source launch (ongoing)
 

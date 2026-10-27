@@ -1,7 +1,8 @@
 // Slack bot tokens at rest (RFC 0011 "Where the token lives"): AES-256-GCM under `SLACK_TOKEN_KEY` (a secret on this
 // Worker, 32 random bytes in base64url), a random 96-bit IV per token, and the workspace and team ids as additional
 // data, so a sealed token copied into another workspace's row does not open. Stored as `v1.<iv>.<ciphertext>`; a key
-// rotation adds `v2` next to it.
+// rotation adds `v2` next to it. Webhook signing secrets are sealed the same way under their own key
+// (`WEBHOOK_SECRET_KEY`, bound to the workspace and the endpoint; src/webhook-routes.ts).
 
 const VERSION = "v1";
 
@@ -44,7 +45,7 @@ export async function openToken(key: string, sealed: string, binding: string): P
 
 function importKey(key: string): Promise<CryptoKey> {
   const bytes = fromBase64url(key);
-  if (bytes.byteLength !== 32) throw new Error("SLACK_TOKEN_KEY must be 32 bytes");
+  if (bytes.byteLength !== 32) throw new Error("The sealing key must be 32 bytes");
   return crypto.subtle.importKey("raw", bytes, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 
@@ -54,7 +55,7 @@ function toBase64url(bytes: Uint8Array): string {
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
-function fromBase64url(text: string): Uint8Array<ArrayBuffer> {
+export function fromBase64url(text: string): Uint8Array<ArrayBuffer> {
   if (!/^[A-Za-z0-9_-]*$/.test(text)) throw new Error("Not base64url");
   const binary = atob(text.replaceAll("-", "+").replaceAll("_", "/"));
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));

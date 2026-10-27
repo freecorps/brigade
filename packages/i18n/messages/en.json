@@ -2163,5 +2163,149 @@
         "kind=*, count=*, countPlural=*": "{countFormatted}"
       }
     }
+  ],
+  "webhooks_card": [
+    {
+      "declarations": ["input part", "input host", "input when"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Webhooks",
+        "part=description": "Send signed JSON to your own services when incidents, alerts and monitors change.",
+        "part=add": "Add endpoint",
+        "part=manage_only": "Only owners and admins can see and manage webhooks.",
+        "part=empty": "No endpoints yet. Add one to get incidents, alerts and monitor changes as signed JSON.",
+        "part=load_failed": "Couldn't load the webhooks.",
+        "part=retry": "Try again",
+        "part=not_configured": "Webhooks aren't set up on this Brigade server.",
+        "part=limit": "A workspace can have at most 20 endpoints. Delete one to add another.",
+        "part=url_label": "Endpoint URL",
+        "part=url_hint": "HTTPS only, on a public host. Brigade doesn't follow redirects.",
+        "part=url_invalid": "Enter an https:// URL on a public host, without a user name or password.",
+        "part=description_label": "Description",
+        "part=description_hint": "Optional. Shown here instead of the host.",
+        "part=description_invalid": "Use at most 200 visible characters.",
+        "part=events_label": "Events",
+        "part=events_none": "Pick at least one event.",
+        "part=events_all": "All",
+        "part=group_incidents": "Incidents",
+        "part=group_monitors": "Monitors and alerts",
+        "part=group_escalation": "Escalation",
+        "part=create": "Add endpoint",
+        "part=creating": "Adding…",
+        "part=save": "Save",
+        "part=saving": "Saving…",
+        "part=saved": "Saved.",
+        "part=cancel": "Cancel",
+        "part=save_failed": "Couldn't save. Try again.",
+        "part=exists": "This endpoint already exists. Give it a new secret if you missed the first one.",
+        "part=status_on": "On",
+        "part=status_off": "Off",
+        "part=status_failing": "Off: failing",
+        "part=last_ok": "Delivered {when}",
+        "part=last_failed": "Last delivery failed {when}",
+        "part=never": "No deliveries yet",
+        "part=failing_since": "Failing since {when}",
+        "part=disabled_failing": "Brigade turned this endpoint off {when}, after its deliveries kept failing for a day. Fix the endpoint, then turn it back on.",
+        "part=edit": "Edit",
+        "part=close_edit": "Done",
+        "part=turn_on": "Turn on",
+        "part=turn_off": "Turn off",
+        "part=toggle_failed": "Couldn't change it. Try again.",
+        "part=test": "Send test event",
+        "part=testing": "Sending…",
+        "part=test_sent": "Test event on its way. It shows under Recent deliveries.",
+        "part=test_too_soon": "A test event went out moments ago. Wait a few seconds.",
+        "part=test_failed": "Couldn't send a test event. Try again.",
+        "part=rotate": "New secret",
+        "part=rotate_confirm": "Give {host} a new signing secret? Deliveries are signed with both for 24 hours, so the receiver can switch over.",
+        "part=rotate_go": "Make new secret",
+        "part=rotating": "Making…",
+        "part=rotate_failed": "Couldn't make a new secret. Try again.",
+        "part=keep": "Keep current",
+        "part=delete": "Delete",
+        "part=delete_confirm": "Delete {host}? Deliveries stop at once and its log is gone.",
+        "part=delete_go": "Delete endpoint",
+        "part=deleting": "Deleting…",
+        "part=delete_failed": "Couldn't delete. Try again.",
+        "part=secret_created": "Copy the signing secret for {host} now: Brigade won't show it again.",
+        "part=secret_rotated": "New signing secret for {host}. Copy it now: Brigade won't show it again.",
+        "part=secret_label": "Signing secret",
+        "part=secret_verify": "Check the webhook-signature header with any Standard Webhooks library, using this secret.",
+        "part=copy": "Copy",
+        "part=copied": "Copied",
+        "part=copy_key": "Press Ctrl+C to copy it.",
+        "part=copy_key_apple": "Press ⌘C to copy it.",
+        "part=close_prompt": "Close without copying? You'd have to make a new secret.",
+        "part=keep_open": "Keep it open",
+        "part=close": "Close",
+        "part=recent_title": "Recent deliveries",
+        "part=recent_empty": "Nothing delivered yet. Send a test event to try the endpoint.",
+        "part=attempt": "Try {when}",
+        "part=*": "Webhooks"
+      }
+    }
+  ],
+  "webhook_event": [
+    {
+      "declarations": ["input type"],
+      "selectors": ["type"],
+      "match": {
+        "type=incident.declared": "Incident declared",
+        "type=incident.status_changed": "Status changed",
+        "type=incident.severity_changed": "Severity changed",
+        "type=incident.acknowledged": "Acknowledged",
+        "type=incident.update_posted": "Update posted",
+        "type=incident.role_assigned": "Role assigned",
+        "type=alert.fired": "Alert fired",
+        "type=alert.resolved": "Alert resolved",
+        "type=monitor.status_changed": "Monitor status changed",
+        "type=escalation.paged": "Escalation level paged",
+        "type=webhook.test": "Test event",
+        "type=*": "Incident declared"
+      }
+    }
+  ],
+  "webhook_error": [
+    {
+      "declarations": ["input error", "input status"],
+      "selectors": ["error"],
+      "match": {
+        "error=timeout": "Timed out",
+        "error=network": "Couldn't connect",
+        "error=status": "HTTP {status}",
+        "error=redirect": "Redirect {status}, not followed",
+        "error=blocked": "Blocked: not a public https URL",
+        "error=secret": "Secret unreadable on the server",
+        "error=*": "Timed out"
+      }
+    }
+  ],
+  "webhook_events_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} event",
+        "countPlural=*": "{countFormatted} events"
+      }
+    }
+  ],
+  "email_webhook_disabled": [
+    {
+      "declarations": ["input part", "input workspace", "input webhook", "input failures"],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "A webhook in {workspace} was turned off",
+        "part=intro": "Brigade turned off the webhook {webhook} in {workspace}: its last {failures} deliveries failed, over more than a day.",
+        "part=how": "Fix the endpoint, then turn it back on from the Webhooks card on the dashboard. Events from while it was off aren't sent.",
+        "part=open": "Open the dashboard",
+        "part=footer": "You get this email because you're an owner of {workspace} on Brigade.",
+        "part=*": "A webhook in {workspace} was turned off"
+      }
+    }
   ]
 }

@@ -14,6 +14,7 @@ import { asksForEmail } from "./mailer.ts";
 import { emailRetryDelay, notifyEmail, type EmailNotifyEnv } from "./notify-email.ts";
 import { asksForInvitation, notifyInvitation } from "./notify-invite.ts";
 import { notifySlack, type SlackNotifyEnv } from "./notify-slack.ts";
+import { notifyWebhookDisabled, notifyWebhooks, type WebhookNotifyEnv } from "./notify-webhooks.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 import {
   asksForPage,
@@ -23,7 +24,9 @@ import {
   type SendFailure,
   sendsCritical,
 } from "./paging.ts";
+import { SideConnections } from "./side-connections.ts";
 import { asksForSlack } from "./slack.ts";
+import { asksForWebhookEmail, asksForWebhooks } from "./webhooks.ts";
 import { HEARTBEAT_EVENT, isSystemEvent, WATCHDOG_NAME, type RelayHealth } from "./watchdog.ts";
 import { WORKSPACE_ID } from "./workspace.ts";
 
@@ -46,6 +49,13 @@ export const PAGE_RETRY_MAX_SECONDS = 60;
  * The incident's claim and the Slack ledger (src/slack.ts) make the retry safe: it waits out the claim and re-plans.
  */
 export const SLACK_BUDGET_MS = 3000;
+/**
+ * The same for outbound webhooks (src/notify-webhooks.ts): every endpoint due for one event gets this long in all,
+ * however slow a receiver is. Past it the consumer moves on without a retry of its own: a delivery under way finishes
+ * under `waitUntil` and records its outcome, one not started keeps its claim, and the shard's alarm brings back
+ * whatever is due (src/webhooks.ts `redrive`).
+ */
+export const WEBHOOK_BUDGET_MS = 3000;
 /** How long the relay gets per send. */
 export const RELAY_TIMEOUT_MS = 10_000;
 /** How long the relay's token check gets when the dead-man switch's heartbeat comes through. */
@@ -54,7 +64,8 @@ export const RELAY_HEALTH_TIMEOUT_MS = 5000;
 /** Optional: an instance without a relay still runs, and every page it would send is recorded as failed. */
 export type NotifyEnv = EmailEnv &
   EmailNotifyEnv &
-  SlackNotifyEnv & {
+  SlackNotifyEnv &
+  WebhookNotifyEnv & {
     WORKSPACE: Env["WORKSPACE"];
     /** The dead-man switch's watchdog (src/watchdog.ts); without it a heartbeat is logged and dropped. */
     WATCHDOG?: Env["WATCHDOG"];
@@ -108,6 +119,10 @@ export async function consumeEvents(
   waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<void> {
   const seen = new Set<string>();
+  // Slack and webhooks share a few of the invocation's six connections, so a page's relay request never waits for
+  // them (src/side-connections.ts).
+  const slots = new SideConnections();
+  const sideSend = slots.wrap(send);
   await Promise.all(
     batch.messages.map(async (message) => {
       // The dead-man switch's own events (src/watchdog.ts): never a shard's, never a page.
@@ -125,44 +140,63 @@ export async function consumeEvents(
       seen.add(event.id);
       const email = asksForEmail(event);
       const invitation = asksForInvitation(event);
-      const delay = email || invitation ? emailRetryDelay : retryDelay;
-      // Slack runs alongside push, never before it, and its failures stay its own: a Slack outage or a shard error on
-      // its side only asks for a later delivery, which the page ledger makes a no-op for push.
-      const slack = asksForSlack(event)
-        ? withinSlackBudget(
-            notifySlack(event, env, send).catch((error: unknown) => {
-              log("slack notifier failed", { event: event.id, error: String(error) });
-              return retryDelay(message.attempts);
-            }),
-            event,
-            message.attempts,
-            waitUntil,
-          ).then((seconds) => {
-            // Past the Queue's retries, give Slack up rather than send a page event to the dead-letter queue.
-            if (seconds === undefined || message.attempts <= QUEUE_MAX_RETRIES) return seconds;
-            log("slack given up: out of queue retries", {
-              event: event.id,
-              attempts: message.attempts,
-            });
-            return undefined;
-          })
-        : Promise.resolve(undefined);
+      const webhookEmail = asksForWebhookEmail(event);
+      const delay = email || invitation || webhookEmail ? emailRetryDelay : retryDelay;
+      // Slack and webhooks run alongside push, never before it, each within its own budget, and their failures stay
+      // their own: an outage or a shard error on their side only asks for a later delivery, which the page ledger makes
+      // a no-op for push. Webhooks never ask for one past their budget: their retries are the shard's.
+      const side = (
+        name: "slack" | "webhooks",
+        wanted: boolean,
+        work: () => Promise<number | undefined>,
+      ) =>
+        wanted
+          ? withinBudget(
+              name,
+              work().catch((error: unknown) => {
+                log(`${name} notifier failed`, { event: event.id, error: String(error) });
+                return retryDelay(message.attempts);
+              }),
+              event,
+              name === "slack" ? retryDelay(message.attempts) : undefined,
+              waitUntil,
+            ).then((seconds) => {
+              // Past the Queue's retries, give it up rather than send a page event to the dead-letter queue.
+              if (seconds === undefined || message.attempts <= QUEUE_MAX_RETRIES) return seconds;
+              log(`${name} given up: out of queue retries`, {
+                event: event.id,
+                attempts: message.attempts,
+              });
+              return undefined;
+            })
+          : Promise.resolve(undefined);
+      const slack = side("slack", asksForSlack(event), () => notifySlack(event, env, sideSend));
+      const webhooks = side("webhooks", asksForWebhooks(event), async () => {
+        await notifyWebhooks(event, env, send, slots, Date.now() + WEBHOOK_BUDGET_MS);
+        return undefined;
+      });
+      const sides = Promise.all([slack, webhooks]);
       try {
         const delaySeconds = email
           ? await notifyEmail(event, message.attempts, env, mail)
           : invitation
             ? await notifyInvitation(event, message.attempts, env, mail)
-            : (await notifyPush(event, message.attempts, env, send))
-              ? retryDelay(message.attempts)
-              : undefined;
-        // Slack's work always finishes (within its budget) before the message is settled. A page's own retry comes
-        // first: never put off behind Slack's backoff, and an early Slack retry only finds its event held again.
-        const slackSeconds = await slack;
-        const next = delaySeconds ?? slackSeconds;
+            : webhookEmail
+              ? await notifyWebhookDisabled(event, message.attempts, env, mail)
+              : (await notifyPush(event, message.attempts, env, send))
+                ? retryDelay(message.attempts)
+                : undefined;
+        // Slack's and the webhooks' work always finishes (within its budget) before the message is settled. A page's
+        // own retry comes first: never put off behind their backoff, and an early retry only finds their work held.
+        const [slackSeconds, webhookSeconds] = await sides;
+        const later = [slackSeconds, webhookSeconds].filter(
+          (seconds): seconds is number => seconds !== undefined,
+        );
+        const next = delaySeconds ?? (later.length ? Math.min(...later) : undefined);
         if (next !== undefined) message.retry({ delaySeconds: next });
         else message.ack();
       } catch (error) {
-        await slack;
+        await sides;
         // The shard was unreachable or threw: nothing was recorded, so the whole page runs again.
         log("event handling failed", { event: event.id, type: event.type, error: String(error) });
         if (message.attempts > QUEUE_MAX_RETRIES) {
@@ -182,26 +216,34 @@ export async function consumeEvents(
 }
 
 /**
- * Slack's answer for one event, or a retry once `SLACK_BUDGET_MS` has passed without one. The late call runs on under
- * `waitUntil`, so a message Slack accepted still has its `ts` recorded and the retry updates it rather than posting
- * again; until then its claim stands, so the retry neither posts twice at once nor waits forever.
+ * A side notifier's answer for one event (Slack, webhooks), or `late` once its budget (`SLACK_BUDGET_MS`,
+ * `WEBHOOK_BUDGET_MS`) has passed without one: Slack's retry delay, nothing for webhooks. The late call runs on under
+ * `waitUntil`, so a message Slack accepted still has its `ts` recorded (and a delivery its outcome) and a retry
+ * updates it rather than sending again; until then its claim stands, so nothing sends twice at once or waits forever.
  */
-async function withinSlackBudget(
-  slack: Promise<number | undefined>,
+async function withinBudget(
+  name: "slack" | "webhooks",
+  work: Promise<number | undefined>,
   event: BrigadeEvent,
-  attempts: number,
+  late: number | undefined,
   waitUntil: ((promise: Promise<unknown>) => void) | undefined,
 ): Promise<number | undefined> {
-  waitUntil?.(slack);
+  waitUntil?.(work);
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const overrun = new Promise<number>((resolve) => {
-    timer = setTimeout(() => {
-      log("slack notifier overran its budget: retrying later", { event: event.id });
-      resolve(retryDelay(attempts));
-    }, SLACK_BUDGET_MS);
+  const overrun = new Promise<number | undefined>((resolve) => {
+    timer = setTimeout(
+      () => {
+        log(`${name} notifier overran its budget`, {
+          event: event.id,
+          ...(late === undefined ? {} : { retryIn: late }),
+        });
+        resolve(late);
+      },
+      name === "slack" ? SLACK_BUDGET_MS : WEBHOOK_BUDGET_MS,
+    );
   });
   try {
-    return await Promise.race([slack, overrun]);
+    return await Promise.race([work, overrun]);
   } finally {
     clearTimeout(timer);
   }

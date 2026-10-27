@@ -52,6 +52,14 @@ import { Receipts, type ReceiptResult } from "./receipts.ts";
 import { SlackDesk, type SlackPlan, type SlackShardAction } from "./slack.ts";
 import { StatusPublisher, type StatusConfigureResult } from "./status-page.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
+import {
+  WebhookDesk,
+  type WebhookEmailPlan,
+  type WebhookEventRef,
+  type WebhookOutcome,
+  type WebhookPlan,
+  type WebhookRunResult,
+} from "./webhooks.ts";
 import type { RowChange } from "./store.ts";
 
 export interface WorkspaceInfo {
@@ -151,6 +159,8 @@ const MAX_SALVAGE_LENGTH = 1024 * 1024;
 export const REPAIR_BUDGET_MS = 5 * 1000;
 /** How long the alarm waits on a status page push (RFC 0012) before it lets the push finish in the background. */
 export const STATUS_PUSH_BUDGET_MS = 5 * 1000;
+/** The soonest the alarm comes back for webhook retries after it ran: a backlog past one redrive waits this long. */
+export const WEBHOOK_REDRIVE_MIN_MS = 1000;
 /**
  * The least the alarm waits on a status page push when an escalation level is due sooner than
  * `STATUS_PUSH_BUDGET_MS`, so a level due at once (or one whose timer failed) still leaves the push a moment.
@@ -170,6 +180,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly receipts: Receipts;
   private readonly mailer: Mailer;
   private readonly slack: SlackDesk;
+  private readonly webhooks: WebhookDesk;
   private readonly escalations: Escalations;
   private readonly membership: Membership;
   private readonly invitations: Invitations;
@@ -228,6 +239,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       randomBytes,
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
+    });
+    this.webhooks = new WebhookDesk({
+      storage: ctx.storage,
+      shard: this.shard,
+      log: (message, fields) => this.log(message, fields),
+      committed: (version, changes) => this.broadcast(version, changes, undefined),
+      wake: (at) => this.wake(at, "webhook retry"),
     });
     this.escalations = new Escalations({
       shard: this.shard,
@@ -289,6 +307,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (escalationAt !== null) this.wake(escalationAt, "escalation");
     } catch (error) {
       this.log("arming the escalation failed", { error: String(error) });
+    }
+    // Likewise a webhook delivery due again (src/webhooks.ts `redrive`).
+    try {
+      const webhookAt = this.webhooks.nextAt();
+      if (webhookAt !== null) this.wake(webhookAt, "webhook retry");
+    } catch (error) {
+      this.log("arming the webhook retry failed", { error: String(error) });
     }
     // Likewise a member repair whose alarm failed to arm.
     try {
@@ -767,6 +792,56 @@ export class WorkspaceDO extends DurableObject<Env> {
     return this.slack.record(event, outcome, Date.now());
   }
 
+  /**
+   * `webhook.create` or `webhook.rotateSecret` as `actor` (RPC from `POST /workspaces/:id/webhooks` and
+   * `…/webhooks/:id/rotate`, which checked the session, read the role in D1, made the secret and sealed it). The same
+   * RBAC as every mutation; a member removed within the tombstone is refused as their sync upgrade would be.
+   */
+  async webhookRun(
+    workspaceId: string,
+    actor: Actor,
+    name: "webhook.create" | "webhook.rotateSecret",
+    args: Record<string, unknown>,
+    key: string,
+  ): Promise<WebhookRunResult> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    const result = this.webhooks.run(actor, name, args, key, Date.now());
+    if (result.ok) return { ok: true };
+    const { code, issues } = result.error;
+    return issues ? { ok: false, code, issues } : { ok: false, code };
+  }
+
+  /** What the webhook notifier should deliver for `event` (RPC from the queue consumer): see `WebhookDesk.plan`. */
+  planWebhooks(event: BrigadeEvent): WebhookPlan {
+    if (this.shard.workspace() !== event.workspaceId) return { event: null, body: null, sends: [] };
+    return this.webhooks.plan(event, Date.now());
+  }
+
+  /** What one webhook delivery attempt did (RPC from the queue consumer): see `WebhookDesk.record`. */
+  recordWebhook(
+    event: WebhookEventRef,
+    webhookId: string,
+    outcome: WebhookOutcome,
+  ): { retryAt: number | null } {
+    if (this.shard.workspace() !== event.workspaceId) return { retryAt: null };
+    return this.webhooks.record(event, webhookId, outcome, Date.now());
+  }
+
+  /** The owners' email for an endpoint turned off (RPC from the queue consumer): see `WebhookDesk.planEmail`. */
+  planWebhookEmail(event: BrigadeEvent): WebhookEmailPlan {
+    if (this.shard.workspace() !== event.workspaceId) return { send: false, reason: "not_found" };
+    return this.webhooks.planEmail(event, Date.now());
+  }
+
+  /** What that email did (RPC from the queue consumer): see `WebhookDesk.recordEmail`. */
+  recordWebhookEmail(event: BrigadeEvent, done: boolean): void {
+    if (this.shard.workspace() !== event.workspaceId) return;
+    this.webhooks.recordEmail(event, done, Date.now());
+  }
+
   /** A page the Queue gave up on (RPC from the dead-letter consumer): see `Pager.deadLettered`. */
   recordDeadLetter(event: BrigadeEvent): DeadLetterResult {
     if (this.shard.workspace() !== event.workspaceId) return "other_workspace";
@@ -775,8 +850,8 @@ export class WorkspaceDO extends DurableObject<Env> {
 
   /**
    * The shard's one alarm (RFC 0005, RFC 0007, RFC 0006 "Who is paged"): escalation levels that came due
-   * (`Escalations.fireDue`, synchronous, drained at once when any fired), monitor upkeep (`Monitoring.tick`), draining
-   * the outbox to the Queue, then a due member repair (`Membership.repairDue`: a member change D1 has and the shard
+   * (`Escalations.fireDue`, synchronous, drained at once when any fired), monitor upkeep (`Monitoring.tick`), webhook
+   * deliveries due again (`WebhookDesk.redrive`), draining the outbox to the Queue, then a due member repair (`Membership.repairDue`: a member change D1 has and the shard
    * missed), and the outbox again when the repair wrote events. The drain goes before the repair because the repair
    * waits on D1 (and on any member change ahead of it in the member lock): a page never waits on D1. A fallback a
    * tick from now is set first, so a failure never ends the chain; then the alarm moves to the earliest any of them
@@ -802,6 +877,12 @@ export class WorkspaceDO extends DurableObject<Env> {
       monitors = await this.monitoring.tick(now);
     } catch (error) {
       this.log("monitor tick failed", { error });
+    }
+    // Webhook deliveries due again go back to the queue with the drain below (src/webhooks.ts `redrive`).
+    try {
+      this.webhooks.redrive(Date.now());
+    } catch (error) {
+      this.log("webhook redrive failed", { error });
     }
     await this.drainOutbox();
     // The status page after the outbox: a page never waits on KV. Never throws; KV calls have no deadline of their
@@ -878,9 +959,20 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("reading the status page push failed", { error });
     }
+    // Never before now plus a beat: a redrive that could not run is tried again then, not in a loop.
+    let webhookAt: number | null = now + MONITOR_TICK_MS;
+    try {
+      const at = this.webhooks.nextAt();
+      webhookAt = at === null ? null : Math.max(at, Date.now() + WEBHOOK_REDRIVE_MIN_MS);
+    } catch (error) {
+      this.log("reading the webhook retries failed", { error });
+    }
     const next = earliest(
       earliest(earliest(monitors, escalationAt), earliest(repair, armed)),
-      earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
+      earliest(
+        earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
+        webhookAt,
+      ),
     );
     if (next === null) await this.ctx.storage.deleteAlarm();
     else await this.ctx.storage.setAlarm(next);

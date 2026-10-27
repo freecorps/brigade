@@ -36,6 +36,7 @@ import { receiptWorkspace } from "./receipts.ts";
 import { beginSlackInstall } from "./slack-bridge.ts";
 import { configureStatusPage, serveStatusPage } from "./status-route.ts";
 import { readBounded } from "./body.ts";
+import { webhookRequest } from "./webhook-routes.ts";
 import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, RECEIPT_STATUS, USER_ID } from "./http.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
 import {
@@ -58,6 +59,7 @@ const INVITATION_PATH = /^\/workspaces\/([^/]+)\/invitations\/([^/]+?)(\/resend)
 const INVITEE_PATH = /^\/invitations\/([^/]+?)(?:\/(accept|decline))?$/;
 const ACK_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/ack$/;
 const SLACK_INSTALL_PATH = /^\/workspaces\/([^/]+)\/slack\/install$/;
+const WEBHOOKS_PATH = /^\/workspaces\/([^/]+)\/webhooks(?:\/([^/]+)\/rotate)?$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
 const STATUS_PAGE_PATH = /^\/workspaces\/([^/]+)\/status-page$/;
@@ -150,6 +152,8 @@ export default {
     // The public status page (RFC 0012): no session, read from KV, never from the shard.
     const publicStatus = PUBLIC_STATUS_PATH.exec(pathname);
     if (publicStatus) return serveStatusPage(request, env, ctx, publicStatus[1] ?? "");
+    const webhooks = WEBHOOKS_PATH.exec(pathname);
+    if (webhooks) return webhookRequest(request, env, auth, webhooks[1]!, webhooks[2]);
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
     if (pathname === "/receipts") return receiveReceipt(request, env);

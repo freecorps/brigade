@@ -8,6 +8,7 @@ import type { EscalationTargetKind } from "./policies.ts";
 import type { RotationUnit } from "./schedules.ts";
 import type { SlackFailure, SlackLocale } from "./slack.ts";
 import type { ComponentStatus, PublicStatus, StatusCorrection, StatusLocale } from "./status.ts";
+import type { WebhookDisabledReason, WebhookError, WebhookEventType } from "./webhooks.ts";
 import type {
   AlertStatus,
   CheckSource,
@@ -619,12 +620,70 @@ export type StatusIncidentRow = {
   updatedAt: number;
 };
 
+/** One delivery attempt to a webhook endpoint (RFC 0005 "Outbound webhooks"): never the request body. */
+export type WebhookAttempt = {
+  /** The event delivered, also the `webhook-id` header. */
+  eventId: string;
+  type: string;
+  /** 1 for the first try of this event at this endpoint. */
+  attempt: number;
+  at: number;
+  ok: boolean;
+  /** The receiver's HTTP status, if it answered. */
+  status: number | null;
+  /** How long the request took, if it got an answer. */
+  ms: number | null;
+  error: WebhookError | null;
+  /** At most `WEBHOOK_SNIPPET_MAX` characters of the response, printable text only; null for none. */
+  snippet: string | null;
+};
+
+/**
+ * An outbound webhook endpoint (RFC 0005 "Outbound webhooks"), synced to owners and admins only (`webhook.all`): its
+ * URL may carry a token of the receiver's. Written by the `webhook.*` mutations; never the secret.
+ */
+export type WebhookRow = {
+  id: string; // whk_<ULID>, made by the dashboard
+  url: string;
+  /** What it is for; empty: the dashboard shows the URL's host. */
+  description: string;
+  /** The catalog events it takes (`WEBHOOK_EVENT_TYPES`), in catalog order. */
+  events: WebhookEventType[];
+  enabled: boolean;
+  /** Why it is off; null while on. */
+  disabledReason: WebhookDisabledReason | null;
+  disabledAt: number | null;
+  /** Failed attempts since the last success (or since it was turned on). */
+  failures: number;
+  /** When the first of those failed; null while it succeeds. */
+  failingSince: number | null;
+  /** The last "Send test event". */
+  lastTestAt: number | null;
+  secretRotatedAt: number;
+  /** The last `WEBHOOK_LOG_SIZE` attempts, newest first. */
+  recent: WebhookAttempt[];
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+};
+
 /**
  * Server-only: a slug the page gave up (`id`) at `at`, whose snapshot the shard still has to delete before D1 lets
  * anyone else claim it (RFC 0012 "Addresses"). `cleared`: when the snapshot was deleted from KV; the slug is released
  * a grace period after that, once no cache can still serve the old page.
  */
 export type StatusRetiredRow = { id: string; at: number; cleared?: number };
+
+/**
+ * An endpoint's signing secrets, sealed by the API (`v1.<iv>.<ciphertext>`): server-only, never synced or in an event.
+ * `previous` signs alongside `secret` until `previousUntil`, after a rotation.
+ */
+export type WebhookSecretRow = {
+  id: string;
+  secret: string;
+  previous: string | null;
+  previousUntil: number | null;
+};
 
 /**
  * Server-only: the id of a deleted service, incident type or custom field (`id`), deleted at `at`. Incidents keep
@@ -657,6 +716,8 @@ export type BrigadeTables = {
   status_components: StatusComponentRow;
   status_incidents: StatusIncidentRow;
   status_retired: StatusRetiredRow;
+  webhooks: WebhookRow;
+  webhook_secrets: WebhookSecretRow;
   services: ServiceRow;
   incident_types: IncidentTypeRow;
   custom_fields: CustomFieldRow;
@@ -688,6 +749,8 @@ export const TABLES = {
   status_components: { serverOnly: false },
   status_incidents: { serverOnly: false },
   status_retired: { serverOnly: true },
+  webhooks: { serverOnly: false },
+  webhook_secrets: { serverOnly: true },
   services: { serverOnly: false },
   incident_types: { serverOnly: false },
   custom_fields: { serverOnly: false },

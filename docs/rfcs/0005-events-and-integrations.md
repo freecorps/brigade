@@ -5,8 +5,9 @@
 ## Domain events
 
 Every successful mutation emits one or more events with a CloudEvents-style envelope (the one exception is a
-mutation declared `silent`: today `monitor.report`'s routine refreshes and `member.sync`, the shard's cache of the
-members in D1; RFC 0004):
+mutation declared `silent`: today `monitor.report`'s routine refreshes, `member.sync`, the shard's cache of the
+members in D1, and `webhook.record`, an outbound webhook's delivery log, which emits only when it turns the endpoint
+off; RFC 0004):
 
 ```ts
 interface BrigadeEvent<T = unknown> {
@@ -109,6 +110,12 @@ email notifier's own failures are `notification.failed` with `channel: "email"` 
 failure the email was about, `userId`, `reason`: `undelivered`, or `capped` when a cap dropped it, `about`: `unpaged` or `nobody_paged`), with an
 `email_failed` entry ("Couldn't email Ana that nobody could be paged"). Changing who is emailed emits
 `workspace.email_changed` (`unpaged`, `nobodyPaged`).
+
+Outbound webhooks ("Outbound webhooks" below) emit `webhook.created` (`id`, `events`, `enabled`), `webhook.updated`
+(`id`, `events`, `urlChanged`), `webhook.enabled` (`id`), `webhook.disabled` (`id`, `reason`: `manual`, or `failing`
+when Brigade turned it off, `failures`), `webhook.secret_rotated` (`id`), `webhook.deleted` (`id`) and `webhook.test`
+(`id`: "Send test event"), subject the endpoint; never its URL (which may carry the receiver's token) or its secret.
+The webhook notifier's `webhook.redeliver` (`eventId`) brings deliveries due again back to the queue ("Retries").
 
 The paging pipeline's own watchdog (RFC 0007 "Watching the watcher") writes events too, through its own outbox and
 the same Queue, with `workspaceId` `_system` (no workspace can have it; `source` `brigade://_system/watchdog`, actor
@@ -303,8 +310,101 @@ interface Notifier {
 
 - Built-in integrations live in `integrations/*` as separate Workers bound to `api` via **service bindings** (RPC).
 - Third parties implement the same interfaces in their own Worker and register the binding in config — no core fork needed.
-- Lightweight alternative for anything outside Cloudflare: **outbound webhooks** (signed, HMAC-SHA256, retries with backoff)
-  and the public REST API (OpenAPI spec generated from `packages/schema`).
+- Lightweight alternative for anything outside Cloudflare: **outbound webhooks** (below) and the public REST API
+  (OpenAPI spec generated from `packages/schema`, not yet).
+
+## Outbound webhooks
+
+Endpoints a workspace's owners and admins register (`webhook:manage`) to get its events as signed JSON over HTTPS
+(`packages/schema` `src/webhooks.ts`, the API's `src/webhooks.ts`, `src/notify-webhooks.ts`, `src/webhook-sign.ts`).
+
+- **Endpoints.** A URL, a description (up to 200 characters, optional), the catalog events it takes (at least one)
+  and whether it is on; at most 20 per workspace (`MAX_WEBHOOKS_PER_WORKSPACE`, `limit_reached`). Rows sync only to
+  owners and admins (`webhook.all`): receivers put tokens in URLs, so responders and viewers never get them, and the
+  dashboard's rows show host and path, never the query. Mutations: `webhook.update`, `webhook.setEnabled`,
+  `webhook.delete` and `webhook.sendTest` (at most one per endpoint per 10 s) over sync; `webhook.create` and
+  `webhook.rotateSecret` are server-only, run by the API as the member (`POST /workspaces/:id/webhooks`,
+  `…/webhooks/:webhookId/rotate`) because the server makes the secret. An endpoint takes events from when it was
+  created, and only while it is on: deliveries pending when it is turned off or deleted are dropped.
+- **Secrets.** `whsec_` and 32 random bytes in base64 (Standard Webhooks' format), made by the API, shown once in the
+  answer, never again. Brigade must sign with it, so it cannot be kept as a hash: it is sealed with AES-256-GCM under
+  `WEBHOOK_SECRET_KEY` (a secret on the API Worker; the same sealing as Slack's bot tokens, RFC 0011, with the
+  workspace and endpoint ids as additional data, so a sealed secret copied to another row does not open) and kept in
+  the server-only `webhook_secrets` table. The trade-off: whoever has both the shard's storage and the key can sign
+  as Brigade; neither alone can. Without the key, webhooks are off (creating answers `not_configured`, nothing is
+  delivered). Rotating keeps the previous secret signing alongside the new one for 24 hours
+  (`WEBHOOK_ROTATION_GRACE_MS`), so a receiver can switch without dropping deliveries; two at most. Create and rotate
+  take an `Idempotency-Key` (the dashboard sends one, and sends a request again with it when the answer was lost): it
+  is the mutation's id, and the secret is derived from it (HKDF-SHA256 under `WEBHOOK_SECRET_KEY`, over the
+  workspace, endpoint, member, action and key), so a retried request answers the first one's outcome and the same
+  secret, and a retried rotation never rotates again (which would cut the previous secret's grace short).
+- **Signatures** ([Standard Webhooks](https://www.standardwebhooks.com), so any of its libraries verifies them). Each
+  delivery is `POST` with `Content-Type: application/json` and:
+  - `webhook-id`: the event's id (`evt_…`), the same on every retry: the idempotency key;
+  - `webhook-timestamp`: the attempt's time in Unix seconds (receivers should refuse one more than 5 minutes off);
+  - `webhook-signature`: `v1,<base64 HMAC-SHA256>` for each secret in use, space separated, the current one first.
+    The HMAC key is the secret's bytes after `whsec_`, base64-decoded; the signed content is
+    `<webhook-id>.<webhook-timestamp>.<body>`, the body exactly as sent. The specification's own example is the test
+    vector (apps/api test/webhooks.test.ts).
+- **Payloads** (`WebhookPayload`, MIT, for the SDK and the OpenAPI reference to reuse): an envelope `{ version: 1, id,
+  type, time, workspaceId, actor: { kind, id }, data }`; `time` is when the event happened. A change that is not purely
+  additive is `version: 2`, never an edit. Member ids, never names or addresses. The catalog
+  (`WEBHOOK_EVENT_TYPES`) and each `data`:
+  - `incident.declared` (`incident`), `incident.status_changed` and `incident.severity_changed` (`incident`, `from`,
+    `to`), `incident.acknowledged` (`incident`, `by`), `incident.update_posted` (`incident`, `body`: what the member
+    wrote, which every member already reads) and `incident.role_assigned` (`incident`, `role`, `from`, `to`), where
+    `incident` is `{ id, number, title, severity, status, declaredAt, acknowledgedAt }`;
+  - `alert.fired` (`alertId`, `monitor`, `incidentId`), `alert.resolved` (`alertId`, `monitor`, `reason`) and
+    `monitor.status_changed` (`monitor`, `from`, `to`), where `monitor` is `{ id, name, kind, status }` (never its URL,
+    host or heartbeat token; `name`, `kind` and `status` null once it is deleted);
+  - `escalation.paged` (`incident`, `level`, `round`, `reason`, `paged` and `missed`: how many, never who or why);
+  - `webhook.test` (`webhookId`), sent by "Send test event" to that endpoint only, on or off, whatever its filter.
+
+  Nothing else is delivered: members, invitations, devices, schedules and policies, the notifiers' own records and the
+  webhooks' own changes stay inside. The incident or monitor is read when the event is first delivered and the
+  payload kept in the shard's ledger, so every retry carries the same bytes.
+
+- **Delivery.** From the queue consumer, never from the shard (which only writes the outbox, like every event). For
+  each event the shard's ledger (`webhook_sends`, per event and endpoint) says which endpoints are due and holds each
+  for 30 s, so two deliveries of one event never send it at once; a redelivery skips endpoints already done. Targets
+  follow the monitors' rules (RFC 0007 "Targets": no credentials, the same ports, no private, loopback, link-local,
+  reserved or local-only host) plus `https:` only and no literal Cloudflare address, checked on save and again before
+  each attempt; redirects are never followed (a 3xx is a failure), each attempt gets 5 s
+  (`WEBHOOK_TIMEOUT_MS`, reading the answer included), and at most 1 KB of a failed answer is read. Only 2xx is
+  success. A local receiver is reached through a public https tunnel: plain http is refused everywhere, since the
+  rules live in the mutation. The rules check the URL, not where its name resolves: a Worker's `fetch` cannot pin
+  an address, so a public name that resolves to a private one is kept off private networks by Cloudflare's network
+  alone (deployed Workers cannot reach them; RFC 0007 "Targets"). Under `wrangler dev`, or workerd run outside
+  Cloudflare, nothing stops it: such a name resolving to `127.0.0.1` reaches the machine's own services, so a local
+  or self-hosted run must not let untrusted members add endpoints.
+- **Retries.** At least once: 6 attempts per event and endpoint, after 30 s, 2 min, 10 min, 1 h and 4 h
+  (`WEBHOOK_RETRY_DELAYS_MS`), then given up (logged); a blocked URL or a secret that no longer opens is not retried.
+  The schedule is the shard's, not the Queue's: the ledger keeps when each delivery is due again (`retry_at`, or its
+  hold running out with nothing recorded) and the shard's alarm brings it back as `webhook.redeliver` (`eventId`), a
+  server-only mutation's event through the outbox, which the consumer plans as the original event for the endpoints
+  still open (one turned off or deleted since is dropped). Not delivered within 10 min (`WEBHOOK_REQUEUE_MS`), it is
+  queued again. So a webhook never asks for the event's own message to be retried, and never spends the Queue's
+  `max_retries`, which a page on the same event needs; the only exception is a shard that cannot be reached at all,
+  which nothing was recorded for.
+- **Delivery log.** Each endpoint keeps its last 10 attempts on its row (`recent`: event, attempt, time, ok, status,
+  latency, error, and for a failure at most 200 characters of the answer, printable text only), written by the
+  silent `webhook.record`. No request bodies are kept beyond the ledger's payload (15 days, like the page ledger).
+- **Auto-disable.** An endpoint whose attempts all failed for 24 hours (`WEBHOOK_DISABLE_AFTER_MS`), at least 10 in a
+  row (`WEBHOOK_DISABLE_FAILURES`), with no success since, is turned off: `webhook.disabled` (`failing`), a notice on
+  its row on the dashboard, and an email to the workspace's owners (verified addresses, at most 50, in their language;
+  description or host only, never the path or query), claimed in the shard so a redelivery sends nobody twice.
+  Turning it back on starts the count over.
+- **Never in a page's way.** Webhooks are not a paging path, but share the consumer. They run alongside push like
+  Slack, and get at most 3 s per event in a batch (`WEBHOOK_BUDGET_MS`): past it the consumer moves on without a
+  retry, an attempt under way finishes under `waitUntil` and records its outcome, and the alarm brings back whatever
+  is due. They also share the invocation's connections: a Worker invocation has six open at once and a seventh
+  subrequest waits, so a relay reached through `RELAY_URL` would wait behind receivers that never answer. Slack and
+  webhooks together hold at most 3 per invocation (`SIDE_CONNECTIONS`, src/side-connections.ts; a Slack answer is
+  read before its slot is freed); a delivery still waiting for one at its budget is not started (no attempt; the
+  alarm brings it back when its hold runs out). A page in the same batch (or the same event) goes to the relay at
+  once (tested with 20 receivers that never answer, against a model of the six-connection limit).
+- **Not yet.** The OpenAPI reference and `packages/sdk` (with a verifier) publishing these types; per-endpoint
+  custom headers; replaying a given-up delivery from the dashboard.
 
 ## Slack (first ChatProvider)
 

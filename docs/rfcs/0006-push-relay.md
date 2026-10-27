@@ -298,10 +298,10 @@ shard's copy whenever that check fails. How the copy follows D1 (RFC 0003 "Membe
     `MEMBER_CHECK_BUDGET_MS` (1.5 s; the reconcile finishes in the background), and a D1 that fails or is late leaves
     the page to the shard's copy, logged (`paging with the shard's member list`), with the check skipped for 30 s
     so an outage does not cost every page its wait, and the repair alarm armed.
-  So a member removed or demoted outside Brigade is still paged for at most a period of activity, never past a page
-  planned while D1 answers. Tests: `apps/api/test/members.test.ts` ("a member deleted in D1 stops being paged at the
-  next periodic reconcile", "a page checks a member list not checked against D1 lately first", "a page whose check
-  D1 fails or hangs goes with the shard's copy").
+    So a member removed or demoted outside Brigade is still paged for at most a period of activity, never past a page
+    planned while D1 answers. Tests: `apps/api/test/members.test.ts` ("a member deleted in D1 stops being paged at the
+    next periodic reconcile", "a page checks a member list not checked against D1 lately first", "a page whose check
+    D1 fails or hangs goes with the shard's copy").
 - Tests: `apps/api/test/members.test.ts` ("a removed member is deleted from D1 and the shard with every device, and is
   no longer paged", "a demoted member stops being paged at once", the "when one side fails" cases (among them "a
   failed leave: the leaver's own retry stops their pages", "a failed change is repaired by the shard's alarm" and "an

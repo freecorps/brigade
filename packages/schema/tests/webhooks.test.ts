@@ -32,6 +32,11 @@ import {
   type WebhookPayloadType,
   type WebhookRow,
   type WebhookSourceEvent,
+  webhookHeaderHint,
+  webhookHeaderNameProblem,
+  webhookHeadersInput,
+  webhookHeadersUpdate,
+  webhookHeaderValueProblem,
 } from "../src/index.ts";
 
 const T = Date.UTC(2026, 9, 26, 12, 0, 0);
@@ -132,6 +137,8 @@ describe("webhook endpoints", () => {
       secret: OTHER,
       previous: SECRET,
       previousUntil: T + 1000 + WEBHOOK_ROTATION_GRACE_MS,
+      // A rotation keeps the custom headers.
+      headers: [],
     });
 
     for (const result of [updated, off, rotated]) {
@@ -664,5 +671,64 @@ describe("payload validators", () => {
     expect(JSON.stringify(toJsonSchema(WEBHOOK_PAYLOADS["incident.acknowledged"]))).toContain(
       '"token"',
     );
+  });
+});
+
+describe("custom header rules", () => {
+  test("names: HTTP tokens, never one Brigade, a proxy or Cloudflare sets", () => {
+    for (const name of ["Authorization", "X-Team", "x-api-key"]) {
+      expect(webhookHeaderNameProblem(name), name).toBeNull();
+    }
+    for (const name of [
+      "Host",
+      "content-type",
+      "Content-Length",
+      "Transfer-Encoding",
+      "User-Agent",
+      "webhook-signature",
+      "Webhook-Id",
+      "X-Forwarded-For",
+      "CF-Connecting-IP",
+      "Proxy-Authorization",
+      "Bad Name",
+      "",
+      "x".repeat(65),
+    ]) {
+      expect(webhookHeaderNameProblem(name), name).not.toBeNull();
+    }
+  });
+
+  test("values: visible ASCII and inner spaces, no line breaks or controls", () => {
+    expect(webhookHeaderValueProblem("Bearer abc def")).toBeNull();
+    for (const value of [
+      "",
+      " lead",
+      "trail ",
+      "a\r\nX-Injected: b",
+      "a\u0000b",
+      "café",
+      "x".repeat(1025),
+    ]) {
+      expect(webhookHeaderValueProblem(value), JSON.stringify(value)).not.toBeNull();
+    }
+    expect(webhookHeaderHint("short")).toBeNull();
+    expect(webhookHeaderHint("Bearer 0123456789abcdef")).toBe("cdef");
+  });
+
+  test("a list holds each name once, whatever its case, and at most five", () => {
+    expect(webhookHeadersInput([{ name: "X-A", value: "1" }]).ok).toBe(true);
+    expect(
+      webhookHeadersInput([
+        { name: "X-A", value: "1" },
+        { name: "x-a", value: "2" },
+      ]),
+    ).toMatchObject({ ok: false, issues: [{ path: "[1].name" }] });
+    expect(
+      webhookHeadersInput(Array.from({ length: 6 }, (_, i) => ({ name: `X-${i}`, value: "v" }))).ok,
+    ).toBe(false);
+    expect(webhookHeadersUpdate([{ name: "Authorization" }])).toEqual({
+      ok: true,
+      value: [{ name: "Authorization", value: undefined }],
+    });
   });
 });

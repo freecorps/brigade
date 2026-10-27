@@ -341,6 +341,26 @@ test("a monitor that went silent while down still links its incident, sorts firs
   expect(document.body.textContent).toContain("1 down");
 });
 
+test("a down monitor a route keeps quiet says which route, and that nobody is paged", async () => {
+  const suppressed = monitor({
+    name: "Docs",
+    status: "down",
+    alertId: newId("alt", T0, randomBytes),
+    alertRoute: { id: "rte_quiet", name: "Quiet docs", outcome: "suppressed" },
+  });
+  const dropped = monitor({
+    name: "Staging",
+    status: "down",
+    alertId: newId("alt", T0, randomBytes),
+    alertRoute: { id: "rte_drop", name: "Drop staging", outcome: "dropped" },
+  });
+  await mount([suppressed, dropped]);
+  const [first, second] = $$("[data-monitor]");
+  expect(first!.textContent).toContain("Kept quiet by route Quiet docs: no incident");
+  expect(first!.querySelector("a")).toBeNull();
+  expect(second!.textContent).toContain("Dropped by route Drop staging: nobody is paged");
+});
+
 /**
  * Browsers drop focus to the body when the node holding it is removed, which a move by `insertBefore` is;
  * happy-dom keeps it. This puts the browser's behaviour back on one list.

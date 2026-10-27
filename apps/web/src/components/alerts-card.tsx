@@ -9,6 +9,9 @@ import {
   applyMapping,
   pickRoute,
   can,
+  namesMonitor,
+  ROUTE_ALL_MONITORS,
+  ROUTE_ALL_SOURCES,
   formatIncidentNumber,
   MAX_ALERT_ROUTES,
   MAX_ALERT_SOURCES,
@@ -26,6 +29,7 @@ import {
   type EscalationPolicyRow,
   type IncidentTypeRow,
   type IncidentRow,
+  type MonitorRow,
   type RouteAction,
   type RouteMatch,
   type Severity,
@@ -110,6 +114,7 @@ function AlertsLive({ onRetry }: { onRetry: () => void }) {
   const types = useQuery("incidentTypes.all", {});
   const services = useQuery("services.all", {});
   const incidents = useQuery("incidents.active", {});
+  const monitors = useQuery("monitors.all", {});
   const create = useMutation("alertSource.create");
   const rotate = useMutation("alertSource.rotate");
   const remove = useMutation("alertSource.delete");
@@ -120,7 +125,7 @@ function AlertsLive({ onRetry }: { onRetry: () => void }) {
   const deleteRoute = useMutation("alertRoute.delete");
   const origin = window.location.origin;
   // Every list the card shows: an empty one that is still loading, or failed, must not read as "none".
-  const all = [sources, routes, recent, policies, types, services, incidents];
+  const all = [sources, routes, recent, policies, types, services, incidents, monitors];
   return (
     <AlertsPanel
       sources={sources.rows}
@@ -130,6 +135,7 @@ function AlertsLive({ onRetry }: { onRetry: () => void }) {
       types={types.rows}
       services={services.rows}
       incidents={incidents.rows}
+      monitors={monitors.rows}
       loading={all.some((query) => query.status === "loading")}
       failed={all.some((query) => query.status === "error")}
       manage={can(role, "alert:manage")}
@@ -174,6 +180,8 @@ type PanelProps = {
   types: readonly IncidentTypeRow[];
   services: readonly ServiceRow[];
   incidents: readonly IncidentRow[];
+  /** What a route may name besides sources (RFC 0007 "Monitor alerts through the routes"). */
+  monitors: readonly MonitorRow[];
   loading: boolean;
   failed: boolean;
   manage: boolean;
@@ -1031,13 +1039,38 @@ function UrlPanel({ shown, onDismiss }: { shown: ShownUrl; onDismiss: () => void
 
 const severityText = (severity: AlertSeverity) => say(`severity_${severity}`);
 
+/**
+ * A route's `sourceIds` from the editor's picks: no monitor and every source is the empty list, as before monitors;
+ * with monitors, every source is said explicitly (`ROUTE_ALL_SOURCES`), so adding monitors never drops the sources.
+ */
+export function matchSourceIds(
+  everySource: boolean,
+  sources: readonly string[],
+  monitors: readonly string[],
+): string[] {
+  if (everySource) return monitors.length > 0 ? [ROUTE_ALL_SOURCES, ...monitors] : [];
+  return [...sources, ...monitors];
+}
+
 /** One line saying what a route matches. */
-function matchText(match: RouteMatch, sources: readonly AlertSourceRow[]): string {
+function matchText(
+  match: RouteMatch,
+  sources: readonly AlertSourceRow[],
+  monitors: readonly MonitorRow[],
+): string {
   const parts: string[] = [];
   if (match.sourceIds.length > 0) {
     parts.push(
       match.sourceIds
-        .map((id) => sources.find((source) => source.id === id)?.name ?? say("deleted_source"))
+        .map((id) =>
+          id === ROUTE_ALL_SOURCES
+            ? say("every_source")
+            : id === ROUTE_ALL_MONITORS
+              ? say("every_monitor")
+              : id.startsWith("mon_")
+                ? (monitors.find((monitor) => monitor.id === id)?.name ?? say("deleted_monitor"))
+                : (sources.find((source) => source.id === id)?.name ?? say("deleted_source")),
+        )
         .join(", "),
     );
   }
@@ -1068,7 +1101,7 @@ function actionText(action: RouteAction, catalog: Catalog): string {
 }
 
 function Routes(props: PanelProps) {
-  const { routes, manage, sources } = props;
+  const { routes, manage, sources, monitors } = props;
   const [adding, setAdding] = useState(false);
   const full = routes.length >= MAX_ALERT_ROUTES;
   return (
@@ -1091,6 +1124,7 @@ function Routes(props: PanelProps) {
         <RouteForm
           route={null}
           sources={sources}
+          monitors={monitors}
           catalog={props}
           onCancel={() => setAdding(false)}
           onSave={async (draft) => {
@@ -1123,6 +1157,7 @@ function RouteRow({
   index,
   routes,
   sources,
+  monitors,
   manage,
   onUpdateRoute,
   onMoveRoute,
@@ -1137,6 +1172,7 @@ function RouteRow({
         <RouteForm
           route={route}
           sources={sources}
+          monitors={monitors}
           catalog={props}
           onCancel={() => setEditing(false)}
           onDelete={async () => onDeleteRoute(route.id)}
@@ -1156,7 +1192,7 @@ function RouteRow({
           {route.name}
         </span>
         <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-          {matchText(route.match, sources)}
+          {matchText(route.match, sources, monitors)}
         </span>
         <span className="text-xs [overflow-wrap:anywhere]">{actionText(route.action, props)}</span>
         {route.disabled ? (
@@ -1201,6 +1237,7 @@ type ActionKind = RouteAction["kind"];
 function RouteForm({
   route,
   sources,
+  monitors,
   catalog,
   onSave,
   onCancel,
@@ -1208,6 +1245,7 @@ function RouteForm({
 }: {
   route: AlertRouteRow | null;
   sources: readonly AlertSourceRow[];
+  monitors: readonly MonitorRow[];
   catalog: Catalog;
   onSave: (draft: RouteDraft) => Promise<boolean>;
   onCancel: () => void;
@@ -1215,7 +1253,17 @@ function RouteForm({
 }) {
   const action = route?.action;
   const [name, setName] = useState(route?.name ?? "");
-  const [sourceIds, setSourceIds] = useState<string[]>(route?.match.sourceIds ?? []);
+  const saved = route?.match.sourceIds ?? [];
+  // The route's sources and monitors are picked apart (`routeMatches`): every source is a choice of its own, so
+  // naming monitors never changes which sources a route takes. An empty list (every route saved before monitors) is
+  // every source.
+  const [everySource, setEverySource] = useState(
+    saved.includes(ROUTE_ALL_SOURCES) || saved.length === 0,
+  );
+  const [pickedSources, setPickedSources] = useState<string[]>(
+    saved.filter((id) => id !== ROUTE_ALL_SOURCES && !namesMonitor(id)),
+  );
+  const [monitorIds, setMonitorIds] = useState<string[]>(saved.filter(namesMonitor));
   const [severities, setSeverities] = useState<AlertSeverity[]>(route?.match.severities ?? []);
   const [labels, setLabels] = useState(route ? formatLabels(route.match.labels) : "");
   const [kind, setKind] = useState<ActionKind>(action?.kind ?? "open");
@@ -1240,6 +1288,7 @@ function RouteForm({
     policy: useId(),
     type: useId(),
     sources: useId(),
+    monitors: useId(),
   };
 
   const submit = (event: FormEvent) => {
@@ -1249,6 +1298,9 @@ function RouteForm({
     if (name.trim() === "") problems.name = "route_name_required";
     if (!parsed) problems.labels = "labels_invalid";
     if (kind === "group" && groupBy.trim() === "") problems.groupBy = "group_by_required";
+    if (!everySource && pickedSources.length === 0 && monitorIds.length === 0) {
+      problems.sources = "match_nothing";
+    }
     setInvalid(problems);
     if (Object.keys(problems).length > 0 || !parsed) return;
     const paging = {
@@ -1270,12 +1322,27 @@ function RouteForm({
     setState("busy");
     void onSave({
       name: name.trim(),
-      match: { sourceIds, severities, labels: parsed },
+      match: {
+        sourceIds: matchSourceIds(everySource, pickedSources, monitorIds),
+        severities,
+        labels: parsed,
+      },
       action: next,
     }).then((ok) => setState(ok ? "idle" : "failed"));
   };
   const toggle = <T,>(list: T[], value: T) =>
     list.includes(value) ? list.filter((one) => one !== value) : [...list, value];
+  const everyMonitor = monitorIds.includes(ROUTE_ALL_MONITORS);
+  // A route that names monitors and no source takes no alert source at all (`routeMatches`).
+  const monitorsOnly = !everySource && pickedSources.length === 0 && monitorIds.length > 0;
+  // Monitors carry only the labels `monitor` and `kind`: grouping them by another puts them all in one incident.
+  const groupKey = groupBy.trim().toLowerCase();
+  const groupsMonitorsTogether =
+    kind === "group" &&
+    monitorIds.length > 0 &&
+    groupKey !== "" &&
+    groupKey !== "monitor" &&
+    groupKey !== "kind";
   const error = (key: string) => {
     const part = invalid[key];
     return part ? say(part) : undefined;
@@ -1294,23 +1361,78 @@ function RouteForm({
       />
       <fieldset className="flex min-w-0 flex-col gap-2" aria-describedby={ids.sources}>
         <legend className="mb-1.5 text-sm font-medium">{say("match_sources")}</legend>
-        {sources.length === 0 ? (
-          <p id={ids.sources} className="text-sm text-muted-foreground">
-            {say("any_source")}
+        <label className="flex min-h-6 items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="size-4 shrink-0 accent-primary"
+            checked={everySource}
+            // Every source stands for the ones picked one by one: they are dropped, not kept hidden.
+            onChange={() => {
+              setEverySource(!everySource);
+              setPickedSources([]);
+            }}
+          />
+          {say("every_source")}
+        </label>
+        {everySource
+          ? null
+          : sources.map((source) => (
+              <label key={source.id} className="flex min-h-6 items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4 shrink-0 accent-primary"
+                  checked={pickedSources.includes(source.id)}
+                  onChange={() => setPickedSources((list) => toggle(list, source.id))}
+                />
+                <span className="min-w-0 [overflow-wrap:anywhere]">{source.name}</span>
+              </label>
+            ))}
+        {error("sources") ? (
+          <p id={ids.sources} role="alert" className="text-sm text-destructive">
+            {error("sources")}
           </p>
-        ) : (
-          sources.map((source) => (
-            <label key={source.id} className="flex min-h-6 items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="size-4 shrink-0 accent-primary"
-                checked={sourceIds.includes(source.id)}
-                onChange={() => setSourceIds((list) => toggle(list, source.id))}
-              />
-              <span className="min-w-0 [overflow-wrap:anywhere]">{source.name}</span>
-            </label>
-          ))
+        ) : monitorsOnly ? (
+          <p id={ids.sources} className="text-sm text-muted-foreground">
+            {say("monitors_only")}
+          </p>
+        ) : null}
+      </fieldset>
+      <fieldset className="flex min-w-0 flex-col gap-2" aria-describedby={ids.monitors}>
+        <legend className="mb-1.5 text-sm font-medium">{say("match_monitors")}</legend>
+        <label className="flex min-h-6 items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="size-4 shrink-0 accent-primary"
+            checked={everyMonitor}
+            onChange={() =>
+              // Every monitor stands for the ones picked one by one: they are dropped, not kept hidden.
+              setMonitorIds(everyMonitor ? [] : [ROUTE_ALL_MONITORS])
+            }
+          />
+          {say("every_monitor")}
+        </label>
+        {everyMonitor || monitors.length === 0 ? null : (
+          // A workspace may have 100 monitors (more where the operator allows): the list scrolls in place rather
+          // than pushing the rest of the form away.
+          <div className="-m-0.5 flex max-h-64 flex-col gap-2 overflow-y-auto p-0.5">
+            {monitors.map((monitor) => (
+              <label key={monitor.id} className="flex min-h-6 items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4 shrink-0 accent-primary"
+                  checked={monitorIds.includes(monitor.id)}
+                  onChange={() => setMonitorIds((list) => toggle(list, monitor.id))}
+                />
+                <span className="min-w-0 [overflow-wrap:anywhere]">{monitor.name}</span>
+              </label>
+            ))}
+          </div>
         )}
+        <p id={ids.monitors} className="text-sm text-muted-foreground">
+          {monitors.length === 0 && !everyMonitor
+            ? `${say("monitors_empty")} ${say("monitors_hint")}`
+            : say("monitors_hint")}
+        </p>
       </fieldset>
       <fieldset className="flex min-w-0 flex-col gap-2">
         <legend className="mb-1.5 text-sm font-medium">{say("match_severities")}</legend>
@@ -1366,6 +1488,15 @@ function RouteForm({
           error={error("groupBy")}
           onChange={(event) => setGroupBy(event.target.value)}
         />
+      ) : null}
+      {groupsMonitorsTogether ? (
+        // A warning, not an error: one incident for every monitor may be what the owner wants.
+        <p
+          role="status"
+          className="text-sm text-muted-foreground [overflow-wrap:anywhere] sm:col-span-2"
+        >
+          {say("group_monitor_labels")}
+        </p>
       ) : null}
       {paging ? (
         <>

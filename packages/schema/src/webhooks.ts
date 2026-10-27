@@ -950,8 +950,16 @@ export const ESCALATION_REASONS = [
 ] as const satisfies readonly EscalationReason[];
 /** `incident.role_assigned`'s `role`: a built-in's name, or `custom` for a role the workspace defined. */
 const ROLE_KINDS = [...INCIDENT_ROLES, "custom"] as const;
-/** Why an alert resolves (`alert.resolved`). */
-export const ALERT_RESOLVED_REASONS = ["recovered", "paused", "deleted"] as const;
+/**
+ * Why an alert resolves (`alert.resolved`): `incident_closed`, people closed the incident it was on while the monitor
+ * was still down (it alerts again at its next report, RFC 0007 "Monitor alerts through the routes").
+ */
+export const ALERT_RESOLVED_REASONS = [
+  "recovered",
+  "paused",
+  "deleted",
+  "incident_closed",
+] as const;
 export type AlertResolvedReason = (typeof ALERT_RESOLVED_REASONS)[number];
 
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
@@ -1127,6 +1135,8 @@ export function webhookPayload(
     case "alert.resolved": {
       const alertId = text("id");
       const reason = oneOf("reason", ALERT_RESOLVED_REASONS);
+      // A route kept it quiet (no incident): receivers never got its `alert.fired`, so they get no resolve either.
+      if (field(data, "quiet") === true) return undefined;
       return monitor && alertId !== undefined && reason
         ? { ...base, type, data: { alertId, monitor, reason } }
         : undefined;

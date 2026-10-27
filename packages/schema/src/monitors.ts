@@ -3,17 +3,21 @@
 // down when a quorum of its sources is down, which fires one alert per monitor and opens an incident through
 // `incident.declare`, run as the monitors' system actor (RFC 0003 "Alert → incident flow", RFC 0004).
 
-import type { Actor } from "./mutation.ts";
+import { ALERTS_ACTOR, settleIncident } from "./alert-sources.ts";
 import { ACCOUNT_ACTOR } from "./devices.ts";
 import { idTime, isId } from "./id.ts";
-import { declareIncident, ID_CLOCK_SKEW_MS, INCIDENT_TITLE_MAX } from "./incidents.ts";
+import { ID_CLOCK_SKEW_MS, INCIDENT_TITLE_MAX } from "./incidents.ts";
 import { SEVERITIES, type Severity } from "./lifecycle.ts";
 import {
+  fireMonitorAlert,
+  MONITOR_INCIDENT_SEVERITY,
+  type AlertResolved,
+  type MonitorOpen,
+} from "./monitor-alerts.ts";
+import {
   defineMutation,
-  defineRegistry,
   fail,
   ok,
-  runMutation,
   type DomainEvent,
   type MutationContext,
   type MutationResult,
@@ -102,16 +106,6 @@ export const CHECK_ERRORS = ["pattern_slow"] as const;
 export function isCheckError(error: string | null | undefined): boolean {
   return (CHECK_ERRORS as readonly string[]).includes(error ?? "");
 }
-/** The severity of the incident a monitor opens, unless it names its own (`MonitorRow.severity`). */
-export const MONITOR_INCIDENT_SEVERITY: Severity = "sev2";
-
-/**
- * Who runs monitor reports and the incidents they open (RFC 0004 "Server-side writes"): a system actor that
- * carries a role like any other, here `admin` (manage monitors, declare incidents). Server-only mutations are
- * reachable only from the shard's own code, never from a socket, so the role grants a member nothing new.
- */
-export const MONITOR_ACTOR: Actor = { kind: "system", id: "sys_monitors", role: "admin" };
-
 /** Majority of the sources: 1 of 1, 2 of 2, 2 of 3, 3 of 4 … (RFC 0007's default, 2 of 3). */
 export function quorum(sources: number): number {
   return Math.floor(sources / 2) + 1;
@@ -592,14 +586,6 @@ export type MonitorChecked = DomainEvent<"monitor.checked", MonitorCheck>;
 export type MonitorStatusChanged = DomainEvent<
   "monitor.status_changed",
   { from: MonitorStatus; to: MonitorStatus }
->;
-export type AlertFired = DomainEvent<
-  "alert.fired",
-  { id: string; fingerprint: string; monitorId: string; incidentId: string }
->;
-export type AlertResolved = DomainEvent<
-  "alert.resolved",
-  { id: string; monitorId: string; reason: "recovered" | "paused" | "deleted" }
 >;
 
 const monitorId = v.id("mon");
@@ -1241,14 +1227,16 @@ export const rotateHeartbeat = defineMutation({
 
 /**
  * Resolves the monitor's firing alert, if any. The incident it opened stays for people to close; its timeline
- * says why the alert ended (the monitor recovered, or someone paused or deleted it).
+ * says why the alert ended (the monitor recovered, or someone paused or deleted it). One it was grouped onto that an
+ * alert source opened settles as when that source's alert resolves (`settleIncident`): once the monitor recovers and
+ * nothing else fires on it, it resolves if nobody worked on it, as the alerts' actor.
  */
 function resolveAlert(
   store: MutationStore,
   monitor: MonitorRow,
-  reason: AlertResolved["data"]["reason"],
+  reason: Exclude<AlertResolved["data"]["reason"], "rerouted" | "incident_closed">,
   ctx: MutationContext,
-): AlertResolved[] {
+): DomainEvent[] {
   if (monitor.alertId === null) return [];
   const alert = store.get("alerts", monitor.alertId);
   if (!alert || alert.status !== "firing") return [];
@@ -1263,13 +1251,31 @@ function resolveAlert(
       ctx,
     );
   }
-  return [
-    {
-      type: "alert.resolved",
-      subject: alert.id,
-      data: { id: alert.id, monitorId: monitor.id, reason },
+  const settled =
+    reason === "recovered" &&
+    alert.outcome === "grouped" &&
+    !openedByMonitor(store, alert.incidentId)
+      ? settleIncident(store, alert.incidentId, { ...ctx, actor: ALERTS_ACTOR })
+      : { events: [], resolved: false };
+  const resolved: AlertResolved = {
+    type: "alert.resolved",
+    subject: alert.id,
+    data: {
+      id: alert.id,
+      monitorId: monitor.id,
+      reason,
+      ...(alert.incidentId === null && { quiet: true as const }),
+      ...(settled.resolved && alert.incidentId !== null && { resolvedIncident: alert.incidentId }),
     },
-  ];
+  };
+  return [resolved, ...settled.events];
+}
+
+/** Whether a monitor's alert opened `incidentId` (rather than grouping onto it): a monitor's incident stays for people. */
+function openedByMonitor(store: MutationStore, incidentId: string | null): boolean {
+  return store
+    .scan("alerts")
+    .some((row) => row.incidentId === incidentId && row.outcome !== "grouped");
 }
 
 /**
@@ -1294,6 +1300,7 @@ export const setMonitorPaused = defineMutation({
       ...restart(ctx),
       alertId: null,
       incidentId: null,
+      ...(monitor.alertRoute ? { alertRoute: null } : {}),
       updatedAt: ctx.now,
     });
     const event: MonitorPaused = {
@@ -1335,6 +1342,7 @@ export const takeOverMonitors = defineMutation({
           ...restart(ctx),
           alertId: null,
           incidentId: null,
+          ...(monitor.alertRoute ? { alertRoute: null } : {}),
           updatedAt: ctx.now,
         });
         const event: MonitorPaused = {
@@ -1430,31 +1438,38 @@ export const setMonitorCap = defineMutation({
   },
 });
 
-const declaring = defineRegistry([declareIncident]);
-
 /** What the shard makes for a monitor that may open an incident: ids and the title (mutations make neither). */
 const openArgs = v.object({
   alertId: v.id("alt"),
   incidentId: v.id("inc"),
   title: v.string({ min: 1, max: INCIDENT_TITLE_MAX }),
 });
-type OpenArgs = { alertId: string; incidentId: string; title: string };
 
 /**
  * Moves `monitor` to `status` (a no-op when it already holds): `monitor.status_changed`, and the alert that goes
- * with it. Turning down fires one alert (none while one fires: deduplicated per monitor) and opens its incident
- * through `incident.declare`, with RBAC, in this same transaction. Turning up resolves it. `unknown` leaves a
- * firing alert alone: no data is no recovery. Returns the events, or the failure that must roll everything back.
+ * with it. Turning down fires one alert (none while one fires: deduplicated per monitor) through the alert routes
+ * (`fireMonitorAlert`), which with no route matching opens its incident through `incident.declare`, with RBAC, in
+ * this same transaction, as monitors always have. Turning up resolves it, whatever a route did with it. `unknown`
+ * leaves a firing alert alone: no data is no recovery. Returns the events, or the failure that must roll everything
+ * back.
  */
 function moveTo(
   store: MutationStore,
   monitor: MonitorRow,
   status: MonitorStatus,
-  open: OpenArgs,
+  open: MonitorOpen,
   ctx: MutationContext,
   patch: Partial<Omit<MonitorRow, "id">>,
 ): { events: DomainEvent[] } | { failed: MutationResult } {
-  if (status === monitor.status) return { events: [] };
+  if (status === monitor.status) {
+    // Still down with no alert: people closed the incident it was on (`incident.setStatus` released it), so it
+    // alerts again, through the routes, as an alert source's alert sent again would (RFC 0007).
+    if (status !== "down" || monitor.alertId !== null) return { events: [] };
+    const fired = fireMonitorAlert(store, monitor, open, ctx);
+    if ("failed" in fired) return fired;
+    Object.assign(patch, fired.patch);
+    return { events: fired.events };
+  }
   const { id } = monitor;
   patch.status = status;
   patch.since = ctx.now;
@@ -1466,50 +1481,15 @@ function moveTo(
     } satisfies MonitorStatusChanged,
   ];
   if (status === "down" && monitor.alertId === null) {
-    // `runMutation` turns any exception into `internal`; a storage failure must reach the shard as one instead
-    // (it rolls back and the probe retries), so it is caught here and thrown again.
-    let thrown: { error: unknown } | undefined;
-    const declared = runMutation(
-      declaring,
-      "incident.declare",
-      {
-        id: open.incidentId,
-        title: open.title,
-        severity: monitor.severity ?? MONITOR_INCIDENT_SEVERITY,
-      },
-      store,
-      ctx,
-      { onError: (error) => (thrown = { error }) },
-    );
-    if (thrown) throw thrown.error;
-    // Without its incident the alert would page nobody: fail the report, and the probe sends it again.
-    if (!declared.ok) return { failed: declared };
-    store.insert("alerts", {
-      id: open.alertId,
-      fingerprint: `monitor:${id}`,
-      monitorId: id,
-      status: "firing",
-      firedAt: ctx.now,
-      resolvedAt: null,
-      incidentId: open.incidentId,
-    });
-    patch.alertId = open.alertId;
-    patch.incidentId = open.incidentId;
-    // The incident first: a consumer that sees the alert can already find what it points at.
-    events.push(...declared.events, {
-      type: "alert.fired",
-      subject: open.alertId,
-      data: {
-        id: open.alertId,
-        fingerprint: `monitor:${id}`,
-        monitorId: id,
-        incidentId: open.incidentId,
-      },
-    } satisfies AlertFired);
+    const fired = fireMonitorAlert(store, monitor, open, ctx);
+    if ("failed" in fired) return fired;
+    Object.assign(patch, fired.patch);
+    events.push(...fired.events);
   } else if (status === "up") {
     events.push(...resolveAlert(store, monitor, "recovered", ctx));
     patch.alertId = null;
     patch.incidentId = null;
+    if (monitor.alertRoute) patch.alertRoute = null;
   }
   return { events };
 }

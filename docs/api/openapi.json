@@ -11255,7 +11255,8 @@
                             "enum": [
                               "recovered",
                               "paused",
-                              "deleted"
+                              "deleted",
+                              "incident_closed"
                             ]
                           },
                           {

@@ -88,10 +88,10 @@ import {
   allAlertRoutes,
   allAlertSources,
   ingestAlerts,
-  rerouteAlerts,
   recentAlerts,
   takeOverAlertSources,
 } from "./alert-sources.ts";
+import { rerouteAlerts } from "./monitor-alerts.ts";
 import { allApiTokens, apiTokenServerMutations } from "./api-tokens.ts";
 import { invitationMutations } from "./invitations.ts";
 import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";

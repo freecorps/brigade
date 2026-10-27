@@ -39,5 +39,6 @@ export * from "./webhooks.ts";
 export * from "./alert-normalize.ts";
 export * from "./alert-mapping.ts";
 export * from "./alert-sources.ts";
+export * from "./monitor-alerts.ts";
 export * from "./registry.ts";
 export * from "./rest.ts";

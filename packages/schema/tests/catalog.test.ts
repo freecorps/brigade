@@ -709,13 +709,24 @@ describe("the policy an incident's pages use", () => {
   });
 
   /** As if the monitor `MON`, naming `policyId`, opened the incident and still fires on it. */
-  const openedByMonitor = (store: MutationStore, policyId: string) =>
+  const openedByMonitor = (store: MutationStore, policyId: string) => {
     store.insert("monitors", {
       id: MON,
       name: "Checkout API",
       policyId,
       incidentId: INC,
+      alertId: "alt_01JB0000000000000000000001",
     } as unknown as BrigadeTables["monitors"]);
+    store.insert("alerts", {
+      id: "alt_01JB0000000000000000000001",
+      fingerprint: `monitor:${MON}`,
+      monitorId: MON,
+      status: "firing",
+      firedAt: 0,
+      resolvedAt: null,
+      incidentId: INC,
+    });
+  };
 
   test("its type's policy wins over the policy of the monitor that opened it", () => {
     const store = catalog();

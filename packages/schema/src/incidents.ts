@@ -103,9 +103,11 @@ function stopEscalation(
 }
 
 /**
- * Lets go of the alert-source alerts still firing on an incident that is closing (RFC 0005 "Alert sources"): they are
- * `closed`, no longer count against the workspace's firing alerts, and their key firing again is a new alert. Written
- * here rather than in alert-sources.ts, which builds on this module. `alert.resolved` for each, as there.
+ * Lets go of the alerts still firing on an incident that is closing (RFC 0005 "Alert sources"). An alert source's are
+ * `closed`, no longer count against the workspace's firing alerts, and their key firing again is a new alert. A
+ * monitor's, opened or grouped (RFC 0007 "Monitor alerts through the routes"), resolves and the monitor lets go of it,
+ * so a monitor still down alerts again at its next report rather than never until it recovers. Written here rather
+ * than in alert-sources.ts or monitors.ts, which build on this module. `alert.resolved` for each (`incident_closed`).
  */
 function releaseAlerts(
   store: MutationStore,
@@ -124,6 +126,24 @@ function releaseAlerts(
       type: "alert.resolved",
       subject: row.id,
       data: { id: row.id, sourceId: row.sourceId, reason: "incident_closed" },
+    });
+  }
+  for (const row of store.scan("alerts")) {
+    if (row.incidentId !== incidentId || row.status !== "firing") continue;
+    store.update("alerts", row.id, { status: "resolved", resolvedAt: ctx.now });
+    const monitor = store.get("monitors", row.monitorId);
+    if (monitor?.alertId === row.id) {
+      store.update("monitors", monitor.id, {
+        alertId: null,
+        incidentId: null,
+        ...(monitor.alertRoute ? { alertRoute: null } : {}),
+        updatedAt: ctx.now,
+      });
+    }
+    events.push({
+      type: "alert.resolved",
+      subject: row.id,
+      data: { id: row.id, monitorId: row.monitorId, reason: "incident_closed" },
     });
   }
   return events;

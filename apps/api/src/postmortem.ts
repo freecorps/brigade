@@ -98,6 +98,10 @@ export function describeEntry(
       return `posted an update: ${clipText(entry.body, UPDATE_CHARS)}`;
     case "alert_resolved":
       return `the alert of monitor "${entry.monitor}" resolved (${entry.reason})`;
+    case "alert_grouped":
+      return entry.monitorId
+        ? `monitor "${entry.name}" went down and was grouped onto this incident`
+        : `the alert "${entry.name}" was grouped onto this incident`;
     case "escalated":
       return entry.level === null
         ? "paged everyone who can respond"

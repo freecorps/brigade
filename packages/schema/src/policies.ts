@@ -134,11 +134,16 @@ export function incidentPolicy(
   return policy && { policy, monitor: null };
 }
 
-/** The monitor that opened `incidentId`: the one still firing on it, else the one whose alert opened it. */
+/**
+ * The monitor that opened `incidentId` (RFC 0006 "Who is paged", 4): the one whose alert opened it, firing or not. A
+ * monitor whose alert a `group` route put onto it (RFC 0007 "Monitor alerts through the routes") did not open it, so
+ * its policy never takes over the incident's pages.
+ */
 function openedBy(store: MutationStore, incidentId: string) {
-  const firing = store.scan("monitors").find((monitor) => monitor.incidentId === incidentId);
-  if (firing) return firing;
-  const alert = store.scan("alerts").find((one) => one.incidentId === incidentId);
+  const alert = store
+    .scan("alerts")
+    .filter((one) => one.incidentId === incidentId && one.outcome !== "grouped")
+    .sort((a, b) => a.firedAt - b.firedAt)[0];
   return alert ? store.get("monitors", alert.monitorId) : undefined;
 }
 

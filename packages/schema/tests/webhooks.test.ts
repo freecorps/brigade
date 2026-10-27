@@ -656,6 +656,27 @@ describe("payload", () => {
     });
   });
 
+  test("a monitor alert a route kept quiet resolves for nobody, as it fired for nobody; a closed incident's does", () => {
+    const resolved = (data: object) =>
+      webhookPayload(
+        event("alert.resolved", { id: "alt_x", monitorId: "mon_x", ...data }, "alt_x"),
+        {},
+      );
+    // Suppressed or dropped: its `alert.fired` had no incident (or there was none), so neither reaches receivers.
+    expect(
+      webhookPayload(
+        event("alert.fired", { id: "alt_x", monitorId: "mon_x", incidentId: null }, "alt_x"),
+        {},
+      ),
+    ).toBeUndefined();
+    expect(resolved({ reason: "recovered", quiet: true })).toBeUndefined();
+    expect(resolved({ reason: "recovered" })?.data).toMatchObject({ reason: "recovered" });
+    // People closed the incident while the monitor was down: receivers that saw it fire see it end.
+    expect(resolved({ reason: "incident_closed" })?.data).toMatchObject({
+      reason: "incident_closed",
+    });
+  });
+
   test("an event missing a field (or holding the wrong kind) has no payload, never a coerced one", () => {
     const alert = (data: unknown) => webhookPayload(event("alert.fired", data, "alt_x"), {});
     expect(alert({ id: "alt_x", monitorId: "mon_x", incidentId: incident.id })?.data).toMatchObject(

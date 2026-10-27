@@ -22,6 +22,8 @@ export type Timeline_EntryInputs = {
 * | "alert_recovered" | "{a} recovered, so its alert resolved" |
 * | "alert_paused" | "{actor} paused {a}, so its alert resolved" |
 * | "alert_deleted" | "{actor} deleted {a}, so its alert resolved" |
+* | "alert_grouped_monitor" | "{a} went down and was grouped here" |
+* | "alert_grouped_source" | "The alert {a} fired and was grouped here" |
 * | "page_failed_undelivered" | "Couldn't page {a}: the push didn't go through" |
 * | "page_failed_unsupported" | "Couldn't page {a}: Brigade can't push to Android phones yet" |
 * | "page_failed_not_configured" | "Couldn't page {a}: push notifications aren't set up on this server" |

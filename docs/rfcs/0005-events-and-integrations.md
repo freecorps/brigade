@@ -155,7 +155,15 @@ Alert sources (below, "Alert sources") emit `alert_source.created` and `alert_so
 `incident.declared` it opened, `alert.dropped` (`id`, `fingerprint`, `sourceId`, `routeId`, `routeName`) and
 `alert.resolved` (`id`, `sourceId`, `reason`: `resolved`, `source_deleted`, `incident_closed`, `expired`, `evicted` or
 `rerouted`, and `resolvedIncident` when the incident resolved with it, followed by its `incident.status_changed`). A
-monitor's `alert.*` events carry `monitorId` instead of `sourceId`. A repeat of a firing alert emits nothing, nor
+monitor's `alert.*` events carry `monitorId` instead of `sourceId`; one a route took (RFC 0007 "Monitor alerts
+through the routes") also carries `outcome`, `routeId` and `reason` `matched` on `alert.fired` (`incidentId` null when
+suppressed), `alert.dropped` when dropped, and `alert.resolved` with `reason` `rerouted` when a quiet one is routed
+again. A monitor's `alert.resolved` also has `reason` `incident_closed` (people closed the incident it was on while it
+was down: it alerts again at its next report), `quiet: true` when the alert had no incident (suppressed or dropped),
+and `resolvedIncident` when recovering settled an alert source's incident it was grouped onto. Receivers of the
+public webhook catalog (below) get neither side of a quiet monitor alert: its `alert.fired` has no incident and its
+`alert.resolved` is `quiet` (a `rerouted` one always is), so a receiver never gets a resolve for an alert it never saw
+fire; they still get `monitor.status_changed`. A repeat of a firing alert emits nothing, nor
 does a firing held by a resolve that came before it (recorded as `resolved_early`, "Alert sources").
 
 The paging pipeline's own watchdog (RFC 0007 "Watching the watcher") writes events too, through its own outbox and
@@ -504,14 +512,25 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   (through the default route, as urgent as the most urgent alert it stands for), whose repeats count like any other.
   The last 300 rows are kept (`MAX_ALERT_ROWS`), oldest resolved or closed first.
 - **Routes** (`alertRoute.create`, `.update`, `.move`, `.delete`; at most 50): tried in order, the first that matches
-  decides. A route matches on sources, alert severities and labels (`key=value`, or a key alone for any value); an
-  empty condition matches anything. Its action: `open` an incident (a severity, else the type's default, else the
+  decides. A route matches on where the alert comes from, alert severities and labels (`key=value`, or a key alone for
+  any value); empty severities or labels match any. Where it comes from (`match.sourceIds`, `routeMatches`) has two
+  halves: alert sources, named (at most 20) or every source (`sources`), and monitors, named (at most 100) or every
+  monitor (`monitors`, RFC 0007 "Monitor alerts through the routes"). A monitor matches only a route that names it or
+  every monitor. An alert source matches a route that names it or every source, or one that names no source and no
+  monitor (an empty list, as every route saved before monitors were routed, keeps meaning every source); a list naming
+  only monitors takes no source. The route editor has "Every source" beside the sources and writes `sources`
+  explicitly whenever a route that took every source names monitors, so adding monitors never changes which sources a
+  route takes. Its action: `open` an incident (a severity, else the type's default, else the
   alert's own: critical SEV1, high SEV2, warning SEV3, info SEV4; an incident type and services, checked to exist when
   the route is saved and left out by `incident.declare` if deleted since; and an escalation policy, or the default),
-  `group` into the open incident of its `groupBy` label's value (opening one when there is none), `suppress` (kept as
-  an alert, no incident) or `drop` (recorded with the route that dropped it, never paged). When the routes change, the
-  shard routes every suppressed or dropped alert still firing again at once (`alert.reroute`, as `sys_alerts`), so
-  deleting or changing the route that kept one quiet pages it now; if that fails, its next repeat routes it again.
+  `group` into the open incident of its `groupBy` label's value (opening one when there is none; the incident's
+  timeline says so, `alert_grouped`, since grouping pages nobody by itself), `suppress` (kept as an alert, no incident)
+  or `drop` (recorded with the route that dropped it, never paged). When the routes change, the shard routes every
+  suppressed or dropped alert still firing that the routes would now page again (`alert.reroute`, as `sys_alerts`), so
+  deleting or changing the route that kept one quiet pages it now: at most 200 a run, 50 to a mutation
+  (`REROUTE_CHUNK`), the rest on the shard's alarm a tick later. A chunk that fails runs again a row at a time, and a
+  row that fails alone is logged and left for 10 minutes (`REROUTE_RETRY_MS`), so one bad row never holds the others
+  back; an alert source's next repeat routes it again anyway.
   **The default route** takes what no route matches: it opens an incident at the alert's own severity, paged through
   the default policy, and cannot be changed, so an unmatched alert always pages. A route naming a deleted source
   matches nothing from it (never widening to every source); one naming a deleted policy goes back to the default.
@@ -542,8 +561,7 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   paste in Grafana, Datadog or Sentry, the routes in order with the default last, and the latest alerts with what
   became of each (opened or added to which incident, suppressed, dropped, held by a resolve that came first, and by
   which route).
-- **Not yet.** Monitor alerts through the routes (planned in RFC 0007 "Monitor alerts through the routes");
-  `AlertGroupDO`; email ingest; Slack naming `sys_alerts` (it reads "a teammate" today).
+- **Not yet.** `AlertGroupDO`; email ingest; Slack naming `sys_alerts` (it reads "a teammate" today).
 
 ## Provider interfaces (published in `packages/sdk`, MIT)
 
@@ -648,7 +666,9 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
     `from`, `to`, as the event has them; `roleId` added with role definitions, taken from `role` for events from
     before), where
     `incident` is `{ id, number, title, severity, status, declaredAt, acknowledgedAt }`;
-  - `alert.fired` (`alertId`, `monitor`, `incidentId`), `alert.resolved` (`alertId`, `monitor`, `reason`) and
+  - `alert.fired` (`alertId`, `monitor`, `incidentId`), `alert.resolved` (`alertId`, `monitor`, `reason`:
+    `recovered`, `paused`, `deleted` or `incident_closed`; never for a monitor alert a route kept quiet, whose
+    `alert.fired` was never sent either) and
     `monitor.status_changed` (`monitor`, `from`, `to`), where `monitor` is `{ id, name, kind, status }` (never its URL,
     host or heartbeat token; `name`, `kind` and `status` null once it is deleted);
   - `escalation.paged` (`incident`, `level`, `round`, `reason`, `paged` and `missed`: how many, never who or why);

@@ -137,6 +137,8 @@ export function entryText(entry: TimelineRow, who: People): string {
       return say("update");
     case "alert_resolved":
       return say(`alert_${entry.reason}`, entry.monitor);
+    case "alert_grouped":
+      return say(entry.monitorId ? "alert_grouped_monitor" : "alert_grouped_source", entry.name);
     case "alerts_resolved":
       return say("alerts_resolved");
     case "page_failed":

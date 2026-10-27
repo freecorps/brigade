@@ -151,7 +151,10 @@ until its next run.
    catalog"; `service`, "set on the service …"): the services an alert route opened it with, or a member declared it
    with or added later (`incident.setServices`, a monitor's incident too). A run under way keeps its levels; the
    incident's next run follows the service;
-4. the **monitor** that opened it (`monitor`);
+4. the **monitor** that opened it (`monitor`): the one whose alert opened it, firing or not, never one a `group` route
+   put onto it later (RFC 0007 "Monitor alerts through the routes"), so a grouped monitor's policy does not take over
+   an incident an alert source or another monitor opened. Test: `packages/schema/tests/monitor-alerts.test.ts` ("a
+   grouped monitor's policy never pages the incident an alert source opened");
 5. the workspace's **default** policy (RFC 0003 "Escalation policies");
 6. else the **interim rule** below.
 

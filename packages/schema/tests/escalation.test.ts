@@ -1378,7 +1378,7 @@ describe("the policy order", () => {
   });
 });
 
-const unreached =(store: MutationStore, step = run(store).paged, now = T + MINUTE) =>
+const unreached = (store: MutationStore, step = run(store).paged, now = T + MINUTE) =>
   runMutation(
     serverMutations,
     "escalation.unreached",

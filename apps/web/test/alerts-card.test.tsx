@@ -442,7 +442,11 @@ describe("AlertsPanel", () => {
         ],
         recent: [
           alert("alt_1", {
-            received: { title: "High memory usage on web-1", severity: "high", providerSeverity: "P2" },
+            received: {
+              title: "High memory usage on web-1",
+              severity: "high",
+              providerSeverity: "P2",
+            },
           }),
         ],
       }),
@@ -454,8 +458,9 @@ describe("AlertsPanel", () => {
     click(button(container, "Add value"));
     type(input(container, "Value"), "P2");
     type(input(container, "Severity"), "critical");
-    const routed = [...container.querySelectorAll("dt")].find((one) => one.textContent === "Route")!
-      .nextElementSibling!;
+    const routed = [...container.querySelectorAll("dt")].find(
+      (one) => one.textContent === "Route",
+    )!.nextElementSibling!;
     expect(routed.textContent).toBe("Silence criticalsDrop it");
     expect(routed.className).toContain("text-destructive");
   });

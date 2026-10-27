@@ -886,7 +886,7 @@ function PageAgain({ incidentId, entries }: { incidentId: string; entries: strin
       setPending(false);
       if (outcome.ok) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-        if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(say("done"));
+        AccessibilityInfo.announceForAccessibility(say("done"));
         return;
       }
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});

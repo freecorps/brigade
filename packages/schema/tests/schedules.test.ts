@@ -628,6 +628,59 @@ describe("overrides", () => {
     return store;
   };
 
+  test("a token with only schedule:override covers its creator alone, whatever the creator's role", () => {
+    const token = (by: string, role: Role, scopes: string[]): MutationContext => ({
+      actor: {
+        kind: "token",
+        id: "tok_01JB0000000000000000000001",
+        role,
+        by,
+        scopes,
+      } as MutationContext["actor"],
+      now: T,
+      server: true,
+    });
+    const store = withSchedule();
+    // An admin's token without schedule:manage: not for someone else.
+    expect(
+      runMutation(
+        mutations,
+        "schedule.addOverride",
+        cover({ userId: "usr_eva" }),
+        store,
+        token("usr_bia", "admin", ["schedule:override"]),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    // A responder's token: for its creator.
+    expect(
+      runMutation(
+        mutations,
+        "schedule.addOverride",
+        cover(),
+        store,
+        token("usr_caio", "responder", ["schedule:override"]),
+      ).ok,
+    ).toBe(true);
+    expect(
+      runMutation(
+        mutations,
+        "schedule.removeOverride",
+        { id: OVR1 },
+        store,
+        token("usr_bia", "admin", ["schedule:override"]),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(
+      runMutation(
+        mutations,
+        "schedule.removeOverride",
+        { id: OVR1 },
+        store,
+        token("usr_bia", "admin", ["schedule:override", "schedule:manage"]),
+      ).ok,
+    ).toBe(true);
+  });
+
   test("responders add and remove overrides only for themselves; admins for anyone; viewers never", () => {
     const store = withSchedule();
     expect(

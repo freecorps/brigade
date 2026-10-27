@@ -51,6 +51,7 @@ describe("workspace.create", () => {
       "escalation.advance",
       "escalation.fallback",
       "escalation.repage",
+      "escalation.unreached",
       "slack.connect",
       "notification.failSlack",
     ]);

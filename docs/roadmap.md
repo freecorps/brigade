@@ -400,9 +400,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Done since: postmortem templates per incident type and a workspace default (RFC 0013 "Templates"): built-in
     sections reordered, renamed or left out, up to three custom ones, a hint and starter text each, set by owners and
     admins with a preview; a postmortem keeps the sections it was made with; the AI draft and exports follow them.
-  - Left: the `brigade-exports-dev` bucket and its `dev` binding, and the `AI` binding in `dev` (manager's call,
-    apps/api/README.md "Deploying dev"); staging and production buckets; the mobile app's follow-ups and postmortem;
-    revision history (Q24); issue-tracker sync.
+  - `dev` has the `brigade-exports-dev` bucket (with its lifecycle rule) and the `AI` binding, so exports and "Draft
+    with AI" work there.
+  - Left: staging and production buckets and their `AI` bindings (owner's call); the mobile app's follow-ups and
+    postmortem; revision history (Q24); issue-tracker sync.
 - [ ] Public status page with email subscriptions
   - Done (RFC 0012): one page per workspace with a name, an address (`/status/<slug>`, unique across the instance,
     claimed in D1) and a language (en, pt-BR), public or a draft; components in optional groups with a status set by

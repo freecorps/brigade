@@ -4,6 +4,7 @@
 // first, then runs these, so they never decide a change on their own (apps/api/src/members.ts).
 
 import { allows, can, ROLES, type Role } from "./access.ts";
+import { forgetMemberSettings } from "./calls.ts";
 import { dropDevices } from "./devices.ts";
 import { defineMutation, fail, ok, type Actor, type DomainEvent } from "./mutation.ts";
 import { dropFromSchedules } from "./schedules.ts";
@@ -148,6 +149,7 @@ export const removeMember = defineMutation({
       return fail("forbidden", "Not allowed to remove this member");
     }
     if (store.get("members", args.id)) store.delete("members", args.id);
+    forgetMemberSettings(store, args.id);
     const devices = dropDevices(store, args.id, "member_removed");
     const schedules = dropFromSchedules(store, args.id, ctx);
     const event: MemberRemoved = {
@@ -198,6 +200,7 @@ export const reconcileMembers = defineMutation({
       const role = roles.get(current.id);
       if (role === undefined) {
         store.delete("members", current.id);
+        forgetMemberSettings(store, current.id);
         const event: MemberRemoved = {
           type: "member.removed",
           subject: current.id,

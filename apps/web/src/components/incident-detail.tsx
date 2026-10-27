@@ -227,6 +227,8 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
   // What each page did on each phone, and the phones members have (RFC 0006 "Delivery receipts").
   const deliveries = useQuery("incident.deliveries", { id: row.id });
   const devices = useQuery("devices.all", {});
+  // Which pages ring each member as a call (RFC 0010), for the explanation's calls line.
+  const memberSettings = useQuery("members.settings", {});
   // Which roles it lists, by its type (RFC 0003 "Role definitions"); `incident.assignRole` checks them on this client.
   const roleRows = useQuery("incidentRoles.all", {});
   const types = useQuery("incidentTypes.all", {});
@@ -319,11 +321,12 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
     deliveries: deliveries.rows,
     timeline: timeline.rows,
     schedules: schedules.rows,
+    settings: memberSettings.rows,
     now,
   };
 
   // Every query the explanation reads must have loaded: empty lists while they fill would read as "no phone".
-  const feeds = [members, timeline, schedules, deliveries, devices];
+  const feeds = [members, timeline, schedules, deliveries, devices, memberSettings];
   const pagingFailed = feeds.find((feed) => feed.status === "error");
   const pagingReady = feeds.every((feed) => feed.status === "ready");
 

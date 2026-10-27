@@ -360,4 +360,50 @@ describe("whyPaged", () => {
     const why = whyPaged(input({ deliveries: [delivery({ userId: "usr_caio" })] }));
     expect(why.pages[0]?.deliveries).toEqual([]);
   });
+
+  test("a call is its own line on the page and never changes the answer, which is the alert push's", () => {
+    const call = (overrides: Partial<DeliveryRow> = {}) =>
+      delivery({ id: `${INC}:${RUN}:${DEV}:call`, kind: "call", ...overrides });
+    const refused = whyPaged(
+      input({
+        deliveries: [
+          delivery({ deliveredAt: T + 900 }),
+          call({ acceptedAt: null, error: "token_invalid", reason: "BadDeviceToken" }),
+        ],
+      }),
+    );
+    expect(refused.verdict).toBe("delivered");
+    expect(refused.pages[0]?.deliveries.map((one) => one.row.kind)).toEqual([undefined]);
+    expect(refused.pages[0]?.calls.map((one) => one.row.reason)).toEqual(["BadDeviceToken"]);
+    expect(refused.call).toBe("failed");
+
+    // A call that rang while every alert push failed is still a failed page.
+    const failed = whyPaged(
+      input({
+        deliveries: [delivery({ acceptedAt: null, error: "apns_refused" }), call()],
+      }),
+    );
+    expect(failed.verdict).toBe("failed");
+    expect(failed.call).toBe("accepted");
+
+    // An alert that never got through rings nobody: the call stays planned.
+    const unsent = whyPaged(
+      input({
+        deliveries: [
+          delivery({ sentAt: T + 100, acceptedAt: null, error: "apns_refused" }),
+          call({ sentAt: null, acceptedAt: null }),
+        ],
+        now: T + PAGE_STUCK_MS,
+      }),
+    );
+    expect(unsent.call).toBe("not_sent");
+    expect(whyPaged(input({ deliveries: [delivery()] })).call).toBeNull();
+  });
+
+  test("says which pages ring the member as a call: their choice, else the default", () => {
+    expect(whyPaged(input()).calls).toBe("sev1_sev2");
+    const settings = [{ id: "usr_bia", calls: "never" as const, updatedAt: T }];
+    expect(whyPaged(input({ settings })).calls).toBe("never");
+    expect(whyPaged(input({ settings, userId: "usr_caio" })).calls).toBe("sev1_sev2");
+  });
 });

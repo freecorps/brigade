@@ -18,8 +18,10 @@ import {
   planDeliveries,
   reportDeliveries,
 } from "./deliveries.ts";
+import { allMemberSettings, setCalls } from "./calls.ts";
 import {
   expireDevice,
+  expireVoipToken,
   registerDevice,
   signOutDevices,
   touchDevice,
@@ -109,6 +111,7 @@ export const mutations = defineRegistry([
   ...catalogMutations,
   registerDevice,
   unregisterDevice,
+  setCalls,
   setEmailSettings,
   configureSlack,
   disconnectSlack,
@@ -126,6 +129,7 @@ export const queries = defineRegistry([
   incidentByNumber,
   incidentTimeline,
   allMembers,
+  allMemberSettings,
   allMonitors,
   monitorCapQuery,
   allSchedules,
@@ -167,6 +171,7 @@ export const serverMutations = defineRegistry([
   ...catalogMutations,
   registerDevice,
   unregisterDevice,
+  setCalls,
   setEmailSettings,
   configureSlack,
   disconnectSlack,
@@ -187,6 +192,7 @@ export const serverMutations = defineRegistry([
   reportMonitorCheck,
   evaluateMonitor,
   expireDevice,
+  expireVoipToken,
   signOutDevices,
   touchDevice,
   takeOverMonitors,

@@ -106,6 +106,17 @@ export type Page_WhyInputs = {
 * | "miss_not_a_member" | "they can no longer respond" |
 * | "miss_escalation_stalled" | "the escalation stalled" |
 * | "miss_nobody_else" | "nobody else could respond" |
+* | "call_label" | "Call · {detail}" |
+* | "call_not_sent" | "Not rung: Brigade rings a phone only after the page's notification gets through to Apple." |
+* | "call_error_token_invalid" | "Apple said this phone's call token is no longer valid, so Brigade stopped calling it. Pages still reach it as notifications." |
+* | "call_note" | "Calls ring after the notification and never change whether the page got through." |
+* | "short_call_accepted" | "Call sent" |
+* | "short_call_sending" | "Calling" |
+* | "short_call_failed" | "Call failed" |
+* | "short_call_not_sent" | "Call not sent" |
+* | "calls_choice_sev1_sev2" | "{name}'s iPhones ring as a call for SEV1 pages and SEV2 escalations" |
+* | "calls_choice_sev1" | "{name}'s iPhones ring as a call for SEV1 pages only" |
+* | "calls_choice_never" | "{name} turned calls off: pages come as notifications only" |
 * | * | "Who was paged" |
 *
 * @param {Page_WhyInputs} inputs

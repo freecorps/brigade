@@ -1,7 +1,8 @@
 import type { Permission, Role } from "./access.ts";
 import type { AlertOutcome, AlertRouteReason } from "./alert-sources.ts";
 import type { AlertSeverity, AlertSourceKind } from "./alert-normalize.ts";
-import type { DeliveryError } from "./deliveries.ts";
+import type { CallChoice } from "./calls.ts";
+import type { DeliveryError, DeliveryKind } from "./deliveries.ts";
 import type { DevicePlatform, PushEnvironment } from "./devices.ts";
 import type { IncidentStatus, Severity } from "./lifecycle.ts";
 import type { EmailAbout, EmailFailure, PageFailure } from "./notifications.ts";
@@ -418,6 +419,17 @@ export type MemberRow = {
   updatedAt: number;
 };
 
+/**
+ * A member's own paging settings in the workspace, written by the member (`member.setCalls`) and synced to everyone.
+ * Its own table, not `members`, which is a cache of D1 that `member.sync` rewrites. No row: the defaults.
+ */
+export type MemberSettingsRow = {
+  id: string; // the member's user id
+  /** Which pages ring their phones as a call (RFC 0010); the alert push is sent either way. */
+  calls: CallChoice;
+  updatedAt: number;
+};
+
 /** The workspace a shard serves: one row, written by `workspace.create` (RFC 0003). */
 export type WorkspaceRow = {
   id: string; // ws_<ULID>, the Better Auth organization id
@@ -615,7 +627,13 @@ export type DeviceSummaryRow = {
  * accepted. Written by `delivery.plan`, `delivery.report` and `delivery.confirm`.
  */
 export type DeliveryRow = {
-  id: string; // `<incident id>:<event id>:<device id>` (`deliveryId`)
+  /** `<incident id>:<event id>:<device id>` (`deliveryId`); a call's ends in `:call` (`callDeliveryId`). */
+  id: string;
+  /**
+   * `call`: the VoIP call that rang the device after its alert push (RFC 0010); it has no `delivered` stage (the
+   * extension that reports receipts never sees a call). Absent on a push and on rows from before calls had rows.
+   */
+  kind?: DeliveryKind;
   incidentId: string;
   /** The event that asked for the page. */
   eventId: string;
@@ -1135,6 +1153,7 @@ export type BrigadeTables = {
   heartbeats: HeartbeatRow;
   timeline: TimelineRow;
   members: MemberRow;
+  member_settings: MemberSettingsRow;
   devices: DeviceRow;
   member_devices: DeviceSummaryRow;
   deliveries: DeliveryRow;
@@ -1184,6 +1203,7 @@ export const TABLES = {
   heartbeats: { serverOnly: true },
   timeline: { serverOnly: false },
   members: { serverOnly: false },
+  member_settings: { serverOnly: false },
   devices: { serverOnly: true },
   member_devices: { serverOnly: false },
   deliveries: { serverOnly: false },

@@ -298,8 +298,15 @@ Validate the risky assumptions before writing product code. Each spike produces 
     once the relay took the alert; a call that fails is logged and never changes the page's retries, delivery rows
     or escalation. The app registers its PushKit token with `device.register` and again when PushKit changes it;
     answering reads the page aloud and 1 acknowledges with `incident.ack`, as in S6.
-  - Left: trying it on an iPhone (VoIP Services on the App ID); delivery rows for calls; clearing a VoIP token APNs
-    refuses; a per-member choice of calls; Android calls (FCM).
+  - Done since: each call has a delivery row of its own (`kind: "call"`: planned, handed to the relay, accepted by APNs
+    or the error with APNs' reason), synced like the alert's, shown next to each member's outcome on the incident page
+    and as its own line in `?why=<member>`, never changing the page's outcome; a VoIP token APNs refuses as gone
+    (`BadDeviceToken`, `Unregistered`, `DeviceTokenNotForTopic`) is cleared (`device.expireVoip`,
+    `device.voip_cleared`) while the phone keeps its alert pushes; each member chooses which pages ring them (SEV1
+    pages and SEV2 escalations, the default; SEV1 only; never) with `member.setCalls`, from the dashboard's Calls card
+    and the mobile app's account section, and the queue consumer follows it, the alert push going out either way (RFC
+    0010 "Who a call rings").
+  - Left: trying it on an iPhone (VoIP Services on the App ID); a per-phone choice of calls; Android calls (FCM).
 - [ ] Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup
   - Done: the on-call screen (shifts, overrides, who each schedule has now, covering a shift); pages are
     time-sensitive. The iOS "I'm on call" widget (home screen small, lock screen rectangular and inline): on call
@@ -315,7 +322,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     APNs (or the error, with APNs' reason), opened on the phone. The iOS Notification Service Extension reports
     the last with a single-page token sealed inside the page (`POST /receipts`, no session), never waiting on it.
     The incident page lists who was paged; `?why=<member>` explains it step by step (RFC 0006 "Delivery receipts").
-  - Left: receipts from VoIP call pushes (RFC 0010) and Android (FCM); "shown" and "opened by the person" stages;
+  - Done since: call rows (RFC 0010), each up to accepted by APNs (a call has no receipt), shown apart from the page's.
+  - Left: receipts from Android (FCM); "shown" and "opened by the person" stages;
     escalating early when every push of a level is refused (Q18); the mobile app's own why-not-paged screen.
 
 ## Phase 3 — Parity where it matters (6–8 weeks)

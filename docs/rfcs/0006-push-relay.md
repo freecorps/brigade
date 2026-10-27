@@ -66,7 +66,8 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   `<bundle id>.voip`, priority 10) whose body is only `{ call: { id }, brigade: <envelope> }`. The relay refuses a call
   that is not a `page` or has no lowercase UUID id, and keeps it 60 seconds by default (at most 5 minutes), because
   iOS terminates an app that receives a VoIP push and reports no call. Devices register a separate PushKit token for
-  calls (spike S6, [write-up](../spikes/s6-voip-call-screen.md)).
+  calls (spike S6, [write-up](../spikes/s6-voip-call-screen.md)). A refused call is answered like a refused alert
+  (`502` with APNs' `status` and `reason`), which is how the instance knows to clear a VoIP token APNs says is gone.
 - **The relay is part of this repo** (`apps/relay`). Anyone can run their own with their own store credentials.
 - **How the instance reaches it.** An instance whose relay runs on the same Cloudflare account binds it as a service
   (`RELAY`, apps/api wrangler.jsonc): Cloudflare answers a Worker's fetch to another workers.dev Worker on the same
@@ -442,6 +443,16 @@ paged, without logs.
    (429, 5xx), with APNs' own reason when it gave one; an accepted retry clears it. `attempts` counts them.
 3. **delivered**: the phone's extension opened (decrypted) the page and said so (`delivery.confirm`), once.
 
+**Calls** (RFC 0010) have rows of their own, `kind: "call"`, id `<incident>:<event>:<device>:call`, planned with the
+alert's row for each device the page rings (`delivery.plan` with `call`) and reported in the same `delivery.report`
+(`kind: "call"`): planned, sent, accepted by APNs or the error with APNs' reason (`token_invalid` for a call means its
+VoIP token was cleared, `device.expireVoip`, and the device stays). A call has no delivered stage (the extension never
+sees it), and a receipt can never name its row. A call row whose alert never got through stays planned: the call is
+sent only once the relay took the alert. Call rows never count as the page reaching the device: the verdict, the early
+escalation (`escalation.unreached`) and "no device left because the push service refused one" read the alert rows
+alone. `notification.planned` counts them as `calls`, `notification.sent` as `calls: { accepted, failed }`. Each kind
+keeps its own `MAX_DELIVERIES_PER_DEVICE` rows per device.
+
 Shown and acted on (the person saw it, tapped Acknowledge) are not stages yet: the ack is on the incident already,
 and "shown" needs the app, not the extension. Each write emits its event through the outbox (RFC 0005), actor
 `sys_notifier`. **Retention**: rows are kept with the incident, like its timeline, but an incident keeps at most 20
@@ -491,7 +502,8 @@ it (tested: one envelope reaches the relay, with no receipt inside, and the row 
 extension starts the receipt request and shows the page at once, without waiting for it (5 s timeout, ephemeral
 session, no cookies, no retry, the token never logged), and only for a page it decrypted: the fallback text has no
 token. So receipts are **best effort**: iOS may end the extension before the request leaves, a phone offline after
-showing the page never reports, and VoIP call pushes (RFC 0010) and Android send none yet. A missing receipt means
+showing the page never reports, and VoIP call pushes (RFC 0010, whose rows stop at accepted) and Android send none
+yet. A missing receipt means
 "not confirmed", never "not shown", and the dashboard says so.
 
 **Privacy.** A receipt says when a phone was reachable. Rows and device summaries are synced only within the
@@ -511,8 +523,11 @@ minutes (`PAGE_STUCK_MS`; the notifier sends within seconds) is `stuck`, "Planne
 forever. Pages to the same level with the same outcome in a row fold into the latest. The view says: whether they can be paged (a viewer, gone),
 which rule paged (the policy, or the interim rule), each page (were they on it, and if not why: not on call for its
 schedule and who was, a level that names others, the commander paged first, they declared it), each device's stages
-with times and errors, the phones they have now and when each was last heard from, the email about a missed page
-(expected, failed, capped, off) and who acknowledged. The mobile app's own view of it comes later.
+with times and errors, each call that rang a device after its alert as a line of its own (stages, errors, or "not
+rung" when its alert never got through; never the page's outcome), the phones they have now and when each was last
+heard from, which pages ring them as a call (their choice, RFC 0010), the email about a missed page (expected,
+failed, capped, off) and who acknowledged. The list adds the calls in a word next to the outcome ("Call sent", "Call
+failed", "Call not sent"). The mobile app's own view of it comes later.
 
 ## Driver abstraction
 

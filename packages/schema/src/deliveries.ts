@@ -45,6 +45,15 @@ export const DELIVERY_ERRORS = [
 ] as const;
 export type DeliveryError = (typeof DELIVERY_ERRORS)[number];
 
+/** What a delivery row is for: the page's alert push, or the call that rang after it (RFC 0010). */
+export const DELIVERY_KINDS = ["push", "call"] as const;
+export type DeliveryKind = (typeof DELIVERY_KINDS)[number];
+
+/** Whether a row is a call's, not a push's (rows from before calls had rows have no `kind`: pushes). */
+export function isCallDelivery(row: Pick<DeliveryRow, "kind">): boolean {
+  return row.kind === "call";
+}
+
 /** The furthest stage a device's page reached, from its row. */
 export type DeliveryStage = "planned" | "sent" | "accepted" | "delivered";
 
@@ -60,7 +69,15 @@ export function deliveryId(incidentId: string, eventId: string, deviceId: string
   return `${incidentId}:${eventId}:${deviceId}`;
 }
 
-/** Splits a delivery id, or returns undefined unless it is exactly `inc_…:evt_…:dev_…`. */
+/**
+ * A call's delivery row id: the push's with `:call`, so it sits next to it and `parseDeliveryId` (receipts) never
+ * takes it.
+ */
+export function callDeliveryId(incidentId: string, eventId: string, deviceId: string): string {
+  return `${deliveryId(incidentId, eventId, deviceId)}:call`;
+}
+
+/** Splits a push's delivery id, or returns undefined unless it is exactly `inc_…:evt_…:dev_…`. */
 export function parseDeliveryId(
   id: unknown,
 ): { incidentId: string; eventId: string; deviceId: string } | undefined {
@@ -96,6 +113,8 @@ export type NotificationPlanned = DomainEvent<
     incidentId: string;
     eventId: string;
     devices: number;
+    /** Of those, the devices a call is planned for too (RFC 0010); absent when none. */
+    calls?: number;
     page?: { run: string; step: number };
     /** Older rows dropped to keep `MAX_DELIVERIES_PER_DEVICE` per device; absent when none. */
     dropped?: number;
@@ -103,7 +122,15 @@ export type NotificationPlanned = DomainEvent<
 >;
 export type NotificationSent = DomainEvent<
   "notification.sent",
-  { incidentId: string; eventId: string; accepted: number; failed: number }
+  {
+    incidentId: string;
+    eventId: string;
+    /** Alert pushes. */
+    accepted: number;
+    failed: number;
+    /** Calls the same attempt rang (RFC 0010); absent when it rang none. */
+    calls?: { accepted: number; failed: number };
+  }
 >;
 export type NotificationDelivered = DomainEvent<
   "notification.delivered",
@@ -111,9 +138,10 @@ export type NotificationDelivered = DomainEvent<
 >;
 
 /**
- * Server only, as the notifier: the devices a page is about to go to (`Pager.plan`), one `planned` row each. A device
- * the page already planned (a retry) keeps its row; with none new it is a `conflict`. Each device planned keeps its
- * latest `MAX_DELIVERIES_PER_DEVICE` rows on the incident; older ones are dropped.
+ * Server only, as the notifier: the devices a page is about to go to (`Pager.plan`), one `planned` row each, and with
+ * `call` a second row for the call that rings it after the alert push (RFC 0010). A row the page already planned (a
+ * retry) is kept; with none new it is a `conflict`. Each device planned keeps its latest `MAX_DELIVERIES_PER_DEVICE`
+ * rows of each kind on the incident; older ones are dropped.
  */
 export const planDeliveries = defineMutation({
   name: "delivery.plan",
@@ -129,6 +157,8 @@ export const planDeliveries = defineMutation({
         userId: memberId,
         platform: v.picklist(DEVICE_PLATFORMS),
         environment: v.picklist(PUSH_ENVIRONMENTS),
+        // Whether the page rings this device as a call too. Optional: a shard from before calls had rows.
+        call: v.omittable(v.boolean()),
       }),
       { min: 1, max: MAX_DELIVERY_DEVICES },
     ),
@@ -137,14 +167,18 @@ export const planDeliveries = defineMutation({
   apply(store, args, ctx) {
     if (!store.get("incidents", args.incidentId)) return fail("not_found", "Incident not found");
     let planned = 0;
-    for (const device of args.devices) {
-      const id = deliveryId(args.incidentId, args.eventId, device.deviceId);
-      if (store.get("deliveries", id)) continue;
+    let calls = 0;
+    const plan = (id: string, device: (typeof args.devices)[number], kind?: "call") => {
+      if (store.get("deliveries", id)) return false;
       store.insert("deliveries", {
         id,
+        ...(kind ? { kind } : {}),
         incidentId: args.incidentId,
         eventId: args.eventId,
-        ...device,
+        deviceId: device.deviceId,
+        userId: device.userId,
+        platform: device.platform,
+        environment: device.environment,
         run: args.page?.run ?? null,
         step: args.page?.step ?? null,
         plannedAt: ctx.now,
@@ -156,9 +190,18 @@ export const planDeliveries = defineMutation({
         reason: null,
         updatedAt: ctx.now,
       });
-      planned++;
+      return true;
+    };
+    for (const device of args.devices) {
+      if (plan(deliveryId(args.incidentId, args.eventId, device.deviceId), device)) planned++;
+      if (
+        device.call === true &&
+        plan(callDeliveryId(args.incidentId, args.eventId, device.deviceId), device, "call")
+      ) {
+        calls++;
+      }
     }
-    if (planned === 0) return fail("conflict", "Every device is planned already");
+    if (planned + calls === 0) return fail("conflict", "Every device is planned already");
     const { from, to } = prefixRange(`${args.incidentId}:`);
     const dropped = dropOldest(
       store.range("deliveries", from, to),
@@ -172,6 +215,7 @@ export const planDeliveries = defineMutation({
         incidentId: args.incidentId,
         eventId: args.eventId,
         devices: planned,
+        ...(calls > 0 && { calls }),
         ...(args.page && { page: args.page }),
         ...(dropped > 0 && { dropped }),
       },
@@ -180,7 +224,10 @@ export const planDeliveries = defineMutation({
   },
 });
 
-/** Drops each of `devices`' rows beyond its latest `MAX_DELIVERIES_PER_DEVICE` (by plan time); returns how many. */
+/**
+ * Drops each of `devices`' rows beyond its latest `MAX_DELIVERIES_PER_DEVICE` of each kind (by plan time); returns how
+ * many.
+ */
 function dropOldest(
   rows: readonly DeliveryRow[],
   devices: ReadonlySet<string>,
@@ -189,7 +236,8 @@ function dropOldest(
   const byDevice = new Map<string, DeliveryRow[]>();
   for (const row of rows) {
     if (!devices.has(row.deviceId)) continue;
-    byDevice.set(row.deviceId, [...(byDevice.get(row.deviceId) ?? []), row]);
+    const key = `${row.deviceId}:${row.kind ?? "push"}`;
+    byDevice.set(key, [...(byDevice.get(key) ?? []), row]);
   }
   let dropped = 0;
   for (const list of byDevice.values()) {
@@ -204,9 +252,10 @@ function dropOldest(
 }
 
 /**
- * Server only, as the notifier: what the relay answered for each device of one attempt (`Pager.record`). `ms` is how
- * long the relay took, so the row says when the push was handed over. An accepted push clears the last error; a
- * device without a planned row (a plan from before receipts) is skipped.
+ * Server only, as the notifier: what the relay answered for each device of one attempt (`Pager.record`), the alert
+ * push's and, with `kind: "call"`, the call's. `ms` is how long the relay took, so the row says when it was handed
+ * over. An accepted push or call clears the last error; one without a planned row (a plan from before receipts, or
+ * from before calls had rows) is skipped.
  */
 export const reportDeliveries = defineMutation({
   name: "delivery.report",
@@ -220,16 +269,24 @@ export const reportDeliveries = defineMutation({
         error: v.nullable(v.picklist(DELIVERY_ERRORS)),
         reason: v.nullable(apnsReason),
         ms: v.integer({ min: 0, max: 60_000 }),
+        kind: v.omittable(v.picklist(DELIVERY_KINDS)),
       }),
-      { min: 1, max: MAX_DELIVERY_DEVICES },
+      // A push and a call for every device.
+      { min: 1, max: 2 * MAX_DELIVERY_DEVICES },
     ),
   }),
   permission: "incident:update",
   apply(store, args, ctx) {
     let accepted = 0;
     let failed = 0;
+    const calls = { accepted: 0, failed: 0 };
     for (const outcome of args.outcomes) {
-      const id = deliveryId(args.incidentId, args.eventId, outcome.deviceId);
+      const call = outcome.kind === "call";
+      const id = (call ? callDeliveryId : deliveryId)(
+        args.incidentId,
+        args.eventId,
+        outcome.deviceId,
+      );
       const row = store.get("deliveries", id);
       if (!row) continue;
       // Never before the plan: the notifier's clock and the shard's may disagree. Never after a receipt either: a
@@ -244,14 +301,23 @@ export const reportDeliveries = defineMutation({
           : { error: outcome.error ?? "relay_unreachable", reason: outcome.reason }),
         updatedAt: ctx.now,
       });
-      if (outcome.ok) accepted++;
+      if (call) calls[outcome.ok ? "accepted" : "failed"]++;
+      else if (outcome.ok) accepted++;
       else failed++;
     }
-    if (accepted + failed === 0) return fail("not_found", "No planned device");
+    if (accepted + failed + calls.accepted + calls.failed === 0) {
+      return fail("not_found", "No planned device");
+    }
     const event: NotificationSent = {
       type: "notification.sent",
       subject: args.incidentId,
-      data: { incidentId: args.incidentId, eventId: args.eventId, accepted, failed },
+      data: {
+        incidentId: args.incidentId,
+        eventId: args.eventId,
+        accepted,
+        failed,
+        ...(calls.accepted + calls.failed > 0 && { calls }),
+      },
     };
     return ok(event);
   },

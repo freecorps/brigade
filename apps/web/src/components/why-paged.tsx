@@ -6,6 +6,7 @@ import type {
   EmailSettings,
   IncidentRow,
   MemberRow,
+  MemberSettingsRow,
   ScheduleRow,
   TimelineRow,
 } from "@freecorps/brigade-schema";
@@ -21,6 +22,7 @@ import {
   CircleHelpIcon,
   CircleOffIcon,
   MailIcon,
+  PhoneCallIcon,
   ShieldIcon,
   SmartphoneIcon,
   UserRoundIcon,
@@ -30,6 +32,9 @@ import { useId, useState } from "react";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import {
   byUrgency,
+  callChoiceText,
+  callLabel,
+  callTone,
   deliveryError,
   deviceLabel,
   emailText,
@@ -41,6 +46,7 @@ import {
   pagingMembers,
   ruleText,
   sameOutcomeText,
+  shortCall,
   shortVerdict,
   stageText,
   stageTimes,
@@ -49,6 +55,8 @@ import {
   verdictTone,
   whyPaged,
   whyText,
+  type WhyCall,
+  type WhyDelivery,
   type WhyPage,
   type WhyPaged,
   type WhyVerdict,
@@ -66,6 +74,8 @@ export type PagingData = {
   timeline: readonly TimelineRow[];
   schedules: readonly ScheduleRow[];
   email?: EmailSettings;
+  /** Members' own paging settings (which pages ring them as a call); absent: the defaults. */
+  settings?: readonly MemberSettingsRow[];
   /** The time now: a page planned long ago and never sent is stuck, not on its way. */
   now: number;
 };
@@ -116,7 +126,12 @@ export function PagingCard({
     entry.kind === "page_failed" && entry.userId !== null ? [entry.userId] : [],
   );
   const ids = pagingMembers(data.members, data.deliveries, touched);
-  const rows = byUrgency(ids.map((id) => ({ id, verdict: explain(data, id).verdict })));
+  const rows = byUrgency(
+    ids.map((id) => {
+      const why = explain(data, id);
+      return { id, verdict: why.verdict, call: why.call };
+    }),
+  );
   const shown = all ? rows : rows.slice(0, LIST_LIMIT);
   const titleId = useId();
   return (
@@ -132,7 +147,7 @@ export function PagingCard({
           <p className="text-sm text-muted-foreground">{whyText("empty")}</p>
         ) : (
           <ul className="flex flex-col">
-            {shown.map(({ id, verdict }) => {
+            {shown.map(({ id, verdict, call }) => {
               const Icon = VERDICT_ICONS[verdict];
               const name = memberName(id, who);
               return (
@@ -155,6 +170,7 @@ export function PagingCard({
                     <Icon aria-hidden className="size-3.5 shrink-0" />
                     {shortVerdict(verdict)}
                   </span>
+                  {call ? <CallWord call={call} /> : null}
                   <WhyLink
                     number={number}
                     userId={id}
@@ -182,6 +198,18 @@ export function PagingCard({
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+/** The calls a member's pages rang them with, in a word, next to what the pages did: never in its place. */
+function CallWord({ call }: { call: WhyCall }) {
+  return (
+    <span
+      className={cn("flex min-w-0 items-center gap-1.5 text-xs sm:shrink-0", TONE[callTone(call)])}
+    >
+      <PhoneCallIcon aria-hidden className="size-3.5 shrink-0" />
+      {shortCall(call)}
+    </span>
   );
 }
 
@@ -326,6 +354,7 @@ export function WhyPagedView({
             </ul>
           )}
         </Step>
+        <Step icon={PhoneCallIcon}>{callChoiceText(why.calls, name)}</Step>
         {why.email ? <Step icon={MailIcon}>{emailText(why.email, name)}</Step> : null}
         {why.acknowledged ? (
           <Step icon={BellOffIcon}>
@@ -420,6 +449,7 @@ function PageStep({
   timeZone: string;
 }) {
   const compact = page.deliveries.length > COMPACT_DEVICES;
+  const compactCalls = page.calls.length > COMPACT_DEVICES;
   const at = (value: number) => (
     <time
       className="shrink-0 tabular-nums"
@@ -454,66 +484,98 @@ function PageStep({
         ))}
         {page.deliveries.length > 0 ? (
           <ul className={cn("flex flex-col", compact ? "gap-1.5" : "gap-3")}>
-            {page.deliveries.map(({ row, stage, stuck }) => {
-              const reached = stageTimes(row, stuck);
-              const furthest = reached.filter((one) => one.at !== null).at(-1)!;
-              return (
-                <li
-                  key={row.id}
-                  className={cn(
-                    "flex flex-col rounded-md bg-muted/60",
-                    compact ? "gap-0.5 px-3 py-2" : "gap-1.5 p-3",
-                  )}
-                >
-                  <span className="font-medium">{deviceLabel(row)}</span>
-                  {compact ? (
-                    // Many phones: each one's furthest stage only, still with its time.
-                    <p className="flex flex-wrap items-baseline justify-between gap-x-3">
-                      <span>{stageText(furthest.stage)}</span>
-                      {at(furthest.at!)}
-                    </p>
-                  ) : (
-                    <ol className="flex flex-col gap-y-1">
-                      {reached.map(({ stage: one, at: when, stopped }) => (
-                        <li
-                          key={one}
-                          className={cn(
-                            "flex flex-wrap items-baseline justify-between gap-x-3",
-                            when === null && "text-muted-foreground",
-                          )}
-                        >
-                          <span>{stageText(one)}</span>
-                          {when !== null ? (
-                            at(when)
-                          ) : (
-                            <span className={cn("shrink-0", stopped && TONE.warn)}>
-                              {whyText(stopped ? "stage_stopped" : "stage_none")}
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-                  {stuck ? <p className={TONE.warn}>{whyText("stuck_note")}</p> : null}
-                  {deliveryError(row).map((line) => (
-                    <p key={line} className={TONE.warn}>
-                      {line}
-                    </p>
-                  ))}
-                  {stage === "accepted" && !compact ? (
-                    <p className="text-muted-foreground">{whyText("no_receipt")}</p>
-                  ) : null}
-                  {row.attempts > 1 ? (
-                    <p className="text-muted-foreground">
-                      {whyText("attempts", { detail: String(row.attempts) })}
-                    </p>
-                  ) : null}
-                </li>
-              );
-            })}
+            {page.deliveries.map((delivery) => (
+              <DeliveryItem key={delivery.row.id} delivery={delivery} compact={compact} at={at} />
+            ))}
           </ul>
         ) : null}
+        {page.calls.length > 0 ? (
+          // Calls apart from the pushes: they ring after them and never change whether the page got through.
+          <div className="flex flex-col gap-1.5">
+            <p className="text-muted-foreground">{whyText("call_note")}</p>
+            <ul className={cn("flex flex-col", compactCalls ? "gap-1.5" : "gap-3")}>
+              {page.calls.map((delivery) => (
+                <DeliveryItem
+                  key={delivery.row.id}
+                  delivery={delivery}
+                  compact={compactCalls}
+                  at={at}
+                />
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
+    </li>
+  );
+}
+
+/**
+ * One device's push or call on a page: each stage with its time (only the furthest when `compact`), and why it stopped.
+ * A call has no delivered stage, and one never sent was held back because its push never got through.
+ */
+function DeliveryItem({
+  delivery: { row, stage, stuck },
+  compact,
+  at,
+}: {
+  delivery: WhyDelivery;
+  compact: boolean;
+  at: (value: number) => React.ReactNode;
+}) {
+  const call = row.kind === "call";
+  const reached = stageTimes(row, stuck);
+  const furthest = reached.filter((one) => one.at !== null).at(-1)!;
+  return (
+    <li
+      className={cn(
+        "flex flex-col rounded-md bg-muted/60",
+        compact ? "gap-0.5 px-3 py-2" : "gap-1.5 p-3",
+      )}
+    >
+      <span className="font-medium">{call ? callLabel(row) : deviceLabel(row)}</span>
+      {compact ? (
+        // Many phones: each one's furthest stage only, still with its time.
+        <p className="flex flex-wrap items-baseline justify-between gap-x-3">
+          <span>{stageText(furthest.stage)}</span>
+          {at(furthest.at!)}
+        </p>
+      ) : (
+        <ol className="flex flex-col gap-y-1">
+          {reached.map(({ stage: one, at: when, stopped }) => (
+            <li
+              key={one}
+              className={cn(
+                "flex flex-wrap items-baseline justify-between gap-x-3",
+                when === null && "text-muted-foreground",
+              )}
+            >
+              <span>{stageText(one)}</span>
+              {when !== null ? (
+                at(when)
+              ) : (
+                <span className={cn("shrink-0", stopped && TONE.warn)}>
+                  {whyText(stopped ? "stage_stopped" : "stage_none")}
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+      {stuck ? <p className={TONE.warn}>{whyText(call ? "call_not_sent" : "stuck_note")}</p> : null}
+      {deliveryError(row).map((line) => (
+        <p key={line} className={TONE.warn}>
+          {line}
+        </p>
+      ))}
+      {stage === "accepted" && !compact && !call ? (
+        <p className="text-muted-foreground">{whyText("no_receipt")}</p>
+      ) : null}
+      {row.attempts > 1 ? (
+        <p className="text-muted-foreground">
+          {whyText("attempts", { detail: String(row.attempts) })}
+        </p>
+      ) : null}
     </li>
   );
 }

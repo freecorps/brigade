@@ -138,6 +138,10 @@ would change D1 without the shard's copy or an event.
   the upgrade goes on, so a re-added member's own first upgrade is not refused; if that read fails, the refusal
   stands. A reconcile that finds them in D1 again drops it too. One arriving later still restores the copy until its own reconcile removes
   it again, a second `member.removed` (`reconciled`) for the same member (accepted).
+- **A member's own settings.** What a member decides for themselves in a workspace lives in the shard's
+  `member_settings` (one row per member who chose something, synced to every member; never in `members`, which
+  `member.sync` rewrites from D1). Today that is which pages ring their iPhones as a call (`member.setCalls`, RFC 0010
+  "Who a call rings"); `member.remove` and `member.reconcile` delete the row with the member.
 - **Open sockets.** After a change the shard closes the target's sockets: `1008` when removed (the client reconnects
   and the upgrade answers `403 not_a_member`), `1012` on a role change (it reconnects with the new role). The
   reconcile after every upgrade also closes any socket whose actor D1 no longer backs (gone, or another role),

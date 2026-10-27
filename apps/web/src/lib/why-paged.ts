@@ -3,15 +3,30 @@
 import { m } from "@freecorps/brigade-i18n";
 import { personName, type People } from "@freecorps/brigade-i18n/incident";
 import type {
+  CallChoice,
   DeliveryRow,
   DeliveryStage,
   DeviceSummaryRow,
   MemberRow,
   PageFailure,
 } from "@freecorps/brigade-schema";
-import type { WhyEmail, WhyMiss, WhyPage, WhyPaged, WhyVerdict } from "@freecorps/brigade-sync";
+import type {
+  WhyCall,
+  WhyEmail,
+  WhyMiss,
+  WhyPage,
+  WhyPaged,
+  WhyVerdict,
+} from "@freecorps/brigade-sync";
 
-export { whyPaged, type WhyPaged, type WhyPage, type WhyVerdict } from "@freecorps/brigade-sync";
+export {
+  whyPaged,
+  type WhyCall,
+  type WhyDelivery,
+  type WhyPaged,
+  type WhyPage,
+  type WhyVerdict,
+} from "@freecorps/brigade-sync";
 
 const say = (text: string, fields: { name?: string; time?: string; detail?: string } = {}) =>
   m.page_why({
@@ -52,6 +67,26 @@ export function verdictText(why: Pick<WhyPaged, "verdict" | "pages">, name: stri
 /** The answer in a word or two, for the incident page's list. */
 export function shortVerdict(verdict: WhyVerdict): string {
   return say(`short_${verdict}`);
+}
+
+/** The calls of a member's pages in a word or two, for the incident page's list: "Call failed". */
+export function shortCall(call: WhyCall): string {
+  return say(`short_call_${call}`);
+}
+
+/** How a call's word looks: a failed or unsent call is a warning; the page itself says whether it got through. */
+export function callTone(call: WhyCall): "ok" | "warn" | "neutral" {
+  return call === "failed" || call === "not_sent" ? "warn" : "neutral";
+}
+
+/** Which pages ring the member's iPhones as a call, as they chose it. */
+export function callChoiceText(choice: CallChoice, name: string): string {
+  return say(`calls_choice_${choice}`, { name });
+}
+
+/** "Call · iPhone · App Store build". */
+export function callLabel(row: Pick<DeviceSummaryRow, "platform" | "environment">): string {
+  return say("call_label", { detail: deviceLabel(row) });
 }
 
 /** How a verdict looks: good news, a warning, or neutral. */
@@ -106,8 +141,10 @@ export function pageGroups(pages: readonly WhyPage[]): { page: WhyPage; earlier:
 function outcomeKey(page: WhyPage): string {
   return JSON.stringify([
     page.targeted,
-    page.deliveries
-      .map(({ row, stage, stuck }) => [row.deviceId, stage, row.error, row.reason, stuck].join("/"))
+    [...page.deliveries, ...page.calls]
+      .map(({ row, stage, stuck }) =>
+        [row.deviceId, row.kind ?? "push", stage, row.error, row.reason, stuck].join("/"),
+      )
       .sort(),
     page.misses.map((miss) => miss.reason).sort(),
   ]);
@@ -165,6 +202,9 @@ export function missText(reason: PageFailure, name: string): string {
 
 export const STAGES: readonly DeliveryStage[] = ["planned", "sent", "accepted", "delivered"];
 
+/** A call's stages: Apple taking it is the last one Brigade learns (no receipt comes from a call). */
+export const CALL_STAGES: readonly DeliveryStage[] = ["planned", "sent", "accepted"];
+
 /**
  * Each stage of one device's page and when it happened (null: not reached). After a failed attempt or a page stuck
  * unsent, the first stage not reached is where it `stopped`.
@@ -180,8 +220,10 @@ export function stageTimes(
     { stage: "delivered" as const, at: row.deliveredAt },
   ];
   const halted = row.error !== null || stuck;
-  const first = times.findIndex(({ at }) => at === null);
-  return times.map((time, index) => ({ ...time, stopped: halted && index === first }));
+  const kept =
+    row.kind === "call" ? times.filter(({ stage }) => CALL_STAGES.includes(stage)) : times;
+  const first = kept.findIndex(({ at }) => at === null);
+  return kept.map((time, index) => ({ ...time, stopped: halted && index === first }));
 }
 
 export function stageText(stage: DeliveryStage): string {
@@ -191,7 +233,14 @@ export function stageText(stage: DeliveryStage): string {
 /** Why the last attempt failed, with Apple's own reason when it gave one; null when it did not fail. */
 export function deliveryError(row: DeliveryRow): string[] {
   if (row.error === null) return [];
-  const lines = [say(`error_${row.error}`)];
+  // A call's refused token stops only the calls: the phone stays, unlike a push's.
+  const lines = [
+    say(
+      row.kind === "call" && row.error === "token_invalid"
+        ? "call_error_token_invalid"
+        : `error_${row.error}`,
+    ),
+  ];
   if (row.reason !== null) lines.push(say("apns_reason", { detail: row.reason }));
   return lines;
 }

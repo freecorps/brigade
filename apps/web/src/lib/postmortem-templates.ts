@@ -7,6 +7,7 @@ import {
   CUSTOM_POSTMORTEM_SECTIONS,
   isBuiltinSection,
   MAX_TEMPLATE_SECTIONS,
+  POSTMORTEM_SECTION_KEYS,
   POSTMORTEM_SECTIONS,
   TEMPLATE_HINT_MAX,
   TEMPLATE_STARTER_MAX,
@@ -72,7 +73,8 @@ export function moveSection<T>(sections: readonly T[], index: number, by: -1 | 1
 /** What the text rules refuse in a value: hidden characters, or nothing visible. */
 const textProblem = (value: string, multiline: boolean) =>
   value.length > 0 &&
-  (textRules.problem(value, multiline, true) !== undefined || !textRules.hasVisible(value));
+  // Titles are one line without joiners, hints and starter text may have both, as the shard's validators say.
+  (textRules.problem(value, multiline, multiline) !== undefined || !textRules.hasVisible(value));
 
 export type SectionErrors = { title?: boolean; hint?: boolean; starter?: boolean };
 
@@ -94,6 +96,9 @@ export function checkTemplate(
       starter: section.starter.trim(),
     };
     const wrong: SectionErrors = {};
+    // A key the shard does not know, or one listed twice, is refused there too.
+    const known = (POSTMORTEM_SECTION_KEYS as readonly string[]).includes(one.key);
+    if (!known || sections.filter((other) => other.key === one.key).length > 1) wrong.title = true;
     if (
       one.title.length > TEMPLATE_TITLE_MAX ||
       textProblem(one.title, false) ||

@@ -53,7 +53,9 @@ test("the checks: a custom section needs a title, hidden characters and overlong
     ok: false,
     errors: { 0: { title: true } },
   });
-  expect(checkTemplate([{ ...newSection("summary"), hint: `a${"‮"}b` }])).toMatchObject({
+  expect(
+    checkTemplate([{ ...newSection("summary"), hint: `a${String.fromCharCode(0x202e)}b` }]),
+  ).toMatchObject({
     ok: false,
     errors: { 0: { hint: true } },
   });
@@ -61,6 +63,20 @@ test("the checks: a custom section needs a title, hidden characters and overlong
     ok: false,
   });
   expect(checkTemplate([])).toMatchObject({ ok: false });
+  // As the shard: a key twice or one it does not know, and a joiner in a one-line title.
+  expect(checkTemplate([newSection("summary"), newSection("summary")])).toMatchObject({
+    ok: false,
+    errors: { 0: { title: true }, 1: { title: true } },
+  });
+  expect(checkTemplate([{ ...newSection("summary"), key: "nonsense" as never }])).toMatchObject({
+    ok: false,
+  });
+  expect(
+    checkTemplate([{ ...newSection("custom1"), title: `Co${String.fromCharCode(0x200d)}mms` }]),
+  ).toMatchObject({
+    ok: false,
+    errors: { 0: { title: true } },
+  });
   expect(
     checkTemplate([{ ...newSection("custom1"), title: " Comms ", starter: " Email:\n " }]),
   ).toEqual({

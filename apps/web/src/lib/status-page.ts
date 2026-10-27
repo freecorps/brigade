@@ -1,7 +1,7 @@
 // The dashboard's side of the status page (RFC 0012): saving the page's settings through the API (the slug is
 // claimed in D1, so it is not a socket mutation), its public address, and the card's wording. Pure apart from
 // `fetch`; tested in test/status-page.test.tsx.
-import { m } from "@freecorps/brigade-i18n";
+import { formatNumber, getLocale, m } from "@freecorps/brigade-i18n";
 import type { StatusLocale } from "@freecorps/brigade-schema";
 
 /** The card's text for `part` (packages/i18n `status_card`). */
@@ -81,4 +81,64 @@ export function statusUrl(slug: string, origin: string): string {
 /** A typed slug: trimmed and lower-cased, as people paste it. */
 export function normalizeSlug(input: string): string {
   return input.trim().toLowerCase();
+}
+
+/** The subscribers card's text for `part` (packages/i18n `status_subscribers`). */
+export function subscribersText(
+  part: string,
+  args: { confirmed?: number; pending?: number; email?: string } = {},
+): string {
+  return m.status_subscribers({
+    part,
+    confirmed: formatNumber(args.confirmed ?? 0, getLocale()),
+    pending: formatNumber(args.pending ?? 0, getLocale()),
+    email: args.email ?? "",
+  });
+}
+
+export type SubscriberCounts = { confirmed: number; pending: number };
+
+const subscribersPath = (workspaceId: string) =>
+  `/api/workspaces/${encodeURIComponent(workspaceId)}/status-page/subscribers`;
+
+/** `GET …/status-page/subscribers`: how many confirmed and pending (owners and admins); null when it failed. */
+export async function loadSubscriberCounts(
+  workspaceId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<SubscriberCounts | null> {
+  try {
+    const response = await fetcher(subscribersPath(workspaceId), {
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as Partial<SubscriberCounts>;
+    return typeof body.confirmed === "number" && typeof body.pending === "number"
+      ? { confirmed: body.confirmed, pending: body.pending }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The CSV export's address (a download, authenticated by the session cookie). */
+export const subscribersExportUrl = (workspaceId: string) =>
+  `${subscribersPath(workspaceId)}/export`;
+
+/** `DELETE …/status-page/subscribers` `{ email }`. */
+export async function removeSubscriber(
+  workspaceId: string,
+  email: string,
+  fetcher: typeof fetch = fetch,
+): Promise<"removed" | "not_found" | "failed"> {
+  try {
+    const response = await fetcher(subscribersPath(workspaceId), {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    if (response.ok) return "removed";
+    return response.status === 404 ? "not_found" : "failed";
+  } catch {
+    return "failed";
+  }
 }

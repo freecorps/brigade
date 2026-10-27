@@ -5,6 +5,7 @@ import {
   COMPONENT_NAME_MAX,
   COMPONENT_STATUSES,
   isStatusSlug,
+  MAX_COMPONENT_MONITORS,
   MAX_COMPONENTS,
   STATUS_LOCALES,
   STATUS_PAGE_TITLE_MAX,
@@ -14,7 +15,7 @@ import {
   type StatusPageRow,
 } from "@freecorps/brigade-schema";
 import { useMutation, useQuery, useSyncClient } from "@freecorps/brigade-sync/react";
-import { ExternalLinkIcon, PlusIcon, RotateCwIcon } from "lucide-react";
+import { DownloadIcon, ExternalLinkIcon, PlusIcon, RotateCwIcon } from "lucide-react";
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { CONFIRM_DESTRUCTIVE } from "@/components/monitor-form";
 import { useMember } from "@/components/session";
@@ -23,7 +24,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Field, FormError } from "@/components/ui/field";
 import {
+  loadSubscriberCounts,
   normalizeSlug,
+  removeSubscriber,
+  subscribersExportUrl,
+  subscribersText,
+  type SubscriberCounts,
   saveErrorPart,
   saveStatusPage,
   statusCardText as say,
@@ -69,14 +75,29 @@ function StatusPageLive({ onRetry }: { onRetry: () => void }) {
   const create = useMutation("statusComponent.create");
   const update = useMutation("statusComponent.update");
   const remove = useMutation("statusComponent.delete");
+  const link = useMutation("statusComponent.linkMonitors");
+  const manage = can(role, "status:manage");
+  // Monitors are only offered to link to those who manage the page (`monitor:read` covers every role).
+  const monitors = useQuery("monitors.all", {});
   return (
     <StatusPagePanel
       page={page.rows[0] ?? null}
       components={components.rows}
       loading={page.status === "loading"}
       failed={page.status === "error"}
-      manage={can(role, "status:manage")}
+      manage={manage}
       origin={window.location.origin}
+      monitors={monitors.rows.map((row) => ({ id: row.id, name: row.name }))}
+      onLink={async (id, monitorIds) => (await link({ id, monitorIds })).ok}
+      subscribers={
+        manage
+          ? {
+              load: () => loadSubscriberCounts(workspaceId),
+              remove: (email) => removeSubscriber(workspaceId, email),
+              exportUrl: subscribersExportUrl(workspaceId),
+            }
+          : undefined
+      }
       onSave={(settings) => saveStatusPage(workspaceId, settings)}
       onCreate={async (name, group) => (await create({ id: client.newId("cmp"), name, group })).ok}
       onUpdate={async (row) => (await update(row)).ok}
@@ -100,6 +121,17 @@ type PanelProps = {
   onUpdate: (row: ComponentEdit) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
   onRetry: () => void;
+  /** The workspace's monitors a component's uptime bar may come from. */
+  monitors?: readonly { id: string; name: string }[];
+  onLink?: (id: string, monitorIds: string[]) => Promise<boolean>;
+  /** Owners and admins only: the page's email subscribers. */
+  subscribers?: SubscribersApi;
+};
+
+export type SubscribersApi = {
+  load: () => Promise<SubscriberCounts | null>;
+  remove: (email: string) => Promise<"removed" | "not_found" | "failed">;
+  exportUrl: string;
 };
 
 /** The card itself, without the hooks: what each state looks like (tested and screenshotted with made-up data). */
@@ -141,6 +173,7 @@ export function StatusPagePanel(props: PanelProps) {
               </p>
             ) : null}
             {page ? <Components {...props} /> : null}
+            {page && props.subscribers ? <Subscribers api={props.subscribers} /> : null}
             {page && !manage ? (
               <p className="text-sm text-muted-foreground">{say("manage_only")}</p>
             ) : null}
@@ -303,7 +336,15 @@ function Settings({ page, onSave }: Pick<PanelProps, "page" | "onSave">) {
   );
 }
 
-function Components({ components, manage, onCreate, onUpdate, onDelete }: PanelProps) {
+function Components({
+  components,
+  manage,
+  onCreate,
+  onUpdate,
+  onDelete,
+  monitors = [],
+  onLink,
+}: PanelProps) {
   return (
     <section
       aria-labelledby="status-components-title"
@@ -326,6 +367,8 @@ function Components({ components, manage, onCreate, onUpdate, onDelete }: PanelP
               manage={manage}
               onUpdate={onUpdate}
               onDelete={onDelete}
+              monitors={monitors}
+              onLink={onLink}
             />
           ))}
         </ul>
@@ -342,7 +385,13 @@ function ComponentRow({
   manage,
   onUpdate,
   onDelete,
-}: Pick<PanelProps, "manage" | "onUpdate" | "onDelete"> & { component: StatusComponentRow }) {
+  monitors = [],
+  onLink,
+}: Pick<PanelProps, "manage" | "onUpdate" | "onDelete" | "monitors" | "onLink"> & {
+  component: StatusComponentRow;
+}) {
+  const linked = component.monitorIds ?? [];
+  const [chosen, setChosen] = useState<string[]>(linked);
   const [mode, setMode] = useState<"view" | "edit" | "confirm">("view");
   const [name, setName] = useState(component.name);
   const [group, setGroup] = useState(component.group ?? "");
@@ -364,6 +413,15 @@ function ComponentRow({
           <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
             {component.group ?? say("ungrouped")}
           </span>
+          {linked.length > 0 ? (
+            <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+              {say("uptime_from", {
+                name: linked
+                  .map((id) => monitors.find((monitor) => monitor.id === id)?.name ?? "…")
+                  .join(", "),
+              })}
+            </span>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           <ComponentChip status={component.status} />
@@ -376,6 +434,7 @@ function ComponentRow({
                 setName(component.name);
                 setGroup(component.group ?? "");
                 setStatus(component.status);
+                setChosen(linked);
                 setFailed(null);
                 setNameInvalid(false);
                 setMode("edit");
@@ -429,20 +488,24 @@ function ComponentRow({
             setNameInvalid(true);
             return;
           }
-          if (
-            next.name === component.name &&
-            next.group === component.group &&
-            next.status === component.status
-          ) {
+          const fieldsChanged =
+            next.name !== component.name ||
+            next.group !== component.group ||
+            next.status !== component.status;
+          const monitorsChanged = chosen.join() !== linked.join();
+          if (!fieldsChanged && !monitorsChanged) {
             setMode("view");
             return;
           }
           setBusy(true);
-          void onUpdate(next).then((ok) => {
+          void (async () => {
+            const ok =
+              (!fieldsChanged || (await onUpdate(next))) &&
+              (!monitorsChanged || !onLink || (await onLink(component.id, chosen)));
             setBusy(false);
             if (ok) setMode("view");
             else setFailed("save_failed");
-          });
+          })();
         }}
       >
         <Field
@@ -481,6 +544,39 @@ function ComponentRow({
         <p className="text-sm text-muted-foreground sm:col-span-3">
           {say("component_status_hint")}
         </p>
+        {onLink ? (
+          <fieldset className="flex min-w-0 flex-col gap-1 sm:col-span-3">
+            <legend className="mb-1 text-sm font-medium">{say("uptime_label")}</legend>
+            <p className="mb-1 text-sm text-muted-foreground">
+              {say(monitors.length === 0 ? "uptime_no_monitors" : "uptime_hint")}
+            </p>
+            {monitors.map((monitor) => {
+              const checked = chosen.includes(monitor.id);
+              const full = !checked && chosen.length >= MAX_COMPONENT_MONITORS;
+              return (
+                <label key={monitor.id} className="flex min-h-11 items-center gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-5 shrink-0 accent-primary"
+                    checked={checked}
+                    disabled={full}
+                    onChange={(event) =>
+                      setChosen((current) =>
+                        event.target.checked
+                          ? [...current, monitor.id]
+                          : current.filter((id) => id !== monitor.id),
+                      )
+                    }
+                  />
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{monitor.name}</span>
+                </label>
+              );
+            })}
+            {chosen.length >= MAX_COMPONENT_MONITORS ? (
+              <p className="text-sm text-muted-foreground">{say("uptime_limit")}</p>
+            ) : null}
+          </fieldset>
+        ) : null}
         <div className="flex flex-wrap items-center gap-3 sm:col-span-3">
           <Button type="submit" disabled={busy}>
             {say(busy ? "saving" : "save")}
@@ -556,5 +652,116 @@ function AddComponent({ full, onCreate }: Pick<PanelProps, "onCreate"> & { full:
         </div>
       ) : null}
     </form>
+  );
+}
+
+/**
+ * The page's email subscribers (RFC 0012 "Email subscriptions"), owners and admins only: how many, the CSV export, and
+ * removing one by address. Addresses are only ever in the export; the card shows counts.
+ */
+function Subscribers({ api }: { api: SubscribersApi }) {
+  const [counts, setCounts] = useState<SubscriberCounts | null | "loading">("loading");
+  const [attempt, setAttempt] = useState(0);
+  const [email, setEmail] = useState("");
+  const [state, setState] = useState<
+    "idle" | "busy" | { done: "removed"; email: string } | { error: "not_found" | "remove_failed" }
+  >("idle");
+  useEffect(() => {
+    let live = true;
+    setCounts("loading");
+    void api.load().then((loaded) => {
+      if (live) setCounts(loaded);
+    });
+    return () => {
+      live = false;
+    };
+    // `api` is rebuilt every render; a retry or a removal reloads.
+  }, [attempt]);
+  const text = subscribersText;
+  return (
+    <section
+      aria-labelledby="status-subscribers-title"
+      className="flex flex-col gap-3 border-t pt-4"
+    >
+      <div className="flex flex-col gap-1">
+        <h3 id="status-subscribers-title" className="text-sm font-semibold">
+          {text("title")}
+        </h3>
+        <p className="max-w-prose text-sm text-muted-foreground">{text("hint")}</p>
+      </div>
+      {counts === "loading" ? (
+        <p
+          className="h-5 w-48 animate-pulse rounded bg-muted motion-reduce:animate-none"
+          aria-hidden
+        />
+      ) : counts === null ? (
+        <div className="flex flex-col items-start gap-2">
+          <FormError>{text("load_failed")}</FormError>
+          <Button variant="outline" onClick={() => setAttempt((count) => count + 1)}>
+            <RotateCwIcon aria-hidden />
+            {text("retry")}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm tabular-nums">{text("count", counts)}</p>
+          <a
+            href={api.exportUrl}
+            download
+            className="inline-flex h-11 items-center gap-2 rounded-md border px-4 text-sm font-medium"
+          >
+            <DownloadIcon aria-hidden className="size-4" />
+            {text("export")}
+          </a>
+        </div>
+      )}
+      <form
+        noValidate
+        className="grid min-w-0 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const address = email.trim();
+          if (!address) return;
+          setState("busy");
+          void api.remove(address).then((result) => {
+            if (result === "removed") {
+              setEmail("");
+              setState({ done: "removed", email: address });
+              setAttempt((count) => count + 1);
+            } else setState({ error: result === "not_found" ? "not_found" : "remove_failed" });
+          });
+        }}
+      >
+        <Field
+          label={text("remove_label")}
+          hint={text("remove_hint")}
+          type="email"
+          autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          value={email}
+          onChange={(event) => {
+            setEmail(event.target.value);
+            setState("idle");
+          }}
+        />
+        <Button
+          type="submit"
+          variant="outline"
+          className="sm:mb-7"
+          disabled={state === "busy" || email.trim() === ""}
+        >
+          {text(state === "busy" ? "removing" : "remove")}
+        </Button>
+      </form>
+      <p role="status" className="text-sm text-muted-foreground empty:hidden">
+        {typeof state === "object" && "done" in state
+          ? text("removed", { email: state.email })
+          : ""}
+      </p>
+      {typeof state === "object" && "error" in state ? (
+        <FormError>{text(state.error)}</FormError>
+      ) : null}
+    </section>
   );
 }

@@ -1,5 +1,5 @@
 // The `brigade-events` consumer (RFC 0005 "Delivery", RFC 0002 runtime map): routes each event to its notifiers:
-// a page that failed to email (src/notify-email.ts), everything else to push, and an incident's events to Slack as
+// a page that failed to email (src/notify-email.ts), a status page's subscribers (src/notify-status.ts), everything else to push, and an incident's events to Slack as
 // well (src/notify-slack.ts), next to push and never ahead of it. Push: for an event that pages, the
 // workspace shard plans who gets it, each device's push is sealed to its own key (HPKE, `packages/push`) and sent
 // through the relay (RFC 0006), a page that rings rings as a call after its alert push (RFC 0010), and the outcomes
@@ -14,6 +14,7 @@ import { asksForEmail } from "./mailer.ts";
 import { emailRetryDelay, notifyEmail, type EmailNotifyEnv } from "./notify-email.ts";
 import { asksForInvitation, notifyInvitation } from "./notify-invite.ts";
 import { notifySlack, type SlackNotifyEnv } from "./notify-slack.ts";
+import { notifyStatus, type StatusNotifyEnv } from "./notify-status.ts";
 import { notifyWebhookDisabled, notifyWebhooks, type WebhookNotifyEnv } from "./notify-webhooks.ts";
 import type { BrigadeEvent } from "./outbox.ts";
 import {
@@ -26,6 +27,7 @@ import {
 } from "./paging.ts";
 import { SideConnections } from "./side-connections.ts";
 import { asksForSlack } from "./slack.ts";
+import { asksForStatusEmail } from "./status-mail.ts";
 import { asksForWebhookEmail, asksForWebhooks } from "./webhooks.ts";
 import { HEARTBEAT_EVENT, isSystemEvent, WATCHDOG_NAME, type RelayHealth } from "./watchdog.ts";
 import { WORKSPACE_ID } from "./workspace.ts";
@@ -65,6 +67,7 @@ export const RELAY_HEALTH_TIMEOUT_MS = 5000;
 export type NotifyEnv = EmailEnv &
   EmailNotifyEnv &
   SlackNotifyEnv &
+  StatusNotifyEnv &
   WebhookNotifyEnv & {
     WORKSPACE: Env["WORKSPACE"];
     /** The dead-man switch's watchdog (src/watchdog.ts); without it a heartbeat is logged and dropped. */
@@ -141,7 +144,9 @@ export async function consumeEvents(
       const email = asksForEmail(event);
       const invitation = asksForInvitation(event);
       const webhookEmail = asksForWebhookEmail(event);
-      const delay = email || invitation || webhookEmail ? emailRetryDelay : retryDelay;
+      const statusEmail = asksForStatusEmail(event);
+      const delay =
+        email || invitation || webhookEmail || statusEmail ? emailRetryDelay : retryDelay;
       // Slack and webhooks run alongside push, never before it, each within its own budget, and their failures stay
       // their own: an outage or a shard error on their side only asks for a later delivery, which the page ledger makes
       // a no-op for push. Webhooks never ask for one past their budget: their retries are the shard's.
@@ -183,9 +188,11 @@ export async function consumeEvents(
             ? await notifyInvitation(event, message.attempts, env, mail)
             : webhookEmail
               ? await notifyWebhookDisabled(event, message.attempts, env, mail)
-              : (await notifyPush(event, message.attempts, env, send))
-                ? retryDelay(message.attempts)
-                : undefined;
+              : statusEmail
+                ? await notifyStatus(event, message.attempts, env, mail, slots, waitUntil)
+                : (await notifyPush(event, message.attempts, env, send))
+                  ? retryDelay(message.attempts)
+                  : undefined;
         // Slack's and the webhooks' work always finishes (within its budget) before the message is settled. A page's
         // own retry comes first: never put off behind their backoff, and an early retry only finds their work held.
         const [slackSeconds, webhookSeconds] = await sides;

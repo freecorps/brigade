@@ -14,6 +14,7 @@ import {
 import { defineQuery } from "./query.ts";
 import type {
   IncidentRow,
+  MaintenanceRow,
   StatusComponentRow,
   StatusIncidentRow,
   StatusPageRow,
@@ -21,6 +22,7 @@ import type {
 import { appendTimeline } from "./timeline.ts";
 import { UPDATE_BODY_MAX } from "./incidents.ts";
 import { v, type Validator } from "./validate.ts";
+import { MAX_COMPONENT_MONITORS, uptime, type Uptime } from "./uptime.ts";
 
 /** The one row of `status_page`: a workspace has at most one page. */
 export const STATUS_PAGE_ID = "status_page";
@@ -53,8 +55,14 @@ export const MAX_PUBLIC_UPDATES = 50;
 export const STATUS_HISTORY_DAYS = 90;
 /** At most this many resolved incidents in the snapshot, newest first, however many the 90 days hold. */
 export const STATUS_HISTORY_MAX = 50;
-/** The snapshot's shape; bumped when a reader would misread a newer one. */
-export const STATUS_SNAPSHOT_VERSION = 1;
+/**
+ * The snapshot's shape; bumped when a reader would misread a newer one. 2 added uptime bars, maintenance windows and
+ * the `maintenance` component status; a reader of 2 still renders a 1. A page that uses none of them is still written
+ * as a 1, so a Worker rolled back to a reader of 1 keeps serving it.
+ */
+export const STATUS_SNAPSHOT_VERSION = 2;
+/** Upcoming maintenance windows in the snapshot, soonest first. */
+export const STATUS_UPCOMING_MAX = 10;
 
 /**
  * A page's address under `/status/`: 3 to 40 lowercase letters, digits and single hyphens, starting and ending
@@ -237,8 +245,8 @@ export const updateStatusComponent = defineMutation({
 });
 
 /**
- * Deletes a component and takes it out of every published incident in the same transaction (`incidents`: how many
- * named it), so no incident points at a component that is gone; owners and admins.
+ * Deletes a component and takes it out of every published incident and maintenance window in the same transaction
+ * (`incidents`: how many incidents named it), so nothing points at a component that is gone; owners and admins.
  */
 export const deleteStatusComponent = defineMutation({
   name: "statusComponent.delete",
@@ -256,10 +264,54 @@ export const deleteStatusComponent = defineMutation({
         updatedAt: ctx.now,
       });
     }
+    for (const row of store.scan("status_maintenance")) {
+      if (!row.componentIds.includes(args.id)) continue;
+      store.update("status_maintenance", row.id, {
+        componentIds: row.componentIds.filter((id) => id !== args.id),
+        updatedAt: ctx.now,
+      });
+    }
     const event: StatusComponentDeleted = {
       type: "status_component.deleted",
       subject: args.id,
       data: { id: args.id, incidents },
+    };
+    return ok(event);
+  },
+});
+
+export type StatusComponentMonitorsLinked = DomainEvent<
+  "status_component.monitors_linked",
+  { id: string; monitorIds: string[] }
+>;
+
+/**
+ * Links a component to the monitors its uptime bar comes from (RFC 0012 "Uptime"); an empty list takes the bar off.
+ * Owners and admins, like the rest of the components. Unchanged is a `conflict`.
+ */
+export const linkComponentMonitors = defineMutation({
+  name: "statusComponent.linkMonitors",
+  args: v.object({
+    id: componentId,
+    monitorIds: v.array(v.id("mon"), { max: MAX_COMPONENT_MONITORS, unique: true }),
+  }),
+  permission: "status:manage",
+  apply(store, args, ctx) {
+    const current = store.get("status_components", args.id);
+    if (!current) return fail("not_found", "Component not found");
+    const missing = args.monitorIds.findIndex((id: string) => !store.get("monitors", id));
+    if (missing >= 0) {
+      const message = "No such monitor";
+      return fail("invalid_args", message, [{ path: `monitorIds[${missing}]`, message }]);
+    }
+    if ((current.monitorIds ?? []).join() === args.monitorIds.join()) {
+      return fail("conflict", "The component's monitors are unchanged");
+    }
+    store.update("status_components", args.id, { monitorIds: args.monitorIds, updatedAt: ctx.now });
+    const event: StatusComponentMonitorsLinked = {
+      type: "status_component.monitors_linked",
+      subject: args.id,
+      data: args,
     };
     return ok(event);
   },
@@ -538,8 +590,20 @@ export const statusIncidentById = defineQuery({
   filter: (row, args) => row.id === args.id,
 });
 
-/** The public's copy of a component: its name and what it shows. */
-export type SnapshotComponent = { name: string; status: ComponentStatus };
+/** What a component shows: its status, or `maintenance` while a window touches it and nothing is worse. */
+export type SnapshotComponentStatus = ComponentStatus | "maintenance";
+
+/** The public's copy of a component: its name, what it shows and, when linked to monitors, its uptime bar. */
+export type SnapshotComponent = { name: string; status: SnapshotComponentStatus; uptime?: Uptime };
+
+/** A maintenance window as the public reads it. */
+export type SnapshotMaintenance = {
+  title: string;
+  body: string;
+  components: string[];
+  startsAt: number;
+  endsAt: number;
+};
 export type SnapshotGroup = { name: string | null; components: SnapshotComponent[] };
 export type SnapshotIncident = {
   title: string;
@@ -558,7 +622,8 @@ export type SnapshotIncident = {
  * renders. Everything in it was written for the public; no id, member or internal title is.
  */
 export type StatusSnapshot = {
-  v: typeof STATUS_SNAPSHOT_VERSION;
+  /** 1 when the page uses nothing version 2 added, else `STATUS_SNAPSHOT_VERSION`. */
+  v: 1 | typeof STATUS_SNAPSHOT_VERSION;
   title: string;
   locale: StatusLocale;
   /** When the shard built it. */
@@ -570,6 +635,10 @@ export type StatusSnapshot = {
   active: SnapshotIncident[];
   /** Resolved within `STATUS_HISTORY_DAYS`, newest first, at most `STATUS_HISTORY_MAX`. */
   history: SnapshotIncident[];
+  /** Windows under way, soonest end first. Absent from version 1. */
+  maintenance?: SnapshotMaintenance[];
+  /** Windows not started yet, soonest first, at most `STATUS_UPCOMING_MAX`. Absent from version 1. */
+  upcoming?: SnapshotMaintenance[];
 };
 
 type SnapshotStore = Pick<MutationStore, "get" | "scan">;
@@ -581,19 +650,46 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
   const incidents = store.scan("status_incidents");
   const components = store.scan("status_components").sort(byCreation);
   const names = new Map(components.map((component) => [component.id, component.name]));
+  const windows = store.scan("status_maintenance");
+  const inProgress = windows
+    .filter((row) => row.phase === "in_progress")
+    .sort((a, b) => a.endsAt - b.endsAt);
+  const linked = components.some((component) => (component.monitorIds ?? []).length > 0);
+  const monitors = linked ? store.scan("monitors") : [];
+  const alerts = linked ? store.scan("alerts") : [];
   const groups: SnapshotGroup[] = [];
   let overall: ComponentStatus = "operational";
   for (const component of components) {
-    const status = componentStatus(component, incidents);
-    overall = worseStatus(overall, status);
+    const derived = componentStatus(component, incidents);
+    overall = worseStatus(overall, derived);
+    const status: SnapshotComponentStatus =
+      derived === "operational" && inProgress.some((row) => row.componentIds.includes(component.id))
+        ? "maintenance"
+        : derived;
     let group = groups.find((candidate) => candidate.name === component.group);
     if (!group) {
       group = { name: component.group, components: [] };
       if (component.group === null) groups.unshift(group);
       else groups.push(group);
     }
-    group.components.push({ name: component.name, status });
+    const monitorIds = component.monitorIds ?? [];
+    group.components.push(
+      monitorIds.length > 0
+        ? { name: component.name, status, uptime: uptime(monitorIds, monitors, alerts, now) }
+        : { name: component.name, status },
+    );
   }
+  const toWindow = (row: MaintenanceRow): SnapshotMaintenance => ({
+    title: row.title,
+    body: row.body,
+    components: row.componentIds.flatMap((id) => names.get(id) ?? []),
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+  });
+  const upcoming = windows
+    .filter((row) => row.phase === "scheduled")
+    .sort((a, b) => a.startsAt - b.startsAt)
+    .slice(0, STATUS_UPCOMING_MAX);
   const toPublic = (row: StatusIncidentRow): SnapshotIncident => ({
     title: row.title,
     status: row.status,
@@ -618,8 +714,7 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
     .filter((row) => row.status === "resolved" && (row.resolvedAt ?? 0) >= since)
     .sort((a, b) => (b.resolvedAt ?? 0) - (a.resolvedAt ?? 0))
     .slice(0, STATUS_HISTORY_MAX);
-  return {
-    v: STATUS_SNAPSHOT_VERSION,
+  const base = {
     title: page.title,
     locale: page.locale,
     generatedAt: now,
@@ -628,6 +723,14 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
     active: active.map(toPublic),
     history: history.map(toPublic),
   };
+  // No uptime bar, no window and so no component under maintenance: version 1, which every reader renders.
+  if (!linked && inProgress.length === 0 && upcoming.length === 0) return { v: 1, ...base };
+  return {
+    v: STATUS_SNAPSHOT_VERSION,
+    ...base,
+    maintenance: inProgress.map(toWindow),
+    upcoming: upcoming.map(toWindow),
+  };
 }
 
 /** The status page's mutations clients may send (the page's own settings go through the API, see above). */
@@ -635,6 +738,7 @@ export const statusMutations = [
   createStatusComponent,
   updateStatusComponent,
   deleteStatusComponent,
+  linkComponentMonitors,
   publishIncidentUpdate,
   editPublishedUpdate,
   removePublishedUpdate,

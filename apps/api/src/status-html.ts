@@ -3,12 +3,20 @@
 // Every piece of text is escaped; everything in the snapshot was written for the public.
 
 import type { Locale } from "@freecorps/brigade-i18n";
-import { status_text } from "@freecorps/brigade-i18n/messages";
+import {
+  status_maintenance,
+  status_subscribe,
+  status_text,
+  status_uptime,
+} from "@freecorps/brigade-i18n/messages";
 import type {
   ComponentStatus,
   PublicStatus,
+  SnapshotComponent,
   SnapshotIncident,
+  SnapshotMaintenance,
   StatusSnapshot,
+  UptimeState,
 } from "@freecorps/brigade-schema";
 import { themes, type BadgeColors, type ThemeName } from "@freecorps/brigade-ui";
 
@@ -21,6 +29,22 @@ const escape = (text: string) =>
 
 const say = (locale: Locale, part: string, args: { time?: string; list?: string } = {}) =>
   escape(status_text({ part, time: args.time ?? "", list: args.list ?? "" }, { locale }));
+
+const sayWindow = (locale: Locale, part: string, args: { time?: string; until?: string } = {}) =>
+  escape(status_maintenance({ part, time: args.time ?? "", until: args.until ?? "" }, { locale }));
+
+const saySubscribe = (locale: Locale, part: string, args: { email?: string; page?: string } = {}) =>
+  escape(status_subscribe({ part, email: args.email ?? "", page: args.page ?? "" }, { locale }));
+
+const sayUptime = (
+  locale: Locale,
+  part: string,
+  args: { percent?: string; date?: string; minutes?: string } = {},
+) =>
+  status_uptime(
+    { part, percent: args.percent ?? "", date: args.date ?? "", minutes: args.minutes ?? "" },
+    { locale },
+  );
 
 /** Times in UTC, said so on the page: the Worker does not know the visitor's time zone, and no script asks. */
 const when = (at: number, locale: Locale) =>
@@ -78,6 +102,9 @@ function themeVars(theme: ThemeName): string {
     const { bg, fg } = publicColors(theme, status);
     vars.push(`--p-${status}-bg:${bg}`, `--p-${status}-fg:${fg}`);
   }
+  // Maintenance reads as planned work, not trouble: the "monitoring" blue.
+  const planned = t.status.monitoring;
+  vars.push(`--c-maintenance-bg:${planned.bg}`, `--c-maintenance-fg:${planned.fg}`);
   return vars.join(";");
 }
 
@@ -110,9 +137,33 @@ p{margin:0}
 details.incident summary{cursor:pointer;list-style:none}
 details.incident summary::-webkit-details-marker{display:none}
 .empty{color:var(--muted)}
+.list li.with-bar{flex-wrap:wrap}
+.uptime{flex-basis:100%;margin-top:.25rem}
+.summary{color:var(--muted);font-size:.8125rem;margin:0 0 .375rem;font-variant-numeric:tabular-nums}
+.bars{display:flex;gap:1px;height:2rem;align-items:stretch}
+@media (min-width:40rem){.bars{gap:2px}}
+.bars span{flex:1;min-width:1px;border-radius:2px;background:var(--border)}
+.bars .u-up{background:var(--c-operational-fg)}
+.bars .u-degraded{background:var(--c-degraded-fg)}
+.bars .u-down{background:var(--c-major_outage-fg)}
+.bars .u-none{background:var(--border)}
+.scale{display:flex;justify-content:space-between;gap:.5rem;color:var(--muted);font-size:.75rem;margin-top:.25rem;white-space:nowrap}
+.window{color:var(--muted);font-size:.875rem;margin-top:.25rem}
+.subscribe{background:var(--card);border:1px solid var(--border);border-radius:.75rem;padding:1rem;margin-top:2rem}
+.subscribe h2{margin:0 0 .25rem}
+.subscribe form{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.75rem}
+.subscribe label{flex-basis:100%;font-size:.875rem;font-weight:600}
+input[type=email]{flex:1 1 14rem;min-width:0;min-height:3rem;font:inherit;font-size:16px;color:var(--fg);background:var(--bg);border:1px solid var(--border);border-radius:.5rem;padding:0 .75rem}
+input[type=email]:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+button{min-height:3rem;padding:0 1.25rem;font:inherit;font-weight:600;color:var(--bg);background:var(--fg);border:0;border-radius:.5rem;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;transition:transform 120ms cubic-bezier(.23,1,.32,1)}
+button:active{transform:scale(.97)}
+.trap{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
+.actions{margin-top:1.5rem;display:flex;flex-wrap:wrap;align-items:center;gap:1rem}
+a{color:inherit}
+@media (prefers-reduced-motion:reduce){button{transition:none}}
 .hint{margin:-.5rem 0 .75rem}
 footer{margin-top:2.5rem;color:var(--muted);font-size:.875rem;display:flex;flex-wrap:wrap;justify-content:space-between;gap:.5rem}
-${COMPONENT_STATUSES.map((s) => `.c-${s}{background:var(--c-${s}-bg);color:var(--c-${s}-fg)}`).join("")}
+${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.c-${s}{background:var(--c-${s}-bg);color:var(--c-${s}-fg)}`).join("")}
 ${PUBLIC_STATUSES.map((s) => `.p-${s}{background:var(--p-${s}-bg);color:var(--p-${s}-fg)}`).join("")}
 `;
 
@@ -131,7 +182,7 @@ function document(locale: Locale, title: string, body: string): string {
 </html>`;
 }
 
-const componentChip = (locale: Locale, status: ComponentStatus) =>
+const componentChip = (locale: Locale, status: ComponentStatus | "maintenance") =>
   `<span class="chip c-${status}"><span class="dot"></span>${say(locale, `component_${status}`)}</span>`;
 
 const publicChip = (locale: Locale, status: PublicStatus) =>
@@ -163,8 +214,67 @@ function pastIncident(locale: Locale, incident: SnapshotIncident): string {
   return `<details class="incident"><summary><h3>${escape(incident.title)}</h3>${resolved}</summary>${incidentBody(locale, incident)}</details>`;
 }
 
-/** The page for a snapshot. */
-export function renderStatusPage(snapshot: StatusSnapshot): string {
+const DAY_FORMAT = { dateStyle: "medium", timeZone: "UTC" } as const;
+
+/**
+ * A component's uptime bar: 90 days as coloured bars (hidden from screen readers, each with its day as a tooltip) and
+ * one text alternative that says the percentage and every day with downtime.
+ */
+function uptimeBar(locale: Locale, component: SnapshotComponent): string {
+  const { uptime } = component;
+  if (!uptime) return "";
+  const day = (date: string) =>
+    new Intl.DateTimeFormat(locale, DAY_FORMAT).format(new Date(`${date}T00:00:00Z`));
+  const describe = (state: UptimeState, date: string, down: number) =>
+    sayUptime(locale, `day_${state}`, { date: day(date), minutes: String(down) });
+  const percent =
+    uptime.percent === null
+      ? sayUptime(locale, "no_data")
+      : sayUptime(locale, "summary", {
+          percent: new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(
+            uptime.percent,
+          ),
+        });
+  const bad = uptime.days.filter((one) => one.state === "degraded" || one.state === "down");
+  const label = [
+    `${component.name}: ${percent}`,
+    ...bad.map((one) => describe(one.state, one.date, one.down)),
+  ].join(". ");
+  const bars = uptime.days
+    .map(
+      (one) =>
+        `<span class="u-${one.state}" title="${escape(describe(one.state, one.date, one.down))}"></span>`,
+    )
+    .join("");
+  return `<div class="uptime"><p class="summary" aria-hidden="true">${escape(percent)}</p><div class="bars" role="img" aria-label="${escape(label)}">${bars}</div><p class="scale" aria-hidden="true"><span>${escape(sayUptime(locale, "start"))}</span><span>${escape(sayUptime(locale, "end"))}</span></p></div>`;
+}
+
+function maintenanceWindow(locale: Locale, window: SnapshotMaintenance, active: boolean): string {
+  const affects =
+    window.components.length > 0
+      ? `<p class="meta">${say(locale, "affects", { list: window.components.join(", ") })}</p>`
+      : "";
+  const range = active
+    ? sayWindow(locale, "window_active", { until: when(window.endsAt, locale) })
+    : sayWindow(locale, "window_upcoming", {
+        time: when(window.startsAt, locale),
+        until: when(window.endsAt, locale),
+      });
+  return `<article class="incident"><header><h3>${escape(window.title)}</h3>${active ? componentChip(locale, "maintenance") : ""}</header><p class="window"><time datetime="${new Date(window.startsAt).toISOString()}">${range}</time></p>${affects}<p class="body">${escape(window.body)}</p></article>`;
+}
+
+function subscribeForm(locale: Locale, slug: string): string {
+  return `<section class="subscribe" aria-labelledby="subscribe"><h2 id="subscribe">${saySubscribe(locale, "form_title")}</h2><p class="meta">${saySubscribe(locale, "form_hint")}</p><form method="post" action="/status/${escape(slug)}/subscribe"><label for="subscribe-email">${saySubscribe(locale, "email_label")}</label><input id="subscribe-email" name="email" type="email" required maxlength="254" autocomplete="email" autocapitalize="none" spellcheck="false" enterkeyhint="send"><span class="trap" aria-hidden="true"><label for="subscribe-website">${saySubscribe(locale, "honeypot")}</label><input id="subscribe-website" name="website" type="text" tabindex="-1" autocomplete="off"></span><button type="submit">${saySubscribe(locale, "submit")}</button></form></section>`;
+}
+
+/**
+ * The page for a snapshot. `slug` and `subscribe` add the email form, which only shows where email can be sent (a page
+ * read from an older snapshot shows it too: subscribing does not depend on the snapshot's version).
+ */
+export function renderStatusPage(
+  snapshot: StatusSnapshot,
+  options: { slug?: string; subscribe?: boolean } = {},
+): string {
   const { locale } = snapshot;
   const groups =
     snapshot.groups.length === 0
@@ -176,7 +286,7 @@ export function renderStatusPage(snapshot: StatusSnapshot): string {
             const rows = group.components
               .map(
                 (component) =>
-                  `<li><span class="name">${escape(component.name)}</span>${componentChip(locale, component.status)}</li>`,
+                  `<li${component.uptime ? ' class="with-bar"' : ""}><span class="name">${escape(component.name)}</span>${componentChip(locale, component.status)}${uptimeBar(locale, component)}</li>`,
               )
               .join("");
             return `${heading}<ul class="list">${rows}</ul>`;
@@ -186,17 +296,91 @@ export function renderStatusPage(snapshot: StatusSnapshot): string {
     snapshot.active.length === 0
       ? ""
       : `<section aria-labelledby="active"><h2 id="active">${say(locale, "active_title")}</h2>${snapshot.active.map((incident) => activeIncident(locale, incident)).join("")}</section>`;
+  const maintenance = snapshot.maintenance ?? [];
+  const upcoming = snapshot.upcoming ?? [];
+  const inProgress =
+    maintenance.length === 0
+      ? ""
+      : `<section aria-labelledby="maintenance"><h2 id="maintenance">${sayWindow(locale, "active_title")}</h2>${maintenance.map((window) => maintenanceWindow(locale, window, true)).join("")}</section>`;
+  const planned =
+    upcoming.length === 0
+      ? ""
+      : `<section aria-labelledby="upcoming"><h2 id="upcoming">${sayWindow(locale, "upcoming_title")}</h2>${upcoming.map((window) => maintenanceWindow(locale, window, false)).join("")}</section>`;
   const history =
     snapshot.history.length === 0
       ? `<p class="empty">${say(locale, "history_empty")}</p>`
       : snapshot.history.map((incident) => pastIncident(locale, incident)).join("");
+  // All operational while a window is under way: say maintenance, not "all systems operational".
+  const banner =
+    snapshot.status === "operational" && maintenance.length > 0
+      ? `<p class="banner c-maintenance" role="status"><span class="dot"></span>${say(locale, "overall_maintenance")}</p>`
+      : `<p class="banner c-${snapshot.status}" role="status"><span class="dot"></span>${say(locale, `overall_${snapshot.status}`)}</p>`;
+  const form = options.subscribe && options.slug ? subscribeForm(locale, options.slug) : "";
   const body = `<h1>${escape(snapshot.title)}</h1>
-<p class="banner c-${snapshot.status}" role="status"><span class="dot"></span>${say(locale, `overall_${snapshot.status}`)}</p>
+${banner}
+${inProgress}
 ${active}
 <section aria-labelledby="components"><h2 id="components">${say(locale, "components_title")}</h2>${groups}</section>
+${planned}
 <section aria-labelledby="history"><h2 id="history">${say(locale, "history_title")}</h2><p class="meta hint">${say(locale, "history_hint")}</p>${history}</section>
+${form}
 <footer><span>${say(locale, "updated", { time: when(snapshot.generatedAt, locale) })}</span><span>${say(locale, "powered")}</span></footer>`;
   return document(locale, `${escape(snapshot.title)} · ${say(locale, "*")}`, body);
+}
+
+/** What a subscription route shows (src/status-subscribers.ts). */
+export type SubscriptionPage =
+  | { kind: "check"; email: string }
+  | { kind: "invalid" }
+  | { kind: "limited" }
+  | { kind: "confirm"; token: string }
+  | { kind: "confirmed" }
+  | { kind: "expired" }
+  | { kind: "manage"; token: string; email: string }
+  | { kind: "unsubscribed" }
+  | { kind: "not_found" }
+  | { kind: "unavailable" };
+
+/** A subscription route's page: the page's name, what happened and, to confirm or unsubscribe, one button. */
+export function renderSubscriptionPage(
+  view: SubscriptionPage,
+  page: { title: string | null; locale: Locale; slug: string },
+): string {
+  const { locale, slug } = page;
+  if (view.kind === "not_found" || view.kind === "unavailable") {
+    return renderStatusMessage(view.kind === "unavailable" ? "unavailable" : "not_found", locale);
+  }
+  // A link whose page moved or is no longer public still works: it names the page by the address it was sent from,
+  // and links back to none.
+  const named = page.title !== null;
+  const name = page.title ?? slug;
+  const args = { page: name, email: "email" in view ? view.email : "" };
+  const parts: Record<SubscriptionPage["kind"], [string, string]> = {
+    check: ["check_title", "check_body"],
+    invalid: ["invalid_title", "invalid_body"],
+    limited: ["limited_title", "limited_body"],
+    confirm: ["confirm_title", "confirm_body"],
+    confirmed: ["confirmed_title", "confirmed_body"],
+    expired: ["expired_title", "expired_body"],
+    manage: ["manage_title", "manage_body"],
+    unsubscribed: ["unsubscribed_title", "unsubscribed_body"],
+    not_found: ["", ""],
+    unavailable: ["", ""],
+  };
+  const [title, text] = parts[view.kind];
+  const base = `/status/${escape(slug)}`;
+  const button =
+    view.kind === "confirm"
+      ? `<form method="post" action="${base}/confirm?t=${escape(encodeURIComponent(view.token))}"><button type="submit">${saySubscribe(locale, "confirm_button")}</button></form>`
+      : view.kind === "manage"
+        ? `<form method="post" action="${base}/unsubscribe?t=${escape(encodeURIComponent(view.token))}"><button type="submit">${saySubscribe(locale, "unsubscribe_button")}</button></form>`
+        : "";
+  const heading = saySubscribe(locale, title);
+  return document(
+    locale,
+    named ? `${heading} · ${escape(name)}` : heading,
+    `${named ? `<p class="meta">${escape(name)}</p>` : ""}<h1>${heading}</h1><p>${saySubscribe(locale, text, args)}</p><div class="actions">${button}${named ? `<a href="${base}">${saySubscribe(locale, "back")}</a>` : ""}</div>`,
+  );
 }
 
 /** No page at this address (or not public), or the snapshot could not be read. */

@@ -436,6 +436,7 @@
   ],
   "monitor_failure_title": "Quando falhar",
   "monitor_stalled": "As verificações de {regions} pararam de chegar. Os monitores de lá mostram Sem dados até voltarem, e ninguém é chamado por isso.",
+  "monitor_check_errors": "O Brigade não conseguiu avaliar as últimas verificações de {monitors}: o padrão do corpo demorou demais. Elas mantêm o último resultado e ninguém é chamado por isso. Simplifique o padrão para corrigir.",
   "monitor_cap": [
     {
       "declarations": ["input part", "input count", "input max"],
@@ -525,6 +526,7 @@
         "field=regions": "Escolha pelo menos uma região.",
         "field=policy": "Essa política não existe mais. Escolha outra.",
         "field=keyword_regex": "Este padrão não é aceito. Lookarounds, referências anteriores e limites de palavra não são, e repetições vão até 100.",
+        "field=keyword_regex_slow": "Este padrão pode demorar demais numa página grande. Use repetições menores, como 50 em vez de 100.",
         "field=headers": "Corrija os cabeçalhos marcados: cada um precisa de nome e valor com caracteres simples, sem credenciais e sem nome repetido.",
         "field=quorum": "Escolha no máximo o número de regiões de onde ele verifica.",
         "field=consecutive": "Use um número inteiro de 1 a 10, ou deixe vazio.",
@@ -594,7 +596,7 @@
         "reason=status": "Recebeu {got}, esperava {expected}",
         "reason=status_any": "Recebeu {got}, esperava 2xx ou 3xx",
         "reason=keyword": "Texto não encontrado",
-        "reason=pattern_slow": "Padrão lento demais para esta página",
+        "reason=pattern_slow": "Erro na verificação: padrão lento demais",
         "reason=missed": "Nenhum sinal a tempo",
         "reason=*": "A verificação falhou"
       }

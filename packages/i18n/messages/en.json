@@ -436,6 +436,7 @@
   ],
   "monitor_failure_title": "When it fails",
   "monitor_stalled": "Checks from {regions} stopped reporting. Monitors there show No data until they report again, and nobody is paged for it.",
+  "monitor_check_errors": "Brigade couldn't judge the latest checks of {monitors}: the body pattern took too long. They keep their last result and nobody is paged for it. Simplify the pattern to fix it.",
   "monitor_cap": [
     {
       "declarations": ["input part", "input count", "input max"],
@@ -525,6 +526,7 @@
         "field=regions": "Pick at least one region.",
         "field=policy": "That policy no longer exists. Pick another.",
         "field=keyword_regex": "This pattern isn't supported. Lookarounds, backreferences and word boundaries aren't, and repeat counts go up to 100.",
+        "field=keyword_regex_slow": "This pattern could take too long on a large page. Use smaller repeat counts, like 50 instead of 100.",
         "field=headers": "Fix the marked headers: each needs a name and a value of plain characters, no credentials, and no name twice.",
         "field=quorum": "Pick at most as many regions as it checks from.",
         "field=consecutive": "Use a whole number from 1 to 10, or leave it empty.",
@@ -594,7 +596,7 @@
         "reason=status": "Got {got}, expected {expected}",
         "reason=status_any": "Got {got}, expected 2xx or 3xx",
         "reason=keyword": "Text not found",
-        "reason=pattern_slow": "Pattern too slow for this page",
+        "reason=pattern_slow": "Check error: pattern too slow",
         "reason=missed": "No ping in time",
         "reason=*": "Check failed"
       }

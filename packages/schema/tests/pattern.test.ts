@@ -1,12 +1,16 @@
 import { describe, expect, test } from "vite-plus/test";
+import { CASE_FOLD_RUNS, CASE_FOLD_UNICODE } from "../src/case-fold.ts";
 import {
   compilePattern,
   matchPattern,
   MAX_PATTERN_PROGRAM,
   MONITOR_PATTERN_MAX,
+  PATTERN_STEPS_PER_CHAR,
+  PATTERN_TOO_SLOW,
   patternProblem,
   type PatternOutcome,
 } from "../src/index.ts";
+import { caseFoldGroups, encode } from "../scripts/case-fold.ts";
 
 /** Whether `pattern` matches `text` (or `too_slow`); throws if it does not compile. */
 function matches(pattern: string, text: string): PatternOutcome {
@@ -126,6 +130,16 @@ describe("what a pattern may not be", () => {
     expect(compiled.ok && compiled.pattern.program.length).toBeLessThanOrEqual(MAX_PATTERN_PROGRAM);
   });
 
+  test("a pattern that could cost more than PATTERN_STEPS_PER_CHAR per character is refused when saved", () => {
+    // 241 instructions, under the program cap, but 140 classes, 101 of them where a match can start: 482 steps.
+    expect(patternProblem("(?:[^<]?){100}a{40}")).toBe(PATTERN_TOO_SLOW);
+    expect(PATTERN_TOO_SLOW).toMatch(/too long on a large page/);
+    const fits = compilePattern("(?:[^<]?){100}a{20}");
+    expect(fits.ok && fits.pattern.cost).toBe(442);
+    // A plain literal as long as a pattern may be costs about twice its length.
+    expect(patternProblem("a".repeat(MONITOR_PATTERN_MAX))).toBeNull();
+  });
+
   // Nested repeats multiply: expanded one copy at a time, `{100}` five deep is 10^10 copies. Each is sized before
   // anything is built, and an empty group (which builds nothing, so no program cap would ever stop it) is refused.
   test.each([
@@ -153,8 +167,8 @@ describe("catastrophic backtracking cannot happen", () => {
     ["^(\\w+\\s?)*$", `${"word ".repeat(BODY / 5 - 1)}!`, false],
     ["(?i)(x+x+)+y", "X".repeat(BODY), false],
     ["(?:a?){60}a{60}", "a".repeat(BODY), true],
-    // About two hundred threads alive at every character: past the step budget, so it gives up instead of finishing.
-    ["(?:a?){60}b", "a".repeat(BODY), "too_slow"],
+    // About two hundred threads alive at every character, and still within the cost it was saved with.
+    ["(?:a?){60}b", "a".repeat(BODY), false],
   ];
 
   test.each(cases)("%j on a 64 KiB body", (pattern, body, expected) => {
@@ -162,6 +176,13 @@ describe("catastrophic backtracking cannot happen", () => {
     expect(matches(pattern, body)).toBe(expected);
     // Generous for slow CI machines; a backtracking engine takes far longer than this on any of them.
     expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  test("a match past its steps gives up as too_slow: the safety net, which a saved pattern never reaches", () => {
+    const compiled = compilePattern("(?:a?){60}b");
+    if (!compiled.ok) throw new Error(compiled.reason);
+    expect(matchPattern(compiled.pattern, "a".repeat(BODY), 8)).toBe("too_slow");
+    expect(matchPattern(compiled.pattern, "a".repeat(BODY))).toBe(false);
   });
 
   test("the work grows linearly with the body, not faster", () => {
@@ -182,15 +203,17 @@ describe("catastrophic backtracking cannot happen", () => {
 });
 
 describe("the work per character is bounded, whatever the text", () => {
-  // Non-ASCII text takes the slow path of every class (a binary search) and, ignoring case, every character has
-  // cases to try. These keep the most threads alive the program cap allows.
+  // Non-ASCII text takes the slow path of every class (a binary search). These keep the most threads alive the cost
+  // cap allows.
   const text = "éжω字Çß🚒Ж".repeat(BODY / 8);
   const worst = [
     "(?i)(?:[à-ÿ0-9\\s\\w]?){100}x",
     "(?:[\\s\\S]?){100}x",
     "(?i)(?:[^a-zé]?){100}x",
+    // As costly as a pattern may be.
+    "(?:[^<]?){100}a{20}",
     "(?i)(.*é){20}x",
-    "(?i)(?:.?){100}(?:[^\\d]?){20}x",
+    "(?i)(?:.?){80}(?:[^\\d]?){20}x",
     "(?i)(?:ж|Ж|é|É|ω|Ω|字|ç|Ç|a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q|r|s|t|u){2}x",
     "(?i)[éжω字ç]+x",
     '(?i)"status":\\s*"(up|ok)"',
@@ -206,9 +229,9 @@ describe("the work per character is bounded, whatever the text", () => {
       expect(matchPattern(compiled.pattern, text)).not.toBe(true);
       best = Math.min(best, performance.now() - started);
     }
-    // Locally about 20 ms; the bound leaves room for a slow CI machine while still catching the seconds the
-    // backtracking-shaped inputs took before (the step budget is what bounds the work, not this clock).
-    expect(best).toBeLessThan(500);
+    // Locally about 100 ms at most; the bound leaves room for a slow CI machine while still catching the seconds the
+    // backtracking-shaped inputs took before (the cost is what bounds the work, not this clock).
+    expect(best).toBeLessThan(1500);
   });
 
   test("an ordinary pattern never runs out of steps", () => {
@@ -225,6 +248,38 @@ describe("the work per character is bounded, whatever the text", () => {
       const compiled = compilePattern(pattern);
       if (!compiled.ok) throw new Error(compiled.reason);
       expect(matchPattern(compiled.pattern, body)).not.toBe("too_slow");
+    }
+  });
+
+  // Each a few hundred steps per character at most: these used to run out of a fixed 64-step budget on long bodies,
+  // and every check then failed. Now the cost is known when they are saved, and they run to the end of any body.
+  const ordinary = [
+    ["[^<>]{0,60}down", "the database is down"],
+    ["[^<]{0,100}error", "<p>an error occurred"],
+    ["(?i)[a-z ]{0,50}(error|fail)", "Checkout: Payment FAILED"],
+    ["(\\w+\\s){0,20}outage", "there is a partial outage"],
+    ['[^"]{0,80}"status":"down"', '{"region":"weur","status":"down"}'],
+  ] as const;
+  const prose = "All systems operational. Every service answered within its usual time today, and nothing is degraded. ";
+  const bodies = {
+    prose: prose.repeat(Math.ceil(60_000 / prose.length)).slice(0, 60_000),
+    json: `[${'{"id":1234,"name":"checkout","status":"up","latency":42},'.repeat(1050)}{}]`.slice(0, 60_000),
+    html: "<li><a href=\"/checkout\">Checkout</a> <span class=\"ok\">Operational</span></li>\n"
+      .repeat(800)
+      .slice(0, 60_000),
+  };
+
+  test.each(ordinary)("%j saves, and matches or rules out on 60 KB of prose, JSON and HTML", (pattern, hit) => {
+    expect(patternProblem(pattern)).toBeNull();
+    const compiled = compilePattern(pattern);
+    if (!compiled.ok) throw new Error(compiled.reason);
+    expect(compiled.pattern.cost).toBeLessThanOrEqual(PATTERN_STEPS_PER_CHAR);
+    for (const body of Object.values(bodies)) {
+      expect(body.length).toBeGreaterThanOrEqual(59_000);
+      expect(matchPattern(compiled.pattern, body)).toBe(false);
+      // At the very end, so the whole body is walked first.
+      expect(matchPattern(compiled.pattern, `${body}${hit}`)).toBe(true);
+      expect(new RegExp(pattern.replace(/^\(\?i\)/, ""), pattern.startsWith("(?i)") ? "iu" : "u").test(`${body}${hit}`)).toBe(true);
     }
   });
 });
@@ -247,10 +302,61 @@ describe("ignoring case", () => {
     expect(matches("(?i)σ", "ς")).toBe(true);
     expect(matches("(?i)Σ", "ς")).toBe(true);
   });
+
+  // Each pair is compared by its simple case folding on both sides, as `RegExp` with `iu` does: before, only the
+  // body's character had its cases tried, so these disagreed one way or the other.
+  test.each([
+    ["ς", "σ"],
+    ["ς", "Σ"],
+    ["σ", "ς"],
+    ["µ", "μ"],
+    ["μ", "µ"],
+    ["ϐ", "β"],
+    ["β", "ϐ"],
+    ["ϑ", "θ"],
+    ["ϴ", "ϑ"],
+    ["θ", "ϴ"],
+    ["ǅ", "ǆ"],
+    ["Ǆ", "ǅ"],
+    ["ι", "ι"],
+    ["ẞ", "ß"],
+    ["ß", "ẞ"],
+    ["ſ", "s"],
+    ["S", "ſ"],
+    ["i", "ı"],
+    ["ı", "I"],
+    ["İ", "i"],
+    ["K", "k"],
+    ["k", "K"],
+    ["Ω", "Ω"],
+    ["ΐ", "ΐ"],
+  ])("(?i)%s against %s agrees with RegExp iu", (pattern, body) => {
+    const expected = new RegExp(pattern, "iu").test(body);
+    expect(matches(`(?i)${pattern}`, body)).toBe(expected);
+    expect(matches(`(?i)[${pattern}]`, body)).toBe(expected);
+    expect(matches(`(?i)[^${pattern}]`, body)).toBe(!expected);
+  });
+
+  test("\\w and \\W ignoring case take the Kelvin sign and the long s as JavaScript does", () => {
+    for (const char of ["K", "ſ"]) {
+      for (const pattern of ["\\w", "\\W", "[\\w]", "[^\\w]", "[\\W]", "[^\\W]"]) {
+        expect(matches(`(?i)^${pattern}$`, char)).toBe(new RegExp(`^${pattern}$`, "iu").test(char));
+        expect(matches(`^${pattern}$`, char)).toBe(new RegExp(`^${pattern}$`, "u").test(char));
+      }
+    }
+  });
+
+  test.skipIf(process.versions.unicode !== CASE_FOLD_UNICODE)(
+    "the committed table is what this engine's RegExp derives",
+    () => {
+      expect(encode(caseFoldGroups()).join(",")).toBe(CASE_FOLD_RUNS);
+    },
+  );
 });
 
-// The engine against JavaScript's own, over the syntax both accept and text without the few characters whose case
-// folding JavaScript treats differently (the Kelvin sign, the long s, final sigma). Seeded, so a failure reproduces.
+// The engine against JavaScript's own, over the syntax both accept and text that includes the characters whose case
+// folding is easy to get wrong (final sigma, micro, sharp s, long s, dotless i, the Kelvin sign). Seeded, so a
+// failure reproduces.
 describe("the same answers as RegExp", () => {
   /** Mulberry32: a small seeded generator, so every run tries the same cases. */
   function generator(seed: number) {
@@ -290,6 +396,19 @@ describe("the same answers as RegExp", () => {
     "ç",
     "字",
     "ß",
+    "ς",
+    "σ",
+    "Σ",
+    "µ",
+    "μ",
+    "ẞ",
+    "ſ",
+    "ı",
+    "K",
+    "ϑ",
+    "s",
+    "i",
+    "k",
     "🚒",
   ];
   const TEXT = [...LETTERS, ".", "(", ")", "\n", "\t", "!"];

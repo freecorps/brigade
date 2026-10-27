@@ -431,7 +431,10 @@ export type MonitorCheck = {
   colo: string | null;
   /** The HTTP status of the last check, if it got one. */
   httpStatus: number | null;
-  /** Why the last check failed (`timeout`, `status`, `keyword`, `network`, `blocked`, `missed`); null if it passed. */
+  /**
+   * Why the last check failed (`timeout`, `status`, `keyword`, `network`, `blocked`, `missed`); null if it passed.
+   * Or a check error (`CHECK_ERRORS`: the check could not be judged), kept with either verdict, which it did not change.
+   */
   error: string | null;
 };
 

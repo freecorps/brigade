@@ -51,6 +51,7 @@ import {
   formatSeconds,
   listsServerError,
   monitorLimitReached,
+  patternFieldReason,
   quorumIsEveryRegion,
   refusedHeaderRows,
   secondsToDown,
@@ -199,7 +200,7 @@ export function MonitorForm({
       ? m.monitor_field_invalid({
           field:
             field === "keyword" && draft.keywordMode === "regex"
-              ? "keyword_regex"
+              ? patternFieldReason(draft.keyword)
               : (tcpFieldReason(field, draft) ?? FIELD_KEYS[field]),
         })
       : undefined;

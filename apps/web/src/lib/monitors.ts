@@ -9,6 +9,7 @@ import {
   createHttpMonitor,
   createTcpMonitor,
   heartbeatToken,
+  isCheckError,
   isCloudflareAddress,
   isFresh,
   MAX_CONSECUTIVE_CHECKS,
@@ -23,6 +24,8 @@ import {
   MONITOR_HEADER_NAME_MAX,
   MONITOR_HEADER_VALUE_MAX,
   normalizeTcpHost,
+  PATTERN_TOO_COMPLEX,
+  PATTERN_TOO_SLOW,
   patternProblem,
   PROBE_REGIONS,
   staleAfterMs,
@@ -111,6 +114,31 @@ export function stalledRegions(
       })
     );
   });
+}
+
+/**
+ * The running monitors with a fresh check error (`CHECK_ERRORS`) from any source: checks Brigade could not judge,
+ * which keep their last verdict and page nobody. In list order.
+ */
+export function checkErrorMonitors<
+  Row extends Pick<MonitorRow, "kind" | "paused" | "intervalSeconds" | "checks">,
+>(rows: readonly Row[], now: number): Row[] {
+  return rows.filter(
+    (row) =>
+      !row.paused &&
+      row.checks.some((check) => isCheckError(check.error) && isFresh(row, check, now)),
+  );
+}
+
+/**
+ * The `monitor_field_invalid` key for a refused pattern: one that is too large or could cost too much on a large page
+ * says to use smaller repeats, anything else what is not supported.
+ */
+export function patternFieldReason(keyword: string): "keyword_regex" | "keyword_regex_slow" {
+  const problem = patternProblem(keyword.trim());
+  return problem === PATTERN_TOO_SLOW || problem === PATTERN_TOO_COMPLEX
+    ? "keyword_regex_slow"
+    : "keyword_regex";
 }
 
 /** The `monitor_check_error` reason for a failed check (`status_any` when any 2xx or 3xx would do). */

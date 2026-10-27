@@ -8,11 +8,18 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   MAX_MONITORS_PER_WORKSPACE,
   newId,
+  PATTERN_TOO_SLOW,
   type Actor,
   type MonitorRow,
   type ProbeRegion,
 } from "@freecorps/brigade-schema";
-import { httpCheck, MAX_BODY_BYTES, USER_AGENT, type HttpCheckConfig } from "../src/check.ts";
+import {
+  httpCheck,
+  MAX_BODY_BYTES,
+  USER_AGENT,
+  type CheckResult,
+  type HttpCheckConfig,
+} from "../src/check.ts";
 import { instanceMonitorCap, toConfig } from "../src/monitors.ts";
 import { MAX_CHECKS_PER_RUN, probeName, type ProbeDO } from "../src/probe.ts";
 import { Shard } from "../src/shard.ts";
@@ -127,18 +134,23 @@ describe("httpCheck with the monitor's options", () => {
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
-  test("a pattern that runs out of steps fails the check as pattern_slow, never stalls it", async () => {
-    // Non-ASCII, so every class is a binary search; `{100}` keeps about two hundred threads alive per character.
-    const body = "éжω字Ç".repeat(MAX_BODY_BYTES / 10);
+  // These ran out of a fixed step budget on long bodies, and every check then failed and paged. A saved pattern now
+  // has a known cost, so it judges any body the probe reads.
+  test.each([
+    ["[^<>]{0,60}down", "the database is down"],
+    ["[^<]{0,100}error", "<p>an error occurred"],
+    ["(?i)[a-z ]{0,50}(error|fail)", "Payment FAILED"],
+    ["(\\w+\\s){0,20}outage", "a partial outage"],
+    ['[^"]{0,80}"status":"down"', '{"status":"down"}'],
+  ])("%j judges a 60 KB body: up when found, keyword when not", async (keyword, hit) => {
+    const prose = "Every service answered within its usual time today, and nothing is degraded. ";
+    const page = prose.repeat(Math.ceil(60_000 / prose.length)).slice(0, 60_000);
+    let body = page;
     const { fetcher } = fakeFetch(() => new Response(body));
-    const started = performance.now();
-    expect(
-      await httpCheck(
-        fetcher,
-        config({ keyword: "(?i)(?:[à-ÿ\\s\\w]?){100}x", keywordMode: "regex" }),
-      ),
-    ).toMatchObject({ ok: false, httpStatus: 200, error: "pattern_slow" });
-    expect(performance.now() - started).toBeLessThan(2000);
+    const check = config({ keyword, keywordMode: "regex" });
+    expect(await httpCheck(fetcher, check)).toMatchObject({ ok: false, error: "keyword" });
+    body = `${page}${hit}`;
+    expect(await httpCheck(fetcher, check)).toMatchObject({ ok: true, error: null });
   });
 });
 
@@ -364,6 +376,96 @@ describe("a monitor's own quorum, streak and severity, end to end", () => {
       expect(shard.store.get("monitors", monitorId)).toMatchObject({ status: "up", alertId: null });
       expect(shard.store.scan("alerts")).toEqual([expect.objectContaining({ status: "resolved" })]);
       expect(shard.store.scan("incidents")).toHaveLength(1);
+    });
+  });
+});
+
+describe("a check error pages nobody", () => {
+  test("a pattern over the cost budget is refused when saved", async () => {
+    const ws = await workspace();
+    const outcome = await ws.run("monitor.createHttp", {
+      id: newId("mon", Date.now(), random),
+      name: "Checkout",
+      url: "https://example.com/health",
+      method: "GET",
+      keyword: "(?:[^<]?){100}a{40}",
+      keywordMode: "regex",
+      intervalSeconds: 60,
+      timeoutSeconds: 5,
+      regions: ["weur"],
+    });
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: {
+        code: "invalid_args",
+        issues: [expect.objectContaining({ path: "keyword", message: PATTERN_TOO_SLOW })],
+      },
+    });
+  });
+
+  test("pattern_slow keeps the region's verdict: no page while up, no recovery while down", async () => {
+    const ws = await workspace();
+    const monitorId = newId("mon", Date.now(), random);
+    const weur = probe(ws.id, "weur");
+    let next: CheckResult = { ok: true, latencyMs: 12, httpStatus: 200, error: null };
+    await runInDurableObject(weur, (instance: ProbeDO) => {
+      instance.fetcher = fakeFetch(() => new Response("ok")).fetcher;
+      instance.check = async () => next;
+    });
+    expect(
+      await ws.run("monitor.createHttp", {
+        id: monitorId,
+        name: "Checkout",
+        url: "https://example.com/health",
+        method: "GET",
+        keyword: "ok",
+        keywordMode: "regex",
+        intervalSeconds: 60,
+        timeoutSeconds: 5,
+        regions: ["weur"],
+        quorum: 1,
+        consecutiveChecks: 1,
+      }),
+    ).toMatchObject({ ok: true });
+    await ws.withShard((_shard, instance) => instance.alarm());
+    await runProbe(weur);
+    const monitor = () => ws.withShard((shard) => shard.store.get("monitors", monitorId)!);
+    expect(await monitor()).toMatchObject({ status: "up" });
+
+    // Two check errors in a row, with a streak of one: neither is a failure, so nothing pages.
+    next = { ok: false, latencyMs: 12, httpStatus: 200, error: "pattern_slow" };
+    await runProbe(weur);
+    await runProbe(weur);
+    expect(await runInDurableObject(weur, (instance: ProbeDO) => instance.rows())).toEqual([
+      expect.objectContaining({ verdict: 1, last_ok: 1, streak: 1 }),
+    ]);
+    // Reported at once, with the verdict it left, so the dashboard says the check could not be judged.
+    expect(await monitor()).toMatchObject({
+      status: "up",
+      alertId: null,
+      checks: [expect.objectContaining({ source: "weur", up: true, error: "pattern_slow" })],
+    });
+    expect(await ws.withShard((shard) => shard.store.scan("incidents"))).toEqual([]);
+
+    // A real failure still pages, and a check error after it does not resolve the alert.
+    next = { ok: false, latencyMs: 12, httpStatus: 200, error: "keyword" };
+    await runProbe(weur);
+    expect(await monitor()).toMatchObject({ status: "down", alertId: expect.any(String) });
+    next = { ok: false, latencyMs: 12, httpStatus: 200, error: "pattern_slow" };
+    await runProbe(weur);
+    expect(await monitor()).toMatchObject({
+      status: "down",
+      alertId: expect.any(String),
+      checks: [expect.objectContaining({ up: false, error: "pattern_slow" })],
+    });
+
+    // A passing check recovers it, and the error is gone.
+    next = { ok: true, latencyMs: 12, httpStatus: 200, error: null };
+    await runProbe(weur);
+    expect(await monitor()).toMatchObject({
+      status: "up",
+      alertId: null,
+      checks: [expect.objectContaining({ up: true, error: null })],
     });
   });
 });

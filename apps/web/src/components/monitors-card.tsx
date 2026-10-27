@@ -3,6 +3,7 @@ import {
   can,
   expectedStatuses,
   formatIncidentNumber,
+  isCheckError,
   MAX_MONITORS_PER_WORKSPACE,
   MONITOR_CAP_MAX,
   monitorAlerting,
@@ -16,6 +17,7 @@ import { cn } from "cn";
 import {
   BellRingIcon,
   CheckIcon,
+  CircleHelpIcon,
   CircleCheckIcon,
   CircleDashedIcon,
   CirclePauseIcon,
@@ -57,6 +59,7 @@ import { formatAge, queryErrorReason } from "@/lib/incidents";
 import {
   checkErrorReason,
   formatLatency,
+  checkErrorMonitors,
   formatStatuses,
   formatSeconds,
   monitorActions,
@@ -409,6 +412,7 @@ export function MonitorsCard() {
         ) : null}
         {status === "error" ? <FormError>{queryErrorReason(error?.code)}</FormError> : null}
         <StalledProbes rows={rows} now={now} locale={locale} />
+        <CheckErrors rows={rows} now={now} locale={locale} />
 
         {rows.length > 0 ? (
           <ul
@@ -566,6 +570,35 @@ function StalledProbes({
     >
       <CloudOffIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
       <span className="min-w-0">{m.monitor_stalled({ regions: names })}</span>
+    </p>
+  );
+}
+
+/**
+ * Monitors whose latest check Brigade could not judge (`checkErrorMonitors`): named once above the list. Their
+ * regions keep their last verdict, so nobody is paged for it (RFC 0007 "Body patterns"); the pattern needs fixing.
+ */
+function CheckErrors({
+  rows,
+  now,
+  locale,
+}: {
+  rows: readonly MonitorRow[];
+  now: number;
+  locale: Locale;
+}) {
+  const unjudged = checkErrorMonitors(rows, now);
+  if (unjudged.length === 0) return null;
+  const names = new Intl.ListFormat(locale, { type: "conjunction" }).format(
+    unjudged.map((row) => row.name),
+  );
+  return (
+    <p
+      role="status"
+      className="flex items-start gap-2 rounded-md bg-sev3 px-3 py-2.5 text-sm text-sev3-foreground"
+    >
+      <CircleHelpIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+      <span className="min-w-0 break-words">{m.monitor_check_errors({ monitors: names })}</span>
     </p>
   );
 }
@@ -885,6 +918,19 @@ function CheckChip({ chip, row, locale }: { chip: SourceChip; row: MonitorRow; l
     );
   }
   const { check } = chip;
+  if (isCheckError(check.error)) {
+    // Not the target's failure: neither up nor down, and it changed neither (`CHECK_ERRORS`).
+    return (
+      <li className={cn(base, "flex-wrap border-sev3-foreground/40 text-sev3-foreground")}>
+        <CircleHelpIcon aria-hidden className="size-3 shrink-0" />
+        <span className="whitespace-nowrap">{where}</span>
+        {check.colo === null ? null : <span className="font-medium">{check.colo}</span>}
+        <span className="font-medium">
+          {m.monitor_check_error({ reason: check.error ?? "", got: "", expected: "" })}
+        </span>
+      </li>
+    );
+  }
   return (
     <li
       className={cn(

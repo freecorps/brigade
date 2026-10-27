@@ -21,17 +21,32 @@
   region has reported nothing for 15 minutes, which re-arms a probe whose alarm was lost. The shard's own alarm sets
   a fallback a minute out before its work and moves it to the next deadline after, and an accepted heartbeat ping
   re-arms it if it is missing.
-- **Cost of slow targets:** a probe runs at most 6 checks at once, HTTP and TCP together, and waits up to the timeout
-  (at most 30 s) for each. Six is also what a Worker allows: at most six connections waiting for their headers or to
-  open, the rest queued (and a queued check's timeout would already be running). So a region whose targets all
-  time out keeps its object busy, and billed for duration, for about
+- **Cost of slow targets:** a probe runs at most 6 checks at once (`PARALLEL_CHECKS`), HTTP and TCP together, and
+  waits up to the timeout (at most 30 s) for each. Six is also what a Worker allows: at most six connections waiting
+  for their headers or to open, the rest queued (and a queued check's timeout would already be running). So a region
+  whose targets all time out keeps its object busy, and billed for duration, for about
   `ceil(checks / 6) × timeout` per run instead of a few hundred milliseconds.
+- **What one region sustains under hanging targets (decided: documented, not capped lower).** A probe is one object
+  per workspace and region, and every check holds one of its six slots until it answers or times out, so when its
+  targets hang it completes about `PARALLEL_CHECKS / timeout` checks per second: 0.2 per second, 12 a minute, at the
+  30 s maximum timeout. Due checks wait their turn, the most overdue first, so every monitor falls behind evenly
+  rather than some starving. A region's result goes stale after `max(3 × interval, 10 min)` (`staleAfterMs`), and a
+  monitor with fewer than half its regions fresh shows "No data" (below), which pages nobody (Q17), so falling behind
+  shows on the dashboard and never as up; when every monitor of a region is stale the Monitors card also says the
+  region stopped reporting. With every target hanging at 30 s, a region keeps about `6 × 600 / 30 = 120` monitors
+  fresh whatever their interval (at a 5 s timeout, about 720); past that, some show "No data" until their targets
+  answer again. The default cap, 100 monitors per workspace (`MAX_MONITORS_PER_WORKSPACE`), stays under that, so a
+  workspace on defaults never goes "No data" for this. `MONITOR_CAP_MAX` (10,000) is not lowered to match: targets
+  that answer take a few hundred milliseconds, and a region then runs thousands of checks a minute. An operator who
+  raises `MAX_MONITORS` above about 120 trades that: a workspace whose targets hang together sees some monitors as
+  "No data" rather than checked late, and only its own probes are slowed (one object per workspace and region), not
+  another workspace's.
 - **CPU per alarm (built):** an alarm has 30 s of CPU by default (no `limits.cpu_ms` is set). A run takes at most
   `MAX_CHECKS_PER_RUN` (50) due checks, the most overdue first; the rest stay due, and the next alarm comes a second
   later, so a region with thousands of checks runs them across alarms instead of in one. Each check's CPU is bounded
-  too: a body pattern stops after a fixed number of steps per character of the 64 KiB read (below), at most a few
-  tens of milliseconds, so a run's CPU stays around a second at worst and its wall time (six at once, each within its
-  timeout) a few minutes.
+  too: a saved body pattern costs at most `PATTERN_STEPS_PER_CHAR` steps per character of the 64 KiB read (below),
+  about 100 ms for the costliest measured, so a run's CPU stays within a few seconds at worst and its wall time (six
+  at once, each within its timeout) a few minutes.
 
 ## Check types (v1)
 
@@ -53,18 +68,40 @@
     reads of any body. The program's size is computed before any repeat is expanded, so nested repeats
     (`((a{100}){100}){100}`) are refused without building them, the compiler's own steps are counted, a repeat count is
     read to its closing brace however many digits it has, and repeating something that matches only empty text
-    (`(){100}`) is refused. Matching is bounded per character as well: a match stops after `PATTERN_STEPS_PER_CHAR`
-    (64) steps per character of the body and the check fails as `pattern_slow` ("Pattern too slow for this page"),
-    so the probe pages for it like any failure and never stalls on one body. Classes are compiled to an ASCII table
-    and sorted ranges searched by halves, a character's cases are worked out once per match, the copies a repeat
+    (`(){100}`) is refused.
+  - **Cost (decided: fixed when saved).** A pattern's cost is the most steps a match can take per character of the
+    body, a property of its program: every instruction visited once, every class tested once, and the classes a
+    match can start with added once (`Pattern.cost`, at most twice the program's length). A pattern costing more than
+    `PATTERN_STEPS_PER_CHAR` (448) is refused on save ("Pattern could take too long on a large page: use smaller
+    repeat counts"; the form says the same), so a saved pattern's work on any body is known: at most 448 × 64 Ki,
+    about 29 million steps, and the costliest measured take about 100 ms of CPU. Ordinary patterns cost a few
+    hundred: `[^<]{0,100}error` 313, `[^"]{0,80}"status":"down"` 273, `(\w+\s){0,20}outage` 195. (A
+    first version gave every pattern a flat 64 steps per character, so these ran out of steps on long pages and every
+    check failed and paged.)
+  - **A check error does not page (decided).** The match still counts its steps against the pattern's cost and gives
+    up past it (`too_slow`), as a safety net no saved pattern reaches unless the cost is wrong. The check is then
+    `pattern_slow`, a check error (`CHECK_ERRORS`): Brigade could not judge the body, which says nothing about the
+    target. It changes neither the region's streak nor its verdict, so it neither pages nor resolves an alert; the
+    region reports it at once with the verdict it left, and the dashboard shows "Check error: pattern too slow" on the
+    region and one notice above the list naming the monitors ("they keep their last result and nobody is paged").
+    Paging for it would wake someone for Brigade's own limit; the cost is that a target whose body changes while every
+    check errors is not judged on its body until the pattern is fixed, though its status, timeout and connection are
+    still checked first and still page.
+  - **Matching.** Classes are compiled to an ASCII table and sorted ranges searched by halves, the copies a repeat
     makes share one class and ask it once per character, and the threads a match starts with mid-body are walked
-    once; the worst adversarial patterns measured on 64 KiB of non-ASCII text take about 20 ms of CPU, a pattern of
-    twenty alternative words about 16 ms, and an ordinary one a few milliseconds. A seeded test compares thousands of
-    patterns and bodies with JavaScript's `RegExp` (`u` flag, and `iu` for `(?i)`). Supported: literals, `.`,
-    `\d \w \s` and their negations, escaped punctuation, classes `[a-z]` and `[^…]` (ignoring case, `[^…]` matches
-    a character only when none of its cases is in the class), `^` and `$` (start and end of what was read), groups
-    (they only group), `|`, `* + ?` and `{n,m}` (a lazy `?` after one is accepted and changes nothing), and `(?i)` at
-    the very start to ignore case. Refused on save, with a reason: backreferences, lookahead and lookbehind, named
+    once. A seeded test compares thousands of patterns and bodies with JavaScript's `RegExp` (`u` flag, and `iu` for
+    `(?i)`), over text that includes final sigma, the micro sign, sharp s, long s, dotless i and the Kelvin sign.
+    Supported: literals, `.`, `\d \w \s` and their negations, escaped punctuation, classes `[a-z]` and `[^…]`, `^`
+    and `$` (start and end of what was read), groups (they only group), `|`, `* + ?` and `{n,m}` (a lazy `?` after
+    one is accepted and changes nothing), and `(?i)` at the very start to ignore case.
+  - **Ignoring case (decided: as `iu`).** Two characters are the same letter when they share a simple case folding,
+    as JavaScript's `iu` flags compare them: `ς σ Σ`, `µ μ`, `ß ẞ`, `ſ s S`, the Kelvin sign and `k`, `ϑ θ ϴ`, but not
+    `ı` and `i`. At compile time each literal and class is closed under that relation (a negated item such as `\W`
+    after closing what it negates, so `\w` takes the Kelvin sign and the long s, as `iu` does), and the body's
+    character is then matched as it is. The relation comes from a table derived from the engine's own `RegExp` by
+    `packages/schema/scripts/case-fold.ts` (about 1,500 groups, 2.6 KB as runs), which a test derives again on the
+    same Unicode version. Comparing the body's character's own cases only, as a first version did, disagreed with
+    `iu` whenever folding is not symmetric under upper and lower case. Refused on save, with a reason: backreferences, lookahead and lookbehind, named
     groups and word boundaries, which a linear engine does not run. The same compiler checks a pattern in the
     dashboard, in the shard on save, and in the probe before each check (one the rules no longer take fails as
     `keyword`).

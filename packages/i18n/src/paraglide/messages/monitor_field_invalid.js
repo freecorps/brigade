@@ -25,6 +25,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "regions" | "Pick at least one region." |
 * | "policy" | "That policy no longer exists. Pick another." |
 * | "keyword_regex" | "This pattern isn't supported. Lookarounds, backreferences and word boundaries aren't, and repeat counts go up to 100." |
+* | "keyword_regex_slow" | "This pattern could take too long on a large page. Use smaller repeat counts, like 50 instead of 100." |
 * | "headers" | "Fix the marked headers: each needs a name and a value of plain characters, no credentials, and no name twice." |
 * | "quorum" | "Pick at most as many regions as it checks from." |
 * | "consecutive" | "Use a whole number from 1 to 10, or leave it empty." |
@@ -52,6 +53,7 @@ export const monitor_field_invalid = /** @type {((inputs: Monitor_Field_InvalidI
 		if (i?.field === "regions") return /** @type {LocalizedString} */ (`Escolha pelo menos uma região.`);
 		if (i?.field === "policy") return /** @type {LocalizedString} */ (`Essa política não existe mais. Escolha outra.`);
 		if (i?.field === "keyword_regex") return /** @type {LocalizedString} */ (`Este padrão não é aceito. Lookarounds, referências anteriores e limites de palavra não são, e repetições vão até 100.`);
+		if (i?.field === "keyword_regex_slow") return /** @type {LocalizedString} */ (`Este padrão pode demorar demais numa página grande. Use repetições menores, como 50 em vez de 100.`);
 		if (i?.field === "headers") return /** @type {LocalizedString} */ (`Corrija os cabeçalhos marcados: cada um precisa de nome e valor com caracteres simples, sem credenciais e sem nome repetido.`);
 		if (i?.field === "quorum") return /** @type {LocalizedString} */ (`Escolha no máximo o número de regiões de onde ele verifica.`);
 		if (i?.field === "consecutive") return /** @type {LocalizedString} */ (`Use um número inteiro de 1 a 10, ou deixe vazio.`);
@@ -73,6 +75,7 @@ export const monitor_field_invalid = /** @type {((inputs: Monitor_Field_InvalidI
 		if (i?.field === "regions") return /** @type {LocalizedString} */ (`Pick at least one region.`);
 		if (i?.field === "policy") return /** @type {LocalizedString} */ (`That policy no longer exists. Pick another.`);
 		if (i?.field === "keyword_regex") return /** @type {LocalizedString} */ (`This pattern isn't supported. Lookarounds, backreferences and word boundaries aren't, and repeat counts go up to 100.`);
+		if (i?.field === "keyword_regex_slow") return /** @type {LocalizedString} */ (`This pattern could take too long on a large page. Use smaller repeat counts, like 50 instead of 100.`);
 		if (i?.field === "headers") return /** @type {LocalizedString} */ (`Fix the marked headers: each needs a name and a value of plain characters, no credentials, and no name twice.`);
 		if (i?.field === "quorum") return /** @type {LocalizedString} */ (`Pick at most as many regions as it checks from.`);
 		if (i?.field === "consecutive") return /** @type {LocalizedString} */ (`Use a whole number from 1 to 10, or leave it empty.`);

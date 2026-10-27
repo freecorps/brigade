@@ -89,6 +89,19 @@ export const CONSECUTIVE_CHECKS = 2;
  * dashboard's latency and colo stay fresh without a shard version per check. Heartbeats refresh alike.
  */
 export const REPORT_EVERY_MS = 5 * 60 * 1000;
+/**
+ * Check errors (decided, RFC 0007 "Body patterns"): a check Brigade could not judge, which says nothing about the
+ * target. `pattern_slow`: the body pattern gave up past the cost it was saved with, which a saved pattern never does
+ * unless that bound is wrong. A check error changes no streak and no verdict, so it pages nobody and resolves
+ * nothing: the region keeps its last verdict and reports the error with it, and the dashboard shows "Check error"
+ * and a notice.
+ */
+export const CHECK_ERRORS = ["pattern_slow"] as const;
+
+/** Whether `error` is a check error (`CHECK_ERRORS`) rather than the target failing a check. */
+export function isCheckError(error: string | null | undefined): boolean {
+  return (CHECK_ERRORS as readonly string[]).includes(error ?? "");
+}
 /** The severity of the incident a monitor opens, unless it names its own (`MonitorRow.severity`). */
 export const MONITOR_INCIDENT_SEVERITY: Severity = "sev2";
 
@@ -1375,7 +1388,11 @@ export const deleteMonitor = defineMutation({
   },
 });
 
-/** The highest cap an instance or a workspace may set: past it one shard's alarm and probes carry too much. */
+/**
+ * The highest cap an instance or a workspace may set: past it one shard's alarm and probes carry too much. Above
+ * about 120 a region whose targets all hang at the 30 s timeout cannot keep every monitor fresh, and some show
+ * "No data" until their targets answer; an operator raising `MAX_MONITORS` past that accepts it (RFC 0007).
+ */
 export const MONITOR_CAP_MAX = 10_000;
 
 export type MonitorCapChanged = DomainEvent<"monitor.cap_changed", { cap: number | null }>;
@@ -1546,13 +1563,15 @@ export const reportMonitorCheck = defineMutation({
 
     const { open, id, ...result } = args;
     // An up verdict can carry the error of a single failed check that did not flip it: that is no reason, and is
-    // neither stored nor sent.
-    const check: MonitorCheck = { ...result, error: result.up ? null : result.error };
+    // neither stored nor sent. A check error is kept with either verdict, so the dashboard can say the check could
+    // not be judged; it changed no verdict.
+    const reason = (c: Pick<MonitorCheck, "up" | "error">) =>
+      c.up && !isCheckError(c.error) ? null : c.error;
+    const check: MonitorCheck = { ...result, error: reason(result) };
     const checks = [...monitor.checks.filter((c) => c.source !== args.source), check].sort(
       (a, b) => sources.indexOf(a.source) - sources.indexOf(b.source),
     );
     const events: DomainEvent[] = [];
-    const reason = (c: MonitorCheck) => (c.up ? null : c.error);
     if (!previous || previous.up !== check.up || reason(previous) !== reason(check)) {
       events.push({
         type: "monitor.checked",

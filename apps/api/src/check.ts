@@ -50,8 +50,10 @@ export type TcpCheckConfig = {
 };
 
 /**
- * One check's outcome. `error` names why it failed; null when it passed. `pattern_slow`: the body pattern gave up
- * (`PATTERN_STEPS_PER_CHAR`) before finding or ruling out a match, which fails the check rather than hold the probe.
+ * One check's outcome. `error` names why it failed; null when it passed. `pattern_slow` is a check error
+ * (`CHECK_ERRORS`), not a failure of the target: the body pattern gave up past the cost it was saved with before
+ * finding or ruling out a match, which no saved pattern does unless that bound is wrong. The probe then leaves the
+ * region's verdict as it was, so it pages nobody.
  */
 export type CheckResult = {
   ok: boolean;

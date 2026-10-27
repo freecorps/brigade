@@ -16,7 +16,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "status" | "Got {got}, expected {expected}" |
 * | "status_any" | "Got {got}, expected 2xx or 3xx" |
 * | "keyword" | "Text not found" |
-* | "pattern_slow" | "Pattern too slow for this page" |
+* | "pattern_slow" | "Check error: pattern too slow" |
 * | "missed" | "No ping in time" |
 * | * | "Check failed" |
 *
@@ -33,7 +33,7 @@ export const monitor_check_error = /** @type {((inputs: Monitor_Check_ErrorInput
 		if (i?.reason === "status") return /** @type {LocalizedString} */ (`Recebeu ${i?.got}, esperava ${i?.expected}`);
 		if (i?.reason === "status_any") return /** @type {LocalizedString} */ (`Recebeu ${i?.got}, esperava 2xx ou 3xx`);
 		if (i?.reason === "keyword") return /** @type {LocalizedString} */ (`Texto não encontrado`);
-		if (i?.reason === "pattern_slow") return /** @type {LocalizedString} */ (`Padrão lento demais para esta página`);
+		if (i?.reason === "pattern_slow") return /** @type {LocalizedString} */ (`Erro na verificação: padrão lento demais`);
 		if (i?.reason === "missed") return /** @type {LocalizedString} */ (`Nenhum sinal a tempo`);
 		return /** @type {LocalizedString} */ (`A verificação falhou`)
 	}
@@ -44,7 +44,7 @@ export const monitor_check_error = /** @type {((inputs: Monitor_Check_ErrorInput
 		if (i?.reason === "status") return /** @type {LocalizedString} */ (`Got ${i?.got}, expected ${i?.expected}`);
 		if (i?.reason === "status_any") return /** @type {LocalizedString} */ (`Got ${i?.got}, expected 2xx or 3xx`);
 		if (i?.reason === "keyword") return /** @type {LocalizedString} */ (`Text not found`);
-		if (i?.reason === "pattern_slow") return /** @type {LocalizedString} */ (`Pattern too slow for this page`);
+		if (i?.reason === "pattern_slow") return /** @type {LocalizedString} */ (`Check error: pattern too slow`);
 		if (i?.reason === "missed") return /** @type {LocalizedString} */ (`No ping in time`);
 		return /** @type {LocalizedString} */ (`Check failed`)
 	}

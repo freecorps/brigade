@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   CONSECUTIVE_CHECKS,
+  isCheckError,
   MIN_INTERVAL_SECONDS,
   newId,
   REPORT_EVERY_MS,
@@ -41,14 +42,16 @@ const random = (length: number) => crypto.getRandomValues(new Uint8Array(length)
 
 /**
  * Checks run at once per alarm, at most, HTTP and TCP together: a Worker has at most six connections waiting for
- * their response headers or to open, and queues the rest, which would eat into the queued checks' timeouts.
+ * their response headers or to open, and queues the rest, which would eat into the queued checks' timeouts. So with
+ * every target hanging a region completes about `PARALLEL_CHECKS / timeout` checks a second (RFC 0007 "What one
+ * region sustains under hanging targets").
  */
 const PARALLEL_CHECKS = 6;
 /**
  * Checks run per alarm, at most: the most overdue first, and the rest on the next alarm a second later. A body
- * pattern costs at most `PATTERN_STEPS_PER_CHAR` steps per character of the 64 KiB read (a few tens of milliseconds
- * of CPU at worst), so a run stays far inside an alarm's 30 s of CPU however many monitors share the region, and
- * its wall time (six at once, each within its timeout) stays within a few minutes.
+ * pattern costs at most `PATTERN_STEPS_PER_CHAR` steps per character of the 64 KiB read (about 100 ms of CPU for the
+ * costliest), so a run stays inside an alarm's 30 s of CPU however many monitors share the region, and its wall time
+ * (six at once, each within its timeout) stays within a few minutes.
  */
 export const MAX_CHECKS_PER_RUN = 50;
 /** If an alarm run fails before it sets the real next alarm, the one set first fires after this. */
@@ -98,6 +101,9 @@ export class ProbeDO extends DurableObject<Env> {
   fetcher: typeof fetch = (input, init) => fetch(input, init);
   /** Outbound TCP; the tests replace it. */
   connector: Connector = defaultConnector;
+  /** Runs one check; the tests replace it to return results no real target gives (a check error). */
+  check: (config: CheckConfig) => Promise<CheckResult> = (config) =>
+    runCheck(this.fetcher, this.connector, config);
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -168,7 +174,7 @@ export class ProbeDO extends DurableObject<Env> {
     if (due.length > 0 && region && workspaceId) {
       const colo = await observedColo(this.fetcher);
       const results = await mapLimited(due, PARALLEL_CHECKS, (row) =>
-        runCheck(this.fetcher, this.connector, JSON.parse(row.config) as CheckConfig),
+        this.check(JSON.parse(row.config) as CheckConfig),
       );
       due.forEach((row, index) => this.record(row, { ...results[index]!, at: now, colo }, now));
       await this.report(workspaceId, region, now);
@@ -176,20 +182,30 @@ export class ProbeDO extends DurableObject<Env> {
     await this.schedule(now);
   }
 
-  /** Stores one result and the region's verdict after it. */
+  /**
+   * Stores one result and the region's verdict after it. A check error (`CHECK_ERRORS`) says nothing about the
+   * target: it leaves the streak and the verdict as they were, so it neither pages nor resolves, and is reported with
+   * the verdict it left. Starting or ending one is reported at once, not after `REPORT_EVERY_MS`.
+   */
   private record(row: CheckRow, result: Stored, now: number): void {
     const config = JSON.parse(row.config) as CheckConfig;
-    const ok = result.ok ? 1 : 0;
-    const streak = row.last_ok === ok ? row.streak + 1 : 1;
-    // The monitor's own streak length, or CONSECUTIVE_CHECKS. A new check is up on its first success, but down only
-    // after that many failures; after that a verdict flips only after that many alike results (RFC 0007 "Quorum and
-    // flapping").
-    const needed = config.consecutiveChecks ?? CONSECUTIVE_CHECKS;
-    const flips = row.verdict === null ? ok === 1 || streak >= needed : streak >= needed;
-    const verdict = flips ? ok : row.verdict;
+    let { last_ok: ok, streak, verdict } = row;
+    if (!isCheckError(result.error)) {
+      ok = result.ok ? 1 : 0;
+      streak = row.last_ok === ok ? row.streak + 1 : 1;
+      // The monitor's own streak length, or CONSECUTIVE_CHECKS. A new check is up on its first success, but down
+      // only after that many failures; after that a verdict flips only after that many alike results (RFC 0007
+      // "Quorum and flapping").
+      const needed = config.consecutiveChecks ?? CONSECUTIVE_CHECKS;
+      const flips = row.verdict === null ? ok === 1 || streak >= needed : streak >= needed;
+      if (flips) verdict = ok;
+    }
+    const before = row.result === null ? null : (JSON.parse(row.result) as Stored).error;
+    const resend = isCheckError(before) !== isCheckError(result.error);
     // Only if `configure` did not replace the check while it ran.
     this.ctx.storage.sql.exec(
-      `update probe_checks set next_at = ?, last_ok = ?, streak = ?, verdict = ?, result = ?, report_id = ?
+      `update probe_checks set next_at = ?, last_ok = ?, streak = ?, verdict = ?, result = ?, report_id = ?,
+         reported_at = case when ? then null else reported_at end
        where id = ? and config = ?`,
       now + config.intervalSeconds * 1000,
       ok,
@@ -197,6 +213,7 @@ export class ProbeDO extends DurableObject<Env> {
       verdict,
       JSON.stringify(result),
       newId("rep", now, random),
+      resend ? 1 : 0,
       row.id,
       row.config,
     );

@@ -11,6 +11,7 @@ import { expect, test } from "vite-plus/test";
 import {
   checkDraft,
   checkEdit,
+  checkErrorMonitors,
   checkErrorReason,
   draftChanged,
   rebaseDraft,
@@ -29,6 +30,7 @@ import {
   newHeartbeat,
   parseStatuses,
   pausedBy,
+  patternFieldReason,
   quorumIsEveryRegion,
   refusedHeaderRows,
   secondsToDown,
@@ -799,6 +801,48 @@ test("a region is stalled when every running monitor checked from it went quiet,
   expect(stalledRegions([row({ regions: ["weur"], restartedAt: quiet })], now)).toEqual(["weur"]);
   expect(m.monitor_stalled({ regions: "US East and Western Europe" }, { locale: "en" })).toBe(
     "Checks from US East and Western Europe stopped reporting. Monitors there show No data until they report again, and nobody is paged for it.",
+  );
+});
+
+test("a pattern that could cost too much says to use smaller repeats; other refusals say what is not supported", () => {
+  const draft = { ...EMPTY_DRAFT, name: "API", url: "https://example.com" };
+  expect(checkDraft({ ...draft, keyword: "(?:[^<]?){100}a{40}", keywordMode: "regex" }, id())).toEqual({
+    ok: false,
+    fields: ["keyword"],
+  });
+  expect(patternFieldReason("(?:[^<]?){100}a{40}")).toBe("keyword_regex_slow");
+  expect(patternFieldReason("(a|b){100}")).toBe("keyword_regex_slow");
+  expect(patternFieldReason("(?<=a)b")).toBe("keyword_regex");
+  for (const locale of ["en", "pt-BR"] as const) {
+    expect(m.monitor_field_invalid({ field: "keyword_regex_slow" }, { locale })).toMatch(/50/);
+  }
+  // The patterns that used to run out of steps on long pages are accepted.
+  for (const keyword of ["[^<>]{0,60}down", "[^<]{0,100}error", '[^"]{0,80}"status":"down"']) {
+    expect(checkDraft({ ...draft, keyword, keywordMode: "regex" }, id())).toMatchObject({ ok: true });
+  }
+});
+
+test("a fresh check error names its monitor once; a stale one, a paused monitor or a failure do not", () => {
+  const now = 10 * 60 * 60 * 1000;
+  const check = (error: string | null, at = now - 1000, up = true): MonitorCheck => ({
+    source: "weur",
+    at,
+    up,
+    latencyMs: 10,
+    colo: "CDG",
+    httpStatus: 200,
+    error,
+  });
+  const unjudged = row({ name: "Status page", checks: [check("pattern_slow")] });
+  const failing = row({ checks: [check("keyword", now - 1000, false)] });
+  const old = row({ checks: [check("pattern_slow", now - 60 * 60 * 1000)] });
+  const paused = row({ paused: true, checks: [check("pattern_slow")] });
+  expect(checkErrorMonitors([unjudged, failing, old, paused], now)).toEqual([unjudged]);
+  expect(m.monitor_check_error({ reason: "pattern_slow", got: "", expected: "" }, { locale: "en" })).toBe(
+    "Check error: pattern too slow",
+  );
+  expect(m.monitor_check_errors({ monitors: "Status page" }, { locale: "pt-BR" })).toMatch(
+    /ninguém é chamado/,
   );
 });
 

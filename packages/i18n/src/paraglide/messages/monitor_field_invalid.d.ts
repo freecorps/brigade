@@ -22,6 +22,7 @@ export type Monitor_Field_InvalidInputs = {
 * | "regions" | "Pick at least one region." |
 * | "policy" | "That policy no longer exists. Pick another." |
 * | "keyword_regex" | "This pattern isn't supported. Lookarounds, backreferences and word boundaries aren't, and repeat counts go up to 100." |
+* | "keyword_regex_slow" | "This pattern could take too long on a large page. Use smaller repeat counts, like 50 instead of 100." |
 * | "headers" | "Fix the marked headers: each needs a name and a value of plain characters, no credentials, and no name twice." |
 * | "quorum" | "Pick at most as many regions as it checks from." |
 * | "consecutive" | "Use a whole number from 1 to 10, or leave it empty." |

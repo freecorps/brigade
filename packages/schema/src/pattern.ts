@@ -1,33 +1,39 @@
 // The regular expressions an HTTP check may look for in a response body (RFC 0007 "Check types"). Not JavaScript's
 // `RegExp`: its backtracking engine takes exponential time on patterns like `(a+)+$`, and a Worker has no way to stop a
 // running match, so one monitor could hold its probe's CPU. Instead a restricted syntax is compiled to a small program
-// and run as a Pike VM (Thompson's construction, every thread in lockstep): the work is at most the program's length
-// for each character of the body, never more, whatever the pattern or the body. The pattern is capped at
-// `MONITOR_PATTERN_MAX` characters and the program at `MAX_PATTERN_PROGRAM` instructions (counted after repeats are
-// expanded, and before they are: a pattern too large is refused without building it), and the probe reads at most
-// 64 KiB of a body. A match also stops after `PATTERN_STEPS_PER_CHAR` steps per character of the body and reports that
-// it gave up, so one check's CPU is bounded by the body's length, not by the program's.
+// and run as a Pike VM (Thompson's construction, every thread in lockstep): the steps per character of the body are
+// at most the program's length plus its classes and the classes a match can start with (`Pattern.cost`), whatever the pattern or the body. The pattern
+// is capped at `MONITOR_PATTERN_MAX` characters and the program at `MAX_PATTERN_PROGRAM` instructions (counted after
+// repeats are expanded, and before they are: a pattern too large is refused without building it), and a pattern whose
+// cost is over `PATTERN_STEPS_PER_CHAR` is refused when it is saved, so the cost of a check is known then: at most
+// that many steps for each character of the 64 KiB the probe reads. The match still counts its steps against the
+// pattern's cost and gives up past it (`too_slow`), which a saved pattern never reaches unless this bound is wrong.
 //
 // Supported: literals; `.` (any character but a line break); `\d \D \w \W \s \S`; escaped punctuation (`\.`, `\(`, …);
 // `\n \r \t \f \v`; classes `[a-z_]` and `[^…]` (with the escapes above); `^` and `$` (start and end of the body);
 // groups `( )` and `(?: )`, which only group; `|`; `* + ?`, `{n}`, `{n,}` and `{n,m}` (n and m at most 100; a lazy
 // `?` after one is accepted and changes nothing, since only whether it matches counts); and `(?i)` at the very start,
-// for a match that ignores case. Refused, with a reason: backreferences, lookahead and lookbehind, named groups, word
-// boundaries and other escapes, and repeating something that matches only empty text (`(){3}`). A `{` that does not
-// start a repeat is a literal, as in JavaScript.
+// for a match that ignores case as JavaScript's `iu` flags do: two characters are the same letter when they share a
+// simple case folding (`ς σ Σ`, the Kelvin sign and `k`, but not `ı` and `i`). Refused, with a reason:
+// backreferences, lookahead and lookbehind, named groups, word boundaries and other escapes, and repeating something
+// that matches only empty text (`(){3}`). A `{` that does not start a repeat is a literal, as in JavaScript.
+
+import { CASE_FOLD_RUNS } from "./case-fold.ts";
 
 /** The longest pattern a monitor may have, in UTF-16 code units (as the keyword). */
 export const MONITOR_PATTERN_MAX = 200;
-/** At most this many instructions once repeats are expanded: the work per body character. */
+/** At most this many instructions once repeats are expanded; `PATTERN_STEPS_PER_CHAR` refuses some smaller ones. */
 export const MAX_PATTERN_PROGRAM = 256;
 /** The largest count in `{n,m}`. */
 export const MAX_PATTERN_REPEAT = 100;
 /**
- * The steps a match may take per character of the body (one thread visited or tested is a step), plus one character's
- * worth for the empty body. An ordinary pattern takes a few per character; past this the match gives up as
- * `too_slow`, so the probe records a failed check with that reason instead of spending its alarm on one body.
+ * The most steps per character of the body a pattern may cost (`Pattern.cost`: one thread visited or tested is a
+ * step); a pattern that could take more is refused when saved. A cost is at most twice the program's length (every
+ * class a match starts with past the first needs a split), so this admits any program of up to 224 instructions and
+ * some longer ones. Times the 64 KiB a probe reads, it is the most work one check's match can do: about 29 million
+ * steps; the costliest patterns measured take about 100 ms of CPU (RFC 0007 "Body patterns").
  */
-export const PATTERN_STEPS_PER_CHAR = 64;
+export const PATTERN_STEPS_PER_CHAR = 448;
 /** Nodes the compiler may visit while expanding repeats: refused past it, whatever the program's size. */
 const MAX_COMPILE_STEPS = 64 * MAX_PATTERN_PROGRAM;
 
@@ -45,8 +51,8 @@ type Node =
 /**
  * A class compiled for matching: `ascii` says whether each ASCII character is in the class's positive set, `ranges`
  * holds that set's sorted, disjoint ranges as `[low, high, low, high, …]` for a binary search, and `negate` (`[^…]`)
- * turns the answer over afterwards, so that ignoring case can ask about every case of a character first. The copies
- * a repeat makes share one, numbered `id`, so a match asks each class about a character once.
+ * turns the answer over afterwards. The copies a repeat makes share one, numbered `id`, so a match asks each class
+ * about a character once.
  */
 type SetInstruction = {
   op: "set";
@@ -64,12 +70,16 @@ type Instruction =
   | { op: "end" }
   | { op: "match" };
 
-/** A compiled pattern: run it with `matchPattern`. */
-export type Pattern = { program: Instruction[]; ignoreCase: boolean };
+/**
+ * A compiled pattern: run it with `matchPattern`. `cost` is the most steps it can take per character of a body, fixed
+ * by its program: every instruction visited once, every class tested once, and the classes a match starts with
+ * (`restartClasses`) added once.
+ */
+export type Pattern = { program: Instruction[]; cost: number };
 
 export type CompiledPattern = { ok: true; pattern: Pattern } | { ok: false; reason: string };
 
-/** Whether a pattern was found, or `too_slow` when the match gave up (`PATTERN_STEPS_PER_CHAR`). */
+/** Whether a pattern was found, or `too_slow` when the match gave up past its cost: a bug, never a saved pattern. */
 export type PatternOutcome = boolean | "too_slow";
 
 const DIGIT: [number, number][] = [[48, 57]];
@@ -131,9 +141,12 @@ export function compilePattern(source: string): CompiledPattern {
     const sizes = new Map<Node, number>();
     sizeOf(node, sizes);
     const program: Instruction[] = [];
-    emit(node, program, sizes, { steps: 0, sets: new Map() });
+    emit(node, program, sizes, { steps: 0, sets: new Map(), ignoreCase });
     program.push({ op: "match" });
-    return { ok: true, pattern: { program, ignoreCase } };
+    const classes = program.filter((instruction) => instruction.op === "set").length;
+    const cost = program.length + classes + restartClasses(program);
+    if (cost > PATTERN_STEPS_PER_CHAR) return { ok: false, reason: PATTERN_TOO_SLOW };
+    return { ok: true, pattern: { program, cost } };
   } catch (error) {
     if (error instanceof PatternError) return { ok: false, reason: error.message };
     throw error;
@@ -340,7 +353,11 @@ const literal = (char: string): Node => ({
   negate: false,
 });
 
-const TOO_COMPLEX = "Pattern is too complex: use fewer or smaller repeats";
+/** Why a pattern whose program is too large is refused. */
+export const PATTERN_TOO_COMPLEX = "Pattern is too complex: use fewer or smaller repeats";
+/** Why a pattern that could cost more than `PATTERN_STEPS_PER_CHAR` steps per character is refused. */
+export const PATTERN_TOO_SLOW =
+  "Pattern could take too long on a large page: use smaller repeat counts, like {0,50} for {0,100}";
 
 /**
  * The instructions `node` expands to, stored in `sizes` for `emit`; refused as soon as any part is larger than a
@@ -373,13 +390,33 @@ function sizeOf(node: Node, sizes: Map<Node, number>): number {
     }
   }
   // One instruction is left for `match`.
-  if (size >= MAX_PATTERN_PROGRAM) throw new PatternError(TOO_COMPLEX);
+  if (size >= MAX_PATTERN_PROGRAM) throw new PatternError(PATTERN_TOO_COMPLEX);
   sizes.set(node, size);
   return size;
 }
 
+/**
+ * How many classes a match starting mid-body waits on first: those reached from the first instruction without reading
+ * a character, where neither `^` nor `$` holds. `matchPattern` adds them at every character.
+ */
+function restartClasses(program: Instruction[]): number {
+  const seen = new Set<number>();
+  const stack = [0];
+  let classes = 0;
+  while (stack.length > 0) {
+    const pc = stack.pop()!;
+    if (seen.has(pc)) continue;
+    seen.add(pc);
+    const instruction = program[pc]!;
+    if (instruction.op === "split") stack.push(instruction.x, instruction.y);
+    else if (instruction.op === "jump") stack.push(instruction.to);
+    else if (instruction.op === "set") classes++;
+  }
+  return classes;
+}
+
 function push(program: Instruction[], instruction: Instruction): number {
-  if (program.length >= MAX_PATTERN_PROGRAM) throw new PatternError(TOO_COMPLEX);
+  if (program.length >= MAX_PATTERN_PROGRAM) throw new PatternError(PATTERN_TOO_COMPLEX);
   program.push(instruction);
   return program.length - 1;
 }
@@ -392,15 +429,18 @@ function emit(
   node: Node,
   program: Instruction[],
   sizes: Map<Node, number>,
-  work: { steps: number; sets: Map<Node, SetInstruction> },
+  work: { steps: number; sets: Map<Node, SetInstruction>; ignoreCase: boolean },
 ): void {
-  if (++work.steps > MAX_COMPILE_STEPS) throw new PatternError(TOO_COMPLEX);
+  if (++work.steps > MAX_COMPILE_STEPS) throw new PatternError(PATTERN_TOO_COMPLEX);
   // Nothing to build: an empty group, or `a{0}`.
   if (sizes.get(node) === 0) return;
   switch (node.kind) {
     case "set": {
       let set = work.sets.get(node);
-      if (!set) work.sets.set(node, (set = compileSet(node.items, node.negate, work.sets.size)));
+      if (!set) {
+        set = compileSet(node.items, node.negate, work.sets.size, work.ignoreCase);
+        work.sets.set(node, set);
+      }
       push(program, set);
       return;
     }
@@ -470,16 +510,84 @@ function complement(ranges: [number, number][]): [number, number][] {
   return out;
 }
 
-/** The class's items merged into one positive set: a table for ASCII and sorted ranges for the rest. */
-function compileSet(items: CharSet[], negate: boolean, id: number): SetInstruction {
-  const positive = normalize(
-    items.flatMap((item) => (item.negate ? complement(normalize(item.ranges)) : item.ranges)),
+/**
+ * The class's items merged into one positive set: a table for ASCII and sorted ranges for the rest. Ignoring case,
+ * the set is closed under case folding first (a negated item such as `\W` after closing what it negates, as
+ * JavaScript's `iu` does), so a match compares the body's character as it is.
+ */
+function compileSet(
+  items: CharSet[],
+  negate: boolean,
+  id: number,
+  ignoreCase: boolean,
+): SetInstruction {
+  const fold = (ranges: [number, number][]) =>
+    ignoreCase ? foldClosed(normalize(ranges)) : normalize(ranges);
+  const positive = fold(
+    items.flatMap((item) => (item.negate ? complement(fold(item.ranges)) : item.ranges)),
   );
   const ascii = new Uint8Array(128);
   for (const [low, high] of positive) {
     for (let code = low; code <= Math.min(high, 127); code++) ascii[code] = 1;
   }
   return { op: "set", id, ascii, ranges: Int32Array.from(positive.flat()), negate };
+}
+
+/** Whether `code` is in `ranges` (sorted and merged). */
+function inRanges(ranges: [number, number][], code: number): boolean {
+  let low = 0;
+  let high = ranges.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (code < ranges[middle]![0]) high = middle - 1;
+    else if (code > ranges[middle]![1]) low = middle + 1;
+    else return true;
+  }
+  return false;
+}
+
+/** The characters that share a simple case folding (`case-fold.ts`), and each one's group: decoded once. */
+let caseGroups: { groups: number[][]; of: Map<number, number[]> } | undefined;
+
+function foldGroups(): { groups: number[][]; of: Map<number, number[]> } {
+  if (caseGroups) return caseGroups;
+  const groups: number[][] = [];
+  const of = new Map<number, number[]>();
+  for (const run of CASE_FOLD_RUNS.split(",")) {
+    const [start, count, stride, ...offsets] = run.split(" ").map((value) => parseInt(value, 36));
+    for (let i = 0; i < count!; i++) {
+      const first = start! + i * stride!;
+      const group = [first, ...offsets.map((offset) => first + offset)];
+      groups.push(group);
+      for (const code of group) of.set(code, group);
+    }
+  }
+  return (caseGroups = { groups, of });
+}
+
+/** `ranges` (sorted and merged) with every character that shares a case folding with one in them. */
+function foldClosed(ranges: [number, number][]): [number, number][] {
+  const { groups, of } = foldGroups();
+  const added: [number, number][] = [];
+  const addGroup = (group: number[]) => {
+    for (const code of group) added.push([code, code]);
+  };
+  let size = 0;
+  for (const [low, high] of ranges) size += high - low + 1;
+  // A few characters are looked up one by one; a large class (`[^<]`) is asked about every group instead.
+  if (size <= groups.length) {
+    for (const [low, high] of ranges) {
+      for (let code = low; code <= high; code++) {
+        const group = of.get(code);
+        if (group) addGroup(group);
+      }
+    }
+  } else {
+    for (const group of groups) {
+      if (group.some((code) => inRanges(ranges, code))) addGroup(group);
+    }
+  }
+  return added.length === 0 ? ranges : normalize([...ranges, ...added]);
 }
 
 /** Whether `code` is in the instruction's positive set (before `negate`): the table, or a binary search. */
@@ -495,45 +603,6 @@ function inSet(instruction: SetInstruction, code: number): boolean {
     else return true;
   }
   return false;
-}
-
-/**
- * Whether `instruction` takes `code`. Ignoring case, a class takes a character when any of its cases is in the class
- * (`variants`), and `[^…]` when none of them is: as JavaScript's `i` flag does.
- */
-function takes(instruction: SetInstruction, code: number, variants: readonly number[]): boolean {
-  let found = inSet(instruction, code);
-  for (let i = 0; !found && i < variants.length; i++) found = inSet(instruction, variants[i]!);
-  return found !== instruction.negate;
-}
-
-const NO_VARIANTS: readonly number[] = [];
-
-/**
- * The code point's other cases: arithmetic for ASCII letters, the case mappings for the rest (also the lower case of
- * the upper case, so `ς` reaches `σ`). Only one-to-one mappings: `ß` uppercases to two characters, which one
- * position cannot hold.
- */
-function caseVariants(code: number): readonly number[] {
-  if (code < 128) {
-    if (code >= 65 && code <= 90) return [code + 32];
-    if (code >= 97 && code <= 122) return [code - 32];
-    return NO_VARIANTS;
-  }
-  const char = String.fromCodePoint(code);
-  const out: number[] = [];
-  const add = (other: string) => {
-    if (other === char || Array.from(other).length !== 1) return;
-    const point = other.codePointAt(0)!;
-    if (!out.includes(point)) out.push(point);
-  };
-  const lower = char.toLowerCase();
-  const upper = char.toUpperCase();
-  add(lower);
-  add(upper);
-  add(upper.toLowerCase());
-  add(lower.toUpperCase());
-  return out.length === 0 ? NO_VARIANTS : out;
 }
 
 const OP = { set: 0, split: 1, jump: 2, start: 3, end: 4, match: 5 } as const;
@@ -566,11 +635,16 @@ function flatten(pattern: Pattern): Flat {
 
 /**
  * Whether `pattern` matches anywhere in `text`. Every possible match is followed at once, one step per character
- * (a Pike VM): each instruction is visited at most once per position, so the work is at most the program's length
- * times the text's, with no backtracking. Past `PATTERN_STEPS_PER_CHAR` steps per character it stops and returns
- * `too_slow`.
+ * (a Pike VM): each instruction is visited at most once per position, so the work is at most the pattern's `cost`
+ * times the text's length, with no backtracking. It counts its steps anyway, and past `stepsPerChar` per character
+ * (the cost, unless a test asks for less) it stops and returns `too_slow`: a safety net that a saved pattern never
+ * reaches unless the cost is wrong.
  */
-export function matchPattern(pattern: Pattern, text: string): PatternOutcome {
+export function matchPattern(
+  pattern: Pattern,
+  text: string,
+  stepsPerChar = pattern.cost,
+): PatternOutcome {
   const { ops, x, y, sets } = flatten(pattern);
   const size = ops.length;
   const seen = new Int32Array(size).fill(-1);
@@ -582,14 +656,12 @@ export function matchPattern(pattern: Pattern, text: string): PatternOutcome {
   const stack = new Int32Array(size * 2 + 2);
   let generation = 0;
   const length = text.length;
-  let budget = PATTERN_STEPS_PER_CHAR * (length + 1);
-  const ignoreCase = pattern.ignoreCase;
+  // Two walks from the start before the first character: at the start of the body, and the one `restart` keeps.
+  let budget = stepsPerChar * (length + 2);
   // Each class's answer for the current character, by set id: `asked` holds the character's index when known.
   const classes = 1 + sets.reduce((most, set) => Math.max(most, set?.id ?? -1), -1);
   const asked = new Int32Array(classes).fill(-1);
   const answer = new Uint8Array(classes);
-  // A body repeats its characters: each one's cases are worked out once per match, not once per thread.
-  const variants = new Map<number, readonly number[]>();
 
   /** Adds the thread at `pc` and everything it reaches without reading to `following`; true when one matches. */
   const add = (pc: number, index: number): boolean => {
@@ -635,12 +707,6 @@ export function matchPattern(pattern: Pattern, text: string): PatternOutcome {
   for (let index = 0; index < length;) {
     const code = text.codePointAt(index)!;
     const after = index + (code > 0xffff ? 2 : 1);
-    let cases = NO_VARIANTS;
-    if (ignoreCase) {
-      const known = variants.get(code);
-      if (known) cases = known;
-      else variants.set(code, (cases = caseVariants(code)));
-    }
     generation++;
     for (let i = 0; i < count; i++) {
       budget--;
@@ -648,7 +714,7 @@ export function matchPattern(pattern: Pattern, text: string): PatternOutcome {
       const set = sets[pc]!;
       if (asked[set.id] !== index) {
         asked[set.id] = index;
-        answer[set.id] = takes(set, code, cases) ? 1 : 0;
+        answer[set.id] = inSet(set, code) !== set.negate ? 1 : 0;
       }
       if (answer[set.id] === 1 && add(pc + 1, after)) return true;
     }

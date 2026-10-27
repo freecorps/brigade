@@ -24,6 +24,7 @@ import {
   roleDefinitions,
   SEVERITIES,
   UPDATE_BODY_MAX,
+  UPDATE_REMOVED,
   type IncidentRow,
   type Role,
   type RoleDefinition,
@@ -905,10 +906,15 @@ function WrittenUpdate({
   const reveal = use(RevealContext);
   const form = useRef<ComponentRef<typeof View>>(null);
   const say = (part: string, reason = "") => m.incident_update_change({ part, time: "", reason });
-  const refuse = (code: Parameters<typeof mutationErrorReason>[0], failed: string) => {
+  // An edit's `conflict` is the same text, or an update removed meanwhile (`UPDATE_REMOVED`).
+  const refuse = (
+    code: Parameters<typeof mutationErrorReason>[0],
+    failed: string,
+    message = "",
+  ) => {
     const text =
       code === "conflict"
-        ? say(failed === "edit_failed" ? "unchanged" : "gone")
+        ? say(failed === "edit_failed" && message !== UPDATE_REMOVED ? "unchanged" : "gone")
         : say(failed, mutationErrorReason(code));
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
     setRefused(text);
@@ -924,7 +930,7 @@ function WrittenUpdate({
     setRefused(null);
     void editUpdate(checked.args).then((outcome) => {
       if (outcome.ok) return;
-      refuse(outcome.error.code, "edit_failed");
+      refuse(outcome.error.code, "edit_failed", outcome.error.message);
       if (outcome.error.code === "invalid_args") {
         setDraft(typed);
         setEditing(true);

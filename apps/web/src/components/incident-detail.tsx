@@ -8,6 +8,7 @@ import {
   missingRoles,
   PAGE_AGAIN_CONFLICTS,
   UPDATE_BODY_MAX,
+  UPDATE_REMOVED,
   type IncidentRow,
   type IncidentStatus,
   type MemberRow,
@@ -983,8 +984,9 @@ function WrittenUpdate({
   const field = useRef<HTMLTextAreaElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
   const say = (part: string, reason = "") => m.incident_update_change({ part, time: "", reason });
-  const refusal = (code: string, failed: "edit_failed" | "remove_failed") =>
-    code === "conflict" && failed === "edit_failed"
+  // An edit's `conflict` is the same text, or an update removed meanwhile (`UPDATE_REMOVED`).
+  const refusal = (code: string, failed: "edit_failed" | "remove_failed", message = "") =>
+    code === "conflict" && failed === "edit_failed" && message !== UPDATE_REMOVED
       ? say("unchanged")
       : code === "conflict"
         ? say("gone")
@@ -1021,7 +1023,7 @@ function WrittenUpdate({
     void editUpdate(checked.args).then((outcome) => {
       setPending(null);
       if (outcome.ok) return;
-      setRefused(refusal(outcome.error.code, "edit_failed"));
+      setRefused(refusal(outcome.error.code, "edit_failed", outcome.error.message));
       // The text stays to try again, unless the update is gone.
       if (outcome.error.code === "invalid_args") {
         setDraft(typed);

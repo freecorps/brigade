@@ -382,8 +382,11 @@ function writtenUpdate(
 }
 
 type UpdateRow = Extract<TimelineRow, { kind: "update" }>;
-/** A patch of an update's own fields: `Omit` over the entry union keeps only the fields every kind has. */
-type TimelinePatch = Partial<Omit<TimelineRow, "id">>;
+/**
+ * A patch of an update's own fields, checked against the update entry: the store's patch type (`Omit` over the entry
+ * union) keeps only the fields every kind has, so a literal passed to it straight would not be checked.
+ */
+type UpdatePatch = Partial<Omit<UpdateRow, "id" | "kind">>;
 
 /** `incident.editUpdate`'s and `incident.deleteUpdate`'s refusal of an update removed already. */
 export const UPDATE_REMOVED = "Update was removed";
@@ -428,7 +431,8 @@ export const editIncidentUpdate = defineMutation({
       count: (entry.edited?.count ?? 0) + 1,
       previous: entry.body,
     };
-    store.update("timeline", entry.id, { body: args.body, edited } as TimelinePatch);
+    const patch: UpdatePatch = { body: args.body, edited };
+    store.update("timeline", entry.id, patch);
     store.update("incidents", args.id, { updatedAt: ctx.now });
     const event: IncidentUpdateEdited = {
       type: "incident.update_edited",
@@ -460,11 +464,12 @@ export const deleteIncidentUpdate = defineMutation({
       by: entry.edited.by,
       count: entry.edited.count,
     };
-    store.update("timeline", entry.id, {
+    const patch: UpdatePatch = {
       body: "",
       removed: { at: ctx.now, by: ctx.actor.id },
       ...(edited && { edited }),
-    } as TimelinePatch);
+    };
+    store.update("timeline", entry.id, patch);
     store.update("incidents", args.id, { updatedAt: ctx.now });
     const event: IncidentUpdateDeleted = {
       type: "incident.update_deleted",

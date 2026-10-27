@@ -398,6 +398,31 @@ test("my own update: edit in place with an edited marker, remove after asking; o
   expect(buttons("Edit")).toHaveLength(0);
 });
 
+test('an edit refused because the update was removed meanwhile shows the removal, never "already says that"', async () => {
+  const view = await incidentPage();
+  await act(async () => setValue($<HTMLTextAreaElement>("textarea")!, "Rolling back"));
+  await click($$("button").find((button) => button.textContent === "Post update"));
+  await view.flush();
+  const timeline = () => card("Timeline")!;
+  await click($$("button", timeline()).find((button) => button.textContent === "Edit"));
+  await act(async () =>
+    setValue($$("textarea", timeline()).at(-1) as HTMLTextAreaElement, "Fixed"),
+  );
+  const entry = view.shard.store
+    .scan("timeline")
+    .find((row) => row.kind === "update" && row.actor === "usr_dev")!;
+  // An owner removes it on the shard while the edit is on its way.
+  view.shard.write({ kind: "user", id: "usr_ana", role: "owner" }, "incident.deleteUpdate", {
+    id: view.id,
+    entryId: entry.id,
+  });
+  await click($$("button", timeline()).find((button) => button.textContent === "Save"));
+  await view.flush();
+  expect(timeline().textContent).toContain("You posted an update, removed by A teammate");
+  expect(timeline().textContent).not.toContain("The update already says that.");
+  expect(timeline().textContent).not.toContain("Fixed");
+});
+
 test("an admin removes anyone's update, and edits none but their own", async () => {
   role = "admin";
   const view = await incidentPage();

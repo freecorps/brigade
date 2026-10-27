@@ -57,6 +57,17 @@ export type Timeline_EntryInputs = {
 * | "status_corrected_edited" | "{actor} corrected an update on the status page" |
 * | "status_corrected_removed" | "{actor} removed an update from the status page" |
 * | "status_corrected_withdrawn" | "{actor} took the incident off the status page" |
+* | "type_set" | "{actor} set the type to {a}" |
+* | "type_changed" | "{actor} changed the type from {a} to {b}" |
+* | "type_cleared" | "{actor} removed the type {a}" |
+* | "type_cleared_deleted" | "{actor} removed the type" |
+* | "type_changed_deleted" | "{actor} changed the type from a deleted one to {a}" |
+* | "services_added" | "{actor} named {a} as affected" |
+* | "services_removed" | "{actor} took {a} off the affected services" |
+* | "services_changed" | "{actor} named {a} as affected and took off {b}" |
+* | "services_updated" | "{actor} changed the affected services" |
+* | "field_set" | "{actor} set {a} to {b}" |
+* | "field_cleared" | "{actor} cleared {a}" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs

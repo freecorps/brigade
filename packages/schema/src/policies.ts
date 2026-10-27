@@ -3,6 +3,7 @@
 // policy is what pages use (RFC 0006 "Who is paged"), unless the monitor that opened the incident names its own;
 // how a run walks a policy is in escalation.ts.
 
+import { dropPolicyFromCatalog } from "./catalog.ts";
 import { idTime } from "./id.ts";
 import { ID_CLOCK_SKEW_MS } from "./incidents.ts";
 import { dropPolicyFromMonitors } from "./monitors.ts";
@@ -86,14 +87,21 @@ export function defaultPolicy(store: MutationStore): EscalationPolicyRow | undef
 }
 
 /**
- * The policy a run on `incidentId` follows (RFC 0003 "Escalation policies"): the policy of the monitor that opened
- * the incident when it names one (`monitor` says which, by its name now), otherwise the default; undefined with
- * neither (the interim rule pages). A monitor deleted since, or a policy gone, falls back to the default.
+ * The policy a run on `incidentId` follows (RFC 0003 "Escalation policies", "Incident types"): the policy of the
+ * incident's type when it names one, else the policy of the monitor that opened the incident (`monitor` says which,
+ * by its name now), otherwise the default; undefined with none (the interim rule pages). A type or monitor deleted
+ * since, or a policy gone, falls through to the next.
  */
 export function incidentPolicy(
   store: MutationStore,
   incidentId: string,
 ): { policy: EscalationPolicyRow; monitor: { id: string; name: string } | null } | undefined {
+  const typeId = store.get("incidents", incidentId)?.typeId;
+  const type = typeId ? store.get("incident_types", typeId) : undefined;
+  const typed = type?.escalationPolicyId
+    ? store.get("escalation_policies", type.escalationPolicyId)
+    : undefined;
+  if (typed) return { policy: typed, monitor: null };
   const opener = openedBy(store, incidentId);
   const own = opener?.policyId ? store.get("escalation_policies", opener.policyId) : undefined;
   if (opener && own) return { policy: own, monitor: { id: opener.id, name: opener.name } };
@@ -268,9 +276,9 @@ export const updatePolicy = defineMutation({
 });
 
 /**
- * Deletes the policy. Deleting the default leaves none, so pages go back to the interim rule (RFC 0006). Monitors
- * that named it go back to the default in the same transaction (`monitor.updated`, `reason: policy_deleted`), so a
- * monitor never names a policy that is gone.
+ * Deletes the policy. Deleting the default leaves none, so pages go back to the interim rule (RFC 0006). Monitors,
+ * services and incident types that named it go back to the default in the same transaction (`monitor.updated`,
+ * `service.updated`, `incident_type.updated`, `reason: policy_deleted`), so nothing names a policy that is gone.
  */
 export const deletePolicy = defineMutation({
   name: "escalation.deletePolicy",
@@ -285,7 +293,11 @@ export const deletePolicy = defineMutation({
       subject: args.id,
       data: { id: args.id, wasDefault: policy.isDefault },
     };
-    return ok(event, ...dropPolicyFromMonitors(store, args.id, ctx));
+    return ok(
+      event,
+      ...dropPolicyFromMonitors(store, args.id, ctx),
+      ...dropPolicyFromCatalog(store, args.id, ctx),
+    );
   },
 });
 

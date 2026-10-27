@@ -296,6 +296,14 @@ Validate the risky assumptions before writing product code. Each spike produces 
 
 - [ ] Alert sources: Grafana, Datadog, Sentry, generic webhook; alert routes
 - [ ] Service catalog; custom fields; incident types; role definitions
+  - Done: services per workspace (name, description, tier, owners: schedules or members, an optional escalation
+    policy), listed on the dashboard with a page each (owners, who of them is on call, active incidents naming it);
+    incident types (default severity, the escalation policy their pages use, required fields), picked when declaring;
+    custom fields (text, one choice, several choices, number, link) set on the incident page and shown read-only in
+    the app; type, services and fields changed as named mutations with timeline entries (RFC 0003).
+  - Left: role definitions; a monitor naming the service it watches; linking services to status page components;
+    filtering incidents by type, service or field; alert routes paging a service's policy; enforcing required fields
+    at a chosen status (opt-in); editing details from the app.
 - [ ] Follow-ups; postmortem draft with Workers AI; exports to R2
 - [ ] Public status page with email subscriptions
   - Done (RFC 0012): one page per workspace with a name, an address (`/status/<slug>`, unique across the instance,
@@ -322,9 +330,12 @@ Validate the risky assumptions before writing product code. Each spike produces 
     delivery log of the last 10 attempts, "Send test event", and auto-disable after a day of failures with an email
     to the owners. A slow receiver never holds back a page: not its time, its Queue retries or its connections.
     Versioned payload types in `packages/schema`.
-  - Left: setting `WEBHOOK_SECRET_KEY` on the deployed environments (owner's call, apps/api/README.md); the OpenAPI
-    reference generated from `packages/schema`; `packages/sdk` (payload types and a signature verifier) published;
-    replaying a given-up delivery; custom headers per endpoint.
+  - The OpenAPI 3.1 reference of the public HTTP routes is in `docs/api/openapi.json`, generated from the route list
+    in `apps/api/src/openapi.ts` and the schema package's validators, kept honest by tests, and served at
+    `GET /api/openapi.json` (RFC 0002 "Public HTTP API").
+  - Left: setting `WEBHOOK_SECRET_KEY` on the deployed environments (owner's call, apps/api/README.md); a `webhooks`
+    section in the reference for their payloads; API tokens (their own design first); `packages/sdk` (payload types
+    and a signature verifier) published; replaying a given-up delivery; custom headers per endpoint.
 
 ## Phase 4 — Open source launch (ongoing)
 

@@ -27,6 +27,9 @@ export const statement = {
   status: ["read", "manage", "publish"],
   // Outbound webhooks (RFC 0005 "Outbound webhooks"): only those who manage them see them, since a URL may carry a token.
   webhook: ["manage"],
+  // The catalog (RFC 0003 "Service catalog", "Incident types", "Custom fields"): `manage` defines services, incident
+  // types and custom fields. Naming an incident's type and services and filling its fields is `incident:update`.
+  catalog: ["read", "manage"],
 } as const;
 
 type Statement = typeof statement;
@@ -49,6 +52,7 @@ export const roles = {
     escalation: ["read", "manage"],
     status: ["read", "manage", "publish"],
     webhook: ["manage"],
+    catalog: ["read", "manage"],
   },
   admin: {
     incident: ["read", "declare", "update", "ack"],
@@ -60,6 +64,7 @@ export const roles = {
     escalation: ["read", "manage"],
     status: ["read", "manage", "publish"],
     webhook: ["manage"],
+    catalog: ["read", "manage"],
   },
   // Responders see what monitors say (they run the incidents monitors open) but do not change what is watched.
   responder: {
@@ -72,6 +77,7 @@ export const roles = {
     escalation: ["read"],
     // Responders run incidents, so they tell the public about them; what the page lists is an admin's call.
     status: ["read", "publish"],
+    catalog: ["read"],
   },
   viewer: {
     incident: ["read"],
@@ -81,6 +87,7 @@ export const roles = {
     schedule: ["read"],
     escalation: ["read"],
     status: ["read"],
+    catalog: ["read"],
   },
 } as const satisfies Record<Role, Grants>;
 

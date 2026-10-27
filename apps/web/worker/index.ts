@@ -6,8 +6,13 @@
 // unchanged, so Slack's requests and the OAuth redirect share the dashboard's origin; without it, 404.
 // `/status` and `/status/*`, the public status page (RFC 0012), go to the API Worker unchanged too: the API renders it from KV,
 // with no session, so it is served from the dashboard's origin without the SPA.
+// `/api/openapi.json` is the API reference (docs/api/openapi.json, generated from apps/api/src/openapi.ts), answered
+// here from the bundle without auth.
+
+import openApi from "../../../docs/api/openapi.json" with { type: "json" };
 
 const API_PREFIX = "/api";
+const OPENAPI_PATH = "/api/openapi.json";
 
 /** The part of a service or assets binding this Worker uses; `Fetcher` satisfies it. */
 export interface Upstream {
@@ -40,6 +45,7 @@ export async function handle(request: Request, env: Upstreams): Promise<Response
   const url = new URL(request.url);
   if (url.pathname.startsWith(SLACK_PREFIX)) return slack(request, env);
   if (isStatusPath(url.pathname)) return forward(request, env, url.pathname);
+  if (url.pathname === OPENAPI_PATH) return reference(request);
   const path = apiPath(url.pathname);
   if (path === undefined) return env.ASSETS.fetch(request);
   url.pathname = path;
@@ -58,6 +64,26 @@ async function forward(forwarded: Request, env: Upstreams, path: string): Promis
     );
     return Response.json({ error: "api_unreachable" }, { status: 502 });
   }
+}
+
+/** The API reference: public, the same for everyone, so any site and any cache may read it. */
+const REFERENCE_BODY = JSON.stringify(openApi);
+
+function reference(request: Request): Response {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return Response.json(
+      { error: "method_not_allowed" },
+      { status: 405, headers: { Allow: "GET, HEAD", "Access-Control-Allow-Origin": "*" } },
+    );
+  }
+  // Serialized once per isolate; HEAD sends the headers alone.
+  return new Response(request.method === "HEAD" ? null : REFERENCE_BODY, {
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "public, max-age=300",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
 }
 
 /** `/slack/*` as it came (path, method, headers, body: Slack signs the raw body), to the Slack Worker. */

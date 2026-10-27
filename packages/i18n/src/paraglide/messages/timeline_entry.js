@@ -57,6 +57,17 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "status_corrected_edited" | "{actor} corrected an update on the status page" |
 * | "status_corrected_removed" | "{actor} removed an update from the status page" |
 * | "status_corrected_withdrawn" | "{actor} took the incident off the status page" |
+* | "type_set" | "{actor} set the type to {a}" |
+* | "type_changed" | "{actor} changed the type from {a} to {b}" |
+* | "type_cleared" | "{actor} removed the type {a}" |
+* | "type_cleared_deleted" | "{actor} removed the type" |
+* | "type_changed_deleted" | "{actor} changed the type from a deleted one to {a}" |
+* | "services_added" | "{actor} named {a} as affected" |
+* | "services_removed" | "{actor} took {a} off the affected services" |
+* | "services_changed" | "{actor} named {a} as affected and took off {b}" |
+* | "services_updated" | "{actor} changed the affected services" |
+* | "field_set" | "{actor} set {a} to {b}" |
+* | "field_cleared" | "{actor} cleared {a}" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs
@@ -113,6 +124,17 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "status_corrected_edited") return /** @type {LocalizedString} */ (`${i?.actor} corrigiu uma atualização na página de status`);
 		if (i?.kind === "status_corrected_removed") return /** @type {LocalizedString} */ (`${i?.actor} removeu uma atualização da página de status`);
 		if (i?.kind === "status_corrected_withdrawn") return /** @type {LocalizedString} */ (`${i?.actor} tirou o incidente da página de status`);
+		if (i?.kind === "type_set") return /** @type {LocalizedString} */ (`${i?.actor} definiu o tipo como ${i?.a}`);
+		if (i?.kind === "type_changed") return /** @type {LocalizedString} */ (`${i?.actor} mudou o tipo de ${i?.a} para ${i?.b}`);
+		if (i?.kind === "type_cleared") return /** @type {LocalizedString} */ (`${i?.actor} tirou o tipo ${i?.a}`);
+		if (i?.kind === "type_cleared_deleted") return /** @type {LocalizedString} */ (`${i?.actor} tirou o tipo`);
+		if (i?.kind === "type_changed_deleted") return /** @type {LocalizedString} */ (`${i?.actor} mudou o tipo de um tipo excluído para ${i?.a}`);
+		if (i?.kind === "services_added") return /** @type {LocalizedString} */ (`${i?.actor} citou ${i?.a} como afetado`);
+		if (i?.kind === "services_removed") return /** @type {LocalizedString} */ (`${i?.actor} tirou ${i?.a} dos serviços afetados`);
+		if (i?.kind === "services_changed") return /** @type {LocalizedString} */ (`${i?.actor} citou ${i?.a} como afetado e tirou ${i?.b}`);
+		if (i?.kind === "services_updated") return /** @type {LocalizedString} */ (`${i?.actor} mudou os serviços afetados`);
+		if (i?.kind === "field_set") return /** @type {LocalizedString} */ (`${i?.actor} definiu ${i?.a} como ${i?.b}`);
+		if (i?.kind === "field_cleared") return /** @type {LocalizedString} */ (`${i?.actor} limpou ${i?.a}`);
 		return /** @type {LocalizedString} */ (`${i?.actor} alterou o incidente`)
 	}
 	{
@@ -163,6 +185,17 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "status_corrected_edited") return /** @type {LocalizedString} */ (`${i?.actor} corrected an update on the status page`);
 		if (i?.kind === "status_corrected_removed") return /** @type {LocalizedString} */ (`${i?.actor} removed an update from the status page`);
 		if (i?.kind === "status_corrected_withdrawn") return /** @type {LocalizedString} */ (`${i?.actor} took the incident off the status page`);
+		if (i?.kind === "type_set") return /** @type {LocalizedString} */ (`${i?.actor} set the type to ${i?.a}`);
+		if (i?.kind === "type_changed") return /** @type {LocalizedString} */ (`${i?.actor} changed the type from ${i?.a} to ${i?.b}`);
+		if (i?.kind === "type_cleared") return /** @type {LocalizedString} */ (`${i?.actor} removed the type ${i?.a}`);
+		if (i?.kind === "type_cleared_deleted") return /** @type {LocalizedString} */ (`${i?.actor} removed the type`);
+		if (i?.kind === "type_changed_deleted") return /** @type {LocalizedString} */ (`${i?.actor} changed the type from a deleted one to ${i?.a}`);
+		if (i?.kind === "services_added") return /** @type {LocalizedString} */ (`${i?.actor} named ${i?.a} as affected`);
+		if (i?.kind === "services_removed") return /** @type {LocalizedString} */ (`${i?.actor} took ${i?.a} off the affected services`);
+		if (i?.kind === "services_changed") return /** @type {LocalizedString} */ (`${i?.actor} named ${i?.a} as affected and took off ${i?.b}`);
+		if (i?.kind === "services_updated") return /** @type {LocalizedString} */ (`${i?.actor} changed the affected services`);
+		if (i?.kind === "field_set") return /** @type {LocalizedString} */ (`${i?.actor} set ${i?.a} to ${i?.b}`);
+		if (i?.kind === "field_cleared") return /** @type {LocalizedString} */ (`${i?.actor} cleared ${i?.a}`);
 		return /** @type {LocalizedString} */ (`${i?.actor} changed the incident`)
 	}
 });

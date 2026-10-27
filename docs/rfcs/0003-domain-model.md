@@ -9,7 +9,7 @@ Names below are the canonical vocabulary for code, API and UI (translated in the
 ```
 Workspace ─┬─ Member (User + role: owner | admin | responder | viewer)
            ├─ Team ── members
-           ├─ Service (catalog) ── owner Team, dependencies, links
+           ├─ Service (catalog) ── owners (schedules, members), tier, escalation policy
            ├─ Monitor ── target, regions, interval, quorum → raises Alerts
            ├─ AlertSource (webhook endpoint + mapper)
            ├─ AlertRoute (match rules → create/attach Incident, page EscalationPolicy)
@@ -59,7 +59,7 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   can be corrected or taken off the page (`incident.editPublishedUpdate`, `.removePublishedUpdate`, `.unpublish`,
   `status:publish`, a `status_corrected` timeline entry; RFC 0012 "Corrections").
 - **Roles** (`incident.assignRole`, `incident:update`, event `incident.role_assigned`): a fixed set until role
-  definitions exist (Phase 3), `commander`, `communications` and `operations`, at most one member each, stored on
+  definitions exist (Phase 3, after the catalog above), `commander`, `communications` and `operations`, at most one member each, stored on
   the incident (`roles`). `userId: null` unassigns. The assignee must be in the shard's member list and not a
   viewer (`invalid_args` on `userId` otherwise).
 - **Members in the shard** (`members` table, query `members.all`, `workspace:read` for every role): a copy of
@@ -333,6 +333,75 @@ How a page uses them is RFC 0006 "Who is paged".
   paged are `page_failed` entries ("Couldn't page Primary: nobody on call"). What each page did on each phone, and
   why someone was or was not paged, is RFC 0006 "Delivery receipts".
 
+## Service catalog
+
+First slice of Phase 3, in `packages/schema` (`catalog.ts`), stored in `WorkspaceDO` like the on-call tables.
+
+- **Service** (`services` table, query `services.all`, most critical first): a name (1 to 80), an optional
+  description (up to 500, multi-line), a **tier** (`tier1` critical, `tier2` important, `tier3` supporting), its
+  **owners** (0 to 10 schedules or members who can respond, the same targets as an escalation level; no teams yet)
+  and an optional escalation policy. The policy is kept for alert routes (Phase 3) and does not page yet: pages
+  follow the incident's type, then the monitor that opened it, then the default policy. At most 100 services per workspace (every client holds them).
+- **Incidents name the services they affect** (`serviceIds` on the incident row, at most 10, `incident.setServices`
+  replacing the list, event `incident.services_changed`, timeline `services_changed` by the names they had then).
+  `incident.declare` takes them too.
+- **Who manages it** (`catalog:read`, `catalog:manage`): owners and admins create, edit and delete services, incident
+  types and custom fields; everyone reads. Naming an incident's type and services and setting its fields is
+  `incident:update`, so responders do it and viewers do not.
+- **References that go away** are handled like the escalation policies' (no dangling owner or policy): deleting a
+  policy unsets it on every service and type (`service.updated`/`incident_type.updated`, `policy_deleted`), deleting a
+  schedule or removing a member (or making them a viewer) takes them out of every service's owners
+  (`schedule_deleted`, `member_removed`; a service left with none reads as unowned). Deleting a service or a type does
+  **not** rewrite the incidents that name it, which would sync every incident for a catalog edit: readers skip a
+  deleted service and show a deleted type as such, and the next change to that incident drops it. So a deleted
+  service's, type's or field's id is never taken again: the shard keeps it (`catalog_deleted`, server-only, one small
+  row per delete) and refuses to create an entry with it (`conflict`). Otherwise a new field of another kind would
+  inherit old values, or a new type the incidents of a deleted one and its policy.
+- Incidents list their services in the order picked, so reordering them is a change too (timeline
+  `services_changed` with nobody added or removed).
+- Not yet: a monitor naming the service it watches, status page components mapped to services (RFC 0012; a
+  component has no service yet), dependencies and links.
+
+## Incident types
+
+- **Type** (`incident_types` table, query `incidentTypes.all`; at most 20 per workspace): a name, an optional
+  description, an optional **default severity**, an optional **escalation policy** and the custom fields it
+  **requires**. Declaring with a type (`incident.declare`'s `typeId`) takes its default severity when the declare
+  names none (else SEV3); the dashboard's form also preselects it. A type or service deleted while a declare waited
+  (offline, queued) is left out rather than refused: declaring never fails on the catalog.
+- **Its policy pages** (`incidentPolicy`, RFC 0006 "Who is paged"): an incident of a type with a policy pages through
+  it while both exist; else the policy of the monitor that opened it, else the default policy, else the interim rule.
+  The type comes first: it is the choice someone made about this incident, the monitor's is about what it watches.
+  The run keeps the policy it started with.
+- **Changing it later** is `incident.setType` (`incident:update`, event `incident.type_changed`, timeline
+  `type_changed` with the types' names then; `fromDeleted` when the type it had was deleted, so it reads as a change
+  from a deleted type). It changes nothing else: severity defaults apply only when declaring, and a run under way
+  keeps its levels.
+
+## Custom fields
+
+- **Field** (`custom_fields` table, query `customFields.all` in creation order; at most 25 per workspace): a name, an
+  optional description and a **kind** fixed at creation: `text` (1 to 500 characters, multi-line), `single_select`,
+  `multi_select` (up to 20 choices), `number` (any finite number up to 1e15 either way) or `link` (`http(s)://`, up to
+  1000). Selects have 1 to 50 options with ids (`opt_…`) and distinct labels, so renaming an option keeps every value.
+- **Values** live on the incident row (`fields`, by field id), set one at a time by `incident.setField` (value `null`
+  clears), checked against the field's kind in the mutation (`checkFieldValue`, the same check the dashboard runs
+  before sending: text rules and sizes, the number bounds, `http(s)` links, live options); event
+  `incident.field_changed`, timeline `field_changed` with the field's name and the value as it read then (a select's
+  labels). Readers take a value only if it still fits its field (`liveValue`), and clients render a link only if it
+  passes the same link check.
+- **Size**: the caps bound an incident's values to about 25k UTF-16 code units (25 link fields of 1000), which is
+  about 25 KiB of UTF-8 for ASCII and at most about 73 KiB if every character takes three bytes. That rides on the
+  incident row in every snapshot and patch; one `incident.setField` frame carries one value, far inside RFC 0004's
+  client frame limit.
+- **Required fields** never hold anything up: declaring, paging and resolving do not wait for paperwork. A required
+  field is flagged on the incident page until filled (`missingFields`), and once filled it can change but not be
+  cleared (`invalid_args`). Enforcing them at a chosen status can come later, opt-in.
+- **What goes away fades**: an option taken out of a field stops counting in values that hold it (`liveValue`); a
+  deleted field leaves every type that required it (`incident_type.updated`, `field_deleted`) and its values are
+  ignored, then dropped by the incident's next field write.
+- Filtering incidents by type, service or field comes later; the mobile app shows them read-only for now.
+
 ## Tenancy and access control
 
 - **Workspace = Better Auth organization** (`organization` plugin). Users can belong to many workspaces and switch
@@ -345,7 +414,7 @@ How a page uses them is RFC 0006 "Who is paged".
 | Role        | Typical permissions                                                                    |
 | ----------- | -------------------------------------------------------------------------------------- |
 | `owner`     | Everything, including billing/deletion and transferring ownership                      |
-| `admin`     | Manage members, integrations, monitors, schedules, escalation policies                 |
+| `admin`     | Manage members, integrations, monitors, schedules, escalation policies, the catalog    |
 | `responder` | Declare/run incidents, ack/escalate pages, edit timeline, manage own on-call overrides |
 | `viewer`    | Read-only (stakeholders)                                                               |
 
@@ -382,7 +451,7 @@ Exact columns are defined in code (`packages/schema`) rather than duplicated her
 
 ## Identifiers
 
-ULIDs, prefixed by type (`inc_…`, `svc_…`, `usr_…`) for readable logs and URLs. Better Auth's rows use them too
+ULIDs, prefixed by type (`inc_…`, `svc_…`, `typ_…`, `fld_…`, `opt_…`, `usr_…`) for readable logs and URLs. Better Auth's rows use them too
 (`advanced.database.generateId`): `usr_` users, `ses_` sessions, `acc_` accounts, `ver_` verifications, `ws_`
 workspaces (organizations), `mem_` members, `inv_` invitations (the shard writes invitation and accepted-member rows
 itself with the same `authId`). A workspace id names its shard. Incidents also get a short

@@ -133,4 +133,19 @@ describe("Slack routing", () => {
     expect(response.status).toBe(404);
     expect(assets.seen).toHaveLength(0);
   });
+
+  test("answers the API reference itself, without auth or the API", async () => {
+    const { api, assets, env } = bindings();
+    const response = await handle(new Request("http://web.test/api/openapi.json"), env);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(await response.json()).toMatchObject({ openapi: "3.1.0" });
+    const post = await handle(
+      new Request("http://web.test/api/openapi.json", { method: "POST" }),
+      env,
+    );
+    expect(post.status).toBe(405);
+    expect(api.seen).toHaveLength(0);
+    expect(assets.seen).toHaveLength(0);
+  });
 });

@@ -32,11 +32,12 @@ import {
 import type { MemberChangeResult } from "./members.ts";
 import { emailSender } from "./email.ts";
 import { consumeDeadLetters, consumeEvents, type NotifyEnv } from "./notify.ts";
-import { receiptWorkspace, type ReceiptResult } from "./receipts.ts";
+import { receiptWorkspace } from "./receipts.ts";
 import { beginSlackInstall } from "./slack-bridge.ts";
 import { configureStatusPage, serveStatusPage } from "./status-route.ts";
 import { readBounded } from "./body.ts";
 import { webhookRequest } from "./webhook-routes.ts";
+import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, RECEIPT_STATUS, USER_ID } from "./http.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
 import {
   IDEMPOTENCY_KEY_HEADER,
@@ -53,8 +54,6 @@ export { WorkspaceDO } from "./workspace.ts";
 
 const WORKSPACE_PATH = /^\/workspaces\/([^/]+)$/;
 const MEMBER_PATH = /^\/workspaces\/([^/]+)\/members\/([^/]+)$/;
-/** A user id as Better Auth makes them here (`usr_<ULID>`), or older plain ids: no encoding, bounded. */
-const USER_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const INVITATIONS_PATH = /^\/workspaces\/([^/]+)\/invitations$/;
 const INVITATION_PATH = /^\/workspaces\/([^/]+)\/invitations\/([^/]+?)(\/resend)?$/;
 const INVITEE_PATH = /^\/invitations\/([^/]+?)(?:\/(accept|decline))?$/;
@@ -650,38 +649,8 @@ export async function changeMember(
   if (!member && (result.code === "not_found" || result.code === "forbidden")) {
     return json({ error: "not_a_member" }, 403);
   }
-  const status = {
-    forbidden: 403,
-    not_found: 404,
-    last_owner: 409,
-    conflict: 409,
-    unavailable: 503,
-    not_applied: 503,
-  }[result.code];
-  return json({ error: result.code }, status);
+  return json({ error: result.code }, MEMBER_STATUS[result.code]);
 }
-
-/** The answer for each invitation refusal (src/invitations.ts `InvitationCode`). */
-const INVITATION_STATUS: Record<InvitationCode, number> = {
-  forbidden: 403,
-  wrong_email: 403,
-  unverified: 403,
-  already_member: 409,
-  already_invited: 409,
-  limit_reached: 409,
-  workspace_full: 409,
-  workspace_limit: 409,
-  conflict: 409,
-  rate_limited: 429,
-  address_limited: 429,
-  inviter_limited: 429,
-  send_limit: 409,
-  too_soon: 429,
-  not_found: 404,
-  expired: 410,
-  unavailable: 503,
-  not_applied: 503,
-};
 
 function invitationAnswer(
   result: { ok: true } | { ok: false; code: InvitationCode },
@@ -932,16 +901,6 @@ export async function acknowledgeIncident(
   return json({ error: status === undefined ? "internal" : result.code }, status ?? 500);
 }
 
-/** The answer for each refusal of an ack; anything else (`internal`, `unknown_mutation`) is a 500. */
-const ACK_STATUS: Partial<Record<Exclude<AckResult, { ok: true }>["code"], number>> = {
-  conflict: 409,
-  invalid_transition: 409,
-  not_found: 404,
-  forbidden: 403,
-  not_a_member: 403,
-  invalid_args: 400,
-};
-
 /**
  * `GET /sync/:workspaceId` with `Upgrade: websocket`: hands the socket to the workspace's shard (RFC 0004
  * "Socket topology"). The Worker authenticates the upgrade (`resolveActor`: 401 without a session, 403 for a
@@ -1025,16 +984,6 @@ export async function receiveHeartbeat(
 
 /** Largest `POST /receipts` body read, in bytes: a token and its JSON. */
 const MAX_RECEIPT_BODY = 1024;
-
-/** How each receipt result answers the phone: it only logs the status, and never retries a 4xx. */
-const RECEIPT_STATUS: Record<ReceiptResult, number> = {
-  recorded: 200,
-  already: 200,
-  invalid: 403,
-  expired: 410,
-  not_found: 404,
-  rate_limited: 429,
-};
 
 /**
  * `POST /receipts` with `{ "token": "…" }`: the phone's Notification Service Extension says it opened a page (RFC

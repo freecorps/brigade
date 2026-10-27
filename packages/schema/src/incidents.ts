@@ -22,6 +22,10 @@ export const INCIDENT_TITLE_MAX = 200;
 export const UPDATE_BODY_MAX = 4000;
 /** How far into the future of the server's clock the time in a client-made id may be. */
 export const ID_CLOCK_SKEW_MS = 10 * 60 * 1000;
+/** The severity of a declare that names none and whose type has no default. */
+export const DEFAULT_SEVERITY: Severity = "sev3";
+/** Services one incident names (RFC 0003 "Service catalog"). */
+export const MAX_INCIDENT_SERVICES = 10;
 
 export type IncidentDeclared = DomainEvent<
   "incident.declared",
@@ -104,7 +108,11 @@ export const declareIncident = defineMutation({
   args: v.object({
     id: incidentId,
     title: v.string({ min: 1, max: INCIDENT_TITLE_MAX }),
-    severity: v.picklist(SEVERITIES),
+    // Left out: the type's default severity, else `DEFAULT_SEVERITY`.
+    severity: v.optional(v.picklist(SEVERITIES)),
+    // RFC 0003 "Incident types", "Service catalog". Left out by clients from before them.
+    typeId: v.optional(v.id("typ")),
+    serviceIds: v.optional(v.array(v.id("svc"), { max: MAX_INCIDENT_SERVICES, unique: true })),
   }),
   permission: "incident:declare",
   apply(store, args, ctx) {
@@ -116,11 +124,15 @@ export const declareIncident = defineMutation({
       ]);
     }
     if (store.get("incidents", args.id)) return fail("conflict", "Incident already exists");
+    // A type or a service deleted while the declare waited (offline, queued) is left out rather than refused:
+    // declaring must not fail on the catalog.
+    const type = args.typeId ? store.get("incident_types", args.typeId) : undefined;
+    const serviceIds = (args.serviceIds ?? []).filter((id: string) => store.get("services", id));
     const row: IncidentRow = {
       id: args.id,
       number: ctx.server ? allocateIncidentNumber(store) : null,
       title: args.title,
-      severity: args.severity,
+      severity: args.severity ?? type?.defaultSeverity ?? DEFAULT_SEVERITY,
       status: "triage",
       declaredAt: ctx.now,
       declaredBy: ctx.actor.id,
@@ -128,6 +140,8 @@ export const declareIncident = defineMutation({
       acknowledgedBy: null,
       roles: {},
       timelineSeq: 0,
+      ...(type && { typeId: type.id }),
+      ...(serviceIds.length > 0 && { serviceIds }),
       updatedAt: ctx.now,
     };
     store.insert("incidents", row);

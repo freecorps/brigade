@@ -27,6 +27,7 @@ import {
   GaugeIcon,
   GlobeIcon,
   HeartPulseIcon,
+  LayersIcon,
   LoaderCircleIcon,
   MessageSquareTextIcon,
   MailWarningIcon,
@@ -34,6 +35,8 @@ import {
   PencilLineIcon,
   PhoneMissedIcon,
   SendIcon,
+  SquarePenIcon,
+  TagIcon,
   TimerOffIcon,
   UserRoundIcon,
   XIcon,
@@ -54,6 +57,7 @@ import { STATUS_ICONS } from "@/components/incident-badges";
 import { SeverityMenu, StatusMenu } from "@/components/incident-item";
 import { ANNOUNCE_MS, useNow } from "@/components/incidents-card";
 import { EscalationProgress } from "@/components/escalation-progress";
+import { IncidentDetailsCard } from "@/components/incident-details";
 import { usePreferences } from "@/components/preferences";
 import { StatusPublishCard } from "@/components/status-publish";
 import { PagingCard, WhyPagedView, type PagingData } from "@/components/why-paged";
@@ -469,6 +473,7 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
           {row.number !== null && pagingReady ? (
             <PagingCard data={paging} who={who} number={row.number} />
           ) : null}
+          <IncidentDetailsCard row={row} />
         </div>
       </div>
     </Shell>
@@ -718,6 +723,9 @@ const ENTRY_ICONS: Record<Exclude<TimelineRow["kind"], "status_changed">, Lucide
   status_corrected: PencilLineIcon,
   escalated: BellRingIcon,
   escalation_exhausted: TimerOffIcon,
+  type_changed: TagIcon,
+  services_changed: LayersIcon,
+  field_changed: SquarePenIcon,
 };
 
 /**

@@ -17,6 +17,7 @@ import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as VerifyEmailRouteImport } from './routes/verify-email'
 import { Route as IncidentsNumberRouteImport } from './routes/incidents.$number'
 import { Route as InvitationsIdRouteImport } from './routes/invitations.$id'
+import { Route as ServicesIdRouteImport } from './routes/services.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -58,6 +59,11 @@ const InvitationsIdRoute = InvitationsIdRouteImport.update({
   path: '/invitations/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ServicesIdRoute = ServicesIdRouteImport.update({
+  id: '/services/$id',
+  path: '/services/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -68,6 +74,7 @@ export interface FileRoutesByFullPath {
   '/verify-email': typeof VerifyEmailRoute
   '/incidents/$number': typeof IncidentsNumberRoute
   '/invitations/$id': typeof InvitationsIdRoute
+  '/services/$id': typeof ServicesIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -78,6 +85,7 @@ export interface FileRoutesByTo {
   '/verify-email': typeof VerifyEmailRoute
   '/incidents/$number': typeof IncidentsNumberRoute
   '/invitations/$id': typeof InvitationsIdRoute
+  '/services/$id': typeof ServicesIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -89,6 +97,7 @@ export interface FileRoutesById {
   '/verify-email': typeof VerifyEmailRoute
   '/incidents/$number': typeof IncidentsNumberRoute
   '/invitations/$id': typeof InvitationsIdRoute
+  '/services/$id': typeof ServicesIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -101,6 +110,7 @@ export interface FileRouteTypes {
     | '/verify-email'
     | '/incidents/$number'
     | '/invitations/$id'
+    | '/services/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -111,6 +121,7 @@ export interface FileRouteTypes {
     | '/verify-email'
     | '/incidents/$number'
     | '/invitations/$id'
+    | '/services/$id'
   id:
     | '__root__'
     | '/'
@@ -121,6 +132,7 @@ export interface FileRouteTypes {
     | '/verify-email'
     | '/incidents/$number'
     | '/invitations/$id'
+    | '/services/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -132,6 +144,7 @@ export interface RootRouteChildren {
   VerifyEmailRoute: typeof VerifyEmailRoute
   IncidentsNumberRoute: typeof IncidentsNumberRoute
   InvitationsIdRoute: typeof InvitationsIdRoute
+  ServicesIdRoute: typeof ServicesIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -192,6 +205,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InvitationsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/services/$id': {
+      id: '/services/$id'
+      path: '/services/$id'
+      fullPath: '/services/$id'
+      preLoaderRoute: typeof ServicesIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -204,6 +224,7 @@ const rootRouteChildren: RootRouteChildren = {
   VerifyEmailRoute: VerifyEmailRoute,
   IncidentsNumberRoute: IncidentsNumberRoute,
   InvitationsIdRoute: InvitationsIdRoute,
+  ServicesIdRoute: ServicesIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

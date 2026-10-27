@@ -137,7 +137,7 @@ async function run(
         : env.DB?.prepare(
             `select id, email, origin from status_subscriber
              where workspace_id = ? and status = 'confirmed' and id > ?
-               and (follows is null
+               and (follows is null or not json_valid(follows)
                  or exists (select 1 from json_each(follows) where value in (select value from json_each(?)))
                  or not exists (select 1 from json_each(follows) where value in (select value from json_each(?))))
              order by id limit ?`,

@@ -798,11 +798,11 @@ export async function serveSubscribers(
       const [follows, everything] = await env.DB.batch<{ key?: string; n: number }>([
         env.DB.prepare(
           `select each.value as key, count(*) as n from status_subscriber, json_each(status_subscriber.follows) as each
-           where workspace_id = ? and status = 'confirmed' and follows is not null group by each.value`,
+           where workspace_id = ? and status = 'confirmed' and json_valid(follows) group by each.value`,
         ).bind(workspaceId),
         env.DB.prepare(
           `select count(*) as n from status_subscriber
-           where workspace_id = ? and status = 'confirmed' and follows is null`,
+           where workspace_id = ? and status = 'confirmed' and (follows is null or not json_valid(follows))`,
         ).bind(workspaceId),
       ]);
       return json({

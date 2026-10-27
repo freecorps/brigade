@@ -1207,6 +1207,18 @@ describe("following components", () => {
     expect(await recipients(t, [made.web])).toEqual([api, core].sort());
   });
 
+  test("an unreadable choice hears of everything and holds back nobody else", async () => {
+    const t = await team();
+    const made = await components(t);
+    const [api, broken] = [visitor(), visitor()];
+    await confirmed(t, api, [statusFollowKey("c", made.api)]);
+    await confirmed(t, broken, [statusFollowKey("c", made.docs)]);
+    await env.DB.prepare("update status_subscriber set follows = ? where email = ?")
+      .bind("{not json", broken)
+      .run();
+    expect(await recipients(t, [made.api])).toEqual([api, broken].sort());
+  });
+
   test("maintenance follows the same rule", async () => {
     const t = await team();
     const made = await components(t);

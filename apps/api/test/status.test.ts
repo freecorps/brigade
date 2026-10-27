@@ -200,6 +200,8 @@ const parkStatus = (t: Team) =>
     const parked = new Proxy(real, {
       get: (target, key) => {
         if (key === "publish") return () => Promise.resolve();
+        // Parked: it asks for no alarm either, or a dirty page would bring the alarm straight back each run.
+        if (key === "nextAt") return () => null;
         const value: unknown = Reflect.get(target, key);
         return typeof value === "function" ? value.bind(target) : value;
       },

@@ -1020,15 +1020,17 @@ describe("paging comes first", () => {
       }
     };
     let mailed = 0;
+    const mailedTo = new Set<string>();
     const mail: EmailSender = {
       id: "test",
-      async send() {
+      async send(email) {
         await take();
         mailPeak = Math.max(mailPeak, ++mailOpen);
         try {
           // 1.2 s: waves start at 0, 1.2 and 2.4 s, none on the 3 s budget's edge (`STATUS_EMAIL_BUDGET_MS`).
           await new Promise((resolve) => setTimeout(resolve, 1200));
           mailed++;
+          mailedTo.add(email.to.email);
           return { ok: true };
         } finally {
           mailOpen--;
@@ -1079,6 +1081,18 @@ describe("paging comes first", () => {
     expect(acked.length + retried.length).toBe(requested.length);
     expect(acked.length).toBeLessThanOrEqual(mailed);
     expect(retried.length).toBeGreaterThanOrEqual(requested.length - mailed);
+    // Each acked confirmation went to its own subscriber (a retried one may have gone too: at least once).
+    const emailOf = async (subscriberId: string) =>
+      (
+        await env.DB.prepare("select email from status_subscriber where id = ?")
+          .bind(subscriberId)
+          .first<{ email: string }>()
+      )?.email;
+    for (const id of acked) {
+      const event = requested[Number(id.slice("msg-".length))]!;
+      const { subscriberId } = event.data as { subscriberId: string };
+      expect(mailedTo).toContain(await emailOf(subscriberId));
+    }
   }, 30_000);
 });
 

@@ -104,7 +104,9 @@ the session are relied on, and the reference says how), `GET /workspaces/:id` (t
 `POST /receipts` (the iOS extension's delivery receipts, RFC 0006), `PUT /workspaces/:id/status-page` (the
 dashboard's status page settings), `POST /workspaces/:id/webhooks` and `POST /workspaces/:id/webhooks/:webhookId/rotate`
 (the dashboard's Webhooks card: they answer a new signing secret once, RFC 0005 "Outbound webhooks"; public once API
-tokens exist) and `/slack/*`. `GET /status/:slug` is the public status page itself (RFC 0012): HTML
+tokens exist), `POST /workspaces/:id/incidents/:incidentId/postmortem/draft`, `POST` and `GET /workspaces/:id/exports…`
+and `GET /features` (the dashboard's AI drafts and exports, RFC 0013) and `/slack/*`. `GET /status/:slug` is the
+public status page itself (RFC 0012): HTML
 for people, not an API. A JSON read of a status page does not exist yet.
 
 **Source of truth.** Request bodies are converted from the `v.*` validators the routes run (`toJsonSchema` in

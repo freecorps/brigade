@@ -305,6 +305,19 @@ Validate the risky assumptions before writing product code. Each spike produces 
     filtering incidents by type, service or field; alert routes paging a service's policy; enforcing required fields
     at a chosen status (opt-in); editing details from the app.
 - [ ] Follow-ups; postmortem draft with Workers AI; exports to R2
+  - Done (RFC 0013): follow-ups on incidents (title, owner, due date, open or done, optional issue link), changed by
+    responders and up with timeline entries and events, overdue on the reader's calendar, an incident's list on its
+    page and the workspace's open ones on the overview and `/follow-ups`, 50 per incident and 500 open per workspace;
+    a postmortem per incident in seven plain-text sections, saved over the revision its editor opened (a stale save
+    is refused and the editor keeps the text); "Draft with AI" (`@cf/meta/llama-3.3-70b-instruct-fp8-fast` through
+    the `AI` binding, in `waitUntil` off the request path, written through a mutation as `sys_ai`, 20 a day per
+    workspace, never reading addresses or devices, marked "AI draft — review before sharing" until a member saves);
+    exports of an incident or a date range to R2 (`EXPORTS`, `workspaces/<id>/`), owners and admins only, downloaded
+    through an authenticated route, expiring after 7 days (refused and deleted on download, swept hourly, lifecycle
+    rule as the backstop). Without either binding the feature is hidden and its route answers 503.
+  - Left: the `brigade-exports-dev` bucket and its `dev` binding, and the `AI` binding in `dev` (manager's call,
+    apps/api/README.md "Deploying dev"); staging and production buckets; the mobile app's follow-ups and postmortem;
+    reminders for follow-ups due; revision history (Q24); issue-tracker sync; postmortem templates per type.
 - [ ] Public status page with email subscriptions
   - Done (RFC 0012): one page per workspace with a name, an address (`/status/<slug>`, unique across the instance,
     claimed in D1) and a language (en, pt-BR), public or a draft; components in optional groups with a status set by

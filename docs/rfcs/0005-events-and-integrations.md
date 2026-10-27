@@ -48,6 +48,13 @@ and `custom_field.deleted`. On incidents: `incident.type_changed` (`from`, `to`:
 `incident.services_changed` (`serviceIds`, `added`, `removed`) and `incident.field_changed` (`fieldId`, `kind`,
 `value`: the text, number or option ids, null when cleared).
 
+Follow-ups, postmortems and exports (RFC 0013) emit `follow_up.created`, `follow_up.updated` (plus `reason`: `edited`,
+or `member_removed` when its owner left), `follow_up.completed`, `follow_up.reopened` and `follow_up.deleted` (each
+with `id`, `incidentId`, `title`, `ownerId`, `dueDate`, `status`); `postmortem.saved` (`incidentId`, `revision`,
+`characters`: never the text), `postmortem.draft_requested` (`incidentId`, `requestId`, `by`), `postmortem.drafted`
+(the same as saved, plus `requestId` and `model`) and `postmortem.draft_failed` (`incidentId`, `requestId`, `reason`);
+and `workspace.exported` (`id`, `scope`, `incidents`, `bytes`, `expiresAt`). No notifier acts on them yet; none pages.
+
 On-call schedules (RFC 0003 "Schedules") emit `schedule.created` (`id`, `name`, `timeZone`, `layers`: how many),
 `schedule.updated` (the same, plus `reason`: `edited`, or `member_removed` with the `userId` taken out of the
 rotations), `schedule.deleted` (`id`, `overrides` deleted with it), `schedule.override_added` (`id`, `scheduleId`,

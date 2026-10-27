@@ -102,7 +102,9 @@ Internal, not part of the contract, may change without notice: `/auth/*` (Better
 the session are relied on, and the reference says how), `GET /workspaces/:id` (the dashboard's stack check),
 `/account/takeover` (the dashboard's notice), `/workspaces/:id/slack/install` (a browser redirect, RFC 0011),
 `POST /receipts` (the iOS extension's delivery receipts, RFC 0006), `PUT /workspaces/:id/status-page` (the
-dashboard's status page settings) and `/slack/*`. `GET /status/:slug` is the public status page itself (RFC 0012): HTML
+dashboard's status page settings), `POST /workspaces/:id/webhooks` and `POST /workspaces/:id/webhooks/:webhookId/rotate`
+(the dashboard's Webhooks card: they answer a new signing secret once, RFC 0005 "Outbound webhooks"; public once API
+tokens exist) and `/slack/*`. `GET /status/:slug` is the public status page itself (RFC 0012): HTML
 for people, not an API. A JSON read of a status page does not exist yet.
 
 **Source of truth.** Request bodies are converted from the `v.*` validators the routes run (`toJsonSchema` in
@@ -115,8 +117,8 @@ for a basic case (and `401` without a session).
 **Auth.** Only the Better Auth session cookie today, with cookie-authenticated writes refusing another site's
 `Origin`. **API tokens** (per workspace, scoped, revocable, hashed at rest, sent as `Authorization: Bearer`) are the
 next item: they need their own design (who may mint them, which roles they carry, how the shard's RBAC sees them as an
-actor) before anything outside a browser can call the API comfortably. Outbound webhook payloads get a `webhooks`
-section in the reference when they land.
+actor) before anything outside a browser can call the API comfortably. Outbound webhook payloads (RFC 0005 "Outbound
+webhooks", their types in `packages/schema`) are not in the reference yet: a `webhooks` section is the next step.
 
 ## Tooling decisions
 

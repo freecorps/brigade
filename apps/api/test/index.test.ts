@@ -9,7 +9,7 @@ import { sessionCookie } from "./session.ts";
 // invitation_repair, slack_states, slack_commands, slack_messages, slack_events, webhook_events, webhook_sends,
 // webhook_emails, status_emails, status_email_days, status_confirm_days, status_subscriber_events and ended_session,
 // created when the shard starts.
-const SYNC_TABLES = 31;
+const SYNC_TABLES = 32;
 
 const ORIGIN = "http://api.test";
 const api = (path: string, init?: RequestInit) => exports.default.fetch(`${ORIGIN}${path}`, init);

@@ -615,8 +615,15 @@ describe("fallbacks (the paging path's)", () => {
       // The alarm stopped waiting on the push when the level fell due, and came back for the level (the runtime may
       // have run that alarm already; if not, it runs now), all while the push still hangs.
       expect(released).toBe(false);
-      await runDurableObjectAlarm(ws.stub);
-      expect(await ws.levels(incident)).toHaveLength(2);
+      // The level is due within 300 ms: run the shard's alarm until it has fired (the runtime may run it first, or run
+      // it while this one waits), all while the push still hangs.
+      await vi.waitFor(
+        async () => {
+          await runDurableObjectAlarm(ws.stub);
+          expect(await ws.levels(incident)).toHaveLength(2);
+        },
+        { timeout: 5000, interval: 100 },
+      );
       expect(released).toBe(false);
     } finally {
       release();

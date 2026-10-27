@@ -476,7 +476,9 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
       ) : null}
       {noticesFor(["role"])}
       <IncidentDetails row={row} />
-      {paging.data && row.number !== null ? (
+      {paging.errorCode !== undefined ? (
+        <ThemedText variant="caption">{queryErrorReason(paging.errorCode)}</ThemedText>
+      ) : paging.data && row.number !== null ? (
         <PagingSection data={paging.data} number={row.number} who={who} />
       ) : null}
 

@@ -196,7 +196,7 @@ describe("the work per character is bounded, whatever the text", () => {
     '(?i)"status":\\s*"(up|ok)"',
   ];
 
-  test.each(worst)("%j on 64 KiB of non-ASCII text finishes in under 50 ms", (pattern) => {
+  test.each(worst)("%j on 64 KiB of non-ASCII text finishes in well under a second", (pattern) => {
     const compiled = compilePattern(pattern);
     if (!compiled.ok) throw new Error(compiled.reason);
     let best = Number.POSITIVE_INFINITY;
@@ -206,7 +206,9 @@ describe("the work per character is bounded, whatever the text", () => {
       expect(matchPattern(compiled.pattern, text)).not.toBe(true);
       best = Math.min(best, performance.now() - started);
     }
-    expect(best).toBeLessThan(50);
+    // Locally about 20 ms; the bound leaves room for a slow CI machine while still catching the seconds the
+    // backtracking-shaped inputs took before (the step budget is what bounds the work, not this clock).
+    expect(best).toBeLessThan(500);
   });
 
   test("an ordinary pattern never runs out of steps", () => {

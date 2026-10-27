@@ -89,6 +89,9 @@ export async function handle(
         (body.ttlSeconds !== undefined &&
           (typeof body.ttlSeconds !== "number" || body.ttlSeconds > MAX_CALL_TTL_SECONDS)))) ||
     (!call && body.callId !== undefined) ||
+    // A Critical Alert is a page's alert push, never a call or anything less urgent.
+    (body.critical !== undefined &&
+      (typeof body.critical !== "boolean" || (body.critical && (call || urgency !== "page")))) ||
     (body.environment !== undefined &&
       !ENVIRONMENTS.includes(body.environment as ApnsEnvironment)) ||
     (body.collapseId !== undefined && typeof body.collapseId !== "string") ||
@@ -134,6 +137,7 @@ export async function handle(
         urgency: urgency as Urgency,
         kind: kind as PushKind,
         ...(call ? { callId: body.callId as string } : {}),
+        ...(body.critical === true ? { critical: true } : {}),
         // 0 keeps APNs' "try once"; otherwise an absolute time.
         expiration: ttl === 0 ? 0 : Math.floor(Date.now() / 1000) + ttl,
         ...(body.collapseId === undefined ? {} : { collapseId: body.collapseId as string }),

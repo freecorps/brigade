@@ -333,6 +333,11 @@ export type DeviceRow = {
   pushToken: string;
   /** PushKit token for calls (RFC 0010); null without one. */
   voipToken: string | null;
+  /**
+   * The member allowed Critical Alerts on this phone, in an app build that has the entitlement (RFC 0006 "Critical
+   * Alerts"): a SEV1 page then rings through silent mode and Do Not Disturb. Absent on devices registered before it.
+   */
+  criticalAlerts?: boolean;
   /** HPKE public key, uncompressed P-256, base64url (`packages/push`). */
   publicKey: string;
   registeredAt: number;

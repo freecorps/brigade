@@ -6,6 +6,7 @@ import { withIncomingCall } from "./plugins/incoming-call.ts";
 import { withNotificationService } from "./plugins/notification-service.ts";
 import { withPendingBackup } from "./plugins/pending-backup.ts";
 import { withSplashGround } from "./plugins/splash-ground.ts";
+import { withWidget } from "./plugins/widget.ts";
 
 // One id on both stores, registered under the Freecorps Apple team. Same `app.freecorps.*` prefix as
 // Freecorps' other apps.
@@ -15,15 +16,23 @@ const APP_ID = "app.freecorps.brigade";
 // tokens); every EAS build is ad hoc or App Store signed, whose profiles carry `production`.
 const APS_ENVIRONMENT = process.env.EAS_BUILD === "true" ? "production" : "development";
 
+// Critical Alerts (RFC 0006 "Critical Alerts"): `BRIGADE_CRITICAL_ALERTS=1` adds the entitlement and has the app ask
+// for them. Off by default: Apple has not granted the entitlement to the team yet, and a profile without it fails
+// the build. Without it, pages are time-sensitive, as on every build so far.
+const CRITICAL_ALERTS = process.env.BRIGADE_CRITICAL_ALERTS === "1";
+
 export default ({ config }: ConfigContext): ExpoConfig =>
-  // iOS: the Notification Service Extension that decrypts pushes (spike S1), and the launch screen pointed at
-  // the splash ground, which expo-splash-screen skips without an image. Both: pages that ring as calls (S6).
-  // Android: the queue of unsent changes kept out of backups (RFC 0004 "Clients").
+  // iOS: the Notification Service Extension that decrypts pushes (spike S1), the "I'm on call" widget (after the
+  // extension, whose App Group it shares), and the launch screen pointed at the splash ground, which
+  // expo-splash-screen skips without an image. Both: pages that ring as calls (S6). Android: the queue of unsent
+  // changes kept out of backups (RFC 0004 "Clients").
   withPendingBackup(
     withIncomingCall(
-      withNotificationService(
-        withSplashGround(appConfig(config), { fallback: themes.light.background }),
-        { apsEnvironment: APS_ENVIRONMENT },
+      withWidget(
+        withNotificationService(
+          withSplashGround(appConfig(config), { fallback: themes.light.background }),
+          { apsEnvironment: APS_ENVIRONMENT, criticalAlerts: CRITICAL_ALERTS },
+        ),
       ),
     ),
   );
@@ -95,5 +104,7 @@ const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
     eas: { projectId: "67e9e504-0692-4883-88d5-8e17863f661d" },
     // Which APNs environment this build's device tokens belong to, for device registration (src/lib/device.ts).
     apsEnvironment: APS_ENVIRONMENT,
+    // Whether the app asks for Critical Alerts and reports them at registration (src/lib/phone.ts).
+    criticalAlerts: CRITICAL_ALERTS,
   },
 });

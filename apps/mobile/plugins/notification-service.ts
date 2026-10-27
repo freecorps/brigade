@@ -11,7 +11,7 @@ import {
 } from "expo/config-plugins";
 
 // The iOS Notification Service Extension that decrypts Brigade pushes (spike S1, RFC 0006). It adds:
-// - the push, App Group and time-sensitive entitlements to the app;
+// - the push, App Group and time-sensitive entitlements to the app, and Critical Alerts when asked (`criticalAlerts`);
 // - a `BrigadeNotificationService` app extension target, embedded in the app, compiling
 //   modules/brigade-push/extension/NotificationService.swift and the app module's BrigadePushCrypto.swift and
 //   BrigadePage.swift (the Acknowledge action's category, set on decrypted pages);
@@ -47,7 +47,14 @@ const SOURCES = NSE_SOURCES.map((source) => join(MODULE_DIR, source));
 export interface NotificationServiceOptions {
   /** `aps-environment`: `development` for debug and ad hoc builds signed for the sandbox, else `production`. */
   apsEnvironment: "development" | "production";
+  /**
+   * Adds the Critical Alerts entitlement (RFC 0006 "Critical Alerts"). Only once Apple has granted it to the team:
+   * a provisioning profile without it fails the build. `BRIGADE_CRITICAL_ALERTS=1` sets it (app.config.ts).
+   */
+  criticalAlerts?: boolean;
 }
+
+export const CRITICAL_ALERTS_ENTITLEMENT = "com.apple.developer.usernotifications.critical-alerts";
 
 /** `Localizable.strings` text for the keys the native side needs. Throws if a locale lacks one. */
 export function localizableStrings(messages: Record<string, unknown>): string {
@@ -59,7 +66,8 @@ export function localizableStrings(messages: Record<string, unknown>): string {
   return `/* Generated from packages/i18n by plugins/notification-service.ts. */\n${lines.join("\n")}\n`;
 }
 
-function escapeStrings(value: string): string {
+/** A value inside a `.strings` file's quotes. */
+export function escapeStrings(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
 }
 
@@ -116,10 +124,13 @@ export const EXTENSION_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `;
 
-/** The app's entitlements: APNs, the App Group shared with the extension (and its Keychain), Time Sensitive. */
+/**
+ * The app's entitlements: APNs, the App Group shared with the extension (and its Keychain), Time Sensitive, and
+ * Critical Alerts when the build asks for them.
+ */
 export function applyAppEntitlements(
   entitlements: Record<string, unknown>,
-  { apsEnvironment }: NotificationServiceOptions,
+  { apsEnvironment, criticalAlerts }: NotificationServiceOptions,
 ): Record<string, unknown> {
   const groups = Array.isArray(entitlements["com.apple.security.application-groups"])
     ? (entitlements["com.apple.security.application-groups"] as unknown[])
@@ -131,6 +142,7 @@ export function applyAppEntitlements(
       ? groups
       : [...groups, APP_GROUP],
     "com.apple.developer.usernotifications.time-sensitive": true,
+    ...(criticalAlerts ? { [CRITICAL_ALERTS_ENTITLEMENT]: true } : {}),
   };
 }
 
@@ -161,7 +173,7 @@ export function applyNotificationService(
     `${options.bundleIdentifier}.NotificationService`,
   );
   const group = project.addPbxGroup([], NSE_TARGET, NSE_TARGET);
-  addToMainGroup(project, group.uuid);
+  addToMainGroup(project, group.uuid, NSE_TARGET);
   const sources = project.addBuildPhase([], "PBXSourcesBuildPhase", "Sources", target.uuid);
   const resources = project.addBuildPhase([], "PBXResourcesBuildPhase", "Resources", target.uuid);
   project.addBuildPhase([], "PBXFrameworksBuildPhase", "Frameworks", target.uuid);
@@ -220,13 +232,14 @@ export function applyNotificationService(
   return project;
 }
 
-function addToMainGroup(project: XcodeProject, groupUuid: string): void {
+/** Shows an extension's folder at the top of the Xcode project. */
+export function addToMainGroup(project: XcodeProject, groupUuid: string, name: string): void {
   const mainGroup = project.getFirstProject().firstProject.mainGroup as string;
   const groups = project.hash.project.objects.PBXGroup as Record<string, { children: unknown[] }>;
-  groups[mainGroup]!.children.push({ value: groupUuid, comment: NSE_TARGET });
+  groups[mainGroup]!.children.push({ value: groupUuid, comment: name });
 }
 
-function addFileReference(
+export function addFileReference(
   project: XcodeProject,
   group: { children: unknown[] },
   path: string,
@@ -247,7 +260,7 @@ function addFileReference(
   return uuid;
 }
 
-function addBuildFile(
+export function addBuildFile(
   project: XcodeProject,
   phase: { files: unknown[] },
   fileRef: string,
@@ -261,7 +274,7 @@ function addBuildFile(
   phase.files.push({ value: uuid, comment: `${name} in ${phaseName}` });
 }
 
-function readMessages(locale: string): Record<string, unknown> {
+export function readMessages(locale: string): Record<string, unknown> {
   return JSON.parse(readFileSync(join(MESSAGES_DIR, `${locale}.json`), "utf8")) as Record<
     string,
     unknown

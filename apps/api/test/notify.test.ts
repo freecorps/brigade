@@ -36,7 +36,13 @@ import {
   type NotifyEnv,
 } from "../src/notify.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
-import { asksForPage, MAX_PAGE_DEVICES, pageTargets, ringsAsCall } from "../src/paging.ts";
+import {
+  asksForPage,
+  MAX_PAGE_DEVICES,
+  pageTargets,
+  ringsAsCall,
+  sendsCritical,
+} from "../src/paging.ts";
 import worker from "../src/index.ts";
 import { Shard } from "../src/shard.ts";
 import { HEARTBEAT_EVENT, PING_TIMEOUT_MS, SYSTEM_WORKSPACE } from "../src/watchdog.ts";
@@ -106,6 +112,8 @@ async function workspace(members: Actor[] = [ana, bia, caio]) {
       environment?: "sandbox" | "production";
       /** Registers a PushKit token too, so the phone can ring (RFC 0010). */
       voip?: boolean;
+      /** Reports Critical Alerts as allowed (RFC 0006 "Critical Alerts"); left out as an app from before them. */
+      criticalAlerts?: boolean;
     } = {},
   ) => {
     const recipient = await generateRecipient();
@@ -119,6 +127,7 @@ async function workspace(members: Actor[] = [ana, bia, caio]) {
       pushToken,
       voipToken,
       publicKey: toBase64url(recipient.publicKey),
+      ...(options.criticalAlerts === undefined ? {} : { criticalAlerts: options.criticalAlerts }),
     });
     return { deviceId, pushToken, voipToken, recipient, userId: actor.id };
   };
@@ -167,6 +176,8 @@ type RelayBody = {
   /** `call` for a VoIP push (RFC 0010); absent for an alert. */
   kind?: string;
   callId?: string;
+  /** A Critical Alert (RFC 0006); absent otherwise. */
+  critical?: boolean;
 };
 
 const relayEnv = {
@@ -579,6 +590,76 @@ describe("pages that ring as a call (RFC 0010)", () => {
     expect(one).toMatch(UUID);
     expect(await callIdOf("evt_01")).toBe(one);
     expect(await callIdOf("evt_02")).not.toBe(one);
+  });
+});
+
+describe("Critical Alerts (RFC 0006)", () => {
+  test("the policy: a SEV1 page to an iPhone that allows them; nothing else", () => {
+    const sev = (severity: "sev1" | "sev2" | "sev3", urgency: "page" | "high" = "page") => ({
+      urgency,
+      incident: { severity },
+    });
+    const allowed = { platform: "ios", criticalAlerts: true } as const;
+    expect(sendsCritical(sev("sev1"), allowed)).toBe(true);
+    expect(sendsCritical(sev("sev2"), allowed)).toBe(false);
+    expect(sendsCritical(sev("sev3", "high"), allowed)).toBe(false);
+    expect(sendsCritical(sev("sev1", "high"), allowed)).toBe(false);
+    expect(sendsCritical(sev("sev1"), { platform: "ios", criticalAlerts: false })).toBe(false);
+    // A shard from before Critical Alerts sends no flag.
+    expect(sendsCritical(sev("sev1"), { platform: "ios" })).toBe(false);
+    expect(sendsCritical(sev("sev1"), { platform: "android", criticalAlerts: true })).toBe(false);
+  });
+
+  test("a SEV1 page is critical only for the phones that allow it; SEV2 pages stay time-sensitive", async () => {
+    const ws = await workspace();
+    const anaPhone = await ws.device(ana, { criticalAlerts: true });
+    const biaPhone = await ws.device(bia, { criticalAlerts: false });
+    const fake = relay();
+    const { event } = await ws.declare(MONITOR_ACTOR, "sev1");
+    expect(await deliver(event, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
+    const to = (token: string) => fake.requests.filter((r) => r.body.deviceToken === token);
+    expect(to(anaPhone.pushToken).map((r) => r.body.critical)).toEqual([true]);
+    expect(to(biaPhone.pushToken).map((r) => r.body.critical)).toEqual([undefined]);
+    expect(to(anaPhone.pushToken)[0]!.body.urgency).toBe("page");
+
+    const sev2 = await ws.declare(MONITOR_ACTOR, "sev2");
+    await deliver(sev2.event, fake.send);
+    expect(fake.requests.slice(2).map((r) => r.body.critical)).toEqual([undefined, undefined]);
+  });
+
+  test("a critical push the relay or APNs refuses goes out time-sensitive at once (the fallback)", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia, { criticalAlerts: true });
+    const { incident, event } = await ws.declare(MONITOR_ACTOR, "sev1");
+    const refusals = [
+      Response.json({ error: "invalid_body" }, { status: 400 }),
+      Response.json({ status: 400, reason: "BadPayload" }, { status: 502 }),
+    ];
+    for (const refusal of refusals) {
+      const fake = relay((body) =>
+        body.critical ? refusal.clone() : Response.json({ status: 200 }),
+      );
+      const fresh = await ws.declare(MONITOR_ACTOR, "sev1");
+      expect(await deliver(fresh.event, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
+      expect(fake.requests.map((r) => r.body.critical)).toEqual([true, undefined]);
+      expect(fake.requests[1]!.body).toMatchObject({
+        deviceToken: phone.pushToken,
+        urgency: "page",
+      });
+    }
+    expect(logged().map((line) => line.message)).toContain(
+      "relay refused a critical push, sending it time-sensitive",
+    );
+    // A token APNs says is gone is not resent: the device is dropped as for any push.
+    const gone = relay(() =>
+      Response.json({ status: 400, reason: "BadDeviceToken" }, { status: 502 }),
+    );
+    await deliver(event, gone.send);
+    expect(gone.requests).toHaveLength(1);
+    expect(
+      await ws.withShard((shard) => shard.store.get("devices", phone.deviceId)),
+    ).toBeUndefined();
+    expect((await ws.timeline(incident)).map((row) => row.kind)).toContain("declared");
   });
 });
 

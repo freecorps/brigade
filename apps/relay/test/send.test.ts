@@ -209,6 +209,34 @@ describe("POST /send", () => {
     expect(apns.sent).toHaveLength(0);
   });
 
+  test("a critical page goes out as a Critical Alert; critical for anything else is refused", async () => {
+    const apns = fakeApns();
+    const response = await handle(post(await sendBody({ critical: true })), env, apns.send);
+    expect(response.status).toBe(200);
+    const aps = ((await apns.sent[0]!.json()) as { aps: Record<string, unknown> }).aps;
+    expect(aps).toMatchObject({
+      sound: { critical: 1, name: "default", volume: 1 },
+      "interruption-level": "critical",
+    });
+    const callId = "6f1c2a4e-9b3d-4c5e-8f70-1a2b3c4d5e6f";
+    for (const body of [
+      await sendBody({ critical: true, urgency: "high" }),
+      await sendBody({ critical: true, urgency: "low" }),
+      await sendBody({ critical: true, kind: "call", callId }),
+      await sendBody({ critical: 1 }),
+      await sendBody({ critical: "true" }),
+    ]) {
+      expect((await handle(post(body), env, apns.send)).status, JSON.stringify(body)).toBe(400);
+    }
+    expect(apns.sent).toHaveLength(1);
+    // `critical: false` is the default page: time-sensitive.
+    await handle(post(await sendBody({ critical: false })), env, apns.send);
+    expect(((await apns.sent[1]!.json()) as { aps: Record<string, unknown> }).aps).toMatchObject({
+      sound: "default",
+      "interruption-level": "time-sensitive",
+    });
+  });
+
   test("an alert is still the default", async () => {
     const apns = fakeApns();
     await handle(post(await sendBody()), env, apns.send);

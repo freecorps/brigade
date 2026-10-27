@@ -137,6 +137,9 @@ export const registerDevice = defineMutation({
     // PushKit's token for calls (RFC 0010, spike S6); null without one.
     voipToken: v.nullable(pushToken),
     publicKey,
+    // Whether Critical Alerts are allowed (RFC 0006 "Critical Alerts"). Optional, so apps from before it still
+    // register; left out reads as not allowed.
+    criticalAlerts: v.optional(v.boolean()),
   }),
   permission: "device:register",
   apply(store, args, ctx) {
@@ -156,6 +159,7 @@ export const registerDevice = defineMutation({
       }
       const row: DeviceRow = {
         ...args,
+        criticalAlerts: args.criticalAlerts === true,
         userId,
         registeredAt: current?.registeredAt ?? ctx.now,
         updatedAt: ctx.now,
@@ -167,6 +171,7 @@ export const registerDevice = defineMutation({
         current.environment === row.environment &&
         current.pushToken === row.pushToken &&
         current.voipToken === row.voipToken &&
+        (current.criticalAlerts ?? false) === row.criticalAlerts &&
         current.publicKey === row.publicKey
       ) {
         // A device registered before summaries existed gets its summary the next time the app registers it.

@@ -110,6 +110,40 @@ describe("device.register", () => {
     expect(store.get("devices", id)?.publicKey).toBe(OTHER_KEY);
   });
 
+  test("Critical Alerts: optional for apps from before it, stored, and a change refreshes the device", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const id = deviceId();
+    // An app from before the capability sends no `criticalAlerts`: registered, read as not allowed.
+    expect(run(store, ana, "device.register", args(id)).ok).toBe(true);
+    expect(store.get("devices", id)?.criticalAlerts).toBe(false);
+    expect(run(store, ana, "device.register", args(id, { criticalAlerts: false }))).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(run(store, ana, "device.register", args(id, { criticalAlerts: true })).ok).toBe(true);
+    expect(store.get("devices", id)?.criticalAlerts).toBe(true);
+    // Turned off in Settings: the next registration says so.
+    expect(run(store, ana, "device.register", args(id)).ok).toBe(true);
+    expect(store.get("devices", id)?.criticalAlerts).toBe(false);
+    expect(run(store, ana, "device.register", args(id, { criticalAlerts: "yes" }))).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args" },
+    });
+  });
+
+  test("a device stored before Critical Alerts counts as not allowing them", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const id = deviceId();
+    run(store, ana, "device.register", args(id));
+    const { criticalAlerts: _, ...old } = store.get("devices", id)!;
+    store.delete("devices", id);
+    store.insert("devices", old);
+    expect(run(store, ana, "device.register", args(id))).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+  });
+
   test("the same token under a new id (a reinstall) replaces the old device", () => {
     const store = createMemoryStore<BrigadeTables>();
     const old = deviceId();

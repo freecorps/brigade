@@ -23,6 +23,7 @@ import { finishDeps, keptSignOuts, phoneDeps, SESSION_LIFETIME_MS } from "@/lib/
 import { finishSignOut, signOutPhone, type FinishResult } from "@/lib/sign-out";
 import { knownWorkspace, memberActor, settledRole, WORKSPACE_KEY, type Server } from "@/lib/sync";
 import { createWorkspaceSync, setCurrentSync, type WorkspaceSync } from "@/lib/sync-client";
+import { clearWidget, WidgetSnapshot } from "@/components/widget";
 import { BrigadeCall } from "../../modules/brigade-call";
 
 /** The signed-in member in their active workspace: what every signed-in screen reads. */
@@ -186,7 +187,23 @@ export function Session({ children }: { children: (ready: boolean) => ReactNode 
   else if (session.isPending) view = { kind: "loading" };
   else if (session.error) view = { kind: "unavailable", retry: () => void session.refetch() };
   else view = { kind: "signed-out" };
-  return <SessionContext value={view}>{children(false)}</SessionContext>;
+  return (
+    <>
+      <ClearWidgetWhen signedOut={view.kind === "signed-out" || view.kind === "no-workspace"} />
+      <SessionContext value={view}>{children(false)}</SessionContext>
+    </>
+  );
+}
+
+/**
+ * Nobody's shifts on the widget without a member in a workspace: a session that ended or was forgotten (not only an
+ * explicit sign-out) clears it too.
+ */
+function ClearWidgetWhen({ signedOut }: { signedOut: boolean }) {
+  useEffect(() => {
+    if (signedOut) clearWidget();
+  }, [signedOut]);
+  return null;
 }
 
 /**
@@ -206,6 +223,7 @@ async function signOutHere(): Promise<boolean> {
 /** Signing out without a workspace: nothing pages this phone for it. */
 async function signOut(): Promise<void> {
   await signOutHere();
+  clearWidget();
   await SecureStore.deleteItemAsync(WORKSPACE_KEY).catch(() => {});
   await dropQueues(pendingFiles).catch(() => {});
 }
@@ -368,6 +386,8 @@ function ActiveWorkspace({
       },
     );
     await SecureStore.deleteItemAsync(WORKSPACE_KEY).catch(() => {});
+    // Their shifts leave the home and lock screens with them.
+    clearWidget();
     // Nothing they queued is sent or shown after they leave, whoever signs in next.
     await sync?.queue?.drop().catch(() => {});
     await dropQueues(pendingFiles).catch(() => {});
@@ -423,6 +443,7 @@ function ActiveWorkspace({
   if (!ready || !sync) return <SessionContext value={value}>{children(false)}</SessionContext>;
   return (
     <SyncProvider client={sync.client} shard={sync.shard}>
+      <WidgetSnapshot userId={userId} />
       <SessionContext value={value}>{children(true)}</SessionContext>
     </SyncProvider>
   );

@@ -119,6 +119,33 @@ test("an iPhone registers its PushKit token so pages can ring; without one, or o
   expect(other.scan("devices")).toMatchObject([{ voipToken: null }]);
 });
 
+test("Critical Alerts are reported only when allowed, so an instance from before them still registers the phone", async () => {
+  const base = { publicKey: KEY, pushToken: "ab".repeat(32), apsEnvironment: "development" };
+  expect(deviceRegistration({ ...base, platform: "ios", criticalAlerts: true })).toMatchObject({
+    criticalAlerts: true,
+  });
+  for (const args of [
+    deviceRegistration({ ...base, platform: "ios" }),
+    deviceRegistration({ ...base, platform: "ios", criticalAlerts: false }),
+    deviceRegistration({ ...base, platform: "android", criticalAlerts: true }),
+  ]) {
+    expect(args).not.toHaveProperty("criticalAlerts");
+  }
+
+  const store = createMemoryStore<BrigadeTables>();
+  const as = shard(store);
+  expect(await registerPhone(phone(as(ANA), { criticalAlerts: async () => true }))).toBe("on");
+  expect(store.scan("devices")).toMatchObject([{ criticalAlerts: true }]);
+  // Turned off in Settings, or a permission read that fails: time-sensitive pages, as before.
+  expect(await registerPhone(phone(as(ANA), { criticalAlerts: async () => false }))).toBe("on");
+  expect(store.scan("devices")).toMatchObject([{ criticalAlerts: false }]);
+  const failing = async (): Promise<boolean> => {
+    throw new Error("no permission read");
+  };
+  expect(await registerPhone(phone(as(ANA), { criticalAlerts: failing }))).toBe("on");
+  expect(store.scan("devices")).toMatchObject([{ criticalAlerts: false }]);
+});
+
 test("a registered phone keeps its instance's origin for the extension's receipts, and only then", async () => {
   const store = createMemoryStore<BrigadeTables>();
   const as = shard(store);

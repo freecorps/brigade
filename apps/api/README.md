@@ -530,7 +530,8 @@ draft pending (`postmortem.requestDraft`, 20 a day per workspace) and answers 20
 (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`, `AI_MODEL`) in `waitUntil`, with at most 25 s, and writes the draft
 through `postmortem.writeDraft` as `sys_ai`. The model reads the incident, its timeline's changes and updates and its
 follow-ups, with members by name. It never reads addresses, devices or deliveries. A draft costs under one cent. The
-`AI` binding is in no environment yet: add `"ai": { "binding": "AI" }` to an environment ("Deploying dev", step 6).
+`AI` binding is set for `dev` only ("Deploying dev", step 6); staging and production add `"ai": { "binding": "AI" }`
+the same way.
 Locally, the binding would call the real Workers AI on your account, so leave it out of the top level; the tests use a
 fake model.
 

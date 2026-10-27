@@ -7,15 +7,18 @@
 - Regular Workers run near the caller; Cron Triggers run wherever Cloudflare schedules them. Neither gives region control.
 - **`ProbeDO` with `locationHint`** (`wnam`, `enam`, `sam`, `weur`, `eeur`, `apac`, `oc`, `afr`, `me`) — one per
   workspace and region. Hints are best-effort; the DO reports its actual colo (`request.cf.colo` on its outbound
-  calls / trace) so the UI shows where checks really ran. Validate in spike S2 (running; first samples in
-  [docs/spikes/s2-probe-placement.md](../spikes/s2-probe-placement.md): `sam`, `afr` and `me` land in Miami,
-  London and Warsaw, as Cloudflare documents that objects do not spawn in those regions yet).
+  calls / trace) so the UI shows where checks really ran. Settled by spike S2
+  ([docs/spikes/s2-probe-placement.md](../spikes/s2-probe-placement.md)): over 48 hours no probe moved colo, alarms
+  missed at most one minute, and egress leaves from the object's colo; `sam`, `afr` and `me` stayed in Miami, London
+  and Warsaw, as Cloudflare documents that objects do not spawn in those regions yet. Every alarm run is a new
+  instance in the same colo, so a colo change, never a new instance, means a probe moved.
 - Each `ProbeDO` uses `alarm()` to run its monitors on schedule (min interval: 30s).
 - **Built (first slice):** `ProbeDO` is named `<workspace>:<region>` and created with that hint. Monitors offer only
-  the regions where objects spawn in-region in S2's first samples: `wnam`, `enam`, `weur`, `eeur`, `apac`, `oc`
+  the regions where objects spawn in-region (S2, over 48 hours): `wnam`, `enam`, `weur`, `eeur`, `apac`, `oc`
   (`PROBE_REGIONS` in `packages/schema`); `sam`, `afr` and `me` are not offered until Cloudflare places objects
   there. Every result carries the colo the probe really ran from (`/cdn-cgi/trace`, fetched once per alarm run), and
-  the dashboard shows it next to the region. The 48-hour S2 result (due 2026-10-27) may still change this list.
+  the dashboard shows it next to the region. `apac-ne` (Osaka) and
+  `apac-se` (Singapore) also place in-region and are candidates for later regions.
 - **The alarm chain never ends on a failure:** every alarm sets the next one before doing anything else (as S2's
   probe did); the workspace shard re-pushes each region's checks every 10 minutes, and at once when an active
   region has reported nothing for 15 minutes, which re-arms a probe whose alarm was lost. The shard's own alarm sets

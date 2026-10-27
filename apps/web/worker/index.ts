@@ -7,7 +7,7 @@
 // `/status` and `/status/*`, the public status page (RFC 0012), go to the API Worker unchanged too: the API renders it from KV,
 // with no session, so it is served from the dashboard's origin without the SPA.
 // `/api/openapi.json` is the API reference (docs/api/openapi.json, generated from apps/api/src/openapi.ts), answered
-// here from the bundle without auth.
+// here from the bundle without auth. A WebSocket upgrade anywhere else is a 404, never handed to the assets (`noSocket`).
 
 import openApi from "../../../docs/api/openapi.json" with { type: "json" };
 
@@ -47,10 +47,23 @@ export async function handle(request: Request, env: Upstreams): Promise<Response
   if (isStatusPath(url.pathname)) return forward(request, env, url.pathname);
   if (url.pathname === OPENAPI_PATH) return reference(request);
   const path = apiPath(url.pathname);
-  if (path === undefined) return env.ASSETS.fetch(request);
+  if (path === undefined) {
+    return request.headers.has("Upgrade") ? noSocket() : env.ASSETS.fetch(request);
+  }
   url.pathname = path;
   // Same method, headers and (streamed) body; only the URL changes.
   return forward(new Request(url, request), env, path);
+}
+
+/**
+ * An upgrade (a WebSocket) outside `/api`: assets serve no sockets, so it never reaches `ASSETS`. In `vp dev` the
+ * Cloudflare Vite plugin sends every upgrade to this Worker whatever `run_worker_first` says, and its `ASSETS` is a
+ * Node handler that Miniflare cannot answer an upgrade with: it fails an assertion in `#handleLoopbackUpgrade` and
+ * the dev server exits (same path as https://github.com/cloudflare/workers-sdk/issues/13054). Deployed, such an
+ * upgrade goes to the assets without this Worker.
+ */
+function noSocket(): Response {
+  return Response.json({ error: "not_found" }, { status: 404 });
 }
 
 /** `request` to the API Worker; a gateway's 502 when the binding fails. */

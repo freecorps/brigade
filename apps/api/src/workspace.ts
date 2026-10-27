@@ -8,6 +8,7 @@ import {
   fitMemberName,
   isRole,
   MAX_EXPORT_BYTES,
+  monitorAlertsToReroute,
   newId,
   ROLES,
   nextMaintenanceAt,
@@ -1824,6 +1825,14 @@ export class WorkspaceDO extends DurableObject<Env> {
       monitors = await this.monitoring.tick(now);
     } catch (error) {
       this.log("monitor tick failed", { error });
+    }
+    // A down monitor a route kept quiet, which the routes would page now: routing it again right after the routes
+    // changed failed. Monitors never send again while down, so the alarm is what retries it (RFC 0007 "Monitor alerts
+    // through the routes"). Never throws.
+    try {
+      if (monitorAlertsToReroute(this.shard.store).length > 0) this.alerts.reroute();
+    } catch (error) {
+      this.log("routing quiet monitor alerts again failed", { error });
     }
     // Webhook deliveries due again go back to the queue with the drain below (src/webhooks.ts `redrive`).
     try {

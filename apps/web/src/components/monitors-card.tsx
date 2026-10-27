@@ -698,6 +698,14 @@ function MonitorItem({
           {m.monitor_status({ status: badge })}
         </Badge>
         {alerting && row.incidentId ? <IncidentLink id={row.incidentId} /> : null}
+        {alerting &&
+        (row.alertRoute?.outcome === "suppressed" || row.alertRoute?.outcome === "dropped") ? (
+          // A route keeps this down monitor quiet (RFC 0007 "Monitor alerts through the routes"): say so, since
+          // nobody is paged for it.
+          <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+            {m.monitor_route_quiet({ outcome: row.alertRoute.outcome, name: row.alertRoute.name })}
+          </span>
+        ) : null}
       </div>
       <div className="col-span-2 row-start-2 flex min-w-0 flex-col gap-0.5 md:col-span-1 md:row-start-1">
         <p

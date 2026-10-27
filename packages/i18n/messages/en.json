@@ -631,6 +631,17 @@
       }
     }
   ],
+  "monitor_route_quiet": [
+    {
+      "declarations": ["input outcome", "input name"],
+      "selectors": ["outcome"],
+      "match": {
+        "outcome=suppressed": "Kept quiet by route {name}: no incident",
+        "outcome=dropped": "Dropped by route {name}: nobody is paged",
+        "outcome=*": "Route: {name}"
+      }
+    }
+  ],
   "monitor_incident_link": [
     {
       "declarations": ["input has", "input number"],
@@ -2871,6 +2882,12 @@
         "part=route_limit": "This workspace has as many routes as it can ({value}).",
         "part=any_alert": "Any alert",
         "part=deleted_source": "a deleted source",
+        "part=match_monitors": "Monitors",
+        "part=every_monitor": "Every monitor",
+        "part=monitors_hint": "A route takes a monitor's alert only when it names it here. With no route taking it, a monitor that goes down opens its incident at its own severity, paged through its policy.",
+        "part=monitors_empty": "No monitors yet.",
+        "part=monitors_only": "No source is picked, so this route takes only the monitors below.",
+        "part=deleted_monitor": "a deleted monitor",
         "part=recent_title": "Recent alerts",
         "part=recent_empty": "No alerts received yet.",
         "part=status_firing": "Firing",

@@ -269,13 +269,14 @@ says who is on call; escalation policies (below) page from it.
 ## Alert → incident flow
 
 1. Alert arrives (monitor or webhook) → normalized to `AlertEvent { source, fingerprint, status: firing|resolved, labels, payload }`.
-   First slice (RFC 0007): monitor alerts live in `WorkspaceDO` (`alerts`, deduplicated per monitor) and open an
-   incident directly. Alert sources (RFC 0005 "Alert sources") normalize webhooks to `NormalizedAlert` (dedup key,
+   First slice (RFC 0007): monitor alerts live in `WorkspaceDO` (`alerts`, deduplicated per monitor) and go through
+   the same routes when a route names them (RFC 0007 "Monitor alerts through the routes"), else open an incident
+   directly. Alert sources (RFC 0005 "Alert sources") normalize webhooks to `NormalizedAlert` (dedup key,
    title, severity, firing or resolved, link, labels) and keep them in `WorkspaceDO` too (`source_alerts`).
 2. `AlertGroupDO(fingerprint)` deduplicates within a window. Not built: the shard deduplicates by source and key while
    the alert fires (RFC 0007 "`AlertGroupDO` (later)").
 3. `AlertRoute` rules (evaluated in order) decide: drop, suppress, group into an open incident, or open a new incident
-   with a severity, a type, services and an escalation policy. Built for alert sources (`alert_routes`,
+   with a severity, a type, services and an escalation policy. Built for alert sources and monitors (`alert_routes`,
    `alertRoute.*`).
 4. Creating a page starts an escalation run on the `IncidentDO` (alarm per level timeout).
 

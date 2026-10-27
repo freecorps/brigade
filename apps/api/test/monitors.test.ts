@@ -607,6 +607,74 @@ describe("monitor down → alert → incident", () => {
     });
   });
 
+  test("a down monitor a deleted suppress route kept quiet is paged by the shard alarm if routing it again failed", async () => {
+    const ws = await workspace();
+    const monitorId = newId("mon", Date.now(), random);
+    const routeId = newId("rte", Date.now(), random);
+    await ws.run("monitor.createHttp", {
+      id: monitorId,
+      name: "Checkout",
+      url: "https://example.com/health",
+      method: "GET",
+      expectedStatus: null,
+      keyword: null,
+      intervalSeconds: 60,
+      timeoutSeconds: 5,
+      regions: ["weur"],
+    });
+    expect(
+      await ws.run("alertRoute.create", {
+        id: routeId,
+        name: "Quiet monitors",
+        match: { sourceIds: ["monitors"], severities: [], labels: [] },
+        action: { kind: "suppress" },
+      }),
+    ).toMatchObject({ ok: true });
+    const verdict = (up: boolean, at: number) => ({
+      reportId: newId("rep", at, random),
+      id: monitorId,
+      at,
+      up,
+      latencyMs: 80,
+      colo: "CDG",
+      httpStatus: up ? 200 : 503,
+      error: up ? null : "status",
+    });
+    const at = Date.now();
+    expect(await ws.stub.report("weur", [verdict(true, at - 2)])).toEqual([true]);
+    expect(await ws.stub.report("weur", [verdict(false, at - 1)])).toEqual([true]);
+    await ws.withShard((shard) => {
+      expect(shard.store.get("monitors", monitorId)).toMatchObject({
+        status: "down",
+        incidentId: null,
+        alertRoute: { id: routeId, outcome: "suppressed" },
+      });
+      expect(shard.store.scan("incidents")).toEqual([]);
+    });
+    // Deleted outside a member's socket, so the shard never ran its reroute: as if that had failed.
+    expect(await ws.run("alertRoute.delete", { id: routeId })).toMatchObject({ ok: true });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await ws.withShard((_shard, instance) => instance.alarm());
+    } finally {
+      error.mockRestore();
+    }
+    await ws.withShard((shard, _instance, sql) => {
+      const monitor = shard.store.get("monitors", monitorId)!;
+      expect(monitor).toMatchObject({ status: "down", incidentId: expect.any(String) });
+      expect(shard.store.get("incidents", monitor.incidentId!)).toMatchObject({
+        title: "Checkout is down",
+        declaredBy: "sys_monitors",
+      });
+      // The events carry the actor of the mutation that routed it again (`alert.reroute`, the alerts').
+      expect(outbox(sql).slice(-3)).toEqual([
+        "alert.resolved by sys_alerts",
+        "incident.declared by sys_alerts",
+        "alert.fired by sys_alerts",
+      ]);
+    });
+  });
+
   test("a TCP monitor whose probes stop reporting turns unknown on the shard alarm too", async () => {
     const ws = await workspace();
     const monitorId = newId("mon", Date.now(), random);

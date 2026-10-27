@@ -218,6 +218,7 @@ export * from './monitor_policy.js';
 export * from './monitor_quorum_option.js';
 export * from './monitor_region.js';
 export * from './monitor_rotate.js';
+export * from './monitor_route_quiet.js';
 export * from './monitor_stalled.js';
 export * from './monitor_status.js';
 export * from './monitors_count.js';

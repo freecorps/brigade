@@ -2,13 +2,14 @@
 // and signature, normalizing it (packages/schema, alert-normalize.ts) and running `alert.ingest` as the alerts'
 // system actor, which routes each alert and opens incidents through `incident.declare`.
 
-import { alert_incident_title } from "@freecorps/brigade-i18n/messages";
+import { alert_incident_title, monitor_incident_title } from "@freecorps/brigade-i18n/messages";
 import {
   ALERTS_ACTOR,
   alertIssues,
   newId,
   normalizeAlerts,
   quietAlerts,
+  monitorAlertsToReroute,
   type AlertHeaders,
   type AlertSourceRow,
   type IngestItem,
@@ -299,14 +300,26 @@ export class AlertIntake {
   }
 
   /**
-   * After the routes changed: routes every suppressed or dropped alert still firing again (`alert.reroute`), so one a
-   * deleted or changed route kept quiet pages now. Never throws: the route change is committed, and if this fails,
-   * each alert's next repeat routes it again anyway.
+   * After the routes changed: routes every suppressed or dropped alert still firing again (`alert.reroute`), an alert
+   * source's or a monitor's, so one a deleted or changed route kept quiet pages now. Never throws: the route change
+   * is committed, and if this fails, each source alert's next repeat routes it again anyway. A monitor never repeats
+   * while down, so its quiet alert is only routed again by the next route change; the failure is logged.
    */
   reroute(): void {
     const { shard, randomBytes: random, log } = this.options;
     try {
-      const quiet = quietAlerts(shard.store);
+      const store = shard.store;
+      const quiet = [
+        ...quietAlerts(store).map((row) => ({ id: row.id })),
+        ...monitorAlertsToReroute(store).map((row) => ({
+          id: row.id,
+          // TODO(RFC 0008): the workspace's default locale, as for the incidents monitors open.
+          title: monitor_incident_title(
+            { name: store.get("monitors", row.monitorId)?.name ?? row.monitorId },
+            { locale: "en" },
+          ),
+        })),
+      ];
       if (quiet.length === 0) return;
       const now = Date.now();
       const { result, changes } = shard.mutate({
@@ -319,6 +332,7 @@ export class AlertIntake {
             rowId: row.id,
             alertId: newId("alt", now, random),
             incidentId: newId("inc", now, random),
+            ...("title" in row && { title: row.title }),
           })),
           capacityTitle: CAPACITY_TITLE(),
         },

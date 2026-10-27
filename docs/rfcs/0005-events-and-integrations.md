@@ -155,7 +155,11 @@ Alert sources (below, "Alert sources") emit `alert_source.created` and `alert_so
 `incident.declared` it opened, `alert.dropped` (`id`, `fingerprint`, `sourceId`, `routeId`, `routeName`) and
 `alert.resolved` (`id`, `sourceId`, `reason`: `resolved`, `source_deleted`, `incident_closed`, `expired`, `evicted` or
 `rerouted`, and `resolvedIncident` when the incident resolved with it, followed by its `incident.status_changed`). A
-monitor's `alert.*` events carry `monitorId` instead of `sourceId`. A repeat of a firing alert emits nothing, nor
+monitor's `alert.*` events carry `monitorId` instead of `sourceId`; one a route took (RFC 0007 "Monitor alerts
+through the routes") also carries `outcome`, `routeId` and `reason` `matched` on `alert.fired` (`incidentId` null when
+suppressed), `alert.dropped` when dropped, and `alert.resolved` with `reason` `rerouted` when a quiet one is routed
+again. The public webhook catalog (below) is unchanged: a suppressed monitor's `alert.fired` has no incident and a
+`rerouted` resolve is no public reason, so neither reaches receivers, who still get `monitor.status_changed`. A repeat of a firing alert emits nothing, nor
 does a firing held by a resolve that came before it (recorded as `resolved_early`, "Alert sources").
 
 The paging pipeline's own watchdog (RFC 0007 "Watching the watcher") writes events too, through its own outbox and
@@ -504,7 +508,8 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   (through the default route, as urgent as the most urgent alert it stands for), whose repeats count like any other.
   The last 300 rows are kept (`MAX_ALERT_ROWS`), oldest resolved or closed first.
 - **Routes** (`alertRoute.create`, `.update`, `.move`, `.delete`; at most 50): tried in order, the first that matches
-  decides. A route matches on sources, alert severities and labels (`key=value`, or a key alone for any value); an
+  decides. A route matches on sources (and monitors, which must be named: RFC 0007 "Monitor alerts through the
+  routes"), alert severities and labels (`key=value`, or a key alone for any value); an
   empty condition matches anything. Its action: `open` an incident (a severity, else the type's default, else the
   alert's own: critical SEV1, high SEV2, warning SEV3, info SEV4; an incident type and services, checked to exist when
   the route is saved and left out by `incident.declare` if deleted since; and an escalation policy, or the default),
@@ -542,8 +547,7 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   paste in Grafana, Datadog or Sentry, the routes in order with the default last, and the latest alerts with what
   became of each (opened or added to which incident, suppressed, dropped, held by a resolve that came first, and by
   which route).
-- **Not yet.** Monitor alerts through the routes (planned in RFC 0007 "Monitor alerts through the routes");
-  `AlertGroupDO`; email ingest; Slack naming `sys_alerts` (it reads "a teammate" today).
+- **Not yet.** `AlertGroupDO`; email ingest; Slack naming `sys_alerts` (it reads "a teammate" today).
 
 ## Provider interfaces (published in `packages/sdk`, MIT)
 

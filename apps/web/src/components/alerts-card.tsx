@@ -9,6 +9,7 @@ import {
   applyMapping,
   pickRoute,
   can,
+  ROUTE_ALL_MONITORS,
   formatIncidentNumber,
   MAX_ALERT_ROUTES,
   MAX_ALERT_SOURCES,
@@ -26,6 +27,7 @@ import {
   type EscalationPolicyRow,
   type IncidentTypeRow,
   type IncidentRow,
+  type MonitorRow,
   type RouteAction,
   type RouteMatch,
   type Severity,
@@ -110,6 +112,7 @@ function AlertsLive({ onRetry }: { onRetry: () => void }) {
   const types = useQuery("incidentTypes.all", {});
   const services = useQuery("services.all", {});
   const incidents = useQuery("incidents.active", {});
+  const monitors = useQuery("monitors.all", {});
   const create = useMutation("alertSource.create");
   const rotate = useMutation("alertSource.rotate");
   const remove = useMutation("alertSource.delete");
@@ -120,7 +123,7 @@ function AlertsLive({ onRetry }: { onRetry: () => void }) {
   const deleteRoute = useMutation("alertRoute.delete");
   const origin = window.location.origin;
   // Every list the card shows: an empty one that is still loading, or failed, must not read as "none".
-  const all = [sources, routes, recent, policies, types, services, incidents];
+  const all = [sources, routes, recent, policies, types, services, incidents, monitors];
   return (
     <AlertsPanel
       sources={sources.rows}
@@ -130,6 +133,7 @@ function AlertsLive({ onRetry }: { onRetry: () => void }) {
       types={types.rows}
       services={services.rows}
       incidents={incidents.rows}
+      monitors={monitors.rows}
       loading={all.some((query) => query.status === "loading")}
       failed={all.some((query) => query.status === "error")}
       manage={can(role, "alert:manage")}
@@ -174,6 +178,8 @@ type PanelProps = {
   types: readonly IncidentTypeRow[];
   services: readonly ServiceRow[];
   incidents: readonly IncidentRow[];
+  /** What a route may name besides sources (RFC 0007 "Monitor alerts through the routes"). */
+  monitors: readonly MonitorRow[];
   loading: boolean;
   failed: boolean;
   manage: boolean;
@@ -1032,12 +1038,22 @@ function UrlPanel({ shown, onDismiss }: { shown: ShownUrl; onDismiss: () => void
 const severityText = (severity: AlertSeverity) => say(`severity_${severity}`);
 
 /** One line saying what a route matches. */
-function matchText(match: RouteMatch, sources: readonly AlertSourceRow[]): string {
+function matchText(
+  match: RouteMatch,
+  sources: readonly AlertSourceRow[],
+  monitors: readonly MonitorRow[],
+): string {
   const parts: string[] = [];
   if (match.sourceIds.length > 0) {
     parts.push(
       match.sourceIds
-        .map((id) => sources.find((source) => source.id === id)?.name ?? say("deleted_source"))
+        .map((id) =>
+          id === ROUTE_ALL_MONITORS
+            ? say("every_monitor")
+            : id.startsWith("mon_")
+              ? (monitors.find((monitor) => monitor.id === id)?.name ?? say("deleted_monitor"))
+              : (sources.find((source) => source.id === id)?.name ?? say("deleted_source")),
+        )
         .join(", "),
     );
   }
@@ -1068,7 +1084,7 @@ function actionText(action: RouteAction, catalog: Catalog): string {
 }
 
 function Routes(props: PanelProps) {
-  const { routes, manage, sources } = props;
+  const { routes, manage, sources, monitors } = props;
   const [adding, setAdding] = useState(false);
   const full = routes.length >= MAX_ALERT_ROUTES;
   return (
@@ -1091,6 +1107,7 @@ function Routes(props: PanelProps) {
         <RouteForm
           route={null}
           sources={sources}
+          monitors={monitors}
           catalog={props}
           onCancel={() => setAdding(false)}
           onSave={async (draft) => {
@@ -1123,6 +1140,7 @@ function RouteRow({
   index,
   routes,
   sources,
+  monitors,
   manage,
   onUpdateRoute,
   onMoveRoute,
@@ -1137,6 +1155,7 @@ function RouteRow({
         <RouteForm
           route={route}
           sources={sources}
+          monitors={monitors}
           catalog={props}
           onCancel={() => setEditing(false)}
           onDelete={async () => onDeleteRoute(route.id)}
@@ -1156,7 +1175,7 @@ function RouteRow({
           {route.name}
         </span>
         <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-          {matchText(route.match, sources)}
+          {matchText(route.match, sources, monitors)}
         </span>
         <span className="text-xs [overflow-wrap:anywhere]">{actionText(route.action, props)}</span>
         {route.disabled ? (
@@ -1201,6 +1220,7 @@ type ActionKind = RouteAction["kind"];
 function RouteForm({
   route,
   sources,
+  monitors,
   catalog,
   onSave,
   onCancel,
@@ -1208,6 +1228,7 @@ function RouteForm({
 }: {
   route: AlertRouteRow | null;
   sources: readonly AlertSourceRow[];
+  monitors: readonly MonitorRow[];
   catalog: Catalog;
   onSave: (draft: RouteDraft) => Promise<boolean>;
   onCancel: () => void;
@@ -1240,6 +1261,7 @@ function RouteForm({
     policy: useId(),
     type: useId(),
     sources: useId(),
+    monitors: useId(),
   };
 
   const submit = (event: FormEvent) => {
@@ -1276,6 +1298,11 @@ function RouteForm({
   };
   const toggle = <T,>(list: T[], value: T) =>
     list.includes(value) ? list.filter((one) => one !== value) : [...list, value];
+  const everyMonitor = sourceIds.includes(ROUTE_ALL_MONITORS);
+  // A route that names monitors and no source takes no alert source at all (`routeMatches`).
+  const monitorsOnly =
+    sourceIds.some((id) => id === ROUTE_ALL_MONITORS || id.startsWith("mon_")) &&
+    !sourceIds.some((id) => id.startsWith("src_"));
   const error = (key: string) => {
     const part = invalid[key];
     return part ? say(part) : undefined;
@@ -1294,7 +1321,10 @@ function RouteForm({
       />
       <fieldset className="flex min-w-0 flex-col gap-2" aria-describedby={ids.sources}>
         <legend className="mb-1.5 text-sm font-medium">{say("match_sources")}</legend>
-        {sources.length === 0 ? (
+        {monitorsOnly ? (
+          <p className="text-sm text-muted-foreground">{say("monitors_only")}</p>
+        ) : null}
+        {sources.length === 0 && !monitorsOnly ? (
           <p id={ids.sources} className="text-sm text-muted-foreground">
             {say("any_source")}
           </p>
@@ -1311,6 +1341,47 @@ function RouteForm({
             </label>
           ))
         )}
+      </fieldset>
+      <fieldset className="flex min-w-0 flex-col gap-2" aria-describedby={ids.monitors}>
+        <legend className="mb-1.5 text-sm font-medium">{say("match_monitors")}</legend>
+        <label className="flex min-h-6 items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="size-4 shrink-0 accent-primary"
+            checked={everyMonitor}
+            onChange={() =>
+              // Every monitor stands for the ones picked one by one: they are dropped, not kept hidden.
+              setSourceIds((list) =>
+                everyMonitor
+                  ? list.filter((id) => id !== ROUTE_ALL_MONITORS)
+                  : [...list.filter((id) => !id.startsWith("mon_")), ROUTE_ALL_MONITORS],
+              )
+            }
+          />
+          {say("every_monitor")}
+        </label>
+        {everyMonitor || monitors.length === 0 ? null : (
+          // A workspace may have 100 monitors (more where the operator allows): the list scrolls in place rather
+          // than pushing the rest of the form away.
+          <div className="-m-0.5 flex max-h-64 flex-col gap-2 overflow-y-auto p-0.5">
+            {monitors.map((monitor) => (
+              <label key={monitor.id} className="flex min-h-6 items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4 shrink-0 accent-primary"
+                  checked={sourceIds.includes(monitor.id)}
+                  onChange={() => setSourceIds((list) => toggle(list, monitor.id))}
+                />
+                <span className="min-w-0 [overflow-wrap:anywhere]">{monitor.name}</span>
+              </label>
+            ))}
+          </div>
+        )}
+        <p id={ids.monitors} className="text-sm text-muted-foreground">
+          {monitors.length === 0 && !everyMonitor
+            ? `${say("monitors_empty")} ${say("monitors_hint")}`
+            : say("monitors_hint")}
+        </p>
       </fieldset>
       <fieldset className="flex min-w-0 flex-col gap-2">
         <legend className="mb-1.5 text-sm font-medium">{say("match_severities")}</legend>

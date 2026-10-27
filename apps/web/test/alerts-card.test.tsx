@@ -8,6 +8,7 @@ import type {
   AlertSourceRow,
   EscalationPolicyRow,
   IncidentRow,
+  MonitorRow,
   SourceAlertRow,
 } from "@freecorps/brigade-schema";
 import { act, type ReactElement } from "react";
@@ -114,6 +115,7 @@ const incident: IncidentRow = {
 };
 
 const policy = { id: "esc_payments", name: "Payments on-call" } as EscalationPolicyRow;
+const monitor = (id: string, name: string) => ({ id, name }) as MonitorRow;
 
 function panel(overrides: Partial<Parameters<typeof AlertsPanel>[0]> = {}) {
   return (
@@ -125,6 +127,7 @@ function panel(overrides: Partial<Parameters<typeof AlertsPanel>[0]> = {}) {
       types={[]}
       services={[]}
       incidents={[incident]}
+      monitors={[monitor("mon_checkout", "Checkout API"), monitor("mon_docs", "Docs")]}
       loading={false}
       failed={false}
       manage
@@ -383,6 +386,79 @@ describe("AlertsPanel", () => {
         action: { kind: "drop" },
       },
     ]);
+  });
+
+  test("a route picks monitors one by one, or every monitor; naming no source then takes none", async () => {
+    const saved: RouteDraft[] = [];
+    const container = mount(panel({ onCreateRoute: async (draft) => (saved.push(draft), true) }));
+    click(button(container, "Add route"));
+    type(input(container, "Route name"), "Quiet docs");
+    expect(container.textContent).toContain(
+      "A route takes a monitor's alert only when it names it here.",
+    );
+    click(input(container, "Docs"));
+    expect(container.textContent).toContain("this route takes only the monitors below");
+    type(input(container, "Then"), "suppress");
+    await act(async () => {
+      button(container, "Save").closest("form")!.requestSubmit();
+    });
+    expect(saved[0]?.match.sourceIds).toEqual(["mon_docs"]);
+
+    click(button(container, "Add route"));
+    type(input(container, "Route name"), "Every monitor pages");
+    click(input(container, "Grafana production"));
+    click(input(container, "Docs"));
+    // Every monitor replaces the ones picked, which are no longer listed.
+    click(input(container, "Every monitor"));
+    expect(container.querySelector("form")!.textContent).not.toContain("Checkout API");
+    expect(container.textContent).not.toContain("this route takes only the monitors below");
+    await act(async () => {
+      button(container, "Save").closest("form")!.requestSubmit();
+    });
+    expect(saved[1]?.match.sourceIds).toEqual(["src_grafana", "monitors"]);
+  });
+
+  test("the monitor picker's worst case: a full workspace, long names, none at all, pt-BR", () => {
+    const long = "Checkout API — eu-west payments gateway health (primary) 🇵🇹 with a long suffix";
+    const many = Array.from({ length: 100 }, (_, index) =>
+      monitor(`mon_${index}`, index === 0 ? long.slice(0, 80) : `Monitor ${index + 1}`),
+    );
+    const container = mount(panel({ monitors: many }));
+    click(button(container, "Add route"));
+    const list = container.querySelector(".overflow-y-auto")!;
+    // Scrolls in place: the form's actions stay close.
+    expect(list.className).toContain("max-h-64");
+    expect(list.querySelectorAll("input[type=checkbox]")).toHaveLength(100);
+    expect(list.querySelector("span")!.className).toContain("[overflow-wrap:anywhere]");
+    act(() => root?.unmount());
+
+    const empty = mount(panel({ monitors: [] }));
+    click(button(empty, "Add route"));
+    expect(empty.textContent).toContain("No monitors yet.");
+    expect(empty.querySelector(".overflow-y-auto")).toBeNull();
+    act(() => root?.unmount());
+
+    void setI18nLocale("pt-BR");
+    const translated = mount(panel());
+    click(button(translated, "Adicionar rota"));
+    expect(translated.textContent).toContain("Todos os monitores");
+  });
+
+  test("a route names its monitors, every monitor, or a deleted one", () => {
+    const container = mount(
+      panel({
+        routes: [
+          route("rte_1", "Docs", 0, {
+            match: { sourceIds: ["mon_docs", "mon_gone"], severities: [], labels: [] },
+          }),
+          route("rte_2", "All", 1, {
+            match: { sourceIds: ["monitors"], severities: [], labels: [] },
+          }),
+        ],
+      }),
+    );
+    expect(container.textContent).toContain("Docs, a deleted monitor");
+    expect(container.textContent).toContain("Every monitor");
   });
 
   test("a source's title and severity are previewed on its latest alert as sent, then saved", async () => {

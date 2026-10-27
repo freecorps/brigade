@@ -631,6 +631,17 @@
       }
     }
   ],
+  "monitor_route_quiet": [
+    {
+      "declarations": ["input outcome", "input name"],
+      "selectors": ["outcome"],
+      "match": {
+        "outcome=suppressed": "Silenciado pela rota {name}: sem incidente",
+        "outcome=dropped": "Descartado pela rota {name}: ninguém é acionado",
+        "outcome=*": "Rota: {name}"
+      }
+    }
+  ],
   "monitor_incident_link": [
     {
       "declarations": ["input has", "input number"],
@@ -2871,6 +2882,12 @@
         "part=route_limit": "Este espaço de trabalho já tem o máximo de rotas ({value}).",
         "part=any_alert": "Qualquer alerta",
         "part=deleted_source": "uma fonte excluída",
+        "part=match_monitors": "Monitores",
+        "part=every_monitor": "Todos os monitores",
+        "part=monitors_hint": "Uma rota só recebe o alerta de um monitor quando o seleciona aqui. Sem rota que o receba, um monitor que cai abre seu incidente com a própria severidade, acionado pela sua política.",
+        "part=monitors_empty": "Nenhum monitor ainda.",
+        "part=monitors_only": "Nenhuma fonte selecionada: esta rota recebe só os monitores abaixo.",
+        "part=deleted_monitor": "um monitor excluído",
         "part=recent_title": "Alertas recentes",
         "part=recent_empty": "Nenhum alerta recebido ainda.",
         "part=status_firing": "Disparando",

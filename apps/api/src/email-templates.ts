@@ -9,6 +9,7 @@ import {
   email_reset,
   email_text,
   email_verify,
+  email_webhook_disabled,
   member_role,
   severity_named,
   severity_sev1,
@@ -155,7 +156,8 @@ function renderMessage(
   parts: {
     subject: string;
     lines: string[];
-    link: { label: string; url: string };
+    /** Absent: no link (the dashboard's origin is not configured). */
+    link?: { label: string; url: string };
     after: string[];
     footer: string;
   },
@@ -163,14 +165,24 @@ function renderMessage(
   locale: Locale,
 ): OutgoingEmail {
   const { subject, lines, link, after, footer } = parts;
-  const textBody = [...lines, `${link.label}: ${link.url}`, ...after, "--", footer].join("\n\n");
+  const textBody = [
+    ...lines,
+    ...(link ? [`${link.label}: ${link.url}`] : []),
+    ...after,
+    "--",
+    footer,
+  ].join("\n\n");
   const paragraph = (line: string, style = "") =>
     `<p style="margin:0 0 16px${style}">${escapeHtml(line)}</p>`;
   const html = [
     `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><title>${escapeHtml(singleLine(subject))}</title></head>`,
     `<body style="margin:0;padding:24px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:15px;line-height:1.5;color:#111">`,
     ...lines.map((line) => paragraph(line)),
-    `<p style="margin:0 0 16px"><a href="${escapeHtml(link.url)}" style="display:inline-block;padding:10px 16px;border-radius:6px;background:#111;color:#fff;text-decoration:none">${escapeHtml(link.label)}</a></p>`,
+    ...(link
+      ? [
+          `<p style="margin:0 0 16px"><a href="${escapeHtml(link.url)}" style="display:inline-block;padding:10px 16px;border-radius:6px;background:#111;color:#fff;text-decoration:none">${escapeHtml(link.label)}</a></p>`,
+        ]
+      : []),
     ...after.map((line) => paragraph(line)),
     paragraph(footer, ";color:#666;font-size:13px"),
     "</body></html>",
@@ -255,6 +267,35 @@ export function renderInvitationEmail(
       lines: [text("intro"), text("how")],
       link: { label: text("open"), url },
       after: [text("expires")],
+      footer: text("footer"),
+    },
+    to,
+    locale,
+  );
+}
+
+/**
+ * The email that tells an owner Brigade turned a webhook endpoint off after its deliveries kept failing (RFC 0005
+ * "Outbound webhooks"). `webhook` is the endpoint's description, or its host when it has none (never the path or
+ * query, which may carry a token); the description and the workspace's name are what members typed.
+ */
+export function renderWebhookDisabledEmail(
+  facts: { workspace: string; webhook: string; failures: number },
+  to: { email: string; name?: string },
+  url: string | undefined,
+  locale: Locale,
+): OutgoingEmail {
+  const text = (part: string) =>
+    email_webhook_disabled(
+      { part, workspace: facts.workspace, webhook: facts.webhook, failures: facts.failures },
+      { locale },
+    );
+  return renderMessage(
+    {
+      subject: text("subject"),
+      lines: [text("intro"), text("how")],
+      ...(url ? { link: { label: text("open"), url } } : {}),
+      after: [],
       footer: text("footer"),
     },
     to,

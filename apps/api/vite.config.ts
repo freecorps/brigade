@@ -23,6 +23,12 @@ const TEST_AUTH_SECRET = "brigade-tests-only-secret-not-for-deployments";
  */
 const TEST_SLACK_TOKEN_KEY = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
 
+/**
+ * Test-only key for sealing webhook signing secrets (src/webhook-routes.ts): 32 bytes of 9s, base64url. Not a
+ * credential, like the Slack key above. Deployed Workers get WEBHOOK_SECRET_KEY from `wrangler secret put`.
+ */
+const TEST_WEBHOOK_SECRET_KEY = "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk";
+
 export default defineConfig(async ({ command, mode }) => ({
   // The Vite plugin runs the Worker in dev and build; tests run it through the Vitest plugin instead.
   // `workspaceSource()` resolves packages/schema and packages/sync to their TypeScript source (RFC 0002).
@@ -36,6 +42,7 @@ export default defineConfig(async ({ command, mode }) => ({
                 ...LOCAL_VARS,
                 BETTER_AUTH_SECRET: TEST_AUTH_SECRET,
                 SLACK_TOKEN_KEY: TEST_SLACK_TOKEN_KEY,
+                WEBHOOK_SECRET_KEY: TEST_WEBHOOK_SECRET_KEY,
                 // Tests read events from the outbox; test/outbox.test.ts drives the drain itself.
                 OUTBOX_DRAIN: "paused",
                 // The dead-man switch's ping (src/watchdog.ts): a loopback URL nothing listens on;

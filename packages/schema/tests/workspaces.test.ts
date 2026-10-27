@@ -55,6 +55,9 @@ describe("workspace.create", () => {
       "escalation.unreached",
       "slack.connect",
       "notification.failSlack",
+      "webhook.create",
+      "webhook.rotateSecret",
+      "webhook.record",
     ]);
     const result = runMutation(
       mutations,

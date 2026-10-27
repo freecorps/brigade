@@ -25,6 +25,8 @@ export const statement = {
   // The public status page (RFC 0012): `manage` sets it up and edits its components; `publish` tells the public
   // about an incident.
   status: ["read", "manage", "publish"],
+  // Outbound webhooks (RFC 0005 "Outbound webhooks"): only those who manage them see them, since a URL may carry a token.
+  webhook: ["manage"],
 } as const;
 
 type Statement = typeof statement;
@@ -46,6 +48,7 @@ export const roles = {
     schedule: ["read", "manage", "override"],
     escalation: ["read", "manage"],
     status: ["read", "manage", "publish"],
+    webhook: ["manage"],
   },
   admin: {
     incident: ["read", "declare", "update", "ack"],
@@ -56,6 +59,7 @@ export const roles = {
     schedule: ["read", "manage", "override"],
     escalation: ["read", "manage"],
     status: ["read", "manage", "publish"],
+    webhook: ["manage"],
   },
   // Responders see what monitors say (they run the incidents monitors open) but do not change what is watched.
   responder: {

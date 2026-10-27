@@ -52,6 +52,13 @@ import { Receipts, type ReceiptResult } from "./receipts.ts";
 import { SlackDesk, type SlackPlan, type SlackShardAction } from "./slack.ts";
 import { StatusPublisher, type StatusConfigureResult } from "./status-page.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
+import {
+  WebhookDesk,
+  type WebhookEmailPlan,
+  type WebhookOutcome,
+  type WebhookPlan,
+  type WebhookRunResult,
+} from "./webhooks.ts";
 import type { RowChange } from "./store.ts";
 
 export interface WorkspaceInfo {
@@ -165,6 +172,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private readonly receipts: Receipts;
   private readonly mailer: Mailer;
   private readonly slack: SlackDesk;
+  private readonly webhooks: WebhookDesk;
   private readonly escalations: Escalations;
   private readonly membership: Membership;
   private readonly invitations: Invitations;
@@ -221,6 +229,12 @@ export class WorkspaceDO extends DurableObject<Env> {
       storage: ctx.storage,
       shard: this.shard,
       randomBytes,
+      log: (message, fields) => this.log(message, fields),
+      committed: (version, changes) => this.broadcast(version, changes, undefined),
+    });
+    this.webhooks = new WebhookDesk({
+      storage: ctx.storage,
+      shard: this.shard,
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
     });
@@ -760,6 +774,57 @@ export class WorkspaceDO extends DurableObject<Env> {
   recordSlack(event: BrigadeEvent, outcome: SlackPostOutcome): { retryAt: number | null } {
     if (this.shard.workspace() !== event.workspaceId) return { retryAt: null };
     return this.slack.record(event, outcome, Date.now());
+  }
+
+  /**
+   * `webhook.create` or `webhook.rotateSecret` as `actor` (RPC from `POST /workspaces/:id/webhooks` and
+   * `…/webhooks/:id/rotate`, which checked the session, read the role in D1, made the secret and sealed it). The same
+   * RBAC as every mutation; a member removed within the tombstone is refused as their sync upgrade would be.
+   */
+  async webhookRun(
+    workspaceId: string,
+    actor: Actor,
+    name: "webhook.create" | "webhook.rotateSecret",
+    args: Record<string, unknown>,
+    key: string,
+  ): Promise<WebhookRunResult> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    const result = this.webhooks.run(actor, name, args, key, Date.now());
+    if (result.ok) return { ok: true };
+    const { code, issues } = result.error;
+    return issues ? { ok: false, code, issues } : { ok: false, code };
+  }
+
+  /** What the webhook notifier should deliver for `event` (RPC from the queue consumer): see `WebhookDesk.plan`. */
+  planWebhooks(event: BrigadeEvent): WebhookPlan {
+    if (this.shard.workspace() !== event.workspaceId)
+      return { body: null, sends: [], waitUntil: null };
+    return this.webhooks.plan(event, Date.now());
+  }
+
+  /** What one webhook delivery attempt did (RPC from the queue consumer): see `WebhookDesk.record`. */
+  recordWebhook(
+    event: BrigadeEvent,
+    webhookId: string,
+    outcome: WebhookOutcome,
+  ): { retryAt: number | null } {
+    if (this.shard.workspace() !== event.workspaceId) return { retryAt: null };
+    return this.webhooks.record(event, webhookId, outcome, Date.now());
+  }
+
+  /** The owners' email for an endpoint turned off (RPC from the queue consumer): see `WebhookDesk.planEmail`. */
+  planWebhookEmail(event: BrigadeEvent): WebhookEmailPlan {
+    if (this.shard.workspace() !== event.workspaceId) return { send: false, reason: "not_found" };
+    return this.webhooks.planEmail(event, Date.now());
+  }
+
+  /** What that email did (RPC from the queue consumer): see `WebhookDesk.recordEmail`. */
+  recordWebhookEmail(event: BrigadeEvent, done: boolean): void {
+    if (this.shard.workspace() !== event.workspaceId) return;
+    this.webhooks.recordEmail(event, done, Date.now());
   }
 
   /** A page the Queue gave up on (RPC from the dead-letter consumer): see `Pager.deadLettered`. */

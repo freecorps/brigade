@@ -59,6 +59,7 @@ import {
 } from "./paging.ts";
 import type { ProbeReport } from "./probe.ts";
 import { Receipts, type ReceiptResult } from "./receipts.ts";
+import { AlertIntake, type AlertIntakeResult } from "./alert-intake.ts";
 import { SlackDesk, type SlackPlan, type SlackShardAction } from "./slack.ts";
 import { StatusPublisher, type StatusConfigureResult } from "./status-page.ts";
 import { findQuery, Shard, subscriptionChanges } from "./shard.ts";
@@ -156,10 +157,11 @@ export type SocketState = {
 
 /**
  * What `signOutUser` did. With `takeOver`, `paused`: the names of the monitors it paused; `revoked`: how many heartbeat
- * URLs stopped working. Both absent when it took nothing over (another member is here after all).
+ * URLs stopped working; `sources`: how many alert source URLs; `routes`: how many alert routes the account created were
+ * disabled. All absent when it took nothing over (another member is here after all).
  */
 export type SignOutResult =
-  | { ok: true; paused?: string[]; revoked?: number }
+  | { ok: true; paused?: string[]; revoked?: number; sources?: number; routes?: number }
   | { ok: false; code: "not_found" };
 
 /** Largest frame the shard reads at all, to salvage the id of a refused `subscribe` or `mutate`. */
@@ -191,6 +193,7 @@ export class WorkspaceDO extends DurableObject<Env> {
   private statusBudgetMs = STATUS_PUSH_BUDGET_MS;
   private readonly shard: Shard;
   private readonly monitoring: Monitoring;
+  private readonly alerts: AlertIntake;
   private readonly drain: OutboxDrain;
   private readonly drainPaused: boolean;
   private readonly pager: Pager;
@@ -276,6 +279,13 @@ export class WorkspaceDO extends DurableObject<Env> {
       randomBytes,
       log: (message, fields) => this.log(message, fields),
       committed: (version, changes) => this.broadcast(version, changes, undefined),
+    });
+    this.alerts = new AlertIntake({
+      shard: this.shard,
+      randomBytes,
+      log: (message, fields) => this.log(message, fields),
+      committed: (version, changes) => this.broadcast(version, changes, undefined),
+      allow: (sourceId) => this.alertAllowed(sourceId),
     });
     this.membership = new Membership({
       db: env.DB,
@@ -729,7 +739,8 @@ export class WorkspaceDO extends DurableObject<Env> {
    * sockets, which then reconnect with no session and are refused. Better Auth has already deleted every session, so
    * this is what keeps a phone or a socket of whoever held the account before from going on as them. With `takeOver`
    * (the owner of the address took back an account someone else signed up with, and it is the only member here),
-   * also pauses every monitor and revokes every heartbeat URL (`monitor.takeOver`), so whoever set them up cannot page
+   * also pauses every monitor and revokes every heartbeat and alert source URL (`monitor.takeOver`,
+   * `alertSource.takeOver`), so whoever set them up cannot page
    * the owner through them; answers the names of the monitors it paused and how many heartbeat URLs it revoked. The
    * shard checks its own member list again first: with anyone else in it, nothing is taken over. Nothing to change
    * is fine. A shard that serves another workspace, or none yet, answers `not_found`.
@@ -750,17 +761,30 @@ export class WorkspaceDO extends DurableObject<Env> {
       // Their monitors are not the account's to pause.
       const others = this.shard.store.scan("members").some((member) => member.id !== userId);
       if (!options.takeOver || others) return { ok: true };
-      const paused = this.shard.store
-        .scan("monitors")
-        .filter((monitor) => !monitor.paused)
-        .map((monitor) => monitor.name);
       // Random bytes, not the hash of a token: no heartbeat URL matches it, so every one is revoked.
       const tokenHash = [...crypto.getRandomValues(new Uint8Array(32))]
         .map((byte) => byte.toString(16).padStart(2, "0"))
         .join("");
+      // Alert source URLs (RFC 0005 "Alert sources"): they page like a heartbeat does. And the routes the account
+      // created, which could drop or suppress what the owner needs paged; what they kept quiet is routed again. Before
+      // the monitors: a retry after this step failed must still find every monitor to name as paused. Counted so a
+      // retry after it succeeded counts the same (the routes it disabled then are still the account's).
+      const sources = this.shard.store.scan("alert_source_secrets").length;
+      const routes = this.shard.store
+        .scan("alert_routes")
+        .filter(
+          (route) =>
+            route.createdBy === userId && (!route.disabled || route.disabled === "takeover"),
+        ).length;
+      this.serverMutation("alertSource.takeOver", { tokenHash, userId });
+      if (routes > 0) this.alerts.reroute();
+      const paused = this.shard.store
+        .scan("monitors")
+        .filter((monitor) => !monitor.paused)
+        .map((monitor) => monitor.name);
       const revoked = this.shard.store.scan("heartbeats").length;
       this.serverMutation("monitor.takeOver", { tokenHash });
-      return { ok: true, paused, revoked };
+      return { ok: true, paused, revoked, sources, routes };
     } catch (error) {
       this.membership.armRepair(Date.now());
       throw error;
@@ -825,6 +849,51 @@ export class WorkspaceDO extends DurableObject<Env> {
   async heartbeat(monitorId: string, digest: ArrayBuffer): Promise<boolean> {
     if (this.shard.workspace() === undefined) return false;
     return this.monitoring.ping(monitorId, digest);
+  }
+
+  /**
+   * An alert source's payload (RPC from the Worker's `POST /alerts/:token`) with the SHA-256 of the URL's secret,
+   * its text and its headers (RFC 0005 "Alert sources"). Every refusal is `not_found`, alike; a shard that serves no
+   * workspace yet answers it without claiming one.
+   */
+  async alert(
+    sourceId: string,
+    digest: ArrayBuffer,
+    body: ArrayBuffer,
+    headers: Record<string, string>,
+  ): Promise<AlertIntakeResult> {
+    if (this.shard.workspace() === undefined) return { status: "not_found" };
+    return this.alerts.receive(sourceId, digest, body, headers);
+  }
+
+  /**
+   * An alert source's payload the Worker would not read, past `MAX_ALERT_BODY` (RPC from `POST /alerts/:token`): it
+   * pages as the unreadable alert when the URL's secret and the source's header check out (`AlertIntake.receiveTooLarge`).
+   */
+  async alertTooLarge(
+    sourceId: string,
+    digest: ArrayBuffer,
+    headers: Record<string, string>,
+  ): Promise<AlertIntakeResult> {
+    if (this.shard.workspace() === undefined) return { status: "not_found" };
+    return this.alerts.receiveTooLarge(sourceId, digest, headers);
+  }
+
+  /**
+   * Whether a verified payload of `sourceId` may go on: `ALERT_LIMIT` (wrangler.jsonc), keyed on the workspace and the
+   * source, spent only once the shard checked the secrets, so a flood with a wrong secret cannot use up the real
+   * source's budget. Approximate and per Cloudflare location; a limiter that fails lets the payload through, since a
+   * lost alert is worse than a busy shard.
+   */
+  private async alertAllowed(sourceId: string): Promise<boolean> {
+    const workspace = this.shard.workspace() ?? "";
+    try {
+      const { success } = await this.env.ALERT_LIMIT.limit({ key: `${workspace}:${sourceId}` });
+      return success;
+    } catch (error) {
+      this.log("alert rate limit failed", { source: sourceId, error: String(error) });
+      return true;
+    }
   }
 
   /**
@@ -1448,6 +1517,8 @@ export class WorkspaceDO extends DurableObject<Env> {
     this.send(ws, result);
     if (result.ok) {
       this.broadcast(result.version, changes, ws);
+      // The routes changed: what they kept quiet is routed again now (RFC 0005 "Alert sources"). Never throws.
+      if (changes.some((change) => change.table === "alert_routes")) this.alerts.reroute();
       // A monitor changed: the alarm pushes it to its probes (and keeps watching its heartbeats) right away.
       if (changes.some((change) => change.table === "monitors")) {
         this.ctx.storage.setAlarm(Date.now()).catch((error: unknown) => {

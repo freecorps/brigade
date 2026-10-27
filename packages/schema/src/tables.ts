@@ -1,4 +1,6 @@
 import type { Role } from "./access.ts";
+import type { AlertOutcome, AlertRouteReason } from "./alert-sources.ts";
+import type { AlertSeverity, AlertSourceKind } from "./alert-normalize.ts";
 import type { DeliveryError } from "./deliveries.ts";
 import type { DevicePlatform, PushEnvironment } from "./devices.ts";
 import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
@@ -165,6 +167,8 @@ export type Escalation = {
    * null or absent: the workspace's default policy.
    */
   monitor?: { id: string; name: string } | null;
+  /** Likewise the alert route whose policy this is, for an incident an alert source opened through it. */
+  route?: { id: string; name: string } | null;
   levels: EscalationLevel[];
   repeat: number;
   /** The event whose page started the run: a redelivery of it pages the same level again, never a new run. */
@@ -231,6 +235,11 @@ export type TimelineEntry =
       monitor: string;
       reason: "recovered" | "paused" | "deleted";
     }
+  /**
+   * Every alert-source alert on the incident resolved, but people had already worked on it (acknowledged, took a
+   * role, wrote an update or moved it on), so it stays open for them to close (`alert.ingest`).
+   */
+  | { kind: "alerts_resolved" }
   /**
    * A page reached nobody, or not `userId` on any of their devices (`notification.fail`, RFC 0005); `schedule` names
    * an escalation level's schedule that had nobody on call (absent on other entries).
@@ -785,6 +794,141 @@ export type ExportRow = {
   expiresAt: number;
 };
 
+/**
+ * An inbound alert integration (RFC 0005 "Alert sources"): a secret URL, `POST /alerts/<token>`, that one sender
+ * posts to. Never its token, header value or signing secret (`AlertSourceSecretRow`).
+ */
+export type AlertSourceRow = {
+  id: string; // src_<ULID>, made by the client
+  name: string;
+  kind: AlertSourceKind;
+  /** A header the sender must also send (lower-cased); null: the URL's secret alone. */
+  headerName: string | null;
+  /** Whether a signature is verified (Sentry always; Grafana when given its HMAC secret). */
+  signed: boolean;
+  /** When a payload last arrived, to the minute (`SOURCE_SEEN_EVERY_MS`); null: never. */
+  lastReceivedAt: number | null;
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+};
+
+/** Server-only: an alert source's secrets. The token and the header value only as SHA-256 (hex). */
+export type AlertSourceSecretRow = {
+  id: string;
+  tokenHash: string;
+  headerHash: string | null;
+  /** The provider's HMAC secret, kept as given: verifying a signature needs it. */
+  signingSecret: string | null;
+};
+
+/** What an alert route matches; an empty list matches anything. A label `value` of "" matches any value. */
+export type RouteMatch = {
+  sourceIds: string[];
+  severities: AlertSeverity[];
+  labels: { key: string; value: string }[];
+};
+
+/**
+ * What a route does with an alert it matches: `open` an incident (at `severity`, or the type's default, or the
+ * alert's own when null; of `typeId` and on `serviceIds`; paged through `policyId`, or the default when null); `group`
+ * it into the open incident of its `groupBy` label's value, opening one when none is; `suppress` it (kept as an
+ * alert, no incident); or `drop` it (recorded, nothing else).
+ */
+export type RouteIncident = {
+  severity: Severity | null;
+  typeId: string | null;
+  serviceIds: string[];
+  policyId: string | null;
+};
+export type RouteAction =
+  | ({ kind: "open" } & RouteIncident)
+  | ({ kind: "group"; groupBy: string } & RouteIncident)
+  | { kind: "suppress" }
+  | { kind: "drop" };
+
+/** An alert route (RFC 0003 "Alert → incident flow"): tried in `position` order, the first match wins. */
+export type AlertRouteRow = {
+  id: string; // rte_<ULID>, made by the client
+  name: string;
+  /** 0 is tried first. */
+  position: number;
+  match: RouteMatch;
+  action: RouteAction;
+  /**
+   * Why the route is skipped, if it is: `takeover`, its creator's account was taken back by the owner of its address
+   * (`alertSource.takeOver`), so what they routed is not trusted until someone saves the route again. Absent or null:
+   * it routes.
+   */
+  disabled?: "takeover" | null;
+  createdAt: number;
+  /** Who created it (a member id): a takeover disables the routes of the account it took back. */
+  createdBy: string;
+  updatedAt: number;
+};
+
+/** An alert an alert source sent, and what Brigade did with it. Written only by `alert.ingest` and source deletion. */
+export type SourceAlertRow = {
+  id: string; // alt_<ULID>, made by the shard
+  sourceId: string;
+  /** The sender's fingerprint: the same key while firing is the same alert. */
+  dedupKey: string;
+  title: string;
+  severity: AlertSeverity;
+  /**
+   * `firing` holds its key; `resolved` by the sender (or its source deleted); `closed` let go of without the sender
+   * resolving it: its incident was closed, it expired (`ALERT_IDLE_TTL_MS`), it made room past `MAX_OPEN_ALERTS`, or
+   * it was routed again into a new alert. Only firing rows count against `MAX_OPEN_ALERTS`.
+   */
+  status: SourceAlertStatus;
+  link: string | null;
+  labels: Record<string, string>;
+  outcome: AlertOutcome;
+  reason: AlertRouteReason;
+  /** The route that took it, its name then; null: the default route. */
+  routeId: string | null;
+  routeName: string | null;
+  /** For a `group` route: the route and the label value it grouped by. */
+  groupKey: string | null;
+  /** The route's escalation policy; null: the default. */
+  policyId: string | null;
+  incidentId: string | null;
+  /** The incident's number when the alert went onto it (`INC-142`), kept so the dashboard can name it once it is over. */
+  incidentNumber?: number | null;
+  firedAt: number;
+  lastSeenAt: number;
+  /** When it stopped firing: resolved or closed. */
+  resolvedAt: number | null;
+  /** How many more times it was sent while firing (deduplicated). */
+  repeats: number;
+  updatedAt: number;
+};
+
+export type SourceAlertStatus = "firing" | "resolved" | "closed";
+
+/**
+ * Server-only: a resolve that came before its firing (`alert.ingest`), so the firing that follows within
+ * `EARLY_RESOLVE_TTL_MS`, and did not start after it, is not opened. `id`: `<source id>:<dedup key>` (a source id
+ * has no colon). `at`: when the resolve came; `endedAt`: when the sender says it resolved, if it said.
+ */
+export type AlertResolveMarkerRow = { id: string; at: number; endedAt?: number | null };
+
+/**
+ * Server-only: the alert route an alert source opened an incident through (its id is the incident's), written with
+ * the incident's declaration, so the route's policy pages it for as long as the incident lives (RFC 0006 "Who is
+ * paged"), however many of its alert rows `MAX_ALERT_ROWS` deleted since. None for an incident the default route
+ * opened, or a member declared. A flap reopening the incident replaces it with the route that matches the alert now
+ * (or deletes it, for the default route), so the reopen pages through that route's policy.
+ */
+export type IncidentRouteRow = {
+  id: string;
+  routeId: string;
+  /** The route's name when it opened the incident. */
+  routeName: string;
+  /** Its escalation policy then; null: the default. */
+  policyId: string | null;
+};
+
 /** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only. */
 export type CounterRow = { id: string; value: number };
 
@@ -821,6 +965,12 @@ export type BrigadeTables = {
   ai_drafts: AiDraftRow;
   exports: ExportRow;
   export_ledger: ExportLedgerRow;
+  alert_sources: AlertSourceRow;
+  alert_source_secrets: AlertSourceSecretRow;
+  alert_routes: AlertRouteRow;
+  source_alerts: SourceAlertRow;
+  alert_resolve_markers: AlertResolveMarkerRow;
+  incident_routes: IncidentRouteRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -859,6 +1009,12 @@ export const TABLES = {
   ai_drafts: { serverOnly: true },
   exports: { serverOnly: false },
   export_ledger: { serverOnly: true },
+  alert_sources: { serverOnly: false },
+  alert_source_secrets: { serverOnly: true },
+  alert_routes: { serverOnly: false },
+  source_alerts: { serverOnly: false },
+  alert_resolve_markers: { serverOnly: true },
+  incident_routes: { serverOnly: true },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

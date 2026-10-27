@@ -35,9 +35,13 @@ export type IncidentStatusChanged = DomainEvent<
   "incident.status_changed",
   { from: IncidentStatus; to: IncidentStatus }
 >;
+/**
+ * `reopening`: raised by the alerts' actor as a flapping alert reopens its incident (RFC 0005 "Alert sources"); the
+ * reopen right after it pages, at this severity, so this one asks for no page of its own.
+ */
 export type IncidentSeverityChanged = DomainEvent<
   "incident.severity_changed",
-  { from: Severity; to: Severity }
+  { from: Severity; to: Severity; reopening?: true }
 >;
 /** Someone acknowledged the page: escalation stops (RFC 0003, "Escalation run"). */
 export type IncidentAcknowledged = DomainEvent<"incident.acknowledged", { by: string }>;
@@ -90,6 +94,33 @@ function stopEscalation(
   if (ctx.server && store.get("escalation_timers", incident.id)) {
     store.delete("escalation_timers", incident.id);
   }
+}
+
+/**
+ * Lets go of the alert-source alerts still firing on an incident that is closing (RFC 0005 "Alert sources"): they are
+ * `closed`, no longer count against the workspace's firing alerts, and their key firing again is a new alert. Written
+ * here rather than in alert-sources.ts, which builds on this module. `alert.resolved` for each, as there.
+ */
+function releaseAlerts(
+  store: MutationStore,
+  incidentId: string,
+  ctx: MutationContext,
+): DomainEvent[] {
+  const events: DomainEvent[] = [];
+  for (const row of store.scan("source_alerts")) {
+    if (row.incidentId !== incidentId || row.status !== "firing") continue;
+    store.update("source_alerts", row.id, {
+      status: "closed",
+      resolvedAt: ctx.now,
+      updatedAt: ctx.now,
+    });
+    events.push({
+      type: "alert.resolved",
+      subject: row.id,
+      data: { id: row.id, sourceId: row.sourceId, reason: "incident_closed" },
+    });
+  }
+  return events;
 }
 
 /** Server only: the next per-workspace incident number, written in the same transaction as the incident. */
@@ -176,6 +207,7 @@ export const setIncidentStatus = defineMutation({
       updatedAt: ctx.now,
       ...(reopened && { acknowledgedAt: null, acknowledgedBy: null }),
     });
+    const released = isActive(args.status) ? [] : releaseAlerts(store, args.id, ctx);
     if (!isActive(args.status)) stopEscalation(store, incident, "resolved", ctx);
     appendTimeline(
       store,
@@ -188,7 +220,7 @@ export const setIncidentStatus = defineMutation({
       subject: args.id,
       data: { from: incident.status, to: args.status },
     };
-    return ok(event);
+    return ok(event, ...released);
   },
 });
 

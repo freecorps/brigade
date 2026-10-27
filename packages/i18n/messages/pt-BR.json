@@ -657,6 +657,7 @@
         "part=you": "Você",
         "part=you_object": "você",
         "part=monitors": "Um monitor",
+        "part=alerts": "Uma fonte de alertas",
         "part=teammate": "Alguém do time",
         "part=read_only": "Leitores acompanham o incidente; respondedores e admins o alteram.",
         "part=not_found_title": "Incidente não encontrado",
@@ -771,6 +772,7 @@
         "kind=follow_up_removed": "{actor} removeu a ação {a}",
         "kind=postmortem_started": "{actor} começou o postmortem",
         "kind=postmortem_ai_drafted": "O Workers AI escreveu um rascunho do postmortem",
+        "kind=alerts_resolved": "Todos os alertas deste incidente foram resolvidos. Ele continua aberto porque há pessoas trabalhando nele.",
         "kind=*": "{actor} alterou o incidente"
       }
     }
@@ -1245,6 +1247,7 @@
         "text=level_empty_draft": "Ninguém para chamar ainda: adicione uma escala ou uma pessoa, ou remova este nível.",
         "text=policy_default": "Política: {name}, a padrão do workspace",
         "text=policy_monitor": "Política: {name}, definida no monitor {who}",
+        "text=policy_route": "Política: {name}, definida na rota de alertas {who}",
         "text=early": "Chamado na hora: ninguém no nível {level} pôde ser alcançado",
         "text=*": "Escalonamento"
       }
@@ -1766,10 +1769,10 @@
       "selectors": ["part"],
       "match": {
         "part=title": "Você recuperou esta conta",
-        "part=body": "Alguém se cadastrou com o seu e-mail antes de você confirmá-lo e criou os espaços de trabalho abaixo. Agora eles são seus. Para que ninguém mais possa acionar você pelo que foi configurado ali, o Brigade pausou todos os monitores e desativou as URLs de heartbeat.",
-        "part=after": "Retome os monitores que quiser manter. Dê a cada heartbeat que você mantiver uma nova URL (Nova URL no formulário Editar) antes de retomá-lo. Confira também as escalas e as políticas de escalonamento de cada espaço de trabalho.",
+        "part=body": "Alguém se cadastrou com o seu e-mail antes de você confirmá-lo e criou os espaços de trabalho abaixo. Agora eles são seus. Para que ninguém mais possa acionar você pelo que foi configurado ali, o Brigade pausou todos os monitores, desativou as URLs de heartbeat e de fontes de alertas e desligou as rotas de alertas que foram criadas.",
+        "part=after": "Retome os monitores que quiser manter. Dê a cada heartbeat e fonte de alertas que você mantiver uma nova URL antes de retomá-los, e salve cada rota de alertas que quiser manter. Confira também as escalas e as políticas de escalonamento de cada espaço de trabalho.",
         "part=failed": "O Brigade não conseguiu acessar este espaço de trabalho, então nada nele foi pausado. Confira os monitores agora.",
-        "part=nothing": "Não havia monitores.",
+        "part=nothing": "Não havia nada para desativar.",
         "part=dismiss": "Entendi",
         "part=dismissing": "Ocultando…",
         "part=dismiss_failed": "Não foi possível ocultar este aviso. Tente de novo.",
@@ -2451,6 +2454,184 @@
       "match": {
         "countPlural=one": "{countFormatted} incidente",
         "countPlural=*": "{countFormatted} incidentes"
+      }
+    }
+  ],
+  "takeover_sources_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} URL de fonte de alertas desativada",
+        "countPlural=*": "{countFormatted} URLs de fontes de alertas desativadas"
+      }
+    }
+  ],
+  "takeover_routes_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} rota de alertas desligada",
+        "countPlural=*": "{countFormatted} rotas de alertas desligadas"
+      }
+    }
+  ],
+  "alerts_card": [
+    {
+      "declarations": ["input part", "input name", "input value"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Fontes de alertas",
+        "part=description": "Grafana, Datadog, Sentry ou qualquer ferramenta que envie um webhook manda alertas para um URL secreto. As rotas decidem quais alertas abrem incidentes e quem é acionado.",
+        "part=load_failed": "Não foi possível carregar as fontes de alertas.",
+        "part=retry": "Tentar de novo",
+        "part=add": "Adicionar fonte",
+        "part=sources_empty": "Nenhuma fonte de alertas ainda. Adicione uma para ter um URL para colar na sua ferramenta de monitoramento.",
+        "part=manage_only": "Só proprietários e administradores adicionam fontes de alertas e mudam rotas.",
+        "part=name_label": "Nome",
+        "part=name_required": "Dê um nome à fonte.",
+        "part=kind_label": "Enviado por",
+        "part=kind_generic": "Qualquer webhook",
+        "part=kind_grafana": "Grafana",
+        "part=kind_datadog": "Datadog",
+        "part=kind_sentry": "Sentry",
+        "part=header_label": "Cabeçalho extra (opcional)",
+        "part=header_hint": "O Brigade também confere este cabeçalho. Para Basic auth, use Authorization.",
+        "part=header_value_label": "Valor do cabeçalho",
+        "part=header_invalid": "Use letras, dígitos e hífens, e não um cabeçalho do próprio transporte.",
+        "part=header_value_required": "Informe o valor que o cabeçalho leva.",
+        "part=secret_label_sentry": "Client secret",
+        "part=secret_hint_sentry": "Da sua integração interna do Sentry. O Brigade confere a assinatura de cada webhook com ele.",
+        "part=secret_label_grafana": "Segredo HMAC (opcional)",
+        "part=secret_hint_grafana": "Use o mesmo segredo nas configurações de assinatura HMAC do ponto de contato.",
+        "part=secret_required": "O Sentry assina todo webhook: cole o client secret dele.",
+        "part=secret_invalid": "Use de 8 a 256 caracteres, sem espaços.",
+        "part=create": "Criar fonte",
+        "part=creating": "Criando…",
+        "part=cancel": "Cancelar",
+        "part=create_failed": "Não foi possível criar a fonte. Tente de novo.",
+        "part=limit": "Este espaço de trabalho já tem o máximo de fontes de alertas ({value}). Exclua uma para adicionar outra.",
+        "part=url_once": "Copie este URL agora. O Brigade guarda só um hash dele, então ele aparece uma vez só.",
+        "part=url_rotated": "Novo URL para {name}. O antigo não funciona mais.",
+        "part=copy": "Copiar",
+        "part=copied": "Copiado",
+        "part=close_prompt": "Fechar sem copiar? Você precisaria de um novo URL.",
+        "part=keep": "Manter aberto",
+        "part=close": "Fechar",
+        "part=setup_title": "Onde colar",
+        "part=setup_grafana": "No Grafana, abra Alerting e depois Contact points, e adicione uma integração Webhook com este URL e o método POST. Em Optional Webhook settings, defina Max alerts como 50, para que o conteúdo fique abaixo dos 256 KiB do Brigade. Depois aponte uma política de notificação para esse ponto de contato.",
+        "part=setup_grafana_hmac": "Em Optional Webhook settings, configure HMAC Signature com o segredo que você informou ao Brigade. Mantenha o cabeçalho de assinatura padrão e deixe o cabeçalho de timestamp vazio.",
+        "part=setup_datadog": "No Datadog, abra Integrations e depois Webhooks, e adicione um webhook chamado brigade com este URL e o payload abaixo. Depois coloque @webhook-brigade na mensagem de um monitor.",
+        "part=setup_sentry": "No Sentry, abra Settings e depois Developer Settings, e crie uma integração interna com este URL de webhook. Ative Alert Rule Action, copie o client secret para o Brigade e escolha a integração nas ações de uma regra de alerta.",
+        "part=setup_generic": "Faça POST de JSON para este URL. Só title é obrigatório. Envie o mesmo dedup_key enquanto o alerta dispara, e status resolved quando acabar.",
+        "part=setup_header": "Envie também o cabeçalho {name} com o valor que você informou.",
+        "part=setup_show": "Como conectar",
+        "part=last_received": "Último alerta {value}",
+        "part=never_received": "Nenhum alerta recebido ainda",
+        "part=signed": "Assinatura conferida",
+        "part=header_checked": "Confere {name}",
+        "part=rotate": "Novo URL",
+        "part=rotate_confirm": "O URL atual para de funcionar na hora. Atualize o que envia para ele.",
+        "part=rotate_failed": "Não foi possível gerar um novo URL. O atual continua funcionando.",
+        "part=delete": "Excluir",
+        "part=delete_confirm": "Excluir {name}? O URL para de funcionar e os alertas disparando dela são resolvidos. Os incidentes que eles abriram continuam abertos.",
+        "part=delete_failed": "Não foi possível excluir. Tente de novo.",
+        "part=keep_source": "Manter",
+        "part=routes_title": "Rotas de alertas",
+        "part=routes_hint": "Testadas de cima para baixo: a primeira rota que combina decide. Um alerta sem rota que combine abre um incidente com a própria severidade, acionado pela política padrão.",
+        "part=default_route": "Todo o resto",
+        "part=default_route_action": "Abre um incidente com a severidade do alerta, acionado pela política padrão. Payloads ilegíveis sempre vêm para cá.",
+        "part=route_name": "Nome da rota",
+        "part=route_name_required": "Dê um nome à rota.",
+        "part=match_sources": "De",
+        "part=any_source": "Qualquer fonte",
+        "part=match_severities": "Severidade do alerta",
+        "part=any_severity": "Qualquer severidade",
+        "part=severity_critical": "Crítica",
+        "part=severity_high": "Alta",
+        "part=severity_warning": "Aviso",
+        "part=severity_info": "Informativa",
+        "part=match_labels": "Rótulos",
+        "part=labels_hint": "chave=valor, separados por vírgula. Uma chave sozinha combina com qualquer valor.",
+        "part=labels_invalid": "Escreva cada rótulo como chave=valor, no máximo 10.",
+        "part=action_label": "Então",
+        "part=action_open": "Abrir um incidente",
+        "part=action_group": "Agrupar num incidente aberto",
+        "part=action_suppress": "Guardar o alerta, sem incidente",
+        "part=action_drop": "Descartar",
+        "part=severity_label": "Severidade do incidente",
+        "part=severity_from_alert": "A do próprio alerta",
+        "part=policy_label": "Política de escalonamento",
+        "part=policy_default": "Política padrão",
+        "part=type_label": "Tipo de incidente",
+        "part=type_none": "Sem tipo",
+        "part=services_label": "Serviços",
+        "part=group_by": "Agrupar pelo rótulo",
+        "part=group_by_hint": "Alertas com o mesmo valor deste rótulo entram num mesmo incidente aberto.",
+        "part=group_by_required": "Informe o rótulo para agrupar.",
+        "part=add_route": "Adicionar rota",
+        "part=save": "Salvar",
+        "part=saving": "Salvando…",
+        "part=save_failed": "Não foi possível salvar a rota. Tente de novo.",
+        "part=edit": "Editar",
+        "part=move_up": "Subir",
+        "part=move_down": "Descer",
+        "part=route_limit": "Este espaço de trabalho já tem o máximo de rotas ({value}).",
+        "part=any_alert": "Qualquer alerta",
+        "part=deleted_source": "uma fonte excluída",
+        "part=recent_title": "Alertas recentes",
+        "part=recent_empty": "Nenhum alerta recebido ainda.",
+        "part=status_firing": "Disparando",
+        "part=status_resolved": "Resolvido",
+        "part=status_closed": "Encerrado",
+        "part=outcome_opened": "Abriu {name}",
+        "part=outcome_grouped": "Adicionado a {name}",
+        "part=outcome_suppressed": "Suprimido, sem incidente",
+        "part=outcome_dropped": "Descartado",
+        "part=outcome_resolved_early": "A resolução chegou antes, então sem incidente",
+        "part=via_route": "Rota: {name}",
+        "part=via_default": "Rota padrão",
+        "part=via_malformed": "Payload ilegível, então a rota padrão assumiu",
+        "part=via_capacity": "Alertas demais disparando, então acionou como o alerta de capacidade",
+        "part=route_disabled": "Desligada desde que a conta que a criou foi recuperada. Salve para ligá-la de novo.",
+        "part=source_link": "Abrir na origem",
+        "part=an_incident": "um incidente",
+        "part=*": "Fontes de alertas"
+      }
+    }
+  ],
+  "alerts_repeats": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Enviado mais {countFormatted} vez",
+        "countPlural=*": "Enviado mais {countFormatted} vezes"
+      }
+    }
+  ],
+  "alert_incident_title": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=malformed": "Alerta ilegível de {name}",
+        "part=too_large": "Alerta ilegível de {name} (conteúdo grande demais)",
+        "part=capacity": "Capacidade de alertas atingida",
+        "part=*": "Alerta ilegível de {name}"
       }
     }
   ]

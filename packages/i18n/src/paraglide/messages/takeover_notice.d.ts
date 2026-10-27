@@ -9,9 +9,9 @@ export type Takeover_NoticeInputs = {
 * | --- | --- |
 * | "title" | "You took this account back" |
 * | "body" | "Someone signed up with your email address before you confirmed it, and created the workspaces below. They're yours now. So nobody else can page you through w..." |
-* | "after" | "Resume the monitors you want to keep. Give each heartbeat you keep a new URL (New URL in its Edit form) before you resume it. Check each workspace's on-call ..." |
+* | "after" | "Resume the monitors you want to keep. Give each heartbeat and alert source you keep a new URL before you resume it, and save each alert route you want to kee..." |
 * | "failed" | "Brigade couldn't reach this workspace, so nothing in it was paused. Check its monitors now." |
-* | "nothing" | "It had no monitors." |
+* | "nothing" | "Nothing there needed turning off." |
 * | "dismiss" | "Got it" |
 * | "dismissing" | "Hiding…" |
 * | "dismiss_failed" | "Couldn't hide this notice. Try again." |

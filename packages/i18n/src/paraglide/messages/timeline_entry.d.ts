@@ -75,6 +75,7 @@ export type Timeline_EntryInputs = {
 * | "follow_up_removed" | "{actor} removed the follow-up {a}" |
 * | "postmortem_started" | "{actor} started the postmortem" |
 * | "postmortem_ai_drafted" | "Workers AI drafted the postmortem" |
+* | "alerts_resolved" | "Every alert on this incident resolved. It stays open because people are working on it." |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs

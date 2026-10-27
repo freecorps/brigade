@@ -23,6 +23,9 @@
       "name": "Monitors"
     },
     {
+      "name": "Alerts"
+    },
+    {
       "name": "Workspaces"
     },
     {
@@ -141,6 +144,132 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed. Not retried by itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "internal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Unavailable for now: retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "unavailable"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/alerts/{token}": {
+      "post": {
+        "operationId": "sendAlerts",
+        "tags": [
+          "Alerts"
+        ],
+        "summary": "Send alerts to an alert source",
+        "description": "What Grafana, Datadog, Sentry or any webhook posts (RFC 0005 \"Alert sources\"). The token is the source URL's last segment (shown once, when the source is made or its URL rotated). The body is the provider's own payload, at most 256 KiB; a Sentry source also needs `Sentry-Hook-Signature`, a Grafana source with an HMAC secret `X-Grafana-Alerting-Signature`, and a source with a header that header. A payload Brigade cannot read is still accepted (`malformed`), and pages. So is one past 256 KiB, unread (`tooLarge`): it pages one unreadable alert once the URL and the source's header check out (a signature needs the body, so the secret URL authenticates it). Every refusal of the URL, header or signature is the same `404`; `503` carries `Retry-After` (over a rate limit too: Datadog retries a 5xx, not a 429; and for a token refused within the last minute once the workspace's refusals are over their limit).",
+        "security": [],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "`<workspaceId>.<sourceId>.<secret>`, from the alert source's URL.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "description": "The provider's webhook payload, as JSON."
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted: how many alerts it held, whether it was unreadable, and whether it was too large to read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "alerts": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "malformed": {
+                      "type": "boolean"
+                    },
+                    "tooLarge": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "alerts"
+                  ]
                 }
               }
             }

@@ -259,6 +259,22 @@ describe("which events page", () => {
       expect(asksForPage(event(type)), type).toBe(false);
     }
   });
+
+  test("an incident the alerts reopen (a flapping alert) pages; one a member reopens does not", () => {
+    const reopened = { from: "resolved", to: "investigating" };
+    expect(asksForPage(event("incident.status_changed", reopened))).toBe(false);
+    const byAlerts = (data: unknown) => ({
+      ...event("incident.status_changed", data),
+      actor: { kind: "system" as const, id: "sys_alerts" },
+    });
+    expect(asksForPage(byAlerts(reopened))).toBe(true);
+    expect(asksForPage(byAlerts({ from: "triage", to: "resolved" }))).toBe(false);
+    // The raise that reopen brought along pages through the reopen alone: one page, not two.
+    const raised = { from: "sev3", to: "sev1", reopening: true };
+    expect(
+      asksForPage({ ...event("incident.severity_changed", raised), actor: byAlerts({}).actor }),
+    ).toBe(false);
+  });
 });
 
 describe("who is paged", () => {

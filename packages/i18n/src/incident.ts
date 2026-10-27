@@ -4,6 +4,7 @@
 // `@freecorps/brigade-sync`.
 import {
   formatIncidentNumber,
+  ALERTS_ACTOR,
   MONITOR_ACTOR,
   type IncidentRole,
   type IncidentStatus,
@@ -60,6 +61,7 @@ export function personName(
 ): string {
   if (id === who.self) return m.incident_page({ part: place === "subject" ? "you" : "you_object" });
   if (id === MONITOR_ACTOR.id) return m.incident_page({ part: "monitors" });
+  if (id === ALERTS_ACTOR.id) return m.incident_page({ part: "alerts" });
   const member = who.members.get(id);
   if (!member) return m.incident_page({ part: "teammate" });
   return member.name ?? m.incident_page({ part: "unnamed" });
@@ -102,6 +104,8 @@ export function entryText(entry: TimelineRow, who: People): string {
       return say("update");
     case "alert_resolved":
       return say(`alert_${entry.reason}`, entry.monitor);
+    case "alerts_resolved":
+      return say("alerts_resolved");
     case "page_failed":
       // Written by the notifier: the sentence is about who was not paged, not who wrote it.
       // A dead-lettered page is about the page, whoever it was for.

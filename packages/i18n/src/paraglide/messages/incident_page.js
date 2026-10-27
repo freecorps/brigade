@@ -28,6 +28,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "you" | "You" |
 * | "you_object" | "you" |
 * | "monitors" | "A monitor" |
+* | "alerts" | "An alert source" |
 * | "teammate" | "A teammate" |
 * | "read_only" | "Viewers follow the incident; responders and admins change it." |
 * | "not_found_title" | "Incident not found" |
@@ -64,6 +65,7 @@ export const incident_page = /** @type {((inputs: Incident_PageInputs, options?:
 		if (i?.part === "you") return /** @type {LocalizedString} */ (`Você`);
 		if (i?.part === "you_object") return /** @type {LocalizedString} */ (`você`);
 		if (i?.part === "monitors") return /** @type {LocalizedString} */ (`Um monitor`);
+		if (i?.part === "alerts") return /** @type {LocalizedString} */ (`Uma fonte de alertas`);
 		if (i?.part === "teammate") return /** @type {LocalizedString} */ (`Alguém do time`);
 		if (i?.part === "read_only") return /** @type {LocalizedString} */ (`Leitores acompanham o incidente; respondedores e admins o alteram.`);
 		if (i?.part === "not_found_title") return /** @type {LocalizedString} */ (`Incidente não encontrado`);
@@ -94,6 +96,7 @@ export const incident_page = /** @type {((inputs: Incident_PageInputs, options?:
 		if (i?.part === "you") return /** @type {LocalizedString} */ (`You`);
 		if (i?.part === "you_object") return /** @type {LocalizedString} */ (`you`);
 		if (i?.part === "monitors") return /** @type {LocalizedString} */ (`A monitor`);
+		if (i?.part === "alerts") return /** @type {LocalizedString} */ (`An alert source`);
 		if (i?.part === "teammate") return /** @type {LocalizedString} */ (`A teammate`);
 		if (i?.part === "read_only") return /** @type {LocalizedString} */ (`Viewers follow the incident; responders and admins change it.`);
 		if (i?.part === "not_found_title") return /** @type {LocalizedString} */ (`Incident not found`);

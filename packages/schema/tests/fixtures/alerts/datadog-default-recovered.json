@@ -1,0 +1,12 @@
+{
+  "body": "Checkout latency is high",
+  "last_updated": "1761566400000",
+  "event_type": "query_alert_monitor",
+  "title": "[Recovered] Checkout latency is high",
+  "date": "1761566400000",
+  "org": {
+    "id": "1",
+    "name": "Example"
+  },
+  "id": "7654322"
+}

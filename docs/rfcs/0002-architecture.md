@@ -92,6 +92,7 @@ without auth at `GET /api/openapi.json` by the dashboard's Worker.
 | ------------------------------------------------------------------------------------ | ------------------------------------------------- |
 | `GET /health`, `GET /health/paging`                                                  | Uptime checks; whether pages are going out        |
 | `POST /heartbeat/:token`                                                             | Cron jobs and backups pinging a heartbeat         |
+| `POST /alerts/:token`                                                                | Grafana, Datadog, Sentry or a webhook alerting    |
 | `POST /workspaces`                                                                   | Provisioning                                      |
 | `PATCH`, `DELETE /workspaces/:id/members/:userId`                                    | Role changes, offboarding                         |
 | `GET`, `POST /workspaces/:id/invitations`, `DELETE …/:invitationId`, `POST …/resend` | Onboarding from a directory                       |
@@ -267,8 +268,11 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     is the only member (the shard checks its own member list again, in case someone joined since), the shard also
     pauses every monitor and revokes every heartbeat URL (`monitor.takeOver`, server only, as `ACCOUNT_ACTOR`:
     `monitor.paused` with any firing alert resolved, and `monitor.heartbeat_revoked`, whose hash becomes random
-    bytes nobody holds a token for), and the dashboard tells the owner once which workspaces came with the account
-    and what was paused, or that a shard could not be reached (`takeover_notice` in D1,
+    bytes nobody holds a token for), revokes every alert source URL the same way (`alertSource.takeOver`,
+    `alert_source.revoked`; RFC 0005 "Alert sources") and disables the alert routes the account created
+    (`disabled: "takeover"`, `alert_route.updated` with `reason: takeover`, until someone saves them), and the dashboard
+    tells the owner once which workspaces came with the account and what was paused or disabled, or that a shard could
+    not be reached (`takeover_notice` in D1,
     `GET`/`DELETE /account/takeover`, en and pt-BR; two resets at once merge into one notice). The owner resumes what they
     want to keep and gives a heartbeat they keep a new URL (`monitor.rotateHeartbeat`, New URL in its edit form;
     RFC 0007). Schedules and escalation policies stay: they page

@@ -139,10 +139,13 @@ export function EscalationProgress({
             <span className="min-w-0">{statusText(status, who, now, locale)}</span>
           </p>
           <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-            {/* Which policy, and why this one: the monitor that opened the incident names it, or the default. */}
-            {run.monitor
-              ? escalationText("policy_monitor", { name: run.policyName, who: run.monitor.name })
-              : escalationText("policy_default", { name: run.policyName })}
+            {/* Which policy, and why this one: the alert route or the monitor that opened the incident names it,
+                or the default. */}
+            {run.route
+              ? escalationText("policy_route", { name: run.policyName, who: run.route.name })
+              : run.monitor
+                ? escalationText("policy_monitor", { name: run.policyName, who: run.monitor.name })
+                : escalationText("policy_default", { name: run.policyName })}
           </p>
         </div>
         {next && run.nextAt !== null ? (

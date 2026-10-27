@@ -32,6 +32,8 @@ export const statement = {
   catalog: ["read", "manage"],
   // Taking the workspace's incidents out of Brigade as a file (RFC 0013 "Exports").
   data: ["export"],
+  // Alert sources and routes (RFC 0005 "Alert sources"): `manage` creates sources (their secret URLs) and routes.
+  alert: ["read", "manage"],
 } as const;
 
 type Statement = typeof statement;
@@ -56,6 +58,7 @@ export const roles = {
     webhook: ["manage"],
     catalog: ["read", "manage"],
     data: ["export"],
+    alert: ["read", "manage"],
   },
   admin: {
     incident: ["read", "declare", "update", "ack"],
@@ -69,6 +72,7 @@ export const roles = {
     webhook: ["manage"],
     catalog: ["read", "manage"],
     data: ["export"],
+    alert: ["read", "manage"],
   },
   // Responders see what monitors say (they run the incidents monitors open) but do not change what is watched.
   responder: {
@@ -82,6 +86,7 @@ export const roles = {
     // Responders run incidents, so they tell the public about them; what the page lists is an admin's call.
     status: ["read", "publish"],
     catalog: ["read"],
+    alert: ["read"],
   },
   viewer: {
     incident: ["read"],
@@ -92,6 +97,7 @@ export const roles = {
     escalation: ["read"],
     status: ["read"],
     catalog: ["read"],
+    alert: ["read"],
   },
 } as const satisfies Record<Role, Grants>;
 

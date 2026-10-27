@@ -7,6 +7,7 @@ import { dropPolicyFromCatalog } from "./catalog.ts";
 import { idTime } from "./id.ts";
 import { ID_CLOCK_SKEW_MS } from "./incidents.ts";
 import { dropPolicyFromMonitors } from "./monitors.ts";
+import { dropPolicyFromRoutes, incidentRoute } from "./alert-sources.ts";
 import {
   defineMutation,
   fail,
@@ -87,15 +88,27 @@ export function defaultPolicy(store: MutationStore): EscalationPolicyRow | undef
 }
 
 /**
- * The policy a run on `incidentId` follows (RFC 0003 "Escalation policies", "Incident types"): the policy of the
- * incident's type when it names one, else the policy of the monitor that opened the incident (`monitor` says which,
- * by its name now), otherwise the default; undefined with none (the interim rule pages). A type or monitor deleted
- * since, or a policy gone, falls through to the next.
+ * The policy a run on `incidentId` follows (RFC 0003 "Escalation policies", "Incident types", RFC 0006 "Who is
+ * paged"): the policy of the alert route an alert source opened the incident through when it names one (`route` says
+ * which, by its name then), else the policy of the incident's type, else the policy of the monitor that opened the
+ * incident (`monitor` says which, by its name now), otherwise the default; undefined with none (the interim rule
+ * pages). A route, type or monitor deleted since, or a policy gone, falls through to the next.
  */
 export function incidentPolicy(
   store: MutationStore,
   incidentId: string,
-): { policy: EscalationPolicyRow; monitor: { id: string; name: string } | null } | undefined {
+):
+  | {
+      policy: EscalationPolicyRow;
+      monitor: { id: string; name: string } | null;
+      route?: { id: string; name: string } | null;
+    }
+  | undefined {
+  const opened = incidentRoute(store, incidentId);
+  const routed = opened?.policyId ? store.get("escalation_policies", opened.policyId) : undefined;
+  if (opened && routed) {
+    return { policy: routed, monitor: null, route: { id: opened.routeId, name: opened.routeName } };
+  }
   const typeId = store.get("incidents", incidentId)?.typeId;
   const type = typeId ? store.get("incident_types", typeId) : undefined;
   const typed = type?.escalationPolicyId
@@ -297,6 +310,7 @@ export const deletePolicy = defineMutation({
       event,
       ...dropPolicyFromMonitors(store, args.id, ctx),
       ...dropPolicyFromCatalog(store, args.id, ctx),
+      ...dropPolicyFromRoutes(store, args.id, ctx),
     );
   },
 });

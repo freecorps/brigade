@@ -97,10 +97,17 @@ export function TakeoverNoticeView({
   );
 }
 
-/** What was done in one workspace: the monitors paused (by name), the heartbeat URLs turned off, or neither. */
+/**
+ * What was done in one workspace: the monitors paused (by name), the heartbeat and alert source URLs and the alert
+ * routes turned off, or nothing.
+ */
 function summary(workspace: InheritedWorkspace): string {
   if (workspace.failed) return text("failed");
-  if (workspace.paused.length === 0 && workspace.revoked === 0) return text("nothing");
+  const sources = workspace.sources ?? 0;
+  const routes = workspace.routes ?? 0;
+  if (workspace.paused.length === 0 && workspace.revoked === 0 && sources === 0 && routes === 0) {
+    return text("nothing");
+  }
   const parts: string[] = [];
   if (workspace.paused.length > 0) {
     parts.push(
@@ -108,5 +115,7 @@ function summary(workspace: InheritedWorkspace): string {
     );
   }
   if (workspace.revoked > 0) parts.push(m.takeover_revoked_count({ count: workspace.revoked }));
+  if (sources > 0) parts.push(m.takeover_sources_count({ count: sources }));
+  if (routes > 0) parts.push(m.takeover_routes_count({ count: routes }));
   return parts.join(". ");
 }

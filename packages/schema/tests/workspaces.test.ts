@@ -64,6 +64,9 @@ describe("workspace.create", () => {
       "postmortem.failDraft",
       "export.record",
       "export.reserve",
+      "alert.ingest",
+      "alert.reroute",
+      "alertSource.takeOver",
     ]);
     const result = runMutation(
       mutations,

@@ -46,6 +46,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "level_empty_draft" | "Nobody to page yet: add a schedule or a person, or remove this level." |
 * | "policy_default" | "Policy: {name}, the workspace default" |
 * | "policy_monitor" | "Policy: {name}, set on the monitor {who}" |
+* | "policy_route" | "Policy: {name}, set on the alert route {who}" |
 * | "early" | "Paged now: nobody on level {level} could be reached" |
 * | * | "Escalation" |
 *
@@ -92,6 +93,7 @@ export const escalation_text = /** @type {((inputs: Escalation_TextInputs, optio
 		if (i?.text === "level_empty_draft") return /** @type {LocalizedString} */ (`Ninguém para chamar ainda: adicione uma escala ou uma pessoa, ou remova este nível.`);
 		if (i?.text === "policy_default") return /** @type {LocalizedString} */ (`Política: ${i?.name}, a padrão do workspace`);
 		if (i?.text === "policy_monitor") return /** @type {LocalizedString} */ (`Política: ${i?.name}, definida no monitor ${i?.who}`);
+		if (i?.text === "policy_route") return /** @type {LocalizedString} */ (`Política: ${i?.name}, definida na rota de alertas ${i?.who}`);
 		if (i?.text === "early") return /** @type {LocalizedString} */ (`Chamado na hora: ninguém no nível ${i?.level} pôde ser alcançado`);
 		return /** @type {LocalizedString} */ (`Escalonamento`)
 	}
@@ -132,6 +134,7 @@ export const escalation_text = /** @type {((inputs: Escalation_TextInputs, optio
 		if (i?.text === "level_empty_draft") return /** @type {LocalizedString} */ (`Nobody to page yet: add a schedule or a person, or remove this level.`);
 		if (i?.text === "policy_default") return /** @type {LocalizedString} */ (`Policy: ${i?.name}, the workspace default`);
 		if (i?.text === "policy_monitor") return /** @type {LocalizedString} */ (`Policy: ${i?.name}, set on the monitor ${i?.who}`);
+		if (i?.text === "policy_route") return /** @type {LocalizedString} */ (`Policy: ${i?.name}, set on the alert route ${i?.who}`);
 		if (i?.text === "early") return /** @type {LocalizedString} */ (`Paged now: nobody on level ${i?.level} could be reached`);
 		return /** @type {LocalizedString} */ (`Escalation`)
 	}

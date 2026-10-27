@@ -25,7 +25,7 @@ import { consumeDeadLetters, consumeEvents, type Fetch } from "../src/notify.ts"
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import { StatusPublisher } from "../src/status-page.ts";
-import { WorkspaceDO } from "../src/workspace.ts";
+import { STATUS_PUSH_BUDGET_MS, WorkspaceDO } from "../src/workspace.ts";
 
 const MINUTE = 60_000;
 const random = (length: number) => crypto.getRandomValues(new Uint8Array(length));
@@ -571,17 +571,28 @@ describe("fallbacks (the paging path's)", () => {
       locale: "en",
       enabled: true,
     });
-    // A KV that answers, but only after 3 s: inside the push budget (5 s), long after the level is due.
-    const slow = () => new Promise<void>((resolve) => setTimeout(resolve, 3000));
+    // A KV that answers only when the test lets it, and a push budget far longer than the test: if the alarm comes
+    // back while the push still hangs, only the level falling due can have ended its wait. No wall-clock bound, so a
+    // loaded machine cannot fail it.
+    let release = () => {};
+    let released = false;
+    const gate = new Promise<void>((resolve) => {
+      release = () => {
+        released = true;
+        resolve();
+      };
+    });
+    const hang = () => gate;
     const real = await ws.withShard((shard, state, instance) => {
       const real: unknown = Reflect.get(instance, "status");
+      Reflect.set(instance, "statusBudgetMs", 10 * 60 * 1000);
       Reflect.set(
         instance,
         "status",
         new StatusPublisher({
           shard,
           sql: state.storage.sql,
-          kv: { put: slow, delete: slow } as unknown as KVNamespace,
+          kv: { put: hang, delete: hang } as unknown as KVNamespace,
           db: env.DB,
           randomBytes: random,
           log: () => {},
@@ -592,27 +603,27 @@ describe("fallbacks (the paging path's)", () => {
       return real;
     });
     try {
-      const dueAt = await ws.withShard((shard) => {
+      await ws.withShard((shard) => {
         const at = Date.now() + 300;
         const row = shard.store.get("incidents", incident)!;
         shard.store.update("incidents", incident, {
           escalation: { ...row.escalation!, nextAt: at },
         });
         shard.store.update("escalation_timers", incident, { at });
-        return at;
       });
-      const firstDone = await ws.withShard(async (_shard, _state, instance) => {
-        await instance.alarm();
-        return Date.now();
-      });
+      await ws.withShard((_shard, _state, instance) => instance.alarm());
       // The alarm stopped waiting on the push when the level fell due, and came back for the level (the runtime may
-      // have run that alarm already; if not, it runs now).
-      expect(firstDone - dueAt).toBeLessThan(500);
+      // have run that alarm already; if not, it runs now), all while the push still hangs.
+      expect(released).toBe(false);
       await runDurableObjectAlarm(ws.stub);
       expect(await ws.levels(incident)).toHaveLength(2);
-      expect(Date.now() - dueAt).toBeLessThan(1000);
+      expect(released).toBe(false);
     } finally {
-      await ws.withShard((_shard, _state, instance) => Reflect.set(instance, "status", real));
+      release();
+      await ws.withShard((_shard, _state, instance) => {
+        Reflect.set(instance, "status", real);
+        Reflect.set(instance, "statusBudgetMs", STATUS_PUSH_BUDGET_MS);
+      });
     }
   });
 

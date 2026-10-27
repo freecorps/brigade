@@ -12,9 +12,17 @@ import { fetchTakeover, parseTakeover, TAKEOVER_PATH } from "../src/lib/takeover
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const inherited = [
-  { id: "ws_1", name: "Squat", paused: ["Their host", "Their cron"], revoked: 1, failed: false },
-  { id: "ws_2", name: "Empty", paused: [], revoked: 0, failed: false },
-  { id: "ws_3", name: "Unreachable", paused: [], revoked: 0, failed: true },
+  {
+    id: "ws_1",
+    name: "Squat",
+    paused: ["Their host", "Their cron"],
+    revoked: 1,
+    sources: 2,
+    routes: 1,
+    failed: false,
+  },
+  { id: "ws_2", name: "Empty", paused: [], revoked: 0, sources: 0, routes: 0, failed: false },
+  { id: "ws_3", name: "Unreachable", paused: [], revoked: 0, sources: 0, routes: 0, failed: true },
 ];
 
 describe("parseTakeover", () => {
@@ -97,8 +105,8 @@ describe("TakeoverNotice", () => {
     expect(shown.querySelector("h2")?.textContent).toBe("You took this account back");
     const items = [...shown.querySelectorAll("li")].map((item) => item.textContent);
     expect(items).toEqual([
-      "Squat2 monitors paused: Their host, Their cron. 1 heartbeat URL turned off",
-      "EmptyIt had no monitors.",
+      "Squat2 monitors paused: Their host, Their cron. 1 heartbeat URL turned off. 2 alert source URLs turned off. 1 alert route turned off",
+      "EmptyNothing there needed turning off.",
       "UnreachableBrigade couldn't reach this workspace, so nothing in it was paused. Check its monitors now.",
     ]);
     await act(async () => shown.querySelector("button")!.click());

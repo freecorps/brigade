@@ -42,7 +42,8 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   (RFC 0005): `declared`, `status_changed`, `severity_changed`, `acknowledged`, `role_assigned` (stored with the
   previous and new holder; the dashboard words it as assigned, unassigned, taken or stepped down), `update`, and
   `alert_resolved` when the alert of the monitor that opened it resolves (recovered, or the monitor paused or
-  deleted), by `sys_monitors` or the member who did it. The outbox is server-only and drained, while clients need
+  deleted), by `sys_monitors` or the member who did it; `alerts_resolved` when every alert-source alert on an incident
+  people worked on resolved, which leaves it open for them (RFC 0005 "Alert sources"). The outbox is server-only and drained, while clients need
   entries live and optimistic, so deriving the timeline from events would need a projection anyway. Entries are
   numbered per incident (`<incident id>:<seq>`, from the incident's `timelineSeq`), so a client's optimistic entry
   and the server's share an id; nothing edits or deletes one. "Edit timeline" for responders means adding to it.
@@ -262,9 +263,13 @@ says who is on call; escalation policies (below) page from it.
 
 1. Alert arrives (monitor or webhook) → normalized to `AlertEvent { source, fingerprint, status: firing|resolved, labels, payload }`.
    First slice (RFC 0007): monitor alerts live in `WorkspaceDO` (`alerts`, deduplicated per monitor) and open an
-   incident directly until `AlertGroupDO` and alert routes exist.
-2. `AlertGroupDO(fingerprint)` deduplicates within a window.
-3. `AlertRoute` rules (evaluated in order) decide: ignore, attach to an open incident, or create a new incident with a type/severity and an escalation policy.
+   incident directly. Alert sources (RFC 0005 "Alert sources") normalize webhooks to `NormalizedAlert` (dedup key,
+   title, severity, firing or resolved, link, labels) and keep them in `WorkspaceDO` too (`source_alerts`).
+2. `AlertGroupDO(fingerprint)` deduplicates within a window. Not built: the shard deduplicates by source and key while
+   the alert fires (RFC 0007 "`AlertGroupDO` (later)").
+3. `AlertRoute` rules (evaluated in order) decide: drop, suppress, group into an open incident, or open a new incident
+   with a severity, a type, services and an escalation policy. Built for alert sources (`alert_routes`,
+   `alertRoute.*`).
 4. Creating a page starts an escalation run on the `IncidentDO` (alarm per level timeout).
 
 ## Escalation policies
@@ -289,7 +294,9 @@ How a page uses them is RFC 0006 "Who is paged".
   policy (`incidentPolicy`: the monitor still firing on the incident, else the one whose alert opened it); a monitor
   that names none, or one since deleted, goes to the default, then to the interim rule. The run records which and why
   (`monitor`: the monitor's id and name, null for the default), and the incident page says it. A member's own
-  declaration always uses the default. Alert routes (Phase 3) will pick a policy the same way.
+  declaration always uses the default. An alert route picks a policy the same way, and comes first (RFC 0006 "Who is
+  paged"); deleting a policy a route names puts the route back on the default (`alert_route.updated`,
+  `reason: policy_deleted`).
 - **Deleting a policy a monitor names** is not refused: the monitor goes back to the default in the same transaction
   (`monitor.updated`, `reason: policy_deleted`), so a monitor never names a policy that is gone and a delete never
   needs the monitors edited first. Falling back is the safe side: the default pages (or the interim rule), never
@@ -447,8 +454,11 @@ server-only mutations (`postmortem.requestDraft` as the member, `.writeDraft` an
   `page_failed`.
 - **System actors** (RFC 0004 "Server-side writes") carry a role like members and pass the same check. Monitors run
   as `{ kind: "system", id: "sys_monitors", role: "admin" }` (`MONITOR_ACTOR`); incidents they open are declared by
-  `sys_monitors`. Their server-only mutations (`monitor.report`) are never reachable from a socket, so the role
-  grants no member anything.
+  `sys_monitors`. Alert sources run as `sys_alerts` (`ALERTS_ACTOR`, `alert.ingest`). Their server-only mutations
+  (`monitor.report`, `alert.ingest`) are never reachable from a socket, so the role grants no member anything.
+- Alert sources and routes (`alert:read`, `alert:manage`; RFC 0005 "Alert sources"): owners and admins create sources
+  (secret URLs) and routes; everyone reads them and the recent alerts. A source's token, header value and signing
+  secret are never in a synced row.
 - Workspace-defined custom roles can come later via Better Auth dynamic access control.
 - Every DO key is prefixed by the organization id; a shard never serves data of another workspace.
 

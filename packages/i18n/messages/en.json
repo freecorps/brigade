@@ -657,6 +657,7 @@
         "part=you": "You",
         "part=you_object": "you",
         "part=monitors": "A monitor",
+        "part=alerts": "An alert source",
         "part=teammate": "A teammate",
         "part=read_only": "Viewers follow the incident; responders and admins change it.",
         "part=not_found_title": "Incident not found",
@@ -771,6 +772,7 @@
         "kind=follow_up_removed": "{actor} removed the follow-up {a}",
         "kind=postmortem_started": "{actor} started the postmortem",
         "kind=postmortem_ai_drafted": "Workers AI drafted the postmortem",
+        "kind=alerts_resolved": "Every alert on this incident resolved. It stays open because people are working on it.",
         "kind=*": "{actor} changed the incident"
       }
     }
@@ -1245,6 +1247,7 @@
         "text=level_empty_draft": "Nobody to page yet: add a schedule or a person, or remove this level.",
         "text=policy_default": "Policy: {name}, the workspace default",
         "text=policy_monitor": "Policy: {name}, set on the monitor {who}",
+        "text=policy_route": "Policy: {name}, set on the alert route {who}",
         "text=early": "Paged now: nobody on level {level} could be reached",
         "text=*": "Escalation"
       }
@@ -1766,10 +1769,10 @@
       "selectors": ["part"],
       "match": {
         "part=title": "You took this account back",
-        "part=body": "Someone signed up with your email address before you confirmed it, and created the workspaces below. They're yours now. So nobody else can page you through what they set up, Brigade paused every monitor there and turned off their heartbeat URLs.",
-        "part=after": "Resume the monitors you want to keep. Give each heartbeat you keep a new URL (New URL in its Edit form) before you resume it. Check each workspace's on-call schedules and escalation policies too.",
+        "part=body": "Someone signed up with your email address before you confirmed it, and created the workspaces below. They're yours now. So nobody else can page you through what they set up, Brigade paused every monitor there, turned off their heartbeat and alert source URLs, and turned off the alert routes they created.",
+        "part=after": "Resume the monitors you want to keep. Give each heartbeat and alert source you keep a new URL before you resume it, and save each alert route you want to keep. Check each workspace's on-call schedules and escalation policies too.",
         "part=failed": "Brigade couldn't reach this workspace, so nothing in it was paused. Check its monitors now.",
-        "part=nothing": "It had no monitors.",
+        "part=nothing": "Nothing there needed turning off.",
         "part=dismiss": "Got it",
         "part=dismissing": "Hiding…",
         "part=dismiss_failed": "Couldn't hide this notice. Try again.",
@@ -2451,6 +2454,184 @@
       "match": {
         "countPlural=one": "{countFormatted} incident",
         "countPlural=*": "{countFormatted} incidents"
+      }
+    }
+  ],
+  "takeover_sources_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} alert source URL turned off",
+        "countPlural=*": "{countFormatted} alert source URLs turned off"
+      }
+    }
+  ],
+  "takeover_routes_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{countFormatted} alert route turned off",
+        "countPlural=*": "{countFormatted} alert routes turned off"
+      }
+    }
+  ],
+  "alerts_card": [
+    {
+      "declarations": ["input part", "input name", "input value"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Alert sources",
+        "part=description": "Grafana, Datadog, Sentry or anything that sends a webhook posts alerts to a secret URL. Routes decide which alerts open incidents and who is paged.",
+        "part=load_failed": "Couldn't load alert sources.",
+        "part=retry": "Try again",
+        "part=add": "Add source",
+        "part=sources_empty": "No alert sources yet. Add one to get a URL to paste into your monitoring tool.",
+        "part=manage_only": "Only owners and admins add alert sources and change routes.",
+        "part=name_label": "Name",
+        "part=name_required": "Give the source a name.",
+        "part=kind_label": "Sent by",
+        "part=kind_generic": "Any webhook",
+        "part=kind_grafana": "Grafana",
+        "part=kind_datadog": "Datadog",
+        "part=kind_sentry": "Sentry",
+        "part=header_label": "Extra header (optional)",
+        "part=header_hint": "Brigade also checks this header. For Basic auth, use Authorization.",
+        "part=header_value_label": "Header value",
+        "part=header_invalid": "Use letters, digits and hyphens, and not a header the transport uses.",
+        "part=header_value_required": "Enter the value the header carries.",
+        "part=secret_label_sentry": "Client secret",
+        "part=secret_hint_sentry": "From your Sentry internal integration. Brigade checks every webhook's signature with it.",
+        "part=secret_label_grafana": "HMAC secret (optional)",
+        "part=secret_hint_grafana": "Set the same secret in the contact point's HMAC signature settings.",
+        "part=secret_required": "Sentry signs every webhook: paste its client secret.",
+        "part=secret_invalid": "Use 8 to 256 characters, without spaces.",
+        "part=create": "Create source",
+        "part=creating": "Creating…",
+        "part=cancel": "Cancel",
+        "part=create_failed": "Couldn't create the source. Try again.",
+        "part=limit": "This workspace has as many alert sources as it can ({value}). Delete one to add another.",
+        "part=url_once": "Copy this URL now. Brigade keeps only a hash of it, so it is shown once.",
+        "part=url_rotated": "New URL for {name}. The old one no longer works.",
+        "part=copy": "Copy",
+        "part=copied": "Copied",
+        "part=close_prompt": "Close without copying? You'd need a new URL.",
+        "part=keep": "Keep it open",
+        "part=close": "Close",
+        "part=setup_title": "Where to paste it",
+        "part=setup_grafana": "In Grafana, open Alerting, then Contact points, and add a Webhook integration with this URL and the POST method. Under Optional Webhook settings, set Max alerts to 50, so a payload stays under Brigade's 256 KiB. Then send a notification policy to that contact point.",
+        "part=setup_grafana_hmac": "Under Optional Webhook settings, set HMAC Signature to the secret you gave Brigade. Keep the default signature header and leave the timestamp header empty.",
+        "part=setup_datadog": "In Datadog, open Integrations, then Webhooks, and add a webhook named brigade with this URL and the payload below. Then add @webhook-brigade to a monitor's message.",
+        "part=setup_sentry": "In Sentry, open Settings, then Developer Settings, and create an internal integration with this webhook URL. Turn on Alert Rule Action, copy its client secret into Brigade, and pick the integration in an alert rule's actions.",
+        "part=setup_generic": "POST JSON to this URL. Only title is required. Send the same dedup_key while the alert fires, and status resolved when it's over.",
+        "part=setup_header": "Also send the header {name} with the value you entered.",
+        "part=setup_show": "How to connect it",
+        "part=last_received": "Last alert {value}",
+        "part=never_received": "No alert received yet",
+        "part=signed": "Signature checked",
+        "part=header_checked": "Checks {name}",
+        "part=rotate": "New URL",
+        "part=rotate_confirm": "The current URL stops working at once. Update whatever sends to it.",
+        "part=rotate_failed": "Couldn't make a new URL. The current one still works.",
+        "part=delete": "Delete",
+        "part=delete_confirm": "Delete {name}? Its URL stops working and its firing alerts resolve. Incidents they opened stay open.",
+        "part=delete_failed": "Couldn't delete it. Try again.",
+        "part=keep_source": "Keep it",
+        "part=routes_title": "Alert routes",
+        "part=routes_hint": "Tried from the top: the first route that matches decides. An alert no route matches opens an incident at its own severity, paged through the default policy.",
+        "part=default_route": "Everything else",
+        "part=default_route_action": "Opens an incident at the alert's severity, paged through the default policy. Unreadable payloads always come here.",
+        "part=route_name": "Route name",
+        "part=route_name_required": "Give the route a name.",
+        "part=match_sources": "From",
+        "part=any_source": "Any source",
+        "part=match_severities": "Alert severity",
+        "part=any_severity": "Any severity",
+        "part=severity_critical": "Critical",
+        "part=severity_high": "High",
+        "part=severity_warning": "Warning",
+        "part=severity_info": "Info",
+        "part=match_labels": "Labels",
+        "part=labels_hint": "key=value, separated by commas. A key alone matches any value.",
+        "part=labels_invalid": "Write each label as key=value, at most 10.",
+        "part=action_label": "Then",
+        "part=action_open": "Open an incident",
+        "part=action_group": "Group into one open incident",
+        "part=action_suppress": "Keep the alert, open no incident",
+        "part=action_drop": "Drop it",
+        "part=severity_label": "Incident severity",
+        "part=severity_from_alert": "The alert's own",
+        "part=policy_label": "Escalation policy",
+        "part=policy_default": "Default policy",
+        "part=type_label": "Incident type",
+        "part=type_none": "No type",
+        "part=services_label": "Services",
+        "part=group_by": "Group by label",
+        "part=group_by_hint": "Alerts with the same value of this label join one open incident.",
+        "part=group_by_required": "Name the label to group by.",
+        "part=add_route": "Add route",
+        "part=save": "Save",
+        "part=saving": "Saving…",
+        "part=save_failed": "Couldn't save the route. Try again.",
+        "part=edit": "Edit",
+        "part=move_up": "Move up",
+        "part=move_down": "Move down",
+        "part=route_limit": "This workspace has as many routes as it can ({value}).",
+        "part=any_alert": "Any alert",
+        "part=deleted_source": "a deleted source",
+        "part=recent_title": "Recent alerts",
+        "part=recent_empty": "No alerts received yet.",
+        "part=status_firing": "Firing",
+        "part=status_resolved": "Resolved",
+        "part=status_closed": "Closed",
+        "part=outcome_opened": "Opened {name}",
+        "part=outcome_grouped": "Added to {name}",
+        "part=outcome_suppressed": "Suppressed, no incident",
+        "part=outcome_dropped": "Dropped",
+        "part=outcome_resolved_early": "Its resolve came first, so no incident",
+        "part=via_route": "Route: {name}",
+        "part=via_default": "Default route",
+        "part=via_malformed": "Unreadable payload, so the default route took it",
+        "part=via_capacity": "Too many alerts firing, so it paged as the capacity alert",
+        "part=route_disabled": "Off since the account that created it was taken back. Save it to turn it on again.",
+        "part=source_link": "Open in the source",
+        "part=an_incident": "an incident",
+        "part=*": "Alert sources"
+      }
+    }
+  ],
+  "alerts_repeats": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Sent {countFormatted} more time",
+        "countPlural=*": "Sent {countFormatted} more times"
+      }
+    }
+  ],
+  "alert_incident_title": [
+    {
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
+      "match": {
+        "part=malformed": "Unreadable alert from {name}",
+        "part=too_large": "Unreadable alert from {name} (payload too large)",
+        "part=capacity": "Alert capacity reached",
+        "part=*": "Unreadable alert from {name}"
       }
     }
   ]

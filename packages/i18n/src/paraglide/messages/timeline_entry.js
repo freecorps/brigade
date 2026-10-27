@@ -75,6 +75,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "follow_up_removed" | "{actor} removed the follow-up {a}" |
 * | "postmortem_started" | "{actor} started the postmortem" |
 * | "postmortem_ai_drafted" | "Workers AI drafted the postmortem" |
+* | "alerts_resolved" | "Every alert on this incident resolved. It stays open because people are working on it." |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs
@@ -149,6 +150,7 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "follow_up_removed") return /** @type {LocalizedString} */ (`${i?.actor} removeu a ação ${i?.a}`);
 		if (i?.kind === "postmortem_started") return /** @type {LocalizedString} */ (`${i?.actor} começou o postmortem`);
 		if (i?.kind === "postmortem_ai_drafted") return /** @type {LocalizedString} */ (`O Workers AI escreveu um rascunho do postmortem`);
+		if (i?.kind === "alerts_resolved") return /** @type {LocalizedString} */ (`Todos os alertas deste incidente foram resolvidos. Ele continua aberto porque há pessoas trabalhando nele.`);
 		return /** @type {LocalizedString} */ (`${i?.actor} alterou o incidente`)
 	}
 	{
@@ -217,6 +219,7 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "follow_up_removed") return /** @type {LocalizedString} */ (`${i?.actor} removed the follow-up ${i?.a}`);
 		if (i?.kind === "postmortem_started") return /** @type {LocalizedString} */ (`${i?.actor} started the postmortem`);
 		if (i?.kind === "postmortem_ai_drafted") return /** @type {LocalizedString} */ (`Workers AI drafted the postmortem`);
+		if (i?.kind === "alerts_resolved") return /** @type {LocalizedString} */ (`Every alert on this incident resolved. It stays open because people are working on it.`);
 		return /** @type {LocalizedString} */ (`${i?.actor} changed the incident`)
 	}
 });

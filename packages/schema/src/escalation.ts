@@ -308,11 +308,12 @@ export const startEscalation = defineMutation({
     if (incident.escalation?.status === "running") return fail("conflict", "Already escalating");
     const chosen = incidentPolicy(store, incident.id);
     if (!chosen) return fail("not_found", "No escalation policy");
-    const { policy, monitor } = chosen;
+    const { policy, monitor, route } = chosen;
     const run: Escalation = {
       policyId: policy.id,
       policyName: policy.name,
       monitor,
+      ...(route && { route }),
       levels: policy.levels,
       repeat: policy.repeat,
       eventId: args.eventId,

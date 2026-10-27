@@ -147,8 +147,9 @@ verdict or failure reason changes.
   again. That trade is accepted (Q17); watching Brigade's own probes belongs to the dead-man switch (Q19).
 - **Restarts:** creating a monitor, changing its target, resuming it and rotating a heartbeat's URL set `restartedAt`; results from before it are
   refused. A status change does not move it, so a report computed before another region flipped the status and
-  delivered after it still counts (no false recovery, no second incident). Until `AlertGroupDO` and alert routes
-  exist, the workspace shard is the alert's home: the server-only mutation `monitor.report`, run as the system actor
+  delivered after it still counts (no false recovery, no second incident). Alert routes exist for alert sources
+  (RFC 0005 "Alert sources"), but monitor alerts do not go through them yet, and `AlertGroupDO` is later work (below);
+  until then the workspace shard is the alert's home: the server-only mutation `monitor.report`, run as the system actor
   `sys_monitors` (RFC 0004 "Server-side writes"), records the result, and when the quorum turns down it fires one alert
   per monitor (`alerts` table, fingerprint `monitor:<id>`; no second one while it fires) and opens an incident through
   `incident.declare` (SEV2, "<name> is down") in the same transaction, so there is never an alert without its
@@ -157,6 +158,14 @@ verdict or failure reason changes.
   (`monitor.*`, `alert.fired`, `alert.resolved`, `incident.declared`). A monitor may name an escalation policy
   (`policyId`): the incident it opens pages through that policy instead of the workspace's default (RFC 0003
   "Escalation policies").
+
+- **`AlertGroupDO` (later).** Alert sources (RFC 0005) and monitors keep their alerts in the workspace shard, with caps
+  per workspace (20 sources, 50 routes, 200 alerts firing at once, 300 kept). The firing cap never refuses an alert:
+  closed incidents release theirs, idle quiet ones expire after 24 hours, and past it a new alert pages as one
+  "Alert capacity reached" alert (RFC 0005 "Alert sources", "Room"). An `AlertGroupDO` per fingerprint (or
+  per route group) is the next step once one workspace's alert volume outgrows its shard: deduplication and grouping
+  move there, and the shard only sees the alerts that open or join an incident. Monitor alerts move onto the routes
+  in the same step.
 
 ## Watching the watcher
 

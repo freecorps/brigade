@@ -48,6 +48,7 @@ export type Escalation_TextInputs = {
 * | "level_empty_draft" | "Nobody to page yet: add a schedule or a person, or remove this level." |
 * | "policy_default" | "Policy: {name}, the workspace default" |
 * | "policy_monitor" | "Policy: {name}, set on the monitor {who}" |
+* | "policy_route" | "Policy: {name}, set on the alert route {who}" |
 * | "early" | "Paged now: nobody on level {level} could be reached" |
 * | * | "Escalation" |
 *

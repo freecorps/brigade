@@ -295,6 +295,14 @@ Validate the risky assumptions before writing product code. Each spike produces 
 ## Phase 3 — Parity where it matters (6–8 weeks)
 
 - [ ] Alert sources: Grafana, Datadog, Sentry, generic webhook; alert routes
+  - Done (RFC 0005 "Alert sources"): per-workspace sources of four kinds with a secret URL shown once and rotatable,
+    an optional header and Sentry's and Grafana's HMAC signatures; payloads normalized to a dedup key, title,
+    severity, status, link and labels; ordered routes (open with a severity, type, services and policy; group;
+    suppress; drop) with a default that always pages; the route's policy first in the policy order (RFC 0006);
+    unreadable payloads paging through the default; caps per workspace; the dashboard's Alert sources card with
+    setup per provider, a routes editor and the latest alerts.
+  - Left: monitor alerts through the routes and `AlertGroupDO` (RFC 0007); whether a service's policy pages; title
+    and severity mapping per source; Slack naming the alerts' actor; email ingest.
 - [ ] Service catalog; custom fields; incident types; role definitions
   - Done: services per workspace (name, description, tier, owners: schedules or members, an optional escalation
     policy), listed on the dashboard with a page each (owners, who of them is on call, active incidents naming it);

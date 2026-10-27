@@ -1,0 +1,11 @@
+{
+  "alert_id": "1234",
+  "scope": "host:web-1",
+  "transition": "Warn",
+  "title": "[Warn on {host:web-1}] Checkout latency is high",
+  "priority": "P1",
+  "alert_type": "warning",
+  "link": "https://app.datadoghq.example.com/event/event?id=5678",
+  "tags": "env:prod,service:checkout,team:payments",
+  "aggregate": "8c2b3cd1a6f0b7a4"
+}

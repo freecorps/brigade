@@ -16,6 +16,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "redirect" | "Redirect {status}, not followed" |
 * | "blocked" | "Blocked: not a public https URL" |
 * | "secret" | "Secret unreadable on the server" |
+* | "expired" | "Not sent: payload no longer kept" |
 * | * | "Timed out" |
 *
 * @param {Webhook_ErrorInputs} inputs
@@ -31,6 +32,7 @@ export const webhook_error = /** @type {((inputs: Webhook_ErrorInputs, options?:
 		if (i?.error === "redirect") return /** @type {LocalizedString} */ (`Redirecionamento ${i?.status}, não seguido`);
 		if (i?.error === "blocked") return /** @type {LocalizedString} */ (`Bloqueado: não é uma URL https pública`);
 		if (i?.error === "secret") return /** @type {LocalizedString} */ (`Segredo ilegível no servidor`);
+		if (i?.error === "expired") return /** @type {LocalizedString} */ (`Não enviado: conteúdo não é mais guardado`);
 		return /** @type {LocalizedString} */ (`Tempo esgotado`)
 	}
 	{
@@ -40,6 +42,7 @@ export const webhook_error = /** @type {((inputs: Webhook_ErrorInputs, options?:
 		if (i?.error === "redirect") return /** @type {LocalizedString} */ (`Redirect ${i?.status}, not followed`);
 		if (i?.error === "blocked") return /** @type {LocalizedString} */ (`Blocked: not a public https URL`);
 		if (i?.error === "secret") return /** @type {LocalizedString} */ (`Secret unreadable on the server`);
+		if (i?.error === "expired") return /** @type {LocalizedString} */ (`Not sent: payload no longer kept`);
 		return /** @type {LocalizedString} */ (`Timed out`)
 	}
 });

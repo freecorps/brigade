@@ -106,7 +106,8 @@ export type Webhooks_CardInputs = {
 * | "replay" | "Replay" |
 * | "replaying" | "Replaying…" |
 * | "replay_sent" | "Replay on its way, with the same webhook-id. It shows at the top of Recent deliveries." |
-* | "replay_too_soon" | "A delivery was replayed moments ago, or this endpoint reached its replays for the hour. Wait a little." |
+* | "replay_too_soon" | "A delivery was replayed moments ago, or this endpoint or the workspace reached its replays for the hour. Wait a little." |
+* | "headers_dropped" | "Saving with an address on another host removes this endpoint's custom headers. Enter them again afterwards." |
 * | "replay_off" | "Turn this endpoint on to replay a delivery." |
 * | "replay_gone" | "Brigade no longer keeps this delivery, so it can't be replayed." |
 * | "replay_failed" | "Couldn't replay it. Try again." |

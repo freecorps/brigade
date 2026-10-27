@@ -1034,6 +1034,31 @@ describe("replaying a delivery", () => {
     expect(await redrive(t)).toEqual([]);
   });
 
+  test("a replay whose payload is no longer kept is a failed attempt in the log, never a silent success", async () => {
+    const t = await team();
+    const { id } = await endpoint(t);
+    const event = await declare(t, owner(t));
+    await deliver([event], receiver().send);
+    await attempt(t, "webhook.replay", { id, eventId: event.id }, owner(t));
+    const [replay] = await eventsOf(t, "webhook.replay");
+    // The shard pruned the payload meanwhile.
+    await t.withShard((_shard, state) => state.storage.sql.exec("delete from webhook_events"));
+    const hook = receiver();
+    await deliver([replay!], hook.send);
+    expect(hook.received).toEqual([]);
+    expect((await row(t, id)).recent[0]).toMatchObject({
+      eventId: event.id,
+      ok: false,
+      error: "expired",
+      replay: true,
+    });
+    expect((await row(t, id)).failures).toBe(0);
+    // Done: neither the alarm nor the Queue sends it, or logs it, again.
+    expect(await redrive(t)).toEqual([]);
+    await deliver([replay!], hook.send, { attempts: 2 });
+    expect((await row(t, id)).recent.filter((one) => one.error === "expired")).toHaveLength(1);
+  });
+
   test("a replay to a receiver that never answers never holds back a page in the same batch", async () => {
     const t = await team();
     const { id } = await endpoint(t);
@@ -1122,6 +1147,42 @@ describe("custom headers", () => {
       expect(await refused.json()).toMatchObject({ error: "invalid_args" });
     }
     expect((await row(t, id)).headers ?? []).toEqual([]);
+  });
+
+  test("moving the URL to another host removes them, so a replay never carries them there", async () => {
+    const t = await team();
+    const { id } = await endpoint(t);
+    expect(
+      (await putHeaders(t, id, [{ name: "Authorization", value: "Bearer kept-for-hooks-0001" }]))
+        .status,
+    ).toBe(200);
+    const event = await declare(t, owner(t));
+    // Planned (claimed) before the move: it carries the old URL with the old headers, read together.
+    const before = await runInDurableObject(t.stub, (instance: WorkspaceDO) =>
+      instance.planWebhooks(event),
+    );
+    expect(before.sends).toMatchObject([{ url: HOOK, headers: [{ name: "Authorization" }] }]);
+    const moved = "https://collector.example.net/in";
+    await t.run(
+      "webhook.update",
+      { id, url: moved, description: "Ops bot", events: ["incident.declared"] },
+      { kind: "user", id: t.bia.id, role: "admin" },
+    );
+    expect((await row(t, id)).headers).toEqual([]);
+    const kept = await t.withShard((shard) => shard.store.get("webhook_secrets", id));
+    expect(kept?.headers).toEqual([]);
+    expect((await eventsOf(t, "webhook.headers_changed")).at(-1)).toMatchObject({
+      data: { id, names: [] },
+    });
+    // Planned after: the new URL, and nothing of the old headers.
+    const hook = receiver();
+    await deliver(await redrive(t), hook.send);
+    await attempt(t, "webhook.replay", { id, eventId: event.id }, owner(t));
+    await deliver([(await eventsOf(t, "webhook.replay")).at(-1)!], hook.send);
+    expect(hook.received.map((one) => one.url)).toEqual([moved, moved]);
+    for (const one of hook.received) expect(one.headers.authorization).toBeUndefined();
+    // A header sent without a value has nothing left to keep.
+    expect((await putHeaders(t, id, [{ name: "Authorization" }])).status).toBe(400);
   });
 
   test("PUT replaces them all, keeps a value sent without one, and its event names them only", async () => {

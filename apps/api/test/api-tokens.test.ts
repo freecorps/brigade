@@ -2,7 +2,7 @@
 // sync upgrade, scopes and the creator's current role checked at use time, the same 401 for every refused token, the
 // rate limit, the last use, and that the token never reaches a log, an event, a synced row or the shard.
 import { env, exports } from "cloudflare:workers";
-import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { createExecutionContext, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { newId, type Permission } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vite-plus/test";
@@ -14,7 +14,8 @@ import {
   tokenDigest,
   type ApiTokenEnv,
 } from "../src/api-tokens.ts";
-import { MEMBER_CHANGE_LIMIT } from "../src/index.ts";
+import { MEMBER_CHANGE_LIMIT, workerAuth } from "../src/index.ts";
+import { requestDraftRoute } from "../src/postmortem.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import { IDEMPOTENCY_KEY_HEADER, type WorkspaceDO } from "../src/workspace.ts";
@@ -667,6 +668,26 @@ describe("the dashboard's internal routes", () => {
     for (const name of ["createWebhook", "configureStatusPage", "createExport"] as const) {
       expect((await routes(t)[name](minted.token)).status, name).toBe(401);
     }
+    // Without an `AI` binding a draft stops before the shard (503, nothing done); with one, the shard refuses it too.
+    const request = new Request(
+      `${ORIGIN}/workspaces/${t.id}/incidents/${t.incident}/postmortem/draft`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${minted.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ locale: "en" }),
+      },
+    );
+    const ctx = createExecutionContext();
+    const ai = { run: async () => ({ response: "{}" }) };
+    const draft = await requestDraftRoute(
+      request,
+      { ...env, AI: ai },
+      ctx,
+      () => workerAuth(env, ctx, request),
+      t.id,
+      t.incident,
+    );
+    expect(draft.status).toBe(401);
   });
 
   test("a creator demoted loses them at the next use", async () => {

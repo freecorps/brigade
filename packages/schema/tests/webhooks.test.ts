@@ -15,7 +15,12 @@ import {
   WEBHOOK_DISABLE_AFTER_MS,
   WEBHOOK_DISABLE_FAILURES,
   WEBHOOK_LOG_SIZE,
+  WEBHOOK_REPLAY_EVERY_MS,
+  WEBHOOK_REPLAY_MAX_AGE_MS,
+  WEBHOOK_REPLAY_WINDOW_MS,
+  WEBHOOK_REPLAYS_PER_HOUR,
   WEBHOOK_ROTATION_GRACE_MS,
+  WEBHOOK_WORKSPACE_REPLAYS_PER_HOUR,
   WEBHOOK_TEST_EVERY_MS,
   WEBHOOK_EVENT_TYPES,
   WEBHOOK_PAYLOADS,
@@ -37,6 +42,7 @@ import {
   webhookHeadersInput,
   webhookHeadersUpdate,
   webhookHeaderValueProblem,
+  webhookOriginChanged,
 } from "../src/index.ts";
 
 const T = Date.UTC(2026, 9, 26, 12, 0, 0);
@@ -111,7 +117,12 @@ describe("webhook endpoints", () => {
         {
           type: "webhook.updated",
           subject: id,
-          data: { id, events: ["incident.declared", "alert.fired"], urlChanged: true },
+          data: {
+            id,
+            events: ["incident.declared", "alert.fired"],
+            urlChanged: true,
+            headersCleared: false,
+          },
         },
       ],
     });
@@ -241,6 +252,235 @@ describe("webhook endpoints", () => {
         ctx("owner", T + WEBHOOK_TEST_EVERY_MS),
       ),
     ).toMatchObject({ ok: true });
+  });
+});
+
+describe("custom headers and the URL", () => {
+  const AUTH = `v1.${"E".repeat(16)}.${"f".repeat(40)}`;
+  const withHeaders = () => {
+    const { store, id } = created();
+    expect(
+      runMutation(
+        serverMutations,
+        "webhook.setHeaders",
+        { id, headers: [{ name: "Authorization", value: AUTH, hint: "abcd" }] },
+        store,
+        ctx(),
+      ),
+    ).toMatchObject({ ok: true });
+    return { store, id };
+  };
+  const update = (
+    store: ReturnType<typeof created>["store"],
+    id: string,
+    url: string,
+    server = true,
+  ) =>
+    runMutation(
+      mutations,
+      "webhook.update",
+      { id, url, description: "Ops bot", events: ["incident.declared"] },
+      store,
+      { ...ctx("admin"), server },
+    );
+
+  test("a URL on another origin removes the headers in the same change, and says so", () => {
+    const { store, id } = withHeaders();
+    expect(update(store, id, "https://attacker.example.net/collect")).toEqual({
+      ok: true,
+      events: [
+        {
+          type: "webhook.updated",
+          subject: id,
+          data: { id, events: ["incident.declared"], urlChanged: true, headersCleared: true },
+        },
+        { type: "webhook.headers_changed", subject: id, data: { id, names: [] } },
+      ],
+    });
+    expect(store.get("webhooks", id)!.headers).toEqual([]);
+    expect(store.get("webhook_secrets", id)!.headers).toEqual([]);
+    expect(store.get("webhook_secrets", id)!.secret).toBe(SECRET);
+  });
+
+  test("another port or scheme is another origin; another path or query is not", () => {
+    for (const url of [
+      "https://hooks.example.com:8443/brigade",
+      "https://sub.hooks.example.com/brigade",
+    ]) {
+      const { store, id } = withHeaders();
+      expect(update(store, id, url)).toMatchObject({ ok: true, events: [{}, {}] });
+      expect(store.get("webhook_secrets", id)!.headers).toEqual([]);
+    }
+    const { store, id } = withHeaders();
+    expect(update(store, id, "https://hooks.example.com/other?team=ops")).toMatchObject({
+      ok: true,
+      events: [{ data: { urlChanged: true, headersCleared: false } }],
+    });
+    expect(store.get("webhook_secrets", id)!.headers).toEqual([
+      { name: "Authorization", value: AUTH },
+    ]);
+    expect(webhookOriginChanged("https://a.example.com/x", "http://a.example.com/x")).toBe(true);
+    expect(webhookOriginChanged("https://a.example.com/x", "https://A.example.com:443/y")).toBe(
+      false,
+    );
+    expect(webhookOriginChanged("https://a.example.com/x", "not a url")).toBe(true);
+  });
+
+  test("a hint is kept as made, even one that starts with a value's inner space", () => {
+    const { store, id } = created();
+    const hint = webhookHeaderHint("Token 0123456789 abc")!;
+    expect(hint).toBe(" abc");
+    expect(
+      runMutation(
+        serverMutations,
+        "webhook.setHeaders",
+        { id, headers: [{ name: "X-Key", value: AUTH, hint }] },
+        store,
+        ctx(),
+      ),
+    ).toMatchObject({ ok: true });
+    expect(store.get("webhooks", id)!.headers).toEqual([{ name: "X-Key", hint: " abc" }]);
+    for (const bad of ["abc", "abcde", "abc ", "ab\ncd"]) {
+      expect(
+        runMutation(
+          serverMutations,
+          "webhook.setHeaders",
+          { id, headers: [{ name: "X-Key", value: AUTH, hint: bad }] },
+          store,
+          ctx(),
+        ),
+        JSON.stringify(bad),
+      ).toMatchObject({ ok: false, error: { code: "invalid_args" } });
+    }
+  });
+
+  test("the dashboard's optimistic apply (no secrets row) clears the names too", () => {
+    const { store, id } = withHeaders();
+    store.delete("webhook_secrets", id);
+    expect(update(store, id, "https://other.example.org/", false)).toMatchObject({
+      ok: true,
+      events: [{ data: { headersCleared: true } }, { type: "webhook.headers_changed" }],
+    });
+    expect(store.get("webhooks", id)!.headers).toEqual([]);
+  });
+});
+
+describe("replay", () => {
+  /** An endpoint whose log holds one delivery of an event made at `at`; returns the event's id. */
+  const logged = (
+    store: ReturnType<typeof created>["store"],
+    id: string,
+    at = T,
+    replay = false,
+    eventId?: string,
+  ) => {
+    const one = {
+      ...attempt(true, at),
+      ...(eventId ? { eventId } : {}),
+      ...(replay ? { replay } : {}),
+    };
+    expect(
+      runMutation(serverMutations, "webhook.record", { id, attempt: one }, store, ctx("owner", at)),
+    ).toMatchObject({ ok: true });
+    return one.eventId;
+  };
+  const replay = (
+    store: ReturnType<typeof created>["store"],
+    id: string,
+    eventId: string,
+    now: number,
+  ) => runMutation(mutations, "webhook.replay", { id, eventId }, store, ctx("owner", now));
+
+  test("is measured from the event, never from a replay's own entry in the log", () => {
+    const { store, id } = created();
+    const eventId = logged(store, id, T);
+    const late = T + WEBHOOK_REPLAY_MAX_AGE_MS - 60_000;
+    expect(replay(store, id, eventId, late)).toMatchObject({ ok: true });
+    logged(store, id, late, true, eventId);
+    // The original scrolls out of the log: only the replay's entry is left.
+    for (let n = 0; n < WEBHOOK_LOG_SIZE - 1; n++) logged(store, id, late + n + 1);
+    const recent = store.get("webhooks", id)!.recent.filter((one) => one.eventId === eventId);
+    expect(recent).toMatchObject([{ replay: true }]);
+    expect(replay(store, id, eventId, T + WEBHOOK_REPLAY_MAX_AGE_MS + 1)).toMatchObject({
+      ok: false,
+      error: { code: "not_found" },
+    });
+  });
+
+  test(`at most ${WEBHOOK_WORKSPACE_REPLAYS_PER_HOUR} an hour across the workspace, even after a delete`, () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const endpoints = Array.from({ length: 4 }, () => {
+      const id = newWebhookId();
+      runMutation(
+        serverMutations,
+        "webhook.create",
+        {
+          id,
+          url: "https://hooks.example.com/",
+          description: "",
+          events: ["incident.declared"],
+          secret: SECRET,
+        },
+        store,
+        ctx(),
+      );
+      return { id, eventId: logged(store, id, T) };
+    });
+    const full = Math.ceil(WEBHOOK_WORKSPACE_REPLAYS_PER_HOUR / WEBHOOK_REPLAYS_PER_HOUR);
+    let now = T + 1000;
+    for (const { id, eventId } of endpoints.slice(0, full)) {
+      for (let n = 0; n < WEBHOOK_REPLAYS_PER_HOUR; n++) {
+        expect(replay(store, id, eventId, now + n * WEBHOOK_REPLAY_EVERY_MS)).toMatchObject({
+          ok: true,
+        });
+      }
+      now += 1;
+    }
+    const last = endpoints[full]!;
+    expect(replay(store, last.id, last.eventId, now + 2 * WEBHOOK_REPLAY_EVERY_MS)).toMatchObject({
+      ok: false,
+      error: { code: "limit_reached", message: expect.stringContaining("workspace") },
+    });
+    // Deleting the endpoints that used them gives nothing back.
+    runMutation(mutations, "webhook.delete", { id: endpoints[0]!.id }, store, ctx());
+    expect(replay(store, last.id, last.eventId, now + 3 * WEBHOOK_REPLAY_EVERY_MS)).toMatchObject({
+      ok: false,
+      error: { code: "limit_reached" },
+    });
+    // An hour after the first, there is room again.
+    expect(replay(store, last.id, last.eventId, T + 1000 + WEBHOOK_REPLAY_WINDOW_MS)).toMatchObject(
+      {
+        ok: true,
+      },
+    );
+  });
+
+  test("a replay whose payload was gone shows in the log, never counted against the receiver", () => {
+    const { store, id } = created();
+    const eventId = logged(store, id, T);
+    const gone = {
+      ...attempt(false, T + 1),
+      eventId,
+      status: null,
+      ms: null,
+      error: "expired",
+      snippet: null,
+      replay: true,
+    };
+    expect(
+      runMutation(
+        serverMutations,
+        "webhook.record",
+        { id, attempt: gone },
+        store,
+        ctx("owner", T + 1),
+      ),
+    ).toMatchObject({ ok: true });
+    expect(store.get("webhooks", id)).toMatchObject({
+      failures: 0,
+      failingSince: null,
+      recent: [{ ok: false, error: "expired", replay: true }, { ok: true }],
+    });
   });
 });
 
@@ -690,6 +930,12 @@ describe("custom header rules", () => {
       "X-Forwarded-For",
       "CF-Connecting-IP",
       "Proxy-Authorization",
+      "True-Client-IP",
+      "X-Client-IP",
+      "Client-IP",
+      "X-Cluster-Client-IP",
+      "Forwarded",
+      "X-Real-IP",
       "Bad Name",
       "",
       "x".repeat(65),

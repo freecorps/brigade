@@ -286,8 +286,8 @@ export class WebhookDesk {
    * A `webhook.replay` (`data`: the endpoint, the event and its type): the event's kept body, once, to that endpoint
    * while it is on, under the replay's own row in the ledger (keyed by the replay's id), so the event's own row, done
    * or not, is never touched. The body is kept again under the replay's id, so a replay the consumer never recorded
-   * comes back through `redrive` like any delivery. Undefined when the payload is no longer kept, the endpoint is gone
-   * or off, or the replay is done or held.
+   * comes back through `redrive` like any delivery. A payload no longer kept is a failed attempt in the endpoint's log
+   * (`expired`), never a silent drop. Undefined then, and when the endpoint is gone or off, or the replay is done or held.
    */
   private replay(replay: BrigadeEvent, now: number): WebhookPlan | undefined {
     const data = replay.data as { id?: unknown; eventId?: unknown; type?: unknown } | null;
@@ -309,6 +309,14 @@ export class WebhookDesk {
           event: eventId,
           webhook: webhookId,
         });
+        if (!this.send(replay.id, webhookId)?.done) {
+          this.record(
+            { id: eventId, type, workspaceId: replay.workspaceId, ledger: replay.id },
+            webhookId,
+            { at: now, ok: false, status: null, ms: null, error: "expired", snippet: null },
+            now,
+          );
+        }
         return undefined;
       }
       this.sql.exec(
@@ -344,12 +352,16 @@ export class WebhookDesk {
 
   /**
    * Claims each of `endpoints` due now under ledger key `ledgerId` (the event's id, or a replay's); one held, waiting
-   * out its backoff or done is skipped.
+   * out its backoff or done is skipped. The URL and the custom headers are read together, from the rows as they are
+   * now: a send planned before `webhook.update` moved the URL carries the old URL with the old headers, and one planned
+   * after carries the new URL with none of them (RFC 0005 "Custom headers").
    */
   private claim(ledgerId: string, endpoints: readonly WebhookRow[], now: number): WebhookSend[] {
     const { store } = this.options.shard;
     const sends: WebhookSend[] = [];
-    for (const endpoint of endpoints) {
+    for (const { id } of endpoints) {
+      const endpoint = store.get("webhooks", id);
+      if (!endpoint) continue;
       const ledger = this.send(ledgerId, endpoint.id);
       if (ledger?.done) continue;
       if (Math.max(ledger?.claimed_until ?? 0, ledger?.retry_at ?? 0) > now) continue;

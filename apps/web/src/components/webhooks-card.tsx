@@ -37,6 +37,7 @@ import {
   canReplay,
   checkDraft,
   checkHeaders,
+  dropsHeaders,
   headerDrafts,
   headerValueShown,
   replayOutcome,
@@ -397,6 +398,7 @@ function EndpointForm({
   onSubmit,
   onCancel,
   unchanged,
+  dropsHeaders: drops,
   withHeaders = false,
 }: {
   initial: WebhookDraft;
@@ -409,6 +411,8 @@ function EndpointForm({
   onCancel: () => void;
   /** For an edit: whether the draft says what the endpoint already does (nothing to send). */
   unchanged?: (draft: WebhookDraft) => boolean;
+  /** For an edit: whether saving `draft` removes the endpoint's custom headers (its URL moves to another origin). */
+  dropsHeaders?: (draft: WebhookDraft) => boolean;
   /** For a new endpoint: its custom headers, sent with the create (an edit changes them on their own). */
   withHeaders?: boolean;
 }) {
@@ -493,6 +497,9 @@ function EndpointForm({
           maxLength={400}
         />
       </div>
+      <p aria-live="polite" className="text-sm text-amber-700 empty:hidden dark:text-amber-400">
+        {drops?.(draft) ? webhookText("headers_dropped") : ""}
+      </p>
       <fieldset
         className="flex min-w-0 flex-col gap-3"
         aria-describedby={issues.events ? eventsErrorId : undefined}
@@ -823,6 +830,7 @@ function EndpointEditor({
         submitPart="save"
         busyPart="saving"
         unchanged={(draft) => sameDraft(draft, row)}
+        dropsHeaders={(draft) => dropsHeaders(draft, row)}
         onCancel={onClose}
         onSubmit={async (draft) =>
           (await onUpdate(row.id, draft)) ? null : { form: webhookText("save_failed") }

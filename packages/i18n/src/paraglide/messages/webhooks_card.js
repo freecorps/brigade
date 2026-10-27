@@ -107,7 +107,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "replay" | "Replay" |
 * | "replaying" | "Replaying…" |
 * | "replay_sent" | "Replay on its way, with the same webhook-id. It shows at the top of Recent deliveries." |
-* | "replay_too_soon" | "A delivery was replayed moments ago, or this endpoint reached its replays for the hour. Wait a little." |
+* | "replay_too_soon" | "A delivery was replayed moments ago, or this endpoint or the workspace reached its replays for the hour. Wait a little." |
+* | "headers_dropped" | "Saving with an address on another host removes this endpoint's custom headers. Enter them again afterwards." |
 * | "replay_off" | "Turn this endpoint on to replay a delivery." |
 * | "replay_gone" | "Brigade no longer keeps this delivery, so it can't be replayed." |
 * | "replay_failed" | "Couldn't replay it. Try again." |
@@ -218,7 +219,8 @@ export const webhooks_card = /** @type {((inputs: Webhooks_CardInputs, options?:
 		if (i?.part === "replay") return /** @type {LocalizedString} */ (`Reenviar`);
 		if (i?.part === "replaying") return /** @type {LocalizedString} */ (`Reenviando…`);
 		if (i?.part === "replay_sent") return /** @type {LocalizedString} */ (`Reenvio a caminho, com o mesmo webhook-id. Ele aparece no topo de Entregas recentes.`);
-		if (i?.part === "replay_too_soon") return /** @type {LocalizedString} */ (`Uma entrega foi reenviada há pouco, ou este endpoint atingiu o limite de reenvios da hora. Aguarde um pouco.`);
+		if (i?.part === "replay_too_soon") return /** @type {LocalizedString} */ (`Uma entrega foi reenviada há pouco, ou este endpoint ou o workspace atingiu o limite de reenvios da hora. Aguarde um pouco.`);
+		if (i?.part === "headers_dropped") return /** @type {LocalizedString} */ (`Salvar com um endereço em outro host remove os cabeçalhos personalizados deste endpoint. Informe-os de novo depois.`);
 		if (i?.part === "replay_off") return /** @type {LocalizedString} */ (`Ligue este endpoint para reenviar uma entrega.`);
 		if (i?.part === "replay_gone") return /** @type {LocalizedString} */ (`O Brigade não guarda mais esta entrega, então ela não pode ser reenviada.`);
 		if (i?.part === "replay_failed") return /** @type {LocalizedString} */ (`Não foi possível reenviar. Tente de novo.`);
@@ -323,7 +325,8 @@ export const webhooks_card = /** @type {((inputs: Webhooks_CardInputs, options?:
 		if (i?.part === "replay") return /** @type {LocalizedString} */ (`Replay`);
 		if (i?.part === "replaying") return /** @type {LocalizedString} */ (`Replaying…`);
 		if (i?.part === "replay_sent") return /** @type {LocalizedString} */ (`Replay on its way, with the same webhook-id. It shows at the top of Recent deliveries.`);
-		if (i?.part === "replay_too_soon") return /** @type {LocalizedString} */ (`A delivery was replayed moments ago, or this endpoint reached its replays for the hour. Wait a little.`);
+		if (i?.part === "replay_too_soon") return /** @type {LocalizedString} */ (`A delivery was replayed moments ago, or this endpoint or the workspace reached its replays for the hour. Wait a little.`);
+		if (i?.part === "headers_dropped") return /** @type {LocalizedString} */ (`Saving with an address on another host removes this endpoint's custom headers. Enter them again afterwards.`);
 		if (i?.part === "replay_off") return /** @type {LocalizedString} */ (`Turn this endpoint on to replay a delivery.`);
 		if (i?.part === "replay_gone") return /** @type {LocalizedString} */ (`Brigade no longer keeps this delivery, so it can't be replayed.`);
 		if (i?.part === "replay_failed") return /** @type {LocalizedString} */ (`Couldn't replay it. Try again.`);

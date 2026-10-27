@@ -9,8 +9,9 @@ import {
   newId,
   WEBHOOK_DESCRIPTION_MAX,
   WEBHOOK_EVENT_TYPES,
-  WEBHOOK_REPLAY_MAX_AGE_MS,
   webhookHeaderNameProblem,
+  webhookOriginChanged,
+  webhookReplayableUntil,
   webhookHeaderValueProblem,
   webhookTargetProblem,
   type WebhookAttempt,
@@ -242,7 +243,8 @@ export async function requestHeaders(
 
 /**
  * Whether the log's `attempt` gets a Replay button: the newest attempt of its event (one button per event), while the
- * shard still keeps the payload. The shard decides the rest (on, the rate limit).
+ * shard still keeps the payload (measured from the event, as the shard does, never from a replay's entry). The shard
+ * decides the rest (on, the rate limits).
  */
 export function canReplay(
   attempts: readonly WebhookAttempt[],
@@ -252,10 +254,22 @@ export function canReplay(
   const attempt = attempts[index];
   if (!attempt) return false;
   if (attempts.findIndex((one) => one.eventId === attempt.eventId) !== index) return false;
-  const first = Math.min(
-    ...attempts.filter((one) => one.eventId === attempt.eventId).map((one) => one.at),
+  return now <= webhookReplayableUntil(attempt.eventId);
+}
+
+/**
+ * Whether saving `draft` removes `row`'s custom headers: it has some, and the URL moves to another origin (the shard
+ * removes them then, RFC 0005 "Custom headers"). The form says so before it is saved.
+ */
+export function dropsHeaders(draft: Pick<WebhookDraft, "url">, row: WebhookRow): boolean {
+  const url = draft.url.trim();
+  // Only for a URL the form would save: never while it is still being typed.
+  return (
+    (row.headers?.length ?? 0) > 0 &&
+    url !== "" &&
+    webhookTargetProblem(url) === null &&
+    webhookOriginChanged(row.url, url)
   );
-  return now - first <= WEBHOOK_REPLAY_MAX_AGE_MS;
 }
 
 export type ReplayOutcome = "sent" | "too_soon" | "off" | "gone" | "failed";

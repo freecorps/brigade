@@ -131,7 +131,7 @@ failure the email was about, `userId`, `reason`: `undelivered`, or `capped` when
 `workspace.email_changed` (`unpaged`, `nobodyPaged`).
 
 Outbound webhooks ("Outbound webhooks" below) emit `webhook.created` (`id`, `events`, `enabled`), `webhook.updated`
-(`id`, `events`, `urlChanged`), `webhook.enabled` (`id`), `webhook.disabled` (`id`, `reason`: `manual`, or `failing`
+(`id`, `events`, `urlChanged`, `headersCleared`), `webhook.enabled` (`id`), `webhook.disabled` (`id`, `reason`: `manual`, or `failing`
 when Brigade turned it off, `failures`), `webhook.secret_rotated` (`id`), `webhook.headers_changed` (`id`, `names`: the
 custom headers' names, never a value), `webhook.deleted` (`id`), `webhook.test` (`id`: "Send test event") and
 `webhook.replay` (`id`, `eventId`, `type`: "Replay" from the delivery log), subject the endpoint; never its URL (which
@@ -556,7 +556,8 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   endpoint whatever its case; Brigade refuses the request's framing and hop-by-hop names (`Host`, `Content-Length`,
   `Transfer-Encoding`, `Connection`, `Keep-Alive`, `TE`, `Trailer`, `Upgrade`, `Expect`), what it sets itself
   (`Content-Type`, `Content-Encoding`, `User-Agent` and every `webhook-*`, so a header never forges a signature), and
-  what proxies and Cloudflare own (`Forwarded`, `Via`, `X-Real-IP`, `proxy-*`, `sec-*`, `cf-*`, `x-forwarded-*`;
+  what proxies and Cloudflare own or a receiver may read as the client's address (`Forwarded`, `Via`, `X-Real-IP`,
+  `True-Client-IP`, `X-Client-IP`, `Client-IP`, `X-Cluster-Client-IP`, `proxy-*`, `sec-*`, `cf-*`, `x-forwarded-*`;
   `WEBHOOK_RESERVED_HEADERS`). A value is 1 to 1024 characters of visible ASCII and inner spaces: no CR, LF or other
   control, so it cannot split the request. `Authorization` is allowed (decided: many receivers want a bearer token
   rather than checking a signature), so every value is treated as a secret: the API seals each one like the signing
@@ -564,7 +565,14 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   server-only `webhook_secrets` row, and never answers it. The synced row keeps each name and a hint (the last 4
   characters of a value of at least 16, else none), which the card shows; the event names the headers only. The
   consumer opens them before each delivery; one that does not open fails the attempt as `secret`, like the signing
-  secret.
+  secret. The values belong to the receiver they were entered for, so `webhook.update` to a URL on another origin
+  (scheme, host or port; a new path or query keeps them) removes every header, values and names, in the same change,
+  with `headersCleared` on `webhook.updated` and a `webhook.headers_changed` naming none (decided: otherwise anyone
+  who can edit the URL, another admin or a token with only `webhook:manage`, could point it at their own host and
+  replay a delivery to read a stored `Authorization`). The dashboard says so on the URL field before it is saved; the
+  headers are entered again with `PUT …/headers`. A delivery reads the URL and the headers together when it is
+  claimed, so one claimed before the change carries the old URL with the old headers and one claimed after the new URL
+  with none.
 - **Secrets.** `whsec_` and 32 random bytes in base64 (Standard Webhooks' format), made by the API, shown once in the
   answer, never again. Brigade must sign with it, so it cannot be kept as a hash: it is sealed with AES-256-GCM under
   `WEBHOOK_SECRET_KEY` (a secret on the API Worker; the same sealing as Slack's bot tokens, RFC 0011, with the
@@ -640,8 +648,9 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   page ledger).
 - **Replay.** Owners and admins (or a token with `webhook:manage`) resend a delivery from the log: any event in it,
   given up or not (a given-up one is the reason to), with `webhook.replay` (`id`, `eventId`) over sync. The shard
-  checks the event is in the endpoint's log and its payload still kept (14 days after its first attempt,
-  `WEBHOOK_REPLAY_MAX_AGE_MS`, a day inside the ledger's 15), and emits `webhook.replay` through the outbox like every
+  checks the event is in the endpoint's log and its payload still kept (14 days after the event, by its id's time,
+  `WEBHOOK_REPLAY_MAX_AGE_MS`, a day inside the ledger's 15; never measured from a replay's own entry in the log, which
+  would outlive the payload), and emits `webhook.replay` through the outbox like every
   event. The consumer plans it as one more attempt for that endpoint only: the kept body, byte for byte, with the
   same `webhook-id` (the event's id, so a receiver that has it de-duplicates) and a fresh `webhook-timestamp` and
   signature (the current secrets, and the current custom headers). It has its own row in the ledger, keyed by the
@@ -649,9 +658,12 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   a free connection, or it died), the alarm brings it back like any delivery. A replay is one attempt: a failed one is
   logged and not retried by itself (replay it again). Refused for an endpoint that is off (`invalid_transition`:
   decided, turn it back on first, since an endpoint is off because its receiver is broken or unwanted) or deleted
-  (`not_found`); one turned off after it was asked is dropped. At most one replay per endpoint per 10 s
-  (`WEBHOOK_REPLAY_EVERY_MS`) and 10 an hour (`WEBHOOK_REPLAYS_PER_HOUR`, `limit_reached`), so the button cannot be
-  used to flood a receiver. It runs like every delivery, inside the webhooks' budget and side connections ("Never in a
+  (`not_found`); one turned off after it was asked is dropped. A payload the shard no longer has when the consumer
+  plans it is a failed attempt in the log (`expired`, not counted towards auto-disable), never a silent drop. At most
+  one replay per endpoint per 10 s (`WEBHOOK_REPLAY_EVERY_MS`), 10 an hour per endpoint (`WEBHOOK_REPLAYS_PER_HOUR`)
+  and 30 an hour across the workspace (`WEBHOOK_WORKSPACE_REPLAYS_PER_HOUR`, counted in server-only counters, so
+  deleting an endpoint gives none back; `limit_reached`), so replays add at most 30 requests an hour to a receiver,
+  even one every endpoint points at. It runs like every delivery, inside the webhooks' budget and side connections ("Never in a
   page's way").
 - **Auto-disable.** An endpoint whose attempts all failed for 24 hours (`WEBHOOK_DISABLE_AFTER_MS`), at least 10 in a
   row (`WEBHOOK_DISABLE_FAILURES`), with no success since, is turned off: `webhook.disabled` (`failing`), a notice on

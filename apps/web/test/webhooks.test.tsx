@@ -2,7 +2,7 @@
 // The dashboard's Webhooks card (RFC 0005 "Outbound webhooks"): checking a draft, the secret requests, how an
 // endpoint and its deliveries read, and what adding, editing and the one-time secret do.
 import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
-import type { WebhookRow } from "@freecorps/brigade-schema";
+import { newId, type WebhookRow } from "@freecorps/brigade-schema";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
@@ -405,6 +405,33 @@ describe("WebhooksPanel", () => {
     expect(calls.deletes).toEqual([row().id]);
   });
 
+  test("an edit that moves the URL to another host says it removes the custom headers", () => {
+    const { container } = render({
+      rows: [row({ headers: [{ name: "Authorization", hint: "6789" }] })],
+    });
+    act(() => container.querySelector<HTMLButtonElement>("button[aria-label=Edit]")!.click());
+    const url = container.querySelector<HTMLInputElement>("input[type=url]")!;
+    const warning = "removes this endpoint's custom headers";
+    expect(container.textContent).not.toContain(warning);
+    type(url, "https://hooks.example.com/other-path");
+    expect(container.textContent).not.toContain(warning);
+    type(url, "https://collector.example.net/in");
+    expect(container.textContent).toContain(warning);
+    // Still being typed: nothing to warn about yet.
+    type(url, "https://collector");
+    expect(container.textContent).not.toContain(warning);
+    act(() => root?.unmount());
+    document.body.innerHTML = "";
+    // Without headers there is nothing to remove.
+    const plain = render({ rows: [row()] });
+    act(() => plain.container.querySelector<HTMLButtonElement>("button[aria-label=Edit]")!.click());
+    type(
+      plain.container.querySelector<HTMLInputElement>("input[type=url]")!,
+      "https://collector.example.net/in",
+    );
+    expect(plain.container.textContent).not.toContain(warning);
+  });
+
   test("an unchanged edit sends nothing", async () => {
     const { container, calls } = render({ rows: [row()] });
     act(() => container.querySelector<HTMLButtonElement>("button[aria-label=Edit]")!.click());
@@ -431,10 +458,13 @@ describe("WebhooksPanel", () => {
   });
 });
 
+/** An event's id made at `at` (its time is what the replay window counts from). */
+const eventAt = (at: number, n = 1) => newId("evt", at, (length) => new Uint8Array(length).fill(n));
+
 const attempt = (
   more: Partial<WebhookRow["recent"][number]> = {},
 ): WebhookRow["recent"][number] => ({
-  eventId: "evt_01JB0000000000000000000001",
+  eventId: eventAt(NOW - 2 * 60 * 60_000),
   type: "incident.declared",
   attempt: 6,
   at: NOW - 5 * 60_000,
@@ -571,10 +601,16 @@ describe("replaying a delivery", () => {
     const log = [
       attempt({ attempt: 6 }),
       attempt({ attempt: 5, at: NOW - 60 * 60_000 }),
-      attempt({ eventId: "evt_01JB0000000000000000000002", attempt: 1, ok: true, status: 200 }),
-      attempt({ eventId: "evt_01JB0000000000000000000003", at: NOW - 20 * 86_400_000 }),
+      attempt({ eventId: eventAt(NOW - 60 * 60_000, 2), attempt: 1, ok: true, status: 200 }),
+      attempt({ eventId: eventAt(NOW - 20 * 86_400_000, 3), at: NOW - 20 * 86_400_000 }),
     ];
     expect(log.map((_, index) => canReplay(log, index, NOW))).toEqual([true, false, true, false]);
+  });
+
+  test("counts from the event, not from a replay's newer entry once the original left the log", () => {
+    const old = eventAt(NOW - 15 * 86_400_000, 4);
+    const log = [attempt({ eventId: old, attempt: 1, replay: true, at: NOW - 60_000 })];
+    expect(canReplay(log, 0, NOW)).toBe(false);
   });
 
   test("replays from the log, says it went, and marks a replayed attempt", async () => {
@@ -632,5 +668,10 @@ describe("replaying a delivery", () => {
     expect(container.textContent).toContain("Reenviar");
     expect(container.textContent).toContain("Cabeçalhos personalizados");
     expect(container.textContent).toContain("valor oculto");
+    type(
+      container.querySelector<HTMLInputElement>("input[type=url]")!,
+      "https://outro.example.net/",
+    );
+    expect(container.textContent).toContain("remove os cabeçalhos personalizados deste endpoint");
   });
 });

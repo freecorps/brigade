@@ -2501,7 +2501,8 @@
         "part=replay": "Replay",
         "part=replaying": "Replaying…",
         "part=replay_sent": "Replay on its way, with the same webhook-id. It shows at the top of Recent deliveries.",
-        "part=replay_too_soon": "A delivery was replayed moments ago, or this endpoint reached its replays for the hour. Wait a little.",
+        "part=replay_too_soon": "A delivery was replayed moments ago, or this endpoint or the workspace reached its replays for the hour. Wait a little.",
+        "part=headers_dropped": "Saving with an address on another host removes this endpoint's custom headers. Enter them again afterwards.",
         "part=replay_off": "Turn this endpoint on to replay a delivery.",
         "part=replay_gone": "Brigade no longer keeps this delivery, so it can't be replayed.",
         "part=replay_failed": "Couldn't replay it. Try again.",
@@ -2541,6 +2542,7 @@
         "error=redirect": "Redirect {status}, not followed",
         "error=blocked": "Blocked: not a public https URL",
         "error=secret": "Secret unreadable on the server",
+        "error=expired": "Not sent: payload no longer kept",
         "error=*": "Timed out"
       }
     }

@@ -27,6 +27,9 @@ export const NOW = Date.UTC(2026, 9, 26, 12, 0, 0);
 
 export type SlackCall = { url: string; body: unknown; auth: string | null };
 
+/** Slack Web API methods that ignore a JSON body (they read a form or the query string). */
+const READ_METHODS = new Set(["users.info", "users.lookupByEmail", "conversations.list"]);
+
 /** A fake Slack: answers `users.info` with `user`, records every call, and lets a test override any method. */
 export function fakeSlack(
   options: {
@@ -55,6 +58,14 @@ export function fakeSlack(
       ? request.url.slice("https://slack.com/api/".length)
       : undefined;
     if (method && options.methods?.[method]) return options.methods[method](body);
+    const json = request.headers.get("Content-Type")?.startsWith("application/json") === true;
+    // As Slack does: read methods take their arguments from a form only, and a JSON body names nobody.
+    if (json && method !== undefined && READ_METHODS.has(method)) {
+      return Response.json({
+        ok: false,
+        error: method === "users.info" ? "user_not_found" : "invalid_arguments",
+      });
+    }
     if (method === "users.info") return Response.json({ ok: true, user });
     if (method) return Response.json({ ok: true });
     return new Response("ok");

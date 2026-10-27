@@ -288,10 +288,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     Disconnect; `/inc update`, `sev`, `resolve`, `role` and `escalate` (`escalation.now`, the next level now) as the
     member through the shard, and a declare form (`views.open`) with severity, type and services; a channel picker on
     the card from `conversations.list` through the API (RFC 0011).
-  - Left: creating the Slack app and the secrets, applying migration 0006 and deploying (owner's call,
-    integrations/slack/README.md, Q22); App Home; Enterprise Grid and distribution beyond one app per instance;
-    staging and production names.
-  - Left: test on a real Slack workspace (owner).
+  - Done on `dev`: the Slack app created from the manifest, its secrets set, the Slack Worker deployed and bound to the
+    dashboard, and a real Slack workspace connected. Tried there: `/inc declare` (the incident, its channel and the
+    people invited), the Acknowledge button, `!update`, `/inc sev`, `/inc resolve` and the message shortcut.
+  - Left: the app and secrets for staging and production (owner's call, integrations/slack/README.md, Q22); App Home;
+    Enterprise Grid and distribution beyond one app per instance.
 - [ ] Email notifier; in-app VoIP call paging (RFC 0010); optional PSTN notifier (provider-agnostic)
   - Done: the email notifier (RFC 0005 "Email"): a provider-agnostic `EmailSender`, Cloudflare Email Sending through
     the `send_email` binding (every environment; the sender is the secret `EMAIL_FROM`, so no domain is in the repo),

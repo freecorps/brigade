@@ -26,9 +26,10 @@ describe("lookUpPerson", () => {
       email: "ana@example.com",
       locale: "pt-BR",
     });
-    expect(slack.to("users.info")[0]).toMatchObject({
+    // As a form: Slack ignores a JSON body on `users.info` and would answer `user_not_found`.
+    expect(slack.calls.find((call) => call.url.endsWith("/users.info"))).toMatchObject({
       auth: `Bearer ${BOT_TOKEN}`,
-      body: { user: USER, include_locale: true },
+      body: { user: USER, include_locale: "true" },
     });
   });
 

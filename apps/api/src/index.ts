@@ -7,6 +7,7 @@ import {
   parseAlertSourceToken,
   parseHeartbeatToken,
   workspaceName,
+  type Actor,
   type MemberChange,
   type Role,
 } from "@freecorps/brigade-schema";
@@ -52,6 +53,7 @@ import { requestDraftRoute } from "./postmortem.ts";
 import { readBounded, readBoundedBytes } from "./body.ts";
 import { webhookRequest } from "./webhook-routes.ts";
 import { MAX_ALERT_BODY } from "./alert-intake.ts";
+import { apiTokenRoute, callerOf, unauthenticated } from "./api-tokens.ts";
 import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, RECEIPT_STATUS, USER_ID } from "./http.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
 import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
@@ -62,6 +64,7 @@ import {
   WORKSPACE_HEADER,
   WORKSPACE_ID,
   type AckResult,
+  type TokenRefused,
 } from "./workspace.ts";
 
 export { ProbeDO } from "./probe.ts";
@@ -87,6 +90,7 @@ const SUBSCRIPTION_PATH = /^\/status\/([^/]+)\/(subscribe|confirm|manage|unsubsc
 const DRAFT_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/postmortem\/draft$/;
 const EXPORTS_PATH = /^\/workspaces\/([^/]+)\/exports$/;
 const EXPORT_PATH = /^\/workspaces\/([^/]+)\/exports\/([^/]+)$/;
+const API_TOKENS_PATH = /^\/workspaces\/([^/]+)\/api-tokens(?:\/([^/]+))?$/;
 /** Minute of the hour the cron sweeps expired exports (src/exports.ts). */
 const EXPORT_SWEEP_MINUTE = 17;
 /** Minute of the hour the cron deletes status page subscribers who never confirmed (src/status-subscribers.ts). */
@@ -160,21 +164,33 @@ export default {
         ? withoutInvitations(response)
         : response;
     }
+    // Routes that take an API token besides the session (RFC 0014) record its last use after answering.
+    const waitUntil = (promise: Promise<unknown>) => ctx.waitUntil(promise);
     const sync = SYNC_PATH.exec(pathname)?.[1];
-    if (sync !== undefined) return openSync(request, env, auth, sync);
+    if (sync !== undefined) return openSync(request, env, auth, sync, waitUntil);
     if (pathname === "/workspaces") return createWorkspace(request, auth);
     const member = MEMBER_PATH.exec(pathname);
-    if (member) return changeMember(request, env, auth, member[1]!, member[2]!);
+    if (member) return changeMember(request, env, auth, member[1]!, member[2]!, waitUntil);
     const invitations = INVITATIONS_PATH.exec(pathname);
-    if (invitations) return workspaceInvitations(request, env, auth, invitations[1]!);
+    if (invitations) return workspaceInvitations(request, env, auth, invitations[1]!, waitUntil);
     const invitation = INVITATION_PATH.exec(pathname);
     if (invitation) {
-      return changeInvitation(request, env, auth, invitation[1]!, invitation[2]!, !!invitation[3]);
+      return changeInvitation(
+        request,
+        env,
+        auth,
+        invitation[1]!,
+        invitation[2]!,
+        !!invitation[3],
+        waitUntil,
+      );
     }
+    const apiTokens = API_TOKENS_PATH.exec(pathname);
+    if (apiTokens) return apiTokenRoute(request, env, auth, apiTokens[1]!, apiTokens[2]);
     const invitee = INVITEE_PATH.exec(pathname);
     if (invitee) return answerInvitation(request, env, auth, invitee[1]!, invitee[2]);
     const ack = ACK_PATH.exec(pathname);
-    if (ack) return acknowledgeIncident(request, env, auth, ack[1]!, ack[2]!);
+    if (ack) return acknowledgeIncident(request, env, auth, ack[1]!, ack[2]!, waitUntil);
     const slackInstall = SLACK_INSTALL_PATH.exec(pathname)?.[1];
     if (slackInstall !== undefined) return beginSlackInstall(request, env, auth, slackInstall);
     // Postmortem drafts and exports (RFC 0013).
@@ -741,7 +757,8 @@ export const MEMBER_CHANGE_LIMIT = { window: 60, max: 20 };
  * own id, leaves the workspace (RFC 0003 "Members"). The Worker checks the origin, the session and that the caller
  * is a member; the workspace's shard checks the rules against D1, writes D1, then its own copy and the outbox, and
  * closes the member's sockets (src/members.ts). `not_applied` (503): D1 has the change and the shard not yet; the
- * shard's alarm reconciles it within seconds, and the same request again finishes it sooner.
+ * shard's alarm reconciles it within seconds, and the same request again finishes it sooner. An API token with
+ * `members:manage` (RFC 0014) acts by its creator's rules and role now, and never changes or removes its creator.
  */
 export async function changeMember(
   request: Request,
@@ -749,18 +766,18 @@ export async function changeMember(
   lazyAuth: () => Auth,
   workspaceId: string,
   userId: string,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<Response> {
   if (request.method !== "PATCH" && request.method !== "DELETE") {
     return json({ error: "method_not_allowed" }, 405, { Allow: "PATCH, DELETE" });
   }
   if (!ORGANIZATION_ID.test(workspaceId)) return json({ error: "invalid_workspace_id" }, 400);
   if (!USER_ID.test(userId)) return json({ error: "not_found" }, 404);
-  const origin = request.headers.get("Origin");
-  if (origin !== null && origin !== new URL(request.url).origin) {
-    return json({ error: "forbidden_origin" }, 403);
-  }
-  const session = await lazyAuth().api.getSession({ headers: request.headers });
-  if (!session) return json({ error: "unauthenticated" }, 401);
+  const resolved = await callerOf(request, env, lazyAuth, workspaceId, "members:manage", waitUntil);
+  if (!resolved.ok) return resolved.response;
+  const { caller } = resolved;
+  const token = caller.kind === "token" ? caller.actor : undefined;
+  if (token && userId === caller.userId) return json({ error: "forbidden" }, 403);
 
   let change: MemberChange = { kind: "remove" };
   if (request.method === "PATCH") {
@@ -782,13 +799,14 @@ export async function changeMember(
   // Every other answer to a non-member is the same 403, whether or not the workspace exists (open question Q16).
   // The leave retry does take longer for a workspace that exists (it asks the shard); that is safe only because a
   // workspace id is a ULID nobody can guess, which `ORGANIZATION_ID` holds this route to.
-  let member: boolean;
+  // A token's creator was a member when it resolved.
+  let member = token !== undefined;
   try {
-    member = (await memberRole(env.DB, workspaceId, session.user.id)) !== undefined;
+    if (!member) member = (await memberRole(env.DB, workspaceId, caller.userId)) !== undefined;
     if (!member) {
       const retryingLeave =
         request.method === "DELETE" &&
-        userId === session.user.id &&
+        userId === caller.userId &&
         (await workspaceExists(env.DB, workspaceId));
       if (!retryingLeave) return json({ error: "not_a_member" }, 403);
     }
@@ -797,10 +815,12 @@ export async function changeMember(
     return json({ error: "unavailable" }, 503);
   }
   // Each change wakes the shard (and it reads D1): bounded per member and workspace. Counted only once the workspace
-  // is known to be theirs (or to exist, for a leave sent again), so made-up ids leave no counter behind.
+  // is known to be theirs (or to exist, for a leave sent again), so made-up ids leave no counter behind. An API token
+  // counts against its creator (`caller.userId`): their sessions and tokens share one budget, so minting more tokens
+  // buys no more changes.
   try {
     const { window, max } = MEMBER_CHANGE_LIMIT;
-    const key = `member-change:${workspaceId}:${session.user.id}`;
+    const key = `member-change:${workspaceId}:${caller.userId}`;
     if ((await countRequest(env.DB, key, window, Date.now())) > max) {
       return json({ error: "rate_limited" }, 429, { "Retry-After": String(window) });
     }
@@ -808,16 +828,17 @@ export async function changeMember(
     console.error(JSON.stringify({ message: "member change count failed", error: String(error) }));
     return json({ error: "unavailable" }, 503);
   }
-  let result: MemberChangeResult;
+  let result: MemberChangeResult | TokenRefused;
   try {
     const shard = env.WORKSPACE.getByName(workspaceId);
     result = member
-      ? await shard.changeMember(workspaceId, session.user.id, userId, change)
-      : await shard.finishLeave(workspaceId, session.user.id);
+      ? await shard.changeMember(workspaceId, caller.userId, userId, change, token)
+      : await shard.finishLeave(workspaceId, caller.userId);
   } catch (error) {
     return failed("WorkspaceDO.changeMember failed", workspaceId, error);
   }
   if (result.ok) return json({ ok: true });
+  if (result.code === "unauthenticated") return unauthenticated();
   if (!member && (result.code === "not_found" || result.code === "forbidden")) {
     return json({ error: "not_a_member" }, 403);
   }
@@ -825,9 +846,10 @@ export async function changeMember(
 }
 
 function invitationAnswer(
-  result: { ok: true } | { ok: false; code: InvitationCode },
+  result: { ok: true } | { ok: false; code: InvitationCode } | TokenRefused,
   status = 200,
 ): Response {
+  if (!result.ok && result.code === "unauthenticated") return unauthenticated();
   if (!result.ok) return json({ error: result.code }, INVITATION_STATUS[result.code]);
   return json(result, status);
 }
@@ -857,24 +879,27 @@ async function readObject(request: Request): Promise<Record<string, unknown> | u
  * them); `POST` `{ email, role }` invites someone (RFC 0003 "Invitations"). The Worker checks the origin, the
  * session, that the caller is a member and, to invite, that their own address is verified (an invitation is an email
  * from Brigade to an address they typed); the shard checks the rules and limits against D1, writes D1, then its
- * outbox (`member.invited`, which the email notifier sends). Answers 201 with the invitation.
+ * outbox (`member.invited`, which the email notifier sends). Answers 201 with the invitation. An API token with
+ * `members:manage` (RFC 0014) invites as its creator, whose address must be verified; the event names the token.
  */
 export async function workspaceInvitations(
   request: Request,
   env: Env,
   lazyAuth: () => Auth,
   workspaceId: string,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<Response> {
   if (request.method !== "GET" && request.method !== "POST") {
     return json({ error: "method_not_allowed" }, 405, { Allow: "GET, POST" });
   }
   if (!ORGANIZATION_ID.test(workspaceId)) return json({ error: "invalid_workspace_id" }, 400);
-  if (crossSite(request)) return json({ error: "forbidden_origin" }, 403);
-  const session = await lazyAuth().api.getSession({ headers: request.headers });
-  if (!session) return json({ error: "unauthenticated" }, 401);
-  let role: Role | undefined;
+  const resolved = await callerOf(request, env, lazyAuth, workspaceId, "members:manage", waitUntil);
+  if (!resolved.ok) return resolved.response;
+  const { caller } = resolved;
+  const token = caller.kind === "token" ? caller.actor : undefined;
+  let role: Role | undefined = token?.role;
   try {
-    role = await memberRole(env.DB, workspaceId, session.user.id);
+    role ??= await memberRole(env.DB, workspaceId, caller.userId);
   } catch (error) {
     console.error(JSON.stringify({ message: "member lookup failed", error: String(error) }));
     return json({ error: "unavailable" }, 503);
@@ -895,7 +920,7 @@ export async function workspaceInvitations(
     }
   }
 
-  if (!session.user.emailVerified) return json({ error: "unverified" }, 403);
+  if (!caller.emailVerified) return json({ error: "unverified" }, 403);
   const body = await readObject(request);
   const email = invitationEmail(body?.email);
   const invited = body?.role;
@@ -903,10 +928,11 @@ export async function workspaceInvitations(
   try {
     const result = await env.WORKSPACE.getByName(workspaceId).invite(
       workspaceId,
-      session.user.id,
+      caller.userId,
       email,
       invited,
       new URL(request.url).origin,
+      token,
     );
     return invitationAnswer(result, 201);
   } catch (error) {
@@ -918,7 +944,7 @@ export async function workspaceInvitations(
  * `DELETE /workspaces/:id/invitations/:invitationId` revokes a pending invitation; `POST …/resend` sends it again
  * with a new expiry (at most once every five minutes, within the workspace's daily cap). Owners and admins; an admin
  * never touches an invitation to be an owner. The same checks as inviting, then the shard (`invitation.revoked`, or
- * `member.invited` again).
+ * `member.invited` again). An API token with `members:manage` too (RFC 0014).
  */
 export async function changeInvitation(
   request: Request,
@@ -927,35 +953,38 @@ export async function changeInvitation(
   workspaceId: string,
   invitationId: string,
   resend: boolean,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<Response> {
   const method = resend ? "POST" : "DELETE";
   if (request.method !== method)
     return json({ error: "method_not_allowed" }, 405, { Allow: method });
   if (!ORGANIZATION_ID.test(workspaceId)) return json({ error: "invalid_workspace_id" }, 400);
   if (!isId("inv", invitationId)) return json({ error: "not_found" }, 404);
-  if (crossSite(request)) return json({ error: "forbidden_origin" }, 403);
-  const session = await lazyAuth().api.getSession({ headers: request.headers });
-  if (!session) return json({ error: "unauthenticated" }, 401);
+  const resolved = await callerOf(request, env, lazyAuth, workspaceId, "members:manage", waitUntil);
+  if (!resolved.ok) return resolved.response;
+  const { caller } = resolved;
+  const token = caller.kind === "token" ? caller.actor : undefined;
   try {
-    if ((await memberRole(env.DB, workspaceId, session.user.id)) === undefined) {
+    if (!token && (await memberRole(env.DB, workspaceId, caller.userId)) === undefined) {
       return json({ error: "not_a_member" }, 403);
     }
   } catch (error) {
     console.error(JSON.stringify({ message: "member lookup failed", error: String(error) }));
     return json({ error: "unavailable" }, 503);
   }
-  if (resend && !session.user.emailVerified) return json({ error: "unverified" }, 403);
+  if (resend && !caller.emailVerified) return json({ error: "unverified" }, 403);
   try {
     const shard = env.WORKSPACE.getByName(workspaceId);
     return invitationAnswer(
       resend
         ? await shard.resendInvitation(
             workspaceId,
-            session.user.id,
+            caller.userId,
             invitationId,
             new URL(request.url).origin,
+            token,
           )
-        : await shard.revokeInvitation(workspaceId, session.user.id, invitationId),
+        : await shard.revokeInvitation(workspaceId, caller.userId, invitationId, token),
     );
   } catch (error) {
     return failed("WorkspaceDO invitation change failed", workspaceId, error);
@@ -1024,7 +1053,8 @@ export async function answerInvitation(
  * with its RBAC and its event through the outbox (`WorkspaceDO.acknowledge`). The same key again answers what the
  * first request did, so a retry after a lost answer is not reported as someone else's ack. Answers:
  * 200 acknowledged; 409 `conflict` already acknowledged (by anyone); 409 `invalid_transition` the incident is no
- * longer active; 404 no such incident; 403 `forbidden` (a viewer) or `not_a_member`; 401 without a session.
+ * longer active; 404 no such incident; 403 `forbidden` (a viewer) or `not_a_member`; 401 without a session. An API
+ * token with `incident:ack` (RFC 0014) acks as itself, with its creator's role now.
  */
 export async function acknowledgeIncident(
   request: Request,
@@ -1032,6 +1062,7 @@ export async function acknowledgeIncident(
   lazyAuth: () => Auth,
   workspaceId: string,
   incidentId: string,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<Response> {
   if (request.method !== "POST")
     return json({ error: "method_not_allowed" }, 405, { Allow: "POST" });
@@ -1040,28 +1071,28 @@ export async function acknowledgeIncident(
   if (!isId("inc", incidentId)) return json({ error: "not_found" }, 404);
   const key = request.headers.get(IDEMPOTENCY_KEY_HEADER);
   if (key === null || !TOKEN.test(key)) return json({ error: "invalid_args" }, 400);
-  const origin = request.headers.get("Origin");
-  if (origin !== null && origin !== new URL(request.url).origin) {
-    return json({ error: "forbidden_origin" }, 403);
-  }
-  const session = await lazyAuth().api.getSession({ headers: request.headers });
-  if (!session) return json({ error: "unauthenticated" }, 401);
+  const resolved = await callerOf(request, env, lazyAuth, workspaceId, "incident:ack", waitUntil);
+  if (!resolved.ok) return resolved.response;
+  const { caller } = resolved;
 
   // Checked here first, so a made-up workspace or an outsider never wakes (or creates) a shard.
-  let role: Role | undefined;
+  let actor: Actor | undefined = caller.kind === "token" ? caller.actor : undefined;
   try {
-    role = await memberRole(env.DB, workspaceId, session.user.id);
+    if (!actor) {
+      const role = await memberRole(env.DB, workspaceId, caller.userId);
+      if (role !== undefined) actor = { kind: "user", id: caller.userId, role };
+    }
   } catch (error) {
     console.error(JSON.stringify({ message: "member lookup failed", error: String(error) }));
     return json({ error: "unavailable" }, 503);
   }
-  if (role === undefined) return json({ error: "not_a_member" }, 403);
+  if (actor === undefined) return json({ error: "not_a_member" }, 403);
 
   let result: AckResult;
   try {
     result = await env.WORKSPACE.getByName(workspaceId).acknowledge(
       workspaceId,
-      { kind: "user", id: session.user.id, role },
+      actor,
       incidentId,
       key,
     );
@@ -1069,6 +1100,7 @@ export async function acknowledgeIncident(
     return failed("WorkspaceDO.acknowledge failed", workspaceId, error);
   }
   if (result.ok) return json({ ok: true });
+  if (result.code === "unauthenticated") return unauthenticated();
   const status = ACK_STATUS[result.code];
   return json({ error: status === undefined ? "internal" : result.code }, status ?? 500);
 }
@@ -1078,20 +1110,23 @@ export async function acknowledgeIncident(
  * "Socket topology"). The Worker authenticates the upgrade (`resolveActor`: 401 without a session, 403 for a
  * non-member or another site's page) and forwards a request it builds itself, carrying only the upgrade, the
  * workspace id and the verified actor (with the member's name, when their password was last reset, and the session's
- * id, which tags the socket, and expiry, when the shard closes it), so no client header reaches the shard.
+ * id, which tags the socket, and expiry, when the shard closes it), so no client header reaches the shard. With
+ * `Authorization: Bearer` (RFC 0014), the socket acts as the API token, its queries and mutations held to its scopes;
+ * it carries no session, so ending one of its creator's sessions never closes it.
  */
 async function openSync(
   request: Request,
   env: Env,
   auth: () => Auth,
   workspace: string,
+  waitUntil?: (promise: Promise<unknown>) => void,
 ): Promise<Response> {
   if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405, { Allow: "GET" });
   if (!WORKSPACE_ID.test(workspace)) return json({ error: "invalid_workspace_id" }, 400);
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
     return json({ error: "upgrade_required" }, 426, { Upgrade: "websocket" });
   }
-  const resolved = await resolveActor(request, env, auth, workspace);
+  const resolved = await resolveActor(request, env, auth, workspace, waitUntil);
   if (!resolved.ok) return resolved.response;
   // The shard is named by the workspace id alone; entity shards will be `${workspaceId}:${entityId}`.
   const headers = new Headers({

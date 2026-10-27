@@ -49,6 +49,8 @@ export const ACK_STATUS: Partial<Record<Extract<AckResult, { ok: false }>["code"
   forbidden: 403,
   not_a_member: 403,
   invalid_args: 400,
+  // An API token the shard no longer backs (RFC 0014).
+  unauthenticated: 401,
 };
 
 /** How each receipt result answers the phone: it only logs the status, and never retries a 4xx. */

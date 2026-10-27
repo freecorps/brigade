@@ -40,7 +40,7 @@ interface Store<S> {                         // SQLite in the DO; createMemorySt
   transaction(fn);                           // undo every write if fn throws; re-entrant
 }
 
-type MutationContext = { actor: { kind: "user" | "system" | "integration"; id; role }; now: number; server: boolean };
+type MutationContext = { actor: { kind: "user" | "system" | "integration" | "token"; id; role; by?; scopes? }; now: number; server: boolean };
 
 defineMutation({ name: "incident.declare", args: v.object({ … }), permission: "incident:declare",
   apply(store, args, ctx) { …; return ok(event) /* or fail("not_found", …) */ } });
@@ -367,6 +367,10 @@ server → client
   topology"). It reads the actor from a `Brigade-Actor` header and the workspace id from `Brigade-Workspace`, on a
   request the Worker builds itself with only those two headers and `Upgrade`, so nothing the client sent reaches
   the shard; it records the workspace on first use and checks it on every later upgrade. `hello.token` is ignored.
+- **API tokens (RFC 0014):** an upgrade with `Authorization: Bearer` acts as `{ kind: "token", id: "tok_…", role,
+  by, scopes }`, the creator's role read in D1; the shard refuses it (`401`) once its own list says the token is
+  revoked or expired, runs each query and mutation only within its scopes, and closes its sockets when it is revoked
+  (`1008`) or its creator's membership changes through Brigade (as the creator's own).
 - **Dev actor (local only):** where `SYNC_DEV_ACTOR` is `"1"` and the request is for `localhost`, `127.0.0.1` or
   `[::1]`, an upgrade **without a session** acts as `{ kind: "user", id: "usr_dev", role: "responder" }`
   (`DEV_ACTOR`) on any shard; for any other host it gets `401`, so a deployment that set the variable by mistake

@@ -10,8 +10,10 @@ import {
   isRole,
   MAX_EXPORT_BYTES,
   newId,
+  ROLES,
   nextMaintenanceAt,
   STATUS_PAGE_ID,
+  TOKENS_ACTOR,
   type Actor,
   type EmailAbout,
   type MemberChange,
@@ -115,8 +117,15 @@ export const IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 /** The client id acks from a notification action run under (`WorkspaceDO.acknowledge`). */
 export const NOTIFICATION_CLIENT_ID = "notification";
 
+/** An API token the shard's own list no longer backs (revoked, expired, or not this workspace's: RFC 0014). */
+export type TokenRefused = { ok: false; code: "unauthenticated" };
+const TOKEN_REFUSED: TokenRefused = { ok: false, code: "unauthenticated" };
+
 /** What `WorkspaceDO.acknowledge` did. */
-export type AckResult = { ok: true } | { ok: false; code: MutationErrorCode | "not_a_member" };
+export type AckResult =
+  | { ok: true }
+  | { ok: false; code: MutationErrorCode | "not_a_member" }
+  | TokenRefused;
 
 /** Set by the Worker on the upgrade it forwards; the shard records it on first use. */
 export const WORKSPACE_HEADER = "Brigade-Workspace";
@@ -479,11 +488,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     actorId: string,
     targetId: string,
     change: MemberChange,
-  ): Promise<MemberChangeResult> {
+    token?: Actor,
+  ): Promise<MemberChangeResult | TokenRefused> {
     if (this.shard.workspace() !== workspaceId) {
       return Promise.resolve({ ok: false, code: "not_found" });
     }
-    return this.membership.change(workspaceId, actorId, targetId, change);
+    if (token && !this.tokenActor(token)) return Promise.resolve(TOKEN_REFUSED);
+    return this.membership.change(workspaceId, actorId, targetId, change, token);
   }
 
   /**
@@ -497,9 +508,11 @@ export class WorkspaceDO extends DurableObject<Env> {
     email: string,
     role: Role,
     origin: string | null,
-  ): Promise<InvitationResult<{ invitation: ListedInvitation }>> {
+    token?: Actor,
+  ): Promise<InvitationResult<{ invitation: ListedInvitation }> | TokenRefused> {
     if (this.shard.workspace() !== workspaceId) return notFound();
-    return this.invitations.invite(workspaceId, actorId, email, role, origin);
+    if (token && !this.tokenActor(token)) return Promise.resolve(TOKEN_REFUSED);
+    return this.invitations.invite(workspaceId, actorId, email, role, origin, token);
   }
 
   resendInvitation(
@@ -507,18 +520,22 @@ export class WorkspaceDO extends DurableObject<Env> {
     actorId: string,
     invitationId: string,
     origin: string | null,
-  ): Promise<InvitationResult<{ expiresAt: number }>> {
+    token?: Actor,
+  ): Promise<InvitationResult<{ expiresAt: number }> | TokenRefused> {
     if (this.shard.workspace() !== workspaceId) return notFound();
-    return this.invitations.resend(workspaceId, actorId, invitationId, origin);
+    if (token && !this.tokenActor(token)) return Promise.resolve(TOKEN_REFUSED);
+    return this.invitations.resend(workspaceId, actorId, invitationId, origin, token);
   }
 
   revokeInvitation(
     workspaceId: string,
     actorId: string,
     invitationId: string,
-  ): Promise<InvitationResult> {
+    token?: Actor,
+  ): Promise<InvitationResult | TokenRefused> {
     if (this.shard.workspace() !== workspaceId) return notFound();
-    return this.invitations.revoke(workspaceId, actorId, invitationId);
+    if (token && !this.tokenActor(token)) return Promise.resolve(TOKEN_REFUSED);
+    return this.invitations.revoke(workspaceId, actorId, invitationId, token);
   }
 
   acceptInvitation(
@@ -663,7 +680,10 @@ export class WorkspaceDO extends DurableObject<Env> {
     mutationId: string,
   ): Promise<AckResult> {
     if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
-    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+    const acting = this.tokenActor(actor);
+    if (!acting) return TOKEN_REFUSED;
+    actor = acting;
+    if (await this.membership.refuses(workspaceId, actor.by ?? actor.id, Date.now())) {
       return { ok: false, code: "not_a_member" };
     }
     const now = Date.now();
@@ -1069,6 +1089,103 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (!result.ok) return { ok: false, code: result.error.code };
     this.broadcast(result.version, changes, undefined);
     return { ok: true };
+  }
+
+  /**
+   * `apiToken.create` or `apiToken.revoke` as the member (RPC from `POST` and `DELETE /workspaces/:id/api-tokens…`,
+   * which checked the session, read the role in D1 and wrote D1 first: RFC 0014). The same RBAC as every mutation. A
+   * revoke, or one already made, closes the token's sockets.
+   */
+  async apiTokenRun(
+    workspaceId: string,
+    actor: Actor,
+    name: "apiToken.create" | "apiToken.revoke",
+    args: Record<string, unknown>,
+  ): Promise<{ ok: true } | { ok: false; code: MutationErrorCode | "not_a_member" }> {
+    if (this.shard.workspace() !== workspaceId) return { ok: false, code: "not_found" };
+    if (await this.membership.refuses(workspaceId, actor.id, Date.now())) {
+      return { ok: false, code: "not_a_member" };
+    }
+    const now = Date.now();
+    const { result, changes } = this.shard.mutate({
+      clientId: "api",
+      mutationId: newId("mut", now, (length) => crypto.getRandomValues(new Uint8Array(length))),
+      actor,
+      name,
+      args,
+      now,
+      internal: true,
+    });
+    if (result.ok) this.broadcast(result.version, changes, undefined);
+    if (name === "apiToken.revoke" && (result.ok || result.error.code === "conflict")) {
+      this.closeSockets((socketActor) =>
+        socketActor.kind === "token" && socketActor.id === args.id ? "removed" : undefined,
+      );
+    }
+    return result.ok ? { ok: true } : { ok: false, code: result.error.code };
+  }
+
+  /**
+   * When an API token was last used, as the Worker recorded it in D1 (at most every few minutes): copied into the list
+   * as `TOKENS_ACTOR` (`apiToken.touch`, silent). A token this shard does not list, or a newer time, is no change.
+   */
+  apiTokenUsed(workspaceId: string, tokenId: string, at: number): void {
+    if (this.shard.workspace() !== workspaceId) return;
+    const now = Date.now();
+    const { result, changes } = this.shard.mutate({
+      clientId: "api",
+      mutationId: newId("mut", now, (length) => crypto.getRandomValues(new Uint8Array(length))),
+      actor: TOKENS_ACTOR,
+      name: "apiToken.touch",
+      args: { id: tokenId, at },
+      now,
+      internal: true,
+    });
+    if (result.ok) this.broadcast(result.version, changes, undefined);
+  }
+
+  /**
+   * An API token actor as this shard backs it (RFC 0014), or undefined: its listed copy must exist, be neither revoked
+   * nor expired and have the same creator. Its role is the lower of what the Worker read in D1 and the creator's copy
+   * here, so a demotion this shard already ran holds at once. Any other actor is returned as it is.
+   */
+  private tokenActor(actor: Actor): Actor | undefined {
+    if (actor.kind !== "token") return actor;
+    const row = this.shard.store.get("api_tokens", actor.id);
+    if (!row || row.revokedAt !== null || row.createdBy !== actor.by) return undefined;
+    if (row.expiresAt !== null && row.expiresAt <= Date.now()) return undefined;
+    const copy = this.shard.store.get("members", row.createdBy);
+    return copy && ROLES.indexOf(copy.role) > ROLES.indexOf(actor.role)
+      ? { ...actor, role: copy.role }
+      : actor;
+  }
+
+  /** Whether a socket acting as API token `actor` must close: no longer backed here, or its role lowered since. */
+  private tokenVerdict(actor: Actor): SocketVerdict | undefined {
+    const acting = this.tokenActor(actor);
+    if (!acting) return "token_ended";
+    return acting.role === actor.role ? undefined : "role_changed";
+  }
+
+  /**
+   * The alarm's part of RFC 0014: closes every API token socket this shard no longer backs (`tokenVerdict`), so one
+   * that expires while idle does not keep receiving patches, and answers when the next open one expires (null for
+   * none). Never throws.
+   */
+  private closeEndedTokens(): number | null {
+    const expiries: number[] = [];
+    try {
+      this.closeSockets((actor) => {
+        if (actor.kind !== "token") return undefined;
+        const verdict = this.tokenVerdict(actor);
+        const expiresAt = this.shard.store.get("api_tokens", actor.id)?.expiresAt ?? null;
+        if (verdict === undefined && expiresAt !== null) expiries.push(expiresAt);
+        return verdict;
+      });
+    } catch (error) {
+      this.log("closing ended API token sockets failed", { error });
+    }
+    return expiries.length === 0 ? null : Math.min(...expiries);
   }
 
   /** Runs a server-only mutation as `ACCOUNT_ACTOR`; a `conflict` is nothing to do. Throws on anything else. */
@@ -1493,6 +1610,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("closing expired sockets failed", { error });
     }
+    const tokenAt = this.closeEndedTokens();
     let webhookAt: number | null = now + MONITOR_TICK_MS;
     try {
       const at = this.webhooks.nextAt();
@@ -1513,7 +1631,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       earliest(earliest(monitors, escalationAt), earliest(repair, earliest(armed, maintenanceAt))),
       earliest(
         earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
-        earliest(webhookAt, expiryAt),
+        earliest(webhookAt, earliest(expiryAt, tokenAt)),
       ),
     );
     if (next === null) await this.ctx.storage.deleteAlarm();
@@ -1633,7 +1751,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       );
     }
     // Set by the Worker after it authenticated the upgrade (src/actor.ts); never copied from the client.
-    const actor = readActor(request.headers);
+    let actor = readActor(request.headers);
     if (!actor) return Response.json({ error: "internal" }, { status: 500 });
     const workspace = request.headers.get(WORKSPACE_HEADER) ?? "";
     if (!WORKSPACE_ID.test(workspace))
@@ -1642,10 +1760,27 @@ export class WorkspaceDO extends DurableObject<Env> {
       this.log("shard serves another workspace", { workspace });
       return Response.json({ error: "internal" }, { status: 500 });
     }
+    // An API token (RFC 0014): refused once this shard's list no longer backs it (revoked, expired, another
+    // workspace's), however recently the Worker's cache saw it; its role is never above its creator's copy here.
+    if (actor.kind === "token") {
+      const acting = this.tokenActor(actor);
+      if (!acting) return Response.json({ error: "unauthenticated" }, { status: 401 });
+      actor = acting;
+      // The alarm closes the socket when the token expires, whether or not it sends anything.
+      const expiresAt = this.shard.store.get("api_tokens", actor.id)?.expiresAt ?? null;
+      if (expiresAt !== null) this.wake(expiresAt, "API token expiry");
+    }
     const name = readMemberName(request.headers);
     // A member just removed here whose upgrade the Worker let through before the removal: refused, as the Worker
     // would now, rather than have `member.sync` restore their copy. A member D1 has again (re-added) is not.
     if (name !== undefined && (await this.membership.refuses(workspace, actor.id, Date.now()))) {
+      return Response.json({ error: "not_a_member" }, { status: 403 });
+    }
+    // The same for a token whose creator was just removed: it acts for them, so it is refused with them.
+    if (
+      actor.kind === "token" &&
+      (await this.membership.refuses(workspace, actor.by ?? actor.id, Date.now()))
+    ) {
       return Response.json({ error: "not_a_member" }, { status: 403 });
     }
     // Before the socket exists, so no `device.register` of this session can come first: a register that changes
@@ -1764,6 +1899,7 @@ export class WorkspaceDO extends DurableObject<Env> {
       if (verdict === "removed") close(ws, CLOSE_POLICY_VIOLATION, "not a member");
       else if (verdict === "role_changed") close(ws, CLOSE_SERVICE_RESTART, "role changed");
       else if (verdict === "signed_out") close(ws, CLOSE_SERVICE_RESTART, "signed out");
+      else if (verdict === "token_ended") close(ws, CLOSE_POLICY_VIOLATION, "token ended");
     }
   }
 
@@ -1801,6 +1937,14 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (!state) {
       close(ws, CLOSE_INTERNAL_ERROR, "no socket state");
       return;
+    }
+    // An API token's socket (RFC 0014) is checked on every frame, not only at the upgrade: one that expired, was
+    // revoked here, or whose creator's copy here was demoted since closes instead of answering. In memory only; the
+    // alarm closes an idle one when it expires (`closeEndedTokens`).
+    if (state.actor.kind === "token") {
+      const verdict = this.tokenVerdict(state.actor);
+      if (verdict === "token_ended") return close(ws, CLOSE_POLICY_VIOLATION, "token ended");
+      if (verdict === "role_changed") return close(ws, CLOSE_SERVICE_RESTART, "role changed");
     }
     // Checks size (64 KiB), JSON, shape and ids; never throws. Binary frames are refused as not text.
     const parsed = parseClientMessage(data);
@@ -1912,7 +2056,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (state.subs.length >= MAX_SUBSCRIPTIONS) {
       return refuse("limit", `At most ${MAX_SUBSCRIPTIONS} subscriptions per socket`);
     }
-    const result = this.shard.query(name, rawArgs, state.actor.role);
+    const result = this.shard.query(name, rawArgs, state.actor.role, state.actor.scopes);
     if (!result.ok) return refuse(result.error.code, result.error.message);
     // `runQuery` accepted both, so the lookup and the args are valid.
     const query = findQuery(name)!;

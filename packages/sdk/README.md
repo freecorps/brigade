@@ -81,7 +81,10 @@ export default {
 The payloads, by `type`: `incident.declared`, `incident.status_changed`, `incident.severity_changed`,
 `incident.acknowledged`, `incident.update_posted`, `incident.role_assigned`, `alert.fired`, `alert.resolved`,
 `monitor.status_changed`, `escalation.paged` and `webhook.test` ("Send test event"). Their schemas are the reference's
-`webhooks` section; `WebhookPayloadOf<"alert.fired">` is one of them as a type.
+`webhooks` section; `WebhookPayloadOf<"alert.fired">` is one of them as a type. Every payload's `actor` is
+`{ kind, id }`: `kind` is `user` (`usr_…`), `token` (an API token, `tok_…`, acting for the member who made it),
+`system` (`sys_…`) or `integration`, and like every list it may grow. An id that names who did something, like
+`incident.acknowledged`'s `data.by`, may be a `tok_…` too.
 
 ## Ping a heartbeat
 
@@ -101,9 +104,8 @@ import { createClient, isBrigadeApiError } from "@freecorps/brigade-sdk";
 
 const brigade = createClient({
   baseUrl: "https://brigade.example.com/api",
-  // A Better Auth session cookie (`POST /api/auth/sign-in/email` sets it), on a server. API tokens are not there
-  // yet: when they are, they go in `headers`.
-  cookie: process.env.BRIGADE_SESSION_COOKIE,
+  // An API token (dashboard → API tokens), with the `incident:ack` scope: sent as `Authorization: Bearer`.
+  token: process.env.BRIGADE_TOKEN,
 });
 
 try {
@@ -134,6 +136,14 @@ Every method resolves with the documented success and rejects with a `BrigadeApi
 redirect: never followed, so a cookie or token never goes elsewhere). An id that is empty, `.` or `..` is a
 `BrigadeArgumentError` (`invalid_argument`), before anything is sent; a network failure is `fetch`'s own error.
 
+- **API tokens.** `token` is a workspace's API token (`brg_…`, RFC 0014), minted by an owner or admin in the
+  dashboard with a name, an optional expiry and scopes, and shown once. The operations marked `bearerAuth` in the
+  reference take it: members, invitations and acknowledging (each with its scope), and the sync socket. It acts with
+  its creator's role as it is now, never beyond its scopes; a wrong, revoked or expired token, or one whose creator
+  left, is `401 unauthenticated`, and over its rate limit `429 rate_limited`. A server keeps it in a secret; GitHub
+  secret scanning can find leaked ones with the pattern `brg_[A-Za-z0-9_-]{43}`. `cookie` (a Better Auth session
+  cookie, from `POST /api/auth/sign-in/email`) still works for every operation, including those no token takes
+  (`createWorkspace`, the invitee's).
 - **Browsers.** The `cookie` option is for servers: a browser ignores a `Cookie` header a script sets, and sends its
   own cookies instead. On a page of the API's own origin it does so already; from another origin, pass
   `credentials: "include"` (and the API must allow that origin). `fetch` can be injected

@@ -30,6 +30,9 @@ describe("checkInvite", () => {
     expect(inviteRoles({ role: "responder" })).toEqual([]);
     expect(inviteRoles({ role: "viewer" })).toEqual([]);
     expect(checkInvite({ role: "admin" }, "owner")).toEqual({ ok: false, code: "forbidden" });
+    // An API token (RFC 0014) never invites an owner or admin, whatever its creator's role.
+    expect(inviteRoles({ role: "owner", kind: "token" })).toEqual(["responder", "viewer"]);
+    expect(inviteRoles({ role: "admin", kind: "token" })).toEqual(["responder", "viewer"]);
   });
 });
 

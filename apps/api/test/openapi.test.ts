@@ -1,7 +1,8 @@
 // The API reference (src/openapi.ts, RFC 0002 "Public HTTP API") against the Worker: the committed
 // docs/api/openapi.json is what the generator writes; every documented path answers exactly its documented methods;
-// every operation answers its documented success, with a body its schema accepts, for a basic case; and every
-// session operation answers 401 without one.
+// every operation answers its documented success, with a body its schema accepts, for a basic case; every session
+// operation answers 401 without one; and every operation marked `bearerAuth` answers the same success with an API
+// token instead of the cookie (RFC 0014), and 401 with a wrong one.
 import { env, exports } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import {
@@ -11,6 +12,7 @@ import {
   INVITATION_RESEND_INTERVAL_MS,
   newHeartbeatSecret,
   newId,
+  TOKEN_SCOPES,
   WEBHOOK_PAYLOADS,
   type Actor,
   type JsonSchema,
@@ -27,6 +29,7 @@ import {
   WORKSPACE_ID_PATTERN,
   type Operation,
 } from "../src/openapi.ts";
+import { forgetAllTokens, newApiToken, tokenDigest } from "../src/api-tokens.ts";
 import { Shard } from "../src/shard.ts";
 import { serverSignedFixture } from "./sdk-fixture.ts";
 import { IDEMPOTENCY_KEY_HEADER, ORGANIZATION_ID, type WorkspaceDO } from "../src/workspace.ts";
@@ -299,6 +302,47 @@ const CASES: Record<string, () => Promise<Case>> = {
   },
 };
 
+/**
+ * An API token with every scope for the workspace's owner, written to D1 and listed in its shard as minting does
+ * (src/api-tokens.ts), so the operations run with it exactly as with the owner's cookie.
+ */
+async function ownerToken(workspaceId: string): Promise<string> {
+  const owner = await env.DB.prepare(
+    `select "userId" as id from member where "organizationId" = ? and role = 'owner' limit 1`,
+  )
+    .bind(workspaceId)
+    .first<{ id: string }>();
+  const token = newApiToken();
+  const id = newId("tok", Date.now(), random);
+  // A moment after every membership the case set up.
+  const at = Date.now() + 1000;
+  await env.DB.prepare(
+    `insert into api_token (id, workspace_id, hash, name, created_by, scopes, created_at)
+     values (?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(
+      id,
+      workspaceId,
+      await tokenDigest(token, undefined),
+      "Reference",
+      owner!.id,
+      JSON.stringify(TOKEN_SCOPES),
+      at,
+    )
+    .run();
+  const listed = await env.WORKSPACE.getByName(workspaceId).apiTokenRun(
+    workspaceId,
+    { kind: "user", id: owner!.id, role: "owner" },
+    "apiToken.create",
+    { id, name: "Reference", scopes: [...TOKEN_SCOPES], expiresAt: null },
+  );
+  expect(listed).toEqual({ ok: true });
+  return token;
+}
+
+/** The case's workspace, from its path. */
+const caseWorkspace = (path: string) => /\/(?:workspaces|sync)\/(ws_[0-9A-Z]{26})/.exec(path)?.[1];
+
 function send({ path, init = {}, cookie }: Case): Promise<Response> {
   return api(path, {
     ...init,
@@ -414,6 +458,28 @@ describe("each operation answers as documented", () => {
         const anonymous = await send({ ...basic, cookie: undefined });
         expect(anonymous.status).toBe(401);
         await expectDocumented(operation, anonymous);
+      }
+
+      if (operation.bearer !== undefined) {
+        forgetAllTokens();
+        const fresh = await CASES[operation.operationId]!();
+        const workspace = caseWorkspace(fresh.path);
+        expect(workspace, "a bearer operation names its workspace").toBeDefined();
+        const withToken = (token: string) =>
+          send({
+            ...fresh,
+            cookie: undefined,
+            init: {
+              ...fresh.init,
+              headers: { ...fresh.init?.headers, Authorization: `Bearer ${token}` },
+            },
+          });
+        const accepted = await withToken(await ownerToken(workspace!));
+        expect(accepted.status).toBe(fresh.status);
+        await expectDocumented(operation, accepted);
+        const wrong = await withToken(newApiToken());
+        expect(wrong.status).toBe(401);
+        await expectDocumented(operation, wrong);
       }
     });
   }

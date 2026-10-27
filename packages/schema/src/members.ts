@@ -3,7 +3,7 @@
 // announce it (RFC 0005). D1 (Better Auth's `member` table) is the authority: the API Worker's shard writes it
 // first, then runs these, so they never decide a change on their own (apps/api/src/members.ts).
 
-import { can, ROLES, type Role } from "./access.ts";
+import { allows, can, ROLES, type Role } from "./access.ts";
 import { dropDevices } from "./devices.ts";
 import { defineMutation, fail, ok, type Actor, type DomainEvent } from "./mutation.ts";
 import { dropFromSchedules } from "./schedules.ts";
@@ -15,6 +15,16 @@ import { v } from "./validate.ts";
  * anything.
  */
 export const MEMBERS_ACTOR: Actor = { kind: "system", id: "sys_members", role: "admin" };
+
+/**
+ * The roles an API token (RFC 0014) never grants (inviting or changing a role), changes or removes: making or
+ * unmaking an owner or an admin is a person's call, never a script's, whatever its creator's role.
+ */
+export const TOKEN_OUT_OF_REACH: readonly Role[] = ["owner", "admin"];
+
+/** Whether an API token may touch `role`: grant it, or change or remove someone who has it. */
+export const tokenReaches = (role: Role | null) =>
+  role !== null && !TOKEN_OUT_OF_REACH.includes(role);
 
 /** Why a member left the workspace: removed by an owner or admin, left on their own, or gone from D1. */
 export const MEMBER_REMOVALS = ["removed", "left", "reconciled"] as const;
@@ -42,11 +52,13 @@ export type MemberChangeRefusal = "forbidden" | "last_owner" | "conflict";
  *   makes anyone an owner;
  * - anyone may leave (remove themselves); a responder or viewer changes no role, their own included;
  * - nobody demotes or removes the last owner, themselves included: an owner may step down or leave only while
- *   another owner remains.
+ *   another owner remains;
+ * - an API token (`kind: "token"`, `actor` being its creator, RFC 0014) never makes anyone an owner or admin, nor
+ *   changes or removes one (`TOKEN_OUT_OF_REACH`); the API also keeps it off its creator.
  * The API checks it against D1 before writing; the dashboard uses it to show only what will be accepted.
  */
 export function checkMemberChange(
-  actor: { id: string; role: Role },
+  actor: { id: string; role: Role; kind?: Actor["kind"] },
   target: { id: string; role: Role },
   change: MemberChange,
   owners: number,
@@ -57,6 +69,12 @@ export function checkMemberChange(
     if (
       actor.role !== "owner" &&
       (target.role === "owner" || (change.kind === "role" && change.role === "owner"))
+    ) {
+      return { ok: false, code: "forbidden" };
+    }
+    if (
+      actor.kind === "token" &&
+      (!tokenReaches(target.role) || (change.kind === "role" && !tokenReaches(change.role)))
     ) {
       return { ok: false, code: "forbidden" };
     }
@@ -72,13 +90,17 @@ const memberId = v.string({ min: 1, max: 64 });
 /**
  * Server only: a member's role changed in D1 (`from` → `to`, as D1 had them). Updates the shard's copy if it has
  * one (a member who never opened Brigade has none, and gets the new role from `member.sync` when they do) and
- * emits `member.role_changed`. Run once per change D1 made: the caller decides whether the shard still lags.
+ * emits `member.role_changed`. Run once per change D1 made: the caller decides whether the shard still lags. An API
+ * token never moves anyone to or from owner or admin (`TOKEN_OUT_OF_REACH`).
  */
 export const changeMemberRole = defineMutation({
   name: "member.changeRole",
   args: v.object({ id: memberId, from: v.picklist(ROLES), to: v.picklist(ROLES) }),
   permission: "members:manage",
   apply(store, args, ctx) {
+    if (ctx.actor.kind === "token" && !(tokenReaches(args.from) && tokenReaches(args.to))) {
+      return fail("forbidden", "A token never changes an owner's or admin's role, nor makes one");
+    }
     if (args.from === args.to) return fail("conflict", "Role is unchanged");
     if (store.get("members", args.id))
       store.update("members", args.id, { role: args.to, updatedAt: ctx.now });
@@ -99,7 +121,8 @@ export const changeMemberRole = defineMutation({
  * `member.removed` (and `device.unregistered` per device). `left` is the actor themselves (any role); `removed`
  * needs `members:manage`; `reconciled` is `MEMBERS_ACTOR` catching the shard up with one removal D1 already has
  * (without reconciling every member). Emits even when the shard had neither (a member who never opened Brigade):
- * the caller runs it once per removal D1 made.
+ * the caller runs it once per removal D1 made. An API token only ever removes (it never leaves): `members:manage` in
+ * its scopes, never an owner or admin.
  */
 export const removeMember = defineMutation({
   name: "member.remove",
@@ -108,15 +131,19 @@ export const removeMember = defineMutation({
     role: v.nullable(v.picklist(ROLES)),
     reason: v.picklist(MEMBER_REMOVALS),
   }),
-  // Leaving needs only membership; removing someone else is checked below.
+  // Leaving needs only membership; removing someone else is checked below. A token never leaves, so it needs
+  // `members:manage` in its scopes to run this at all (the Worker checked it already).
   permission: "workspace:read",
+  tokenPermission: "members:manage",
   apply(store, args, ctx) {
     const allowed =
-      args.reason === "left"
-        ? ctx.actor.id === args.id
-        : args.reason === "reconciled"
-          ? ctx.actor.kind === MEMBERS_ACTOR.kind && ctx.actor.id === MEMBERS_ACTOR.id
-          : can(ctx.actor.role, "members:manage");
+      ctx.actor.kind === "token"
+        ? args.reason === "removed" && tokenReaches(args.role)
+        : args.reason === "left"
+          ? ctx.actor.id === args.id
+          : args.reason === "reconciled"
+            ? ctx.actor.kind === MEMBERS_ACTOR.kind && ctx.actor.id === MEMBERS_ACTOR.id
+            : allows(ctx.actor, "members:manage");
     if (!allowed) {
       return fail("forbidden", "Not allowed to remove this member");
     }

@@ -106,8 +106,9 @@ the session are relied on, and the reference says how), `GET /workspaces/:id` (t
 `POST /receipts` (the iOS extension's delivery receipts, RFC 0006), `POST /devices/register` (the app registering
 its phone in every workspace it was opened in, RFC 0006 "Device registration"), `PUT /workspaces/:id/status-page` (the
 dashboard's status page settings), `POST /workspaces/:id/webhooks` and `POST /workspaces/:id/webhooks/:webhookId/rotate`
-(the dashboard's Webhooks card: they answer a new signing secret once, RFC 0005 "Outbound webhooks"; public once API
-tokens exist), `POST /workspaces/:id/incidents/:incidentId/postmortem/draft`, `POST` and `GET /workspaces/:id/exports…`
+(the dashboard's Webhooks card: they answer a new signing secret once, RFC 0005 "Outbound webhooks"; cookie only for
+now, RFC 0014 "Not in this slice"), `POST /workspaces/:id/api-tokens` and `DELETE /workspaces/:id/api-tokens/:tokenId`
+(the dashboard's API tokens card: the token is answered once, RFC 0014), `POST /workspaces/:id/incidents/:incidentId/postmortem/draft`, `POST` and `GET /workspaces/:id/exports…`
 and `GET /features` (the dashboard's AI drafts and exports, RFC 0013) and `/slack/*`. `GET /status/:slug` is the
 public status page itself (RFC 0012): HTML
 for people, not an API. A JSON read of a status page does not exist yet.
@@ -119,10 +120,12 @@ openapi` writes the file; `apps/api/test/openapi.test.ts` fails when it is stale
 methods than documented, and unless every operation answers its documented status, with a body its schema accepts,
 for a basic case (and `401` without a session).
 
-**Auth.** Only the Better Auth session cookie today, with cookie-authenticated writes refusing another site's
-`Origin`. **API tokens** (per workspace, scoped, revocable, hashed at rest, sent as `Authorization: Bearer`) are the
-next item: they need their own design (who may mint them, which roles they carry, how the shard's RBAC sees them as an
-actor) before anything outside a browser can call the API comfortably.
+**Auth.** The Better Auth session cookie, with cookie-authenticated writes refusing another site's `Origin`, or an
+**API token** (RFC 0014): per workspace, minted by owners and admins with scopes and an optional expiry, hashed at
+rest, sent as `Authorization: Bearer brg_…`, acting as a `token` actor with its creator's current role and never
+beyond its scopes. The members, invitations (the workspace's side), ack and sync routes above take one; `POST
+/workspaces` and the invitee's routes do not. A bearer request skips the `Origin` check and ignores any cookie; the
+reference marks these operations `bearerAuth`, and its test runs each with a token.
 
 **Webhooks.** The reference's OpenAPI 3.1 `webhooks` section describes what Brigade sends to the endpoints a workspace
 registers (RFC 0005 "Outbound webhooks"): one entry per payload `type`, its body converted from that type's validator
@@ -133,9 +136,9 @@ Standard Webhooks headers. The same test checks it is current and that payloads 
 **SDK.** `packages/sdk` (`@freecorps/brigade-sdk`, MIT, 0.1.0, not on npm yet: publishing is the owner's call) is the
 reference's client side: `verifyWebhook` (Standard Webhooks on Web Crypto, so Workers, Node 20+, Deno, Bun and
 browsers; the payload parsed by the schema package's validators into `WebhookPayload`), `createClient` (one method per
-operation above except `openSync`, an injectable `fetch`, the session cookie or a per-request headers hook where API
-tokens will go, and `BrigadeApiError` with the codes each operation lists) and the payload types. It bundles the schema
-package, so it has no runtime dependencies and no app code; its tests hold its methods, paths and codes to
+operation above except `openSync`, an injectable `fetch`, the session cookie, an API token (`token`, sent as
+`Authorization: Bearer`) or a per-request headers hook, and `BrigadeApiError` with the codes each operation lists) and
+the payload types. It bundles the schema package, so it has no runtime dependencies and no app code; its tests hold its methods, paths and codes to
 `docs/api/openapi.json`, and check deliveries the API's own signer made (a fixture `apps/api` keeps current). Build
 runs `scripts/check-dist.mjs`: the built files import nothing and verify those deliveries in plain Node.
 
@@ -208,7 +211,7 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
     (`device.signOut` with `deviceId`, only ever the signing-out user's own device, and only if last registered
     before the session ended); that sign-out waits for it, so the phone is free by the time it answers (RFC 0006
     "Device registration"). It is durable: before the row goes, the hook's `before` half writes one row per workspace
-    of the user to D1's `session_end` (`migrations/0011_session_end.sql`, one statement), and each shard's success
+    of the user to D1's `session_end` (`migrations/0012_session_end.sql`, one statement), and each shard's success
     deletes its row. A shard that failed every try keeps its row, acted on by whichever comes first: the shard itself
     before a phone registers in it (`POST /devices/register`) and after every sync upgrade into it
     (`WorkspaceDO.catchUpSessionEnds`), or the Worker's cron, every minute, for rows older than a minute

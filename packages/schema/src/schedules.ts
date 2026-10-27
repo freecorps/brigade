@@ -2,10 +2,11 @@
 // change them, and the pure functions that say who is on call at an instant (`onCallAt`) and when it changes
 // (`nextHandoffs`). Escalation policies page whoever `onCallAt` says (escalation.ts, RFC 0006 "Who is paged").
 
-import { can } from "./access.ts";
+import { allows } from "./access.ts";
 import { idTime } from "./id.ts";
 import { ID_CLOCK_SKEW_MS } from "./incidents.ts";
 import {
+  actingMember,
   defineMutation,
   fail,
   ok,
@@ -549,7 +550,8 @@ export const addOverride = defineMutation({
   }),
   permission: "schedule:override",
   apply(store, args, ctx) {
-    if (!can(ctx.actor.role, "schedule:manage") && args.userId !== ctx.actor.id) {
+    // A token covers only its creator unless it also holds `schedule:manage` (RFC 0014).
+    if (!allows(ctx.actor, "schedule:manage") && args.userId !== actingMember(ctx.actor)) {
       return fail("forbidden", "Responders add overrides only for themselves");
     }
     const clock = checkNewId(args.id, ctx);
@@ -617,7 +619,7 @@ export const removeOverride = defineMutation({
   apply(store, args, ctx) {
     const row = store.get("overrides", args.id);
     if (!row) return fail("not_found", "Override not found");
-    if (!can(ctx.actor.role, "schedule:manage") && row.userId !== ctx.actor.id) {
+    if (!allows(ctx.actor, "schedule:manage") && row.userId !== actingMember(ctx.actor)) {
       return fail("forbidden", "Responders remove only their own overrides");
     }
     store.delete("overrides", args.id);

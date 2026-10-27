@@ -58,6 +58,8 @@ export type InvitationPreview = {
 
 const SIGNED_IN = ["unauthenticated", "forbidden_origin"] as const;
 const SHARD_FAILED = ["internal", "unavailable"] as const;
+/** What an API token adds where the reference marks `bearerAuth` (RFC 0014): its scopes, and its rate limit. */
+const BEARER = ["forbidden", "rate_limited"] as const;
 const MEMBER = [
   ...SIGNED_IN,
   "invalid_workspace_id",
@@ -69,6 +71,7 @@ const MEMBER = [
   "not_applied",
   "rate_limited",
   ...SHARD_FAILED,
+  ...BEARER,
 ] as const;
 const INVITATION = [
   "forbidden",
@@ -106,6 +109,7 @@ export const OPERATION_ERRORS = {
     "not_a_member",
     "forbidden",
     "unavailable",
+    ...BEARER,
   ],
   invite: [
     ...SIGNED_IN,
@@ -114,6 +118,7 @@ export const OPERATION_ERRORS = {
     "not_a_member",
     ...INVITATION,
     "internal",
+    ...BEARER,
   ],
   revokeInvitation: [
     ...SIGNED_IN,
@@ -121,6 +126,7 @@ export const OPERATION_ERRORS = {
     "not_a_member",
     ...INVITATION,
     "internal",
+    ...BEARER,
   ],
   resendInvitation: [
     ...SIGNED_IN,
@@ -128,6 +134,7 @@ export const OPERATION_ERRORS = {
     "not_a_member",
     ...INVITATION,
     "internal",
+    ...BEARER,
   ],
   getInvitation: [...SIGNED_IN, "not_found", "unavailable"],
   acceptInvitation: [...SIGNED_IN, ...INVITATION, "internal"],
@@ -142,6 +149,7 @@ export const OPERATION_ERRORS = {
     "invalid_transition",
     "forbidden",
     ...SHARD_FAILED,
+    ...BEARER,
   ],
 } as const satisfies Record<string, readonly string[]>;
 
@@ -198,14 +206,17 @@ export type ClientOptions = {
    */
   cookie?: string;
   /**
+   * An API token (`brg_…`, RFC 0014), sent as `Authorization: Bearer`: minted by a workspace's owner or admin in the
+   * dashboard, for that workspace, with scopes. The operations the reference marks `bearerAuth` take it; with it, the
+   * API ignores any cookie. Keep it out of browsers and logs.
+   */
+  token?: string;
+  /**
    * Whether a browser sends its own cookies: `fetch`'s `credentials`, default `same-origin`. `include` for a page on
    * another origin than the API (which must then allow that origin). Ignored outside browsers.
    */
   credentials?: RequestCredentials;
-  /**
-   * Headers for every request, made per request: where an API token will go once the API has them (RFC 0002
-   * "Public HTTP API"), and anything a proxy in front of Brigade needs.
-   */
+  /** Headers for every request, made per request: anything a proxy in front of Brigade needs. */
   headers?: () => Awaitable<Record<string, string>>;
 };
 
@@ -248,6 +259,7 @@ export function createClient(options: ClientOptions) {
     const headers = new Headers(await options.headers?.());
     headers.set("Accept", "application/json");
     if (options.cookie !== undefined) headers.set("Cookie", options.cookie);
+    if (options.token !== undefined) headers.set("Authorization", `Bearer ${options.token}`);
     for (const [name, value] of Object.entries(init.headers ?? {})) headers.set(name, value);
     if (init.body !== undefined) headers.set("Content-Type", "application/json");
     const response = await send(

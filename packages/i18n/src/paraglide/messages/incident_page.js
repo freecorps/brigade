@@ -30,6 +30,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "monitors" | "A monitor" |
 * | "alerts" | "An alert source" |
 * | "teammate" | "A teammate" |
+* | "api_token" | "An API token" |
 * | "read_only" | "Viewers follow the incident; responders and admins change it." |
 * | "not_found_title" | "Incident not found" |
 * | "load_failed_title" | "Couldn't load the incident" |
@@ -67,6 +68,7 @@ export const incident_page = /** @type {((inputs: Incident_PageInputs, options?:
 		if (i?.part === "monitors") return /** @type {LocalizedString} */ (`Um monitor`);
 		if (i?.part === "alerts") return /** @type {LocalizedString} */ (`Uma fonte de alertas`);
 		if (i?.part === "teammate") return /** @type {LocalizedString} */ (`Alguém do time`);
+		if (i?.part === "api_token") return /** @type {LocalizedString} */ (`Um token de API`);
 		if (i?.part === "read_only") return /** @type {LocalizedString} */ (`Leitores acompanham o incidente; respondedores e admins o alteram.`);
 		if (i?.part === "not_found_title") return /** @type {LocalizedString} */ (`Incidente não encontrado`);
 		if (i?.part === "load_failed_title") return /** @type {LocalizedString} */ (`Não foi possível carregar o incidente`);
@@ -98,6 +100,7 @@ export const incident_page = /** @type {((inputs: Incident_PageInputs, options?:
 		if (i?.part === "monitors") return /** @type {LocalizedString} */ (`A monitor`);
 		if (i?.part === "alerts") return /** @type {LocalizedString} */ (`An alert source`);
 		if (i?.part === "teammate") return /** @type {LocalizedString} */ (`A teammate`);
+		if (i?.part === "api_token") return /** @type {LocalizedString} */ (`An API token`);
 		if (i?.part === "read_only") return /** @type {LocalizedString} */ (`Viewers follow the incident; responders and admins change it.`);
 		if (i?.part === "not_found_title") return /** @type {LocalizedString} */ (`Incident not found`);
 		if (i?.part === "load_failed_title") return /** @type {LocalizedString} */ (`Couldn't load the incident`);

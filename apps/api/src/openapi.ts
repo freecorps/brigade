@@ -16,6 +16,7 @@ import {
   WEBHOOK_PAYLOADS,
   workspaceName,
   type JsonSchema,
+  type Permission,
   type WebhookPayloadType,
 } from "@freecorps/brigade-schema";
 import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, USER_ID } from "./http.ts";
@@ -59,6 +60,11 @@ export type Operation = {
   description?: string;
   /** `session`: the Better Auth session cookie; `optional`: answers more with one; `none`: no auth. */
   auth: "session" | "optional" | "none";
+  /**
+   * Also takes an API token (`Authorization: Bearer`, RFC 0014) with this scope; `"frames"` when each frame is checked
+   * against the token's scopes instead (the sync socket).
+   */
+  bearer?: Permission | "frames";
   parameters?: readonly Parameter[];
   body?: JsonSchema;
   responses: Readonly<Record<number, Answer>>;
@@ -116,6 +122,14 @@ function answers(
 const SHARD_FAILED = { 500: ["internal"], 503: ["unavailable"] };
 /** A cookie-authenticated route: the session, and the same site when an `Origin` is sent. */
 const SIGNED_IN = { 401: ["unauthenticated"], 403: ["forbidden_origin"] };
+/** What an API token adds (RFC 0014): a scope or role that does not allow it, and the token's rate limit. */
+const BEARER = { 403: ["forbidden"], 429: ["rate_limited"] };
+/** `REFUSED`'s wording on the operations that also take an API token (and only on those). */
+const BEARER_REFUSED: Record<number, string> = {
+  401: "No session, or an API token that is wrong, revoked, expired or no longer backed by its creator.",
+  403: "Refused: another site's `Origin`, not a member, or not allowed (with an API token: its scopes or its creator's role).",
+  429: "Too many requests (with an API token: its limit, `Retry-After` seconds).",
+};
 
 const workspaceId: Parameter = {
   name: "workspaceId",
@@ -152,8 +166,8 @@ const MEMBER_REFUSALS = refusals(
 );
 const INVITATION_REFUSALS = codesBy(INVITATION_STATUS);
 
-/** Every public operation, in the order the reference lists them. */
-export const OPERATIONS: readonly Operation[] = [
+/** Every public operation, in the order the reference lists them, before what API tokens add to their answers. */
+const LISTED: readonly Operation[] = [
   {
     method: "get",
     path: "/health",
@@ -284,6 +298,7 @@ export const OPERATIONS: readonly Operation[] = [
       "reload and retry. `503 not_applied`: the change is made and the workspace is catching up; sending it again " +
       "finishes it sooner.",
     auth: "session",
+    bearer: "members:manage",
     parameters: [workspaceId, userId],
     body: { type: "object", properties: { role }, required: ["role"] },
     responses: answers(OK_200, refusals(MEMBER_REFUSALS, { 400: ["invalid_args"] })),
@@ -298,6 +313,7 @@ export const OPERATIONS: readonly Operation[] = [
       "Removes the member and their devices; with your own user id, leaves the workspace. `409 last_owner`: a " +
       "workspace keeps at least one owner.",
     auth: "session",
+    bearer: "members:manage",
     parameters: [workspaceId, userId],
     responses: answers(OK_200, MEMBER_REFUSALS),
   },
@@ -310,6 +326,7 @@ export const OPERATIONS: readonly Operation[] = [
     description:
       "Owners and admins. Newest first, those that ran out included (resending brings one back).",
     auth: "session",
+    bearer: "members:manage",
     parameters: [workspaceId],
     responses: answers(
       {
@@ -339,6 +356,7 @@ export const OPERATIONS: readonly Operation[] = [
       "Owners and admins, with a verified address; an admin cannot invite an owner. Brigade emails the invitation. " +
       "Limited per workspace, inviter and address (`429`, or `409 send_limit` past the workspace's daily cap).",
     auth: "session",
+    bearer: "members:manage",
     parameters: [workspaceId],
     body: {
       type: "object",
@@ -375,6 +393,7 @@ export const OPERATIONS: readonly Operation[] = [
     summary: "Revoke a pending invitation",
     description: "Owners and admins; an admin cannot touch an invitation to be an owner.",
     auth: "session",
+    bearer: "members:manage",
     parameters: [workspaceId, invitationId],
     responses: answers(
       OK_200,
@@ -395,6 +414,7 @@ export const OPERATIONS: readonly Operation[] = [
     description:
       "At most once every five minutes per invitation, within the workspace's daily cap.",
     auth: "session",
+    bearer: "members:manage",
     parameters: [workspaceId, invitationId],
     responses: answers(
       OK_200,
@@ -495,6 +515,7 @@ export const OPERATIONS: readonly Operation[] = [
       "same `Idempotency-Key` again answers what the first request did. `409 conflict`: already acknowledged; " +
       "`409 invalid_transition`: no longer active.",
     auth: "session",
+    bearer: "incident:ack",
     parameters: [
       workspaceId,
       {
@@ -535,6 +556,7 @@ export const OPERATIONS: readonly Operation[] = [
       "this upgrade opens it, as the signed-in member. The frames are not modeled here; see " +
       "`@freecorps/brigade-sync/protocol`.",
     auth: "session",
+    bearer: "frames",
     parameters: [workspaceId],
     responses: answers(
       { 101: { description: "Switched to the WebSocket protocol." } },
@@ -546,6 +568,49 @@ export const OPERATIONS: readonly Operation[] = [
     ),
   },
 ];
+
+/** Every public operation, in the order the reference lists them. */
+export const OPERATIONS: readonly Operation[] = LISTED.map((operation) =>
+  operation.bearer === undefined
+    ? operation
+    : {
+        ...operation,
+        responses: bearerWording(
+          withRefusals(
+            operation.responses,
+            // A socket's frames are refused on the socket, not by the upgrade.
+            operation.bearer === "frames" ? { 429: BEARER[429] } : BEARER,
+          ),
+        ),
+      },
+);
+
+/** `responses` with `REFUSED`'s wording swapped for `BEARER_REFUSED`'s, for an operation that takes a token. */
+function bearerWording(responses: Record<number, Answer>): Record<number, Answer> {
+  const out: Record<number, Answer> = { ...responses };
+  for (const [key, description] of Object.entries(BEARER_REFUSED)) {
+    const status = Number(key);
+    const known = out[status];
+    if (known?.description === REFUSED[status]) out[status] = { ...known, description };
+  }
+  return out;
+}
+
+/** `responses` with `errors` added: to the status's codes, or as a new refusal. */
+function withRefusals(
+  responses: Readonly<Record<number, Answer>>,
+  errors: Record<number, readonly string[]>,
+): Record<number, Answer> {
+  const out: Record<number, Answer> = { ...responses };
+  for (const [key, codes] of Object.entries(errors)) {
+    const status = Number(key);
+    const known = out[status];
+    out[status] = known?.errors
+      ? { ...known, errors: [...new Set([...known.errors, ...codes])] }
+      : { description: REFUSED[status]!, errors: codes };
+  }
+  return out;
+}
 
 const SCHEMAS: Record<string, JsonSchema> = {
   Ok: {
@@ -709,7 +774,11 @@ schedules, escalation policies, devices) is read and changed over Brigade Sync, 
 
 **Auth.** A Better Auth session: sign in with \`POST /api/auth/sign-in/email\` (\`{ "email", "password" }\`) and send
 the cookie it sets. Writes that carry a cookie refuse another site's \`Origin\` (\`403 forbidden_origin\`); a request
-without \`Origin\` is not refused for it. API tokens do not exist yet (see RFC 0002 "Public HTTP API").
+without \`Origin\` is not refused for it. Operations marked with \`bearerAuth\` also take an API token (RFC 0014): an
+owner or admin mints one in the dashboard for one workspace, with scopes, and sends it as \`Authorization: Bearer
+brg_…\`. A token acts with its creator's role as it is now and only within its scopes (\`403 forbidden\` otherwise);
+every refused token (wrong, revoked, expired, its creator gone) is the same \`401 unauthenticated\`; a token's requests
+are limited (\`429 rate_limited\`, \`Retry-After\`). A bearer request skips the \`Origin\` check and ignores any cookie.
 
 **Errors.** Every refusal is JSON, \`{ "error": "<code>" }\`, with the codes each operation lists. Any other method on
 a listed path answers \`405\` with \`Allow\`; an unknown path \`404 not_found\`.
@@ -755,6 +824,14 @@ export function openApiDocument(): JsonSchema {
           description:
             "Better Auth's session cookie (without the `__Secure-` prefix over plain HTTP, as in local development).",
         },
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "brg_ and 43 base64url characters",
+          description:
+            "An API token for one workspace (RFC 0014), shown once when an owner or admin mints it. Each operation " +
+            "names the scope it needs.",
+        },
       },
       schemas: SCHEMAS,
     },
@@ -763,14 +840,26 @@ export function openApiDocument(): JsonSchema {
 
 function toOperation(operation: Operation): Record<string, unknown> {
   const security = { session: [] };
+  const description = [
+    operation.description,
+    operation.bearer === "frames"
+      ? "With an API token, each query and mutation needs its permission among the token's scopes."
+      : operation.bearer
+        ? `With an API token: the \`${operation.bearer}\` scope.`
+        : undefined,
+  ]
+    .filter(Boolean)
+    .join(" ");
   return {
     operationId: operation.operationId,
     tags: [operation.tag],
     summary: operation.summary,
-    ...(operation.description ? { description: operation.description } : {}),
+    ...(description ? { description } : {}),
     security:
       operation.auth === "session"
-        ? [security]
+        ? operation.bearer
+          ? [security, { bearerAuth: [] }]
+          : [security]
         : operation.auth === "optional"
           ? [{}, security]
           : [],

@@ -3,6 +3,7 @@ export * from "./access.ts";
 export * from "./id.ts";
 export * from "./text.ts";
 export * from "./validate.ts";
+export * from "./json-schema.ts";
 export * from "./store.ts";
 export * from "./tables.ts";
 export * from "./mutation.ts";

@@ -19,7 +19,8 @@
     "test": "wrangler types --check && vp test",
     "check": "vp check",
     "cf-typegen": "wrangler types",
-    "cf-typegen:check": "wrangler types --check"
+    "cf-typegen:check": "wrangler types --check",
+    "openapi": "NODE_OPTIONS=--conditions=@freecorps/source vpx ./scripts/openapi.ts"
   },
   "dependencies": {
     "@better-auth/expo": "1.7.13",

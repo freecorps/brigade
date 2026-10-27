@@ -80,6 +80,44 @@ binding back would be a cycle Cloudflare cannot deploy from nothing (RFC 0011 "S
 
 Packages are MIT so third parties can build integrations without AGPL concerns; apps are AGPL (RFC 0009).
 
+## Public HTTP API
+
+Most of Brigade is read and changed over Brigade Sync (RFC 0004): incidents, monitors, schedules, escalation
+policies and devices have no REST routes, and none are planned while sync covers them. The HTTP routes an integration
+may rely on are few, and they are the contract: [`docs/api/openapi.json`](../api/openapi.json), OpenAPI 3.1, served
+without auth at `GET /api/openapi.json` by the dashboard's Worker.
+
+| Public (in the reference)                                                            | Why an integration calls it                       |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------- |
+| `GET /health`, `GET /health/paging`                                                  | Uptime checks; whether pages are going out        |
+| `POST /heartbeat/:token`                                                             | Cron jobs and backups pinging a heartbeat         |
+| `POST /workspaces`                                                                   | Provisioning                                      |
+| `PATCH`, `DELETE /workspaces/:id/members/:userId`                                    | Role changes, offboarding                         |
+| `GET`, `POST /workspaces/:id/invitations`, `DELETE …/:invitationId`, `POST …/resend` | Onboarding from a directory                       |
+| `GET /invitations/:id`, `POST …/accept`, `POST …/decline`                            | The invitee's side                                |
+| `POST /workspaces/:id/incidents/:incidentId/ack`                                     | Acknowledging from outside the apps               |
+| `GET /sync/:id`                                                                      | The sync WebSocket: described, frames not modeled |
+
+Internal, not part of the contract, may change without notice: `/auth/*` (Better Auth's; only sign-in, sign-out and
+the session are relied on, and the reference says how), `GET /workspaces/:id` (the dashboard's stack check),
+`/account/takeover` (the dashboard's notice), `/workspaces/:id/slack/install` (a browser redirect, RFC 0011),
+`POST /receipts` (the iOS extension's delivery receipts, RFC 0006), `PUT /workspaces/:id/status-page` (the
+dashboard's status page settings) and `/slack/*`. `GET /status/:slug` is the public status page itself (RFC 0012): HTML
+for people, not an API. A JSON read of a status page does not exist yet.
+
+**Source of truth.** Request bodies are converted from the `v.*` validators the routes run (`toJsonSchema` in
+`packages/schema`), refusal codes from the status maps the routes answer with (`apps/api/src/http.ts`); the route
+list, auth and answers are written by hand in `apps/api/src/openapi.ts`. `vp run --filter @freecorps/brigade-api
+openapi` writes the file; `apps/api/test/openapi.test.ts` fails when it is stale, when a documented path answers other
+methods than documented, and unless every operation answers its documented status, with a body its schema accepts,
+for a basic case (and `401` without a session).
+
+**Auth.** Only the Better Auth session cookie today, with cookie-authenticated writes refusing another site's
+`Origin`. **API tokens** (per workspace, scoped, revocable, hashed at rest, sent as `Authorization: Bearer`) are the
+next item: they need their own design (who may mint them, which roles they carry, how the shard's RBAC sees them as an
+actor) before anything outside a browser can call the API comfortably. Outbound webhook payloads get a `webhooks`
+section in the reference when they land.
+
 ## Tooling decisions
 
 - **Package manager: Bun.** Pinned via `devEngines` in the root `package.json`.

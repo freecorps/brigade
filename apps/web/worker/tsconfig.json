@@ -6,6 +6,7 @@
     "moduleDetection": "force",
     "module": "esnext",
     "moduleResolution": "bundler",
+    "resolveJsonModule": true,
     "types": [],
     "strict": true,
     "noUnusedLocals": true,

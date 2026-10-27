@@ -33,6 +33,11 @@ named mutation from `@freecorps/brigade-schema`, run in the shard.
 | other methods                            | `405` with `Allow: GET, HEAD`                                                                                                                                                                                                                                                                                                                                               |
 | anything else                            | `404`                                                                                                                                                                                                                                                                                                                                                                       |
 
+The public routes, the ones integrations may rely on, are in the OpenAPI 3.1 reference,
+[`docs/api/openapi.json`](../../docs/api/openapi.json) (RFC 0002 "Public HTTP API"), with every error code each
+answers. It is generated from `src/openapi.ts`: after changing a public route, its body or its answers, run
+`vp run openapi` here; `test/openapi.test.ts` fails until the file matches, and calls every documented operation.
+
 ## Auth and workspaces
 
 Better Auth on D1 (`DB`), with email and password and the organization plugin: a workspace is an organization,

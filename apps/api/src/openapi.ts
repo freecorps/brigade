@@ -1,6 +1,7 @@
-// The OpenAPI 3.1 reference of the API's public HTTP routes (RFC 0002 "Public HTTP API"). Request bodies are made
-// from the validators the routes run (`@freecorps/brigade-schema`, `toJsonSchema`), refusal codes from the status
-// maps the routes answer with (src/http.ts); the routes, their auth and their answers are listed by hand below.
+// The OpenAPI 3.1 reference of the API's public HTTP routes (RFC 0002 "Public HTTP API"), and of the outbound webhooks'
+// payloads (`webhooks`, RFC 0005 "Outbound webhooks"). Request bodies and payloads are made from the validators the
+// routes and receivers run (`@freecorps/brigade-schema`, `toJsonSchema`), refusal codes from the status maps the routes
+// answer with (src/http.ts); the routes, their auth and their answers are listed by hand below.
 // `vp run --filter @freecorps/brigade-api openapi` writes it to docs/api/openapi.json; test/openapi.test.ts fails when
 // that file is stale, and calls each operation to check it answers as documented.
 //
@@ -12,8 +13,10 @@ import {
   ROLES,
   toJsonSchema,
   v,
+  WEBHOOK_PAYLOADS,
   workspaceName,
   type JsonSchema,
+  type WebhookPayloadType,
 } from "@freecorps/brigade-schema";
 import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, USER_ID } from "./http.ts";
 
@@ -576,6 +579,70 @@ const SCHEMAS: Record<string, JsonSchema> = {
   },
 };
 
+/** What each payload `type` reports, for the reference's `webhooks`. */
+const WEBHOOK_SUMMARIES: Record<WebhookPayloadType, string> = {
+  "incident.declared": "An incident was declared",
+  "incident.status_changed": "An incident's status changed",
+  "incident.severity_changed": "An incident's severity changed",
+  "incident.acknowledged": "An incident was acknowledged",
+  "incident.update_posted": "An update was posted to an incident",
+  "incident.role_assigned": "An incident role was assigned or cleared",
+  "alert.fired": "A monitor's alert fired",
+  "alert.resolved": "A monitor's alert resolved",
+  "monitor.status_changed": "A monitor's status changed",
+  "escalation.paged": "An escalation level paged people",
+  "webhook.test": 'Sent by "Send test event", to that endpoint only',
+};
+
+const WEBHOOK_HEADERS: readonly Parameter[] = [
+  {
+    name: "webhook-id",
+    in: "header",
+    description:
+      "The event's id (`evt_<ULID>`), the payload's `id`: the same on every retry, so de-duplicate by it.",
+    schema: { type: "string", pattern: idPattern("evt") },
+  },
+  {
+    name: "webhook-timestamp",
+    in: "header",
+    description: "When this attempt was signed, Unix seconds. Refuse one more than 5 minutes off.",
+    schema: { type: "string", pattern: "^[0-9]+$" },
+  },
+  {
+    name: "webhook-signature",
+    in: "header",
+    description:
+      "`v1,<base64 HMAC-SHA256>` of `<webhook-id>.<webhook-timestamp>.<body>` under each secret in use (two while " +
+      "one is rotated), space separated. The key is the secret's bytes after `whsec_`, base64-decoded.",
+    schema: { type: "string" },
+  },
+];
+
+/** The reference's `webhooks`: one per payload `type`, the body from its validator. */
+function webhooks(): Record<string, unknown> {
+  return Object.fromEntries(
+    (Object.keys(WEBHOOK_PAYLOADS) as WebhookPayloadType[]).map((type) => [
+      type,
+      {
+        post: {
+          // `incident.declared` → `incidentDeclaredWebhook`.
+          operationId: `${type.replace(/[._](\w)/g, (_, letter: string) => letter.toUpperCase())}Webhook`,
+          tags: ["Webhooks"],
+          summary: WEBHOOK_SUMMARIES[type],
+          parameters: WEBHOOK_HEADERS.map((parameter) => ({ ...parameter, required: true })),
+          requestBody: {
+            required: true,
+            content: { "application/json": { schema: toJsonSchema(WEBHOOK_PAYLOADS[type]) } },
+          },
+          responses: {
+            "2XX": { description: "Received. Anything else, or no answer in 5 s, is retried." },
+          },
+        },
+      },
+    ]),
+  );
+}
+
 const DESCRIPTION = `Brigade's public HTTP API: what an integration may call. Everything else (incidents, monitors,
 schedules, escalation policies, devices) is read and changed over Brigade Sync, the WebSocket \`openSync\` opens
 (RFC 0004). Routes not listed here are internal and may change without notice.
@@ -585,7 +652,12 @@ the cookie it sets. Writes that carry a cookie refuse another site's \`Origin\` 
 without \`Origin\` is not refused for it. API tokens do not exist yet (see RFC 0002 "Public HTTP API").
 
 **Errors.** Every refusal is JSON, \`{ "error": "<code>" }\`, with the codes each operation lists. Any other method on
-a listed path answers \`405\` with \`Allow\`; an unknown path \`404 not_found\`.`;
+a listed path answers \`405\` with \`Allow\`; an unknown path \`404 not_found\`.
+
+**Webhooks.** What Brigade sends to the endpoints a workspace registers: a signed \`POST\` per event, as the Standard
+Webhooks specification has it (\`@freecorps/brigade-sdk\`'s \`verifyWebhook\`, or any of its libraries, verifies
+it). Each payload is \`version: 1\`; fields may be added to it, so ignore the ones you do not know. A change that
+is not purely additive is a new version. See RFC 0005 "Outbound webhooks".`;
 
 /** The OpenAPI 3.1 document, as docs/api/openapi.json holds it. */
 export function openApiDocument(): JsonSchema {
@@ -607,8 +679,13 @@ export function openApiDocument(): JsonSchema {
         description: "A Brigade deployment: the dashboard's origin, under /api.",
       },
     ],
-    tags: [...new Set(OPERATIONS.map((operation) => operation.tag))].map((name) => ({ name })),
+    tags: [...new Set([...OPERATIONS.map((operation) => operation.tag), "Webhooks"])].map(
+      (name) => ({
+        name,
+      }),
+    ),
     paths,
+    webhooks: webhooks(),
     components: {
       securitySchemes: {
         session: {

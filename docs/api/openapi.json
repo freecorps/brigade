@@ -3,7 +3,7 @@
   "info": {
     "title": "Brigade API",
     "version": "0.1.0",
-    "description": "Brigade's public HTTP API: what an integration may call. Everything else (incidents, monitors,\nschedules, escalation policies, devices) is read and changed over Brigade Sync, the WebSocket `openSync` opens\n(RFC 0004). Routes not listed here are internal and may change without notice.\n\n**Auth.** A Better Auth session: sign in with `POST /api/auth/sign-in/email` (`{ \"email\", \"password\" }`) and send\nthe cookie it sets. Writes that carry a cookie refuse another site's `Origin` (`403 forbidden_origin`); a request\nwithout `Origin` is not refused for it. API tokens do not exist yet (see RFC 0002 \"Public HTTP API\").\n\n**Errors.** Every refusal is JSON, `{ \"error\": \"<code>\" }`, with the codes each operation lists. Any other method on\na listed path answers `405` with `Allow`; an unknown path `404 not_found`.",
+    "description": "Brigade's public HTTP API: what an integration may call. Everything else (incidents, monitors,\nschedules, escalation policies, devices) is read and changed over Brigade Sync, the WebSocket `openSync` opens\n(RFC 0004). Routes not listed here are internal and may change without notice.\n\n**Auth.** A Better Auth session: sign in with `POST /api/auth/sign-in/email` (`{ \"email\", \"password\" }`) and send\nthe cookie it sets. Writes that carry a cookie refuse another site's `Origin` (`403 forbidden_origin`); a request\nwithout `Origin` is not refused for it. API tokens do not exist yet (see RFC 0002 \"Public HTTP API\").\n\n**Errors.** Every refusal is JSON, `{ \"error\": \"<code>\" }`, with the codes each operation lists. Any other method on\na listed path answers `405` with `Allow`; an unknown path `404 not_found`.\n\n**Webhooks.** What Brigade sends to the endpoints a workspace registers: a signed `POST` per event, as the Standard\nWebhooks specification has it (`@freecorps/brigade-sdk`'s `verifyWebhook`, or any of its libraries, verifies\nit). Each payload is `version: 1`; fields may be added to it, so ignore the ones you do not know. A change that\nis not purely additive is a new version. See RFC 0005 \"Outbound webhooks\".",
     "license": {
       "name": "AGPL-3.0-only",
       "identifier": "AGPL-3.0-only"
@@ -36,6 +36,9 @@
     },
     {
       "name": "Sync"
+    },
+    {
+      "name": "Webhooks"
     }
   ],
   "paths": {
@@ -2645,6 +2648,2133 @@
                 }
               }
             }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {
+    "incident.declared": {
+      "post": {
+        "operationId": "incidentDeclaredWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "An incident was declared",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "description": "The event's id (`evt_<ULID>`), the payload's `id`: the same on every retry, so de-duplicate by it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "description": "When this attempt was signed, Unix seconds. Refuse one more than 5 minutes off.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "description": "`v1,<base64 HMAC-SHA256>` of `<webhook-id>.<webhook-timestamp>.<body>` under each secret in use (two while one is rotated), space separated. The key is the secret's bytes after `whsec_`, base64-decoded.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "type": {
+                    "const": "incident.declared"
+                  },
+                  "time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^ws_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "actor": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "system",
+                          "integration"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ]
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "incident": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                          },
+                          "number": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "severity": {
+                            "type": "string",
+                            "enum": [
+                              "sev1",
+                              "sev2",
+                              "sev3",
+                              "sev4"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "triage",
+                              "investigating",
+                              "fixing",
+                              "monitoring",
+                              "resolved",
+                              "declined"
+                            ]
+                          },
+                          "declaredAt": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "acknowledgedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "number",
+                          "title",
+                          "severity",
+                          "status",
+                          "declaredAt",
+                          "acknowledgedAt"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "incident"
+                    ]
+                  }
+                },
+                "required": [
+                  "version",
+                  "id",
+                  "type",
+                  "time",
+                  "workspaceId",
+                  "actor",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Anything else, or no answer in 5 s, is retried."
+          }
+        }
+      }
+    },
+    "incident.status_changed": {
+      "post": {
+        "operationId": "incidentStatusChangedWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "An incident's status changed",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "description": "The event's id (`evt_<ULID>`), the payload's `id`: the same on every retry, so de-duplicate by it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "description": "When this attempt was signed, Unix seconds. Refuse one more than 5 minutes off.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "description": "`v1,<base64 HMAC-SHA256>` of `<webhook-id>.<webhook-timestamp>.<body>` under each secret in use (two while one is rotated), space separated. The key is the secret's bytes after `whsec_`, base64-decoded.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "type": {
+                    "const": "incident.status_changed"
+                  },
+                  "time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^ws_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "actor": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "system",
+                          "integration"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ]
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "incident": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                          },
+                          "number": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "severity": {
+                            "type": "string",
+                            "enum": [
+                              "sev1",
+                              "sev2",
+                              "sev3",
+                              "sev4"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "triage",
+                              "investigating",
+                              "fixing",
+                              "monitoring",
+                              "resolved",
+                              "declined"
+                            ]
+                          },
+                          "declaredAt": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "acknowledgedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "number",
+                          "title",
+                          "severity",
+                          "status",
+                          "declaredAt",
+                          "acknowledgedAt"
+                        ]
+                      },
+                      "from": {
+                        "type": "string",
+                        "enum": [
+                          "triage",
+                          "investigating",
+                          "fixing",
+                          "monitoring",
+                          "resolved",
+                          "declined"
+                        ]
+                      },
+                      "to": {
+                        "type": "string",
+                        "enum": [
+                          "triage",
+                          "investigating",
+                          "fixing",
+                          "monitoring",
+                          "resolved",
+                          "declined"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "incident",
+                      "from",
+                      "to"
+                    ]
+                  }
+                },
+                "required": [
+                  "version",
+                  "id",
+                  "type",
+                  "time",
+                  "workspaceId",
+                  "actor",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Anything else, or no answer in 5 s, is retried."
+          }
+        }
+      }
+    },
+    "incident.severity_changed": {
+      "post": {
+        "operationId": "incidentSeverityChangedWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "An incident's severity changed",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "description": "The event's id (`evt_<ULID>`), the payload's `id`: the same on every retry, so de-duplicate by it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "description": "When this attempt was signed, Unix seconds. Refuse one more than 5 minutes off.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "description": "`v1,<base64 HMAC-SHA256>` of `<webhook-id>.<webhook-timestamp>.<body>` under each secret in use (two while one is rotated), space separated. The key is the secret's bytes after `whsec_`, base64-decoded.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "type": {
+                    "const": "incident.severity_changed"
+                  },
+                  "time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^ws_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "actor": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "system",
+                          "integration"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ]
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "incident": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                          },
+                          "number": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "severity": {
+                            "type": "string",
+                            "enum": [
+                              "sev1",
+                              "sev2",
+                              "sev3",
+                              "sev4"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "triage",
+                              "investigating",
+                              "fixing",
+                              "monitoring",
+                              "resolved",
+                              "declined"
+                            ]
+                          },
+                          "declaredAt": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "acknowledgedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "number",
+                          "title",
+                          "severity",
+                          "status",
+                          "declaredAt",
+                          "acknowledgedAt"
+                        ]
+                      },
+                      "from": {
+                        "type": "string",
+                        "enum": [
+                          "sev1",
+                          "sev2",
+                          "sev3",
+                          "sev4"
+                        ]
+                      },
+                      "to": {
+                        "type": "string",
+                        "enum": [
+                          "sev1",
+                          "sev2",
+                          "sev3",
+                          "sev4"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "incident",
+                      "from",
+                      "to"
+                    ]
+                  }
+                },
+                "required": [
+                  "version",
+                  "id",
+                  "type",
+                  "time",
+                  "workspaceId",
+                  "actor",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Anything else, or no answer in 5 s, is retried."
+          }
+        }
+      }
+    },
+    "incident.acknowledged": {
+      "post": {
+        "operationId": "incidentAcknowledgedWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "An incident was acknowledged",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "description": "The event's id (`evt_<ULID>`), the payload's `id`: the same on every retry, so de-duplicate by it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "description": "When this attempt was signed, Unix seconds. Refuse one more than 5 minutes off.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "description": "`v1,<base64 HMAC-SHA256>` of `<webhook-id>.<webhook-timestamp>.<body>` under each secret in use (two while one is rotated), space separated. The key is the secret's bytes after `whsec_`, base64-decoded.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "type": {
+                    "const": "incident.acknowledged"
+                  },
+                  "time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^ws_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "actor": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "system",
+                          "integration"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ]
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "incident": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                          },
+                          "number": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "severity": {
+                            "type": "string",
+                            "enum": [
+                              "sev1",
+                              "sev2",
+                              "sev3",
+                              "sev4"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "triage",
+                              "investigating",
+                              "fixing",
+                              "monitoring",
+                              "resolved",
+                              "declined"
+                            ]
+                          },
+                          "declaredAt": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "acknowledgedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "number",
+                          "title",
+                          "severity",
+                          "status",
+                          "declaredAt",
+                          "acknowledgedAt"
+                        ]
+                      },
+                      "by": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "incident",
+                      "by"
+                    ]
+                  }
+                },
+                "required": [
+                  "version",
+                  "id",
+                  "type",
+                  "time",
+                  "workspaceId",
+                  "actor",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Anything else, or no answer in 5 s, is retried."
+          }
+        }
+      }
+    },
+    "incident.update_posted": {
+      "post": {
+        "operationId": "incidentUpdatePostedWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "An update was posted to an incident",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "description": "The event's id (`evt_<ULID>`), the payload's `id`: the same on every retry, so de-duplicate by it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "description": "When this attempt was signed, Unix seconds. Refuse one more than 5 minutes off.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "description": "`v1,<base64 HMAC-SHA256>` of `<webhook-id>.<webhook-timestamp>.<body>` under each secret in use (two while one is rotated), space separated. The key is the secret's bytes after `whsec_`, base64-decoded.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "type": {
+                    "const": "incident.update_posted"
+                  },
+                  "time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^ws_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "actor": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "system",
+                          "integration"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ]
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "incident": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                          },
+                          "number": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "severity": {
+                            "type": "string",
+                            "enum": [
+                              "sev1",
+                              "sev2",
+                              "sev3",
+                              "sev4"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "triage",
+                              "investigating",
+                              "fixing",
+                              "monitoring",
+                              "resolved",
+                              "declined"
+                            ]
+                          },
+                          "declaredAt": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "acknowledgedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "number",
+                          "title",
+                          "severity",
+                          "status",
+                          "declaredAt",
+                          "acknowledgedAt"
+                        ]
+                      },
+                      "body": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4000
+                      }
+                    },
+                    "required": [
+                      "incident",
+                      "body"
+                    ]
+                  }
+                },
+                "required": [
+                  "version",
+                  "id",
+                  "type",
+                  "time",
+                  "workspaceId",
+                  "actor",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Anything else, or no answer in 5 s, is retried."
+          }
+        }
+      }
+    },
+    "incident.role_assigned": {
+      "post": {
+        "operationId": "incidentRoleAssignedWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "An incident role was assigned or cleared",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "description": "The event's id (`evt_<ULID>`), the payload's `id`: the same on every retry, so de-duplicate by it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "description": "When this attempt was signed, Unix seconds. Refuse one more than 5 minutes off.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "description": "`v1,<base64 HMAC-SHA256>` of `<webhook-id>.<webhook-timestamp>.<body>` under each secret in use (two while one is rotated), space separated. The key is the secret's bytes after `whsec_`, base64-decoded.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "type": {
+                    "const": "incident.role_assigned"
+                  },
+                  "time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^ws_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "actor": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "system",
+                          "integration"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ]
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "incident": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                          },
+                          "number": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "severity": {
+                            "type": "string",
+                            "enum": [
+                              "sev1",
+                              "sev2",
+                              "sev3",
+                              "sev4"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "triage",
+                              "investigating",
+                              "fixing",
+                              "monitoring",
+                              "resolved",
+                              "declined"
+                            ]
+                          },
+                          "declaredAt": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "acknowledgedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "number",
+                          "title",
+                          "severity",
+                          "status",
+                          "declaredAt",
+                          "acknowledgedAt"
+                        ]
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "commander",
+                          "communications",
+                          "operations"
+                        ]
+                      },
+                      "from": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "to": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "incident",
+                      "role",
+                      "from",
+                      "to"
+                    ]
+                  }
+                },
+                "required": [
+                  "version",
+                  "id",
+                  "type",
+                  "time",
+                  "workspaceId",
+                  "actor",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Anything else, or no answer in 5 s, is retried."
+          }
+        }
+      }
+    },
+    "alert.fired": {
+      "post": {
+        "operationId": "alertFiredWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "A monitor's alert fired",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "description": "The event's id (`evt_<ULID>`), the payload's `id`: the same on every retry, so de-duplicate by it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "description": "When this attempt was signed, Unix seconds. Refuse one more than 5 minutes off.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "description": "`v1,<base64 HMAC-SHA256>` of `<webhook-id>.<webhook-timestamp>.<body>` under each secret in use (two while one is rotated), space separated. The key is the secret's bytes after `whsec_`, base64-decoded.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "type": {
+                    "const": "alert.fired"
+                  },
+                  "time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^ws_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "actor": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "system",
+                          "integration"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ]
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "alertId": {
+                        "type": "string",
+                        "pattern": "^alt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                      },
+                      "monitor": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^mon_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                          },
+                          "name": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 80
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "kind": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "http",
+                                  "tcp",
+                                  "heartbeat"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "status": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "up",
+                                  "down",
+                                  "unknown"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "kind",
+                          "status"
+                        ]
+                      },
+                      "incidentId": {
+                        "type": "string",
+                        "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                      }
+                    },
+                    "required": [
+                      "alertId",
+                      "monitor",
+                      "incidentId"
+                    ]
+                  }
+                },
+                "required": [
+                  "version",
+                  "id",
+                  "type",
+                  "time",
+                  "workspaceId",
+                  "actor",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Anything else, or no answer in 5 s, is retried."
+          }
+        }
+      }
+    },
+    "alert.resolved": {
+      "post": {
+        "operationId": "alertResolvedWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "A monitor's alert resolved",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "description": "The event's id (`evt_<ULID>`), the payload's `id`: the same on every retry, so de-duplicate by it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "description": "When this attempt was signed, Unix seconds. Refuse one more than 5 minutes off.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "description": "`v1,<base64 HMAC-SHA256>` of `<webhook-id>.<webhook-timestamp>.<body>` under each secret in use (two while one is rotated), space separated. The key is the secret's bytes after `whsec_`, base64-decoded.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "type": {
+                    "const": "alert.resolved"
+                  },
+                  "time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^ws_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "actor": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "system",
+                          "integration"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ]
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "alertId": {
+                        "type": "string",
+                        "pattern": "^alt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                      },
+                      "monitor": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^mon_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                          },
+                          "name": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 80
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "kind": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "http",
+                                  "tcp",
+                                  "heartbeat"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "status": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "up",
+                                  "down",
+                                  "unknown"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "kind",
+                          "status"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string",
+                        "enum": [
+                          "recovered",
+                          "paused",
+                          "deleted"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "alertId",
+                      "monitor",
+                      "reason"
+                    ]
+                  }
+                },
+                "required": [
+                  "version",
+                  "id",
+                  "type",
+                  "time",
+                  "workspaceId",
+                  "actor",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Anything else, or no answer in 5 s, is retried."
+          }
+        }
+      }
+    },
+    "monitor.status_changed": {
+      "post": {
+        "operationId": "monitorStatusChangedWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "A monitor's status changed",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "description": "The event's id (`evt_<ULID>`), the payload's `id`: the same on every retry, so de-duplicate by it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "description": "When this attempt was signed, Unix seconds. Refuse one more than 5 minutes off.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "description": "`v1,<base64 HMAC-SHA256>` of `<webhook-id>.<webhook-timestamp>.<body>` under each secret in use (two while one is rotated), space separated. The key is the secret's bytes after `whsec_`, base64-decoded.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "type": {
+                    "const": "monitor.status_changed"
+                  },
+                  "time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^ws_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "actor": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "system",
+                          "integration"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ]
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "monitor": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^mon_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                          },
+                          "name": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 80
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "kind": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "http",
+                                  "tcp",
+                                  "heartbeat"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "status": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "up",
+                                  "down",
+                                  "unknown"
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "kind",
+                          "status"
+                        ]
+                      },
+                      "from": {
+                        "type": "string",
+                        "enum": [
+                          "pending",
+                          "up",
+                          "down",
+                          "unknown"
+                        ]
+                      },
+                      "to": {
+                        "type": "string",
+                        "enum": [
+                          "pending",
+                          "up",
+                          "down",
+                          "unknown"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "monitor",
+                      "from",
+                      "to"
+                    ]
+                  }
+                },
+                "required": [
+                  "version",
+                  "id",
+                  "type",
+                  "time",
+                  "workspaceId",
+                  "actor",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Anything else, or no answer in 5 s, is retried."
+          }
+        }
+      }
+    },
+    "escalation.paged": {
+      "post": {
+        "operationId": "escalationPagedWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "An escalation level paged people",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "description": "The event's id (`evt_<ULID>`), the payload's `id`: the same on every retry, so de-duplicate by it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "description": "When this attempt was signed, Unix seconds. Refuse one more than 5 minutes off.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "description": "`v1,<base64 HMAC-SHA256>` of `<webhook-id>.<webhook-timestamp>.<body>` under each secret in use (two while one is rotated), space separated. The key is the secret's bytes after `whsec_`, base64-decoded.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "type": {
+                    "const": "escalation.paged"
+                  },
+                  "time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^ws_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "actor": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "system",
+                          "integration"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ]
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "incident": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                          },
+                          "number": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200
+                          },
+                          "severity": {
+                            "type": "string",
+                            "enum": [
+                              "sev1",
+                              "sev2",
+                              "sev3",
+                              "sev4"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "triage",
+                              "investigating",
+                              "fixing",
+                              "monitoring",
+                              "resolved",
+                              "declined"
+                            ]
+                          },
+                          "declaredAt": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
+                          },
+                          "acknowledgedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 64
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "number",
+                          "title",
+                          "severity",
+                          "status",
+                          "declaredAt",
+                          "acknowledgedAt"
+                        ]
+                      },
+                      "level": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "round": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "reason": {
+                        "type": "string",
+                        "enum": [
+                          "started",
+                          "timeout",
+                          "unreachable",
+                          "undelivered",
+                          "exhausted",
+                          "stalled"
+                        ]
+                      },
+                      "paged": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "missed": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "incident",
+                      "level",
+                      "round",
+                      "reason",
+                      "paged",
+                      "missed"
+                    ]
+                  }
+                },
+                "required": [
+                  "version",
+                  "id",
+                  "type",
+                  "time",
+                  "workspaceId",
+                  "actor",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Anything else, or no answer in 5 s, is retried."
+          }
+        }
+      }
+    },
+    "webhook.test": {
+      "post": {
+        "operationId": "webhookTestWebhook",
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Sent by \"Send test event\", to that endpoint only",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "description": "The event's id (`evt_<ULID>`), the payload's `id`: the same on every retry, so de-duplicate by it.",
+            "schema": {
+              "type": "string",
+              "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "description": "When this attempt was signed, Unix seconds. Refuse one more than 5 minutes off.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "required": true
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "description": "`v1,<base64 HMAC-SHA256>` of `<webhook-id>.<webhook-timestamp>.<body>` under each secret in use (two while one is rotated), space separated. The key is the secret's bytes after `whsec_`, base64-decoded.",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "const": 1
+                  },
+                  "id": {
+                    "type": "string",
+                    "pattern": "^evt_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "type": {
+                    "const": "webhook.test"
+                  },
+                  "time": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "workspaceId": {
+                    "type": "string",
+                    "pattern": "^ws_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                  },
+                  "actor": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "user",
+                          "system",
+                          "integration"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ]
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "webhookId": {
+                        "type": "string",
+                        "pattern": "^whk_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+                      }
+                    },
+                    "required": [
+                      "webhookId"
+                    ]
+                  }
+                },
+                "required": [
+                  "version",
+                  "id",
+                  "type",
+                  "time",
+                  "workspaceId",
+                  "actor",
+                  "data"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Received. Anything else, or no answer in 5 s, is retried."
           }
         }
       }

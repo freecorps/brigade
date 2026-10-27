@@ -14,6 +14,8 @@ import {
 } from "./lifecycle.ts";
 import {
   isCloudflareAddress,
+  MONITOR_KINDS,
+  MONITOR_NAME_MAX,
   MONITOR_STATUSES,
   MONITOR_URL_MAX,
   targetProblem,
@@ -24,8 +26,8 @@ import type { EscalationReason, IncidentRow, MonitorRow, WebhookRow } from "./ta
 import { defineMutation, fail, ok, type DomainEvent, type MutationStore } from "./mutation.ts";
 import { defineQuery } from "./query.ts";
 import { idTime } from "./id.ts";
-import { ID_CLOCK_SKEW_MS } from "./incidents.ts";
-import { v, type Validator } from "./validate.ts";
+import { ID_CLOCK_SKEW_MS, INCIDENT_TITLE_MAX, UPDATE_BODY_MAX } from "./incidents.ts";
+import { v, type Validated, type Validator } from "./validate.ts";
 
 /** At most this many endpoints per workspace (`limit_reached` past it). */
 export const MAX_WEBHOOKS_PER_WORKSPACE = 20;
@@ -569,7 +571,7 @@ export type WebhookSourceEvent = {
 export type WebhookContext = { incident?: IncidentRow; monitor?: MonitorRow };
 
 /** Every `EscalationReason`, to check an event's against. */
-const ESCALATION_REASONS = [
+export const ESCALATION_REASONS = [
   "started",
   "timeout",
   "unreachable",
@@ -767,3 +769,129 @@ export function webhookWants(row: WebhookRow, event: WebhookSourceEvent): boolea
     Date.parse(event.time) >= row.createdAt
   );
 }
+
+// ---- Payload validators --------------------------------------------------------------------------------------------
+// What a receiver may check a payload against (the SDK's `verifyWebhook`), and the API reference's `webhooks` section
+// (`toJsonSchema`). Open objects: a field added to version 1 is dropped by an older receiver, never refused. A test
+// holds each to `WebhookPayload` and to what `webhookPayload` makes.
+
+/** A user id, or a system actor's (`sys_monitors`): never a name or an address. */
+const actorId = v.string({ min: 1, max: 64 });
+/** An ISO 8601 time, as `Date.prototype.toISOString` writes it. */
+const isoTime = v.string({ min: 1, max: 64 });
+
+const payloadIncident = v.object(
+  {
+    id: v.id("inc"),
+    number: v.nullable(v.integer({ min: 1, max: Number.MAX_SAFE_INTEGER })),
+    title: v.string({ min: 1, max: INCIDENT_TITLE_MAX }),
+    severity: v.picklist(SEVERITIES),
+    status: v.picklist(INCIDENT_STATUSES),
+    declaredAt: isoTime,
+    acknowledgedAt: v.nullable(isoTime),
+  },
+  { open: true },
+);
+
+const payloadMonitor = v.object(
+  {
+    id: v.id("mon"),
+    name: v.nullable(v.string({ min: 1, max: MONITOR_NAME_MAX })),
+    kind: v.nullable(v.picklist(MONITOR_KINDS)),
+    status: v.nullable(v.picklist(MONITOR_STATUSES)),
+  },
+  { open: true },
+);
+
+function envelope<const Type extends string, const S extends Record<string, Validator<unknown>>>(
+  type: Type,
+  data: S,
+) {
+  return v.object(
+    {
+      version: v.literal(WEBHOOK_PAYLOAD_VERSION),
+      id: v.id("evt"),
+      type: v.literal(type),
+      time: isoTime,
+      workspaceId: v.id("ws"),
+      actor: v.object(
+        { kind: v.picklist(["user", "system", "integration"]), id: actorId },
+        { open: true },
+      ),
+      data: v.object(data, { open: true }),
+    },
+    { open: true },
+  );
+}
+
+const statusChange = { from: v.picklist(INCIDENT_STATUSES), to: v.picklist(INCIDENT_STATUSES) };
+const severityChange = { from: v.picklist(SEVERITIES), to: v.picklist(SEVERITIES) };
+
+/** One validator per payload `type`, in the catalog's order, then `webhook.test`. */
+export const WEBHOOK_PAYLOADS = {
+  "incident.declared": envelope("incident.declared", { incident: payloadIncident }),
+  "incident.status_changed": envelope("incident.status_changed", {
+    incident: payloadIncident,
+    ...statusChange,
+  }),
+  "incident.severity_changed": envelope("incident.severity_changed", {
+    incident: payloadIncident,
+    ...severityChange,
+  }),
+  "incident.acknowledged": envelope("incident.acknowledged", {
+    incident: payloadIncident,
+    by: actorId,
+  }),
+  "incident.update_posted": envelope("incident.update_posted", {
+    incident: payloadIncident,
+    body: v.string({ min: 1, max: UPDATE_BODY_MAX, multiline: true, joiners: true }),
+  }),
+  "incident.role_assigned": envelope("incident.role_assigned", {
+    incident: payloadIncident,
+    role: v.picklist(INCIDENT_ROLES),
+    from: v.nullable(actorId),
+    to: v.nullable(actorId),
+  }),
+  "alert.fired": envelope("alert.fired", {
+    alertId: v.id("alt"),
+    monitor: payloadMonitor,
+    incidentId: v.id("inc"),
+  }),
+  "alert.resolved": envelope("alert.resolved", {
+    alertId: v.id("alt"),
+    monitor: payloadMonitor,
+    reason: v.picklist(ALERT_RESOLVED_REASONS),
+  }),
+  "monitor.status_changed": envelope("monitor.status_changed", {
+    monitor: payloadMonitor,
+    from: v.picklist(MONITOR_STATUSES),
+    to: v.picklist(MONITOR_STATUSES),
+  }),
+  "escalation.paged": envelope("escalation.paged", {
+    incident: payloadIncident,
+    level: v.nullable(v.integer({ min: 1, max: Number.MAX_SAFE_INTEGER })),
+    round: v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }),
+    reason: v.picklist(ESCALATION_REASONS),
+    paged: v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }),
+    missed: v.integer({ min: 0, max: Number.MAX_SAFE_INTEGER }),
+  }),
+  "webhook.test": envelope("webhook.test", { webhookId: v.id("whk") }),
+} as const satisfies Record<WebhookPayload["type"], Validator<unknown>>;
+
+/** Every payload `type` a receiver may get: the catalog and `webhook.test`. */
+export type WebhookPayloadType = WebhookPayload["type"];
+
+/**
+ * `input` (parsed JSON) as a payload, or the issues that keep it from being one: a `type` outside the catalog, another
+ * `version`, or a field that breaks its validator. Fields Brigade added since are dropped, not refused.
+ */
+export const webhookPayloadValidator: Validator<WebhookPayload> = (input, path = "") => {
+  const type = field(input, "type");
+  if (typeof type !== "string" || !Object.prototype.hasOwnProperty.call(WEBHOOK_PAYLOADS, type)) {
+    return {
+      ok: false,
+      issues: [{ path: path ? `${path}.type` : "type", message: "Unknown type" }],
+    };
+  }
+  return WEBHOOK_PAYLOADS[type as WebhookPayloadType](input, path) as Validated<WebhookPayload>;
+};

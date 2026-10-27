@@ -62,6 +62,19 @@ describe("toJsonSchema", () => {
     });
   });
 
+  test("a literal is a const; an open object allows other keys", () => {
+    expect(toJsonSchema(v.literal(1))).toEqual({ const: 1 });
+    const open = v.object({ kind: v.literal("x") }, { open: true });
+    expect(toJsonSchema(open)).toEqual({
+      type: "object",
+      properties: { kind: { const: "x" } },
+      required: ["kind"],
+    });
+    expect(open({ kind: "x", more: 1 })).toEqual({ ok: true, value: { kind: "x" } });
+    expect(v.object({ kind: v.literal("x") })({ kind: "x", more: 1 }).ok).toBe(false);
+    expect(open({ kind: "y" }).ok).toBe(false);
+  });
+
   test("an id's pattern is the one isId checks", () => {
     const { pattern } = toJsonSchema(v.id("inc")) as { pattern: string };
     const id = newId("inc", Date.now(), random);

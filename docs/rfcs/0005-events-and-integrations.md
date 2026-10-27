@@ -311,7 +311,8 @@ interface Notifier {
 - Built-in integrations live in `integrations/*` as separate Workers bound to `api` via **service bindings** (RPC).
 - Third parties implement the same interfaces in their own Worker and register the binding in config — no core fork needed.
 - Lightweight alternative for anything outside Cloudflare: **outbound webhooks** (below) and the public REST API
-  (OpenAPI spec generated from `packages/schema`, not yet).
+  (the OpenAPI reference, `docs/api/openapi.json`, its bodies and payloads converted from `packages/schema`; RFC 0002
+  "Public HTTP API").
 
 ## Outbound webhooks
 
@@ -346,7 +347,8 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
     The HMAC key is the secret's bytes after `whsec_`, base64-decoded; the signed content is
     `<webhook-id>.<webhook-timestamp>.<body>`, the body exactly as sent. The specification's own example is the test
     vector (apps/api test/webhooks.test.ts).
-- **Payloads** (`WebhookPayload`, MIT, for the SDK and the OpenAPI reference to reuse): an envelope `{ version: 1, id,
+- **Payloads** (`WebhookPayload` and its validators `WEBHOOK_PAYLOADS`, MIT, which the SDK and the OpenAPI reference
+  reuse): an envelope `{ version: 1, id,
   type, time, workspaceId, actor: { kind, id }, data }`; `time` is when the event happened. A change that is not purely
   additive is `version: 2`, never an edit. Member ids, never names or addresses. The catalog
   (`WEBHOOK_EVENT_TYPES`) and each `data`:
@@ -403,8 +405,15 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   read before its slot is freed); a delivery still waiting for one at its budget is not started (no attempt; the
   alarm brings it back when its hold runs out). A page in the same batch (or the same event) goes to the relay at
   once (tested with 20 receivers that never answer, against a model of the six-connection limit).
-- **Not yet.** The OpenAPI reference and `packages/sdk` (with a verifier) publishing these types; per-endpoint
-  custom headers; replaying a given-up delivery from the dashboard.
+- **For receivers.** `@freecorps/brigade-sdk` (`packages/sdk`, MIT) verifies a delivery (`verifyWebhook`: every `v1`
+  signature against every secret given, in constant time; the timestamp within 5 minutes either way by default; an
+  optional `whsec_` prefix) and parses its payload with `WEBHOOK_PAYLOADS`, the schema package's validators for each
+  `type`, into a typed `WebhookPayload`; or it answers a typed error (`invalid_signature`, `timestamp_too_old`,
+  `invalid_payload`, …). The validators are open objects: a field added within `version: 1` is dropped by an older
+  receiver, never refused. The API reference's `webhooks` section is converted from the same validators (RFC 0002
+  "Public HTTP API").
+- **Not yet.** Publishing the SDK to npm (the owner's call); per-endpoint custom headers; replaying a given-up
+  delivery from the dashboard.
 
 ## Slack (first ChatProvider)
 

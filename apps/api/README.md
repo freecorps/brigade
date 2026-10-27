@@ -37,6 +37,9 @@ The public routes, the ones integrations may rely on, are in the OpenAPI 3.1 ref
 [`docs/api/openapi.json`](../../docs/api/openapi.json) (RFC 0002 "Public HTTP API"), with every error code each
 answers. It is generated from `src/openapi.ts`: after changing a public route, its body or its answers, run
 `vp run openapi` here; `test/openapi.test.ts` fails until the file matches, and calls every documented operation.
+Its `webhooks` section documents the outbound webhooks' payloads. `packages/sdk` is the client side of both; after
+changing how deliveries are signed or what a payload holds, run `vp run sdk-fixture` here too:
+`test/webhooks.test.ts` fails until the SDK's fixture of signed deliveries matches.
 
 ## Auth and workspaces
 

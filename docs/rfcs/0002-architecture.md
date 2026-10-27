@@ -58,7 +58,8 @@ apps/
 packages/
   schema/      Domain types, validation, mutations shared by server and clients        (MIT)
   sync/        Sync protocol client + React hooks (RFC 0004)                           (MIT)
-  sdk/         Typed API client + provider interfaces for integrations                 (MIT)
+  sdk/         Webhook verifier, typed API client, payload types (provider interfaces  (MIT)
+               for integrations later)
   i18n/        Message catalogs and formatting helpers (RFC 0008)                      (MIT)
   push/        Push payload encryption (HPKE on WebCrypto) and envelope (RFC 0006)     (MIT)
   ui/          Shared design tokens (web + mobile)                                     (MIT)
@@ -117,8 +118,21 @@ for a basic case (and `401` without a session).
 **Auth.** Only the Better Auth session cookie today, with cookie-authenticated writes refusing another site's
 `Origin`. **API tokens** (per workspace, scoped, revocable, hashed at rest, sent as `Authorization: Bearer`) are the
 next item: they need their own design (who may mint them, which roles they carry, how the shard's RBAC sees them as an
-actor) before anything outside a browser can call the API comfortably. Outbound webhook payloads (RFC 0005 "Outbound
-webhooks", their types in `packages/schema`) are not in the reference yet: a `webhooks` section is the next step.
+actor) before anything outside a browser can call the API comfortably.
+
+**Webhooks.** The reference's OpenAPI 3.1 `webhooks` section describes what Brigade sends to the endpoints a workspace
+registers (RFC 0005 "Outbound webhooks"): one entry per payload `type`, its body converted from that type's validator
+(`WEBHOOK_PAYLOADS` in `packages/schema`, open objects: fields may be added within `version: 1`) and the three
+Standard Webhooks headers. The same test checks it is current and that payloads the API signs match their type's schema.
+
+**SDK.** `packages/sdk` (`@freecorps/brigade-sdk`, MIT, 0.1.0, not on npm yet: publishing is the owner's call) is the
+reference's client side: `verifyWebhook` (Standard Webhooks on Web Crypto, so Workers, Node 20+, Deno, Bun and
+browsers; the payload parsed by the schema package's validators into `WebhookPayload`), `createClient` (one method per
+operation above except `openSync`, an injectable `fetch`, the session cookie or a per-request headers hook where API
+tokens will go, and `BrigadeApiError` with the codes each operation lists) and the payload types. It bundles the schema
+package, so it has no runtime dependencies and no app code; its tests hold its methods, paths and codes to
+`docs/api/openapi.json`, and check deliveries the API's own signer made (a fixture `apps/api` keeps current). Build
+runs `scripts/check-dist.mjs`: the built files import nothing and verify those deliveries in plain Node.
 
 ## Tooling decisions
 

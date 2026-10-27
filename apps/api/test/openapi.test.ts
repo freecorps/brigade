@@ -10,6 +10,7 @@ import {
   INVITATION_RESEND_INTERVAL_MS,
   newHeartbeatSecret,
   newId,
+  WEBHOOK_PAYLOADS,
   type Actor,
   type JsonSchema,
 } from "@freecorps/brigade-schema";
@@ -26,6 +27,7 @@ import {
   type Operation,
 } from "../src/openapi.ts";
 import { Shard } from "../src/shard.ts";
+import { serverSignedFixture } from "./sdk-fixture.ts";
 import { IDEMPOTENCY_KEY_HEADER, ORGANIZATION_ID, type WorkspaceDO } from "../src/workspace.ts";
 
 const ORIGIN = "http://api.test";
@@ -345,6 +347,40 @@ describe("the API reference", () => {
         .split(", ")
         .filter((method) => method !== "HEAD");
       expect(allowed.sort(), path).toEqual(methods.sort());
+    }
+  });
+});
+
+describe("the reference's webhooks", () => {
+  type Webhook = {
+    post: {
+      parameters: { name: string; schema: JsonSchema }[];
+      requestBody: { content: { "application/json": { schema: JsonSchema } } };
+    };
+  };
+  const webhooks = document.webhooks as Record<string, Webhook>;
+
+  test("one per payload type", () => {
+    expect(Object.keys(webhooks)).toEqual(Object.keys(WEBHOOK_PAYLOADS));
+  });
+
+  test("what the API signs and sends matches its type's schema and headers, no other type's", async () => {
+    const { deliveries } = await serverSignedFixture();
+    for (const delivery of deliveries) {
+      const payload = JSON.parse(delivery.body) as { type: string };
+      for (const [type, webhook] of Object.entries(webhooks)) {
+        const issues = checkJsonSchema(
+          webhook.post.requestBody.content["application/json"].schema,
+          payload,
+          document,
+        );
+        if (type === payload.type) expect(issues, type).toEqual([]);
+        else expect(issues, type).not.toEqual([]);
+      }
+      for (const parameter of webhooks[payload.type]!.post.parameters) {
+        const value = (delivery.headers as Record<string, string>)[parameter.name];
+        expect(checkJsonSchema(parameter.schema, value), parameter.name).toEqual([]);
+      }
     }
   });
 });

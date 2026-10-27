@@ -27,6 +27,8 @@ export function toJsonSchema(validator: Validator<unknown>): JsonSchema {
       };
     case "picklist":
       return { type: "string", enum: [...shape.values] };
+    case "literal":
+      return { const: shape.value };
     case "id":
       return { type: "string", pattern: idPattern(shape.prefix) };
     case "integer":
@@ -56,7 +58,7 @@ export function toJsonSchema(validator: Validator<unknown>): JsonSchema {
           const kind = shapeOf(shape.shape[key]!)?.kind;
           return kind !== "optional" && kind !== "omittable";
         }),
-        additionalProperties: false,
+        ...(shape.open ? {} : { additionalProperties: false }),
       };
     }
   }

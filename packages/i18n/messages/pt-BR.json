@@ -25,10 +25,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countExact",
-        "countPlural"
-      ],
+      "selectors": ["countExact", "countPlural"],
       "match": {
         "countExact=0, countPlural=*": "Nenhum incidente ativo",
         "countExact=*, countPlural=one": "{countFormatted} incidente ativo",
@@ -39,14 +36,8 @@
   "skip_to_content": "Pular para o conteúdo",
   "environment": [
     {
-      "declarations": [
-        "input env",
-        "input part"
-      ],
-      "selectors": [
-        "env",
-        "part"
-      ],
+      "declarations": ["input env", "input part"],
+      "selectors": ["env", "part"],
       "match": {
         "env=local, part=badge": "Local",
         "env=local, part=overview": "O painel, o Worker dele, o Worker da API e um Durable Object, tudo rodando na sua máquina.",
@@ -176,9 +167,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{countFormatted} é SEV1",
         "countPlural=*": "{countFormatted} são SEV1"
@@ -213,12 +202,8 @@
   "mobile_change_hint": "Abre as opções",
   "mobile_session": [
     {
-      "declarations": [
-        "input part"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part"],
+      "selectors": ["part"],
       "match": {
         "part=sign_in_hint": "Novo no Brigade? Crie uma conta no painel e depois entre aqui.",
         "part=no_server": "Este build não diz a qual Brigade se conectar.",
@@ -369,10 +354,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countExact",
-        "countPlural"
-      ],
+      "selectors": ["countExact", "countPlural"],
       "match": {
         "countExact=0, countPlural=*": "Nenhum monitor",
         "countExact=*, countPlural=one": "{countFormatted} monitor",
@@ -387,9 +369,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{countFormatted} fora do ar",
         "countPlural=*": "{countFormatted} fora do ar"
@@ -400,12 +380,8 @@
   "monitor_add": "Adicionar monitor",
   "monitor_kind": [
     {
-      "declarations": [
-        "input kind"
-      ],
-      "selectors": [
-        "kind"
-      ],
+      "declarations": ["input kind"],
+      "selectors": ["kind"],
       "match": {
         "kind=http": "Verificação HTTP",
         "kind=tcp": "Porta TCP",
@@ -415,12 +391,8 @@
   ],
   "monitor_kind_short": [
     {
-      "declarations": [
-        "input kind"
-      ],
-      "selectors": [
-        "kind"
-      ],
+      "declarations": ["input kind"],
+      "selectors": ["kind"],
       "match": {
         "kind=http": "HTTP",
         "kind=tcp": "TCP",
@@ -431,12 +403,8 @@
   "monitor_limit_reached": "Este workspace já tem {max} monitores, o máximo possível. Exclua um para adicionar outro.",
   "monitor_status": [
     {
-      "declarations": [
-        "input status"
-      ],
-      "selectors": [
-        "status"
-      ],
+      "declarations": ["input status"],
+      "selectors": ["status"],
       "match": {
         "status=up": "No ar",
         "status=down": "Fora do ar",
@@ -448,12 +416,8 @@
   ],
   "monitor_region": [
     {
-      "declarations": [
-        "input region"
-      ],
-      "selectors": [
-        "region"
-      ],
+      "declarations": ["input region"],
+      "selectors": ["region"],
       "match": {
         "region=wnam": "EUA Oeste",
         "region=enam": "EUA Leste",
@@ -466,12 +430,8 @@
   ],
   "monitor_pause_action": [
     {
-      "declarations": [
-        "input action"
-      ],
-      "selectors": [
-        "action"
-      ],
+      "declarations": ["input action"],
+      "selectors": ["action"],
       "match": {
         "action=pause": "Pausar",
         "action=prompt": "Pausar este monitor? As verificações param até você retomá-lo.",
@@ -482,13 +442,8 @@
   ],
   "monitor_last_result": [
     {
-      "declarations": [
-        "input state",
-        "input when"
-      ],
-      "selectors": [
-        "state"
-      ],
+      "declarations": ["input state", "input when"],
+      "selectors": ["state"],
       "match": {
         "state=paused_you": "Pausado por você {when}",
         "state=paused_other": "Pausado por outra pessoa {when}",
@@ -500,12 +455,8 @@
   "monitor_create": "Criar monitor",
   "monitor_field_invalid": [
     {
-      "declarations": [
-        "input field"
-      ],
-      "selectors": [
-        "field"
-      ],
+      "declarations": ["input field"],
+      "selectors": ["field"],
       "match": {
         "field=name": "Dê um nome ao monitor.",
         "field=url": "Use um endereço http ou https público, numa porta web como 80, 443, 8080 ou 8443.",
@@ -528,12 +479,8 @@
   "monitor_change_failed": "Não foi possível alterar {name}: {reason}",
   "monitor_field_label": [
     {
-      "declarations": [
-        "input field"
-      ],
-      "selectors": [
-        "field"
-      ],
+      "declarations": ["input field"],
+      "selectors": ["field"],
       "match": {
         "field=kind": "Tipo de monitor",
         "field=name": "Nome",
@@ -553,12 +500,8 @@
   ],
   "monitor_field_hint": [
     {
-      "declarations": [
-        "input field"
-      ],
-      "selectors": [
-        "field"
-      ],
+      "declarations": ["input field"],
+      "selectors": ["field"],
       "match": {
         "field=url": "Todos no workspace, inclusive leitores, veem esta URL: não coloque tokens nem senhas nela.",
         "field=expected_status": "Vazio: qualquer 2xx ou 3xx. Redirecionamentos não são seguidos.",
@@ -573,14 +516,8 @@
   ],
   "monitor_check_error": [
     {
-      "declarations": [
-        "input reason",
-        "input got",
-        "input expected"
-      ],
-      "selectors": [
-        "reason"
-      ],
+      "declarations": ["input reason", "input got", "input expected"],
+      "selectors": ["reason"],
       "match": {
         "reason=timeout": "Tempo esgotado",
         "reason=network": "Não conectou",
@@ -595,13 +532,8 @@
   ],
   "monitor_heartbeat": [
     {
-      "declarations": [
-        "input part",
-        "input interval"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input interval"],
+      "selectors": ["part"],
       "match": {
         "part=once": "Mostrada só uma vez",
         "part=send": "Envie um POST para esta URL pelo menos a cada {interval}. O Brigade guarda só um hash dela, então ela não pode ser mostrada de novo.",
@@ -618,13 +550,8 @@
   ],
   "monitor_incident_link": [
     {
-      "declarations": [
-        "input has",
-        "input number"
-      ],
-      "selectors": [
-        "has"
-      ],
+      "declarations": ["input has", "input number"],
+      "selectors": ["has"],
       "match": {
         "has=yes": "Abrir {number}",
         "has=*": "Abrir incidente"
@@ -633,13 +560,8 @@
   ],
   "monitor_edit": [
     {
-      "declarations": [
-        "input part",
-        "input name"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
       "match": {
         "part=action": "Editar",
         "part=form": "Editar {name}",
@@ -651,13 +573,8 @@
   ],
   "monitor_delete": [
     {
-      "declarations": [
-        "input part",
-        "input name"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
       "match": {
         "part=action": "Excluir monitor",
         "part=prompt": "Excluir {name}? As verificações param e os resultados se perdem de vez.",
@@ -671,13 +588,8 @@
   ],
   "monitor_rotate": [
     {
-      "declarations": [
-        "input part",
-        "input name"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
       "match": {
         "part=label": "URL de heartbeat",
         "part=hint": "O Brigade guarda só um hash dela, então a URL atual não pode ser mostrada de novo. Uma nova URL substitui a atual.",
@@ -697,13 +609,8 @@
   "monitor_gone": "Ele foi excluído.",
   "monitor_policy": [
     {
-      "declarations": [
-        "input kind",
-        "input name"
-      ],
-      "selectors": [
-        "kind"
-      ],
+      "declarations": ["input kind", "input name"],
+      "selectors": ["kind"],
       "match": {
         "kind=own": "Chama pela política {name}",
         "kind=default": "Chama pela política {name} (padrão)",
@@ -716,13 +623,8 @@
   ],
   "monitor_discard": [
     {
-      "declarations": [
-        "input part",
-        "input name"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
       "match": {
         "part=prompt": "Descartar as alterações em {name}?",
         "part=prompt_new": "Descartar este novo monitor?",
@@ -734,12 +636,8 @@
   ],
   "incident_page": [
     {
-      "declarations": [
-        "input part"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part"],
+      "selectors": ["part"],
       "match": {
         "part=back": "Todos os incidentes",
         "part=loading": "Carregando o incidente…",
@@ -782,9 +680,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "1 nova atualização de outras pessoas",
         "countPlural=*": "{countFormatted} novas atualizações de outras pessoas"
@@ -793,14 +689,8 @@
   ],
   "incident_role": [
     {
-      "declarations": [
-        "input role",
-        "input form"
-      ],
-      "selectors": [
-        "role",
-        "form"
-      ],
+      "declarations": ["input role", "input form"],
+      "selectors": ["role", "form"],
       "match": {
         "role=commander, form=sentence": "comandante do incidente",
         "role=communications, form=sentence": "responsável pela comunicação",
@@ -814,15 +704,8 @@
   ],
   "timeline_entry": [
     {
-      "declarations": [
-        "input kind",
-        "input actor",
-        "input a",
-        "input b"
-      ],
-      "selectors": [
-        "kind"
-      ],
+      "declarations": ["input kind", "input actor", "input a", "input b"],
+      "selectors": ["kind"],
       "match": {
         "kind=declared": "{actor} declarou o incidente como {a}",
         "kind=status_changed": "{actor} mudou o status de {a} para {b}",
@@ -902,10 +785,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "reason",
-        "countPlural"
-      ],
+      "selectors": ["reason", "countPlural"],
       "match": {
         "reason=no_devices, countPlural=one": "Não foi possível chamar {countFormatted} pessoa: nenhum aparelho registrado",
         "reason=no_devices, countPlural=*": "Não foi possível chamar {countFormatted} pessoas: nenhum aparelho registrado",
@@ -928,14 +808,8 @@
   ],
   "incident_change_failed": [
     {
-      "declarations": [
-        "input kind",
-        "input role",
-        "input reason"
-      ],
-      "selectors": [
-        "kind"
-      ],
+      "declarations": ["input kind", "input role", "input reason"],
+      "selectors": ["kind"],
       "match": {
         "kind=update": "Não foi possível publicar a atualização. {reason}",
         "kind=*": "Não foi possível alterar {role}. {reason}"
@@ -950,10 +824,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countExact",
-        "countPlural"
-      ],
+      "selectors": ["countExact", "countPlural"],
       "match": {
         "countExact=0, countPlural=*": "Nenhum membro",
         "countExact=*, countPlural=one": "{countFormatted} membro",
@@ -963,12 +834,8 @@
   ],
   "member_role": [
     {
-      "declarations": [
-        "input role"
-      ],
-      "selectors": [
-        "role"
-      ],
+      "declarations": ["input role"],
+      "selectors": ["role"],
       "match": {
         "role=owner": "Proprietário",
         "role=admin": "Admin",
@@ -980,13 +847,8 @@
   ],
   "members_part": [
     {
-      "declarations": [
-        "input part",
-        "input name"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
       "match": {
         "part=title": "Membros",
         "part=description": "Proprietários e admins mudam papéis e removem membros. Quem é removido deixa de receber chamados na hora.",
@@ -1012,12 +874,8 @@
   ],
   "member_change_failed": [
     {
-      "declarations": [
-        "input reason"
-      ],
-      "selectors": [
-        "reason"
-      ],
+      "declarations": ["input reason"],
+      "selectors": ["reason"],
       "match": {
         "reason=forbidden": "Você não pode fazer essa mudança.",
         "reason=last_owner": "Um espaço de trabalho precisa de pelo menos um proprietário. Torne outra pessoa proprietária primeiro.",
@@ -1032,13 +890,8 @@
   ],
   "member_demote_prompt": [
     {
-      "declarations": [
-        "input kind",
-        "input role"
-      ],
-      "selectors": [
-        "kind"
-      ],
+      "declarations": ["input kind", "input role"],
+      "selectors": ["kind"],
       "match": {
         "kind=owner": "Mudar seu papel para {role}? Você deixa de gerenciar proprietários; só um proprietário pode devolvê-lo.",
         "kind=all": "Mudar seu papel para {role}? Você deixa de gerenciar membros e proprietários; só um proprietário pode devolvê-lo.",
@@ -1053,9 +906,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Mostrar {countFormatted} membro",
         "countPlural=*": "Mostrar todos os {countFormatted} membros"
@@ -1069,9 +920,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Mostrar {countFormatted} convite",
         "countPlural=*": "Mostrar todos os {countFormatted} convites"
@@ -1087,10 +936,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countExact",
-        "countPlural"
-      ],
+      "selectors": ["countExact", "countPlural"],
       "match": {
         "countExact=0, countPlural=*": "Nenhuma escala",
         "countExact=*, countPlural=one": "{countFormatted} escala",
@@ -1106,15 +952,8 @@
   "oncall_upcoming_none": "Nenhuma troca nas próximas 4 semanas",
   "oncall_shift_length": [
     {
-      "declarations": [
-        "input unit",
-        "input count",
-        "local countPlural = count: plural"
-      ],
-      "selectors": [
-        "unit",
-        "countPlural"
-      ],
+      "declarations": ["input unit", "input count", "local countPlural = count: plural"],
+      "selectors": ["unit", "countPlural"],
       "match": {
         "unit=hours, countPlural=one": "A cada hora",
         "unit=hours, countPlural=*": "A cada {count} horas",
@@ -1129,12 +968,8 @@
   "oncall_time_zone": "Horários em {zone} ({offset})",
   "oncall_unit": [
     {
-      "declarations": [
-        "input unit"
-      ],
-      "selectors": [
-        "unit"
-      ],
+      "declarations": ["input unit"],
+      "selectors": ["unit"],
       "match": {
         "unit=hours": "Horas",
         "unit=days": "Dias",
@@ -1146,12 +981,8 @@
   "oncall_layers_hint": "As camadas se empilham: uma camada posterior prevalece onde tem alguém de plantão. As trocas seguem o relógio do fuso, inclusive nas mudanças de horário de verão.",
   "oncall_field_invalid": [
     {
-      "declarations": [
-        "input field"
-      ],
-      "selectors": [
-        "field"
-      ],
+      "declarations": ["input field"],
+      "selectors": ["field"],
       "match": {
         "field=name": "Informe um nome de até 80 caracteres.",
         "field=time_zone": "Escolha um fuso horário.",
@@ -1174,12 +1005,8 @@
   "oncall_unnamed": "Membro sem nome",
   "oncall_field": [
     {
-      "declarations": [
-        "input field"
-      ],
-      "selectors": [
-        "field"
-      ],
+      "declarations": ["input field"],
+      "selectors": ["field"],
       "match": {
         "field=name": "Nome",
         "field=time_zone": "Fuso horário",
@@ -1197,12 +1024,8 @@
   ],
   "oncall_action": [
     {
-      "declarations": [
-        "input action"
-      ],
-      "selectors": [
-        "action"
-      ],
+      "declarations": ["input action"],
+      "selectors": ["action"],
       "match": {
         "action=add_schedule": "Adicionar escala",
         "action=add_override": "Adicionar substituição",
@@ -1219,13 +1042,8 @@
   ],
   "oncall_action_on": [
     {
-      "declarations": [
-        "input action",
-        "input name"
-      ],
-      "selectors": [
-        "action"
-      ],
+      "declarations": ["input action", "input name"],
+      "selectors": ["action"],
       "match": {
         "action=edit": "Editar {name}",
         "action=add_override": "Adicionar substituição em {name}",
@@ -1239,12 +1057,8 @@
   ],
   "oncall_heading": [
     {
-      "declarations": [
-        "input heading"
-      ],
-      "selectors": [
-        "heading"
-      ],
+      "declarations": ["input heading"],
+      "selectors": ["heading"],
       "match": {
         "heading=new": "Nova escala",
         "heading=layers": "Camadas",
@@ -1256,14 +1070,8 @@
   ],
   "oncall_handoff": [
     {
-      "declarations": [
-        "input unit",
-        "input day",
-        "input time"
-      ],
-      "selectors": [
-        "unit"
-      ],
+      "declarations": ["input unit", "input day", "input time"],
+      "selectors": ["unit"],
       "match": {
         "unit=weeks": "troca {day}, às {time}",
         "unit=from": "a partir de {day}, às {time}",
@@ -1273,13 +1081,8 @@
   ],
   "oncall_layer_now": [
     {
-      "declarations": [
-        "input state",
-        "input name"
-      ],
-      "selectors": [
-        "state"
-      ],
+      "declarations": ["input state", "input name"],
+      "selectors": ["state"],
       "match": {
         "state=active": "Agora: {name}",
         "state=hidden": "Agora: {name}, mas uma camada posterior tem prioridade",
@@ -1295,9 +1098,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=*": "mais {countFormatted}"
       }
@@ -1305,15 +1106,8 @@
   ],
   "oncall_text": [
     {
-      "declarations": [
-        "input text",
-        "input name",
-        "input max",
-        "input time"
-      ],
-      "selectors": [
-        "text"
-      ],
+      "declarations": ["input text", "input name", "input max", "input time"],
+      "selectors": ["text"],
       "match": {
         "text=your_time": "{time} no seu horário",
         "text=members_max": "Até {max} pessoas por camada.",
@@ -1326,12 +1120,8 @@
   ],
   "oncall_zone": [
     {
-      "declarations": [
-        "input part"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part"],
+      "selectors": ["part"],
       "match": {
         "part=placeholder": "Busque uma cidade ou deslocamento UTC",
         "part=empty": "Nenhum fuso horário encontrado.",
@@ -1343,12 +1133,8 @@
   ],
   "oncall_layer_name": [
     {
-      "declarations": [
-        "input number"
-      ],
-      "selectors": [
-        "number"
-      ],
+      "declarations": ["input number"],
+      "selectors": ["number"],
       "match": {
         "number=1": "Principal",
         "number=*": "Camada {number}"
@@ -1357,14 +1143,8 @@
   ],
   "oncall_mine": [
     {
-      "declarations": [
-        "input part",
-        "input name",
-        "input time"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input name", "input time"],
+      "selectors": ["part"],
       "match": {
         "part=on_call": "Você está de plantão",
         "part=off_call": "Você não está de plantão",
@@ -1389,9 +1169,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=*": "De plantão até {time} ({countFormatted} escalas)"
       }
@@ -1404,9 +1182,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Pela próxima hora",
         "countPlural=*": "Pelas próximas {countFormatted} horas"
@@ -1415,13 +1191,8 @@
   ],
   "escalation_level_round": [
     {
-      "declarations": [
-        "input level",
-        "input round"
-      ],
-      "selectors": [
-        "round"
-      ],
+      "declarations": ["input level", "input round"],
+      "selectors": ["round"],
       "match": {
         "round=0": "{level}",
         "round=*": "{level} (repetição {round})"
@@ -1438,9 +1209,7 @@
         "input reason",
         "input who"
       ],
-      "selectors": [
-        "text"
-      ],
+      "selectors": ["text"],
       "match": {
         "text=title": "Escalonamento",
         "text=empty": "Ainda não há políticas de escalonamento. Sem uma política padrão, as chamadas vão para o comandante do incidente, ou para todos que podem responder.",
@@ -1492,11 +1261,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "kind",
-        "count",
-        "countPlural"
-      ],
+      "selectors": ["kind", "count", "countPlural"],
       "match": {
         "kind=policies, count=*, countPlural=one": "{countFormatted} política",
         "kind=policies, count=*, countPlural=*": "{countFormatted} políticas",
@@ -1521,12 +1286,8 @@
   ],
   "escalation_action": [
     {
-      "declarations": [
-        "input action"
-      ],
-      "selectors": [
-        "action"
-      ],
+      "declarations": ["input action"],
+      "selectors": ["action"],
       "match": {
         "action=add_policy": "Nova política",
         "action=edit": "Editar",
@@ -1545,13 +1306,8 @@
   ],
   "escalation_action_on": [
     {
-      "declarations": [
-        "input action",
-        "input name"
-      ],
-      "selectors": [
-        "action"
-      ],
+      "declarations": ["input action", "input name"],
+      "selectors": ["action"],
       "match": {
         "action=edit": "Editar {name}",
         "action=remove_target": "Remover {name}",
@@ -1562,14 +1318,8 @@
   ],
   "escalation_field": [
     {
-      "declarations": [
-        "input field",
-        "input form"
-      ],
-      "selectors": [
-        "field",
-        "form"
-      ],
+      "declarations": ["input field", "input form"],
+      "selectors": ["field", "form"],
       "match": {
         "field=name, form=label": "Nome",
         "field=timeout, form=label": "Minutos até o próximo nível",
@@ -1588,14 +1338,8 @@
   ],
   "escalation_progress": [
     {
-      "declarations": [
-        "input part",
-        "input time",
-        "input level"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input time", "input level"],
+      "selectors": ["part"],
       "match": {
         "part=running": "Escalonando",
         "part=resolved": "Parado: resolvido {time}",
@@ -1617,13 +1361,8 @@
   "escalation_early": "Ninguém no nível {from} pôde ser alcançado, então o nível {level} foi chamado na hora: {who}",
   "escalation_miss": [
     {
-      "declarations": [
-        "input reason",
-        "input name"
-      ],
-      "selectors": [
-        "reason"
-      ],
+      "declarations": ["input reason", "input name"],
+      "selectors": ["reason"],
       "match": {
         "reason=no_devices": "{name} (sem celular registrado)",
         "reason=nobody_on_call": "{name} (ninguém de plantão)",
@@ -1636,15 +1375,8 @@
   ],
   "incident_ack": [
     {
-      "declarations": [
-        "input part",
-        "input name",
-        "input time",
-        "input reason"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input name", "input time", "input reason"],
+      "selectors": ["part"],
       "match": {
         "part=action": "Confirmar",
         "part=hint": "Interrompe as chamadas: nenhum outro nível de escalonamento é disparado.",
@@ -1665,9 +1397,7 @@
         "input reason",
         "input url"
       ],
-      "selectors": [
-        "part"
-      ],
+      "selectors": ["part"],
       "match": {
         "part=unpaged_subject": "{incident}: {title} (o Brigade não conseguiu chamar você)",
         "part=unpaged_intro": "O Brigade tentou chamar você sobre {incident} em {workspace}, mas a chamada não chegou ao seu celular: {reason}.",
@@ -1692,15 +1422,8 @@
   ],
   "page_why": [
     {
-      "declarations": [
-        "input text",
-        "input name",
-        "input time",
-        "input detail"
-      ],
-      "selectors": [
-        "text"
-      ],
+      "declarations": ["input text", "input name", "input time", "input detail"],
+      "selectors": ["text"],
       "match": {
         "text=title": "Quem foi acionado",
         "text=why_title": "Acionamentos de {name}",
@@ -1804,13 +1527,8 @@
   ],
   "email_verify": [
     {
-      "declarations": [
-        "input part",
-        "input email"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
       "match": {
         "part=subject": "Confirme seu email no Brigade",
         "part=intro": "Confirme que {email} é o seu endereço. Até lá, o Brigade não envia emails sobre incidentes, e você não pode convidar pessoas nem aceitar convites.",
@@ -1823,15 +1541,8 @@
   ],
   "email_invite": [
     {
-      "declarations": [
-        "input part",
-        "input inviter",
-        "input workspace",
-        "input role"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input inviter", "input workspace", "input role"],
+      "selectors": ["part"],
       "match": {
         "part=subject": "{inviter} convidou você para {workspace} no Brigade",
         "part=intro": "{inviter} convidou você para entrar em {workspace} no Brigade, onde a equipe responde a incidentes, como {role}.",
@@ -1845,13 +1556,8 @@
   ],
   "verify_notice": [
     {
-      "declarations": [
-        "input part",
-        "input email"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
       "match": {
         "part=title": "Confirme seu email",
         "part=body": "Enviamos um link para {email}. Até você abri-lo, o Brigade não envia emails para você, e você não pode convidar pessoas nem aceitar convites.",
@@ -1867,12 +1573,8 @@
   ],
   "verify_page": [
     {
-      "declarations": [
-        "input part"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part"],
+      "selectors": ["part"],
       "match": {
         "part=page_title": "Confirmar email",
         "part=checking": "Confirmando seu email…",
@@ -1895,15 +1597,8 @@
   ],
   "invite_part": [
     {
-      "declarations": [
-        "input part",
-        "input email",
-        "input date",
-        "input name"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input email", "input date", "input name"],
+      "selectors": ["part"],
       "match": {
         "part=open": "Convidar",
         "part=title": "Convidar alguém",
@@ -1932,13 +1627,8 @@
   ],
   "invite_error": [
     {
-      "declarations": [
-        "input reason",
-        "input email"
-      ],
-      "selectors": [
-        "reason"
-      ],
+      "declarations": ["input reason", "input email"],
+      "selectors": ["reason"],
       "match": {
         "reason=forbidden": "Você não pode fazer esta alteração.",
         "reason=already_member": "{email} já é membro.",
@@ -1968,9 +1658,7 @@
         "input role",
         "input email"
       ],
-      "selectors": [
-        "part"
-      ],
+      "selectors": ["part"],
       "match": {
         "part=page_title": "Convite",
         "part=title": "Entrar em {workspace}",
@@ -2010,13 +1698,8 @@
   ],
   "accept_error": [
     {
-      "declarations": [
-        "input reason",
-        "input workspace"
-      ],
-      "selectors": [
-        "reason"
-      ],
+      "declarations": ["input reason", "input workspace"],
+      "selectors": ["reason"],
       "match": {
         "reason=workspace_full": "{workspace} atingiu o limite de membros. Peça a um proprietário para abrir espaço.",
         "reason=workspace_limit": "Você já está no máximo de espaços de trabalho que o Brigade permite. Saia de um antes.",
@@ -2033,13 +1716,8 @@
   "auth_sign_up_invited_description": "Use o endereço para o qual o convite foi enviado. Depois de confirmá-lo, você pode aceitar o convite.",
   "email_reset": [
     {
-      "declarations": [
-        "input part",
-        "input email"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
       "match": {
         "part=subject": "Redefina sua senha do Brigade",
         "part=intro": "Alguém pediu para redefinir a senha da conta do Brigade de {email}. Se foi você, escolha uma nova senha por este link.",
@@ -2052,13 +1730,8 @@
   ],
   "reset_page": [
     {
-      "declarations": [
-        "input part",
-        "input email"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input email"],
+      "selectors": ["part"],
       "match": {
         "part=forgot_link": "Esqueceu a senha?",
         "part=forgot_page_title": "Esqueci a senha",
@@ -2092,12 +1765,8 @@
   ],
   "takeover_notice": [
     {
-      "declarations": [
-        "input part"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part"],
+      "selectors": ["part"],
       "match": {
         "part=title": "Você recuperou esta conta",
         "part=body": "Alguém se cadastrou com o seu e-mail antes de você confirmá-lo e criou os espaços de trabalho abaixo. Agora eles são seus. Para que ninguém mais possa acionar você pelo que foi configurado ali, o Brigade pausou todos os monitores, desativou as URLs de heartbeat e de fontes de alertas e desligou as rotas de alertas que foram criadas.",
@@ -2118,9 +1787,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{countFormatted} monitor pausado",
         "countPlural=*": "{countFormatted} monitores pausados"
@@ -2134,9 +1801,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{countFormatted} URL de heartbeat desativada",
         "countPlural=*": "{countFormatted} URLs de heartbeat desativadas"
@@ -2153,9 +1818,7 @@
         "input workspace",
         "input list"
       ],
-      "selectors": [
-        "part"
-      ],
+      "selectors": ["part"],
       "match": {
         "part=message_declared_by": "Declarado por {name}",
         "part=message_acknowledged_by": "Confirmado por {name}",
@@ -2187,14 +1850,8 @@
   ],
   "slack_card": [
     {
-      "declarations": [
-        "input part",
-        "input team",
-        "input channel"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input team", "input channel"],
+      "selectors": ["part"],
       "match": {
         "part=title": "Slack",
         "part=description": "Declare e confirme incidentes pelo Slack com /inc e mantenha uma mensagem por incidente em um canal.",
@@ -2231,14 +1888,8 @@
   ],
   "status_text": [
     {
-      "declarations": [
-        "input part",
-        "input time",
-        "input list"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input time", "input list"],
+      "selectors": ["part"],
       "match": {
         "part=public_investigating": "Investigando",
         "part=public_identified": "Identificado",
@@ -2273,15 +1924,8 @@
   ],
   "status_card": [
     {
-      "declarations": [
-        "input part",
-        "input url",
-        "input name",
-        "input status"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input url", "input name", "input status"],
+      "selectors": ["part"],
       "match": {
         "part=title": "Página de status",
         "part=description": "Uma página pública onde clientes veem quais partes do seu serviço funcionam e o que você conta sobre incidentes. Nada da linha do tempo interna aparece lá a menos que alguém publique.",
@@ -2363,14 +2007,8 @@
   ],
   "catalog_text": [
     {
-      "declarations": [
-        "input text",
-        "input name",
-        "input reason"
-      ],
-      "selectors": [
-        "text"
-      ],
+      "declarations": ["input text", "input name", "input reason"],
+      "selectors": ["text"],
       "match": {
         "text=services_title": "Serviços",
         "text=services_empty": "Nenhum serviço ainda. Liste o que vocês operam, quem é responsável e quão crítico é, para que os incidentes digam o que afetam.",
@@ -2434,12 +2072,8 @@
   ],
   "catalog_action": [
     {
-      "declarations": [
-        "input action"
-      ],
-      "selectors": [
-        "action"
-      ],
+      "declarations": ["input action"],
+      "selectors": ["action"],
       "match": {
         "action=add_service": "Novo serviço",
         "action=add_type": "Novo tipo",
@@ -2463,13 +2097,8 @@
   ],
   "catalog_action_on": [
     {
-      "declarations": [
-        "input action",
-        "input name"
-      ],
-      "selectors": [
-        "action"
-      ],
+      "declarations": ["input action", "input name"],
+      "selectors": ["action"],
       "match": {
         "action=edit": "Editar {name}",
         "action=remove": "Remover {name}",
@@ -2481,14 +2110,8 @@
   ],
   "catalog_field": [
     {
-      "declarations": [
-        "input field",
-        "input form"
-      ],
-      "selectors": [
-        "field",
-        "form"
-      ],
+      "declarations": ["input field", "input form"],
+      "selectors": ["field", "form"],
       "match": {
         "field=name, form=label": "Nome",
         "field=description, form=label": "Descrição (opcional)",
@@ -2515,12 +2138,8 @@
   ],
   "catalog_tier": [
     {
-      "declarations": [
-        "input tier"
-      ],
-      "selectors": [
-        "tier"
-      ],
+      "declarations": ["input tier"],
+      "selectors": ["tier"],
       "match": {
         "tier=tier1": "Nível 1 · Crítico",
         "tier=tier2": "Nível 2 · Importante",
@@ -2537,11 +2156,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "kind",
-        "count",
-        "countPlural"
-      ],
+      "selectors": ["kind", "count", "countPlural"],
       "match": {
         "kind=services, count=*, countPlural=one": "{countFormatted} serviço",
         "kind=services, count=*, countPlural=*": "{countFormatted} serviços",
@@ -2561,14 +2176,8 @@
   ],
   "webhooks_card": [
     {
-      "declarations": [
-        "input part",
-        "input host",
-        "input when"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input host", "input when"],
+      "selectors": ["part"],
       "match": {
         "part=title": "Webhooks",
         "part=description": "Envie JSON assinado para os seus próprios serviços quando incidentes, alertas e monitores mudam.",
@@ -2648,12 +2257,8 @@
   ],
   "webhook_event": [
     {
-      "declarations": [
-        "input type"
-      ],
-      "selectors": [
-        "type"
-      ],
+      "declarations": ["input type"],
+      "selectors": ["type"],
       "match": {
         "type=incident.declared": "Incidente declarado",
         "type=incident.status_changed": "Status alterado",
@@ -2672,13 +2277,8 @@
   ],
   "webhook_error": [
     {
-      "declarations": [
-        "input error",
-        "input status"
-      ],
-      "selectors": [
-        "error"
-      ],
+      "declarations": ["input error", "input status"],
+      "selectors": ["error"],
       "match": {
         "error=timeout": "Tempo esgotado",
         "error=network": "Não conectou",
@@ -2697,9 +2297,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{countFormatted} evento",
         "countPlural=*": "{countFormatted} eventos"
@@ -2708,15 +2306,8 @@
   ],
   "email_webhook_disabled": [
     {
-      "declarations": [
-        "input part",
-        "input workspace",
-        "input webhook",
-        "input failures"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input workspace", "input webhook", "input failures"],
+      "selectors": ["part"],
       "match": {
         "part=subject": "Um webhook em {workspace} foi desligado",
         "part=intro": "O Brigade desligou o webhook {webhook} em {workspace}: as últimas {failures} entregas falharam, por mais de um dia.",
@@ -2729,16 +2320,8 @@
   ],
   "followup_text": [
     {
-      "declarations": [
-        "input text",
-        "input name",
-        "input date",
-        "input count",
-        "input reason"
-      ],
-      "selectors": [
-        "text"
-      ],
+      "declarations": ["input text", "input name", "input date", "input count", "input reason"],
+      "selectors": ["text"],
       "match": {
         "text=title": "Ações de acompanhamento",
         "text=description": "O que este incidente deixa para fazer, com responsável e prazo.",
@@ -2786,16 +2369,8 @@
   ],
   "postmortem_text": [
     {
-      "declarations": [
-        "input part",
-        "input name",
-        "input time",
-        "input count",
-        "input reason"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input name", "input time", "input count", "input reason"],
+      "selectors": ["part"],
       "match": {
         "part=title": "Postmortem",
         "part=description": "O que aconteceu e o que o time aprendeu, seção por seção. Texto simples.",
@@ -2839,16 +2414,8 @@
   ],
   "export_text": [
     {
-      "declarations": [
-        "input part",
-        "input name",
-        "input time",
-        "input count",
-        "input reason"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input name", "input time", "input count", "input reason"],
+      "selectors": ["part"],
       "match": {
         "part=title": "Exportar",
         "part=incident_action": "Exportar JSON",
@@ -2883,9 +2450,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{countFormatted} incidente",
         "countPlural=*": "{countFormatted} incidentes"
@@ -2899,9 +2464,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{countFormatted} URL de fonte de alertas desativada",
         "countPlural=*": "{countFormatted} URLs de fontes de alertas desativadas"
@@ -2915,9 +2478,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "{countFormatted} rota de alertas desligada",
         "countPlural=*": "{countFormatted} rotas de alertas desligadas"
@@ -2926,14 +2487,8 @@
   ],
   "alerts_card": [
     {
-      "declarations": [
-        "input part",
-        "input name",
-        "input value"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input name", "input value"],
+      "selectors": ["part"],
       "match": {
         "part=title": "Fontes de alertas",
         "part=description": "Grafana, Datadog, Sentry ou qualquer ferramenta que envie um webhook manda alertas para um URL secreto. As rotas decidem quais alertas abrem incidentes e quem é acionado.",
@@ -3060,9 +2615,7 @@
         "local countPlural = count: plural",
         "local countFormatted = count: number"
       ],
-      "selectors": [
-        "countPlural"
-      ],
+      "selectors": ["countPlural"],
       "match": {
         "countPlural=one": "Enviado mais {countFormatted} vez",
         "countPlural=*": "Enviado mais {countFormatted} vezes"
@@ -3071,13 +2624,8 @@
   ],
   "alert_incident_title": [
     {
-      "declarations": [
-        "input part",
-        "input name"
-      ],
-      "selectors": [
-        "part"
-      ],
+      "declarations": ["input part", "input name"],
+      "selectors": ["part"],
       "match": {
         "part=malformed": "Alerta ilegível de {name}",
         "part=capacity": "Capacidade de alertas atingida",

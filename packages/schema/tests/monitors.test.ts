@@ -919,7 +919,13 @@ describe("monitor.report: quorum → alert → incident", () => {
     const silent = Object.values(serverMutations)
       .filter((def) => (def as { silent?: boolean }).silent)
       .map((def) => def.name);
-    expect(silent).toEqual(["member.sync", "monitor.report", "webhook.record", "export.reserve", "alert.ingest"]);
+    expect(silent).toEqual([
+      "member.sync",
+      "monitor.report",
+      "webhook.record",
+      "export.reserve",
+      "alert.ingest",
+    ]);
   });
 
   test("is server only", () => {

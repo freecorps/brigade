@@ -272,6 +272,15 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Left: trying it on an iPhone (VoIP Services on the App ID); delivery rows for calls; clearing a VoIP token APNs
     refuses; a per-member choice of calls; Android calls (FCM).
 - [ ] Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup
+  - Done: the on-call screen (shifts, overrides, who each schedule has now, covering a shift); pages are
+    time-sensitive. The iOS "I'm on call" widget (home screen small, lock screen rectangular and inline): on call
+    until when, or the next shift, and the open incidents, from a snapshot the app keeps in the App Group and clears
+    on sign-out; it flips at each handoff without the app and asks to open Brigade after 24 hours (RFC 0003
+    "Schedules"). Critical Alerts are ready behind the entitlement (RFC 0006 "Critical Alerts"): a build flag, the
+    device's capability in `device.register`, and SEV1 pages critical only on phones that allow them, falling back
+    to time-sensitive.
+  - Left: Apple's Critical Alerts grant (Q8), then turning it on; trying the widget and Critical Alerts on an
+    iPhone; an Android widget; Android's alarm channel and DND access (FCM first).
 - [x] Delivery receipts and "why wasn't I paged" debugging view
   - Each page is a row per device (`deliveries`, synced to members): planned, handed to the relay, accepted by
     APNs (or the error, with APNs' reason), opened on the phone. The iOS Notification Service Extension reports

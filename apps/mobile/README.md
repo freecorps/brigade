@@ -109,7 +109,7 @@ vp run mobile:install --from ~/brigade-builds/brigade-ios-preview-<commit>.ipa
 the generated folders.
 
 ```bash
-vp test                 # locale, theme, Intl-probe, server URLs, device registration, incident wording and config plugins (Node)
+vp test                 # locale, theme, Intl-probe, server URLs, device registration, incident wording, widget snapshot and config plugins (Node)
 vp run build            # cached expo export of the Android and iOS JS bundles into dist/: proves Metro resolves everything
 ```
 
@@ -134,6 +134,18 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
   fallback. `aps-environment` is `development` locally and `production` on EAS. For local builds signed for a
   device, set `APPLE_TEAM_ID` (never committed) and build with `xcodebuild -allowProvisioningUpdates`; the commands
   are in the S1 write-up.
+- **"I'm on call" widget (iOS):** `plugins/widget.ts` adds the `BrigadeWidget` WidgetKit extension (home screen
+  small, lock screen rectangular and inline) from `modules/brigade-widget/widget`, with the App Group and
+  `Localizable.strings` generated from packages/i18n (`widget_*`). While a member is signed in,
+  `src/components/widget.tsx` writes a snapshot of their on-call stretches and open incidents
+  (`src/lib/widget.ts`: times, a count and the app's locale, no names or credentials) through the local module
+  `modules/brigade-widget` into the App Group, and signing out clears it. The widget never reaches the network: it
+  lays out an entry per handoff, so it flips on time with the app closed, and past 24 hours asks to open Brigade. The
+  widget cannot run Paraglide, so it bundles its strings and the snapshot names the app's language, which the widget
+  uses over the system's. Its decisions are in `src/lib/widget.ts` (tested) and mirrored in `WidgetState.swift`.
+- **Critical Alerts (off):** `BRIGADE_CRITICAL_ALERTS=1` at build time adds the entitlement, asks for Critical Alerts
+  with the notification permission and reports them in `device.register`; SEV1 pages then ring through silent mode
+  on phones that allow them. Leave it unset until Apple grants the entitlement (RFC 0006 "Critical Alerts").
 - **Pages as calls (spike S6):** the local module `modules/brigade-call` rings a page natively (Android: a
   self-managed `ConnectionService`, a `CallStyle` notification and a full-screen ringing screen; iOS: PushKit and
   CallKit), reads it aloud and takes the ack ("press 1"), and `plugins/incoming-call.ts` adds the `voip` background

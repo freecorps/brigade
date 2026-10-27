@@ -16,6 +16,7 @@ import {
   type BrigadeTables,
   type DomainEvent,
   type MutationContext,
+  type Permission,
   type QueryResult,
   type RandomBytes,
   type Role,
@@ -304,9 +305,16 @@ export class Shard {
   }
 
   /** Runs a query for a subscription (permission and args checked by `runQuery`). */
-  query(name: unknown, args: unknown, role: Role): QueryResult<WireRow> {
+  query(
+    name: unknown,
+    args: unknown,
+    role: Role,
+    scopes?: readonly Permission[],
+  ): QueryResult<WireRow> {
     return runQuery(queries, name, args, this.store, role, {
       onError: (error, query) => this.options.log("query failed", { query, error }),
+      // An API token's (RFC 0014): it reads only what its scopes hold.
+      ...(scopes ? { scopes } : {}),
     }) as QueryResult<WireRow>;
   }
 

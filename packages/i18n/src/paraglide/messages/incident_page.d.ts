@@ -27,6 +27,7 @@ export type Incident_PageInputs = {
 * | "monitors" | "A monitor" |
 * | "alerts" | "An alert source" |
 * | "teammate" | "A teammate" |
+* | "api_token" | "An API token" |
 * | "read_only" | "Viewers follow the incident; responders and admins change it." |
 * | "not_found_title" | "Incident not found" |
 * | "load_failed_title" | "Couldn't load the incident" |

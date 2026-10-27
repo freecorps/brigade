@@ -2,6 +2,7 @@ import { m } from "@freecorps/brigade-i18n";
 import { createFileRoute } from "@tanstack/react-router";
 import { AlertsCard } from "@/components/alerts-card";
 import { EscalationCard } from "@/components/escalation-card";
+import { ApiTokensCard } from "@/components/api-tokens-card";
 import { ExportCard } from "@/components/export-card";
 import { OpenFollowUpsCard } from "@/components/follow-ups-card";
 import { IncidentSettingsCard } from "@/components/incident-settings-card";
@@ -65,6 +66,7 @@ function Overview() {
       <StatusPageCard />
       <SlackCard />
       <WebhooksCard />
+      <ApiTokensCard />
       <ExportCard />
       <StackCard />
       <LegendCard />

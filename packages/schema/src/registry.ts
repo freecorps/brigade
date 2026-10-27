@@ -77,6 +77,7 @@ import {
   recentAlerts,
   takeOverAlertSources,
 } from "./alert-sources.ts";
+import { allApiTokens, apiTokenServerMutations } from "./api-tokens.ts";
 import { invitationMutations } from "./invitations.ts";
 import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";
 import { allMembers, createWorkspace, setEmailSettings, syncMember } from "./workspaces.ts";
@@ -129,6 +130,7 @@ export const queries = defineRegistry([
   allAlertSources,
   allAlertRoutes,
   recentAlerts,
+  allApiTokens,
 ]);
 
 /**
@@ -190,4 +192,5 @@ export const serverMutations = defineRegistry([
   ingestAlerts,
   rerouteAlerts,
   takeOverAlertSources,
+  ...apiTokenServerMutations,
 ]);

@@ -210,7 +210,9 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
   const editable = can(member.role, "incident:update");
 
   const members = useQuery("members.all", {});
-  const who = people(member.userId, members.rows);
+  // API tokens (RFC 0014) act too: their entries read "API token <name> (by Ana)".
+  const tokens = useQuery("apiToken.all", {});
+  const who = people(member.userId, members.rows, tokens.rows);
   const timeline = useQuery("incident.timeline", { id: row.id });
   // What the escalation card forecasts the next level from (whoever is on call now).
   const schedules = useQuery("schedules.all", {});

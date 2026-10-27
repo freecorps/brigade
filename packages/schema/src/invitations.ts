@@ -5,7 +5,14 @@
 
 import { can, ROLES, type Role } from "./access.ts";
 import { MEMBERS_ACTOR } from "./members.ts";
-import { defineMutation, fail, ok, type Actor, type DomainEvent } from "./mutation.ts";
+import {
+  actingMember,
+  defineMutation,
+  fail,
+  ok,
+  type Actor,
+  type DomainEvent,
+} from "./mutation.ts";
 import type { MemberRow } from "./tables.ts";
 import { memberName } from "./workspaces.ts";
 import { v } from "./validate.ts";
@@ -111,8 +118,12 @@ export function invitationAddressKey(email: string): string {
 const invitationId = v.string({ min: 1, max: 64 });
 const userId = v.string({ min: 1, max: 64 });
 
-/** Whether the actor running an invitation mutation for a member's request is that member, with `members:manage`. */
-const manages = (actor: Actor, role: Role) => actor.kind === "user" && checkInvite(actor, role).ok;
+/**
+ * Whether the actor running an invitation mutation for a member's request is that member (or their API token, RFC
+ * 0014), with `members:manage`.
+ */
+const manages = (actor: Actor, role: Role) =>
+  (actor.kind === "user" || actor.kind === "token") && checkInvite(actor, role).ok;
 const isMembersActor = (actor: Actor) =>
   actor.kind === MEMBERS_ACTOR.kind && actor.id === MEMBERS_ACTOR.id;
 
@@ -134,7 +145,7 @@ export const inviteMember = defineMutation({
   apply(_store, args, ctx) {
     if (
       !isMembersActor(ctx.actor) &&
-      (!manages(ctx.actor, args.role) || ctx.actor.id !== args.invitedBy)
+      (!manages(ctx.actor, args.role) || actingMember(ctx.actor) !== args.invitedBy)
     ) {
       return fail("forbidden", "Not allowed to invite as this role");
     }
@@ -161,7 +172,7 @@ export const revokeInvitation = defineMutation({
   apply(_store, args, ctx) {
     if (
       !isMembersActor(ctx.actor) &&
-      (!manages(ctx.actor, args.role) || ctx.actor.id !== args.revokedBy)
+      (!manages(ctx.actor, args.role) || actingMember(ctx.actor) !== args.revokedBy)
     ) {
       return fail("forbidden", "Not allowed to revoke this invitation");
     }

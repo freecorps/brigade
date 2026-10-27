@@ -59,6 +59,7 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
   const features = useFeatures();
   const query = useQuery("incident.postmortem", { id: incident.id });
   const members = useQuery("members.all", {});
+  const tokens = useQuery("apiToken.all", {});
   const save = useMutation("postmortem.save");
   const row: PostmortemRow | undefined = query.rows[0];
   const now = useNow(5_000);
@@ -69,7 +70,7 @@ export function PostmortemCard({ incident }: { incident: IncidentRow }) {
   const [asking, setAsking] = useState(false);
   const running = draftRunning(row, now);
   const blank = isBlankPostmortem(row);
-  const who = people(member.userId, members.rows);
+  const who = people(member.userId, members.rows, tokens.rows);
 
   // Whether `row` is the server's: not while it holds a change the server has not answered yet.
   const confirmed = !query.pending;

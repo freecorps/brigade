@@ -11,5 +11,5 @@ First version.
   longer text, new fields.
 - `createClient`: the public HTTP API in `docs/api/openapi.json` (health, paging health, heartbeat ping, workspaces,
   members, invitations, incident acknowledgement), with an injectable `fetch`, typed `BrigadeApiError` codes, no
-  redirects followed and `credentials` for browsers.
+  redirects followed, `credentials` for browsers, and `token` for an API token (`Authorization: Bearer`).
 - The payload types and their validators, from `@freecorps/brigade-schema` (bundled: no runtime dependencies).

@@ -1,13 +1,29 @@
 // Named mutations (RFC 0004 "Shared core"): the same `apply` runs optimistically on clients and
 // authoritatively, with RBAC, in the server's Durable Object.
 
-import { can, isRole, type Permission, type Role } from "./access.ts";
+import { allows, type Permission, type Role } from "./access.ts";
 import type { Store } from "./store.ts";
 import type { BrigadeTables } from "./tables.ts";
 import { clip } from "./text.ts";
 import { MAX_ISSUES, type Infer, type Issue, type Validator } from "./validate.ts";
 
-export type Actor = { kind: "user" | "system" | "integration"; id: string; role: Role };
+/**
+ * Who runs a mutation. An API token (RFC 0014) is `kind: "token"` with its id (`tok_…`), its creator's current role,
+ * the creator's user id (`by`) and its `scopes`: it may use a permission only when both the role and the scopes grant
+ * it (`allows`).
+ */
+export type Actor = {
+  kind: "user" | "system" | "integration" | "token";
+  id: string;
+  role: Role;
+  by?: string;
+  scopes?: readonly Permission[];
+};
+
+/** The member an actor acts for: themselves, or an API token's creator (RFC 0014). */
+export function actingMember(actor: Actor): string {
+  return actor.kind === "token" && actor.by !== undefined ? actor.by : actor.id;
+}
 
 export type MutationContext = {
   actor: Actor;
@@ -166,7 +182,7 @@ export function runMutation(
     if (!Number.isSafeInteger(ctx.now) || ctx.now < 0) {
       throw new RangeError("ctx.now must be a safe non-negative integer");
     }
-    if (!isRole(ctx.actor.role) || !can(ctx.actor.role, def.permission)) {
+    if (!allows(ctx.actor, def.permission)) {
       return fail("forbidden", `Not allowed to run ${def.name}`);
     }
     // Validators only read `rawArgs`, but a hostile value (a proxy, a throwing getter) must not escape either.

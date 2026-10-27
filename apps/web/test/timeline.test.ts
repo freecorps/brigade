@@ -271,3 +271,19 @@ test("a type change reads by the types' names then, and as from a deleted type w
     "Bia Lima mudou o tipo de um tipo excluído para Perda de dados",
   );
 });
+
+test("an API token is named with its creator, never as a raw id (RFC 0014)", async () => {
+  const tokens = people(
+    "usr_me",
+    [member("usr_me", "Me"), member("usr_bia", "Bia Lima")],
+    [{ id: "tok_01M5PWGDG00000000000000001", name: "Deploy bot", createdBy: "usr_bia" }],
+  );
+  expect(personName("tok_01M5PWGDG00000000000000001", tokens)).toBe(
+    "API token Deploy bot (by Bia Lima)",
+  );
+  expect(personName("tok_01M5PWGDG00000000000000002", tokens)).toBe("An API token");
+  await setLocale("pt-BR");
+  expect(personName("tok_01M5PWGDG00000000000000001", tokens)).toBe(
+    "Token de API Deploy bot (por Bia Lima)",
+  );
+});

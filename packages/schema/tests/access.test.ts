@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import {
+  allows,
   can,
   isRole,
   PERMISSIONS,
@@ -38,6 +39,7 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "data:export": true,
     "alert:read": true,
     "alert:manage": true,
+    "token:manage": true,
   },
   admin: {
     "incident:read": true,
@@ -65,6 +67,7 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "data:export": true,
     "alert:read": true,
     "alert:manage": true,
+    "token:manage": true,
   },
   responder: {
     "incident:read": true,
@@ -92,6 +95,7 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "data:export": false,
     "alert:read": true,
     "alert:manage": false,
+    "token:manage": false,
   },
   viewer: {
     "incident:read": true,
@@ -119,6 +123,7 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "data:export": false,
     "alert:read": true,
     "alert:manage": false,
+    "token:manage": false,
   },
 };
 
@@ -149,6 +154,7 @@ test("every permission comes from the statement", () => {
     "data:export",
     "alert:read",
     "alert:manage",
+    "token:manage",
   ]);
 });
 
@@ -174,4 +180,21 @@ test("unknown roles and permissions grant nothing", () => {
   expect(isRole("root")).toBe(false);
   expect(can("viewer", "incident:delete" as Permission)).toBe(false);
   expect(can("owner", "billing:read" as Permission)).toBe(false);
+});
+
+test("a token may use a permission only when its creator's role and its scopes both grant it (RFC 0014)", () => {
+  const token = {
+    kind: "token",
+    role: "admin",
+    scopes: ["monitor:manage", "incident:ack"],
+  } as const;
+  expect(allows(token, "monitor:manage")).toBe(true);
+  // Granted by the role, not by the scopes.
+  expect(allows(token, "incident:update")).toBe(false);
+  // Its creator demoted: the scope stays, the role no longer grants it.
+  expect(allows({ ...token, role: "responder" }, "monitor:manage")).toBe(false);
+  expect(allows({ ...token, role: "responder" }, "incident:ack")).toBe(true);
+  // A token without scopes can do nothing; a member is held to the role alone.
+  expect(allows({ kind: "token", role: "owner" }, "incident:read")).toBe(false);
+  expect(allows({ kind: "user", role: "admin" }, "incident:update")).toBe(true);
 });

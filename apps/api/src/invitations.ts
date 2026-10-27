@@ -262,6 +262,11 @@ export async function listInvitations(
   );
 }
 
+/** Who an invitation change runs as: the member, or the API token they sent it through with their role now. */
+function acting(actorId: string, role: Role, token: Actor | undefined): Actor {
+  return token ? { ...token, role } : { kind: "user", id: actorId, role };
+}
+
 export class Invitations {
   constructor(
     private readonly options: {
@@ -280,7 +285,8 @@ export class Invitations {
   /**
    * `actorId` invites `email` (already `invitationEmail`) as `role`. `origin`: the dashboard the request came
    * through, for the email's link when `DASHBOARD_URL` is not set. A pending invitation for that address that ran
-   * out is replaced.
+   * out is replaced. `token`: the API token `actorId` (its creator) sent it through (RFC 0014): the invitation is
+   * from the creator, and its event names the token.
    */
   invite(
     workspaceId: string,
@@ -288,6 +294,7 @@ export class Invitations {
     email: string,
     role: Role,
     origin: string | null,
+    token?: Actor,
   ): Promise<InvitationResult<{ invitation: ListedInvitation }>> {
     return this.options.membership.locked(async () => {
       const { db, log } = this.options;
@@ -357,7 +364,7 @@ export class Invitations {
       };
       this.recordSend(id, 1, now, origin);
       const applied = this.apply(
-        { kind: "user", id: actorId, role: actor.role },
+        acting(actorId, actor.role, token),
         "invitation.create",
         { id, role, expiresAt, send: 1, invitedBy: actorId },
         now,
@@ -372,6 +379,7 @@ export class Invitations {
     actorId: string,
     invitationId: string,
     origin: string | null,
+    token?: Actor,
   ): Promise<InvitationResult<{ expiresAt: number }>> {
     return this.options.membership.locked(async () => {
       const { db, log } = this.options;
@@ -432,7 +440,7 @@ export class Invitations {
       }
       this.recordSend(invitationId, send, now, origin);
       const applied = this.apply(
-        { kind: "user", id: actorId, role: actor.role },
+        acting(actorId, actor.role, token),
         "invitation.create",
         { id: invitationId, role: row.role, expiresAt, send, invitedBy: actorId },
         now,
@@ -442,7 +450,12 @@ export class Invitations {
   }
 
   /** Revokes a pending invitation (an admin never one for an owner). */
-  revoke(workspaceId: string, actorId: string, invitationId: string): Promise<InvitationResult> {
+  revoke(
+    workspaceId: string,
+    actorId: string,
+    invitationId: string,
+    token?: Actor,
+  ): Promise<InvitationResult> {
     return this.options.membership.locked(async () => {
       const { db, log } = this.options;
       const actor = await this.manager(workspaceId, actorId);
@@ -469,7 +482,7 @@ export class Invitations {
         return { ok: false, code: "unavailable" };
       }
       return this.apply(
-        { kind: "user", id: actorId, role: actor.role },
+        acting(actorId, actor.role, token),
         "invitation.revoke",
         { id: invitationId, role: row.role, revokedBy: actorId },
         Date.now(),

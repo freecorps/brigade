@@ -34,6 +34,8 @@ export const statement = {
   data: ["export"],
   // Alert sources and routes (RFC 0005 "Alert sources"): `manage` creates sources (their secret URLs) and routes.
   alert: ["read", "manage"],
+  // API tokens (RFC 0014): `manage` mints and revokes them. Never a token's own scope.
+  token: ["manage"],
 } as const;
 
 type Statement = typeof statement;
@@ -59,6 +61,7 @@ export const roles = {
     catalog: ["read", "manage"],
     data: ["export"],
     alert: ["read", "manage"],
+    token: ["manage"],
   },
   admin: {
     incident: ["read", "declare", "update", "ack"],
@@ -73,6 +76,7 @@ export const roles = {
     catalog: ["read", "manage"],
     data: ["export"],
     alert: ["read", "manage"],
+    token: ["manage"],
   },
   // Responders see what monitors say (they run the incidents monitors open) but do not change what is watched.
   responder: {
@@ -113,4 +117,17 @@ export function can(role: Role, permission: Permission): boolean {
   const [resource, action] = permission.split(":") as [Resource, string];
   const grants: Grants = roles[role];
   return (grants[resource] as readonly string[] | undefined)?.includes(action) ?? false;
+}
+
+/**
+ * Whether `actor` may use `permission`: its role grants it and, for an API token (RFC 0014), the token's scopes hold it
+ * too. The role of a token is its creator's current one, so a token never does more than its creator could.
+ */
+export function allows(
+  actor: { kind: string; role: unknown; scopes?: readonly string[] },
+  permission: Permission,
+): boolean {
+  if (!isRole(actor.role) || !can(actor.role, permission)) return false;
+  if (actor.kind !== "token") return true;
+  return Array.isArray(actor.scopes) && actor.scopes.includes(permission);
 }

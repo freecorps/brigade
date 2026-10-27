@@ -2,7 +2,7 @@
 // decide which subscriptions a changed row touches, and a client can re-run them over its local rows after an
 // optimistic mutation.
 
-import { can, isRole, type Permission, type Role } from "./access.ts";
+import { allows, type Permission, type Role } from "./access.ts";
 import { lookup, report } from "./mutation.ts";
 import type { Store } from "./store.ts";
 import { TABLES, type BrigadeTables, type SyncedTable } from "./tables.ts";
@@ -105,8 +105,9 @@ export function evaluateQuery<Args, T extends SyncedTable>(
 }
 
 /**
- * Checks that `role` may read, validates `rawArgs`, and evaluates the query. Never throws: unexpected
- * exceptions become an `internal` error and their cause goes only to `options.onError`.
+ * Checks that `role` may read (and, for an API token, that `options.scopes` hold the query's permission: RFC 0014),
+ * validates `rawArgs`, and evaluates the query. Never throws: unexpected exceptions become an `internal` error and
+ * their cause goes only to `options.onError`.
  */
 export function runQuery(
   registry: { readonly [name: string]: AnyQuery },
@@ -114,7 +115,7 @@ export function runQuery(
   rawArgs: unknown,
   store: Store<BrigadeTables>,
   role: Role,
-  options: { onError?(error: unknown, name: string): void } = {},
+  options: { onError?(error: unknown, name: string): void; scopes?: readonly Permission[] } = {},
 ): QueryResult {
   // `name` comes off the wire: a non-string is just an unknown query.
   const query = lookup(registry, name);
@@ -122,7 +123,8 @@ export function runQuery(
     return { ok: false, error: { code: "unknown_query", message: `Unknown query ${clip(name)}` } };
   }
   try {
-    if (!isRole(role) || !can(role, query.permission)) {
+    const actor = { kind: options.scopes ? "token" : "user", role, scopes: options.scopes };
+    if (!allows(actor, query.permission)) {
       return {
         ok: false,
         error: { code: "forbidden", message: `Not allowed to run ${query.name}` },

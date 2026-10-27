@@ -14,6 +14,9 @@ export type Incident_Page_AgainInputs = {
 * | "acked" | "Someone acknowledged the incident, so there's nothing to page again." |
 * | "resolved" | "The incident is no longer active, so there's nothing to page again." |
 * | "failed" | "Couldn't page again. {reason}" |
+* | "confirm_title" | "Page again?" |
+* | "confirm_body" | "Brigade sends a new page to everyone this one missed, right now." |
+* | "done" | "Paged again" |
 * | * | "Page again" |
 *
 * @param {Incident_Page_AgainInputs} inputs

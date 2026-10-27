@@ -181,12 +181,16 @@ Validate the risky assumptions before writing product code. Each spike produces 
     idempotent per tap, so it stops the escalation run like any ack) and answered with a quiet notification;
     offline, the answer is a page again with the action (RFC 0004 "Acknowledging from a notification", RFC 0006
     "Acting from the notification").
+  - Done: on the incident screen, "Page again" under a failed page for owners and admins while the incident waits
+    for someone, as on the dashboard, asking first (RFC 0005 "Page again"); who was paged and why, as the dashboard's
+    `?why=<member>` (RFC 0006 "Delivery receipts"); the incident screen and the explanation a readable width on a
+    tablet.
   - Done on an iPhone (2026-10-27, `dev`): signed in and registered, a page received on the locked phone and
     acknowledged from the notification ([write-up](spikes/s1-apns-encryption.md#real-iphone)).
   - Left: the Acknowledge action from a cold background launch; FCM for Android (until then Android
     says it is not paged); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
-    session's active one); creating an account or workspace from the app; editing and deleting updates; a tablet
-    layout.
+    session's active one); creating an account or workspace from the app; editing and deleting written updates
+    (no mutation for it yet, on the dashboard either: RFC 0003); a tablet layout beyond a readable width.
 - [ ] Event outbox + queue + push notifier
   - Done: the shard alarm drains the outbox to `brigade-events` (`-dev`, `-staging`) in commit order, in bounded
     batches, deleting rows only after the send, with exponential backoff; a consumer in the API Worker routes events
@@ -327,7 +331,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
     The incident page lists who was paged; `?why=<member>` explains it step by step (RFC 0006 "Delivery receipts").
   - Done since: call rows (RFC 0010), each up to accepted by APNs (a call has no receipt), shown apart from the page's.
   - Left: receipts from Android (FCM); "shown" and "opened by the person" stages;
-    escalating early when every push of a level is refused (Q18); the mobile app's own why-not-paged screen.
+    escalating early when every push of a level is refused (Q18).
+  - Done since: the mobile app's own why-not-paged screen: "Who was paged" on the incident screen (the member's own
+    first), each row opening the step-by-step explanation, call lines included, from the same `whyPaged` and the
+    wording now shared in `@freecorps/brigade-i18n/why-paged`.
 
 ## Phase 3 — Parity where it matters (6–8 weeks)
 

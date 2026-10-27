@@ -11,6 +11,7 @@ export default defineConfig({
       "src/auth.ts",
       "src/incident.ts",
       "src/oncall.ts",
+      "src/why-paged.ts",
     ],
     // Ship Paraglide's output as is (one module per message, `m` a real ESM namespace) so consumers
     // tree-shake down to the messages they use; bundling it would turn `m` into a plain object.

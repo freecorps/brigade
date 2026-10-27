@@ -85,6 +85,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "email_off" | "Emails about missed pages are off in this workspace." |
 * | "acknowledged" | "{name} acknowledged it {time}, which stopped paging." |
 * | "why_link_label" | "Was {name} paged?" |
+* | "open_hint" | "Opens the step-by-step explanation" |
 * | "verdict_missed_reason" | "Brigade couldn't page {name}: {detail}" |
 * | "verdict_stuck" | "A page to {name} was planned but never sent" |
 * | "short_stuck" | "Planned but never sent" |
@@ -201,6 +202,7 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "email_off") return /** @type {LocalizedString} */ (`Os emails sobre acionamentos perdidos estão desligados neste espaço de trabalho.`);
 		if (i?.text === "acknowledged") return /** @type {LocalizedString} */ (`${i?.name} reconheceu ${i?.time}, o que parou os acionamentos.`);
 		if (i?.text === "why_link_label") return /** @type {LocalizedString} */ (`Ver acionamentos de ${i?.name}`);
+		if (i?.text === "open_hint") return /** @type {LocalizedString} */ (`Abre a explicação passo a passo`);
 		if (i?.text === "verdict_missed_reason") return /** @type {LocalizedString} */ (`O Brigade não conseguiu acionar ${i?.name}: ${i?.detail}`);
 		if (i?.text === "verdict_stuck") return /** @type {LocalizedString} */ (`Um acionamento para ${i?.name} foi planejado, mas nunca enviado`);
 		if (i?.text === "short_stuck") return /** @type {LocalizedString} */ (`Planejado, nunca enviado`);
@@ -311,6 +313,7 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "email_off") return /** @type {LocalizedString} */ (`Emails about missed pages are off in this workspace.`);
 		if (i?.text === "acknowledged") return /** @type {LocalizedString} */ (`${i?.name} acknowledged it ${i?.time}, which stopped paging.`);
 		if (i?.text === "why_link_label") return /** @type {LocalizedString} */ (`Was ${i?.name} paged?`);
+		if (i?.text === "open_hint") return /** @type {LocalizedString} */ (`Opens the step-by-step explanation`);
 		if (i?.text === "verdict_missed_reason") return /** @type {LocalizedString} */ (`Brigade couldn't page ${i?.name}: ${i?.detail}`);
 		if (i?.text === "verdict_stuck") return /** @type {LocalizedString} */ (`A page to ${i?.name} was planned but never sent`);
 		if (i?.text === "short_stuck") return /** @type {LocalizedString} */ (`Planned but never sent`);

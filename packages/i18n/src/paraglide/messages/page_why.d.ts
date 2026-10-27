@@ -85,6 +85,7 @@ export type Page_WhyInputs = {
 * | "email_off" | "Emails about missed pages are off in this workspace." |
 * | "acknowledged" | "{name} acknowledged it {time}, which stopped paging." |
 * | "why_link_label" | "Was {name} paged?" |
+* | "open_hint" | "Opens the step-by-step explanation" |
 * | "verdict_missed_reason" | "Brigade couldn't page {name}: {detail}" |
 * | "verdict_stuck" | "A page to {name} was planned but never sent" |
 * | "short_stuck" | "Planned but never sent" |

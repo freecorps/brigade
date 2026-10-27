@@ -45,8 +45,9 @@ without a policy keeps the interim rule (commander, then every owner, admin and 
   lost SEV1 or SEV2 declaration is paged again once on its own (RFC 0005 "Notifiers", decided).
 - A failed page is surfaced on the timeline, in logs and now by email (RFC 0005 "Email"): a member a SEV1 or SEV2
   page missed is told once per incident, and the owners are told when a page reached nobody and nothing else will
-  page on its own; both on by default, `workspace.setEmail` turns either off. Still open: a dashboard switch for it;
-  whether a member may opt out of their own emails (deferred to notification preferences); whether the owners'
+  page on its own; both on by default, `workspace.setEmail` turns either off (a dashboard switch now). A member may
+  turn their own missed-page email off (`member.setEmail`); the owners' email has no per-member opt-out, as the
+  fallback when paging fails. Still open: whether the owners'
   email should also go to admins, or skip an owner who declared the incident; and whether the external dead-man
   switch should hear of it too. Email verification gates these emails now: only verified addresses get them (RFC
   0005 "Email", "Abuse"); the caps on them and on account emails are Q21's.
@@ -212,6 +213,9 @@ the email Slack confirmed for one of the connected team's own users (RFC 0011 "W
 - AI drafts are 20 a day per workspace and read members by name. Should an instance operator be able to turn drafts
   off per workspace, or pick another Workers AI model, without a deploy?
 - The draft's language is the status page's, else the asker's. Should workspaces get their own language setting?
+- Follow-up reminders go at 09:00 on the owner's clock (their devices' time zone, the last one used; else UTC), once
+  a day, while anything is due or overdue. Should the hour be a member's choice, should reminders also go a day
+  before the due date, and should an overdue follow-up stop reminding after a while?
 - Exports last 7 days and only owners and admins make them. Should responders export the incidents they ran?
 
 ## Q25 — API tokens to confirm (RFC 0014)

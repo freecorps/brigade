@@ -11,6 +11,8 @@ import {
   newId,
   ROLES,
   nextMaintenanceAt,
+  nextReminderAt,
+  remindersDue,
   STATUS_PAGE_ID,
   statusFollowKey,
   TOKENS_ACTOR,
@@ -64,7 +66,7 @@ import {
   Monitoring,
   type MonitorEnv,
 } from "./monitors.ts";
-import { Mailer, type EmailOutcome, type EmailPlan } from "./mailer.ts";
+import { Mailer, type EmailOutcome, type EmailPlan, type ReminderPlan } from "./mailer.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
 import {
   asksForPage,
@@ -295,6 +297,7 @@ export class WorkspaceDO extends DurableObject<Env> {
         this.armDrain();
         this.armStatus();
         this.armMaintenance();
+        this.armReminders();
         // Activity: the alarm reconciles the member list with D1 a while after it (src/members.ts `periodic`).
         // Undefined only while the constructor runs, before anything commits.
         this.membership?.touched(Date.now());
@@ -408,6 +411,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     // starts or ends.
     this.armStatus();
     this.armMaintenance();
+    this.armReminders();
     // Events left in the outbox (an alarm that failed to arm, a restart) arm the drain again whenever the object
     // wakes, so a backlog never waits for an unrelated change.
     try {
@@ -1593,6 +1597,21 @@ export class WorkspaceDO extends DurableObject<Env> {
   }
 
   /**
+   * The reminder of follow-ups due an event asks for (RPC from the queue consumer, src/notify-reminder.ts): see
+   * `Mailer.planReminder`.
+   */
+  planReminder(event: BrigadeEvent): ReminderPlan {
+    if (this.shard.workspace() !== event.workspaceId) return { send: false, reason: "not_found" };
+    return this.mailer.planReminder(event, Date.now());
+  }
+
+  /** What a reminder's send did (RPC from the queue consumer): see `Mailer.recordReminder`. */
+  recordReminder(event: BrigadeEvent, outcome: EmailOutcome, final: boolean): void {
+    if (this.shard.workspace() !== event.workspaceId) return;
+    this.mailer.recordReminder(event, outcome, final, Date.now());
+  }
+
+  /**
    * Starts a Slack install for `userId` (RPC from `POST /workspaces/:id/slack/install`, which checked the session and
    * that they manage the workspace; RFC 0011 "Installing"): a one-time state nonce, or null when too many are pending
    * or this shard serves another workspace.
@@ -1804,6 +1823,9 @@ export class WorkspaceDO extends DurableObject<Env> {
     // Maintenance windows that started or ended (RFC 0012 "Scheduled maintenance"): their events go out with the drain
     // below, and the push after it shows them.
     this.advanceMaintenance(Date.now());
+    // Reminders of follow-ups due (RFC 0013 "Reminders"): `follow_up.reminder_due` events, out with the drain below,
+    // after every page above.
+    this.remind(Date.now());
     await this.drainOutbox();
     // The status page after the outbox: a page never waits on KV. Never throws; KV calls have no deadline of their
     // own, so past `STATUS_PUSH_BUDGET_MS` the push carries on in the background, the push backs off (the alarm does
@@ -1933,8 +1955,20 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("reading the maintenance windows failed", { error });
     }
+    let reminderAt: number | null = null;
+    try {
+      const at = nextReminderAt(this.shard.store, Date.now());
+      // One that could not go is tried again a tick later, not in a loop.
+      reminderAt =
+        at === null ? null : Math.max(at, Date.now() + (at <= now ? MONITOR_TICK_MS : 0));
+    } catch (error) {
+      this.log("reading the follow-up reminders failed", { error });
+    }
     const next = earliest(
-      earliest(earliest(monitors, escalationAt), earliest(repair, earliest(armed, maintenanceAt))),
+      earliest(
+        earliest(monitors, escalationAt),
+        earliest(repair, earliest(armed, earliest(maintenanceAt, reminderAt))),
+      ),
       earliest(
         earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
         earliest(
@@ -2019,6 +2053,37 @@ export class WorkspaceDO extends DurableObject<Env> {
       }
     } catch (error) {
       this.log("moving maintenance windows on failed", { error });
+    }
+  }
+
+  /**
+   * Reminds each member whose reminder of follow-ups due is due (`followUp.remind`, one per member and day). Each on
+   * its own, so one refused never holds back the others. Never throws.
+   */
+  private remind(now: number): void {
+    let due: { userId: string; date: string }[];
+    try {
+      due = remindersDue(this.shard.store, now);
+    } catch (error) {
+      this.log("reading the follow-up reminders failed", { error });
+      return;
+    }
+    for (const reminder of due) {
+      try {
+        this.serverMutation("followUp.remind", reminder);
+      } catch (error) {
+        this.log("reminding of follow-ups failed", { error });
+      }
+    }
+  }
+
+  /** Brings the alarm forward for the next reminder of follow-ups due. Never throws. */
+  private armReminders(): void {
+    try {
+      const at = nextReminderAt(this.shard.store, Date.now());
+      if (at !== null) this.wake(at, "follow-up reminder");
+    } catch (error) {
+      this.log("arming the follow-up reminder failed", { error: String(error) });
     }
   }
 

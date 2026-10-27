@@ -192,7 +192,8 @@ RFC 0005 "Email". The same `queue` handler routes each `notification.failed` fro
 their addresses and languages from D1 (`user.email`, `user.locale`), renders each email in the recipient's language
 (`src/email-templates.ts`, `email_text` in packages/i18n, escaped HTML and plain text) and sends it through an
 `EmailSender` (`src/email.ts`), then reports back (`WorkspaceDO.recordEmail`). Two emails, both on by default
-(`workspace.setEmail`, owners and admins):
+(`workspace.setEmail`, owners and admins; a member can turn their own missed-page email off with `member.setEmail`,
+never the owners' one):
 
 - **A member a page missed** (no phone, every push failed, Android, no relay, the device cap): SEV1 and SEV2 only,
   once per incident.
@@ -203,6 +204,10 @@ Neither once the incident is acknowledged or resolved. A failed send is retried 
 attempts, or at once when the service refuses the message or address, it is an `email_failed` timeline entry and a
 `notification.failed` with `channel: "email"`. Push never waits on any of this: email only acts on failures push
 already recorded, and a page in the same batch is handled in parallel.
+
+The same path sends the daily reminder of follow-ups due (RFC 0013 "Reminders", `src/notify-reminder.ts`): the shard's
+alarm emits `follow_up.reminder_due` at 09:00 on each owner's clock (else UTC), at most once a day, and the consumer
+sends it with the same ledger, caps and retries.
 
 Which sender is used:
 

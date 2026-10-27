@@ -1,8 +1,15 @@
 import { m } from "@freecorps/brigade-i18n";
-import { CALL_CHOICES, callChoiceOf, type CallChoice } from "@freecorps/brigade-schema";
+import {
+  CALL_CHOICES,
+  callChoiceOf,
+  emailSettings,
+  memberEmailOf,
+  type CallChoice,
+  type MemberEmail,
+} from "@freecorps/brigade-schema";
 import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { radius, spacing } from "@freecorps/brigade-ui";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import {
@@ -12,12 +19,14 @@ import {
   Linking,
   Pressable,
   StyleSheet,
+  Switch,
   View,
 } from "react-native";
 import { useChoiceSheet } from "@/components/choice-sheet";
 import { Row, Section } from "@/components/section";
 import { useMember } from "@/components/session";
 import { ThemedText } from "@/components/themed-text";
+import { useLocale } from "@/hooks/use-locale";
 import { useTheme } from "@/hooks/use-theme";
 import { authClient } from "@/lib/auth-client";
 import type { Paging } from "@/lib/device";
@@ -326,6 +335,85 @@ function Calls() {
   );
 }
 
+/**
+ * The member's own email choices in the open workspace (`member.setEmail`, RFC 0005 "Email", RFC 0013 "Reminders"),
+ * each saved as soon as it is switched (offline, when the phone is next online). The owners' "a page reached nobody"
+ * email is not among them: it is the fallback when paging fails, which the note under them says. Also keeps the time
+ * zone reminders follow on the phone's (`member.setTimeZone`).
+ */
+function EmailChoices() {
+  const { userId } = useMember();
+  const colors = useTheme();
+  const { timeZone } = useLocale();
+  const settings = useQuery("members.settings", {});
+  const workspace = useQuery("workspace.current", {});
+  const setEmail = useMutation("member.setEmail");
+  const setTimeZone = useMutation("member.setTimeZone");
+  const [picked, setPicked] = useState<MemberEmail | null>(null);
+  const [failed, setFailed] = useState(false);
+  const value = memberEmailOf(settings.rows, userId);
+  const shown = picked ?? value;
+  const ready = settings.status === "ready";
+  const keptZone = settings.rows.find((row) => row.id === userId)?.timeZone;
+  useEffect(() => {
+    if (ready && timeZone && timeZone !== keptZone) void setTimeZone({ timeZone });
+  }, [ready, timeZone, keptZone, setTimeZone]);
+  const text = (part: string) => m.member_email_settings({ part });
+  const flip = (key: keyof MemberEmail, on: boolean) => {
+    const next = { ...shown, [key]: on };
+    setPicked(next);
+    setFailed(false);
+    void setEmail(next).then((outcome) => {
+      setPicked(null);
+      if (!outcome.ok && outcome.error.code !== "conflict") setFailed(true);
+    });
+  };
+  const rows: { key: keyof MemberEmail; note?: string }[] = [
+    {
+      key: "missedPages",
+      ...(emailSettings(workspace.rows[0]).unpaged ? {} : { note: text("missed_workspace_off") }),
+    },
+    { key: "followUpReminders" },
+  ];
+  return (
+    <>
+      {rows.map(({ key, note }) => {
+        const label = text(key === "missedPages" ? "missed" : "reminders");
+        const hint = text(key === "missedPages" ? "missed_hint" : "reminders_hint");
+        return (
+          <Row key={key}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing[3] }}>
+              <ThemedText variant="label" style={{ flex: 1 }}>
+                {label}
+              </ThemedText>
+              <Switch
+                accessibilityLabel={label}
+                accessibilityHint={hint}
+                disabled={!ready}
+                value={shown[key]}
+                onValueChange={(on) => flip(key, on)}
+              />
+            </View>
+            <ThemedText variant="caption">{hint}</ThemedText>
+            {note ? <ThemedText variant="caption">{note}</ThemedText> : null}
+          </Row>
+        );
+      })}
+      <Row>
+        <ThemedText variant="caption">{text("owners_note")}</ThemedText>
+        {settings.status === "error" ? (
+          <ThemedText style={{ color: colors.destructive }}>{text("load_failed")}</ThemedText>
+        ) : null}
+        {failed ? (
+          <ThemedText accessibilityLiveRegion="polite" style={{ color: colors.destructive }}>
+            {text("failed")}
+          </ThemedText>
+        ) : null}
+      </Row>
+    </>
+  );
+}
+
 /** Who is signed in, in which workspace, whether this phone is paged, and Sign out. */
 export function Account() {
   const member = useMember();
@@ -409,6 +497,7 @@ export function Account() {
         </ThemedText>
       </Row>
       <Calls />
+      <EmailChoices />
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ busy: leaving, disabled: leaving }}

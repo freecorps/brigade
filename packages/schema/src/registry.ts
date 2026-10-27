@@ -95,7 +95,15 @@ import {
 import { allApiTokens, apiTokenServerMutations } from "./api-tokens.ts";
 import { invitationMutations } from "./invitations.ts";
 import { changeMemberRole, reconcileMembers, removeMember } from "./members.ts";
-import { allMembers, createWorkspace, setEmailSettings, syncMember } from "./workspaces.ts";
+import {
+  allMembers,
+  createWorkspace,
+  currentWorkspace,
+  setEmailSettings,
+  syncMember,
+} from "./workspaces.ts";
+import { memberEmailMutations } from "./member-email.ts";
+import { remindFollowUps } from "./reminders.ts";
 
 /** What clients may send over a socket. */
 export const mutations = defineRegistry([
@@ -113,6 +121,7 @@ export const mutations = defineRegistry([
   registerDevice,
   unregisterDevice,
   setCalls,
+  ...memberEmailMutations,
   setEmailSettings,
   configureSlack,
   disconnectSlack,
@@ -131,6 +140,7 @@ export const queries = defineRegistry([
   incidentTimeline,
   allMembers,
   allMemberSettings,
+  currentWorkspace,
   allMonitors,
   monitorCapQuery,
   allSchedules,
@@ -173,6 +183,7 @@ export const serverMutations = defineRegistry([
   registerDevice,
   unregisterDevice,
   setCalls,
+  ...memberEmailMutations,
   setEmailSettings,
   configureSlack,
   disconnectSlack,
@@ -186,6 +197,7 @@ export const serverMutations = defineRegistry([
   ...maintenanceServerMutations,
   createWorkspace,
   syncMember,
+  remindFollowUps,
   changeMemberRole,
   removeMember,
   reconcileMembers,

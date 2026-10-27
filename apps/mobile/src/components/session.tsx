@@ -16,6 +16,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { useUserLocale } from "@/hooks/use-user-locale";
 import { authClient, forgetSession, server } from "@/lib/auth-client";
 import { registerEverywhere, unregisterPhone, type Paging, type Registrations } from "@/lib/device";
 import { drainer, type Drainable } from "@/lib/drain";
@@ -193,6 +194,8 @@ export function Session({ children }: { children: (ready: boolean) => ReactNode 
 
   const data = session.data;
   const workspaceId = data?.session.activeOrganizationId;
+  // Emails to them come in the phone's language (RFC 0008).
+  useUserLocale(data?.user);
   // With nobody in a workspace to register for, kept sign-outs are still finished; ActiveWorkspace does both.
   usePaging(!(data && workspaceId), online, null);
   let view: SessionView;

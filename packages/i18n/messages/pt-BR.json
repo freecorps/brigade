@@ -3273,5 +3273,100 @@
         "part=*": "Chamadas"
       }
     }
+  ],
+  "email_reminder": [
+    {
+      "declarations": [
+        "input part",
+        "input workspace",
+        "input title",
+        "input incident",
+        "input date"
+      ],
+      "selectors": ["part"],
+      "match": {
+        "part=subject": "Ações de acompanhamento com prazo em {workspace}",
+        "part=item": "{title} ({incident}), prazo {date}",
+        "part=item_overdue": "{title} ({incident}), atrasada desde {date}",
+        "part=open": "Abrir suas ações de acompanhamento",
+        "part=off": "Para parar estes lembretes, desative Lembretes de ações no cartão Email do painel, ou em Email nos ajustes de conta do app do Brigade.",
+        "part=footer": "Você está recebendo este email porque é responsável por ações de acompanhamento em {workspace} no Brigade.",
+        "part=*": "Ações de acompanhamento com prazo em {workspace}"
+      }
+    }
+  ],
+  "email_reminder_intro": [
+    {
+      "declarations": [
+        "input count",
+        "input workspace",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Você tem {countFormatted} ação de acompanhamento aberta com prazo hoje ou atrasada em {workspace}:",
+        "countPlural=*": "Você tem {countFormatted} ações de acompanhamento abertas com prazo hoje ou atrasadas em {workspace}:"
+      }
+    }
+  ],
+  "email_reminder_more": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "E mais {countFormatted}.",
+        "countPlural=*": "E mais {countFormatted}."
+      }
+    }
+  ],
+  "member_email_settings": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Email",
+        "part=description": "Sobre o que o Brigade envia email para você neste workspace.",
+        "part=missed": "Acionamentos perdidos",
+        "part=missed_hint": "Quando um acionamento SEV1 ou SEV2 não chega ao seu celular, o Brigade envia um email para você, uma vez por incidente.",
+        "part=missed_workspace_off": "Seu workspace desativou estes emails para todos.",
+        "part=reminders": "Lembretes de ações",
+        "part=reminders_hint": "Toda manhã às 9:00 no seu fuso horário, a lista das suas ações de acompanhamento abertas com prazo no dia ou atrasadas. No máximo um email por dia.",
+        "part=owners_note": "Proprietários sempre recebem o email quando um acionamento não chegou a ninguém, seja qual for a escolha aqui: é o último recurso quando o acionamento falha.",
+        "part=saving": "Salvando…",
+        "part=saved": "Salvo",
+        "part=failed": "Não foi possível salvar sua escolha. Tente de novo.",
+        "part=loading": "Carregando suas escolhas…",
+        "part=load_failed": "Não foi possível carregar suas escolhas.",
+        "part=on": "Ativado",
+        "part=off": "Desativado",
+        "part=*": "Email"
+      }
+    }
+  ],
+  "workspace_email_settings": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Email quando o acionamento falha",
+        "part=description": "Quem o Brigade avisa por email quando um acionamento não chega. Os dois vêm ativados.",
+        "part=unpaged": "Avisar o membro que um acionamento não chegou",
+        "part=unpaged_hint": "Envia email a um membro quando um acionamento SEV1 ou SEV2 não chegou ao celular dele, uma vez por incidente. Cada membro também pode desativar isso para si.",
+        "part=nobody": "Avisar os proprietários quando um acionamento não chegou a ninguém",
+        "part=nobody_hint": "Envia email aos proprietários quando um acionamento não chegou a ninguém e nada mais vai acionar. É o último recurso quando o acionamento falha, então os membros não podem desativá-lo para si.",
+        "part=nobody_off": "Enquanto isto estiver desativado, ninguém fica sabendo de um acionamento que não chegou a ninguém até abrir o Brigade.",
+        "part=saving": "Salvando…",
+        "part=saved": "Salvo",
+        "part=failed": "Não foi possível salvar a configuração. Tente de novo.",
+        "part=loading": "Carregando as configurações…",
+        "part=load_failed": "Não foi possível carregar as configurações.",
+        "part=*": "Email quando o acionamento falha"
+      }
+    }
   ]
 }

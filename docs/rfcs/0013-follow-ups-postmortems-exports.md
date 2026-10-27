@@ -50,6 +50,29 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
 - **Not yet**: syncing with an issue tracker (the link is typed by hand), reminders before a due date, the mobile
   app (it reads the timeline entries only).
 
+## Reminders
+
+- **What.** Once a day, each member who owns open follow-ups due that day or overdue gets one email listing them
+  (soonest due first, at most 20, the rest counted), each with its incident, a link to `/follow-ups`, and how to turn
+  reminders off. In the member's language (`user.locale`), plain text and escaped HTML like every email (RFC 0005
+  "Email"). A due date is a calendar day, so "today" is the member's own.
+- **When.** At 09:00 (`REMINDER_HOUR`) on the member's clock: the time zone their devices send
+  (`member.setTimeZone`, kept on their `member_settings` row, synced like their call choice; the dashboard and the app
+  send the device's own when it differs from the one kept, so the last device used wins), else UTC.
+- **How.** The shard's alarm (after every page it fires and the drain) asks who is due (`remindersDue`) and runs
+  the server-only `followUp.remind` for each, which writes the day in a server-only ledger (`follow_up_reminders`,
+  one row per member: at most one reminder a day) and emits `follow_up.reminder_due` (`userId`, `date`, `count`)
+  through the outbox. The alarm wakes for the next one due (`nextReminderAt`), armed again after every change. The
+  queue consumer (`src/notify-reminder.ts`) asks the shard for the email (`planReminder`: what is still due, read
+  then, claimed in the email notifier's ledger as `reminder:<member>:<day>`), reads the verified address and language
+  from D1, and sends within the same caps (5 an hour per user, 200 a day per workspace), with the same retries (30 s
+  to 4 minutes, 5 attempts). A failure past them is only logged: a reminder has no incident timeline.
+- **Opting out.** `member.setEmail` (`followUpReminders`, RFC 0005 "Email") from the dashboard's Email card or the
+  app's account settings; on by default. A reminder already asked for is not sent once turned off, nor when
+  everything it would list was done meanwhile.
+- **Never a paging path.** It runs after the alarm's pages, its email goes through the email path only (tested: it
+  never reaches the relay), and nothing pages from it.
+
 ## Postmortems
 
 - **Row** (`postmortems`, synced, keyed by the incident id): seven plain-text sections, `summary`, `impact`,
@@ -152,5 +175,5 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
 
 ## Not in this slice
 
-The mobile app's follow-ups and postmortem screens; reminders and notifications for follow-ups due; postmortem
+The mobile app's follow-ups and postmortem screens; push notifications for follow-ups due; postmortem
 templates per incident type; revision history; publishing a postmortem to the status page; issue-tracker sync.

@@ -326,7 +326,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     pages and SEV2 escalations, the default; SEV1 only; never) with `member.setCalls`, from the dashboard's Calls card
     and the mobile app's account section, and the queue consumer follows it, the alert push going out either way (RFC
     0010 "Who a call rings").
-  - Left: trying it on an iPhone (VoIP Services on the App ID); a per-phone choice of calls; Android calls (FCM).
+  - Tried on an iPhone (a local release build on `dev`): a SEV1 page rings as a call on the locked phone, answering
+    reads it aloud and 1 acknowledges, and "Never" in Account → Calls leaves only the push.
+  - Left: a per-phone choice of calls; Android calls (FCM).
 - [ ] Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup
   - Done: the on-call screen (shifts, overrides, who each schedule has now, covering a shift); pages are
     time-sensitive. The iOS "I'm on call" widget (home screen small, lock screen rectangular and inline): on call
@@ -335,8 +337,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     "Schedules"). Critical Alerts are ready behind the entitlement (RFC 0006 "Critical Alerts"): a build flag, the
     device's capability in `device.register`, and SEV1 pages critical only on phones that allow them, falling back
     to time-sensitive.
-  - Left: Apple's Critical Alerts grant (Q8), then turning it on; trying the widget and Critical Alerts on an
-    iPhone; an Android widget; Android's alarm channel and DND access (FCM first).
+  - Tried on an iPhone: the widget on the home and lock screens, and pages as time-sensitive notifications.
+  - Left: Apple's Critical Alerts grant (Q8), then turning it on and trying it; an Android widget; Android's alarm
+    channel and DND access (FCM first).
 - [x] Delivery receipts and "why wasn't I paged" debugging view
   - Each page is a row per device (`deliveries`, synced to members): planned, handed to the relay, accepted by
     APNs (or the error, with APNs' reason), opened on the phone. The iOS Notification Service Extension reports

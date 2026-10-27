@@ -146,7 +146,9 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
   The extension is its own target (`app.freecorps.brigade.Widget`, App Group `group.app.freecorps.brigade`), so the
   first EAS build after it needs its credentials once, interactively (`eas credentials -p ios`, or an interactive
   `eas build`): the App ID with App Groups on, and an ad hoc and an App Store profile for it. Until then a
-  non-interactive build stops at the credentials step.
+  non-interactive build stops at the credentials step. A local build (`mobile:install`) has Xcode create the App ID,
+  but without the App Group: assign `group.app.freecorps.brigade` to `app.freecorps.brigade.Widget` once in the
+  Developer portal (Identifiers → App Groups → Configure), or the build stops on the widget's profile.
 - **Critical Alerts (off):** `BRIGADE_CRITICAL_ALERTS=1` at build time adds the entitlement, asks for Critical Alerts
   with the notification permission and reports them in `device.register`; SEV1 pages then ring through silent mode
   on phones that allow them. Leave it unset until Apple grants the entitlement (RFC 0006 "Critical Alerts").

@@ -659,3 +659,49 @@ describe("editing and removing written updates", () => {
     ).toMatchObject({ ok: false, error: { code: "forbidden" } });
   });
 });
+
+describe("renaming an incident", () => {
+  test("changes the title, keeps both on the timeline and emits incident.renamed", () => {
+    const store = storeWith([legacy({ timelineSeq: 1, roles: {} })]);
+    const result = run(store, "incident.rename", {
+      id: ID,
+      title: "  Checkout errors in eu-west ",
+    });
+    expect(result).toEqual({
+      ok: true,
+      events: [
+        {
+          type: "incident.renamed",
+          subject: ID,
+          data: { from: "Checkout is down", to: "Checkout errors in eu-west" },
+        },
+      ],
+    });
+    expect(store.get("incidents", ID)).toMatchObject({
+      title: "Checkout errors in eu-west",
+      updatedAt: T,
+    });
+    expect(store.get("timeline", `${ID}:2`)).toMatchObject({
+      kind: "renamed",
+      from: "Checkout is down",
+      to: "Checkout errors in eu-west",
+      actor: "usr_ana",
+      at: T,
+    });
+  });
+
+  test("in any status; the same title is a conflict, a bad one invalid, a viewer forbidden", () => {
+    const store = storeWith([legacy({ status: "resolved", timelineSeq: 1, roles: {} })]);
+    expect(run(store, "incident.rename", { id: ID, title: "Postmortem: checkout" }).ok).toBe(true);
+    const refusal = (args: unknown, context?: MutationContext) => {
+      const result = run(store, "incident.rename", args, context);
+      return result.ok ? null : result.error.code;
+    };
+    expect(refusal({ id: ID, title: "Postmortem: checkout" })).toBe("conflict");
+    expect(refusal({ id: ID, title: "   " })).toBe("invalid_args");
+    expect(refusal({ id: ID, title: "x".repeat(201) })).toBe("invalid_args");
+    expect(refusal({ id: ID, title: "Mine" }, ctx("viewer"))).toBe("forbidden");
+    expect(refusal({ id: OTHER, title: "Elsewhere" })).toBe("not_found");
+    expect(store.get("incidents", ID)?.title).toBe("Postmortem: checkout");
+  });
+});

@@ -77,6 +77,7 @@ const HOUR_MS = 60 * 60_000;
 /** Incident events the Slack notifier acts on: the message, the channel, the mirror and the invitations. */
 const INCIDENT_EVENTS = new Set([
   "incident.declared",
+  "incident.renamed",
   "incident.acknowledged",
   "incident.status_changed",
   "incident.severity_changed",
@@ -979,6 +980,8 @@ export class SlackDesk {
         break;
       case "incident.acknowledged":
       case "incident.severity_changed":
+      // The message reads the title as it is now; the channel keeps the name it was made with.
+      case "incident.renamed":
         updateMessages();
         mirror();
         break;
@@ -1317,6 +1320,8 @@ export class SlackDesk {
         return { kind: "status", by, to: data.to as IncidentStatus };
       case "incident.severity_changed":
         return { kind: "severity", by, to: data.to as Severity };
+      case "incident.renamed":
+        return { kind: "renamed", by, to: String(data.to) };
       case "incident.update_posted": {
         const [inbound] = this.sql
           .exec("select entry_id from slack_inbound where entry_id = ?", String(data.entryId))

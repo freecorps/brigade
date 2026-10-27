@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+- `updateIncident` also renames the incident (`title`, run as `incident.rename`) and hands out incident roles
+  (`roles`: a user id by role id, `null` leaves one empty, each run as `incident.assignRole`), first and after the
+  custom fields respectively, with the same partial application: the first refusal stops the rest.
+- `editIncidentUpdate` and `deleteIncidentUpdate` (`incident:update`): new text for a written update (its author
+  only: the member, or an API token that posted it or whose creator did) and removing one (its author, an owner or
+  an admin). `409 conflict`: the update was removed.
+- `postIncidentUpdate` answers the update's `entryId` (type `UpdatePosted`), what the two above take.
+- Payload types: `incident.renamed` (`from`, `to`), a new event in the webhook catalog (version 1).
+
 ## 0.2.0 (unreleased)
 
 - `createClient` covers incidents and the catalog: `listIncidents` (filters by status, severity, type and service;

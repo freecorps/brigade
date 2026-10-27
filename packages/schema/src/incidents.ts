@@ -80,8 +80,11 @@ export type IncidentRoleAssigned = DomainEvent<
     to: string | null;
   }
 >;
+/** The incident's title changed: `from` the title it had, `to` the one it has now. */
+export type IncidentRenamed = DomainEvent<"incident.renamed", { from: string; to: string }>;
 export type IncidentEvent =
   | IncidentDeclared
+  | IncidentRenamed
   | IncidentStatusChanged
   | IncidentSeverityChanged
   | IncidentAcknowledged
@@ -229,6 +232,29 @@ export const declareIncident = defineMutation({
       type: "incident.declared",
       subject: id,
       data: { id, number, title, severity, status },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * Renames an incident (RFC 0003 "Incident"): a title within the declare's limits, in any status, so a resolved
+ * incident can still get a better name for its postmortem. The timeline keeps both titles ("renamed from … to …").
+ */
+export const renameIncident = defineMutation({
+  name: "incident.rename",
+  args: v.object({ id: incidentId, title: v.string({ min: 1, max: INCIDENT_TITLE_MAX }) }),
+  permission: "incident:update",
+  apply(store, args, ctx) {
+    const incident = store.get("incidents", args.id);
+    if (!incident) return fail("not_found", "Incident not found");
+    if (incident.title === args.title) return fail("conflict", "The title is already that");
+    store.update("incidents", args.id, { title: args.title, updatedAt: ctx.now });
+    appendTimeline(store, incident, { kind: "renamed", from: incident.title, to: args.title }, ctx);
+    const event: IncidentRenamed = {
+      type: "incident.renamed",
+      subject: args.id,
+      data: { from: incident.title, to: args.title },
     };
     return ok(event);
   },

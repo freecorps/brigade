@@ -140,10 +140,18 @@ const { incident } = await brigade.declareIncident(
   { idempotencyKey: `deploy-check:${runId}` },
 );
 await brigade.updateIncident(workspaceId, incident.id, {
+  title: "Checkout is down in eu-west",
   status: "investigating",
   fields: { [regionFieldId]: "eu-west" },
+  roles: { commander: commanderUserId },
 });
-await brigade.postIncidentUpdate(workspaceId, incident.id, { body: "Rolling back the deploy." });
+const { entryId } = await brigade.postIncidentUpdate(workspaceId, incident.id, {
+  body: "Rolling back the deploy.",
+});
+// Its author (the token, or its creator) corrects it; an owner or admin could remove it.
+await brigade.editIncidentUpdate(workspaceId, incident.id, entryId!, {
+  body: "Rolled back the deploy.",
+});
 
 // Every open SEV1, a page at a time.
 for (let cursor: string | undefined; ;) {
@@ -168,29 +176,30 @@ await brigade.createCustomField(workspaceId, {
 ```
 
 Each write runs the named mutation the apps send, with the same rules, timeline entry and event, as the member or
-token; every write takes an `idempotencyKey` (a random one by default). `updateIncident` changes the type, services,
-fields, severity and status in that order, each its own change; the first refusal stops the rest, and the ones before
+token; every write takes an `idempotencyKey` (a random one by default). `updateIncident` changes the title, type,
+services, fields, roles, severity and status in that order, each its own change; the first refusal stops the rest, and the ones before
 it stay made. The same key answers the same refusal again (within 7 days): once it is fixed, retry with a new key, and
 the changes already made come back as no change. A key sent with another request is refused
 (`422 idempotency_key_reused`). A `PATCH` answers the row, so with a token it also needs the read scope
 (`incident:read`, `catalog:read`). `listIncidents` reads at most 1000 incidents a request: a narrow filter may answer
 a short or empty page with a `nextCursor`, so follow it until it is null.
 
-| Method                                                                                                       | Route                                             |
-| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| `getHealth()`, `getPagingHealth()`                                                                           | `GET /health`, `GET /health/paging`               |
-| `pingHeartbeat(token)`                                                                                       | `POST /heartbeat/:token`                          |
-| `sendAlerts(token, payload)`                                                                                 | `POST /alerts/:token`                             |
-| `createWorkspace({ name })`                                                                                  | `POST /workspaces`                                |
-| `changeMemberRole(ws, userId, { role })`, `removeMember(ws, userId)`                                         | `PATCH`, `DELETE /workspaces/:id/members/:userId` |
-| `listInvitations(ws)`, `invite(ws, { email, role })`, `revokeInvitation(ws, id)`, `resendInvitation(ws, id)` | `/workspaces/:id/invitations…`                    |
-| `getInvitation(id)`, `acceptInvitation(id)`, `declineInvitation(id)`                                         | `/invitations/:id…`                               |
-| `acknowledgeIncident(ws, incidentId, { idempotencyKey? })`                                                   | `POST /workspaces/:id/incidents/:incidentId/ack`  |
-| `listIncidents(ws, filter?)`, `declareIncident(ws, body)`                                                    | `GET`, `POST /workspaces/:id/incidents`           |
-| `getIncident(ws, id)`, `updateIncident(ws, id, body)`, `postIncidentUpdate(ws, id, { body })`                | `/workspaces/:id/incidents/:incidentId…`          |
-| `listServices`, `createService`, `getService`, `updateService`, `deleteService`                              | `/workspaces/:id/services…`                       |
-| `listIncidentTypes`, `createIncidentType`, `getIncidentType`, `updateIncidentType`                           | `/workspaces/:id/incident-types…`                 |
-| `listCustomFields`, `createCustomField`, `getCustomField`, `updateCustomField`                               | `/workspaces/:id/custom-fields…`                  |
+| Method                                                                                                       | Route                                                    |
+| ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| `getHealth()`, `getPagingHealth()`                                                                           | `GET /health`, `GET /health/paging`                      |
+| `pingHeartbeat(token)`                                                                                       | `POST /heartbeat/:token`                                 |
+| `sendAlerts(token, payload)`                                                                                 | `POST /alerts/:token`                                    |
+| `createWorkspace({ name })`                                                                                  | `POST /workspaces`                                       |
+| `changeMemberRole(ws, userId, { role })`, `removeMember(ws, userId)`                                         | `PATCH`, `DELETE /workspaces/:id/members/:userId`        |
+| `listInvitations(ws)`, `invite(ws, { email, role })`, `revokeInvitation(ws, id)`, `resendInvitation(ws, id)` | `/workspaces/:id/invitations…`                           |
+| `getInvitation(id)`, `acceptInvitation(id)`, `declineInvitation(id)`                                         | `/invitations/:id…`                                      |
+| `acknowledgeIncident(ws, incidentId, { idempotencyKey? })`                                                   | `POST /workspaces/:id/incidents/:incidentId/ack`         |
+| `listIncidents(ws, filter?)`, `declareIncident(ws, body)`                                                    | `GET`, `POST /workspaces/:id/incidents`                  |
+| `getIncident(ws, id)`, `updateIncident(ws, id, body)`, `postIncidentUpdate(ws, id, { body })`                | `/workspaces/:id/incidents/:incidentId…`                 |
+| `editIncidentUpdate(ws, id, entryId, { body })`, `deleteIncidentUpdate(ws, id, entryId)`                     | `/workspaces/:id/incidents/:incidentId/updates/:entryId` |
+| `listServices`, `createService`, `getService`, `updateService`, `deleteService`                              | `/workspaces/:id/services…`                              |
+| `listIncidentTypes`, `createIncidentType`, `getIncidentType`, `updateIncidentType`                           | `/workspaces/:id/incident-types…`                        |
+| `listCustomFields`, `createCustomField`, `getCustomField`, `updateCustomField`                               | `/workspaces/:id/custom-fields…`                         |
 
 Every method resolves with the documented success and rejects with a `BrigadeApiError` (`operation`, `status`,
 `code`, `body`) for any other answer, `unexpected` for one outside the reference (a 2xx that is no JSON object, or a

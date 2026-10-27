@@ -22,6 +22,8 @@ import {
   incidentTypePatchRequest,
   INVITATION_EMAIL_MAX,
   MAX_CUSTOM_FIELDS_PER_WORKSPACE,
+  MAX_INCIDENT_ROLES,
+  ROLE_ID_MAX,
   ROLES,
   SERVICE_TIERS,
   serviceCreateRequest,
@@ -202,6 +204,17 @@ const incidentId: Parameter = {
   in: "path",
   description: "The incident (`inc_<ULID>`).",
   schema: { type: "string", pattern: idPattern("inc") },
+};
+const entryId: Parameter = {
+  name: "entryId",
+  in: "path",
+  description:
+    "The update's timeline entry, `<incident id>:<seq>` (as `postIncidentUpdate` answers it and webhook payloads " +
+    "carry it); the colon may be percent-encoded.",
+  schema: {
+    type: "string",
+    pattern: `^${idPattern("inc").slice(1, -1)}(:|%3[Aa])[1-9][0-9]{0,8}$`,
+  },
 };
 const catalogId = (name: string, prefix: string, what: string): Parameter => ({
   name,
@@ -793,15 +806,17 @@ const LISTED: readonly Operation[] = [
     path: "/workspaces/{workspaceId}/incidents/{incidentId}",
     operationId: "updateIncident",
     tag: "Incidents",
-    summary: "Change an incident's type, services, fields, severity or status",
+    summary: "Change an incident's title, type, services, fields, roles, severity or status",
     description:
-      "Each change is its own named mutation, as in the app, in this order: `incident.setType`, " +
-      "`incident.setServices`, `incident.setField` per field, `incident.setSeverity`, `incident.setStatus` (each " +
-      "with its timeline entry and event). One that asks for what already is changes nothing. The first refusal " +
+      "Each change is its own named mutation, as in the app, in this order: `incident.rename`, `incident.setType`, " +
+      "`incident.setServices`, `incident.setField` per field, `incident.assignRole` per role, " +
+      "`incident.setSeverity`, `incident.setStatus` (each with its timeline entry and event). One that asks for " +
+      "what already is changes nothing. The first refusal " +
       "stops the rest and is the answer; the changes before it stay made. The same request with the same key answers " +
       "the same refusal again (results are kept, refusals too); once what refused it is fixed, send it with a new " +
       "key: the changes already made come back as changing nothing, and the rest run. Responders and up. " +
-      "`409 invalid_transition`: the status cannot follow the current one. The title is not changed here. The " +
+      "`409 invalid_transition`: the status cannot follow the current one. `400 invalid_args` with an issue at " +
+      "`roles.<role id>`: a role the workspace does not offer, or someone who is not a member or is a viewer. The " +
       "answer is the incident, so an API token needs `incident:read` too.",
     auth: "session",
     bearer: ["incident:update", "incident:read"],
@@ -818,6 +833,17 @@ const LISTED: readonly Operation[] = [
             "field the incident's type requires).",
           additionalProperties: { anyOf: [ref("FieldValue"), { type: "null" }] },
         },
+        roles: {
+          type: "object",
+          description:
+            `Who holds each incident role, by role id (\`commander\`, \`communications\`, \`operations\` or a ` +
+            `workspace role's \`rol_<ULID>\`, at most ${MAX_INCIDENT_ROLES}): a member's user id, or \`null\` to ` +
+            "leave the role empty.",
+          propertyNames: { maxLength: ROLE_ID_MAX },
+          additionalProperties: {
+            anyOf: [{ type: "string", minLength: 1, maxLength: 64 }, { type: "null" }],
+          },
+        },
       },
     },
     responses: answers(
@@ -833,12 +859,67 @@ const LISTED: readonly Operation[] = [
     summary: "Post a written update to an incident",
     description:
       "Runs `incident.postUpdate`: an update on the incident's timeline (what responders know), in any status. " +
-      "Responders and up.",
+      "Responders and up. The answer names its timeline entry (`entryId`), to edit or remove it.",
     auth: "session",
     bearer: "incident:update",
     parameters: [workspaceId, incidentId, idempotencyKey],
     body: toJsonSchema(updateRequest),
-    responses: answers({ 201: { description: "Posted.", body: ref("Ok") } }, restWrite()),
+    responses: answers(
+      {
+        201: {
+          description: "Posted.",
+          body: {
+            type: "object",
+            properties: {
+              ok: { const: true },
+              entryId: {
+                type: ["string", "null"],
+                description:
+                  "The update's timeline entry (`<incident id>:<seq>`). Null only on a retry after the update was edited or removed meanwhile.",
+              },
+            },
+            required: ["ok", "entryId"],
+          },
+        },
+      },
+      restWrite(),
+    ),
+  },
+  {
+    method: "patch",
+    path: "/workspaces/{workspaceId}/incidents/{incidentId}/updates/{entryId}",
+    operationId: "editIncidentUpdate",
+    tag: "Incidents",
+    summary: "Edit a written update",
+    description:
+      "Runs `incident.editUpdate`: the update's text changes in place (it keeps its place, time and author, and " +
+      'reads "edited"), in any status. Only its author: the member who posted it, or an API token that posted it ' +
+      "or whose creator did; anyone else is `403 forbidden`, owners and admins included. Text it already has " +
+      "changes nothing. `409 conflict`: the update was removed. `404 not_found`: no such update on this incident. " +
+      "What was published on the status page is never changed by it.",
+    auth: "session",
+    bearer: "incident:update",
+    parameters: [workspaceId, incidentId, entryId, idempotencyKey],
+    body: toJsonSchema(updateRequest),
+    responses: answers({ 200: { description: "Edited.", body: ref("Ok") } }, restWrite("conflict")),
+  },
+  {
+    method: "delete",
+    path: "/workspaces/{workspaceId}/incidents/{incidentId}/updates/{entryId}",
+    operationId: "deleteIncidentUpdate",
+    tag: "Incidents",
+    summary: "Remove a written update",
+    description:
+      'Runs `incident.deleteUpdate`: the update\'s text is gone and its entry stays as "removed by …". Its author ' +
+      "(as for an edit), or an owner or admin (anyone's); anyone else is `403 forbidden`. `409 conflict`: removed " +
+      "already. `404 not_found`: no such update on this incident.",
+    auth: "session",
+    bearer: "incident:update",
+    parameters: [workspaceId, incidentId, entryId, idempotencyKey],
+    responses: answers(
+      { 200: { description: "Removed.", body: ref("Ok") } },
+      restWrite("conflict"),
+    ),
   },
   {
     method: "get",
@@ -1681,6 +1762,7 @@ const WEBHOOK_SUMMARIES: Record<WebhookPayloadType, string> = {
   "incident.severity_changed": "An incident's severity changed",
   "incident.acknowledged": "An incident was acknowledged",
   "incident.update_posted": "An update was posted to an incident",
+  "incident.renamed": "An incident was renamed",
   "incident.update_edited": "Its author edited an update",
   "incident.update_deleted": "An update was removed",
   "incident.role_assigned": "An incident role was assigned or cleared",
@@ -1772,7 +1854,7 @@ export function openApiDocument(): JsonSchema {
     openapi: "3.1.0",
     info: {
       title: "Brigade API",
-      version: "0.2.0",
+      version: "0.3.0",
       description: DESCRIPTION,
       license: { name: "AGPL-3.0-only", identifier: "AGPL-3.0-only" },
     },

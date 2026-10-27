@@ -76,6 +76,7 @@ export const WEBHOOK_PAYLOAD_VERSION = 1 as const;
  */
 export const WEBHOOK_EVENT_TYPES = [
   "incident.declared",
+  "incident.renamed",
   "incident.status_changed",
   "incident.severity_changed",
   "incident.acknowledged",
@@ -880,6 +881,8 @@ type Envelope<Type extends string, Data> = {
 /** Every payload, by `type` (RFC 0005 "Payloads"). Member ids, never names or addresses. */
 export type WebhookPayload =
   | Envelope<"incident.declared", { incident: WebhookIncident }>
+  /** The title changed: `from` the one it had; `to` the one it has now (also `incident.title`). */
+  | Envelope<"incident.renamed", { incident: WebhookIncident; from: string; to: string }>
   | Envelope<
       "incident.status_changed",
       { incident: WebhookIncident; from: Open<IncidentStatus>; to: Open<IncidentStatus> }
@@ -1094,6 +1097,13 @@ export function webhookPayload(
   switch (type) {
     case "incident.declared":
       return incident && { ...base, type, data: { incident } };
+    case "incident.renamed": {
+      const from = text("from");
+      const to = text("to");
+      return incident && from !== undefined && to !== undefined
+        ? { ...base, type, data: { incident, from, to } }
+        : undefined;
+    }
     case "incident.status_changed": {
       const from = oneOf("from", INCIDENT_STATUSES);
       const to = oneOf("to", INCIDENT_STATUSES);
@@ -1289,6 +1299,11 @@ const severityChange = { from: known(SEVERITIES), to: known(SEVERITIES) };
 /** One validator per payload `type`, in the catalog's order, then `webhook.test`. */
 export const WEBHOOK_PAYLOADS = {
   "incident.declared": envelope("incident.declared", { incident: payloadIncident }),
+  "incident.renamed": envelope("incident.renamed", {
+    incident: payloadIncident,
+    from: payloadText,
+    to: payloadText,
+  }),
   "incident.status_changed": envelope("incident.status_changed", {
     incident: payloadIncident,
     ...statusChange,

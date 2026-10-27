@@ -231,7 +231,7 @@ One message per incident in the workspace's configured channel (`slack.configure
 private ones need the bot invited.
 
 - **Posted** on `incident.declared`; **updated** with `chat.update` on `incident.acknowledged`,
-  `incident.status_changed` and `incident.severity_changed`, when the incident has a message in that channel (an
+  `incident.status_changed`, `incident.severity_changed` and `incident.renamed`, when the incident has a message in that channel (an
   incident declared before Slack was connected, or whose post failed, gets none).
 - **Rendered from the incident as it is now** (number, severity, status, title, who declared it, who acknowledged
   it), not from the event, so events handled out of order still leave the latest state. Titles and names are user
@@ -305,7 +305,9 @@ how long after the incident closes its channel is archived (0: at once; the card
 null to keep it. A workspace without a main channel can still have incident channels.
 
 - **Created** on `incident.declared` with `conversations.create`, named `inc-<number>-<title as a slug>` (lowercase
-  letters, digits and hyphens, accents dropped, at most 80 characters), with `-2` to `-4` when the name is taken. The
+  letters, digits and hyphens, accents dropped, at most 80 characters), with `-2` to `-4` when the name is taken. A
+  renamed incident keeps its channel's name (renaming a channel others may have linked to is not worth the surprise);
+  its messages show the new title. The
   bot that creates it is in it. The channel's id is kept in the shard (`slack_channels`), not in a synced row.
 - **Invited**: who declared it, its role holders and whoever its escalation paged so far (`conversations.invite` with
   `force`, at most 50), and later each new role holder (`incident.role_assigned`) and each person paged
@@ -326,7 +328,8 @@ null to keep it. A workspace without a main channel can still have incident chan
 
 ## Timeline mirror
 
-**Brigade to Slack.** Status, severity, role, update and acknowledgement entries are posted as a line in the incident's
+**Brigade to Slack.** Status, severity, rename ("Ana renamed the incident to _…_"), role, update and acknowledgement
+entries are posted as a line in the incident's
 channel ("Ana changed the severity to SEV2 · High", "Update from Ana" and the text), or, without an incident channel,
 as a reply in the thread of the incident's message in the main channel. Rendered from the event (who did it, to
 what) in the connection's language, with people's text escaped, and idempotent per event like the rest (the `entry`

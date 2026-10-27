@@ -864,6 +864,28 @@ describe("the incident message", () => {
     expect(await messageAt()).toBeUndefined();
   });
 
+  test("a renamed incident: its message shows the new title, and the rename is mirrored under it", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    const event = await declared(t, teamId);
+    const slack = slackApi();
+    await deliver([event], slack.send);
+    const incident = (await incidents(t))[0]!;
+    await t.run(
+      "incident.rename",
+      { id: incident.id, title: "Checkout <errors> in eu-west" },
+      owner(t),
+    );
+    await deliver(await eventsOf(t, "incident.renamed"), slack.send);
+    const updates = slack.calls.filter((call) => call.method === "chat.update");
+    expect(updates).toHaveLength(1);
+    expect(JSON.stringify(updates[0]?.body.blocks)).toContain("Checkout &lt;errors&gt; in eu-west");
+    const replies = slack.calls.filter((call) => call.body.thread_ts === "1790000000.000001");
+    expect(replies.map((call) => call.body.text)).toEqual([
+      "A teammate renamed the incident to *Checkout &lt;errors&gt; in eu-west*",
+    ]);
+  });
+
   test("two events of one incident in a batch post once; the second waits for it and updates", async () => {
     const t = await team();
     const teamId = await connect(t);

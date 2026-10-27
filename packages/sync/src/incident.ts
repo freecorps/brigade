@@ -77,6 +77,22 @@ export function checkDeclare(
     : { ok: false };
 }
 
+const rename = lookup(mutations, "incident.rename")!;
+
+/**
+ * Runs `incident.rename`'s own validator before sending, like `checkDeclare`: a title the shard would refuse stays in
+ * the field. Returns the args as validated (the title trimmed).
+ */
+export function checkRename(
+  id: string,
+  title: string,
+): { ok: true; args: { id: string; title: string } } | { ok: false } {
+  const result = rename.args({ id, title });
+  return result.ok
+    ? { ok: true, args: result.value as { id: string; title: string } }
+    : { ok: false };
+}
+
 /** Members who may hold an incident role (the shard refuses viewers). */
 export function assignable(members: readonly MemberRow[]): MemberRow[] {
   return members.filter((member) => member.role !== "viewer");

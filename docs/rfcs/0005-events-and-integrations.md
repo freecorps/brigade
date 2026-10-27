@@ -35,7 +35,8 @@ emit nothing), `monitor.status_changed` (to `unknown` too, when probes stop repo
 address takes back an account someone else signed up with (RFC 0002 "Auth"), `monitor.paused` and
 `monitor.heartbeat_revoked` (`id`) with actor `sys_account`.
 
-Incidents emit `incident.declared`, `incident.status_changed`, `incident.severity_changed`,
+Incidents emit `incident.declared`, `incident.renamed` (`from`, `to`: the titles before and after; RFC 0003
+"Incident lifecycle"), `incident.status_changed`, `incident.severity_changed`,
 `incident.acknowledged`, `incident.update_posted` (`entryId`, `body`), `incident.update_edited` (`entryId`, `body`,
 `previous`: the text it replaced), `incident.update_deleted` (`entryId`, `author`; never the text; RFC 0003
 "Editing and removing an update"), `incident.paged_again` (`entries`: the
@@ -663,7 +664,8 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   longer than Brigade writes today (`WEBHOOK_PAYLOAD_TEXT_MAX`), and a `type` they do not know as an unknown payload
   (the envelope checked, `data` as sent) rather than an error; a field they do not know is dropped. The catalog
   (`WEBHOOK_EVENT_TYPES`) and each `data`:
-  - `incident.declared` (`incident`), `incident.status_changed` and `incident.severity_changed` (`incident`, `from`,
+  - `incident.declared` (`incident`), `incident.renamed` (`incident`, `from`, `to`; `incident.title` is `to`),
+    `incident.status_changed` and `incident.severity_changed` (`incident`, `from`,
     `to`), `incident.acknowledged` (`incident`, `by`), `incident.update_posted` (`incident`, `entryId`, `body`: what the member
     wrote, which every member already reads; `entryId` added with edits, absent from events before),
     `incident.update_edited` (`incident`, `entryId`, `body`, `previous`), `incident.update_deleted` (`incident`,

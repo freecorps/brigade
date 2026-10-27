@@ -181,8 +181,10 @@ async function click(element: Element | null | undefined) {
   });
 }
 
-function setValue(field: HTMLTextAreaElement, value: string) {
-  Reflect.set(HTMLTextAreaElement.prototype, "value", value, field);
+function setValue(field: HTMLTextAreaElement | HTMLInputElement, value: string) {
+  const prototype =
+    field instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+  Reflect.set(prototype, "value", value, field);
   field.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
@@ -354,6 +356,38 @@ test("a burst of others' updates is announced as one count", async () => {
     view.shard.write(bia, "incident.postUpdate", { id, body: `Step ${i}` });
   await view.flush();
   expect(live.textContent).toBe("5 new updates from others");
+});
+
+test("rename in place: Rename swaps the title for a field, Save renames it, Esc and a blank title change nothing", async () => {
+  const view = await incidentPage();
+  const header = () => $("main header") ?? $$("header").at(-1)!;
+  const rename = () => $$("button", header()).find((button) => button.title === "Rename");
+  await click(rename());
+  const field = $<HTMLInputElement>("input", header())!;
+  expect(field.value).toBe("Checkout down");
+  expect(document.activeElement).toBe(field);
+  // Blank: refused in the field, nothing sent.
+  await act(async () => setValue(field, "   "));
+  await click($$("button", header()).find((button) => button.textContent === "Save"));
+  expect(header().textContent).toContain("Give it a title with visible characters.");
+  // Esc puts the title back.
+  await act(async () => {
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+  expect($("input", header())).toBeNull();
+  expect($("h1")!.textContent).toBe("Checkout down");
+
+  await click(rename());
+  await act(async () =>
+    setValue($<HTMLInputElement>("input", header())!, "Checkout errors in eu-west"),
+  );
+  await click($$("button", header()).find((button) => button.textContent === "Save"));
+  await view.flush();
+  expect($("h1")!.textContent).toBe("Checkout errors in eu-west");
+  expect(view.shard.store.get("incidents", view.id)?.title).toBe("Checkout errors in eu-west");
+  expect(card("Timeline")!.textContent).toContain(
+    "You renamed the incident from “Checkout down” to “Checkout errors in eu-west”",
+  );
 });
 
 test("my own update: edit in place with an edited marker, remove after asking; others' only show their text", async () => {

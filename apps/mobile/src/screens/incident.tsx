@@ -728,6 +728,7 @@ const UNKNOWN_ENTRY_GLYPH: Glyph = {
 const ENTRY_GLYPHS: Record<Exclude<TimelineRow["kind"], "status_changed">, Glyph> = {
   declared: { ios: "plus.circle", android: "add_circle", web: "add_circle" },
   severity_changed: { ios: "gauge.with.dots.needle.67percent", android: "speed", web: "speed" },
+  renamed: { ios: "character.cursor.ibeam", android: "title", web: "title" },
   acknowledged: { ios: "bell.slash", android: "notifications_off", web: "notifications_off" },
   role_assigned: PERSON_GLYPH,
   update: { ios: "text.bubble", android: "chat", web: "chat" },

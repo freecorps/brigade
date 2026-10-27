@@ -817,7 +817,7 @@ function Timeline({
           entry.kind === "email_failed" ||
           entry.kind === "slack_failed"
             ? colors.destructive
-            : entry.kind === "update" ||
+            : (entry.kind === "update" && !entry.removed) ||
                 entry.kind === "status_published" ||
                 entry.kind === "status_corrected"
               ? colors.primary

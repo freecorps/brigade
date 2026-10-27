@@ -884,7 +884,7 @@ function Timeline({
                 <span
                   className={cn(
                     "flex size-8 shrink-0 items-center justify-center rounded-full border bg-card",
-                    (entry.kind === "update" ||
+                    ((entry.kind === "update" && !entry.removed) ||
                       entry.kind === "status_published" ||
                       entry.kind === "status_corrected") &&
                       "border-primary/40 text-primary",

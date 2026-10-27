@@ -3,6 +3,7 @@ import type { DeliveryError } from "./deliveries.ts";
 import type { DevicePlatform, PushEnvironment } from "./devices.ts";
 import type { IncidentRole, IncidentStatus, Severity } from "./lifecycle.ts";
 import type { EmailAbout, EmailFailure, PageFailure } from "./notifications.ts";
+import type { FieldKind, ServiceTier } from "./catalog.ts";
 import type { EscalationTargetKind } from "./policies.ts";
 import type { RotationUnit } from "./schedules.ts";
 import type { SlackFailure, SlackLocale } from "./slack.ts";
@@ -37,6 +38,64 @@ export type IncidentRow = {
   timelineSeq?: number;
   /** The last escalation run of the incident's pages (RFC 0003 "Escalation run"); absent when none ran. */
   escalation?: Escalation | null;
+  /** Its incident type (RFC 0003 "Incident types"); absent or null: none. May name a deleted type. */
+  typeId?: string | null;
+  /** The services it affects, in the order picked; may name deleted ones, which readers skip. */
+  serviceIds?: string[];
+  /** Custom field values by field id (RFC 0003 "Custom fields"); a field never set is absent. */
+  fields?: { [fieldId: string]: FieldValue };
+  updatedAt: number;
+};
+
+/** A custom field's value: text or a link, a number, one option id (single select) or several (multi select). */
+export type FieldValue = string | number | string[];
+
+/** A service the workspace runs (RFC 0003 "Service catalog"). */
+export type ServiceRow = {
+  id: string; // svc_<ULID>, made by the client
+  name: string;
+  /** Empty when none. */
+  description: string;
+  /** How critical it is: `tier1` the most. */
+  tier: ServiceTier;
+  /** Who owns it: schedules or members who can respond. Empty: unowned. */
+  owners: EscalationTarget[];
+  /** The policy that pages for it; null: none. Not used for pages yet (alert routes will). */
+  escalationPolicyId: string | null;
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+};
+
+/** A kind of incident (RFC 0003 "Incident types"): defaults for declaring one, and the fields it needs. */
+export type IncidentTypeRow = {
+  id: string; // typ_<ULID>, made by the client
+  name: string;
+  description: string;
+  /** The severity a declare of this type takes when it names none; null: the declare form's own default. */
+  defaultSeverity: Severity | null;
+  /** The policy its pages use instead of the default one; null: the default. */
+  escalationPolicyId: string | null;
+  /** Custom field ids incidents of the type should fill, in the order shown. */
+  requiredFields: string[];
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+};
+
+/** One choice of a select field; the id stays when the label is renamed. */
+export type FieldOption = { id: string; label: string };
+
+/** A custom field incidents can carry (RFC 0003 "Custom fields"). Its kind never changes. */
+export type CustomFieldRow = {
+  id: string; // fld_<ULID>, made by the client
+  name: string;
+  description: string;
+  kind: FieldKind;
+  /** Select fields only, in the order shown. */
+  options: FieldOption[];
+  createdAt: number;
+  createdBy: string;
   updatedAt: number;
 };
 
@@ -223,7 +282,25 @@ export type TimelineEntry =
    * What the status page says was corrected (RFC 0012 "Corrections"): an update's text `edited` (`body`: the new
    * text), an update `removed` (`body`: the text taken down) or the incident `withdrawn` (`body`: its public title).
    */
-  | { kind: "status_corrected"; change: StatusCorrection; body: string };
+  | { kind: "status_corrected"; change: StatusCorrection; body: string }
+  /**
+   * The incident's type changed (`incident.setType`): the types' names then; null: none. `fromDeleted`: the type it
+   * had was deleted, so `from` is null (entries written before it read a null `from` with a null `to` that way).
+   */
+  | { kind: "type_changed"; from: string | null; to: string | null; fromDeleted?: boolean }
+  /** Services named or taken off (`incident.setServices`), by their names then. */
+  | { kind: "services_changed"; added: string[]; removed: string[] }
+  /**
+   * A custom field was set or cleared (`incident.setField`), by the field's name then. `value` is the text, link or
+   * number; a select's options are `labels` as they read then (and `value` null). Both null: cleared.
+   */
+  | {
+      kind: "field_changed";
+      field: string;
+      fieldKind: FieldKind;
+      value: string | number | string[] | null;
+      labels?: string[];
+    };
 
 /**
  * One entry of an incident's timeline: append-only, written by the mutation that made the change, in its
@@ -549,6 +626,12 @@ export type StatusIncidentRow = {
  */
 export type StatusRetiredRow = { id: string; at: number; cleared?: number };
 
+/**
+ * Server-only: the id of a deleted service, incident type or custom field (`id`), deleted at `at`. Incidents keep
+ * such ids, so a new catalog entry may never take one (RFC 0003 "Service catalog").
+ */
+export type CatalogDeletedRow = { id: string; at: number };
+
 /** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only. */
 export type CounterRow = { id: string; value: number };
 
@@ -574,6 +657,10 @@ export type BrigadeTables = {
   status_components: StatusComponentRow;
   status_incidents: StatusIncidentRow;
   status_retired: StatusRetiredRow;
+  services: ServiceRow;
+  incident_types: IncidentTypeRow;
+  custom_fields: CustomFieldRow;
+  catalog_deleted: CatalogDeletedRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -601,6 +688,10 @@ export const TABLES = {
   status_components: { serverOnly: false },
   status_incidents: { serverOnly: false },
   status_retired: { serverOnly: true },
+  services: { serverOnly: false },
+  incident_types: { serverOnly: false },
+  custom_fields: { serverOnly: false },
+  catalog_deleted: { serverOnly: true },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

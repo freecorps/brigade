@@ -753,6 +753,17 @@
         "kind=status_corrected_edited": "{actor} corrected an update on the status page",
         "kind=status_corrected_removed": "{actor} removed an update from the status page",
         "kind=status_corrected_withdrawn": "{actor} took the incident off the status page",
+        "kind=type_set": "{actor} set the type to {a}",
+        "kind=type_changed": "{actor} changed the type from {a} to {b}",
+        "kind=type_cleared": "{actor} removed the type {a}",
+        "kind=type_cleared_deleted": "{actor} removed the type",
+        "kind=type_changed_deleted": "{actor} changed the type from a deleted one to {a}",
+        "kind=services_added": "{actor} named {a} as affected",
+        "kind=services_removed": "{actor} took {a} off the affected services",
+        "kind=services_changed": "{actor} named {a} as affected and took off {b}",
+        "kind=services_updated": "{actor} changed the affected services",
+        "kind=field_set": "{actor} set {a} to {b}",
+        "kind=field_cleared": "{actor} cleared {a}",
         "kind=*": "{actor} changed the incident"
       }
     }
@@ -1981,6 +1992,175 @@
         "part=corrected": "Corrected. Visitors may still see the old version for about 2 minutes.",
         "part=correct_failed": "Couldn't change the status page. Try again.",
         "part=*": "Status page"
+      }
+    }
+  ],
+  "catalog_text": [
+    {
+      "declarations": ["input text", "input name", "input reason"],
+      "selectors": ["text"],
+      "match": {
+        "text=services_title": "Services",
+        "text=services_empty": "No services yet. List what you run, who owns it and how critical it is, so incidents can say what they affect.",
+        "text=unowned": "No owner",
+        "text=policy_named": "Escalation: {name}",
+        "text=no_policy": "No escalation policy",
+        "text=policy_note": "Kept for alert routes: pages still go through the incident type's policy, the monitor's, or the default one.",
+        "text=back": "Overview",
+        "text=loading": "Loading the service…",
+        "text=not_found_title": "Service not found",
+        "text=not_found": "There is no such service in this workspace. It may have been deleted.",
+        "text=active_incidents": "Active incidents",
+        "text=active_none": "No active incident names this service.",
+        "text=owners": "Owners",
+        "text=description": "Description",
+        "text=no_description": "No description.",
+        "text=gone": "It no longer exists.",
+        "text=change_failed": "Couldn't change {name}: {reason}",
+        "text=delete_service": "Delete {name}? Incidents that name it stop showing it.",
+        "text=delete_type": "Delete {name}? Its incidents keep their fields and show the type as deleted.",
+        "text=delete_field": "Delete {name}? Its values stop showing on every incident, and types stop requiring it.",
+        "text=settings_title": "Incident types and fields",
+        "text=types_title": "Types",
+        "text=types_empty": "No incident types yet. A type sets the severity a declare starts with, the escalation policy its pages use and the fields it needs.",
+        "text=fields_title": "Custom fields",
+        "text=fields_empty": "No custom fields yet. A field adds a typed detail to every incident: text, one choice, several choices, a number or a link.",
+        "text=no_default_severity": "No default severity",
+        "text=pages_through": "Pages through {name}",
+        "text=pages_default": "No policy of its own: the monitor's or the default one pages",
+        "text=requires": "Requires {name}",
+        "text=requires_none": "Requires no field",
+        "text=kind_text": "Text",
+        "text=kind_single_select": "One choice",
+        "text=kind_multi_select": "Several choices",
+        "text=kind_number": "Number",
+        "text=kind_link": "Link",
+        "text=kind_fixed": "A field's kind can't change once it exists.",
+        "text=option_none": "None",
+        "text=severity_none": "No default (the form's own)",
+        "text=policy_default": "The default policy",
+        "text=details_title": "Details",
+        "text=type_label": "Type",
+        "text=no_type": "No type",
+        "text=deleted_type": "Deleted type",
+        "text=services_label": "Affected services",
+        "text=no_services": "None named yet",
+        "text=add_service": "Add a service",
+        "text=not_set": "Not set",
+        "text=required": "Required by the type",
+        "text=required_badge": "Required",
+        "text=required_note": "Required fields never hold up declaring, paging or resolving; once filled they can change but not be cleared.",
+        "text=catalog_link": "Edit types and fields on the overview.",
+        "text=dropped": "People or schedules that are gone were taken out of the owners.",
+        "text=deleted_schedule": "Deleted schedule",
+        "text=deleted_service": "Deleted service",
+        "text=group_schedules": "Schedules",
+        "text=group_people": "People",
+        "text=*": "Catalog"
+      }
+    }
+  ],
+  "catalog_action": [
+    {
+      "declarations": ["input action"],
+      "selectors": ["action"],
+      "match": {
+        "action=add_service": "New service",
+        "action=add_type": "New type",
+        "action=add_field": "New field",
+        "action=edit": "Edit",
+        "action=save": "Save",
+        "action=create_service": "Create service",
+        "action=create_type": "Create type",
+        "action=create_field": "Create field",
+        "action=cancel": "Cancel",
+        "action=delete_service": "Delete service",
+        "action=delete_type": "Delete type",
+        "action=delete_field": "Delete field",
+        "action=delete": "Delete",
+        "action=add_option": "Add an option",
+        "action=clear": "Clear",
+        "action=open": "Open",
+        "action=*": "Change"
+      }
+    }
+  ],
+  "catalog_action_on": [
+    {
+      "declarations": ["input action", "input name"],
+      "selectors": ["action"],
+      "match": {
+        "action=edit": "Edit {name}",
+        "action=remove": "Remove {name}",
+        "action=clear": "Clear {name}",
+        "action=option": "Option {name}",
+        "action=*": "{name}"
+      }
+    }
+  ],
+  "catalog_field": [
+    {
+      "declarations": ["input field", "input form"],
+      "selectors": ["field", "form"],
+      "match": {
+        "field=name, form=label": "Name",
+        "field=description, form=label": "Description (optional)",
+        "field=tier, form=label": "Criticality",
+        "field=owners, form=label": "Owners",
+        "field=add_owner, form=label": "Add a schedule or a person",
+        "field=policy, form=label": "Escalation policy",
+        "field=severity, form=label": "Default severity",
+        "field=required, form=label": "Required fields",
+        "field=kind, form=label": "Kind",
+        "field=options, form=label": "Options",
+        "field=value, form=label": "Value",
+        "field=name, form=invalid": "Enter a name.",
+        "field=description, form=invalid": "Use at most 500 characters, without hidden characters.",
+        "field=options, form=invalid": "Give every option a name, each one different.",
+        "field=text, form=invalid": "Use 1 to 500 characters, without hidden characters.",
+        "field=number, form=invalid": "Enter a number.",
+        "field=link, form=invalid": "Enter a link that starts with https:// or http://.",
+        "field=choice, form=invalid": "Pick at least one option.",
+        "field=*, form=invalid": "Check this field.",
+        "field=*, form=*": "Field"
+      }
+    }
+  ],
+  "catalog_tier": [
+    {
+      "declarations": ["input tier"],
+      "selectors": ["tier"],
+      "match": {
+        "tier=tier1": "Tier 1 · Critical",
+        "tier=tier2": "Tier 2 · Important",
+        "tier=tier3": "Tier 3 · Supporting",
+        "tier=*": "Tier"
+      }
+    }
+  ],
+  "catalog_count": [
+    {
+      "declarations": [
+        "input kind",
+        "input count",
+        "local countPlural = count: plural",
+        "local countFormatted = count: number"
+      ],
+      "selectors": ["kind", "count", "countPlural"],
+      "match": {
+        "kind=services, count=*, countPlural=one": "{countFormatted} service",
+        "kind=services, count=*, countPlural=*": "{countFormatted} services",
+        "kind=types, count=*, countPlural=one": "{countFormatted} type",
+        "kind=types, count=*, countPlural=*": "{countFormatted} types",
+        "kind=fields, count=*, countPlural=one": "{countFormatted} field",
+        "kind=fields, count=*, countPlural=*": "{countFormatted} fields",
+        "kind=options, count=*, countPlural=one": "{countFormatted} option",
+        "kind=options, count=*, countPlural=*": "{countFormatted} options",
+        "kind=missing, count=*, countPlural=one": "{countFormatted} required field to fill",
+        "kind=missing, count=*, countPlural=*": "{countFormatted} required fields to fill",
+        "kind=active, count=*, countPlural=one": "{countFormatted} active incident",
+        "kind=active, count=*, countPlural=*": "{countFormatted} active incidents",
+        "kind=*, count=*, countPlural=*": "{countFormatted}"
       }
     }
   ]

@@ -81,9 +81,11 @@ relay's bearer token):
 
 ## Who is paged
 
-A workspace with a **default escalation policy** (RFC 0003 "Escalation policies") pages through it, and an incident a
-monitor opened pages through that monitor's own policy when it names one; with neither, the **interim rule** pages,
-unchanged since Phase 1.
+An incident pages through the escalation policy of its **type** when the type names one (RFC 0003 "Incident
+types"), else through the policy of the **monitor** that opened it when that monitor names one, else through the
+workspace's **default escalation policy** (RFC 0003 "Escalation policies"); with none, the **interim rule** pages,
+unchanged since Phase 1. A type, monitor or policy gone falls through to the next (`incidentPolicy`). The policy is
+read when a run starts: changing an incident's type mid-run changes nothing until its next run.
 
 **Through the policy.** The first page of an incident (`incident.declared`, or a severity raised into SEV1 or SEV2
 while no run is under way) starts an escalation run in the shard (`escalation.start`) and pages level 1 on that same

@@ -16,6 +16,7 @@ export * from "./monitors.ts";
 export * from "./zoned.ts";
 export * from "./schedules.ts";
 export * from "./policies.ts";
+export * from "./catalog.ts";
 export * from "./escalation.ts";
 export * from "./devices.ts";
 export * from "./deliveries.ts";

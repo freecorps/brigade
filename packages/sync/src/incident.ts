@@ -64,8 +64,9 @@ export function checkDeclare(
   severity: Severity,
 ): { ok: true; args: { id: string; title: string; severity: Severity } } | { ok: false } {
   const result = declare.args({ id, title, severity });
+  // Only what was given: the type and services the validator reads as null are left out, not sent as null.
   return result.ok
-    ? { ok: true, args: result.value as { id: string; title: string; severity: Severity } }
+    ? { ok: true, args: { id: result.value.id, title: result.value.title, severity } }
     : { ok: false };
 }
 

@@ -30,6 +30,7 @@ import {
 import { defineRegistry } from "./mutation.ts";
 import { allOverrides, allSchedules, scheduleMutations } from "./schedules.ts";
 import { allPolicies, policyMutations } from "./policies.ts";
+import { catalogMutations, catalogQueries } from "./catalog.ts";
 import {
   advanceEscalation,
   fallbackEscalation,
@@ -67,6 +68,7 @@ export const mutations = defineRegistry([
   ...monitorMutations,
   ...scheduleMutations,
   ...policyMutations,
+  ...catalogMutations,
   registerDevice,
   unregisterDevice,
   setEmailSettings,
@@ -91,6 +93,7 @@ export const queries = defineRegistry([
   statusPageConfig,
   statusComponents,
   statusIncidentById,
+  ...catalogQueries,
 ]);
 
 /**
@@ -107,6 +110,7 @@ export const serverMutations = defineRegistry([
   ...monitorMutations,
   ...scheduleMutations,
   ...policyMutations,
+  ...catalogMutations,
   registerDevice,
   unregisterDevice,
   setEmailSettings,

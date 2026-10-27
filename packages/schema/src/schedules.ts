@@ -14,6 +14,7 @@ import {
   type MutationResult,
   type MutationStore,
 } from "./mutation.ts";
+import { dropOwner } from "./catalog.ts";
 import { dropFromPolicies } from "./policies.ts";
 import { defineQuery } from "./query.ts";
 import type { OverrideRow, ScheduleLayer, ScheduleRow } from "./tables.ts";
@@ -520,7 +521,8 @@ export const deleteSchedule = defineMutation({
       subject: args.id,
       data: { id: args.id, overrides },
     };
-    return ok(event, ...dropFromPolicies(store, { kind: "schedule", id: args.id }, ctx));
+    const gone = { kind: "schedule", id: args.id } as const;
+    return ok(event, ...dropFromPolicies(store, gone, ctx), ...dropOwner(store, gone, ctx));
   },
 });
 
@@ -623,7 +625,8 @@ export const removeOverride = defineMutation({
 });
 
 /**
- * Takes `userId` out of every rotation and every escalation policy's levels (`dropFromPolicies`) and deletes their
+ * Takes `userId` out of every rotation, every escalation policy's levels (`dropFromPolicies`) and every service's
+ * owners (`dropOwner`), and deletes their
  * overrides, in the transaction that removed them from the workspace or made them a viewer (`member.remove`,
  * `member.changeRole`, `member.reconcile`, `member.sync`). The rest of each
  * layer keeps its order and the rotation is counted again from its start, so the shifts after them move up; a
@@ -662,6 +665,7 @@ export function dropFromSchedules(
     events.push(removed(row, "member_removed"));
   }
   events.push(...dropFromPolicies(store, { kind: "member", id: userId }, ctx));
+  events.push(...dropOwner(store, { kind: "member", id: userId }, ctx));
   return events;
 }
 

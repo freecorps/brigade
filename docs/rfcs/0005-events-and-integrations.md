@@ -37,6 +37,16 @@ Incidents emit `incident.declared`, `incident.status_changed`, `incident.severit
 the same transaction (RFC 0003 "Timeline, updates and roles"); the monitor recovery note rides with
 `alert.resolved`.
 
+The catalog (RFC 0003 "Service catalog", "Incident types", "Custom fields") emits `service.created` (`id`, `name`,
+`tier`, `owners`: how many, `escalationPolicyId`), `service.updated` (the same, plus `reason`: `edited`, or
+`policy_deleted`, `schedule_deleted` or `member_removed` with the `ref` taken out), `service.deleted` (`id`, `name`),
+`incident_type.created` (`id`, `name`, `defaultSeverity`, `escalationPolicyId`, `requiredFields`: how many),
+`incident_type.updated` (the same, plus `reason`: `edited`, `policy_deleted` or `field_deleted`, and `ref`),
+`incident_type.deleted`, `custom_field.created` and `custom_field.updated` (`id`, `name`, `kind`, `options`: how many)
+and `custom_field.deleted`. On incidents: `incident.type_changed` (`from`, `to`: type ids or null),
+`incident.services_changed` (`serviceIds`, `added`, `removed`) and `incident.field_changed` (`fieldId`, `kind`,
+`value`: the text, number or option ids, null when cleared).
+
 On-call schedules (RFC 0003 "Schedules") emit `schedule.created` (`id`, `name`, `timeZone`, `layers`: how many),
 `schedule.updated` (the same, plus `reason`: `edited`, or `member_removed` with the `userId` taken out of the
 rotations), `schedule.deleted` (`id`, `overrides` deleted with it), `schedule.override_added` (`id`, `scheduleId`,

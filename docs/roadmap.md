@@ -296,6 +296,14 @@ Validate the risky assumptions before writing product code. Each spike produces 
 
 - [ ] Alert sources: Grafana, Datadog, Sentry, generic webhook; alert routes
 - [ ] Service catalog; custom fields; incident types; role definitions
+  - Done: services per workspace (name, description, tier, owners: schedules or members, an optional escalation
+    policy), listed on the dashboard with a page each (owners, who of them is on call, active incidents naming it);
+    incident types (default severity, the escalation policy their pages use, required fields), picked when declaring;
+    custom fields (text, one choice, several choices, number, link) set on the incident page and shown read-only in
+    the app; type, services and fields changed as named mutations with timeline entries (RFC 0003).
+  - Left: role definitions; a monitor naming the service it watches; linking services to status page components;
+    filtering incidents by type, service or field; alert routes paging a service's policy; enforcing required fields
+    at a chosen status (opt-in); editing details from the app.
 - [ ] Follow-ups; postmortem draft with Workers AI; exports to R2
 - [ ] Public status page with email subscriptions
   - Done (RFC 0012): one page per workspace with a name, an address (`/status/<slug>`, unique across the instance,

@@ -32,6 +32,8 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "status:read": true,
     "status:manage": true,
     "status:publish": true,
+    "catalog:read": true,
+    "catalog:manage": true,
   },
   admin: {
     "incident:read": true,
@@ -53,6 +55,8 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "status:read": true,
     "status:manage": true,
     "status:publish": true,
+    "catalog:read": true,
+    "catalog:manage": true,
   },
   responder: {
     "incident:read": true,
@@ -74,6 +78,8 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "status:read": true,
     "status:manage": false,
     "status:publish": true,
+    "catalog:read": true,
+    "catalog:manage": false,
   },
   viewer: {
     "incident:read": true,
@@ -95,6 +101,8 @@ const expected: Record<Role, Record<Permission, boolean>> = {
     "status:read": true,
     "status:manage": false,
     "status:publish": false,
+    "catalog:read": true,
+    "catalog:manage": false,
   },
 };
 
@@ -119,6 +127,8 @@ test("every permission comes from the statement", () => {
     "status:read",
     "status:manage",
     "status:publish",
+    "catalog:read",
+    "catalog:manage",
   ]);
 });
 

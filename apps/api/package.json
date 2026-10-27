@@ -20,7 +20,8 @@
     "check": "vp check",
     "cf-typegen": "wrangler types",
     "cf-typegen:check": "wrangler types --check",
-    "openapi": "NODE_OPTIONS=--conditions=@freecorps/source vpx ./scripts/openapi.ts"
+    "openapi": "NODE_OPTIONS=--conditions=@freecorps/source vpx ./scripts/openapi.ts",
+    "sdk-fixture": "NODE_OPTIONS=--conditions=@freecorps/source vpx ./scripts/sdk-fixture.ts"
   },
   "dependencies": {
     "@better-auth/expo": "1.7.13",
@@ -35,6 +36,7 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.65.0",
     "@cloudflare/vitest-plugin": "^1.4.7",
+    "@freecorps/brigade-sdk": "workspace:*",
     "typescript": "^7.0.2",
     "vite-plus": "catalog:",
     "wrangler": "^4.152.0"

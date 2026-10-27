@@ -11,6 +11,7 @@ import {
   runInDurableObject,
 } from "cloudflare:test";
 import { generateRecipient, toBase64url } from "@freecorps/brigade-push";
+import { verifyWebhook } from "@freecorps/brigade-sdk";
 import {
   newId,
   WEBHOOK_DISABLE_AFTER_MS,
@@ -34,6 +35,8 @@ import {
   WEBHOOK_RETRY_DELAYS_MS,
 } from "../src/webhooks.ts";
 import { workerAuth } from "../src/index.ts";
+import committedFixture from "../../../packages/sdk/tests/fixtures/server-signed.json?raw";
+import { serverSignedFixtureJson } from "./sdk-fixture.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
 
 const ORIGIN = "http://api.test";
@@ -63,6 +66,33 @@ describe("signature", () => {
       "webhook-timestamp": "1790000000",
       "webhook-signature": `v1,${await sign(a!, "evt_x", 1790000000, "{}")} v1,${await sign(b!, "evt_x", 1790000000, "{}")}`,
     });
+  });
+
+  test("the SDK's verifier accepts what this signer signs, and its fixture is current", async () => {
+    // packages/sdk cannot import this app (MIT), so it checks a fixture made here: `vp run sdk-fixture` rewrites it.
+    expect(committedFixture).toBe(await serverSignedFixtureJson());
+    const [a, b] = [newWebhookSecret(), newWebhookSecret()];
+    const id = newId("evt", Date.now(), random);
+    const body = JSON.stringify({
+      version: 1,
+      id,
+      type: "webhook.test",
+      time: new Date().toISOString(),
+      workspaceId: newId("ws", Date.now(), random),
+      actor: { kind: "user", id: "usr_ana" },
+      data: { webhookId: newId("whk", Date.now(), random) },
+    });
+    const headers = await signatureHeaders([a!, b!], id, Math.floor(Date.now() / 1000), body);
+    for (const secret of [a!, b!]) {
+      const verified = await verifyWebhook({ secret, headers, body });
+      expect(verified).toMatchObject({
+        ok: true,
+        webhookId: id,
+        payload: { type: "webhook.test" },
+      });
+    }
+    const wrong = await verifyWebhook({ secret: newWebhookSecret(), headers, body });
+    expect(wrong.ok || wrong.error.code).toBe("invalid_signature");
   });
 
   test("a receiver's answer is kept as a short line of printable text", () => {

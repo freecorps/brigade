@@ -24,6 +24,12 @@ describe("toJsonSchema", () => {
     });
     expect(toJsonSchema(v.string({ max: 5 }))).toEqual({ type: "string", maxLength: 5 });
     expect(toJsonSchema(v.picklist(ROLES))).toEqual({ type: "string", enum: [...ROLES] });
+    expect(toJsonSchema(v.openPicklist(ROLES, { max: 9 }))).toEqual({
+      anyOf: [
+        { type: "string", enum: [...ROLES] },
+        { type: "string", minLength: 1, maxLength: 9 },
+      ],
+    });
     expect(toJsonSchema(v.integer({ min: 0, max: 9 }))).toEqual({
       type: "integer",
       minimum: 0,
@@ -60,6 +66,19 @@ describe("toJsonSchema", () => {
       required: [],
       additionalProperties: false,
     });
+  });
+
+  test("a literal is a const; an open object allows other keys", () => {
+    expect(toJsonSchema(v.literal(1))).toEqual({ const: 1 });
+    const open = v.object({ kind: v.literal("x") }, { open: true });
+    expect(toJsonSchema(open)).toEqual({
+      type: "object",
+      properties: { kind: { const: "x" } },
+      required: ["kind"],
+    });
+    expect(open({ kind: "x", more: 1 })).toEqual({ ok: true, value: { kind: "x" } });
+    expect(v.object({ kind: v.literal("x") })({ kind: "x", more: 1 }).ok).toBe(false);
+    expect(open({ kind: "y" }).ok).toBe(false);
   });
 
   test("an id's pattern is the one isId checks", () => {

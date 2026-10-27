@@ -1,0 +1,10 @@
+{
+  // Runtime code: no Node types, so a Node-only API here fails the type check. WebCrypto comes from the
+  // `webworker` lib, the standard API Workers, browsers and Node share.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["es2023", "webworker"],
+    "types": []
+  },
+  "include": ["."]
+}

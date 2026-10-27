@@ -16,6 +16,15 @@ test("picklist accepts only its values", () => {
   expect(pick(undefined).ok).toBe(false);
 });
 
+test("openPicklist accepts its values and any other short string", () => {
+  const pick = v.openPicklist(["a", "b"], { max: 3 });
+  expect(pick("a")).toEqual({ ok: true, value: "a" });
+  expect(pick("new")).toEqual({ ok: true, value: "new" });
+  expect(pick("").ok).toBe(false);
+  expect(pick("long").ok).toBe(false);
+  expect(pick(1).ok).toBe(false);
+});
+
 test("object returns a new object and reports every issue with its path", () => {
   const args = v.object({ name: v.string({ max: 10 }), kind: v.picklist(["x"]) });
   const input = { name: " n ", kind: "x" };

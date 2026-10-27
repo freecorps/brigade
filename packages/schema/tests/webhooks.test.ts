@@ -1,6 +1,8 @@
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, expectTypeOf, test } from "vite-plus/test";
 import {
   createMemoryStore,
+  INCIDENT_TITLE_MAX,
+  isKnownWebhookPayload,
   MAX_WEBHOOKS_PER_WORKSPACE,
   mutations,
   newId,
@@ -14,13 +16,19 @@ import {
   WEBHOOK_LOG_SIZE,
   WEBHOOK_ROTATION_GRACE_MS,
   WEBHOOK_TEST_EVERY_MS,
+  WEBHOOK_EVENT_TYPES,
+  WEBHOOK_PAYLOADS,
   webhookPayload,
+  webhookPayloadValidator,
   webhookTargetProblem,
   webhookWants,
   type BrigadeTables,
+  type Infer,
   type IncidentRow,
   type MutationContext,
   type Role,
+  type WebhookPayload,
+  type WebhookPayloadType,
   type WebhookRow,
   type WebhookSourceEvent,
 } from "../src/index.ts";
@@ -463,5 +471,142 @@ describe("payload", () => {
       true,
     );
     expect(webhookWants(row, event("webhook.test", { id: "whk_y" }))).toBe(false);
+  });
+});
+
+describe("payload validators", () => {
+  const at = (n: number) => newId("evt", T, () => new Uint8Array(16).fill(n));
+  const incident: IncidentRow = {
+    id: newId("inc", T, random),
+    number: 142,
+    title: "Checkout down",
+    severity: "sev1",
+    status: "investigating",
+    declaredAt: T,
+    declaredBy: "usr_ana",
+    acknowledgedAt: T + 60_000,
+    acknowledgedBy: "usr_ana",
+    updatedAt: T,
+  };
+  const monitorId = newId("mon", T, random);
+  const alertId = newId("alt", T, random);
+  const monitor = { name: "Checkout", kind: "http", status: "down" } as const;
+  /** One source event per payload type, as the outbox writes them, with what the shard reads for it. */
+  const SOURCES: Record<WebhookPayloadType, [subject: string, data: unknown, context: object]> = {
+    "incident.declared": [incident.id, { severity: "sev1" }, { incident }],
+    "incident.status_changed": [incident.id, { from: "triage", to: "investigating" }, { incident }],
+    "incident.severity_changed": [incident.id, { from: "sev2", to: "sev1" }, { incident }],
+    "incident.acknowledged": [incident.id, { by: "usr_ana" }, { incident }],
+    "incident.update_posted": [incident.id, { body: "Rolling back.\nETA 10 min." }, { incident }],
+    "incident.role_assigned": [
+      incident.id,
+      { role: "commander", from: null, to: "usr_ana" },
+      { incident },
+    ],
+    "alert.fired": [alertId, { id: alertId, monitorId, incidentId: incident.id }, { monitor }],
+    "alert.resolved": [alertId, { id: alertId, monitorId, reason: "recovered" }, {}],
+    "monitor.status_changed": [monitorId, { from: "up", to: "down" }, { monitor }],
+    "escalation.paged": [
+      "esc_x",
+      { incidentId: incident.id, level: null, round: 2, reason: "exhausted", userIds: [] },
+      { incident },
+    ],
+    "webhook.test": [newId("whk", T, random), { id: "" }, {}],
+  };
+
+  test("every type has a validator, the catalog's order then the test", () => {
+    expect(Object.keys(WEBHOOK_PAYLOADS)).toEqual([...WEBHOOK_EVENT_TYPES, "webhook.test"]);
+    // Each validator accepts exactly its type's payload: no field more, less or of another kind.
+    expectTypeOf<{
+      [K in WebhookPayloadType]: Infer<(typeof WEBHOOK_PAYLOADS)[K]>;
+    }>().toEqualTypeOf<{ [K in WebhookPayloadType]: Extract<WebhookPayload, { type: K }> }>();
+  });
+
+  test("accept every payload webhookPayload makes, unchanged", () => {
+    let n = 0;
+    for (const [type, [subject, data, context]] of Object.entries(SOURCES)) {
+      const source = {
+        id: at(++n),
+        type,
+        time: new Date(T).toISOString(),
+        workspaceId: newId("ws", T, random),
+        actor: { kind: "user" as const, id: "usr_ana" },
+        subject,
+        data: type === "webhook.test" ? { id: subject } : data,
+      };
+      const payload = webhookPayload(source, context);
+      expect(payload, type).toBeDefined();
+      const parsed = webhookPayloadValidator(JSON.parse(JSON.stringify(payload)));
+      expect(parsed, type).toEqual({ ok: true, value: payload });
+    }
+  });
+
+  test("drop fields added since, refuse another version or shape", () => {
+    const payload = {
+      version: 1,
+      id: at(1),
+      type: "webhook.test",
+      time: new Date(T).toISOString(),
+      workspaceId: newId("ws", T, random),
+      actor: { kind: "user", id: "usr_ana", extra: 1 },
+      data: { webhookId: newId("whk", T, random), extra: true },
+      extra: "x",
+    };
+    const parsed = webhookPayloadValidator(payload);
+    expect(parsed.ok && parsed.value).toEqual({
+      ...payload,
+      actor: { kind: "user", id: "usr_ana" },
+      data: { webhookId: payload.data.webhookId },
+      extra: undefined,
+    });
+    expect(parsed.ok && "extra" in parsed.value).toBe(false);
+    expect(webhookPayloadValidator({ ...payload, version: 2 }).ok).toBe(false);
+    expect(webhookPayloadValidator({ ...payload, data: {} }).ok).toBe(false);
+    expect(webhookPayloadValidator({ ...payload, id: "nope" }).ok).toBe(false);
+    expect(webhookPayloadValidator(null).ok).toBe(false);
+  });
+
+  test("take what a newer Brigade may add within version 1", () => {
+    const incidentPayload = webhookPayload(
+      {
+        id: at(1),
+        type: "incident.status_changed",
+        time: new Date(T).toISOString(),
+        workspaceId: newId("ws", T, random),
+        actor: { kind: "user", id: "usr_ana" },
+        subject: incident.id,
+        data: { from: "triage", to: "investigating" },
+      },
+      { incident },
+    )!;
+    const newer = JSON.parse(JSON.stringify(incidentPayload));
+    newer.actor.kind = "robot";
+    newer.data.to = "postmortem";
+    newer.data.incident.severity = "sev0";
+    newer.data.incident.title = "x".repeat(INCIDENT_TITLE_MAX * 10);
+    const parsed = webhookPayloadValidator(newer);
+    expect(parsed).toEqual({ ok: true, value: newer });
+    expect(parsed.ok && isKnownWebhookPayload(parsed.value)).toBe(true);
+    expect(
+      webhookPayloadValidator({ ...newer, data: { ...newer.data, to: "x".repeat(65) } }).ok,
+    ).toBe(false);
+    expect(
+      webhookPayloadValidator({
+        ...newer,
+        data: { ...newer.data, incident: { ...newer.data.incident, title: "x".repeat(70_000) } },
+      }).ok,
+    ).toBe(false);
+
+    // A type added since: the envelope checked, the data as sent.
+    const added = { ...newer, type: "member.removed", data: { anything: [1, 2] } };
+    const unknown = webhookPayloadValidator(added);
+    expect(unknown).toEqual({ ok: true, value: added });
+    expect(unknown.ok && isKnownWebhookPayload(unknown.value)).toBe(false);
+    const own = webhookPayloadValidator({ ...added, type: "toString" });
+    expect(own.ok && isKnownWebhookPayload(own.value)).toBe(false);
+    expect(webhookPayloadValidator({ ...added, version: 2 }).ok).toBe(false);
+    expect(webhookPayloadValidator({ ...added, workspaceId: "nope" }).ok).toBe(false);
+    expect(webhookPayloadValidator({ ...added, type: "" }).ok).toBe(false);
+    expect(webhookPayloadValidator({ ...added, type: 1 }).ok).toBe(false);
   });
 });

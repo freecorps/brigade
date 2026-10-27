@@ -333,9 +333,14 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - The OpenAPI 3.1 reference of the public HTTP routes is in `docs/api/openapi.json`, generated from the route list
     in `apps/api/src/openapi.ts` and the schema package's validators, kept honest by tests, and served at
     `GET /api/openapi.json` (RFC 0002 "Public HTTP API").
-  - Left: setting `WEBHOOK_SECRET_KEY` on the deployed environments (owner's call, apps/api/README.md); a `webhooks`
-    section in the reference for their payloads; API tokens (their own design first); `packages/sdk` (payload types
-    and a signature verifier) published; replaying a given-up delivery; custom headers per endpoint.
+  - The reference's `webhooks` section: one entry per payload type, converted from the schema package's payload
+    validators (`WEBHOOK_PAYLOADS`), checked against what the API signs.
+  - `packages/sdk` (`@freecorps/brigade-sdk` 0.1.0, MIT, ready to publish): `verifyWebhook` (Standard Webhooks on Web
+    Crypto, typed payloads and errors), a typed client for the reference's operations, and the payload types; no
+    runtime dependencies (RFC 0002 "Public HTTP API").
+  - Left: publish `@freecorps/brigade-sdk` to npm (owner); setting `WEBHOOK_SECRET_KEY` on the deployed environments
+    (owner's call, apps/api/README.md); API tokens (their own design first); replaying a given-up delivery; custom
+    headers per endpoint.
 
 ## Phase 4 — Open source launch (ongoing)
 

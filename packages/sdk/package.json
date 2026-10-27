@@ -1,0 +1,58 @@
+{
+  "name": "@freecorps/brigade-sdk",
+  "version": "0.1.0",
+  "description": "SDK for Freecorps Brigade: verify its signed webhooks, call its public HTTP API, and its payload types.",
+  "keywords": [
+    "brigade",
+    "incident-management",
+    "on-call",
+    "standard-webhooks",
+    "webhooks"
+  ],
+  "homepage": "https://github.com/freecorps/brigade/tree/main/packages/sdk#readme",
+  "bugs": {
+    "url": "https://github.com/freecorps/brigade/issues"
+  },
+  "license": "MIT",
+  "author": "Freecorps Tecnologia da Informação LTDA",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freecorps/brigade.git",
+    "directory": "packages/sdk"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "@freecorps/source": "./src/index.ts",
+      "default": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": "./dist/index.mjs",
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack && node scripts/check-dist.mjs",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "check": "vp check"
+  },
+  "devDependencies": {
+    "@freecorps/brigade-schema": "workspace:*",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

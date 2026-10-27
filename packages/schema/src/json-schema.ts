@@ -27,6 +27,16 @@ export function toJsonSchema(validator: Validator<unknown>): JsonSchema {
       };
     case "picklist":
       return { type: "string", enum: [...shape.values] };
+    case "openPicklist":
+      // The known values, or any other: a receiver should expect values added since.
+      return {
+        anyOf: [
+          { type: "string", enum: [...shape.values] },
+          { type: "string", minLength: 1, maxLength: shape.max },
+        ],
+      };
+    case "literal":
+      return { const: shape.value };
     case "id":
       return { type: "string", pattern: idPattern(shape.prefix) };
     case "integer":
@@ -56,7 +66,7 @@ export function toJsonSchema(validator: Validator<unknown>): JsonSchema {
           const kind = shapeOf(shape.shape[key]!)?.kind;
           return kind !== "optional" && kind !== "omittable";
         }),
-        additionalProperties: false,
+        ...(shape.open ? {} : { additionalProperties: false }),
       };
     }
   }

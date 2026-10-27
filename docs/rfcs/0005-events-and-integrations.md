@@ -311,7 +311,8 @@ interface Notifier {
 - Built-in integrations live in `integrations/*` as separate Workers bound to `api` via **service bindings** (RPC).
 - Third parties implement the same interfaces in their own Worker and register the binding in config — no core fork needed.
 - Lightweight alternative for anything outside Cloudflare: **outbound webhooks** (below) and the public REST API
-  (OpenAPI spec generated from `packages/schema`, not yet).
+  (the OpenAPI reference, `docs/api/openapi.json`, its bodies and payloads converted from `packages/schema`; RFC 0002
+  "Public HTTP API").
 
 ## Outbound webhooks
 
@@ -346,9 +347,15 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
     The HMAC key is the secret's bytes after `whsec_`, base64-decoded; the signed content is
     `<webhook-id>.<webhook-timestamp>.<body>`, the body exactly as sent. The specification's own example is the test
     vector (apps/api test/webhooks.test.ts).
-- **Payloads** (`WebhookPayload`, MIT, for the SDK and the OpenAPI reference to reuse): an envelope `{ version: 1, id,
-  type, time, workspaceId, actor: { kind, id }, data }`; `time` is when the event happened. A change that is not purely
-  additive is `version: 2`, never an edit. Member ids, never names or addresses. The catalog
+- **Payloads** (`WebhookPayload` and its validators `WEBHOOK_PAYLOADS`, MIT, which the SDK and the OpenAPI reference
+  reuse): an envelope `{ version: 1, id,
+  type, time, workspaceId, actor: { kind, id }, data }`; `time` is when the event happened. Member ids, never names
+  or addresses. **What version 1 may grow by:** new event types, new values in any list (a severity, a status, a
+  monitor kind, a role, an actor kind, a reason) and new fields, anywhere. Removing or renaming any of them, or changing
+  a field's type or meaning, is `version: 2`, never an edit of version 1. So a receiver must take what it does not know
+  yet: the validators accept any string where a list may grow (typed as the known values or `string`), text much
+  longer than Brigade writes today (`WEBHOOK_PAYLOAD_TEXT_MAX`), and a `type` they do not know as an unknown payload
+  (the envelope checked, `data` as sent) rather than an error; a field they do not know is dropped. The catalog
   (`WEBHOOK_EVENT_TYPES`) and each `data`:
   - `incident.declared` (`incident`), `incident.status_changed` and `incident.severity_changed` (`incident`, `from`,
     `to`), `incident.acknowledged` (`incident`, `by`), `incident.update_posted` (`incident`, `body`: what the member
@@ -403,8 +410,18 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   read before its slot is freed); a delivery still waiting for one at its budget is not started (no attempt; the
   alarm brings it back when its hold runs out). A page in the same batch (or the same event) goes to the relay at
   once (tested with 20 receivers that never answer, against a model of the six-connection limit).
-- **Not yet.** The OpenAPI reference and `packages/sdk` (with a verifier) publishing these types; per-endpoint
-  custom headers; replaying a given-up delivery from the dashboard.
+- **For receivers.** `@freecorps/brigade-sdk` (`packages/sdk`, MIT) verifies a delivery (`verifyWebhook`: every `v1`
+  signature against every secret given, in constant time; the timestamp within 5 minutes either way by default; an
+  optional `whsec_` prefix; a tolerance or a `now` that is not finite is refused, never a replay check quietly off)
+  and parses its payload with `WEBHOOK_PAYLOADS`, the schema package's validators for each `type`, into a typed
+  `WebhookPayload`, or an `UnknownWebhookPayload` (`known: false`) for a type added since; or it answers a typed error
+  (`invalid_signature`, `timestamp_too_old`, `invalid_payload`, …). A receiver answers 2xx to every delivery whose
+  signature holds, known or not, and 4xx only to one whose signature or timestamp does not: a delivery it refuses for
+  its content is retried and, after 24 hours of those, turns its endpoint off ("Auto-disable"), so an SDK one release
+  behind would stop all of a workspace's webhooks. The API reference's `webhooks` section is converted from the same
+  validators (RFC 0002 "Public HTTP API").
+- **Not yet.** Publishing the SDK to npm (the owner's call); per-endpoint custom headers; replaying a given-up
+  delivery from the dashboard.
 
 ## Slack (first ChatProvider)
 

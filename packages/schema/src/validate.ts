@@ -19,6 +19,8 @@ export const MAX_ISSUES = 10;
 export type Shape =
   | { kind: "string"; min: number; max: number; multiline: boolean }
   | { kind: "picklist"; values: readonly string[] }
+  | { kind: "openPicklist"; values: readonly string[]; max: number }
+  | { kind: "literal"; value: string | number | boolean }
   | { kind: "id"; prefix: string }
   | { kind: "integer"; min: number; max: number }
   | { kind: "boolean" }
@@ -26,7 +28,7 @@ export type Shape =
   | { kind: "optional"; inner: Validator<unknown> }
   | { kind: "omittable"; inner: Validator<unknown> }
   | { kind: "array"; item: Validator<unknown>; min: number; max: number; unique: boolean }
-  | { kind: "object"; shape: Readonly<Record<string, Validator<unknown>>> };
+  | { kind: "object"; shape: Readonly<Record<string, Validator<unknown>>>; open: boolean };
 
 const shapes = new WeakMap<Validator<unknown>, Shape>();
 
@@ -92,6 +94,31 @@ function picklist<const T extends string>(values: readonly T[]): Validator<T> {
         ? valid(input as T)
         : invalid(path, `Expected one of ${values.join(", ")}`),
     { kind: "picklist", values },
+  );
+}
+
+/**
+ * One of `values` or any other string of 1 to `max` characters, typed as the known ones plus `string`: for values
+ * Brigade sends and may add to (webhook payloads), so an older receiver takes a new one instead of refusing it.
+ */
+function openPicklist<const T extends string>(
+  values: readonly T[],
+  options: { max: number },
+): Validator<T | (string & {})> {
+  return described(
+    (input, path = "") =>
+      typeof input === "string" && input.length >= 1 && input.length <= options.max
+        ? valid(input)
+        : invalid(path, `Expected a string of 1 to ${options.max} characters`),
+    { kind: "openPicklist", values, max: options.max },
+  );
+}
+
+/** Exactly `value`. */
+function literal<const T extends string | number | boolean>(value: T): Validator<T> {
+  return described(
+    (input, path = "") => (input === value ? valid(value) : invalid(path, `Expected ${value}`)),
+    { kind: "literal", value },
   );
 }
 
@@ -186,17 +213,23 @@ function isPlainObject(input: unknown): input is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
-/** A plain object (no arrays, class instances or exotic prototypes) with exactly these keys. */
+/**
+ * A plain object (no arrays, class instances or exotic prototypes) with exactly these keys. With `open`, other keys
+ * are left out of the value instead of refused: for what Brigade sends and may add fields to (webhook payloads), never
+ * for what it accepts.
+ */
 function object<const S extends Record<string, Validator<unknown>>>(
   shape: S,
-): Validator<{ [K in keyof S]: Infer<S[K]> }> {
+  options: { open?: boolean } = {},
+): Validator<{ -readonly [K in keyof S]: Infer<S[K]> }> {
+  const open = options.open ?? false;
   return described(
     (input, path = "") => {
       if (!isPlainObject(input)) return invalid(path, "Expected an object");
       const at = (key: string) => clip(path ? `${path}.${key}` : key);
       const issues: Issue[] = [];
       const value: Record<string, unknown> = {};
-      for (const key of Object.keys(input)) {
+      for (const key of open ? [] : Object.keys(input)) {
         if (issues.length >= MAX_ISSUES) break;
         if (!Object.prototype.hasOwnProperty.call(shape, key)) {
           issues.push({ path: at(key), message: "Unknown key" });
@@ -209,15 +242,17 @@ function object<const S extends Record<string, Validator<unknown>>>(
       }
       return issues.length
         ? { ok: false, issues: issues.slice(0, MAX_ISSUES) }
-        : valid(value as { [K in keyof S]: Infer<S[K]> });
+        : valid(value as { -readonly [K in keyof S]: Infer<S[K]> });
     },
-    { kind: "object", shape },
+    { kind: "object", shape, open },
   );
 }
 
 export const v = {
   string,
   picklist,
+  openPicklist,
+  literal,
   id,
   object,
   integer,

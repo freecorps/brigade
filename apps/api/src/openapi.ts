@@ -874,7 +874,8 @@ const LISTED: readonly Operation[] = [
               ok: { const: true },
               entryId: {
                 type: ["string", "null"],
-                description: "The update's timeline entry (`<incident id>:<seq>`).",
+                description:
+                  "The update's timeline entry (`<incident id>:<seq>`). Null only on a retry after the update was edited or removed meanwhile.",
               },
             },
             required: ["ok", "entryId"],

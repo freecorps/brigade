@@ -838,6 +838,8 @@ describe("the reference's webhooks", () => {
 
 describe("each operation answers as documented", () => {
   for (const operation of OPERATIONS) {
+    // A bearer operation builds its case twice: two teams (four password hashes) and, for an invitation's, two
+    // invitations. On a loaded runner that alone passes the default 5 s.
     test(`${operation.method.toUpperCase()} ${operation.path}: ${operation.operationId}`, async () => {
       const basic = await CASES[operation.operationId]!();
       const response = await send(basic);
@@ -871,7 +873,7 @@ describe("each operation answers as documented", () => {
         expect(wrong.status).toBe(401);
         await expectDocumented(operation, wrong);
       }
-    });
+    }, 20_000);
   }
 
   test("paging health without a session is only its status", async () => {

@@ -80,20 +80,30 @@ async function addMember(workspaceId: string, userId: string, role: string) {
     .run();
 }
 
-/** Ana owns a new workspace with an incident in triage; Caio is a responder, Duda a viewer, Eva an outsider. */
-async function team() {
+type Crew = { ana: Person; caio: Person; duda: Person; eva: Person };
+
+async function signUpCrew(): Promise<Crew> {
   const [ana, caio, duda, eva] = await Promise.all(
     ["Ana", "Caio", "Duda", "Eva"].map((name) => signUp(name)),
   );
+  return { ana: ana!, caio: caio!, duda: duda!, eva: eva! };
+}
+
+/**
+ * Ana owns a new workspace with an incident in triage; Caio is a responder, Duda a viewer, Eva an outsider. `crew`
+ * casts people signed up earlier in those parts: signing up hashes passwords, the slowest part of a team.
+ */
+async function team(crew?: Crew) {
+  const { ana, caio, duda, eva } = crew ?? (await signUpCrew());
   const created = await api("/workspaces", {
     method: "POST",
-    headers: { Cookie: ana!.cookie },
+    headers: { Cookie: ana.cookie },
     body: JSON.stringify({ name: "Acme" }),
   });
   expect(created.status).toBe(201);
   const { id } = (await created.json()) as { id: string };
-  await addMember(id, caio!.id, "responder");
-  await addMember(id, duda!.id, "viewer");
+  await addMember(id, caio.id, "responder");
+  await addMember(id, duda.id, "viewer");
   const stub = env.WORKSPACE.getByName(id);
   const withShard = <R>(fn: (shard: Shard, state: DurableObjectState) => R | Promise<R>) =>
     runInDurableObject(stub, (_instance: WorkspaceDO, state) =>
@@ -102,7 +112,7 @@ async function team() {
         state,
       ),
     );
-  const owner: Actor = { kind: "user", id: ana!.id, role: "owner" };
+  const owner: Actor = { kind: "user", id: ana.id, role: "owner" };
   const run = (name: string, args: unknown, actor: Actor = owner, internal = false) =>
     withShard((shard) => {
       const { result } = shard.mutate({
@@ -118,7 +128,7 @@ async function team() {
     });
   const incident = newId("inc", Date.now(), random);
   await run("incident.declare", { id: incident, title: "Checkout down", severity: "sev1" });
-  return { id, stub, incident, ana: ana!, caio: caio!, duda: duda!, eva: eva!, withShard, run };
+  return { id, stub, incident, ana, caio, duda, eva, withShard, run };
 }
 
 type Team = Awaited<ReturnType<typeof team>>;
@@ -283,7 +293,8 @@ describe("POST /workspaces/:id/incidents/:incidentId/ack", () => {
 
   test("an incident of another workspace is not found, and stays unacknowledged", async () => {
     const t = await team();
-    const elsewhere = await team();
+    // Eva, an outsider here, owns the other workspace; Caio has no part in it.
+    const elsewhere = await team({ ana: t.eva, caio: t.duda, duda: t.ana, eva: t.caio });
     const response = await ack(t, t.caio, { incident: elsewhere.incident });
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "not_found" });

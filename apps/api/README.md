@@ -428,7 +428,8 @@ monitors' target rules plus https only (no redirects followed, 5 s, at most 1 KB
 Retries: 30 s, 2 min, 10 min, 1 h, 4 h, then given up. A page never waits on it: webhooks get at most
 `WEBHOOK_BUDGET_MS` (3 s) per event in a batch, like Slack. An endpoint failing for a day (10 attempts or more) is
 turned off, and its owners are emailed. Locally, an endpoint must be a public https URL (a tunnel to a local
-receiver works); set `WEBHOOK_SECRET_KEY` in `.dev.vars` to try it under `vp run dev`.
+receiver works); pass `WEBHOOK_SECRET_KEY` from the shell to try it under `vp run dev`
+(`WEBHOOK_SECRET_KEY=… vp run dev`, like the other optional secrets above).
 
 ## Generated types
 

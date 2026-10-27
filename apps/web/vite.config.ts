@@ -33,7 +33,14 @@ function themeColor(): Plugin {
  * here instead; deployed Workers get them from `wrangler secret put`.
  */
 function localSecrets(): Record<string, string> {
-  const names = ["DEAD_MAN_URL", "RELAY_URL", "RELAY_SEND_TOKEN", "EMAIL_FROM", "DASHBOARD_URL"];
+  const names = [
+    "DEAD_MAN_URL",
+    "RELAY_URL",
+    "RELAY_SEND_TOKEN",
+    "EMAIL_FROM",
+    "DASHBOARD_URL",
+    "WEBHOOK_SECRET_KEY",
+  ];
   return Object.fromEntries(
     names.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])),
   );

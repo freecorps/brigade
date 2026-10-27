@@ -236,14 +236,14 @@ function FollowUpItem({
         >
           <StatusIcon
             aria-hidden
-            className={cn("size-5", done ? "text-status-resolved" : "text-muted-foreground")}
+            className={cn("size-5", done ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}
           />
         </Button>
       ) : (
         <span className="flex size-11 shrink-0 items-center justify-center">
           <StatusIcon
             aria-hidden
-            className={cn("size-5", done ? "text-status-resolved" : "text-muted-foreground")}
+            className={cn("size-5", done ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}
           />
         </span>
       )}

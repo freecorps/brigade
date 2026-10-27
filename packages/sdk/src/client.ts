@@ -67,6 +67,7 @@ const MEMBER = [
   "last_owner",
   "conflict",
   "not_applied",
+  "rate_limited",
   ...SHARD_FAILED,
 ] as const;
 const INVITATION = [

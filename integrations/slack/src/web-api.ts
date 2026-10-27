@@ -33,23 +33,32 @@ const TRANSIENT = new Set([
 ]);
 
 /**
- * `POST https://slack.com/api/<method>` with a JSON body (or a form, for `oauth.v2.access`), the token as a bearer
- * when given. Never throws.
+ * Methods that read their arguments only from a form or the query string: Slack ignores a JSON body there (it accepts
+ * JSON for write methods only), so `users.info` would answer `user_not_found` whoever was asked about.
+ */
+const FORM_ONLY = new Set(["users.info", "users.lookupByEmail", "conversations.list"]);
+
+/**
+ * `POST https://slack.com/api/<method>` with a JSON body (or a form, for `oauth.v2.access` and the methods in
+ * `FORM_ONLY`), the token as a bearer when given. Never throws.
  */
 export async function callSlack(
   method: string,
   body: Record<string, unknown>,
   options: { token?: string; form?: boolean; fetch: Fetch; timeoutMs?: number },
 ): Promise<SlackCall> {
-  const headers: Record<string, string> = options.form
+  const form = options.form === true || FORM_ONLY.has(method);
+  const headers: Record<string, string> = form
     ? { "Content-Type": "application/x-www-form-urlencoded" }
     : { "Content-Type": "application/json; charset=utf-8" };
   if (options.token) headers.Authorization = `Bearer ${options.token}`;
-  const payload = options.form
+  const payload = form
     ? new URLSearchParams(
-        // Forms carry only strings (`oauth.v2.access`, `auth.revoke`).
+        // A form carries text: numbers and booleans as Slack reads them (`limit=200`, `include_locale=true`).
         Object.entries(body).flatMap(([key, value]) =>
-          typeof value === "string" ? [[key, value]] : [],
+          typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+            ? [[key, String(value)]]
+            : [],
         ),
       ).toString()
     : JSON.stringify(body);

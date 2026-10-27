@@ -119,7 +119,9 @@ function slackUser(teamId: string, email: string, more: Record<string, unknown> 
 const usersInfo: Fetch = async (request) => {
   expect(request.url).toBe("https://slack.com/api/users.info");
   expect(request.headers.get("Authorization")).toBe(`Bearer ${BOT_TOKEN}`);
-  const { user } = (await request.json()) as { user: string };
+  // A form, as Slack reads `users.info`: a JSON body would name nobody there.
+  expect(request.headers.get("Content-Type")).toBe("application/x-www-form-urlencoded");
+  const user = new URLSearchParams(await request.text()).get("user") ?? "";
   const found = slackUsers.get(user);
   return Response.json(found ? { ok: true, user: found } : { ok: false, error: "user_not_found" });
 };

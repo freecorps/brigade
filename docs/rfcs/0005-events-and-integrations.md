@@ -348,6 +348,7 @@ Endpoints a workspace's owners and admins register (`webhook:manage`) to get its
   Nothing else is delivered: members, invitations, devices, schedules and policies, the notifiers' own records and the
   webhooks' own changes stay inside. The incident or monitor is read when the event is first delivered and the
   payload kept in the shard's ledger, so every retry carries the same bytes.
+
 - **Delivery.** From the queue consumer, never from the shard (which only writes the outbox, like every event). For
   each event the shard's ledger (`webhook_sends`, per event and endpoint) says which endpoints are due and holds each
   for 30 s, so two deliveries of one event never send it at once; a redelivery skips endpoints already done. Targets

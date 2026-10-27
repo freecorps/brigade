@@ -345,15 +345,15 @@ In order, from `apps/api` unless noted:
    applied to `brigade-db-dev`).
 2. **API secrets**, each with `wrangler secret put <NAME> --env dev`:
 
-   | Secret               | Needed for                                                                                                                   |
-   | -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-   | `BETTER_AUTH_SECRET` | Required: sessions (`openssl rand -base64 32`)                                                                               |
-   | `RELAY_SEND_TOKEN`   | Push: the relay's send token (apps/relay); without it every page is recorded as failed                                       |
-   | `DASHBOARD_URL`      | Links in emails and Slack: `https://brigade-web-dev.<subdomain>.workers.dev`                                                 |
-   | `EMAIL_FROM`         | Optional: the email sender ("Email" above); without it no email goes out, so addresses cannot be verified or passwords reset |
-   | `SLACK_TOKEN_KEY`    | Optional until Slack: seals bot tokens ("Slack" below)                                                                       |
+   | Secret               | Needed for                                                                                                                                      |
+   | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `BETTER_AUTH_SECRET` | Required: sessions (`openssl rand -base64 32`)                                                                                                  |
+   | `RELAY_SEND_TOKEN`   | Push: the relay's send token (apps/relay); without it every page is recorded as failed                                                          |
+   | `DASHBOARD_URL`      | Links in emails and Slack: `https://brigade-web-dev.<subdomain>.workers.dev`                                                                    |
+   | `EMAIL_FROM`         | Optional: the email sender ("Email" above); without it no email goes out, so addresses cannot be verified or passwords reset                    |
+   | `SLACK_TOKEN_KEY`    | Optional until Slack: seals bot tokens ("Slack" below)                                                                                          |
    | `WEBHOOK_SECRET_KEY` | Optional: seals webhook signing secrets ("Webhooks" below, `openssl rand 32 \| base64 \| tr '+/' '-_' \| tr -d =`); without it webhooks are off |
-   | `DEAD_MAN_URL`       | Optional: the external dead-man check's ping URL ("Dead-man switch" above)                                                   |
+   | `DEAD_MAN_URL`       | Optional: the external dead-man check's ping URL ("Dead-man switch" above)                                                                      |
 
    No `RELAY_URL`: the `dev` environment reaches `brigade-relay-dev` through its `RELAY` service binding
    (wrangler.jsonc). A Worker's fetch to another workers.dev Worker on the same account is answered 404, so the

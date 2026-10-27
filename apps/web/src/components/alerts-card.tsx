@@ -7,6 +7,7 @@ import {
   ALERT_LABEL_KEY_MAX,
   ALERT_SOURCE_NAME_MAX,
   applyMapping,
+  pickRoute,
   can,
   formatIncidentNumber,
   MAX_ALERT_ROUTES,
@@ -288,6 +289,10 @@ function Sources(props: PanelProps & { onShown: (shown: ShownUrl) => void }) {
 function SourceRow({
   source,
   recent,
+  routes,
+  policies,
+  types,
+  services,
   manage,
   locale,
   now,
@@ -352,6 +357,8 @@ function SourceRow({
       {mode === "map" ? (
         <MappingForm
           source={source}
+          routes={routes}
+          catalog={{ policies, types, services }}
           latest={recent.find(
             (row) =>
               row.sourceId === source.id && row.reason !== "malformed" && row.reason !== "capacity",
@@ -421,11 +428,16 @@ type RuleDraft = { key: number; value: string; severity: AlertSeverity };
 function MappingForm({
   source,
   latest,
+  routes,
+  catalog,
   onSave,
   onCancel,
 }: {
   source: AlertSourceRow;
   latest: SourceAlertRow | undefined;
+  /** In the order they are tried, as `alertRoutes.all` sorts them. */
+  routes: readonly AlertRouteRow[];
+  catalog: Catalog;
   onSave: (mapping: AlertMapping | null) => Promise<boolean>;
   onCancel: () => void;
 }) {
@@ -475,6 +487,8 @@ function MappingForm({
         ...(sent.providerSeverity !== null && { providerSeverity: sent.providerSeverity }),
       })
     : undefined;
+  // Which route the mapped alert would take: a map that moves it onto a route that drops it silences the source.
+  const picked = preview ? pickRoute(routes, source.id, preview, false) : undefined;
   const labelKeys = latest ? Object.keys(latest.labels).slice(0, 8) : [];
 
   const insert = (field: string) => {
@@ -670,6 +684,21 @@ function MappingForm({
                 {" "}
                 · {severityName(preview.severity)}
               </span>
+            </dd>
+            <dt className="text-muted-foreground">{say("preview_route")}</dt>
+            <dd
+              className={`min-w-0 [overflow-wrap:anywhere] ${picked?.action.kind === "drop" ? "text-destructive" : ""}`}
+            >
+              {picked?.route ? (
+                <>
+                  {picked.route.name}
+                  <span className="block text-xs text-muted-foreground">
+                    {actionText(picked.action, catalog)}
+                  </span>
+                </>
+              ) : (
+                say("preview_route_default")
+              )}
             </dd>
           </dl>
         ) : (

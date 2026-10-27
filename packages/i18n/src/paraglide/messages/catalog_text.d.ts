@@ -14,7 +14,7 @@ export type Catalog_TextInputs = {
 * | "unowned" | "No owner" |
 * | "policy_named" | "Escalation: {name}" |
 * | "no_policy" | "No escalation policy" |
-* | "policy_note" | "Kept for alert routes: pages still go through the incident type's policy, the monitor's, or the default one." |
+* | "policy_note" | "Incidents that name this service page through this policy, unless their alert route or incident type has one. The order is: alert route, incident type, the i..." |
 * | "back" | "Overview" |
 * | "loading" | "Loading the service…" |
 * | "not_found_title" | "Service not found" |

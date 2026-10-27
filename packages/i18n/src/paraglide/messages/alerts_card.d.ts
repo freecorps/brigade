@@ -159,6 +159,8 @@ export type Alerts_CardInputs = {
 * | "preview_becomes" | "Becomes" |
 * | "preview_sender_word" | "Sender's severity: {value}" |
 * | "preview_no_word" | "The sender gave no severity" |
+* | "preview_route" | "Route" |
+* | "preview_route_default" | "No route matches: it opens an incident at its own severity, paged through the default policy." |
 * | "mapping_reset" | "Use the sender's" |
 * | "mapping_save_failed" | "Couldn't save the title and severity. Try again." |
 * | * | "Alert sources" |

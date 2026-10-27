@@ -449,7 +449,7 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   changed, or written by hand), or one that leaves nothing visible, gives the alert's own title; a rule or a fallback
   that is not a known severity is skipped. Brigade's own alerts (unreadable, capacity) are never mapped. The row keeps
   the alert as sent (`received`: title, severity, sender's word), which the dashboard's preview maps with the form's
-  draft; alerts already in are not mapped again (a quiet one is, on its next repeat, and routed again like any
+  draft, naming the route the mapped alert would take (so a map that moves a source onto a dropping route shows); alerts already in are not mapped again (a quiet one is, on its next repeat, and routed again like any
   repeat). Tests: `packages/schema/tests/alert-mapping.test.ts` ("a stored template or map that cannot be read still
   pages…", "a template that leaves nothing visible pages with the alert's own title"), `apps/api/test/alerts.test.ts`
   ("a source's mapping names and ranks its incidents; one stored broken still pages as sent").

@@ -77,7 +77,9 @@ export type ServiceRow = {
   tier: ServiceTier;
   /** Who owns it: schedules or members who can respond. Empty: unowned. */
   owners: EscalationTarget[];
-  /** The policy that pages for it; null: none. Not used for pages yet (alert routes will). */
+  /**
+   * The policy that pages for incidents naming it, after their alert route's and type's (`incidentPolicy`); null: none.
+   */
   escalationPolicyId: string | null;
   createdAt: number;
   createdBy: string;

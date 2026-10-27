@@ -149,7 +149,8 @@ until its next run.
 2. the incident's **type** (RFC 0003 "Incident types");
 3. the first of the incident's **services**, in the order they were picked, that names a policy (RFC 0003 "Service
    catalog"; `service`, "set on the service …"): the services an alert route opened it with, or a member declared it
-   with;
+   with or added later (`incident.setServices`, a monitor's incident too). A run under way keeps its levels; the
+   incident's next run follows the service;
 4. the **monitor** that opened it (`monitor`);
 5. the workspace's **default** policy (RFC 0003 "Escalation policies");
 6. else the **interim rule** below.
@@ -157,7 +158,8 @@ until its next run.
 Services come after the type (the type is the more deliberate choice of who handles this kind of incident) and before
 the monitor, so a route that names a service for a monitor's alerts (RFC 0007 "Monitor alerts through the routes")
 pages the service's people. Decided with the service's policy paging; tests:
-`packages/schema/tests/alert-mapping.test.ts` ("a service's policy pages").
+`packages/schema/tests/alert-mapping.test.ts` ("a service's policy pages") and
+`packages/schema/tests/escalation.test.ts` ("the policy order").
 
 A route, type, service or monitor naming none, deleted since, or naming a deleted policy falls through to the next, so a
 deletion never leaves an incident paged by nothing. An alert's incident opened by the default route has no route

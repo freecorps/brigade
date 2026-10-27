@@ -431,6 +431,35 @@ describe("AlertsPanel", () => {
     expect(container.textContent).not.toContain("Preview with the latest alert");
   });
 
+  test("the preview says which route the mapped alert takes, and when that route drops it", () => {
+    const container = mount(
+      panel({
+        routes: [
+          route("rte_drop", "Silence criticals", 0, {
+            match: { sourceIds: [], severities: ["critical"], labels: [] },
+            action: { kind: "drop" },
+          }),
+        ],
+        recent: [
+          alert("alt_1", {
+            received: { title: "High memory usage on web-1", severity: "high", providerSeverity: "P2" },
+          }),
+        ],
+      }),
+    );
+    click(button(container, "Title and severity"));
+    expect(container.textContent).toContain(
+      "No route matches: it opens an incident at its own severity, paged through the default policy.",
+    );
+    click(button(container, "Add value"));
+    type(input(container, "Value"), "P2");
+    type(input(container, "Severity"), "critical");
+    const routed = [...container.querySelectorAll("dt")].find((one) => one.textContent === "Route")!
+      .nextElementSibling!;
+    expect(routed.textContent).toBe("Silence criticalsDrop it");
+    expect(routed.className).toContain("text-destructive");
+  });
+
   test("the mapping's worst case: a broken template, an empty value, no alert yet, a label nobody sends", async () => {
     const saved: (AlertMapping | null)[] = [];
     const long = "x".repeat(200);

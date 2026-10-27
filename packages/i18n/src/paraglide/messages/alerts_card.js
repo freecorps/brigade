@@ -160,6 +160,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "preview_becomes" | "Becomes" |
 * | "preview_sender_word" | "Sender's severity: {value}" |
 * | "preview_no_word" | "The sender gave no severity" |
+* | "preview_route" | "Route" |
+* | "preview_route_default" | "No route matches: it opens an incident at its own severity, paged through the default policy." |
 * | "mapping_reset" | "Use the sender's" |
 * | "mapping_save_failed" | "Couldn't save the title and severity. Try again." |
 * | * | "Alert sources" |
@@ -321,6 +323,8 @@ export const alerts_card = /** @type {((inputs: Alerts_CardInputs, options?: { l
 		if (i?.part === "preview_becomes") return /** @type {LocalizedString} */ (`Fica`);
 		if (i?.part === "preview_sender_word") return /** @type {LocalizedString} */ (`Severidade do remetente: ${i?.value}`);
 		if (i?.part === "preview_no_word") return /** @type {LocalizedString} */ (`O remetente não deu severidade`);
+		if (i?.part === "preview_route") return /** @type {LocalizedString} */ (`Rota`);
+		if (i?.part === "preview_route_default") return /** @type {LocalizedString} */ (`Nenhuma rota combina: abre um incidente com a própria severidade, chamando pela política padrão.`);
 		if (i?.part === "mapping_reset") return /** @type {LocalizedString} */ (`Usar o do remetente`);
 		if (i?.part === "mapping_save_failed") return /** @type {LocalizedString} */ (`Não foi possível salvar o título e a severidade. Tente de novo.`);
 		return /** @type {LocalizedString} */ (`Fontes de alertas`)
@@ -476,6 +480,8 @@ export const alerts_card = /** @type {((inputs: Alerts_CardInputs, options?: { l
 		if (i?.part === "preview_becomes") return /** @type {LocalizedString} */ (`Becomes`);
 		if (i?.part === "preview_sender_word") return /** @type {LocalizedString} */ (`Sender's severity: ${i?.value}`);
 		if (i?.part === "preview_no_word") return /** @type {LocalizedString} */ (`The sender gave no severity`);
+		if (i?.part === "preview_route") return /** @type {LocalizedString} */ (`Route`);
+		if (i?.part === "preview_route_default") return /** @type {LocalizedString} */ (`No route matches: it opens an incident at its own severity, paged through the default policy.`);
 		if (i?.part === "mapping_reset") return /** @type {LocalizedString} */ (`Use the sender's`);
 		if (i?.part === "mapping_save_failed") return /** @type {LocalizedString} */ (`Couldn't save the title and severity. Try again.`);
 		return /** @type {LocalizedString} */ (`Alert sources`)

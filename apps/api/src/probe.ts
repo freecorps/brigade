@@ -81,7 +81,7 @@ type Stored = CheckResult & { at: number; colo: string | null };
 /**
  * One workspace's checks from one region (RFC 0007 "Placement"): the shard pushes the HTTP and TCP monitors that use the
  * region (`configure`), and `alarm()` runs each on its interval. A region's verdict flips after
- * `CONSECUTIVE_CHECKS` alike results; the probe reports it to the shard when it changes and otherwise every
+ * `CONSECUTIVE_CHECKS` alike results (or the monitor's own number); the probe reports it to the shard when it changes and otherwise every
  * `REPORT_EVERY_MS`, with the colo the check really ran from. Every alarm sets the next one before doing anything
  * else, so a failing run never ends the chain (spike S2); the shard also re-pushes the config every few minutes,
  * which re-arms a probe whose alarm was lost.
@@ -166,12 +166,11 @@ export class ProbeDO extends DurableObject<Env> {
     const config = JSON.parse(row.config) as CheckConfig;
     const ok = result.ok ? 1 : 0;
     const streak = row.last_ok === ok ? row.streak + 1 : 1;
-    // A new check is up on its first success, but down only after CONSECUTIVE_CHECKS failures; after that a
-    // verdict flips only after CONSECUTIVE_CHECKS alike results (RFC 0007 "Quorum and flapping").
-    const flips =
-      row.verdict === null
-        ? ok === 1 || streak >= CONSECUTIVE_CHECKS
-        : streak >= CONSECUTIVE_CHECKS;
+    // The monitor's own streak length, or CONSECUTIVE_CHECKS. A new check is up on its first success, but down only
+    // after that many failures; after that a verdict flips only after that many alike results (RFC 0007 "Quorum and
+    // flapping").
+    const needed = config.consecutiveChecks ?? CONSECUTIVE_CHECKS;
+    const flips = row.verdict === null ? ok === 1 || streak >= needed : streak >= needed;
     const verdict = flips ? ok : row.verdict;
     // Only if `configure` did not replace the check while it ran.
     this.ctx.storage.sql.exec(

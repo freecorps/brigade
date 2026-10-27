@@ -29,6 +29,7 @@ import { failEmail, failNotification } from "./notifications.ts";
 import {
   allMonitors,
   evaluateMonitor,
+  monitorCapQuery,
   monitorMutations,
   reportMonitorCheck,
   takeOverMonitors,
@@ -121,6 +122,7 @@ export const queries = defineRegistry([
   incidentTimeline,
   allMembers,
   allMonitors,
+  monitorCapQuery,
   allSchedules,
   allOverrides,
   allPolicies,

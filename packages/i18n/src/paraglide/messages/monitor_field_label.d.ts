@@ -19,6 +19,14 @@ export type Monitor_Field_LabelInputs = {
 * | "timeout" | "Timeout (seconds)" |
 * | "grace" | "Grace (seconds)" |
 * | "policy" | "Escalation policy" |
+* | "keyword_regex" | "Pattern the page must match" |
+* | "keyword_mode" | "Match as" |
+* | "headers" | "Request headers" |
+* | "header_name" | "Header name" |
+* | "header_value" | "Header value" |
+* | "severity" | "Incident severity" |
+* | "quorum" | "Regions that must agree" |
+* | "consecutive" | "Failed checks in a row" |
 * | * | "Check from" |
 *
 * @param {Monitor_Field_LabelInputs} inputs

@@ -7,7 +7,7 @@ import type { Actor } from "./mutation.ts";
 import { ACCOUNT_ACTOR } from "./devices.ts";
 import { idTime, isId } from "./id.ts";
 import { declareIncident, ID_CLOCK_SKEW_MS, INCIDENT_TITLE_MAX } from "./incidents.ts";
-import type { Severity } from "./lifecycle.ts";
+import { SEVERITIES, type Severity } from "./lifecycle.ts";
 import {
   defineMutation,
   defineRegistry,
@@ -19,8 +19,15 @@ import {
   type MutationResult,
   type MutationStore,
 } from "./mutation.ts";
+import { MONITOR_PATTERN_MAX, patternProblem } from "./pattern.ts";
 import { defineQuery } from "./query.ts";
-import type { MonitorCheck, MonitorRow } from "./tables.ts";
+import type {
+  MonitorCheck,
+  MonitorHeader,
+  MonitorRow,
+  StatusRange,
+  WorkspaceRow,
+} from "./tables.ts";
 import { appendTimeline } from "./timeline.ts";
 import { v, type Issue, type Validator } from "./validate.ts";
 
@@ -36,9 +43,10 @@ export type CheckSource = ProbeRegion | "heartbeat";
 
 export const MONITOR_KINDS = ["http", "tcp", "heartbeat"] as const;
 /**
- * Monitors one workspace may have, of every kind together: with the per-monitor limits (one host and port, one
- * check per region every 30 s), what bounds how many targets a workspace can probe (RFC 0007 "Limits"). One cap
- * for every workspace until plans exist.
+ * Monitors one workspace may have, of every kind together, unless the instance's operator sets another cap
+ * (`MAX_MONITORS` in the API's env, passed as `ctx.limits.monitors`): with the per-monitor limits (one host and port,
+ * one check per region every 30 s), what bounds how many targets a workspace can probe (RFC 0007 "Limits"). An owner
+ * may set a lower cap for their workspace (`monitor.setCap`).
  */
 export const MAX_MONITORS_PER_WORKSPACE = 100;
 export type MonitorKind = (typeof MONITOR_KINDS)[number];
@@ -50,6 +58,9 @@ export const MONITOR_STATUSES = ["pending", "up", "down", "unknown"] as const;
 export type MonitorStatus = (typeof MONITOR_STATUSES)[number];
 export const HTTP_METHODS = ["GET", "HEAD"] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
+/** How an HTTP check's `keyword` is matched: plain text, or a pattern in the restricted syntax of `pattern.ts`. */
+export const KEYWORD_MODES = ["text", "regex"] as const;
+export type KeywordMode = (typeof KEYWORD_MODES)[number];
 export const ALERT_STATUSES = ["firing", "resolved"] as const;
 export type AlertStatus = (typeof ALERT_STATUSES)[number];
 
@@ -57,7 +68,15 @@ export const MONITOR_NAME_MAX = 80;
 export const MONITOR_URL_MAX = 2048;
 /** A DNS name is at most 253 characters (RFC 1035). */
 export const MONITOR_HOST_MAX = 253;
-export const MONITOR_KEYWORD_MAX = 200;
+export const MONITOR_KEYWORD_MAX = MONITOR_PATTERN_MAX;
+/** Request headers per HTTP check, and their sizes. */
+export const MAX_MONITOR_HEADERS = 10;
+export const MONITOR_HEADER_NAME_MAX = 64;
+export const MONITOR_HEADER_VALUE_MAX = 512;
+/** Status ranges per HTTP check. */
+export const MAX_STATUS_RANGES = 10;
+/** The most alike checks in a row a monitor may need before a region's verdict flips. */
+export const MAX_CONSECUTIVE_CHECKS = 10;
 /** RFC 0007: no check more often than every 30 s. */
 export const MIN_INTERVAL_SECONDS = 30;
 export const MAX_INTERVAL_SECONDS = 24 * 60 * 60;
@@ -70,7 +89,7 @@ export const CONSECUTIVE_CHECKS = 2;
  * dashboard's latency and colo stay fresh without a shard version per check. Heartbeats refresh alike.
  */
 export const REPORT_EVERY_MS = 5 * 60 * 1000;
-/** The severity of the incident a monitor opens. */
+/** The severity of the incident a monitor opens, unless it names its own (`MonitorRow.severity`). */
 export const MONITOR_INCIDENT_SEVERITY: Severity = "sev2";
 
 /**
@@ -118,13 +137,35 @@ export function isFresh(
 }
 
 /**
+ * The regions that must agree for a monitor's status to change: its own `quorum` (K of its regions), or with none a
+ * majority of the `fresh` results. A heartbeat has one source, which is always its quorum.
+ */
+export function neededAgreeing(
+  monitor: Pick<MonitorRow, "kind" | "quorum">,
+  fresh: number,
+): number {
+  if (monitor.kind === "heartbeat" || monitor.quorum == null) return quorum(fresh);
+  return monitor.quorum;
+}
+
+/** Alike checks in a row before a region's verdict flips (the probe's streak rule): the monitor's own, or 2. */
+export function consecutiveChecks(monitor: Pick<MonitorRow, "consecutiveChecks">): number {
+  return monitor.consecutiveChecks ?? CONSECUTIVE_CHECKS;
+}
+
+/**
  * The monitor's status at `now` from its sources' results. Only fresh results count (`isFresh`), and at least
- * `freshFloor` sources must have one; otherwise the status is `unknown` (or still `pending`, within the stale
- * window after a restart). Among the fresh results it is down when a majority of them is down, up when a majority
- * is up (recovery uses the same rule), and otherwise unchanged.
+ * `freshFloor` sources must have one, and at least its `quorum` when it has one; otherwise the status is `unknown`
+ * (or still `pending`, within the stale window after a restart). Among the fresh results it is down when the needed
+ * number of them is down (`neededAgreeing`: a majority, or the monitor's quorum), up when that many are up and
+ * fewer are down (recovery uses the same rule), and otherwise unchanged. With a quorum of at most half the regions
+ * both can hold at once: down wins, so a monitor that pages on one region in three stays down while any is down.
  */
 export function monitorStatus(
-  monitor: Pick<MonitorRow, "kind" | "regions" | "intervalSeconds" | "status" | "restartedAt">,
+  monitor: Pick<
+    MonitorRow,
+    "kind" | "regions" | "intervalSeconds" | "status" | "restartedAt" | "quorum"
+  >,
   checks: readonly MonitorCheck[],
   now: number,
 ): MonitorStatus {
@@ -132,12 +173,13 @@ export function monitorStatus(
   const fresh = checks.filter(
     (check) => sources.includes(check.source) && isFresh(monitor, check, now),
   );
-  if (fresh.length < freshFloor(sources.length)) {
+  const own = monitor.kind === "heartbeat" ? 0 : (monitor.quorum ?? 0);
+  if (fresh.length < Math.max(freshFloor(sources.length), own)) {
     const starting =
       monitor.status === "pending" && now - monitor.restartedAt <= staleAfterMs(monitor);
     return starting ? "pending" : "unknown";
   }
-  const needed = quorum(fresh.length);
+  const needed = neededAgreeing(monitor, fresh.length);
   if (fresh.filter((check) => !check.up).length >= needed) return "down";
   if (fresh.filter((check) => check.up).length >= needed) return "up";
   return monitor.status;
@@ -402,6 +444,89 @@ const tcpHost: Validator<string> = (input, path = "") => {
     : { ok: true, value: host };
 };
 
+/**
+ * Request headers a check never sends (RFC 0007 "Check types"). `Host` would point the request at another site than
+ * the URL names; `Authorization`, `Proxy-Authorization` and `Cookie`, and any name that reads like a credential, would
+ * put a secret where every member, viewers too, can read it (headers are synced like the URL, never sealed). The rest
+ * are the runtime's to set (`Content-Length`, `Connection`, …), `User-Agent` names Brigade to the site, and
+ * `Forwarded`, `X-Forwarded-*`, `X-Real-IP` and `CF-*` would claim to be someone else.
+ */
+const BLOCKED_HEADERS = new Set([
+  "host",
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "connection",
+  "content-length",
+  "transfer-encoding",
+  "te",
+  "trailer",
+  "upgrade",
+  "keep-alive",
+  "expect",
+  "user-agent",
+  "forwarded",
+  "x-real-ip",
+]);
+const CREDENTIAL_HEADER = /auth|token|secret|passw|api-?key|session|cookie|credential/i;
+/** A header name as HTTP defines it (a token). */
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+/** A header value a Worker's `fetch` takes: printable ASCII (Latin-1 bytes outside it are refused by `Headers`). */
+const HEADER_VALUE = /^[ -~]*$/;
+
+/** Why an HTTP check may not send header `name` with `value`, or null if it may. Checked on save and by the probe. */
+export function headerProblem(name: string, value: string): string | null {
+  if (!HEADER_NAME.test(name)) return "Expected a header name: letters, digits and - _ .";
+  const lower = name.toLowerCase();
+  if (
+    BLOCKED_HEADERS.has(lower) ||
+    lower.startsWith("x-forwarded-") ||
+    lower.startsWith("cf-") ||
+    lower.startsWith("proxy-")
+  ) {
+    return "This header can't be set on a check";
+  }
+  if (CREDENTIAL_HEADER.test(lower)) {
+    return "Headers are visible to every member: credentials can't go in them";
+  }
+  if (!HEADER_VALUE.test(value)) return "Expected printable ASCII";
+  return null;
+}
+
+const monitorHeader: Validator<MonitorHeader> = (input, path = "") => {
+  const shape = v.object({
+    name: v.string({ min: 1, max: MONITOR_HEADER_NAME_MAX }),
+    value: v.string({ min: 1, max: MONITOR_HEADER_VALUE_MAX }),
+  })(input, path);
+  if (!shape.ok) return shape;
+  const problem = headerProblem(shape.value.name, shape.value.value);
+  return problem
+    ? { ok: false, issues: [{ path, message: problem }] }
+    : { ok: true, value: shape.value };
+};
+
+const statusRange = v.object({
+  min: v.integer({ min: 100, max: 599 }),
+  max: v.integer({ min: 100, max: 599 }),
+});
+
+/** Whether `status` counts as up for a check expecting `ranges` (null: any 2xx or 3xx). */
+export function statusExpected(status: number, ranges: readonly StatusRange[] | null): boolean {
+  if (ranges === null || ranges.length === 0) return status >= 200 && status < 400;
+  return ranges.some((range) => status >= range.min && status <= range.max);
+}
+
+/**
+ * The statuses a monitor counts as up: its ranges, or (rows from before ranges) its one `expectedStatus`, or null for
+ * any 2xx or 3xx.
+ */
+export function expectedStatuses(
+  row: Pick<MonitorRow, "expectedStatus" | "expectedStatuses">,
+): StatusRange[] | null {
+  if (row.expectedStatuses != null && row.expectedStatuses.length > 0) return row.expectedStatuses;
+  return row.expectedStatus == null ? null : [{ min: row.expectedStatus, max: row.expectedStatus }];
+}
+
 /** A SHA-256 digest in lower-case hex: the heartbeat token's hash, never the token. */
 const sha256Hex: Validator<string> = (input, path = "") =>
   typeof input === "string" && /^[0-9a-f]{64}$/.test(input)
@@ -451,16 +576,38 @@ const intervalSeconds = v.integer({ min: MIN_INTERVAL_SECONDS, max: MAX_INTERVAL
  */
 const monitorPolicy = v.omittable(v.nullable(v.id("esc")));
 
+/**
+ * Settings every kind may leave out: a new monitor takes the default, an edit keeps the monitor's (`kept`), so a client
+ * that does not know a field never resets it.
+ */
+const alertingFields = {
+  /** The severity of the incident it opens. */
+  severity: v.omittable(v.picklist(SEVERITIES)),
+};
+/** HTTP and TCP: how many regions must agree (null: a majority), and alike checks in a row before a region flips. */
+const quorumFields = {
+  quorum: v.omittable(v.nullable(v.integer({ min: 1, max: PROBE_REGIONS.length }))),
+  consecutiveChecks: v.omittable(v.nullable(v.integer({ min: 1, max: MAX_CONSECUTIVE_CHECKS }))),
+};
+
 const httpFields = {
   name: monitorName,
   url: monitorUrl,
   method: v.picklist(HTTP_METHODS),
-  expectedStatus: v.nullable(v.integer({ min: 100, max: 599 })),
+  /** One status, as clients before ranges send it; left out or null, `expectedStatuses` says. */
+  expectedStatus: v.omittable(v.nullable(v.integer({ min: 100, max: 599 }))),
+  expectedStatuses: v.omittable(
+    v.nullable(v.array(statusRange, { min: 1, max: MAX_STATUS_RANGES })),
+  ),
   keyword: v.nullable(v.string({ min: 1, max: MONITOR_KEYWORD_MAX })),
+  keywordMode: v.omittable(v.picklist(KEYWORD_MODES)),
+  headers: v.omittable(v.array(monitorHeader, { max: MAX_MONITOR_HEADERS })),
   intervalSeconds,
   timeoutSeconds: v.integer({ min: 1, max: MAX_TIMEOUT_SECONDS }),
   regions: v.array(v.picklist(PROBE_REGIONS), { min: 1, max: PROBE_REGIONS.length, unique: true }),
   policyId: monitorPolicy,
+  ...quorumFields,
+  ...alertingFields,
 };
 const tcpFields = {
   name: monitorName,
@@ -470,35 +617,144 @@ const tcpFields = {
   timeoutSeconds: v.integer({ min: 1, max: MAX_TIMEOUT_SECONDS }),
   regions: v.array(v.picklist(PROBE_REGIONS), { min: 1, max: PROBE_REGIONS.length, unique: true }),
   policyId: monitorPolicy,
+  ...quorumFields,
+  ...alertingFields,
 };
 const heartbeatFields = {
   name: monitorName,
   intervalSeconds,
   graceSeconds: v.integer({ min: 0, max: MAX_GRACE_SECONDS }),
   policyId: monitorPolicy,
+  ...alertingFields,
 };
+
+/** The optional settings as a monitor has them, defaults filled in: what a left-out field keeps. */
+type Settings = {
+  keywordMode: KeywordMode;
+  expectedStatuses: StatusRange[] | null;
+  headers: MonitorHeader[];
+  quorum: number | null;
+  consecutiveChecks: number | null;
+  severity: Severity;
+};
+
+const DEFAULT_SETTINGS: Settings = {
+  keywordMode: "text",
+  expectedStatuses: null,
+  headers: [],
+  quorum: null,
+  consecutiveChecks: null,
+  severity: MONITOR_INCIDENT_SEVERITY,
+};
+
+/** `row`'s optional settings, defaults filled in (rows from before them have none). */
+export function monitorSettings(row: MonitorRow): Settings {
+  return {
+    keywordMode: row.keywordMode ?? "text",
+    expectedStatuses: expectedStatuses(row),
+    headers: row.headers ?? [],
+    quorum: row.quorum ?? null,
+    consecutiveChecks: row.consecutiveChecks ?? null,
+    severity: row.severity ?? MONITOR_INCIDENT_SEVERITY,
+  };
+}
+
+/** What a left-out field leaves: the monitor's own (`current`). */
+const kept = <T>(value: T | undefined, current: T): T => (value === undefined ? current : value);
 
 type HttpFields = {
   name: string;
   url: string;
   method: HttpMethod;
-  expectedStatus: number | null;
+  expectedStatus?: number | null;
+  expectedStatuses?: StatusRange[] | null;
   keyword: string | null;
+  keywordMode?: KeywordMode;
+  headers?: MonitorHeader[];
   intervalSeconds: number;
   timeoutSeconds: number;
   regions: ProbeRegion[];
+  quorum?: number | null;
+  consecutiveChecks?: number | null;
+  severity?: Severity;
 };
 
-/** Cross-field rules the validators cannot express; the regions come back in `PROBE_REGIONS` order. */
-function checkHttp(args: HttpFields): { issues: Issue[]; regions: ProbeRegion[] } {
+/**
+ * Cross-field rules the validators cannot express, and the settings the monitor ends up with (`current`: the edited
+ * monitor's, or the defaults); the regions come back in `PROBE_REGIONS` order.
+ */
+function checkHttp(
+  args: HttpFields,
+  current: Settings,
+): { issues: Issue[]; regions: ProbeRegion[]; settings: Settings } {
   const issues: Issue[] = [];
+  const settings = settingsOf(args, current);
   if (args.method === "HEAD" && args.keyword !== null) {
     issues.push({ path: "keyword", message: "A HEAD response has no body to search" });
   }
+  if (args.keyword !== null && settings.keywordMode === "regex") {
+    const problem = patternProblem(args.keyword);
+    if (problem) issues.push({ path: "keyword", message: problem });
+  }
+  if (args.expectedStatus != null && args.expectedStatuses != null) {
+    issues.push({
+      path: "expectedStatuses",
+      message: "Expected either expectedStatus or expectedStatuses",
+    });
+  }
+  args.expectedStatuses?.forEach((range, index) => {
+    if (range.min > range.max) {
+      issues.push({ path: `expectedStatuses[${index}]`, message: "Range out of order" });
+    }
+  });
+  const names = settings.headers.map((header) => header.name.toLowerCase());
+  names.forEach((name, index) => {
+    if (names.indexOf(name) !== index) {
+      issues.push({ path: `headers[${index}]`, message: "Listed twice" });
+    }
+  });
+  issues.push(...checkProbed(args, settings));
+  return {
+    issues,
+    regions: PROBE_REGIONS.filter((region) => args.regions.includes(region)),
+    settings,
+  };
+}
+
+/** The settings `args` leave a monitor with: given ones replace `current`'s. */
+function settingsOf(args: Partial<HttpFields>, current: Settings): Settings {
+  // One status (a client from before ranges) is a range of one; with neither given, the monitor keeps its own.
+  const statuses =
+    args.expectedStatuses !== undefined
+      ? args.expectedStatuses
+      : args.expectedStatus !== undefined
+        ? args.expectedStatus === null
+          ? null
+          : [{ min: args.expectedStatus, max: args.expectedStatus }]
+        : current.expectedStatuses;
+  return {
+    keywordMode: kept(args.keywordMode, current.keywordMode),
+    expectedStatuses: statuses,
+    headers: kept(args.headers, current.headers),
+    quorum: kept(args.quorum, current.quorum),
+    consecutiveChecks: kept(args.consecutiveChecks, current.consecutiveChecks),
+    severity: kept(args.severity, current.severity),
+  };
+}
+
+/** The rules HTTP and TCP checks share: a timeout within the interval, a quorum within the regions. */
+function checkProbed(
+  args: { intervalSeconds: number; timeoutSeconds: number; regions: ProbeRegion[] },
+  settings: Pick<Settings, "quorum">,
+): Issue[] {
+  const issues: Issue[] = [];
   if (args.timeoutSeconds > args.intervalSeconds) {
     issues.push({ path: "timeoutSeconds", message: "Expected at most the interval" });
   }
-  return { issues, regions: PROBE_REGIONS.filter((region) => args.regions.includes(region)) };
+  if (settings.quorum !== null && settings.quorum > new Set(args.regions).size) {
+    issues.push({ path: "quorum", message: "Expected at most the number of regions" });
+  }
+  return issues;
 }
 
 type TcpFields = {
@@ -507,15 +763,41 @@ type TcpFields = {
   intervalSeconds: number;
   timeoutSeconds: number;
   regions: ProbeRegion[];
+  quorum?: number | null;
+  consecutiveChecks?: number | null;
+  severity?: Severity;
 };
 
-/** The target rules (`tcpTargetProblems`) and the timeout; the regions come back in `PROBE_REGIONS` order. */
-function checkTcp(args: TcpFields): { issues: Issue[]; regions: ProbeRegion[] } {
-  const issues = tcpTargetProblems(args.host, args.port);
-  if (args.timeoutSeconds > args.intervalSeconds) {
-    issues.push({ path: "timeoutSeconds", message: "Expected at most the interval" });
-  }
-  return { issues, regions: PROBE_REGIONS.filter((region) => args.regions.includes(region)) };
+/**
+ * The target rules (`tcpTargetProblems`), the timeout and the quorum, and the settings the monitor ends up with; the
+ * regions come back in `PROBE_REGIONS` order.
+ */
+function checkTcp(
+  args: TcpFields,
+  current: Settings,
+): { issues: Issue[]; regions: ProbeRegion[]; settings: Settings } {
+  const settings = settingsOf(args, current);
+  const issues = [...tcpTargetProblems(args.host, args.port), ...checkProbed(args, settings)];
+  return {
+    issues,
+    regions: PROBE_REGIONS.filter((region) => args.regions.includes(region)),
+    settings,
+  };
+}
+
+/** The fields a monitor row stores for `settings` (HTTP only: what it matches and sends). */
+function httpColumns(settings: Settings) {
+  return {
+    expectedStatus: null,
+    expectedStatuses: settings.expectedStatuses,
+    keywordMode: settings.keywordMode,
+    headers: settings.headers,
+  };
+}
+
+/** The fields every probed monitor stores for `settings`. */
+function probedColumns(settings: Settings) {
+  return { quorum: settings.quorum, consecutiveChecks: settings.consecutiveChecks };
 }
 
 function checkNewId(id: string, ctx: MutationContext): MutationResult | undefined {
@@ -537,10 +819,32 @@ function checkPolicy(store: MutationStore, policyId: string | null | undefined):
 const policyOf = (monitor: MonitorRow, policyId: string | null | undefined): string | null =>
   policyId === undefined ? (monitor.policyId ?? null) : policyId;
 
-/** `limit_reached` when the workspace has `MAX_MONITORS_PER_WORKSPACE` monitors already. */
-function checkCap(store: MutationStore): MutationResult | undefined {
-  if (store.scan("monitors").length < MAX_MONITORS_PER_WORKSPACE) return undefined;
-  return fail("limit_reached", `At most ${MAX_MONITORS_PER_WORKSPACE} monitors per workspace`);
+/** The instance's cap (`ctx.limits.monitors`); a client, which does not know it, leaves the check to the shard. */
+function instanceCap(ctx: MutationContext): number {
+  return (
+    ctx.limits?.monitors ?? (ctx.server ? MAX_MONITORS_PER_WORKSPACE : Number.POSITIVE_INFINITY)
+  );
+}
+
+/**
+ * The most monitors a workspace may have: its owner's cap (`monitor.setCap`) when it is lower than the instance's
+ * (`instance`: `MAX_MONITORS` in the API's env, or `MAX_MONITORS_PER_WORKSPACE`), else the instance's. A cap set
+ * before the operator lowered the instance's counts as the instance's.
+ */
+export function monitorCap(
+  workspace: Pick<WorkspaceRow, "monitorCap"> | undefined,
+  instance: number,
+): number {
+  const own = workspace?.monitorCap;
+  return own == null ? instance : Math.min(own, instance);
+}
+
+/** `limit_reached` when the workspace has as many monitors as `monitorCap` allows. */
+function checkCap(store: MutationStore, ctx: MutationContext): MutationResult | undefined {
+  const [workspace] = store.scan("workspace");
+  const cap = monitorCap(workspace, instanceCap(ctx));
+  if (store.scan("monitors").length < cap) return undefined;
+  return fail("limit_reached", `At most ${cap} monitors in this workspace`);
 }
 
 function created(row: MonitorRow): MonitorCreated {
@@ -605,12 +909,12 @@ export const createHttpMonitor = defineMutation({
   apply(store, args, ctx) {
     const clock = checkNewId(args.id, ctx);
     if (clock) return clock;
-    const { issues, regions } = checkHttp(args);
+    const { issues, regions, settings } = checkHttp(args, DEFAULT_SETTINGS);
     issues.push(...checkPolicy(store, args.policyId));
     if (issues.length)
       return fail("invalid_args", "Invalid arguments for monitor.createHttp", issues);
     if (store.get("monitors", args.id)) return fail("conflict", "Monitor already exists");
-    const full = checkCap(store);
+    const full = checkCap(store, ctx);
     if (full) return full;
     const row: MonitorRow = {
       id: args.id,
@@ -618,8 +922,8 @@ export const createHttpMonitor = defineMutation({
       kind: "http",
       url: args.url,
       method: args.method,
-      expectedStatus: args.expectedStatus,
       keyword: args.keyword,
+      ...httpColumns(settings),
       host: null,
       port: null,
       timeoutSeconds: args.timeoutSeconds,
@@ -627,6 +931,8 @@ export const createHttpMonitor = defineMutation({
       intervalSeconds: args.intervalSeconds,
       graceSeconds: null,
       policyId: args.policyId ?? null,
+      ...probedColumns(settings),
+      severity: settings.severity,
       ...fresh(ctx),
     };
     store.insert("monitors", row);
@@ -642,12 +948,12 @@ export const createTcpMonitor = defineMutation({
   apply(store, args, ctx) {
     const clock = checkNewId(args.id, ctx);
     if (clock) return clock;
-    const { issues, regions } = checkTcp(args);
+    const { issues, regions, settings } = checkTcp(args, DEFAULT_SETTINGS);
     issues.push(...checkPolicy(store, args.policyId));
     if (issues.length)
       return fail("invalid_args", "Invalid arguments for monitor.createTcp", issues);
     if (store.get("monitors", args.id)) return fail("conflict", "Monitor already exists");
-    const full = checkCap(store);
+    const full = checkCap(store, ctx);
     if (full) return full;
     const row: MonitorRow = {
       id: args.id,
@@ -664,6 +970,8 @@ export const createTcpMonitor = defineMutation({
       intervalSeconds: args.intervalSeconds,
       graceSeconds: null,
       policyId: args.policyId ?? null,
+      ...probedColumns(settings),
+      severity: settings.severity,
       ...fresh(ctx),
     };
     store.insert("monitors", row);
@@ -687,7 +995,7 @@ export const createHeartbeatMonitor = defineMutation({
       return fail("invalid_args", "Invalid arguments for monitor.createHeartbeat", issues);
     }
     if (store.get("monitors", args.id)) return fail("conflict", "Monitor already exists");
-    const full = checkCap(store);
+    const full = checkCap(store, ctx);
     if (full) return full;
     const row: MonitorRow = {
       id: args.id,
@@ -704,6 +1012,7 @@ export const createHeartbeatMonitor = defineMutation({
       intervalSeconds: args.intervalSeconds,
       graceSeconds: args.graceSeconds,
       policyId: args.policyId ?? null,
+      severity: args.severity ?? MONITOR_INCIDENT_SEVERITY,
       ...fresh(ctx),
     };
     store.insert("monitors", row);
@@ -728,8 +1037,31 @@ const restart = (
   restartedAt: ctx.now,
 });
 
-/** Fields an edit may change without starting the checks over: none of them is what is checked. */
-const UNTARGETED: readonly string[] = ["name", "intervalSeconds", "policyId"];
+/**
+ * Fields an edit may change without starting the checks over: none of them is what is checked. A new quorum applies
+ * from the next evaluation (the shard's alarm runs `monitor.evaluate` within a minute when it changes the status); a
+ * new streak length reaches the probes with the next push, which starts each region's streak over but keeps the
+ * results the shard has.
+ */
+const UNTARGETED: readonly string[] = [
+  "name",
+  "intervalSeconds",
+  "policyId",
+  "quorum",
+  "consecutiveChecks",
+  "severity",
+];
+
+/**
+ * The keys of `next` whose values differ from `monitor`'s, comparing settings with their defaults filled in, so a row
+ * from before a setting and an edit that sends its default are alike.
+ */
+function changedKeys<T extends Record<string, unknown>>(monitor: MonitorRow, next: T): (keyof T)[] {
+  const current: Record<string, unknown> = { ...monitor, ...monitorSettings(monitor) };
+  return (Object.keys(next) as (keyof T)[]).filter(
+    (key) => JSON.stringify(current[key as string] ?? null) !== JSON.stringify(next[key] ?? null),
+  );
+}
 
 export const updateHttpMonitor = defineMutation({
   name: "monitor.updateHttp",
@@ -739,7 +1071,7 @@ export const updateHttpMonitor = defineMutation({
     const monitor = store.get("monitors", args.id);
     if (!monitor) return fail("not_found", "Monitor not found");
     if (monitor.kind !== "http") return fail("invalid_args", "Not an HTTP monitor");
-    const { issues, regions } = checkHttp(args);
+    const { issues, regions, settings } = checkHttp(args, monitorSettings(monitor));
     issues.push(...checkPolicy(store, args.policyId));
     if (issues.length)
       return fail("invalid_args", "Invalid arguments for monitor.updateHttp", issues);
@@ -747,20 +1079,27 @@ export const updateHttpMonitor = defineMutation({
       name: args.name,
       url: args.url,
       method: args.method,
-      expectedStatus: args.expectedStatus,
       keyword: args.keyword,
       intervalSeconds: args.intervalSeconds,
       timeoutSeconds: args.timeoutSeconds,
       regions,
       policyId: policyOf(monitor, args.policyId),
+      ...settings,
     };
-    const changed = (Object.keys(next) as (keyof typeof next)[]).filter(
-      (key) => JSON.stringify(monitor[key] ?? null) !== JSON.stringify(next[key]),
-    );
+    const changed = changedKeys(monitor, next);
     if (changed.length === 0) return fail("conflict", "Nothing to change");
     const retarget = changed.some((key) => !UNTARGETED.includes(key));
     const restarted = retarget && !monitor.paused ? restart(ctx) : {};
-    const row = store.update("monitors", args.id, { ...next, ...restarted, updatedAt: ctx.now });
+    // The statuses are rewritten only when they changed: a row from before ranges keeps its `expectedStatus`, so its
+    // probes' config (and their streaks) stay as they were.
+    const { expectedStatuses: _statuses, ...rest } = next;
+    const statuses = changed.includes("expectedStatuses") ? httpColumns(settings) : {};
+    const row = store.update("monitors", args.id, {
+      ...rest,
+      ...statuses,
+      ...restarted,
+      updatedAt: ctx.now,
+    });
     return ok(updated(row));
   },
 });
@@ -774,7 +1113,7 @@ export const updateTcpMonitor = defineMutation({
     const monitor = store.get("monitors", args.id);
     if (!monitor) return fail("not_found", "Monitor not found");
     if (monitor.kind !== "tcp") return fail("invalid_args", "Not a TCP monitor");
-    const { issues, regions } = checkTcp(args);
+    const { issues, regions, settings } = checkTcp(args, monitorSettings(monitor));
     issues.push(...checkPolicy(store, args.policyId));
     if (issues.length)
       return fail("invalid_args", "Invalid arguments for monitor.updateTcp", issues);
@@ -786,10 +1125,10 @@ export const updateTcpMonitor = defineMutation({
       timeoutSeconds: args.timeoutSeconds,
       regions,
       policyId: policyOf(monitor, args.policyId),
+      ...probedColumns(settings),
+      severity: settings.severity,
     };
-    const changed = (Object.keys(next) as (keyof typeof next)[]).filter(
-      (key) => JSON.stringify(monitor[key] ?? null) !== JSON.stringify(next[key]),
-    );
+    const changed = changedKeys(monitor, next);
     if (changed.length === 0) return fail("conflict", "Nothing to change");
     const retarget = changed.some((key) => !UNTARGETED.includes(key));
     const restarted = retarget && !monitor.paused ? restart(ctx) : {};
@@ -810,21 +1149,15 @@ export const updateHeartbeatMonitor = defineMutation({
     if (issues.length) {
       return fail("invalid_args", "Invalid arguments for monitor.updateHeartbeat", issues);
     }
-    if (
-      monitor.name === args.name &&
-      monitor.intervalSeconds === args.intervalSeconds &&
-      monitor.graceSeconds === args.graceSeconds &&
-      (monitor.policyId ?? null) === policyOf(monitor, args.policyId)
-    ) {
-      return fail("conflict", "Nothing to change");
-    }
-    const row = store.update("monitors", args.id, {
+    const next = {
       name: args.name,
       intervalSeconds: args.intervalSeconds,
       graceSeconds: args.graceSeconds,
       policyId: policyOf(monitor, args.policyId),
-      updatedAt: ctx.now,
-    });
+      severity: kept(args.severity, monitorSettings(monitor).severity),
+    };
+    if (changedKeys(monitor, next).length === 0) return fail("conflict", "Nothing to change");
+    const row = store.update("monitors", args.id, { ...next, updatedAt: ctx.now });
     return ok(updated(row));
   },
 });
@@ -1017,6 +1350,42 @@ export const deleteMonitor = defineMutation({
   },
 });
 
+/** The highest cap an instance or a workspace may set: past it one shard's alarm and probes carry too much. */
+export const MONITOR_CAP_MAX = 10_000;
+
+export type MonitorCapChanged = DomainEvent<"monitor.cap_changed", { cap: number | null }>;
+
+/**
+ * The most monitors this workspace may have, set by an owner (RFC 0007 "Limits"): at most the instance's cap
+ * (`MAX_MONITORS` in the API's env, by default `MAX_MONITORS_PER_WORKSPACE`), which only the server knows, so a client
+ * leaves that check to it. Null goes back to the instance's cap. Lower than the monitors it has already: they keep
+ * running, and no new one is added until enough are deleted. No change is a `conflict`.
+ */
+export const setMonitorCap = defineMutation({
+  name: "monitor.setCap",
+  args: v.object({ cap: v.nullable(v.integer({ min: 1, max: MONITOR_CAP_MAX })) }),
+  permission: "workspace:manage",
+  apply(store, args, ctx) {
+    if (ctx.actor.role !== "owner") return fail("forbidden", "Only owners set the monitor cap");
+    const [workspace] = store.scan("workspace");
+    if (!workspace) return fail("not_found", "Workspace not found");
+    const instance = instanceCap(ctx);
+    if (args.cap !== null && args.cap > instance) {
+      return fail("invalid_args", "Invalid arguments for monitor.setCap", [
+        { path: "cap", message: `Expected at most ${instance}, this instance's cap` },
+      ]);
+    }
+    if ((workspace.monitorCap ?? null) === args.cap) return fail("conflict", "Nothing to change");
+    store.update("workspace", workspace.id, { monitorCap: args.cap });
+    const event: MonitorCapChanged = {
+      type: "monitor.cap_changed",
+      subject: workspace.id,
+      data: { cap: args.cap },
+    };
+    return ok(event);
+  },
+});
+
 const declaring = defineRegistry([declareIncident]);
 
 /** What the shard makes for a monitor that may open an incident: ids and the title (mutations make neither). */
@@ -1059,7 +1428,11 @@ function moveTo(
     const declared = runMutation(
       declaring,
       "incident.declare",
-      { id: open.incidentId, title: open.title, severity: MONITOR_INCIDENT_SEVERITY },
+      {
+        id: open.incidentId,
+        title: open.title,
+        severity: monitor.severity ?? MONITOR_INCIDENT_SEVERITY,
+      },
       store,
       ctx,
       { onError: (error) => (thrown = { error }) },
@@ -1216,6 +1589,18 @@ export const allMonitors = defineQuery({
   sort: downFirst,
 });
 
+/**
+ * The workspace's own row, for its monitor cap (`monitorCap`): the dashboard says how many monitors it may still add,
+ * and an owner changes it there. Every member reads it, like the monitors.
+ */
+export const monitorCapQuery = defineQuery({
+  name: "monitors.cap",
+  args: v.object({}),
+  permission: "monitor:read",
+  table: "workspace",
+  filter: () => true,
+});
+
 /** What members may send. */
 export const monitorMutations = [
   createHttpMonitor,
@@ -1227,6 +1612,7 @@ export const monitorMutations = [
   rotateHeartbeat,
   setMonitorPaused,
   deleteMonitor,
+  setMonitorCap,
 ] as const;
 
 // ---- Heartbeat tokens ------------------------------------------------------------------------------------------

@@ -14,6 +14,7 @@ export * from "./workspaces.ts";
 export * from "./members.ts";
 export * from "./invitations.ts";
 export * from "./monitors.ts";
+export * from "./pattern.ts";
 export * from "./zoned.ts";
 export * from "./schedules.ts";
 export * from "./policies.ts";

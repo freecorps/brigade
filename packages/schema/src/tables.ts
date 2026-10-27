@@ -17,6 +17,7 @@ import type {
   AlertStatus,
   CheckSource,
   HttpMethod,
+  KeywordMode,
   MonitorKind,
   MonitorStatus,
   ProbeRegion,
@@ -396,6 +397,11 @@ export type WorkspaceRow = {
   createdBy: string;
   /** Who is emailed when paging fails (`workspace.setEmail`); absent: `DEFAULT_EMAIL_SETTINGS`. */
   email?: EmailSettings;
+  /**
+   * The most monitors it may have, set by an owner (`monitor.setCap`); never above the instance's own cap
+   * (`MAX_MONITORS_PER_WORKSPACE`, or the API's `MAX_MONITORS` env var). Null or absent: the instance's cap.
+   */
+  monitorCap?: number | null;
 };
 
 /**
@@ -434,8 +440,29 @@ export type MonitorRow = {
   method: HttpMethod | null;
   /** The status that counts as up; null: any 2xx or 3xx (redirects are never followed). */
   expectedStatus: number | null;
-  /** Text the body must contain; null: none. */
+  /** Text the body must contain (or, with `keywordMode` `regex`, a pattern it must match); null: none. */
   keyword: string | null;
+  /** How `keyword` is matched (RFC 0007 "Check types"): plain text, or a pattern (`pattern.ts`). Absent: `text`. */
+  keywordMode?: KeywordMode;
+  /**
+   * The statuses that count as up, as inclusive ranges (`200`, `200-299`); null or absent: `expectedStatus`, and when
+   * that is null too, any 2xx or 3xx. Written by every save since; `expectedStatus` stays for rows from before.
+   */
+  expectedStatuses?: StatusRange[] | null;
+  /**
+   * Request headers an HTTP check sends. Not secret: synced to every member, viewers too, like the URL; a header
+   * that carries credentials (`Authorization`, `Cookie`, …) is refused (`headerProblem`). Absent: none.
+   */
+  headers?: MonitorHeader[];
+  /**
+   * HTTP and TCP: how many fresh regions must agree for the status to change (RFC 0007 "Quorum and flapping"); null
+   * or absent: a majority of the fresh ones.
+   */
+  quorum?: number | null;
+  /** HTTP and TCP: alike checks in a row before a region's verdict flips; null or absent: `CONSECUTIVE_CHECKS`. */
+  consecutiveChecks?: number | null;
+  /** The severity of the incident it opens; absent: `MONITOR_INCIDENT_SEVERITY`. */
+  severity?: Severity;
   /** TCP: the host name or address (IPv6 without brackets) and port connected to. */
   host: string | null;
   port: number | null;
@@ -482,6 +509,11 @@ export type AlertRow = {
   resolvedAt: number | null;
   incidentId: string | null;
 };
+
+/** An inclusive range of HTTP statuses: `{ min: 200, max: 299 }`, or one status as `{ min: 204, max: 204 }`. */
+export type StatusRange = { min: number; max: number };
+/** A request header an HTTP check sends: a token name and a value. */
+export type MonitorHeader = { name: string; value: string };
 
 /**
  * A heartbeat monitor's secret side, never synced: the SHA-256 of its token (hex) and the last ping, kept exactly

@@ -57,7 +57,13 @@ import {
   type Invitee,
   type ListedInvitation,
 } from "./invitations.ts";
-import { isProbeRegion, MONITOR_TICK_MS, Monitoring } from "./monitors.ts";
+import {
+  instanceMonitorCap,
+  isProbeRegion,
+  MONITOR_TICK_MS,
+  Monitoring,
+  type MonitorEnv,
+} from "./monitors.ts";
 import { Mailer, type EmailOutcome, type EmailPlan } from "./mailer.ts";
 import { OutboxDrain, type BrigadeEvent } from "./outbox.ts";
 import {
@@ -272,6 +278,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     this.shard = new Shard(ctx.storage, {
       shard: "workspace",
       randomBytes,
+      limits: { monitors: instanceMonitorCap(env as Env & MonitorEnv) },
       log: (message, fields) => this.log(message, fields),
       onOutbox: () => {
         this.armDrain();

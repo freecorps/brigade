@@ -30,7 +30,8 @@ emit `monitor.created`, `monitor.updated`, `monitor.paused`, `monitor.resumed`, 
 (when a source's verdict or failure reason changes; the 5-minute refreshes of an unchanged verdict are synced but
 emit nothing), `monitor.status_changed` (to `unknown` too, when probes stop reporting), `alert.fired` and
 `alert.resolved`, with actor `sys_monitors` for what the probes and heartbeats cause; `monitor.heartbeat_rotated`
-(`id`; never the token or its hash) when an owner or admin gives a heartbeat a new URL; and, when the owner of an
+(`id`; never the token or its hash) when an owner or admin gives a heartbeat a new URL; `monitor.cap_changed`
+(`cap`, null for the instance's) when an owner sets the workspace's monitor limit; and, when the owner of an
 address takes back an account someone else signed up with (RFC 0002 "Auth"), `monitor.paused` and
 `monitor.heartbeat_revoked` (`id`) with actor `sys_account`.
 

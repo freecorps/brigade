@@ -1,10 +1,16 @@
 import { m } from "@freecorps/brigade-i18n";
+import { severityName } from "@freecorps/brigade-i18n/incident";
 import {
   HTTP_METHODS,
+  KEYWORD_MODES,
+  MAX_CONSECUTIVE_CHECKS,
+  MAX_MONITOR_HEADERS,
   MAX_GRACE_SECONDS,
   MAX_INTERVAL_SECONDS,
   MAX_TIMEOUT_SECONDS,
   MIN_INTERVAL_SECONDS,
+  MONITOR_HEADER_NAME_MAX,
+  MONITOR_HEADER_VALUE_MAX,
   MONITOR_HOST_MAX,
   MONITOR_KEYWORD_MAX,
   MONITOR_KINDS,
@@ -12,14 +18,25 @@ import {
   MONITOR_URL_MAX,
   monitorAlerting,
   PROBE_REGIONS,
+  SEVERITIES,
   type EscalationPolicyRow,
   type HttpMethod,
+  type KeywordMode,
   type MonitorRow,
+  type Severity,
 } from "@freecorps/brigade-schema";
 import { useSyncClient } from "@freecorps/brigade-sync/react";
 import { cn } from "cn";
-import { CheckIcon, CircleAlertIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import {
+  CheckIcon,
+  CircleAlertIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+  XIcon,
+} from "lucide-react";
 import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { usePreferences } from "@/components/preferences";
 import { Button } from "@/components/ui/button";
 import { Field, FormError } from "@/components/ui/field";
 import {
@@ -31,6 +48,7 @@ import {
   editRestarts,
   EMPTY_DRAFT,
   monitorLimitReached,
+  refusedHeaderRows,
   splitHostPort,
   stalePolicy,
   tcpFieldReason,
@@ -61,12 +79,23 @@ const FIELD_KEYS: Record<DraftField, string> = {
   port: "port",
   expectedStatus: "expected_status",
   keyword: "keyword",
+  headers: "headers",
   intervalSeconds: "interval",
   timeoutSeconds: "timeout",
   graceSeconds: "grace",
   regions: "regions",
+  quorum: "quorum",
+  consecutiveChecks: "consecutive",
   policyId: "policy",
 };
+
+/** A header row's inputs: the Field input's look, without its label (each has an aria-label). */
+const HEADER_INPUT =
+  "h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 font-mono text-sm outline-none placeholder:font-sans placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive sm:text-sm max-sm:text-base";
+
+/** The native selects' look, as the method and policy pickers had it. */
+const SELECT =
+  "h-11 w-full min-w-0 truncate rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive";
 
 /** What the form is for: a new monitor, or changes to `row` (whose kind stays), which can also delete it. */
 export type MonitorFormMode =
@@ -74,6 +103,8 @@ export type MonitorFormMode =
       kind: "create";
       /** The workspace has as many monitors as it may (`monitorsFull`): the form says so from the start, and sends nothing. */
       full: boolean;
+      /** The most monitors the workspace may have, for what the form says when it is full. */
+      cap: number;
       onCreate: (checked: Extract<CheckedDraft, { ok: true }>) => Promise<boolean>;
     }
   | {
@@ -116,6 +147,7 @@ export function MonitorForm({
   discard?: DiscardPrompt | null;
 }) {
   const client = useSyncClient();
+  const { locale } = usePreferences();
   const editing = mode.kind === "edit" ? mode.row : null;
   const [initial] = useState<MonitorDraft>(() => (editing ? draftFromRow(editing) : EMPTY_DRAFT));
   const [draft, setDraft] = useState<MonitorDraft>(initial);
@@ -130,6 +162,15 @@ export function MonitorForm({
   const policyId = useId();
   const policyHintId = useId();
   const policyErrorId = useId();
+  const keywordModeId = useId();
+  const headersId = useId();
+  const headersHintId = useId();
+  const headersErrorId = useId();
+  const severityId = useId();
+  const quorumId = useId();
+  const quorumHintId = useId();
+  const quorumErrorId = useId();
+  const failureId = useId();
   const regionsErrorId = useId();
   const hostErrorId = useId();
   const portErrorId = useId();
@@ -150,8 +191,30 @@ export function MonitorForm({
   };
   const error = (field: DraftField) =>
     invalid.has(field)
-      ? m.monitor_field_invalid({ field: tcpFieldReason(field, draft) ?? FIELD_KEYS[field] })
+      ? m.monitor_field_invalid({
+          field:
+            field === "keyword" && draft.keywordMode === "regex"
+              ? "keyword_regex"
+              : (tcpFieldReason(field, draft) ?? FIELD_KEYS[field]),
+        })
       : undefined;
+  /** The header rows to mark, once the list was refused. */
+  const badHeaders = invalid.has("headers") ? refusedHeaderRows(draft) : [];
+  const setHeader = (index: number, part: "name" | "value", value: string) =>
+    set(
+      "headers",
+      draft.headers.map((header, at) => (at === index ? { ...header, [part]: value } : header)),
+    );
+  const headerRefs = useRef<(HTMLInputElement | null)[]>([]);
+  /** Focus moves to this header row's name once it is drawn (a new row), or to Add header (-1, a removed last row). */
+  const [focusHeader, setFocusHeader] = useState<number | null>(null);
+  const addHeaderRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (focusHeader === null) return;
+    if (focusHeader < 0) addHeaderRef.current?.focus();
+    else headerRefs.current[focusHeader]?.focus();
+    setFocusHeader(null);
+  }, [focusHeader]);
   const text = (field: DraftField & keyof MonitorDraft) => ({
     value: draft[field] as string,
     error: error(field),
@@ -223,7 +286,9 @@ export function MonitorForm({
       aria-labelledby={editing ? headingId : undefined}
       className="flex min-w-0 flex-col gap-4 rounded-md border bg-muted/40 p-4"
     >
-      {full ? <FormError id={fullId}>{monitorLimitReached()}</FormError> : null}
+      {full && mode.kind === "create" ? (
+        <FormError id={fullId}>{monitorLimitReached(mode.cap, locale)}</FormError>
+      ) : null}
       {discard ? (
         <DiscardChanges
           name={editing?.name ?? null}
@@ -317,23 +382,158 @@ export function MonitorForm({
               </select>
             </div>
           </div>
-          <div className="grid items-start gap-4 sm:grid-cols-2">
-            <Field
-              label={m.monitor_field_label({ field: "expected_status" })}
-              hint={m.monitor_field_hint({ field: "expected_status" })}
-              inputMode="numeric"
-              maxLength={3}
-              {...text("expectedStatus")}
-            />
-            {draft.method === "GET" ? (
+          <Field
+            label={m.monitor_field_label({ field: "expected_status" })}
+            hint={m.monitor_field_hint({ field: "expected_status" })}
+            inputMode="numeric"
+            placeholder="200, 204, 500-599"
+            maxLength={80}
+            autoComplete="off"
+            spellCheck={false}
+            className="sm:max-w-md"
+            {...text("expectedStatus")}
+          />
+          {draft.method === "GET" ? (
+            // The text or pattern, and how it is matched next to it, as the URL has its method.
+            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto]">
               <Field
-                label={m.monitor_field_label({ field: "keyword" })}
+                label={m.monitor_field_label({
+                  field: draft.keywordMode === "regex" ? "keyword_regex" : "keyword",
+                })}
+                hint={
+                  draft.keywordMode === "regex"
+                    ? m.monitor_field_hint({ field: "keyword_regex" })
+                    : undefined
+                }
                 maxLength={MONITOR_KEYWORD_MAX}
                 autoComplete="off"
+                spellCheck={false}
+                className={draft.keywordMode === "regex" ? "[&_input]:font-mono" : undefined}
                 {...text("keyword")}
               />
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor={keywordModeId} className="text-sm font-medium">
+                  {m.monitor_field_label({ field: "keyword_mode" })}
+                </label>
+                <select
+                  id={keywordModeId}
+                  value={draft.keywordMode}
+                  onChange={(event) => set("keywordMode", event.target.value as KeywordMode)}
+                  className={cn(SELECT, "sm:w-auto")}
+                >
+                  {KEYWORD_MODES.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {m.monitor_keyword_mode({ mode })}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : null}
+          <fieldset
+            className="flex min-w-0 flex-col gap-2"
+            aria-describedby={describe(
+              invalid.has("headers") && headersErrorId,
+              draft.headers.length > 0 && headersHintId,
+            )}
+          >
+            <legend id={headersId} className="mb-1.5 text-sm font-medium">
+              {m.monitor_field_label({ field: "headers" })}
+            </legend>
+            {draft.headers.length > 0 ? (
+              <ul className="flex flex-col gap-2">
+                {draft.headers.map((header, index) => {
+                  const bad = badHeaders.includes(index);
+                  return (
+                    // Rows have no id of their own; the index is stable while a row is edited.
+                    <li
+                      key={index}
+                      // A phone stacks the value under the name, so both stay readable; the remove button
+                      // spans both. From `sm`, one row.
+                      className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto]"
+                    >
+                      <input
+                        ref={(element) => {
+                          headerRefs.current[index] = element;
+                        }}
+                        aria-label={m.monitor_field_label({ field: "header_name" })}
+                        aria-invalid={bad || undefined}
+                        placeholder="Accept"
+                        value={header.name}
+                        maxLength={MONITOR_HEADER_NAME_MAX}
+                        autoComplete="off"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        onChange={(event) => setHeader(index, "name", event.target.value)}
+                        className={HEADER_INPUT}
+                      />
+                      <input
+                        aria-label={m.monitor_field_label({ field: "header_value" })}
+                        aria-invalid={bad || undefined}
+                        placeholder="application/json"
+                        value={header.value}
+                        maxLength={MONITOR_HEADER_VALUE_MAX}
+                        autoComplete="off"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        onChange={(event) => setHeader(index, "value", event.target.value)}
+                        className={HEADER_INPUT}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="col-start-2 row-span-2 row-start-1 size-11 self-center sm:col-start-3 sm:row-span-1"
+                        aria-label={
+                          header.name.trim()
+                            ? m.monitor_header({ part: "remove", name: header.name.trim() })
+                            : m.monitor_header({ part: "remove_unnamed", name: "" })
+                        }
+                        onClick={() => {
+                          set(
+                            "headers",
+                            draft.headers.filter((_, at) => at !== index),
+                          );
+                          // The row under it takes its place, or the one above, or Add header.
+                          const left = draft.headers.length - 1;
+                          setFocusHeader(left === 0 ? -1 : Math.min(index, left - 1));
+                        }}
+                      >
+                        <XIcon aria-hidden />
+                      </Button>
+                    </li>
+                  );
+                })}
+              </ul>
             ) : null}
-          </div>
+            {invalid.has("headers") ? (
+              <p id={headersErrorId} className="flex items-start gap-1.5 text-sm text-destructive">
+                <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+                <span className="min-w-0">{error("headers")}</span>
+              </p>
+            ) : null}
+            {draft.headers.length > 0 ? (
+              <p id={headersHintId} className="text-sm text-muted-foreground">
+                {m.monitor_field_hint({ field: "headers" })}
+              </p>
+            ) : null}
+            {draft.headers.length < MAX_MONITOR_HEADERS ? (
+              <Button
+                ref={addHeaderRef}
+                type="button"
+                variant="outline"
+                className="self-start"
+                aria-describedby={headersId}
+                onClick={() => {
+                  set("headers", [...draft.headers, { name: "", value: "" }]);
+                  setFocusHeader(draft.headers.length);
+                }}
+              >
+                <PlusIcon aria-hidden />
+                {m.monitor_header({ part: "add", name: "" })}
+              </Button>
+            ) : null}
+          </fieldset>
         </>
       ) : null}
 
@@ -490,41 +690,116 @@ export function MonitorForm({
         )}
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor={policyId} className="text-sm font-medium">
-          {m.monitor_field_label({ field: "policy" })}
-        </label>
-        <select
-          id={policyId}
-          value={draft.policyId}
-          onChange={(event) => set("policyId", event.target.value)}
-          aria-invalid={invalid.has("policyId") ? true : undefined}
-          aria-describedby={describe(invalid.has("policyId") && policyErrorId, policyHintId)}
-          className="h-11 w-full min-w-0 truncate rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive sm:max-w-md"
-        >
-          <option value="">{defaultOption(policies)}</option>
-          {policies
-            .filter((policy) => !policy.isDefault || policy.id === initial.policyId)
-            .map((policy) => (
-              <option key={policy.id} value={policy.id}>
-                {policy.name}
-              </option>
-            ))}
-          {/* The policy it names, until this client has it (or after it went): still shown, not silently swapped. */}
-          {draft.policyId !== "" && !policies.some((policy) => policy.id === draft.policyId) ? (
-            <option value={draft.policyId}>{m.escalation_text(GONE)}</option>
-          ) : null}
-        </select>
-        {invalid.has("policyId") ? (
-          <p id={policyErrorId} className="flex items-start gap-1.5 text-sm text-destructive">
-            <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
-            <span className="min-w-0">{m.monitor_field_invalid({ field: "policy" })}</span>
-          </p>
+      {/* What happens when it fails: what the incident is, who it pages, and for checks from regions, when it counts. */}
+      <fieldset
+        aria-labelledby={failureId}
+        className="flex min-w-0 flex-col gap-4 border-t border-border pt-4"
+      >
+        <h4 id={failureId} className="text-sm font-semibold">
+          {m.monitor_failure_title()}
+        </h4>
+        <div className="grid items-start gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <label htmlFor={severityId} className="text-sm font-medium">
+              {m.monitor_field_label({ field: "severity" })}
+            </label>
+            <select
+              id={severityId}
+              value={draft.severity}
+              onChange={(event) => set("severity", event.target.value as Severity)}
+              className={SELECT}
+            >
+              {SEVERITIES.map((severity) => (
+                <option key={severity} value={severity}>
+                  {severityName(severity)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <label htmlFor={policyId} className="text-sm font-medium">
+              {m.monitor_field_label({ field: "policy" })}
+            </label>
+            <select
+              id={policyId}
+              value={draft.policyId}
+              onChange={(event) => set("policyId", event.target.value)}
+              aria-invalid={invalid.has("policyId") ? true : undefined}
+              aria-describedby={describe(invalid.has("policyId") && policyErrorId, policyHintId)}
+              className={SELECT}
+            >
+              <option value="">{defaultOption(policies)}</option>
+              {policies
+                .filter((policy) => !policy.isDefault || policy.id === initial.policyId)
+                .map((policy) => (
+                  <option key={policy.id} value={policy.id}>
+                    {policy.name}
+                  </option>
+                ))}
+              {/* The policy it names, until this client has it (or after it went): still shown, not silently swapped. */}
+              {draft.policyId !== "" && !policies.some((policy) => policy.id === draft.policyId) ? (
+                <option value={draft.policyId}>{m.escalation_text(GONE)}</option>
+              ) : null}
+            </select>
+            {invalid.has("policyId") ? (
+              <p id={policyErrorId} className="flex items-start gap-1.5 text-sm text-destructive">
+                <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+                <span className="min-w-0">{m.monitor_field_invalid({ field: "policy" })}</span>
+              </p>
+            ) : null}
+            <p id={policyHintId} className="text-sm text-muted-foreground">
+              {m.monitor_field_hint({ field: "policy" })}
+            </p>
+          </div>
+        </div>
+        {probed ? (
+          <div className="grid items-start gap-4 sm:grid-cols-2">
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <label htmlFor={quorumId} className="text-sm font-medium">
+                {m.monitor_field_label({ field: "quorum" })}
+              </label>
+              <select
+                id={quorumId}
+                value={draft.quorum}
+                onChange={(event) => set("quorum", event.target.value)}
+                aria-invalid={invalid.has("quorum") || undefined}
+                aria-describedby={describe(invalid.has("quorum") && quorumErrorId, quorumHintId)}
+                className={SELECT}
+              >
+                <option value="">
+                  {m.monitor_quorum_option({ kind: "majority", count: "", total: "" })}
+                </option>
+                {quorumChoices(draft).map((count) => (
+                  <option key={count} value={String(count)}>
+                    {m.monitor_quorum_option({
+                      kind: "count",
+                      count: String(count),
+                      total: String(draft.regions.length),
+                    })}
+                  </option>
+                ))}
+              </select>
+              {invalid.has("quorum") ? (
+                <p id={quorumErrorId} className="flex items-start gap-1.5 text-sm text-destructive">
+                  <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+                  <span className="min-w-0">{error("quorum")}</span>
+                </p>
+              ) : null}
+              <p id={quorumHintId} className="text-sm text-muted-foreground">
+                {m.monitor_field_hint({ field: "quorum" })}
+              </p>
+            </div>
+            <Field
+              label={m.monitor_field_label({ field: "consecutive" })}
+              hint={m.monitor_field_hint({ field: "consecutive" })}
+              inputMode="numeric"
+              placeholder="2"
+              maxLength={String(MAX_CONSECUTIVE_CHECKS).length}
+              {...text("consecutiveChecks")}
+            />
+          </div>
         ) : null}
-        <p id={policyHintId} className="text-sm text-muted-foreground">
-          {m.monitor_field_hint({ field: "policy" })}
-        </p>
-      </div>
+      </fieldset>
 
       {mode.kind === "edit" && mode.row.kind === "heartbeat" && mode.onRotate ? (
         <RotateHeartbeat row={mode.row} changed={changed} onRotate={mode.onRotate} />
@@ -566,6 +841,17 @@ export function MonitorForm({
 }
 
 const GONE = { text: "gone", name: "", time: "", level: "", reason: "", who: "" } as const;
+
+/**
+ * The quorums the picker offers: 1 to the number of regions ticked, and the draft's own if it is more (regions were
+ * unticked since), so it stays shown until it is changed, and the form says to.
+ */
+function quorumChoices(draft: Pick<MonitorDraft, "regions" | "quorum">): number[] {
+  const regions = Math.max(1, draft.regions.length);
+  const own = Number(draft.quorum);
+  const top = Number.isInteger(own) && own > regions ? own : regions;
+  return Array.from({ length: top }, (_, index) => index + 1);
+}
 
 /**
  * The picker's first choice: the workspace's default, by name, or that there is none (the interim rule pages). The

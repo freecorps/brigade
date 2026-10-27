@@ -5,6 +5,7 @@ import {
   REPORT_EVERY_MS,
   type MonitorCheck,
   type MonitorRow,
+  type ProbeRegion,
 } from "@freecorps/brigade-schema";
 import { expect, test } from "vite-plus/test";
 import {
@@ -18,17 +19,23 @@ import {
   EMPTY_DRAFT,
   formatLatency,
   formatSeconds,
+  formatStatuses,
   monitorActions,
   monitorBadge,
   monitorPolicy,
   monitorRefusal,
   monitorsFull,
   newHeartbeat,
+  parseStatuses,
+  pausedBy,
+  refusedHeaderRows,
   sourceChips,
+  stalledRegions,
   stalePolicy,
   splitHostPort,
   tcpFieldReason,
   tcpHostLabel,
+  workspaceMonitorCap,
 } from "../src/lib/monitors";
 
 const id = () => newId("mon", Date.now(), (n) => crypto.getRandomValues(new Uint8Array(n)));
@@ -77,7 +84,10 @@ test("a failed check says why, in both locales", () => {
   ) =>
     m.monitor_check_error(
       {
-        reason: checkErrorReason({ error }, expected),
+        reason: checkErrorReason(
+          { error },
+          expected === null ? null : [{ min: expected, max: expected }],
+        ),
         got: String(httpStatus ?? ""),
         expected: String(expected ?? ""),
       },
@@ -117,13 +127,140 @@ test("an HTTP draft becomes createHttp's args, checked by its own validator", ()
     args: {
       name: "Checkout",
       url: "https://example.com/",
-      expectedStatus: null,
+      expectedStatuses: null,
       keyword: null,
+      keywordMode: "text",
+      headers: [],
       intervalSeconds: 60,
       timeoutSeconds: 10,
       regions: ["enam", "weur"],
+      quorum: null,
+      consecutiveChecks: null,
+      severity: "sev2",
     },
   });
+  // The one status of clients from before ranges is left out (`undefined` never goes over the wire).
+  expect(checked.ok && checked.kind === "http" && checked.args.expectedStatus).toBeUndefined();
+});
+
+test("expected statuses read as a list of statuses and ranges, and back", () => {
+  expect(parseStatuses("")).toBeNull();
+  expect(parseStatuses(" 200, 204 500-599 ")).toEqual([
+    { min: 200, max: 200 },
+    { min: 204, max: 204 },
+    { min: 500, max: 599 },
+  ]);
+  expect(parseStatuses("200;301–302")).toEqual([
+    { min: 200, max: 200 },
+    { min: 301, max: 302 },
+  ]);
+  expect(parseStatuses("2xx")).toBeUndefined();
+  expect(parseStatuses("200-")).toBeUndefined();
+  expect(
+    formatStatuses([
+      { min: 200, max: 200 },
+      { min: 500, max: 599 },
+    ]),
+  ).toBe("200, 500-599");
+  expect(formatStatuses(null)).toBe("");
+  const draft = { ...EMPTY_DRAFT, name: "API", url: "https://example.com" };
+  expect(checkDraft({ ...draft, expectedStatus: "2xx" }, id())).toEqual({
+    ok: false,
+    fields: ["expectedStatus"],
+  });
+  // A range out of order, and a status out of range.
+  expect(checkDraft({ ...draft, expectedStatus: "299-200" }, id())).toEqual({
+    ok: false,
+    fields: ["expectedStatus"],
+  });
+  expect(checkDraft({ ...draft, expectedStatus: "700" }, id())).toEqual({
+    ok: false,
+    fields: ["expectedStatus"],
+  });
+  expect(checkDraft({ ...draft, expectedStatus: "200, 404" }, id())).toMatchObject({
+    ok: true,
+    args: {
+      expectedStatuses: [
+        { min: 200, max: 200 },
+        { min: 404, max: 404 },
+      ],
+    },
+  });
+});
+
+test("a pattern is checked with the probe's own rules; a catastrophic one still compiles and runs", () => {
+  const draft = { ...EMPTY_DRAFT, name: "API", url: "https://example.com" };
+  expect(
+    checkDraft({ ...draft, keyword: '"status":\\s*"ok"', keywordMode: "regex" }, id()),
+  ).toMatchObject({ ok: true, args: { keywordMode: "regex" } });
+  expect(checkDraft({ ...draft, keyword: "(?<=a)b", keywordMode: "regex" }, id())).toEqual({
+    ok: false,
+    fields: ["keyword"],
+  });
+  expect(checkDraft({ ...draft, keyword: "(a)\\1", keywordMode: "regex" }, id())).toEqual({
+    ok: false,
+    fields: ["keyword"],
+  });
+  // As plain text the same characters are fine.
+  expect(checkDraft({ ...draft, keyword: "(?<=a)b" }, id())).toMatchObject({ ok: true });
+  expect(checkDraft({ ...draft, keyword: "(a+)+$", keywordMode: "regex" }, id())).toMatchObject({
+    ok: true,
+  });
+});
+
+test("headers: empty rows are dropped, credentials and duplicates are refused by row", () => {
+  const draft = { ...EMPTY_DRAFT, name: "API", url: "https://example.com" };
+  const headers = [
+    { name: "Accept", value: "application/json" },
+    { name: "", value: "" },
+    { name: "X-Tenant", value: "acme" },
+  ];
+  expect(checkDraft({ ...draft, headers }, id())).toMatchObject({
+    ok: true,
+    args: {
+      headers: [
+        { name: "Accept", value: "application/json" },
+        { name: "X-Tenant", value: "acme" },
+      ],
+    },
+  });
+  const bad = [
+    { name: "Authorization", value: "Bearer x" },
+    { name: "Accept", value: "text/html" },
+    { name: "accept", value: "text/plain" },
+    { name: "X-Api-Key", value: "x" },
+    { name: "Host", value: "example.org" },
+    { name: "Cookie", value: "a=b" },
+    { name: "X-Name", value: "" },
+  ];
+  expect(checkDraft({ ...draft, headers: bad }, id())).toEqual({ ok: false, fields: ["headers"] });
+  expect(refusedHeaderRows({ headers: bad })).toEqual([0, 2, 3, 4, 5, 6]);
+});
+
+test("quorum and streak: within the regions, and left empty for the defaults", () => {
+  const draft = { ...EMPTY_DRAFT, name: "API", url: "https://example.com" };
+  expect(
+    checkDraft({ ...draft, quorum: "2", consecutiveChecks: "3", severity: "sev1" }, id()),
+  ).toMatchObject({ ok: true, args: { quorum: 2, consecutiveChecks: 3, severity: "sev1" } });
+  // Two regions ticked: a quorum of three cannot be met.
+  expect(checkDraft({ ...draft, quorum: "3" }, id())).toEqual({ ok: false, fields: ["quorum"] });
+  expect(checkDraft({ ...draft, consecutiveChecks: "11" }, id())).toEqual({
+    ok: false,
+    fields: ["consecutiveChecks"],
+  });
+  expect(
+    checkDraft(
+      {
+        ...EMPTY_DRAFT,
+        kind: "tcp",
+        name: "DB",
+        host: "db.example.com",
+        port: "5432",
+        quorum: "1",
+      },
+      id(),
+    ),
+  ).toMatchObject({ ok: true, args: { quorum: 1 } });
 });
 
 test("the fields the shard would refuse are named, a private URL among them", () => {
@@ -369,6 +506,7 @@ test("the edit form opens with the monitor's values, and an untouched one change
       name: "Checkout",
       intervalSeconds: 60,
       graceSeconds: 120,
+      severity: "sev2",
     },
   });
   // No token hash in a heartbeat's update: its URL stays as it was.
@@ -440,14 +578,20 @@ test("a TCP monitor edits like an HTTP one: its own update, restarting on a new 
 });
 
 test("a refused monitor change uses the shared wording, except a monitor that is gone", () => {
-  expect(monitorRefusal("forbidden")).toBe(m.sync_error_forbidden());
-  expect(monitorRefusal("conflict")).toBe(m.sync_error_conflict());
-  expect(monitorRefusal("not_found")).toBe("It was deleted.");
-  expect(monitorRefusal("limit_reached")).toBe(
+  expect(monitorRefusal("forbidden", 100, "en")).toBe(m.sync_error_forbidden());
+  expect(monitorRefusal("conflict", 100, "en")).toBe(m.sync_error_conflict());
+  expect(monitorRefusal("not_found", 100, "en")).toBe("It was deleted.");
+  expect(monitorRefusal("limit_reached", 100, "en")).toBe(
     "This workspace has 100 monitors, the most it can have. Delete one to add another.",
+  );
+  // The workspace's own cap, in the reader's number format.
+  expect(monitorRefusal("limit_reached", 2500, "en")).toBe(
+    "This workspace has 2,500 monitors, the most it can have. Delete one to add another.",
   );
   expect(monitorsFull(99)).toBe(false);
   expect(monitorsFull(100)).toBe(true);
+  expect(monitorsFull(20, 20)).toBe(true);
+  expect(monitorsFull(19, 20)).toBe(false);
   expect(m.monitor_gone({}, { locale: "pt-BR" })).toBe("Ele foi excluído.");
 });
 
@@ -551,4 +695,106 @@ test("only a policy that would be sent and is gone blocks the save", () => {
   expect(stalePolicy(sent, own, policies)).toBe(false);
   // Picking it again by hand, on a monitor that moved off it, is.
   expect(stalePolicy({ policyId: GONE }, row({ policyId: null }), policies)).toBe(true);
+});
+
+test("a row from before the new settings opens with their defaults, and saving it untouched changes nothing", () => {
+  // A single expected status, no keyword mode, headers, quorum, streak or severity: what older rows hold.
+  const old = row({ expectedStatus: 204 });
+  const draft = draftFromRow(old);
+  expect(draft).toMatchObject({
+    expectedStatus: "204",
+    keywordMode: "text",
+    headers: [],
+    quorum: "",
+    consecutiveChecks: "",
+    severity: "sev2",
+  });
+  expect(checkEdit(draft, old)).toMatchObject({ ok: true, changed: false });
+  expect(editRestarts(draft, old)).toBe(false);
+  // What is checked starts it over; how it alerts does not.
+  expect(editRestarts({ ...draft, expectedStatus: "204, 304" }, old)).toBe(true);
+  expect(editRestarts({ ...draft, keyword: "ok", keywordMode: "regex" }, old)).toBe(true);
+  expect(editRestarts({ ...draft, headers: [{ name: "Accept", value: "text/html" }] }, old)).toBe(
+    true,
+  );
+  for (const change of [
+    { severity: "sev1" as const },
+    { quorum: "1" },
+    { consecutiveChecks: "3" },
+  ]) {
+    expect(checkEdit({ ...draft, ...change }, old)).toMatchObject({ ok: true, changed: true });
+    expect(editRestarts({ ...draft, ...change }, old)).toBe(false);
+  }
+});
+
+test("an edited header list is kept over the live row; untouched, the live one wins", () => {
+  const live = row({ headers: [{ name: "Accept", value: "text/html" }] });
+  const initial = draftFromRow(row({}));
+  // A teammate added a header while this form was open; this one only renamed the monitor.
+  expect(rebaseDraft({ ...initial, name: "Renamed" }, initial, live).headers).toEqual([
+    { name: "Accept", value: "text/html" },
+  ]);
+  const edited = { ...initial, headers: [{ name: "X-Tenant", value: "acme" }] };
+  expect(rebaseDraft(edited, initial, live).headers).toEqual([{ name: "X-Tenant", value: "acme" }]);
+});
+
+test("Paused by names the member from the shard's list, and falls back when it has no name", () => {
+  const members = [
+    { id: "usr_ana", name: "Ana Souza" },
+    { id: "usr_unnamed", name: null },
+  ];
+  expect(pausedBy({ pausedBy: "usr_me" }, "usr_me", members)).toEqual({
+    state: "paused_you",
+    name: "",
+  });
+  expect(pausedBy({ pausedBy: "usr_ana" }, "usr_me", members)).toEqual({
+    state: "paused_name",
+    name: "Ana Souza",
+  });
+  expect(pausedBy({ pausedBy: "usr_unnamed" }, "usr_me", members).state).toBe("paused_other");
+  // Someone who left, and the server pausing after an account takeover.
+  expect(pausedBy({ pausedBy: "usr_gone" }, "usr_me", members).state).toBe("paused_other");
+  expect(pausedBy({ pausedBy: "sys_account" }, "usr_me", members).state).toBe("paused_other");
+  const line = (locale: "en" | "pt-BR") =>
+    m.monitor_last_result(
+      { state: "paused_name", name: "Ana Souza", when: "5 min ago" },
+      { locale },
+    );
+  expect(line("en")).toBe("Paused by Ana Souza 5 min ago");
+  expect(line("pt-BR")).toBe("Pausado por Ana Souza 5 min ago");
+});
+
+test("the workspace's monitor cap: its owner's, within the instance's", () => {
+  expect(workspaceMonitorCap(undefined, undefined)).toBe(100);
+  expect(workspaceMonitorCap({ monitorCap: null }, 500)).toBe(500);
+  expect(workspaceMonitorCap({ monitorCap: 20 }, 500)).toBe(20);
+  // A cap set before the operator lowered the instance's counts as the instance's.
+  expect(workspaceMonitorCap({ monitorCap: 300 }, 200)).toBe(200);
+});
+
+test("a region is stalled when every running monitor checked from it went quiet, not when one did", () => {
+  const now = 10 * 60 * 60 * 1000;
+  const fresh = (source: ProbeRegion, at: number): MonitorCheck => ({
+    source,
+    at,
+    up: true,
+    latencyMs: 10,
+    colo: "IAD",
+    httpStatus: 200,
+    error: null,
+  });
+  const quiet = now - 60 * 60 * 1000;
+  const a = row({ regions: ["enam", "weur"], checks: [fresh("enam", quiet), fresh("weur", now)] });
+  const b = row({ regions: ["enam"], checks: [fresh("enam", quiet)] });
+  expect(stalledRegions([a, b], now)).toEqual(["enam"]);
+  // One monitor in the region still reports: that is the monitor, not the probe.
+  const c = row({ regions: ["enam"], checks: [fresh("enam", now - 1000)] });
+  expect(stalledRegions([a, b, c], now)).toEqual([]);
+  // Paused monitors and heartbeats do not count; a new monitor waits its stale window first.
+  expect(stalledRegions([{ ...b, paused: true }], now)).toEqual([]);
+  expect(stalledRegions([row({ regions: ["weur"], restartedAt: now - 1000 })], now)).toEqual([]);
+  expect(stalledRegions([row({ regions: ["weur"], restartedAt: quiet })], now)).toEqual(["weur"]);
+  expect(m.monitor_stalled({ regions: "US East and Western Europe" }, { locale: "en" })).toBe(
+    "Checks from US East and Western Europe stopped reporting. Monitors there show No data until they report again, and nobody is paged for it.",
+  );
 });

@@ -133,6 +133,8 @@
   // its D1 table is migrations/0006_slack_team.sql.
   // WEBHOOK_SECRET_KEY (src/webhook-routes.ts) is optional too: 32 random bytes, base64url, that seal webhook signing
   // secrets at rest; without it outbound webhooks are off (RFC 0005 "Outbound webhooks").
+  // MAX_MONITORS (src/monitors.ts) is optional: the most monitors any workspace may have, 1 to 10000; without it 100.
+  // Owners set a lower cap per workspace (`monitor.setCap`, RFC 0007 "Limits").
   // API_TOKEN_KEY (src/api-tokens.ts) is optional: 32 random bytes, base64url, the HMAC key API tokens are hashed under
   // (RFC 0014); without it they are hashed with SHA-256 alone. Setting it later keeps tokens (each row moves to the
   // keyed digest on its next use); changing or removing it invalidates every token hashed under it.

@@ -126,6 +126,8 @@ export class Shard {
       log: Logger;
       /** Default `CHANGE_LOG_VERSIONS`; tests lower it. */
       changeLogVersions?: number;
+      /** The instance's caps, handed to every mutation (`MutationContext.limits`). */
+      limits?: MutationContext["limits"];
       /**
        * Called after a mutation that wrote events commits (outside its transaction), so the owner can arm the
        * outbox drain. Must not throw.
@@ -232,7 +234,7 @@ export class Shard {
     const { clientId, mutationId, actor, now } = input;
     const workspaceId = this.workspace();
     if (workspaceId === undefined) throw new Error("Shard has no workspace yet");
-    const ctx: MutationContext = { actor, now, server: true };
+    const ctx: MutationContext = { actor, now, server: true, limits: this.options.limits };
     // Set by `commit`; a box, because TypeScript does not see assignments made inside the callback.
     const done: { committed?: Committed; failed?: { error: unknown } } = {};
 

@@ -120,6 +120,7 @@ const PAGING_SEVERITIES = new Set(["sev1", "sev2"]);
 const EMAILED: ReadonlySet<PageFailure> = new Set([
   "no_devices",
   "undelivered",
+  "token_invalid",
   "unsupported",
   "not_configured",
   "over_limit",

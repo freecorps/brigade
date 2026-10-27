@@ -23,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { authClient, saveLocale } from "@/lib/auth";
+import { ENVIRONMENT } from "@/lib/environment";
 import { isThemePreference, themePreferences, type ThemePreference } from "@/lib/theme";
 
 const LANGUAGE_NAMES: Record<Locale, () => string> = {
@@ -55,9 +56,12 @@ export function SiteHeader() {
           </span>
         </Link>
         {session.data ? <WorkspaceName /> : null}
-        <span className="hidden h-6 shrink-0 items-center rounded-sm bg-muted px-2 text-xs font-medium text-muted-foreground lg:inline-flex">
-          {m.environment_local()}
-        </span>
+        {/* Production is what Brigade is: only the other environments say which they are. */}
+        {ENVIRONMENT === "production" ? null : (
+          <span className="hidden h-6 shrink-0 items-center rounded-sm bg-muted px-2 text-xs font-medium text-muted-foreground lg:inline-flex">
+            {m.environment({ env: ENVIRONMENT, part: "badge" })}
+          </span>
+        )}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <LanguageMenu />
           <ThemeMenu />

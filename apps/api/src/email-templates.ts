@@ -36,6 +36,7 @@ export type EmailIncident = {
 export const UNPAGED_REASONS = [
   "no_devices",
   "undelivered",
+  "token_invalid",
   "unsupported",
   "not_configured",
   "over_limit",
@@ -106,7 +107,7 @@ export function renderEmail(
   ];
   const after =
     content.about === "unpaged"
-      ? content.reason === "no_devices"
+      ? content.reason === "no_devices" || content.reason === "token_invalid"
         ? [text("unpaged_hint")]
         : []
       : [text("nobody_timeline")];

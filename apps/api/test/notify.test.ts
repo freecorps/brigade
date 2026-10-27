@@ -502,8 +502,54 @@ describe("when paging fails (the paging path's fallback)", () => {
       acked: ["msg-0"],
       retried: [],
     });
+    // Not `no_devices`: Bia had a phone, and APNs refusing its token is why she has none now.
     expect(await ws.timeline(incident)).toContainEqual(
-      expect.objectContaining({ kind: "page_failed", userId: "usr_bia", reason: "no_devices" }),
+      expect.objectContaining({ kind: "page_failed", userId: "usr_bia", reason: "token_invalid" }),
+    );
+  });
+
+  test("a refused token stays the reason for this incident's later pages; a member who never had a phone is no_devices", async () => {
+    const duda = user("usr_duda", "responder");
+    const ws = await workspace([ana, bia, duda]);
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR, "sev3");
+    const fake = relay(() =>
+      Response.json({ status: 400, reason: "BadDeviceToken" }, { status: 502 }),
+    );
+    await deliver(event, fake.send);
+    await deliver(event, fake.send, { attempts: 2 });
+    // Ana raises the severity: a new page, which finds Bia without a phone, and Duda, who never registered one.
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev1" });
+    const raised = (await ws.events(incident)).find((e) => e.type === "incident.severity_changed")!;
+    expect(await deliver(raised, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
+    const failed = (await ws.events(incident))
+      .filter((e) => e.type === "notification.failed")
+      .map((e) => e.data as { eventId: string; userId: string; reason: string });
+    expect(failed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventId: event.id, userId: "usr_bia", reason: "token_invalid" }),
+        expect.objectContaining({ eventId: raised.id, userId: "usr_bia", reason: "token_invalid" }),
+        expect.objectContaining({ eventId: raised.id, userId: "usr_duda", reason: "no_devices" }),
+      ]),
+    );
+    expect(
+      failed.filter((one) => one.userId === "usr_bia" && one.reason !== "token_invalid"),
+    ).toEqual([]);
+  });
+
+  test("a token refused on the last attempt is recorded as token_invalid, not undelivered", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    const fake = relay(() =>
+      Response.json({ status: 400, reason: "BadDeviceToken" }, { status: 502 }),
+    );
+    expect(await deliver(event, fake.send, { attempts: MAX_PAGE_ATTEMPTS })).toEqual({
+      acked: ["msg-0"],
+      retried: [],
+    });
+    expect(await ws.timeline(incident)).toContainEqual(
+      expect.objectContaining({ kind: "page_failed", userId: "usr_bia", reason: "token_invalid" }),
     );
   });
 

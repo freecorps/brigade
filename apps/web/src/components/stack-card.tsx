@@ -28,6 +28,7 @@ import {
 import { usePreferences } from "@/components/preferences";
 import { useMember } from "@/components/session";
 import { StackStatusProvider, useStackStatus } from "@/components/stack-status";
+import { ENVIRONMENT } from "@/lib/environment";
 import { formatBytes, formatClock } from "@/lib/format";
 import {
   CHECK_TIMEOUT_MS,
@@ -40,6 +41,8 @@ import {
 } from "@/lib/stack";
 
 const DEV_COMMAND = "vp run dev";
+
+const checkingText = () => m.environment({ env: ENVIRONMENT, part: "checking" });
 
 // One spinner per check: the verdict's on the first load (nothing to show yet), the button's on a
 // re-check, where the subtitle says "Checking…" and the previous result stays until the new one
@@ -71,12 +74,16 @@ function StackCardBody({ workspaceId }: { workspaceId: string }) {
   const rechecking = checking && report !== undefined;
   const apiFailed = state === "api-down" || state === "api-error" || state === "api-stuck";
   const failed = apiFailed || state === "do-down";
-  const hint = {
-    "api-down": m.stack_hint_start,
-    "api-error": m.stack_hint_api_error,
-    "api-stuck": m.stack_hint_api_stuck,
-    "do-down": m.stack_hint_do,
-  }[apiFailed ? state : "do-down"]();
+  // The local hints point at the terminal running `vp run dev`; a deployed stack has no terminal, only its logs.
+  const local = ENVIRONMENT === "local";
+  const hint = local
+    ? {
+        "api-down": m.stack_hint_start,
+        "api-error": m.stack_hint_api_error,
+        "api-stuck": m.stack_hint_api_stuck,
+        "do-down": m.stack_hint_do,
+      }[apiFailed ? state : "do-down"]()
+    : m.environment({ env: ENVIRONMENT, part: "hint" });
   const apiFailLabel =
     state === "api-error"
       ? m.stack_erroring()
@@ -121,14 +128,14 @@ function StackCardBody({ workspaceId }: { workspaceId: string }) {
   return (
     <Card aria-labelledby="stack-title">
       <CardHeader>
-        <CardTitle id="stack-title">{m.stack_title()}</CardTitle>
+        <CardTitle id="stack-title">{m.environment({ env: ENVIRONMENT, part: "stack" })}</CardTitle>
         <CardDescription className="tabular-nums" aria-live="polite">
           {/* First load: the verdict already says it is checking. A re-check says so here, since
               the verdict below is the previous result. */}
           {!report ? (
             <Placeholder className="my-0.5 h-4 w-32" />
           ) : checking ? (
-            m.stack_checking()
+            checkingText()
           ) : (
             m.stack_checked_at({ time: formatClock(report.checkedAt, locale) })
           )}
@@ -173,7 +180,9 @@ function StackCardBody({ workspaceId }: { workspaceId: string }) {
         {failed ? (
           <div className="flex flex-col items-start gap-3 rounded-md bg-muted p-4 text-sm">
             <p>{hint}</p>
-            <code className="rounded-sm bg-card px-2 py-1 text-foreground">{DEV_COMMAND}</code>
+            {local ? (
+              <code className="rounded-sm bg-card px-2 py-1 text-foreground">{DEV_COMMAND}</code>
+            ) : null}
             {checkAgain}
           </div>
         ) : null}
@@ -208,7 +217,7 @@ function CheckAgainButton({
 type Shown = StackVerdict | "api-error" | "api-stuck" | "checking";
 
 const VERDICTS: Record<Shown, { icon: LucideIcon; text: () => string; tone: string }> = {
-  checking: { icon: LoaderCircleIcon, text: m.stack_checking, tone: "text-muted-foreground" },
+  checking: { icon: LoaderCircleIcon, text: checkingText, tone: "text-muted-foreground" },
   ok: { icon: CircleCheckIcon, text: m.stack_ok, tone: "text-primary" },
   "api-down": { icon: CircleAlertIcon, text: m.stack_api_down, tone: "text-destructive" },
   "api-error": { icon: CircleAlertIcon, text: m.stack_api_error, tone: "text-destructive" },

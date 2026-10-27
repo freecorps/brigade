@@ -6,6 +6,7 @@ import { defineConfig, type Plugin } from "vite-plus";
 // By path, not "@freecorps/brigade-ui": the config loader does not use the @freecorps/source condition,
 // so the package name would need packages/ui built first (tests run before builds in CI).
 import { themes } from "../../packages/ui/src/tokens.ts";
+import { buildEnvironment } from "./src/lib/build-environment.ts";
 import { workspaceSource } from "../../vite.workspace.ts";
 
 /**
@@ -39,6 +40,12 @@ function localSecrets(): Record<string, string> {
 }
 
 export default defineConfig(({ command, mode }) => ({
+  // The header's badge and the overview's wording (src/lib/environment.ts).
+  define: {
+    "import.meta.env.BRIGADE_ENV": JSON.stringify(
+      buildEnvironment(command, process.env.CLOUDFLARE_ENV),
+    ),
+  },
   plugins:
     mode === "test"
       ? [workspaceSource()]

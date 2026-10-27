@@ -21,8 +21,7 @@ export default defineConfig({
         manualPureFunctions: ["defineMutation", "defineQuery", "defineRegistry", "v"],
       },
     },
-    // Declarations from a tsconfig without the source condition: the schema's come from its built `dist` (it builds
-    // first, being a dependency), since tsgo emits declarations for the files under this package only.
+    // Build from the runtime tsconfig (src only, no Node types); the package one also covers tests.
     tsconfig: "src/tsconfig.json",
     deps: {
       alwaysBundle: [SCHEMA],
@@ -30,6 +29,8 @@ export default defineConfig({
     },
     dts: {
       generator: "tsgo",
+      // The schema's declarations from its built `dist`, not its source (tsconfig.pack.json).
+      tsconfig: "tsconfig.pack.json",
     },
     // `@freecorps/source` condition for workspace consumers; publishConfig.exports keeps the dist-only map (RFC 0002).
     exports: { devExports: "@freecorps/source" },

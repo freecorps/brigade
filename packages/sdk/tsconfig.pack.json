@@ -1,0 +1,10 @@
+{
+  // Declarations only (vite.config.ts `pack.dts.tsconfig`): src without the `@freecorps/source` condition, so the
+  // schema package's declarations bundled into dist come from its built `dist` (it builds first, as a dependency);
+  // tsgo emits declarations for the files under this directory only.
+  "extends": "./src/tsconfig.json",
+  "compilerOptions": {
+    "customConditions": []
+  },
+  "include": ["src"]
+}

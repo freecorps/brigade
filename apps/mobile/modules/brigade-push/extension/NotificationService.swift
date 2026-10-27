@@ -1,7 +1,9 @@
 // The Notification Service Extension (spike S1, RFC 0006). APNs delivers `{ aps: { alert: <localized fallback>,
 // mutable-content: 1 }, brigade: <envelope> }`; this decrypts the envelope with the device key and shows its title
 // and body, with the Acknowledge action when it names an incident and its workspace (BrigadePage). If anything
-// fails it shows the fallback, never nothing, and without the action: there is nothing to acknowledge by.
+// fails it shows the fallback, never nothing, and without the action: there is nothing to acknowledge by. Both are
+// copies of the delivered content, so they keep its sound and interruption level as APNs set them: a SEV1 page sent
+// as a Critical Alert (RFC 0006 "Critical Alerts") stays critical, decrypted or not.
 import os
 import UserNotifications
 

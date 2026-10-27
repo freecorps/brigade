@@ -403,19 +403,52 @@ Drivers: `relay` (default), `apns-direct`, `fcm-direct` (own app build), `unifie
 
 ## Paging semantics per platform
 
-| Need                      | iOS                                          | Android                                           |
-| ------------------------- | -------------------------------------------- | ------------------------------------------------- |
-| Break through Focus / DND | `interruption-level: time-sensitive`         | High-importance channel + DND access (user grant) |
-| Ring on silent            | Critical Alerts entitlement (apply to Apple) | Alarm-sound channel                               |
-| Act from the notification | Category actions: Ack (built) / Escalate     | Action buttons                                    |
-| Collapse repeats          | `apns-collapse-id`                           | Notification `tag`                                |
-| Full-screen alarm         | n/a                                          | `USE_FULL_SCREEN_INTENT` (Play policy review)     |
+| Need                      | iOS                                             | Android                                           |
+| ------------------------- | ----------------------------------------------- | ------------------------------------------------- |
+| Break through Focus / DND | `interruption-level: time-sensitive`            | High-importance channel + DND access (user grant) |
+| Ring on silent            | Critical Alerts (built, behind the entitlement) | Alarm-sound channel                               |
+| Act from the notification | Category actions: Ack (built) / Escalate        | Action buttons                                    |
+| Collapse repeats          | `apns-collapse-id`                              | Notification `tag`                                |
+| Full-screen alarm         | n/a                                             | `USE_FULL_SCREEN_INTENT` (Play policy review)     |
+
+## Critical Alerts
+
+Built and off: Freecorps has applied for `com.apple.developer.usernotifications.critical-alerts` and not been
+granted it yet (open question Q8). Everything that does not need the entitlement is in place, so turning it on is a
+build flag:
+
+- **The app.** `BRIGADE_CRITICAL_ALERTS=1` at build time (app.config.ts) adds the entitlement to the app
+  (`plugins/notification-service.ts`) and has it ask for `.criticalAlert` with the notification permission. Unset
+  (the default) the entitlement is not there and nothing asks: an App ID or profile without it would fail the build.
+- **Registration.** `device.register` takes an optional `criticalAlerts` (true when the member allows them, read
+  from the permission each time the app registers, so turning them off in Settings is picked up). The app sends it
+  only when true: an instance from before it refuses unknown keys. Left out, or a device row from before it, reads
+  as not allowed.
+- **Who gets one.** A SEV1 page's alert push (`page` urgency), to an iPhone that allows them (`sendsCritical`,
+  apps/api src/paging.ts). Everything else, a SEV2 page included, stays `time-sensitive`, unchanged. The relay takes
+  `critical: true` only on a `page` alert (anything else is `invalid_body`) and sends
+  `sound: { critical: 1, name: "default", volume: 1 }` with `interruption-level: critical`. The Notification Service
+  Extension edits a copy of the delivered content, so the sound and level survive decryption and the fallback alike.
+- **Fallback (paging path).** A critical push the relay (400) or APNs (its 400) refuses as a request is sent again at
+  once without `critical`, the time-sensitive page every phone gets; tested in apps/api `notify.test.ts`. A device
+  that registered the capability but whose build lost the entitlement is not a risk: iOS plays the push as a
+  time-sensitive alert.
+- **The relay can raise urgency.** Like `interruption-level`, `critical` is in clear in the payload the relay builds;
+  the hardening above (urgency sealed in the plaintext, the extension deciding the level) covers it too.
+
+**Once Apple grants it:** enable Critical Alerts on the App ID `app.freecorps.brigade` in the developer portal (the
+extensions do not need it), regenerate the provisioning profiles (`bunx eas-cli@latest credentials`, or Xcode for
+local builds), set `BRIGADE_CRITICAL_ALERTS=1` in the EAS build profiles' `env` (eas.json) and in local build
+environments, and build. Then check on an iPhone: allow Critical Alerts when asked (or in Settings), sign in, put the
+phone on silent with a Focus on, declare a SEV1 and hear it ring; a SEV2 must stay time-sensitive. Self-hosters with
+their own app build need their own grant from Apple.
 
 ## Expo specifics
 
 - Development builds only (no Expo Go) — native modules + NSE.
 - NSE added by our own config plugin (`apps/mobile/plugins/notification-service.ts`): the extension target, the push,
-  App Group and time-sensitive entitlements, and the fallback strings for both targets. The extension compiles
+  App Group and time-sensitive entitlements (and Critical Alerts with `BRIGADE_CRITICAL_ALERTS=1`), and the fallback
+  strings for both targets. The extension compiles
   `BrigadePushCrypto.swift` and `BrigadePage.swift` from the app's module.
 - Use `getDevicePushTokenAsync()` (native token), not Expo push tokens.
 

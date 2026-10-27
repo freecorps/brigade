@@ -246,6 +246,11 @@ says who is on call; escalation policies (below) page from it.
   does); the alternative, leaving their shifts as holes, keeps everyone else's dates but leaves time nobody covers,
   which is worse once schedules page. A layer left with nobody is a visible gap until someone edits it; the editor
   asks for at least one member. Promoting a viewer back does not restore their place.
+- **On the phone.** The app's on-call screen and the incident list's line work out the member's shifts from the same
+  rows (`nextHandoffs`). The iOS "I'm on call" widget cannot reach the shard: the app writes it a snapshot of the
+  member's stretches on call (merged across schedules, 4 weeks ahead) into the App Group whenever the rows change,
+  and the widget flips at each handoff by the clock alone. A snapshot over 24 hours old asks to open the app, since
+  an override added since would not be in it (`apps/mobile/src/lib/widget.ts`).
 - **Limits.** 50 schedules per workspace, 100 overrides not yet ended per schedule; an override that ended over 30
   days ago is deleted when the next one is added to its schedule (`schedule.override_removed`, `expired`), so the
   table stays small. Deleting a schedule deletes its overrides.

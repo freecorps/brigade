@@ -12,6 +12,12 @@ import { createWorkspaceSync, type WorkspaceSync } from "@/lib/sync-client";
 import { BrigadeCall } from "../../modules/brigade-call";
 import { BrigadePush } from "../../modules/brigade-push";
 
+/**
+ * Whether this build has the Critical Alerts entitlement (`BRIGADE_CRITICAL_ALERTS=1` at build time, RFC 0006
+ * "Critical Alerts"). Asking for them without it is ignored by iOS, so it is only asked when set.
+ */
+const CRITICAL_ALERTS = Constants.expoConfig?.extra?.criticalAlerts === true;
+
 export function phoneDeps(sync: WorkspaceSync, server?: Server): DeviceDeps {
   const keys = BrigadePush;
   return {
@@ -21,10 +27,22 @@ export function phoneDeps(sync: WorkspaceSync, server?: Server): DeviceDeps {
     publicKey: keys ? () => keys.getPublicKey() : null,
     permission: async () => {
       const { status } = await Notifications.requestPermissionsAsync({
-        ios: { allowAlert: true, allowSound: true, allowBadge: false },
+        ios: {
+          allowAlert: true,
+          allowSound: true,
+          allowBadge: false,
+          ...(CRITICAL_ALERTS ? { allowCriticalAlerts: true } : {}),
+        },
       });
       return status === "granted";
     },
+    // Read every registration: the member can turn them off in Settings at any time.
+    ...(CRITICAL_ALERTS && process.env.EXPO_OS === "ios"
+      ? {
+          criticalAlerts: async () =>
+            (await Notifications.getPermissionsAsync()).ios?.allowsCriticalAlerts === true,
+        }
+      : {}),
     pushToken: async () => String((await Notifications.getDevicePushTokenAsync()).data),
     // Pages that ring as calls (RFC 0010): the module reports every VoIP push to CallKit, so its token is safe to give.
     ...(BrigadeCall ? { voipToken: () => BrigadeCall!.getVoipToken() } : {}),

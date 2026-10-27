@@ -7,6 +7,7 @@ import {
   ApnsTokenCache,
   apnsPayload,
   buildApnsRequest,
+  CRITICAL_SOUND,
   FALLBACK_ALERT,
   signApnsJwt,
   voipTopic,
@@ -153,6 +154,46 @@ describe("buildApnsRequest", () => {
       "active",
       "time-sensitive",
     ]);
+  });
+
+  test("a critical page rings on silent; critical is ignored below a page and the default stays time-sensitive", async () => {
+    const sealed = await envelope();
+    const aps = (push: Parameters<typeof apnsPayload>[0]) =>
+      apnsPayload(push).aps as Record<string, unknown>;
+    expect(aps({ envelope: sealed, urgency: "page", critical: true })).toEqual({
+      alert: FALLBACK_ALERT,
+      "mutable-content": 1,
+      sound: { critical: 1, name: "default", volume: 1 },
+      "interruption-level": "critical",
+    });
+    expect(CRITICAL_SOUND).toEqual({ critical: 1, name: "default", volume: 1 });
+    for (const critical of [false, undefined]) {
+      expect(aps({ envelope: sealed, urgency: "page", critical })).toMatchObject({
+        sound: "default",
+        "interruption-level": "time-sensitive",
+      });
+    }
+    expect(aps({ envelope: sealed, urgency: "high", critical: true })).toMatchObject({
+      sound: "default",
+      "interruption-level": "active",
+    });
+  });
+
+  test("buildApnsRequest refuses a critical push that is not a page alert", async () => {
+    const sealed = await envelope();
+    const options = { environment: "sandbox", topic: "app.example", jwt: "a.b.c" } as const;
+    const push = { deviceToken: DEVICE_TOKEN, envelope: sealed, expiration: 0, critical: true };
+    expect(() => buildApnsRequest({ ...push, urgency: "high" }, options)).toThrow(/critical/);
+    expect(() =>
+      buildApnsRequest(
+        { ...push, urgency: "page", kind: "call", callId: "6f1c2a4e-9b3d-4c5e-8f70-1a2b3c4d5e6f" },
+        options,
+      ),
+    ).toThrow(/critical/);
+    const request = buildApnsRequest({ ...push, urgency: "page" }, options);
+    expect(((await request.json()) as { aps: { sound: unknown } }).aps.sound).toEqual(
+      CRITICAL_SOUND,
+    );
   });
 
   test("rejects malformed device tokens and long collapse ids", async () => {

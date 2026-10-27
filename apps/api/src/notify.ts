@@ -21,6 +21,7 @@ import {
   type PagePlan,
   type PageTarget,
   type SendFailure,
+  sendsCritical,
 } from "./paging.ts";
 import { asksForSlack } from "./slack.ts";
 import { HEARTBEAT_EVENT, isSystemEvent, WATCHDOG_NAME, type RelayHealth } from "./watchdog.ts";
@@ -375,6 +376,9 @@ export async function callIdOf(eventId: string): Promise<string> {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/** APNs' reasons for a token that will never work again: the device is dropped. */
+const TOKEN_GONE: readonly string[] = ["BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"];
+
 /** One device's outcome, and whether trying again may help. */
 type Sent = { outcome: DeviceOutcome; retry: boolean };
 
@@ -446,8 +450,8 @@ async function pushOne(
 
   let response: Response;
   const started = Date.now();
-  try {
-    response = await post({
+  const alert = (critical: boolean) =>
+    post({
       method: "POST",
       headers: {
         Authorization: `Bearer ${env.RELAY_SEND_TOKEN}`,
@@ -460,9 +464,34 @@ async function pushOne(
         environment: target.environment,
         // A redelivered page replaces the one on screen instead of stacking.
         collapseId: incident.id,
+        // Rings through silent mode (RFC 0006 "Critical Alerts"); only sent when true.
+        ...(critical ? { critical: true } : {}),
       }),
       signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
     });
+  try {
+    const critical = sendsCritical(plan, target);
+    response = await alert(critical);
+    // The fallback: a Critical Alert the relay (400) or APNs (its 400, in a 502) refuses as a request goes out at
+    // once as the time-sensitive page every phone gets, so asking for more never costs the page. A token APNs says
+    // is gone is handled below, as for any push.
+    if (critical && !response.ok) {
+      const answer = (await response.json().catch(() => ({}))) as {
+        status?: unknown;
+        reason?: unknown;
+      };
+      const refused = response.status === 400 || answer.status === 400;
+      if (refused && !TOKEN_GONE.includes(answer.reason as string)) {
+        log("relay refused a critical push, sending it time-sensitive", {
+          device: deviceId,
+          status: response.status,
+          reason: typeof answer.reason === "string" ? answer.reason : undefined,
+        });
+        response = await alert(false);
+      } else {
+        response = Response.json(answer, { status: response.status });
+      }
+    }
   } catch (error) {
     ms = Date.now() - started;
     // The relay is down or slow: the paging path's first fallback is trying again.
@@ -497,12 +526,7 @@ async function pushOne(
     typeof answer.reason === "string" && /^[A-Za-z]{1,64}$/.test(answer.reason)
       ? answer.reason
       : undefined;
-  if (
-    answer.status === 410 ||
-    answer.reason === "BadDeviceToken" ||
-    answer.reason === "Unregistered" ||
-    answer.reason === "DeviceTokenNotForTopic"
-  ) {
+  if (answer.status === 410 || TOKEN_GONE.includes(answer.reason as string)) {
     return failed("token_invalid", "token_invalid", { expired: true, retry: true, apnsReason });
   }
   // A request the relay or APNs will refuse again (bad body, bad credentials, a wrong relay URL) is not retried, so

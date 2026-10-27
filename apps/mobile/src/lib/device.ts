@@ -9,6 +9,11 @@ export type DeviceRegistration = {
   pushToken: string;
   voipToken: string | null;
   publicKey: string;
+  /**
+   * Present (true) only when Critical Alerts are allowed (RFC 0006 "Critical Alerts"): left out otherwise, so an
+   * instance from before the capability, whose `device.register` refuses unknown keys, still registers the phone.
+   */
+  criticalAlerts?: true;
 };
 
 /**
@@ -34,6 +39,7 @@ export function deviceRegistration(input: {
   publicKey: string;
   pushToken: string;
   voipToken?: string | null;
+  criticalAlerts?: boolean;
   platform: "ios" | "android";
   apsEnvironment: unknown;
 }): DeviceRegistration {
@@ -44,6 +50,9 @@ export function deviceRegistration(input: {
     pushToken: input.pushToken,
     voipToken: input.voipToken ?? null,
     publicKey: input.publicKey,
+    ...(input.platform === "ios" && input.criticalAlerts === true
+      ? { criticalAlerts: true as const }
+      : {}),
   };
 }
 
@@ -75,6 +84,11 @@ export type DeviceDeps = {
    * VoIP push to CallKit (no call module): the phone then never gets a call, only alerts.
    */
   voipToken?: () => Promise<string | null>;
+  /**
+   * iOS, in a build with the Critical Alerts entitlement (`BRIGADE_CRITICAL_ALERTS=1`): whether the member allows
+   * them, asked after `permission`. Absent otherwise: the phone gets time-sensitive pages, as every phone does.
+   */
+  criticalAlerts?: () => Promise<boolean>;
   /**
    * The instance this phone registers with (`https://brigade.example.com`) and where to keep it for the Notification
    * Service Extension (the App Group): it posts delivery receipts to that origin only, whatever URL a page names
@@ -109,11 +123,19 @@ export async function registerPhone(
       publicKey,
       pushToken,
       voipToken: await Promise.race([voip, later(VOIP_GRACE_MS, null)]),
+      criticalAlerts: await allowsCritical(deps),
       platform: deps.platform,
       apsEnvironment: deps.apsEnvironment,
     });
     if (!proceed()) return "pending";
-    const result = await deps.mutate("device.register", args);
+    let result = await deps.mutate("device.register", args);
+    // An instance from before Critical Alerts refuses the unknown key: register without it, so the phone is still
+    // paged (time-sensitive) rather than not at all.
+    if (!result.ok && result.error.code === "invalid_args" && "criticalAlerts" in args) {
+      const { criticalAlerts: _, ...older } = args;
+      if (!proceed()) return "pending";
+      result = await deps.mutate("device.register", older);
+    }
     // `conflict`: registered already with these values. The member's device limit is `limit_reached`.
     if (result.ok || result.error.code === "conflict") {
       keepReceiptOrigin(deps);
@@ -142,6 +164,16 @@ async function callToken(deps: DeviceDeps): Promise<string | null> {
     return (await deps.voipToken()) || null;
   } catch {
     return null;
+  }
+}
+
+/** Never in registration's way: a phone that cannot say gets time-sensitive pages. */
+async function allowsCritical(deps: DeviceDeps): Promise<boolean> {
+  if (deps.platform !== "ios" || !deps.criticalAlerts) return false;
+  try {
+    return (await deps.criticalAlerts()) === true;
+  } catch {
+    return false;
   }
 }
 

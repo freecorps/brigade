@@ -3,6 +3,7 @@ import { describe, expect, test } from "vite-plus/test";
 import {
   APP_GROUP,
   applyAppEntitlements,
+  CRITICAL_ALERTS_ENTITLEMENT,
   EXTENSION_ENTITLEMENTS,
   extensionInfoPlist,
   localizableStrings,
@@ -63,6 +64,31 @@ describe("applyAppEntitlements", () => {
       "com.apple.security.application-groups": ["group.other", APP_GROUP],
       "com.apple.developer.usernotifications.time-sensitive": true,
     });
+  });
+
+  test("Critical Alerts only when the build asks for them (Apple grants the entitlement)", () => {
+    expect(applyAppEntitlements({}, { apsEnvironment: "production" })).not.toHaveProperty(
+      CRITICAL_ALERTS_ENTITLEMENT,
+    );
+    expect(
+      applyAppEntitlements({}, { apsEnvironment: "production", criticalAlerts: false }),
+    ).not.toHaveProperty(CRITICAL_ALERTS_ENTITLEMENT);
+    expect(
+      applyAppEntitlements({}, { apsEnvironment: "production", criticalAlerts: true }),
+    ).toMatchObject({
+      [CRITICAL_ALERTS_ENTITLEMENT]: true,
+      "com.apple.developer.usernotifications.time-sensitive": true,
+    });
+    // A prebuild without `--clean` after a flagged one: the flag off takes it away again.
+    expect(
+      applyAppEntitlements(
+        { [CRITICAL_ALERTS_ENTITLEMENT]: true },
+        { apsEnvironment: "production" },
+      ),
+    ).not.toHaveProperty(CRITICAL_ALERTS_ENTITLEMENT);
+    expect(CRITICAL_ALERTS_ENTITLEMENT).toBe(
+      "com.apple.developer.usernotifications.critical-alerts",
+    );
   });
 
   test("does not add the App Group twice", () => {

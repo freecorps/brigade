@@ -63,6 +63,11 @@ export type PageTarget = {
   publicKey: string;
   /** PushKit's token, for a page that rings as a call (RFC 0010); null without one. */
   voipToken: string | null;
+  /**
+   * Whether the member allowed Critical Alerts on this device (RFC 0006 "Critical Alerts"). Absent from a shard of the
+   * version before them (during a deploy): not allowed.
+   */
+  criticalAlerts?: boolean;
   /** This page's delivery receipt token for the device (src/receipts.ts); absent when none could be minted. */
   receipt?: string;
 };
@@ -168,6 +173,22 @@ export function ringsAsCall(event: BrigadeEvent, severity: Severity): boolean {
   return severity === "sev1" || event.type === "escalation.paged";
 }
 
+/**
+ * Whether one device's alert push is a Critical Alert (RFC 0006 "Critical Alerts"): a SEV1 page, to an iPhone whose
+ * member allowed Critical Alerts. Everything else, a SEV2 page included, stays time-sensitive.
+ */
+export function sendsCritical(
+  plan: { urgency: Urgency; incident: Pick<IncidentRow, "severity"> },
+  target: Pick<PageTarget, "platform" | "criticalAlerts">,
+): boolean {
+  return (
+    plan.urgency === "page" &&
+    plan.incident.severity === "sev1" &&
+    target.platform === "ios" &&
+    target.criticalAlerts === true
+  );
+}
+
 const rank = (severity: Severity) => ["sev1", "sev2", "sev3", "sev4"].indexOf(severity);
 
 /**
@@ -194,13 +215,14 @@ export function pageTargets(
   const devicesOf = (userId: string): PageTarget[] =>
     devices
       .filter((device) => device.userId === userId)
-      .map(({ id, platform, environment, pushToken, voipToken, publicKey }) => ({
+      .map(({ id, platform, environment, pushToken, voipToken, criticalAlerts, publicKey }) => ({
         deviceId: id,
         userId,
         platform,
         environment,
         pushToken,
         voipToken,
+        criticalAlerts: criticalAlerts === true,
         publicKey,
       }));
   const noDevices: string[] = [];
@@ -572,7 +594,8 @@ export class Pager {
       if (!member || member.role === "viewer") continue;
       const mine = devices.filter((device) => device.userId === userId);
       if (mine.length === 0) noDevices.push(userId);
-      for (const { id, platform, environment, pushToken, voipToken, publicKey } of mine) {
+      for (const device of mine) {
+        const { id, platform, environment, pushToken, voipToken, publicKey } = device;
         targets.push({
           deviceId: id,
           userId,
@@ -580,6 +603,7 @@ export class Pager {
           environment,
           pushToken,
           voipToken,
+          criticalAlerts: device.criticalAlerts === true,
           publicKey,
         });
       }

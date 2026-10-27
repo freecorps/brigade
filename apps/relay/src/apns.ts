@@ -39,6 +39,12 @@ export interface ApnsPush {
   callId?: string;
   envelope: PushEnvelope;
   urgency: Urgency;
+  /**
+   * A Critical Alert (RFC 0006 "Critical Alerts"): rings through silent mode and Do Not Disturb. Only for an alert
+   * at `page` urgency, and only to a device whose member allowed Critical Alerts in an app build with the entitlement
+   * (the instance knows from registration). Without the permission iOS plays it as a time-sensitive alert.
+   */
+  critical?: boolean;
   /** `apns-collapse-id`: a repeat replaces the notification on screen (64 bytes at most). */
   collapseId?: string;
   /** Seconds since the epoch after which APNs drops an undelivered push; 0 means try once. Required, so no
@@ -80,6 +86,9 @@ export function buildApnsRequest(
     throw new Error("a call needs a lowercase UUID call id");
   }
   if (call && push.urgency !== "page") throw new Error("only a page rings");
+  if (push.critical && (call || push.urgency !== "page")) {
+    throw new Error("only a page alert is critical");
+  }
   const headers = new Headers({
     authorization: `bearer ${options.jwt}`,
     "apns-topic": call ? voipTopic(options.topic) : options.topic,
@@ -103,21 +112,27 @@ export function buildApnsRequest(
   });
 }
 
+/** The sound of a Critical Alert: the default sound at full volume, played even on silent (`critical: 1`). */
+export const CRITICAL_SOUND = { critical: 1, name: "default", volume: 1 } as const;
+
 /**
  * The JSON body. An alert: a localized fallback alert, `mutable-content` so the extension runs, and the envelope.
  * A call: the call id and the envelope, no `aps` (PushKit hands the whole payload to the app, which reports the
  * call to CallKit at once and decrypts afterwards).
  */
 export function apnsPayload(
-  push: Pick<ApnsPush, "envelope" | "urgency" | "kind" | "callId">,
+  push: Pick<ApnsPush, "envelope" | "urgency" | "kind" | "callId" | "critical">,
 ): Record<string, unknown> {
   if (push.kind === "call") return { call: { id: push.callId }, brigade: push.envelope };
+  const page = push.urgency === "page";
+  const critical = page && push.critical === true;
   const aps: Record<string, unknown> = {
     alert: FALLBACK_ALERT,
     "mutable-content": 1,
-    sound: "default",
-    // Pages break through Focus (RFC 0006, "Paging semantics"); needs the time-sensitive entitlement.
-    "interruption-level": push.urgency === "page" ? "time-sensitive" : "active",
+    sound: critical ? CRITICAL_SOUND : "default",
+    // Pages break through Focus (RFC 0006, "Paging semantics"); needs the time-sensitive entitlement. A Critical
+    // Alert also rings on silent; it needs the critical-alerts entitlement and the member's permission.
+    "interruption-level": critical ? "critical" : page ? "time-sensitive" : "active",
   };
   return { aps, brigade: push.envelope };
 }

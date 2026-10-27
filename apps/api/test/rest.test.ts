@@ -397,10 +397,14 @@ describe("API tokens on these routes", () => {
       "sev3",
     );
     // The writes that answer no row still work without it.
-    const posted = await call(`/workspaces/${t.id}/incidents/${incident}/updates`, writeOnly.token, {
-      method: "POST",
-      body: { body: "Looking." },
-    });
+    const posted = await call(
+      `/workspaces/${t.id}/incidents/${incident}/updates`,
+      writeOnly.token,
+      {
+        method: "POST",
+        body: { body: "Looking." },
+      },
+    );
     expect(posted.status).toBe(201);
     expect(await posted.json()).toEqual({ ok: true });
 
@@ -712,6 +716,10 @@ describe("changing an incident", () => {
     expect(badField.status).toBe(400);
     const viewer = await call(path, t.duda, { method: "PATCH", body: { severity: "sev1" } });
     expect(viewer.status).toBe(403);
+    // Not even an empty one, which runs no mutation.
+    const empty = await call(path, t.duda, { method: "PATCH", body: {} });
+    expect(empty.status).toBe(403);
+    expect(await empty.json()).toEqual({ error: "forbidden" });
     const missing = await call(`/workspaces/${t.id}/incidents/${newId("inc", 1, random)}`, t.caio, {
       method: "PATCH",
       body: { severity: "sev1" },
@@ -809,7 +817,9 @@ describe("Idempotency-Key", () => {
     }
     expect(await subjectEvents()).toBe(after);
     expect(await declares(t)).toHaveLength(2);
-    expect((await t.withShard((shard) => shard.store.get("incidents", one)))?.severity).toBe("sev2");
+    expect((await t.withShard((shard) => shard.store.get("incidents", one)))?.severity).toBe(
+      "sev2",
+    );
     // Another caller's key is their own.
     const ana = await call(path(other), t.ana, {
       method: "PATCH",
@@ -872,6 +882,14 @@ describe("the catalog", () => {
     expect(removed.status).toBe(200);
     expect((await call(`${base}/${service.id}`, t.duda)).status).toBe(404);
     expect((await call(`${base}/${service.id}`, t.ana, { method: "DELETE" })).status).toBe(404);
+    // The create retried after the service was removed: gone, not a server fault.
+    const retried = await call(base, t.ana, {
+      method: "POST",
+      key: "svc-1",
+      body: { name: "Checkout", tier: "tier1", owners: [{ kind: "member", id: t.caio.id }] },
+    });
+    expect(retried.status).toBe(404);
+    expect(await retried.json()).toEqual({ error: "not_found" });
   });
 
   test("incident types and custom fields: made with their ids and options' ids, changed, listed", async () => {

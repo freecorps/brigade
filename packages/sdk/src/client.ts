@@ -517,8 +517,8 @@ export function createClient(options: ClientOptions) {
     listIncidents: (workspaceId: string, filter: IncidentFilter = {}) =>
       call<IncidentPage, "listIncidents">("listIncidents", "GET", () => {
         const query = new URLSearchParams();
-        if (filter.status) query.set("status", filter.status.join(","));
-        if (filter.severity) query.set("severity", filter.severity.join(","));
+        if (filter.status?.length) query.set("status", filter.status.join(","));
+        if (filter.severity?.length) query.set("severity", filter.severity.join(","));
         if (filter.typeId !== undefined) query.set("typeId", filter.typeId);
         if (filter.serviceId !== undefined) query.set("serviceId", filter.serviceId);
         if (filter.cursor !== undefined) query.set("cursor", filter.cursor);

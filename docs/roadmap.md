@@ -341,7 +341,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     `incident.assignRole` by role id, shown read-only in the app when they are the workspace's own.
   - Done: the catalog over the public HTTP API and the SDK (RFC 0002 "Public HTTP API"): services, incident types and
     custom fields listed, read, made and changed (services removed), and incidents listed by status, severity, type
-    and service, through the same mutations, with a session or an API token (`catalog:read`, `catalog:manage`).
+    and service, through the same mutations, with a session or an API token (`catalog:read`, `catalog:manage`;
+    `incident:read` for incidents).
   - Left for later items: a monitor naming the service it watches; linking services to status page components;
     filtering incidents by field; deleting types and fields and editing role definitions over HTTP; alert routes
     paging a service's policy; enforcing required fields

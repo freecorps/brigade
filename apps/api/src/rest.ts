@@ -260,6 +260,8 @@ export async function requestDigest(write: RestWrite): Promise<string> {
  * request is refused, and runs nothing.
  */
 export function writeRest(ctx: WriteContext, write: RestWrite): RestResult {
+  // Checked here too: an empty incident `PATCH` runs no mutation that would.
+  if (!allows(ctx.actor, WRITE_PERMISSION[write.kind])) return refused("forbidden");
   const reads = WRITE_READ_PERMISSION[write.kind];
   if (reads && !allows(ctx.actor, reads)) return refused("forbidden");
   if (!ctx.shard.claimRequestKey(ctx.actor.id, ctx.key, ctx.request, ctx.now)) {
@@ -392,7 +394,7 @@ function updateIncident(ctx: WriteContext, id: string, body: IncidentPatch): Res
   return { ok: true, body: { incident: publicIncident(ctx.shard.store, row) } };
 }
 
-/** A create's answer: the row it made, read back (on a retry, as it is now). */
+/** A create's answer: the row it made, read back (on a retry, as it is now; gone since, `not_found`). */
 function created<R>(
   result: MutationResultMessage,
   row: R | undefined,
@@ -400,7 +402,7 @@ function created<R>(
   as: (row: R) => unknown = (row) => row,
 ): RestResult {
   if (!result.ok) return failure(result);
-  return row ? { ok: true, body: { [key]: as(row) } } : refused("internal");
+  return row ? { ok: true, body: { [key]: as(row) } } : refused("not_found");
 }
 
 /** A `PATCH`'s answer: the row as it is now, when the mutation made the change or there was none to make. */

@@ -1483,7 +1483,7 @@ function toOperation(operation: Operation): Record<string, unknown> {
         ? `With an API token: the \`${operation.bearer}\` scope.`
         : operation.bearer
           ? `With an API token: the ${operation.bearer.map((scope) => `\`${scope}\``).join(" and ")} scopes.`
-        : undefined,
+          : undefined,
   ]
     .filter(Boolean)
     .join(" ");

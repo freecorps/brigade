@@ -149,7 +149,7 @@ await brigade.postIncidentUpdate(workspaceId, incident.id, { body: "Rolling back
 for (let cursor: string | undefined; ;) {
   const page = await brigade.listIncidents(workspaceId, {
     severity: ["sev1"],
-    status: ["triage", "investigating"],
+    status: ["triage", "investigating", "fixing", "monitoring"],
     cursor,
   });
   for (const open of page.incidents) console.log(`INC-${open.number} ${open.title}`);

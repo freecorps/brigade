@@ -207,6 +207,14 @@ describe("requests", () => {
     expect(keys[2]).toBe("retry:1");
   });
 
+  test("incident filters go in the query; an empty list is no filter", async () => {
+    const { client, requests } = recorder(() => Response.json({ incidents: [], nextCursor: null }));
+    await client.listIncidents(WS, { status: [], severity: ["sev1", "sev2"], limit: 10 });
+    expect(requests[0]!.url).toBe(
+      `https://brigade.example.com/api/workspaces/${WS}/incidents?severity=sev1%2Csev2&limit=10`,
+    );
+  });
+
   test("path segments are encoded", async () => {
     const { client, requests } = recorder();
     await client.pingHeartbeat("a/b?c");

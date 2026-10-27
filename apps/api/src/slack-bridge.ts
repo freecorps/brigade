@@ -14,14 +14,21 @@ import type {
   SlackInstall,
   SlackInstallRefusal,
   SlackInstallResult,
+  SlackOpenDeclare,
+  SlackOpenDeclareResult,
   SlackRequester,
+  SlackRevocation,
 } from "@freecorps/brigade-slack/bridge";
+import { declareModal } from "@freecorps/brigade-slack/modal";
 import type { Fetch } from "@freecorps/brigade-slack/notifier";
 import { lookUpPerson } from "@freecorps/brigade-slack/people";
+import { replyText } from "@freecorps/brigade-slack/replies";
+import { callSlack } from "@freecorps/brigade-slack/web-api";
 import {
   can,
   isId,
   isRole,
+  MAX_INCIDENT_SERVICES,
   SEVERITIES,
   SLACK_LOCALES,
   slackTeamId,
@@ -31,7 +38,7 @@ import {
 } from "@freecorps/brigade-schema";
 import { memberRole } from "./actor.ts";
 import type { Auth } from "./auth.ts";
-import type { SlackShardAction } from "./slack.ts";
+import type { SlackShardAction, SlackShardTarget } from "./slack.ts";
 import { isTokenKey, openToken, sealToken, tokenBinding } from "./slack-token.ts";
 import { ORGANIZATION_ID } from "./workspace.ts";
 
@@ -47,6 +54,12 @@ const REQUEST_KEY = /^[0-9a-f]{64}$/;
 /** A Slack user id, as the Slack Worker checked it. */
 const SLACK_USER_ID = /^[UW][A-Z0-9]{2,30}$/;
 const MAX_TITLE_INPUT = 1000;
+/** Longer than any update `incident.postUpdate` takes, so the mutation's own check words the refusal. */
+const MAX_UPDATE_INPUT = 8000;
+const CHANNEL_ID = /^[CG][A-Z0-9]{2,30}$/;
+const SLACK_TS = /^\d{1,12}\.\d{1,9}$/;
+/** Channels the dashboard's picker lists at most: 5 pages of Slack's suggested 200. */
+const MAX_CHANNEL_PAGES = 5;
 
 export class SlackBridge extends WorkerEntrypoint<Env> implements SlackBridgeApi {
   locale(requester: SlackRequester): Promise<SlackLocale> {
@@ -54,7 +67,15 @@ export class SlackBridge extends WorkerEntrypoint<Env> implements SlackBridgeApi
   }
 
   act(request: SlackActRequest): Promise<SlackActResult> {
-    return slackAct(this.env, request);
+    return actAndAnswer(this.env, request);
+  }
+
+  openDeclare(request: SlackOpenDeclare): Promise<SlackOpenDeclareResult> {
+    return openSlackDeclare(this.env, request);
+  }
+
+  revoked(revocation: SlackRevocation): Promise<void> {
+    return slackRevoked(this.env, revocation);
   }
 
   completeInstall(state: string, install: SlackInstall): Promise<SlackInstallResult> {
@@ -176,17 +197,258 @@ export async function slackAct(
     const locale = userLocale(member.locale) ?? slackSide;
     if (!isRole(member.role)) return refuse("unmapped", locale, workspaceName);
     const actor: Actor = { kind: "user", id: member.userId, role: member.role };
+    let shardAction: SlackShardAction;
+    if (action.kind === "role") {
+      // The person the role goes to is mapped as the requester is: Slack's confirmed email, a verified member.
+      const assignee = await lookUpPerson(
+        request.teamId,
+        action.user,
+        connection.token,
+        send,
+        now(),
+      );
+      if (!assignee.ok) {
+        return refuse(
+          assignee.reason === "failed" ? "failed" : "role_unmapped",
+          locale,
+          workspaceName,
+        );
+      }
+      const holder = await memberByEmail(env.DB, workspaceId, assignee.email);
+      if (!holder) return refuse("role_unmapped", locale, workspaceName);
+      const { user: _user, ...rest } = action;
+      shardAction = { ...rest, userId: holder.userId };
+    } else {
+      shardAction = action;
+    }
     const outcome = await env.WORKSPACE.getByName(workspaceId).slackAct(
       workspaceId,
       request.teamId,
       actor,
-      action,
+      shardAction,
       request.key,
     );
     return { ...outcome, locale, workspaceName };
   } catch (error) {
     log("slack action failed", { error: String(error) });
     return refuse("failed");
+  }
+}
+
+/**
+ * `act`, and for a request with no `response_url` (an Events API message) the answer posted by the API itself, as an
+ * ephemeral message to the person in that channel (and thread). The answer is best effort.
+ */
+export async function actAndAnswer(
+  env: SlackBridgeEnv,
+  request: SlackActRequest,
+  send: Fetch = (request) => fetch(request),
+  now: () => number = Date.now,
+): Promise<SlackActResult> {
+  const result = await slackAct(env, request, send, now);
+  const answer = request.answer;
+  // Slack retries an event it thinks went unanswered: the first delivery ran it and answered, so a replay is quiet.
+  if (!answer || !CHANNEL_ID.test(String(answer.channelId)) || result.replayed) return result;
+  try {
+    const connection = await slackConnection(env, request.teamId);
+    if (!connection.ok) return result;
+    const verb = request.action.kind === "update" ? "update" : undefined;
+    const posted = await callSlack(
+      "chat.postEphemeral",
+      {
+        channel: answer.channelId,
+        user: request.slackUserId,
+        text: replyText(result, { verb }),
+        ...(answer.threadTs && SLACK_TS.test(answer.threadTs)
+          ? { thread_ts: answer.threadTs }
+          : {}),
+      },
+      { token: connection.token, fetch: send },
+    );
+    if (!posted.ok) log("slack answer not posted", { error: posted.error });
+  } catch (error) {
+    log("slack answer failed", { error: String(error) });
+  }
+  return result;
+}
+
+/**
+ * Opens the declare form (`views.open`) for a Slack user who may declare, with the workspace's incident types and
+ * services. Refused like an action for anyone who could not declare, so they are told why without a form.
+ */
+export async function openSlackDeclare(
+  env: SlackBridgeEnv,
+  request: SlackOpenDeclare,
+  send: Fetch = (request) => fetch(request),
+  now: () => number = Date.now,
+): Promise<SlackOpenDeclareResult> {
+  const refuse = (
+    code: SlackActRefusal,
+    locale: SlackLocale = "en",
+    workspaceName = "",
+  ): SlackOpenDeclareResult => ({ ok: false, code, locale, workspaceName });
+  const severity = SEVERITIES.find((value) => value === request.severity);
+  if (
+    !slackTeamId(request.teamId).ok ||
+    !SLACK_USER_ID.test(String(request.slackUserId)) ||
+    typeof request.triggerId !== "string" ||
+    !request.triggerId ||
+    request.triggerId.length > 256 ||
+    typeof request.responseUrl !== "string" ||
+    !request.responseUrl.startsWith("https://hooks.slack.com/") ||
+    !severity
+  ) {
+    return refuse("failed");
+  }
+  try {
+    const connection = await slackConnection(env, request.teamId);
+    if (!connection.ok) return refuse(connection.code);
+    const { workspaceId, workspaceName } = connection;
+    const person = await lookUpPerson(
+      request.teamId,
+      request.slackUserId,
+      connection.token,
+      send,
+      now(),
+    );
+    const slackSide = person.locale ?? connection.locale;
+    if (!person.ok) {
+      return refuse(
+        person.reason === "unconfirmed" ? "unconfirmed" : "failed",
+        slackSide,
+        workspaceName,
+      );
+    }
+    const member = await memberByEmail(env.DB, workspaceId, person.email);
+    if (!member) return refuse("unmapped", slackSide, workspaceName);
+    const locale = userLocale(member.locale) ?? slackSide;
+    if (!isRole(member.role)) return refuse("unmapped", locale, workspaceName);
+    if (!can(member.role, "incident:declare")) return refuse("forbidden", locale, workspaceName);
+    const catalog = await env.WORKSPACE.getByName(workspaceId).slackCatalog();
+    const opened = await callSlack(
+      "views.open",
+      {
+        trigger_id: request.triggerId,
+        view: declareModal({
+          locale,
+          severity,
+          types: catalog.types,
+          services: catalog.services,
+          metadata: { responseUrl: request.responseUrl },
+        }),
+      },
+      { token: connection.token, fetch: send },
+    );
+    if (!opened.ok) {
+      log("slack form did not open", { error: opened.error });
+      return refuse("failed", locale, workspaceName);
+    }
+    return { ok: true };
+  } catch (error) {
+    log("slack form failed", { error: String(error) });
+    return refuse("failed");
+  }
+}
+
+/** Slack took the app's access away (Events API): the team's workspace marks its connection revoked. */
+export async function slackRevoked(
+  env: SlackBridgeEnv,
+  revocation: SlackRevocation,
+): Promise<void> {
+  if (!slackTeamId(revocation.teamId).ok) return;
+  const reason = revocation.reason === "tokens_revoked" ? "tokens_revoked" : "uninstalled";
+  const bots =
+    reason === "tokens_revoked"
+      ? (Array.isArray(Reflect.get(revocation, "botUserIds"))
+          ? (Reflect.get(revocation, "botUserIds") as unknown[])
+          : []
+        )
+          .filter((id): id is string => typeof id === "string" && SLACK_USER_ID.test(id))
+          .slice(0, 100)
+      : null;
+  if (bots !== null && bots.length === 0) return;
+  const workspaceId = await teamWorkspace(env.DB, revocation.teamId);
+  if (!workspaceId) return;
+  const changed = await env.WORKSPACE.getByName(workspaceId).slackRevoked(
+    revocation.teamId,
+    reason,
+    bots,
+  );
+  if (changed) log("slack access revoked by Slack", { workspace: workspaceId, reason });
+}
+
+/**
+ * `GET /workspaces/:id/slack/channels`: the channels the dashboard's Slack card picks from (`conversations.list`
+ * with the workspace's bot token: public ones, and private ones Brigade was invited to). Owners and admins only, like
+ * every Slack setting; the token never leaves the API.
+ */
+export async function listSlackChannels(
+  request: Request,
+  env: SlackBridgeEnv,
+  lazyAuth: () => Auth,
+  workspaceId: string,
+  send: Fetch = (request) => fetch(request),
+): Promise<Response> {
+  if (request.method !== "GET") {
+    return Response.json(
+      { error: "method_not_allowed" },
+      { status: 405, headers: { Allow: "GET" } },
+    );
+  }
+  if (!ORGANIZATION_ID.test(workspaceId)) {
+    return Response.json({ error: "invalid_workspace_id" }, { status: 400 });
+  }
+  const session = await lazyAuth().api.getSession({ headers: request.headers });
+  if (!session) return Response.json({ error: "unauthenticated" }, { status: 401 });
+  const noStore = { "Cache-Control": "private, no-store" };
+  try {
+    const role = await memberRole(env.DB, workspaceId, session.user.id);
+    if (!role) return Response.json({ error: "not_a_member" }, { status: 403 });
+    if (!can(role, "workspace:manage"))
+      return Response.json({ error: "forbidden" }, { status: 403 });
+    const teamId = await env.WORKSPACE.getByName(workspaceId).slackTeam();
+    const connection = teamId ? await slackConnection(env, teamId) : null;
+    if (!connection?.ok || connection.workspaceId !== workspaceId) {
+      return Response.json({ error: "not_connected" }, { status: 409, headers: noStore });
+    }
+    const channels: { id: string; name: string; private: boolean }[] = [];
+    let cursor = "";
+    for (let page = 0; page < MAX_CHANNEL_PAGES; page++) {
+      const listed = await callSlack(
+        "conversations.list",
+        {
+          types: "public_channel,private_channel",
+          exclude_archived: "true",
+          limit: "200",
+          ...(cursor ? { cursor } : {}),
+        },
+        { token: connection.token, form: true, fetch: send },
+      );
+      if (!listed.ok) {
+        log("slack channels could not be listed", { workspace: workspaceId, error: listed.error });
+        return Response.json({ error: "slack_failed" }, { status: 502, headers: noStore });
+      }
+      for (const one of Array.isArray(listed.data.channels) ? listed.data.channels : []) {
+        const channel = Object(one) as Record<string, unknown>;
+        if (typeof channel.id !== "string" || !CHANNEL_ID.test(channel.id)) continue;
+        if (typeof channel.name !== "string") continue;
+        // Private channels Brigade is not in cannot take its messages.
+        if (channel.is_private === true && channel.is_member !== true) continue;
+        channels.push({
+          id: channel.id,
+          name: channel.name.slice(0, 80),
+          private: channel.is_private === true,
+        });
+      }
+      const next = Object(listed.data.response_metadata).next_cursor;
+      if (typeof next !== "string" || next === "") break;
+      cursor = next;
+    }
+    channels.sort((a, b) => a.name.localeCompare(b.name));
+    return Response.json({ channels }, { headers: noStore });
+  } catch (error) {
+    log("slack channels failed", { workspace: workspaceId, error: String(error) });
+    return Response.json({ error: "unavailable" }, { status: 503, headers: noStore });
   }
 }
 
@@ -425,8 +687,13 @@ function userLocale(value: string | null): SlackLocale | null {
     : null;
 }
 
-/** The action as the shard takes it, or undefined when it is not one. */
-function parseAction(input: unknown): SlackShardAction | undefined {
+/** The action as the shard takes it, or undefined when it is not one. `role`'s user is still Slack's. */
+function parseAction(
+  input: unknown,
+):
+  | Exclude<SlackShardAction, { kind: "role" }>
+  | ({ kind: "role"; role: string; user: string } & SlackShardTarget)
+  | undefined {
   if (typeof input !== "object" || input === null) return undefined;
   const action = input as Record<string, unknown>;
   if (action.kind === "declare") {
@@ -434,22 +701,83 @@ function parseAction(input: unknown): SlackShardAction | undefined {
     if (typeof action.title !== "string" || action.title.length > MAX_TITLE_INPUT || !severity) {
       return undefined;
     }
-    return { kind: "declare", title: action.title, severity };
+    // Whatever of the type and services cannot be read is left out, and the person is told (`dropped`): the
+    // incident is declared all the same, since that is what they asked for first.
+    const typeId = isId("typ", action.typeId) ? action.typeId : undefined;
+    const picked: unknown[] = Array.isArray(action.serviceIds) ? action.serviceIds : [];
+    const serviceIds = [...new Set(picked.filter((id): id is string => isId("svc", id)))].slice(
+      0,
+      MAX_INCIDENT_SERVICES,
+    );
+    const dropped =
+      (action.typeId !== undefined && !typeId) ||
+      (action.serviceIds !== undefined && !Array.isArray(action.serviceIds)) ||
+      picked.some((id) => !isId("svc", id)) ||
+      new Set(picked).size > MAX_INCIDENT_SERVICES;
+    return {
+      kind: "declare",
+      title: action.title,
+      severity,
+      ...(typeId ? { typeId } : {}),
+      ...(serviceIds.length > 0 ? { serviceIds } : {}),
+      ...(dropped ? { dropped: true } : {}),
+    };
   }
-  if (action.kind === "ack") {
-    if (action.incidentId !== undefined) {
-      return isId("inc", action.incidentId)
-        ? { kind: "ack", incidentId: action.incidentId }
-        : undefined;
+  const target = parseTarget(action);
+  if (!target) return undefined;
+  switch (action.kind) {
+    case "ack":
+    case "resolve":
+      return { kind: action.kind, ...target };
+    case "escalate":
+      if (action.step === undefined) return { kind: "escalate", ...target };
+      if (!Number.isSafeInteger(action.step) || (action.step as number) < 1) return undefined;
+      return { kind: "escalate", step: action.step as number, ...target };
+    case "update":
+      if (typeof action.body !== "string" || action.body.length > MAX_UPDATE_INPUT)
+        return undefined;
+      return {
+        kind: "update",
+        body: action.body,
+        ...(action.fromMessage === true ? { fromMessage: true } : {}),
+        ...target,
+      };
+    case "severity": {
+      const severity = SEVERITIES.find((value) => value === action.severity);
+      return severity ? { kind: "severity", severity, ...target } : undefined;
     }
-    if (action.number !== undefined) {
-      return Number.isSafeInteger(action.number) && (action.number as number) > 0
-        ? { kind: "ack", number: action.number as number }
-        : undefined;
-    }
-    return { kind: "ack" };
+    case "role":
+      if (typeof action.role !== "string" || action.role.length < 1 || action.role.length > 100) {
+        return undefined;
+      }
+      if (!SLACK_USER_ID.test(String(action.user))) return undefined;
+      return { kind: "role", role: action.role, user: String(action.user), ...target };
+    default:
+      return undefined;
   }
-  return undefined;
+}
+
+/** Which incident an action names, checked; undefined when something in it is not what it should be. */
+function parseTarget(action: Record<string, unknown>): SlackShardTarget | undefined {
+  const target: SlackShardTarget = {};
+  if (action.incidentId !== undefined) {
+    if (!isId("inc", action.incidentId)) return undefined;
+    target.incidentId = action.incidentId;
+  }
+  if (action.number !== undefined) {
+    if (!Number.isSafeInteger(action.number) || (action.number as number) <= 0) return undefined;
+    target.number = action.number as number;
+  }
+  if (action.channelId !== undefined) {
+    if (typeof action.channelId !== "string" || !CHANNEL_ID.test(action.channelId))
+      return undefined;
+    target.channelId = action.channelId;
+  }
+  if (action.threadTs !== undefined) {
+    if (typeof action.threadTs !== "string" || !SLACK_TS.test(action.threadTs)) return undefined;
+    target.threadTs = action.threadTs;
+  }
+  return target;
 }
 
 function log(message: string, fields: Record<string, unknown>): void {

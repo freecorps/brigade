@@ -1,10 +1,14 @@
 import { describe, expect, test } from "vite-plus/test";
 import {
+  clearSlackUsersByEmail,
   deliverIncidentMessage,
   incidentMessage,
+  INVITE_BATCH,
+  inviteToChannel,
+  slackUserByEmail,
   type SlackIncidentView,
 } from "../src/notifier.ts";
-import { BOT_TOKEN, fakeSlack } from "./fakes.ts";
+import { BOT_TOKEN, fakeSlack, TEAM, USER } from "./fakes.ts";
 
 const incident: SlackIncidentView = {
   id: "inc_01JB0000000000000000000000",
@@ -193,5 +197,101 @@ describe("deliverIncidentMessage", () => {
       });
       expect(outcome).toMatchObject({ ok: false, ...expected });
     }
+  });
+});
+
+describe("inviteToChannel", () => {
+  test("invites everyone, a batch of Slack's 1000 at a time, and fails when any batch does", async () => {
+    const users = Array.from({ length: INVITE_BATCH * 2 + 5 }, (_, i) => `U0BATCH${i}`);
+    const slack = fakeSlack();
+    const outcome = await inviteToChannel({
+      token: BOT_TOKEN,
+      channel: "C0INC00012",
+      users,
+      fetch: slack.fetch,
+    });
+    expect(outcome).toEqual({ ok: true, channel: "C0INC00012", ts: "" });
+    const sent = slack
+      .to("conversations.invite")
+      .map((call) => String((call.body as { users: string }).users).split(","));
+    expect(sent.map((batch) => batch.length)).toEqual([INVITE_BATCH, INVITE_BATCH, 5]);
+    expect(sent.flat()).toEqual(users);
+    let call = 0;
+    const failing = fakeSlack({
+      methods: {
+        "conversations.invite": () =>
+          ++call === 2
+            ? Response.json({ ok: false, error: "channel_not_found" })
+            : Response.json({ ok: false, error: "already_in_channel" }),
+      },
+    });
+    expect(
+      await inviteToChannel({
+        token: BOT_TOKEN,
+        channel: "C0INC00012",
+        users,
+        fetch: failing.fetch,
+      }),
+    ).toMatchObject({ ok: false, error: "channel_not_found", reason: "no_channel" });
+  });
+});
+
+describe("slackUserByEmail", () => {
+  const person = {
+    id: USER,
+    team_id: TEAM,
+    deleted: false,
+    is_bot: false,
+    is_email_confirmed: true,
+    profile: { email: "ana@example.com" },
+  };
+  const lookUp = async (user: Record<string, unknown>) => {
+    clearSlackUsersByEmail();
+    const slack = fakeSlack({
+      methods: { "users.lookupByEmail": () => Response.json({ ok: true, user }) },
+    });
+    return slackUserByEmail(TEAM, "ana@example.com", BOT_TOKEN, slack.fetch, 0);
+  };
+
+  test("finds only someone Slack vouches for as the team's own, with that email confirmed", async () => {
+    expect(await lookUp(person)).toEqual({ ok: true, id: USER });
+    for (const more of [
+      { is_email_confirmed: false },
+      { is_email_confirmed: undefined },
+      { team_id: "T0OTHER001" },
+      { is_stranger: true },
+      { deleted: true },
+      { is_bot: true },
+    ]) {
+      expect(await lookUp({ ...person, ...more }), JSON.stringify(more)).toEqual({
+        ok: true,
+        id: null,
+      });
+    }
+  });
+
+  test("a 429 is a failure to retry after Slack's Retry-After, never nobody, and is not kept", async () => {
+    clearSlackUsersByEmail();
+    let limited = true;
+    const slack = fakeSlack({
+      methods: {
+        "users.lookupByEmail": () =>
+          limited
+            ? new Response("", { status: 429, headers: { "Retry-After": "20" } })
+            : Response.json({ ok: true, user: person }),
+      },
+    });
+    expect(await slackUserByEmail(TEAM, "ana@example.com", BOT_TOKEN, slack.fetch, 0)).toEqual({
+      ok: false,
+      error: "ratelimited",
+      retryable: true,
+      retryAfterMs: 20_000,
+      reason: "rate_limited",
+    });
+    limited = false;
+    expect(await slackUserByEmail(TEAM, "ana@example.com", BOT_TOKEN, slack.fetch, 1)).toEqual({
+      ok: true,
+      id: USER,
+    });
   });
 });

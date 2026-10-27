@@ -155,9 +155,12 @@ to confirm in production:
 Who a Slack user is no longer waits here: a Slack user maps to the member whose **verified** Brigade email equals
 the email Slack confirmed for one of the connected team's own users (RFC 0011 "Who a Slack user is").
 
-- Disconnect forgets the bot token but does not revoke it in Slack (the shard no longer has it); removing the app in
-  Slack's settings does. Should Disconnect call `auth.revoke` first (the API would keep the sealed token until it
-  has), and should the API listen to `app_uninstalled` / `tokens_revoked` (Events API) to disconnect on its own?
+- Revoking is decided: Disconnect gives the bot token back with `auth.revoke` (the shard keeps it sealed until the
+  notifier has), and `app_uninstalled` / `tokens_revoked` (Events API) mark the connection revoked (RFC 0011
+  "Disconnecting", "Events API").
+- Incident channels: created public unless the card says private, named `inc-<n>-<slug>` (the title as a slug), archived on resolve after
+  the card's delay or kept. Should a severity raised to SEV1 or SEV2 after declaring create one too (today only the
+  declaration does)?
 - Channel messages are written in a language chosen on the card (default: the connecting member's), until workspaces
   have a default locale (Q15). Is that enough, or should it follow Q15's workspace locale once it exists?
 - Who may connect Slack: owners and admins (`workspace:manage`). Should integrations get their own permission?

@@ -197,7 +197,9 @@ chain:
   their chance), except whoever caused the run's first page. This also covers a run whose only reach was whoever
   declared it (on call and counted as reached, so nobody was pushed): it must not end silently, so everyone else who
   can respond is paged at the last level's timeout. When nobody else can respond, that is recorded ("Nobody else was
-  paged: only the person who declared it can respond", `nobody_else`).
+  paged: only the person who declared it can respond", `nobody_else`). A member escalating by hand past the last
+  level of the last round (`escalation.now`, `reason: "manual"`, RFC 0011) ends the run the same way: everyone who
+  can respond, not the commander first.
 - **A level that cannot fire** (`escalation.advance` refusing it while the run is due and still running: a bug, or a
   row it cannot read) is never dropped. Its first failure goes on the timeline ("An escalation level couldn't fire",
   `escalation_stalled`), it is tried again every minute, and 3 minutes after its first failure (stored on its timer, so

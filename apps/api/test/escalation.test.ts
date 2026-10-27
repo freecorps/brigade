@@ -945,6 +945,33 @@ describe("fallbacks (the paging path's)", () => {
     expect(await ws.levels(incident)).toHaveLength(2);
   });
 
+  test("`/inc escalate` past the last level of the last round pages everyone who can respond, not just the commander", async () => {
+    const ws = await workspace();
+    for (const member of [bia, caio, eva]) await ws.device(member);
+    await withPolicy(ws, [{ targets: [{ kind: "member", id: eva.id }] }]);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await ws.run(ana, "incident.assignRole", { id: incident, role: "commander", userId: bia.id });
+    await deliver(event, relay().send);
+    // A member asks for the next level on the last level of the last round: the run ends on everyone.
+    await ws.run(caio, "escalation.now", { incidentId: incident, step: 1 });
+    expect((await ws.levels(incident)).map((one) => [one.level, one.reason])).toEqual([
+      [1, "started"],
+      [null, "manual"],
+    ]);
+    expect(await ws.escalation(incident)).toMatchObject({ status: "exhausted" });
+    const last = (await ws.events(incident)).filter((e) => e.type === "escalation.paged").at(-1)!;
+    const { tokens, send } = relay();
+    await deliver(last, send);
+    // As the timeline says: everyone who can respond, the commander included.
+    expect(await pagedMembers(ws, tokens)).toEqual([bia.id, caio.id, eva.id]);
+    const entry = (await ws.timeline(incident)).filter((row) => row.kind === "escalated").at(-1);
+    expect(entry).toMatchObject({ level: null, reason: "manual" });
+    // The run ended, as the alarm's would have: said once, for whoever acts on it.
+    expect(
+      (await ws.events(incident)).filter((e) => e.type === "escalation.exhausted"),
+    ).toHaveLength(1);
+  });
+
   test("a one-level policy where the person on call declared it pages everyone else at its timeout", async () => {
     const ws = await workspace();
     for (const member of [bia, caio, eva]) await ws.device(member);

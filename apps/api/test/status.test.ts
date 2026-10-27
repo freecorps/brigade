@@ -565,6 +565,20 @@ describe("the snapshot", () => {
   test("a failed push keeps the change pending and backs off", async () => {
     const t = await team();
     const address = slug();
+    // The shard's own publisher stays parked until the end: its alarm, armed by configuring, would otherwise race the
+    // failing push below (push the change first, or fail it once more and double the backoff).
+    await runInDurableObject(t.stub, (instance: WorkspaceDO) => {
+      const real = Reflect.get(instance, "status") as StatusPublisher;
+      const parked = new Proxy(real, {
+        get: (target, key) => {
+          if (key === "publish") return () => Promise.resolve();
+          const value: unknown = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      Reflect.set(instance, "status", parked);
+      Reflect.set(instance, "parkedStatus", real);
+    });
     await configure(t, t.ana, settings(address));
     const logs: string[] = [];
     await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {
@@ -595,9 +609,10 @@ describe("the snapshot", () => {
       expect(next).toBeLessThanOrEqual(now + 1000);
     });
     expect(logs).toContain("publishing the status page failed");
-    // Past the backoff, the shard's own publisher pushes it.
+    // Past the backoff, the shard's own publisher, back at work, pushes it.
     await runInDurableObject(t.stub, async (instance: WorkspaceDO) => {
-      const publisher = Reflect.get(instance, "status") as StatusPublisher;
+      const publisher = Reflect.get(instance, "parkedStatus") as StatusPublisher;
+      Reflect.set(instance, "status", publisher);
       await publisher.publish(t.id, Date.now() + 120_000);
     });
     expect(await snapshot(address)).toMatchObject({ title: "Acme" });

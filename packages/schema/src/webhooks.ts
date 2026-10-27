@@ -604,6 +604,7 @@ export const ESCALATION_REASONS = [
   "undelivered",
   "exhausted",
   "stalled",
+  "manual",
 ] as const satisfies readonly EscalationReason[];
 /** `incident.role_assigned`'s `role`: a built-in's name, or `custom` for a role the workspace defined. */
 const ROLE_KINDS = [...INCIDENT_ROLES, "custom"] as const;

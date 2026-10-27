@@ -6,21 +6,38 @@ import {
   createExecutionContext,
   createMessageBatch,
   getQueueResult,
+  runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
 import { generateRecipient, toBase64url } from "@freecorps/brigade-push";
-import { newId, SLACK_ROW_ID, type Actor } from "@freecorps/brigade-schema";
+import {
+  ESCALATION_ACTOR,
+  MONITOR_ACTOR,
+  newId,
+  SLACK_ROW_ID,
+  type Actor,
+} from "@freecorps/brigade-schema";
 import type { SlackActResult } from "@freecorps/brigade-slack/bridge";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 import { clearPeople } from "@freecorps/brigade-slack/people";
 import { consumeEvents, QUEUE_MAX_RETRIES, SLACK_BUDGET_MS, type Fetch } from "../src/notify.ts";
+import { notifySlack } from "../src/notify-slack.ts";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
-import { SLACK_MAX_ATTEMPTS } from "../src/slack.ts";
 import {
+  SLACK_ESCALATE_WINDOW_MS,
+  SLACK_LOOKUP_BATCH,
+  SLACK_MAX_ATTEMPTS,
+  type SlackDesk,
+} from "../src/slack.ts";
+import {
+  actAndAnswer,
   beginSlackInstall,
   completeSlackInstall,
+  listSlackChannels,
+  openSlackDeclare,
   slackAct,
+  slackRevoked,
   slackConnection,
   slackReplyLocale,
   SLACK_STATE_COOKIE,
@@ -387,7 +404,8 @@ describe("SlackBridge.act", () => {
     const k = key();
     const first = await declare(teamId, t.caio.email, k);
     const second = await declare(teamId, t.caio.email, k);
-    expect(second).toEqual(first);
+    // The same answer, marked a replay: an event retried is not answered twice.
+    expect(second).toEqual({ ...first, replayed: true });
     expect(await incidents(t)).toHaveLength(1);
   });
 
@@ -419,7 +437,7 @@ describe("SlackBridge.act", () => {
     );
     const first = await declare(teamId, t.caio.email, k);
     expect(first).toMatchObject({ ok: true, did: "declared", incident: { id: reserved } });
-    expect(await declare(teamId, t.caio.email, k)).toEqual(first);
+    expect(await declare(teamId, t.caio.email, k)).toEqual({ ...first, replayed: true });
     expect(await incidents(t)).toEqual([expect.objectContaining({ id: reserved })]);
   });
 
@@ -661,9 +679,22 @@ function slackApi(answers: Record<string, () => Response | Promise<Response>> = 
       return Response.json({ status: 200 });
     }
     const method = request.url.replace("https://slack.com/api/", "");
-    calls.push({ method, body: (await request.json()) as Record<string, unknown> });
+    // Reads go as a form (`users.lookupByEmail`, `conversations.list`, `auth.revoke`), writes as JSON.
+    const body = request.headers
+      .get("Content-Type")
+      ?.startsWith("application/x-www-form-urlencoded")
+      ? Object.fromEntries(new URLSearchParams(await request.text()))
+      : ((await request.json()) as Record<string, unknown>);
+    calls.push({ method, body });
     expect(request.headers.get("Authorization")).toBe(`Bearer ${BOT_TOKEN}`);
     if (answers[method]) return answers[method]();
+    if (method === "users.lookupByEmail") {
+      const user = [...slackUsers.values()].find((one) => Object(one.profile).email === body.email);
+      return Response.json(user ? { ok: true, user } : { ok: false, error: "users_not_found" });
+    }
+    if (method === "conversations.create") {
+      return Response.json({ ok: true, channel: { id: `C0INC${String(++ts).padStart(5, "0")}` } });
+    }
     return Response.json({ ok: true, ts: `1790000000.${String(++ts).padStart(6, "0")}` });
   };
   return { calls, send, pushes };
@@ -688,6 +719,7 @@ async function deliver(events: BrigadeEvent[], send: Fetch, attempts = 1) {
     batch,
     {
       WORKSPACE: env.WORKSPACE,
+      DB: env.DB,
       RELAY_URL: "https://relay.test",
       RELAY_SEND_TOKEN: "test-token",
       // Set for the tests in vite.config.ts; optional, so not in the generated `Env`.
@@ -710,6 +742,10 @@ async function deliver(events: BrigadeEvent[], send: Fetch, attempts = 1) {
     })),
   };
 }
+
+/** The incident messages posted: top-level posts, not the mirror's replies under them. */
+const posts = (calls: { method: string; body: Record<string, unknown> }[]) =>
+  calls.filter((call) => call.method === "chat.postMessage" && call.body.thread_ts === undefined);
 
 const eventsOf = async (t: Team, type: string) =>
   (await outbox(t)).filter((event) => event.type === type);
@@ -789,7 +825,14 @@ describe("the incident message", () => {
     expect(updates.every((call) => call.body.ts === "1790000000.000001")).toBe(true);
     // Acknowledged: the button is gone.
     expect(JSON.stringify(updates[1]?.body.blocks)).not.toContain("brigade_ack");
-    expect(slack.calls.filter((call) => call.method === "chat.postMessage")).toHaveLength(1);
+    expect(posts(slack.calls)).toHaveLength(1);
+    // Without an incident channel, the timeline is mirrored as replies under the message: the ack, then the status.
+    const replies = slack.calls.filter((call) => call.body.thread_ts === "1790000000.000001");
+    expect(replies.map((call) => call.body.text)).toEqual([
+      // Nobody is in the shard's member list here, so nobody has a name.
+      "A teammate acknowledged the incident. Paging has stopped.",
+      "A teammate changed the status to *Investigating*",
+    ]);
   });
 
   test("an incident open past the ledger's retention keeps its message, and each use refreshes it", async () => {
@@ -833,9 +876,7 @@ describe("the incident message", () => {
     expect(slack.calls.filter((call) => call.method === "chat.postMessage")).toHaveLength(1);
     expect(first.retryMessages).toEqual([{ msgId: "msg-1", delaySeconds: expect.any(Number) }]);
     // Once the claim ends, the retry updates the message the first posted.
-    await t.withShard((_shard, state) =>
-      state.storage.sql.exec("update slack_messages set claimed_until = 0"),
-    );
+    await t.withShard((_shard, state) => state.storage.sql.exec("delete from slack_claims"));
     await deliver([changed], slack.send, 2);
     expect(slack.calls.filter((call) => call.method === "chat.update")).toHaveLength(1);
   });
@@ -853,7 +894,7 @@ describe("the incident message", () => {
     await deliver([event], limited.send, 2);
     expect(limited.calls).toHaveLength(1);
     await t.withShard((_shard, state) =>
-      state.storage.sql.exec("update slack_events set retry_at = 0"),
+      state.storage.sql.exec("update slack_jobs set retry_at = 0"),
     );
     const ok = slackApi();
     expect(await deliver([event], ok.send, 3)).toMatchObject({ explicitAcks: ["msg-0"] });
@@ -867,7 +908,7 @@ describe("the incident message", () => {
     const down = slackApi({ "chat.postMessage": () => new Response("", { status: 503 }) });
     for (let attempt = 1; attempt <= SLACK_MAX_ATTEMPTS + 1; attempt++) {
       await t.withShard((_shard, state) =>
-        state.storage.sql.exec("update slack_events set retry_at = 0"),
+        state.storage.sql.exec("update slack_jobs set retry_at = 0"),
       );
       await deliver([event], down.send, attempt);
     }
@@ -929,7 +970,7 @@ describe("the incident message", () => {
     // Retried for Slack's sake only.
     expect(first.retryMessages).toHaveLength(1);
     await t.withShard((_shard, state) =>
-      state.storage.sql.exec("update slack_events set retry_at = 0"),
+      state.storage.sql.exec("update slack_jobs set retry_at = 0"),
     );
     await deliver([event], down.send, 2);
     expect(down.pushes).toHaveLength(1);
@@ -999,7 +1040,7 @@ describe("the incident message", () => {
     const down = slackApi({ "chat.postMessage": () => new Response("", { status: 503 }) });
     expect((await deliver([event], down.send, QUEUE_MAX_RETRIES)).retryMessages).toHaveLength(1);
     await t.withShard((_shard, state) =>
-      state.storage.sql.exec("update slack_events set retry_at = 0"),
+      state.storage.sql.exec("update slack_jobs set retry_at = 0"),
     );
     const last = await deliver([event], down.send, QUEUE_MAX_RETRIES + 1);
     expect(last.retryMessages).toEqual([]);
@@ -1060,16 +1101,917 @@ describe("the incident message", () => {
     );
     expect(recorded).toBe("1790000000.000042");
     // The Queue's retry, and the incident's next change: neither posts a second message.
-    await t.withShard((_shard, state) =>
-      state.storage.sql.exec("update slack_messages set claimed_until = 0"),
-    );
+    await t.withShard((_shard, state) => state.storage.sql.exec("delete from slack_claims"));
     await deliver([event], late.send, 2);
     const incident = (await incidents(t))[0]!;
     await t.run("incident.setSeverity", { id: incident.id, severity: "sev2" }, owner(t));
     await deliver(await eventsOf(t, "incident.severity_changed"), late.send);
-    expect(late.calls.filter((call) => call.method === "chat.postMessage")).toHaveLength(1);
+    expect(posts(late.calls)).toHaveLength(1);
     const updates = late.calls.filter((call) => call.method === "chat.update");
     expect(updates).toHaveLength(1);
     expect(updates[0]?.body.ts).toBe("1790000000.000042");
   }, 15_000);
+});
+
+describe("a channel per incident, and the timeline mirror", () => {
+  /** Connected with incident channels on, Ana and Caio in the shard's member list. */
+  async function withChannels(t: Team, settings: Record<string, unknown> = {}) {
+    const teamId = await connect(t);
+    await t.run("member.sync", { id: t.ana.id, name: "Ana", role: "owner" }, owner(t), true);
+    await t.run(
+      "member.sync",
+      { id: t.caio.id, name: "Caio", role: "responder" },
+      { kind: "user", id: t.caio.id, role: "responder" },
+      true,
+    );
+    await t.run(
+      "slack.configure",
+      {
+        channelId: "C0CHAN0001",
+        locale: "en",
+        incidentChannels: "all",
+        archiveAfterHours: 0,
+        ...settings,
+      },
+      owner(t),
+    );
+    return teamId;
+  }
+
+  async function declare(t: Team, teamId: string, title: string, severity = "sev1") {
+    const result = await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.ana.email),
+        action: { kind: "declare", title, severity: severity as "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
+    expect(result).toMatchObject({ ok: true, did: "declared" });
+    return (await eventsOf(t, "incident.declared")).at(-1)!;
+  }
+
+  const as = (t: Team, teamId: string, email: string, action: SlackActRequestAction) =>
+    slackAct(env, { teamId, slackUserId: slackUser(teamId, email), action, key: key() }, usersInfo);
+
+  test("declaring creates #inc-<n>-<slug>, invites the people, posts there, and links it from the main channel", async () => {
+    const t = await team();
+    const teamId = await withChannels(t);
+    const event = await declare(t, teamId, "Checkout: São Paulo down!");
+    const slack = slackApi();
+    expect(await deliver([event], slack.send)).toMatchObject({ explicitAcks: ["msg-0"] });
+    await deliver([event], slack.send);
+    const methods = slack.calls.map((call) => call.method);
+    expect(methods).toEqual([
+      "conversations.create",
+      "users.lookupByEmail",
+      "conversations.invite",
+      "chat.postMessage",
+      "chat.postMessage",
+    ]);
+    expect(slack.calls[0]?.body).toEqual({
+      name: "inc-1-checkout-sao-paulo-down",
+      is_private: false,
+    });
+    const ana = [...slackUsers.values()].find((one) => Object(one.profile).email === t.ana.email)!;
+    expect(slack.calls[2]?.body).toMatchObject({ channel: "C0INC00001", users: ana.id });
+    expect(slack.calls[3]?.body.channel).toBe("C0INC00001");
+    expect(slack.calls[4]?.body.channel).toBe("C0CHAN0001");
+    expect(JSON.stringify(slack.calls[4]?.body.blocks)).toContain(
+      "Incident channel: <#C0INC00001>",
+    );
+  });
+
+  test("only SEV1 and SEV2 get one when the workspace says so; a taken name gets -2", async () => {
+    const t = await team();
+    const teamId = await withChannels(t, { incidentChannels: "major" });
+    const minor = await declare(t, teamId, "Slow search", "sev3");
+    const slack = slackApi();
+    await deliver([minor], slack.send);
+    expect(slack.calls.map((call) => call.method)).toEqual(["chat.postMessage"]);
+    const major = await declare(t, teamId, "Payments down", "sev2");
+    let taken = 0;
+    const busy = slackApi({
+      "conversations.create": () =>
+        ++taken === 1
+          ? Response.json({ ok: false, error: "name_taken" })
+          : Response.json({ ok: true, channel: { id: "C0INC00099" } }),
+    });
+    await deliver([major], busy.send);
+    const creates = busy.calls.filter((call) => call.method === "conversations.create");
+    expect(creates.map((call) => call.body.name)).toEqual([
+      "inc-2-payments-down",
+      "inc-2-payments-down-2",
+    ]);
+  });
+
+  test("/inc in the incident's channel acts on it; updates are mirrored there, but not `!update` messages", async () => {
+    const t = await team();
+    const teamId = await withChannels(t);
+    const slack = slackApi();
+    await deliver([await declare(t, teamId, "Checkout down")], slack.send);
+    const channel = "C0INC00001";
+    expect(
+      await as(t, teamId, t.caio.email, {
+        kind: "update",
+        body: "Rolled back",
+        channelId: channel,
+      }),
+    ).toMatchObject({
+      ok: true,
+      did: "updated",
+      incident: { number: 1 },
+    });
+    expect(
+      await as(t, teamId, t.caio.email, {
+        kind: "update",
+        body: "From a message",
+        channelId: channel,
+        fromMessage: true,
+      }),
+    ).toMatchObject({ ok: true, did: "updated" });
+    // A message outside an incident's channel is nobody's update.
+    expect(
+      await as(t, teamId, t.caio.email, {
+        kind: "update",
+        body: "Lost",
+        channelId: "C0CHAN0001",
+        fromMessage: true,
+      }),
+    ).toMatchObject({ ok: false, code: "not_incident_channel" });
+    expect(
+      await as(t, teamId, t.caio.email, { kind: "severity", severity: "sev2", channelId: channel }),
+    ).toMatchObject({
+      ok: true,
+      did: "severity",
+      severity: "sev2",
+    });
+    const before = slack.calls.length;
+    for (const type of ["incident.update_posted", "incident.severity_changed"]) {
+      for (const one of await eventsOf(t, type)) await deliver([one], slack.send);
+    }
+    const later = slack.calls.slice(before);
+    const mirrored = later.filter(
+      (call) => call.method === "chat.postMessage" && call.body.channel === channel,
+    );
+    expect(mirrored.map((call) => call.body.text)).toEqual([
+      "*Update from Caio*\nRolled back",
+      "Caio changed the severity to *SEV2 · High*",
+    ]);
+    // Both messages show the new severity.
+    expect(
+      later.filter((call) => call.method === "chat.update").map((call) => call.body.channel),
+    ).toEqual(["C0CHAN0001", channel]);
+    const timeline = await t.withShard((shard) => shard.store.scan("timeline"));
+    expect(
+      timeline.filter((row) => row.kind === "update").map((row) => Reflect.get(row, "body")),
+    ).toEqual(["Rolled back", "From a message"]);
+  });
+
+  test("resolving archives the channel after the workspace's delay; a reopened incident keeps it", async () => {
+    const t = await team();
+    const teamId = await withChannels(t);
+    const slack = slackApi();
+    await deliver([await declare(t, teamId, "Checkout down")], slack.send);
+    expect(
+      await as(t, teamId, t.caio.email, { kind: "resolve", channelId: "C0INC00001" }),
+    ).toMatchObject({
+      ok: true,
+      did: "resolved",
+    });
+    for (const one of await eventsOf(t, "incident.status_changed"))
+      await deliver([one], slack.send);
+    const archive = () =>
+      runInDurableObject(t.stub, (instance: WorkspaceDO) =>
+        (instance as unknown as { slack: SlackDesk }).slack.archiveDue(Date.now() + 1),
+      );
+    // Due at once (archive right away): the shard's alarm, brought forward for it, asks for the archive.
+    await vi.waitFor(async () => expect(await eventsOf(t, "slack.archive_due")).toHaveLength(1));
+    const due = await eventsOf(t, "slack.archive_due");
+    await deliver(due, slack.send);
+    expect(slack.calls.filter((call) => call.method === "conversations.archive")).toEqual([
+      { method: "conversations.archive", body: { channel: "C0INC00001" } },
+    ]);
+    // Asked once: archived, nothing is due any more.
+    expect(await archive()).toBe(0);
+
+    const kept = await team();
+    const keptTeam = await withChannels(kept, { archiveAfterHours: 24 });
+    const other = slackApi();
+    await deliver([await declare(kept, keptTeam, "Login down")], other.send);
+    const incident = (await incidents(kept))[0]!;
+    await kept.run("incident.setStatus", { id: incident.id, status: "resolved" }, owner(kept));
+    await kept.run("incident.setStatus", { id: incident.id, status: "investigating" }, owner(kept));
+    for (const one of await eventsOf(kept, "incident.status_changed"))
+      await deliver([one], other.send);
+    const keptDue = await runInDurableObject(kept.stub, (instance: WorkspaceDO) =>
+      (instance as unknown as { slack: SlackDesk }).slack.archiveDue(Date.now() + 48 * 3600_000),
+    );
+    expect(keptDue).toBe(0);
+  });
+
+  test("the subcommands run as the member, with the dashboard's RBAC and refusals", async () => {
+    const t = await team();
+    const teamId = await withChannels(t, { incidentChannels: "off" });
+    await declare(t, teamId, "Checkout down");
+    await t.run(
+      "member.sync",
+      { id: t.bia.id, name: "Bia", role: "admin" },
+      { kind: "user", id: t.bia.id, role: "admin" },
+      true,
+    );
+    // A viewer cannot change an incident.
+    expect(
+      await as(t, teamId, t.duda.email, { kind: "update", body: "Hi", number: 1 }),
+    ).toMatchObject({
+      ok: false,
+      code: "forbidden",
+    });
+    const bia = slackUser(teamId, t.bia.email);
+    expect(
+      await as(t, teamId, t.caio.email, {
+        kind: "role",
+        role: "Incident Commander",
+        user: bia,
+        number: 1,
+      }),
+    ).toMatchObject({ ok: true, did: "role", role: { id: "commander", name: null } });
+    expect(
+      await as(t, teamId, t.caio.email, { kind: "role", role: "commander", user: bia, number: 1 }),
+    ).toMatchObject({ ok: false, code: "unchanged" });
+    expect(
+      await as(t, teamId, t.caio.email, { kind: "role", role: "scribe", user: bia, number: 1 }),
+    ).toMatchObject({
+      ok: false,
+      code: "unknown_role",
+      roles: expect.arrayContaining([{ id: "commander", name: null }]),
+    });
+    const stranger = slackUser(teamId, "nobody@example.com");
+    expect(
+      await as(t, teamId, t.caio.email, { kind: "role", role: "ops", user: stranger, number: 1 }),
+    ).toMatchObject({ ok: false, code: "role_unmapped" });
+    const incident = (await incidents(t))[0]!;
+    expect(incident.roles).toEqual({ commander: t.bia.id });
+    // No policy, so no escalation run: nothing to page next.
+    expect(await as(t, teamId, t.caio.email, { kind: "escalate", number: 1 })).toMatchObject({
+      ok: false,
+      code: "not_escalating",
+    });
+    await declare(t, teamId, "Search down");
+    expect(await as(t, teamId, t.caio.email, { kind: "severity", severity: "sev2" })).toMatchObject(
+      {
+        ok: false,
+        code: "which",
+        choices: [1, 2],
+      },
+    );
+    expect(await as(t, teamId, t.caio.email, { kind: "resolve", number: 2 })).toMatchObject({
+      ok: true,
+      did: "resolved",
+    });
+    expect(await as(t, teamId, t.caio.email, { kind: "resolve", number: 2 })).toMatchObject({
+      ok: false,
+      code: "not_active",
+    });
+    // The events are the dashboard's, as the member.
+    const assigned = await eventsOf(t, "incident.role_assigned");
+    expect(assigned[0]).toMatchObject({ actor: { kind: "user", id: t.caio.id } });
+  });
+
+  test("an Events API message is answered with an ephemeral message in its channel", async () => {
+    const t = await team();
+    const teamId = await withChannels(t, { incidentChannels: "off" });
+    await declare(t, teamId, "Checkout down");
+    const slack = slackApi();
+    const send: Fetch = (request) =>
+      request.url.endsWith("/users.info") ? usersInfo(request) : slack.send(request);
+    const result = await actAndAnswer(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.caio.email),
+        action: { kind: "update", body: "Hello", fromMessage: true, channelId: "C0CHAN0001" },
+        key: key(),
+        answer: { channelId: "C0CHAN0001", threadTs: "1790000000.000001" },
+      },
+      send,
+    );
+    expect(result).toMatchObject({ ok: false, code: "not_incident_channel" });
+    expect(slack.calls).toEqual([
+      {
+        method: "chat.postEphemeral",
+        body: expect.objectContaining({
+          channel: "C0CHAN0001",
+          thread_ts: "1790000000.000001",
+          text: expect.stringMatching(/^This isn't an incident's channel/),
+        }),
+      },
+    ]);
+  });
+});
+
+describe("what must happen once: escalations, messages, retried events, the claim", () => {
+  /** Connected without a main channel, Ana and Caio synced with phones, a default policy paging Ana then Caio. */
+  async function escalating(t: Team) {
+    const teamId = await connect(t, newTeam(), null);
+    await phone(t, "a".repeat(64));
+    const caio: Actor = { kind: "user", id: t.caio.id, role: "responder" };
+    await t.run("member.sync", { id: t.caio.id, name: "Caio", role: "responder" }, caio, true);
+    const recipient = await generateRecipient();
+    await t.run(
+      "device.register",
+      {
+        id: newId("dev", Date.now(), random),
+        platform: "ios",
+        environment: "production",
+        pushToken: "c".repeat(64),
+        voipToken: null,
+        publicKey: toBase64url(recipient.publicKey),
+      },
+      caio,
+    );
+    await t.run(
+      "escalation.createPolicy",
+      {
+        id: newId("esc", Date.now(), random),
+        name: "Checkout",
+        levels: [t.ana.id, t.caio.id].map((id) => ({
+          id: newId("lvl", Date.now(), random),
+          targets: [{ kind: "member", id }],
+          timeoutMinutes: 5,
+        })),
+        repeat: 1,
+        isDefault: true,
+      },
+      owner(t),
+    );
+    const incidentId = newId("inc", Date.now(), random);
+    await t.run(
+      "incident.declare",
+      { id: incidentId, title: "Checkout down", severity: "sev1" },
+      MONITOR_ACTOR,
+    );
+    const declared = (await eventsOf(t, "incident.declared"))[0]!;
+    await t.run(
+      "escalation.start",
+      { incidentId, eventId: declared.id, causedBy: MONITOR_ACTOR.id },
+      ESCALATION_ACTOR,
+      true,
+    );
+    return { teamId, incidentId };
+  }
+
+  const run = (t: Team, incidentId: string) =>
+    t.withShard((shard) => shard.store.get("incidents", incidentId)!.escalation!);
+  /** The run's last page, as if it was paged `ago` ms back. */
+  const pagedAgo = (t: Team, incidentId: string, ago: number) =>
+    t.withShard((shard) => {
+      const row = shard.store.get("incidents", incidentId)!;
+      const pages = row.escalation!.pages.map((page, i, all) =>
+        i === all.length - 1 ? { ...page, at: Date.now() - ago } : page,
+      );
+      shard.store.update("incidents", incidentId, { escalation: { ...row.escalation!, pages } });
+    });
+  const escalate = (t: Team, teamId: string, email: string, more: { step?: number } = {}) =>
+    slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, email),
+        action: { kind: "escalate", number: 1, ...more },
+        key: key(),
+      },
+      usersInfo,
+    );
+
+  test("two people escalating at once page the next level once", async () => {
+    const t = await team();
+    const { teamId, incidentId } = await escalating(t);
+    await pagedAgo(t, incidentId, SLACK_ESCALATE_WINDOW_MS + 1000);
+    const results = await Promise.all([
+      escalate(t, teamId, t.ana.email),
+      escalate(t, teamId, t.caio.email),
+    ]);
+    expect(results.filter((one) => one.ok)).toEqual([
+      expect.objectContaining({ ok: true, did: "escalated" }),
+    ]);
+    // The other is told the level the first paged: nobody skips a level.
+    expect(results.find((one) => !one.ok)).toMatchObject({ code: "just_paged", level: 2 });
+    expect(await run(t, incidentId)).toMatchObject({ paged: 2, status: "running" });
+    expect((await eventsOf(t, "escalation.paged")).map((e) => e.data)).toEqual([
+      expect.objectContaining({ level: 1, reason: "started" }),
+      expect.objectContaining({ level: 2, reason: "manual" }),
+    ]);
+  });
+
+  test("escalating right after the run's first page goes through", async () => {
+    const t = await team();
+    const { teamId, incidentId } = await escalating(t);
+    // Level 1 was paged a moment ago, when the run started: no level moved, so nobody is made to wait.
+    expect(await escalate(t, teamId, t.ana.email)).toMatchObject({ ok: true, did: "escalated" });
+    expect(await run(t, incidentId)).toMatchObject({ paged: 2, status: "running" });
+    // The page that escalation made does hold the next one back.
+    expect(await escalate(t, teamId, t.caio.email)).toMatchObject({
+      ok: false,
+      code: "just_paged",
+      level: 2,
+    });
+  });
+
+  test("escalating right after the level's timeout fired does not skip the level it paged", async () => {
+    const t = await team();
+    const { teamId, incidentId } = await escalating(t);
+    const seen = (await run(t, incidentId)).paged;
+    // Level 1 times out: the alarm pages level 2.
+    await t.withShard(async (shard, state) => {
+      const at = Date.now() - 1;
+      const row = shard.store.get("incidents", incidentId)!;
+      shard.store.update("incidents", incidentId, {
+        escalation: { ...row.escalation!, nextAt: at },
+      });
+      shard.store.update("escalation_timers", incidentId, { at });
+      await state.storage.setAlarm(at);
+    });
+    await runDurableObjectAlarm(t.stub);
+    expect(await run(t, incidentId)).toMatchObject({ paged: 2 });
+    // Typed, with no step: the page is too young to have been seen.
+    expect(await escalate(t, teamId, t.caio.email)).toMatchObject({
+      ok: false,
+      code: "just_paged",
+      level: 2,
+    });
+    // With the step the person saw (level 1's): the run moved past it.
+    expect(await escalate(t, teamId, t.caio.email, { step: seen })).toMatchObject({
+      ok: false,
+      code: "just_paged",
+      level: 2,
+    });
+    expect(await run(t, incidentId)).toMatchObject({ paged: 2 });
+    // With the step it is at now, or once the page is old enough: the next level.
+    expect(
+      await escalate(t, teamId, t.caio.email, { step: (await run(t, incidentId)).paged }),
+    ).toMatchObject({ ok: true, did: "escalated" });
+    expect(await run(t, incidentId)).toMatchObject({ paged: 3 });
+    await pagedAgo(t, incidentId, SLACK_ESCALATE_WINDOW_MS + 1000);
+    expect(await escalate(t, teamId, t.caio.email)).toMatchObject({ ok: true });
+    expect(await run(t, incidentId)).toMatchObject({ paged: 4 });
+  });
+
+  test("one Slack message is one update, whoever posts it and however often", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await t.run(
+      "slack.configure",
+      { channelId: "C0CHAN0001", locale: "en", incidentChannels: "all" },
+      owner(t),
+    );
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.ana.email),
+        action: { kind: "declare", title: "Checkout down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
+    await deliver(await eventsOf(t, "incident.declared"), slackApi().send);
+    const message = key();
+    const post = (email: string) =>
+      slackAct(
+        env,
+        {
+          teamId,
+          slackUserId: slackUser(teamId, email),
+          action: {
+            kind: "update",
+            body: "Rolled back",
+            fromMessage: true,
+            channelId: "C0INC00001",
+          },
+          key: message,
+        },
+        usersInfo,
+      );
+    expect(await post(t.caio.email)).toMatchObject({ ok: true, did: "updated" });
+    expect(await post(t.bia.email)).toMatchObject({ ok: true, did: "updated", replayed: true });
+    expect(await post(t.caio.email)).toMatchObject({ ok: true, did: "updated", replayed: true });
+    expect(await eventsOf(t, "incident.update_posted")).toHaveLength(1);
+  });
+
+  test("a retried Events API message is answered once", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await t.run(
+      "slack.configure",
+      { channelId: "C0CHAN0001", locale: "en", incidentChannels: "all" },
+      owner(t),
+    );
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.ana.email),
+        action: { kind: "declare", title: "Checkout down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
+    await deliver(await eventsOf(t, "incident.declared"), slackApi().send);
+    const slack = slackApi();
+    const send: Fetch = (request) =>
+      request.url.endsWith("/users.info") ? usersInfo(request) : slack.send(request);
+    const request = {
+      teamId,
+      slackUserId: slackUser(teamId, t.caio.email),
+      action: {
+        kind: "update" as const,
+        body: "Rolled back",
+        fromMessage: true,
+        channelId: "C0INC00001",
+      },
+      key: key(),
+      answer: { channelId: "C0INC00001" },
+    };
+    expect(await actAndAnswer(env, request, send)).toMatchObject({ ok: true });
+    expect(await actAndAnswer(env, request, send)).toMatchObject({ ok: true, replayed: true });
+    expect(slack.calls.filter((call) => call.method === "chat.postEphemeral")).toHaveLength(1);
+    expect(await eventsOf(t, "incident.update_posted")).toHaveLength(1);
+  });
+
+  test("a form's type or services that are gone or unreadable: declared without them, and the person told", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    const declare = (more: Record<string, unknown>) =>
+      slackAct(
+        env,
+        {
+          teamId,
+          slackUserId: slackUser(teamId, t.caio.email),
+          action: { kind: "declare", title: "Checkout down", severity: "sev2", ...more } as never,
+          key: key(),
+        },
+        usersInfo,
+      );
+    expect(await declare({ typeId: newId("typ", Date.now(), random) })).toMatchObject({
+      ok: true,
+      did: "declared",
+      dropped: true,
+    });
+    expect(await declare({ serviceIds: ["nope"] })).toMatchObject({ ok: true, dropped: true });
+    expect(await declare({ typeId: "typ_?" })).toMatchObject({ ok: true, dropped: true });
+    const plain = await declare({});
+    expect(plain).toMatchObject({ ok: true });
+    expect(plain).not.toHaveProperty("dropped");
+    expect(await incidents(t)).toHaveLength(4);
+    expect(
+      (await incidents(t)).every((one) => one.typeId === undefined || one.typeId === null),
+    ).toBe(true);
+  });
+
+  test("D1 failing while members are looked up is retried, never recorded as an unreadable token", async () => {
+    const t = await team();
+    const teamId = await connect(t, newTeam(), null);
+    await t.run("member.sync", { id: t.ana.id, name: "Ana", role: "owner" }, owner(t), true);
+    await t.run(
+      "slack.configure",
+      { channelId: null, locale: "en", incidentChannels: "all" },
+      owner(t),
+    );
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.ana.email),
+        action: { kind: "declare", title: "Checkout down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
+    const declared = (await eventsOf(t, "incident.declared"))[0]!;
+    const down = {
+      prepare: () => {
+        throw new Error("D1 down");
+      },
+    } as unknown as D1Database;
+    const slack = slackApi();
+    const delay = await notifySlack(
+      declared,
+      {
+        WORKSPACE: env.WORKSPACE,
+        DB: down,
+        SLACK_TOKEN_KEY: Reflect.get(env, "SLACK_TOKEN_KEY") as string,
+      },
+      slack.send,
+    );
+    expect(delay).toBeGreaterThan(0);
+    expect(slack.calls.map((call) => call.method)).toEqual(["conversations.create"]);
+    expect(await eventsOf(t, "notification.failed")).toHaveLength(0);
+  });
+
+  test("an event holds the incident across its jobs: another event of it waits until it is done", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await t.run("member.sync", { id: t.ana.id, name: "Ana", role: "owner" }, owner(t), true);
+    await t.run(
+      "slack.configure",
+      { channelId: "C0CHAN0001", locale: "en", incidentChannels: "all" },
+      owner(t),
+    );
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.ana.email),
+        action: { kind: "declare", title: "Checkout down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
+    const incident = (await incidents(t))[0]!;
+    await t.run("incident.setSeverity", { id: incident.id, severity: "sev2" }, owner(t));
+    const declared = (await eventsOf(t, "incident.declared"))[0]!;
+    const changed = (await eventsOf(t, "incident.severity_changed"))[0]!;
+    const desk = <R>(fn: (instance: WorkspaceDO) => R) =>
+      runInDurableObject(t.stub, (instance: WorkspaceDO) => fn(instance));
+    const plan = (event: BrigadeEvent) => desk((instance) => instance.planSlack(event));
+    const done = (job: string, more: Record<string, unknown> = {}) =>
+      desk((instance) =>
+        instance.recordSlack(declared, job, {
+          ok: true,
+          channel: "C0INC00001",
+          ts: "1790000000.000001",
+          ...more,
+        }),
+      );
+    const jobs: string[] = [];
+    for (;;) {
+      const next = await plan(declared);
+      if (!next.send) break;
+      jobs.push(next.job);
+      // Between every two jobs of the declaration, the severity change waits.
+      expect(await plan(changed)).toMatchObject({ send: false, reason: "held" });
+      await done(
+        next.job,
+        next.work.kind === "lookup" ? { people: { [t.ana.id]: "U0SLACKANA" } } : {},
+      );
+    }
+    expect(jobs).toEqual([
+      "channel",
+      `lookup:${t.ana.id}`,
+      "invite",
+      "message:incident",
+      "message:main",
+    ]);
+    // Done: the change goes on at once.
+    expect(await plan(changed)).toMatchObject({ send: true });
+  });
+
+  test("invites are looked up a few at a time, and a 429 waits for Retry-After without leaving anyone out", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await t.run("member.sync", { id: t.ana.id, name: "Ana", role: "owner" }, owner(t), true);
+    await t.run(
+      "slack.configure",
+      { channelId: null, locale: "en", incidentChannels: "all" },
+      owner(t),
+    );
+    await slackAct(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.ana.email),
+        action: { kind: "declare", title: "Checkout down", severity: "sev1" },
+        key: key(),
+      },
+      usersInfo,
+    );
+    const declared = (await eventsOf(t, "incident.declared"))[0]!;
+    let limited = true;
+    const slack = slackApi({
+      "users.lookupByEmail": () => {
+        if (limited) return new Response("", { status: 429, headers: { "Retry-After": "20" } });
+        const user = [...slackUsers.values()].find(
+          (one) => Object(one.profile).email === t.ana.email,
+        );
+        return Response.json({ ok: true, user });
+      },
+    });
+    const first = await deliver([declared], slack.send);
+    expect(first.retryMessages).toEqual([{ msgId: "msg-0", delaySeconds: 20 }]);
+    expect(slack.calls.map((call) => call.method)).toEqual([
+      "conversations.create",
+      "users.lookupByEmail",
+    ]);
+    limited = false;
+    await t.withShard((_shard, state) =>
+      state.storage.sql.exec("update slack_jobs set retry_at = 0"),
+    );
+    await deliver([declared], slack.send, 2);
+    const ana = [...slackUsers.values()].find((one) => Object(one.profile).email === t.ana.email)!;
+    expect(slack.calls.filter((call) => call.method === "conversations.invite")).toEqual([
+      { method: "conversations.invite", body: expect.objectContaining({ users: ana.id }) },
+    ]);
+    // Many people: a batch per job, each one's lookups started at once and bounded, so a job fits the claim.
+    const many = Array.from({ length: SLACK_LOOKUP_BATCH + 3 }, (_, i) => `usr_many${i}`);
+    for (const id of many) {
+      await t.run(
+        "member.sync",
+        { id, name: null, role: "responder" },
+        { kind: "user", id, role: "responder" },
+        true,
+      );
+    }
+    const incident = (await incidents(t))[0]!;
+    const paged: BrigadeEvent = {
+      ...declared,
+      id: newId("evt", Date.now(), random),
+      type: "escalation.paged",
+      data: { incidentId: incident.id, userIds: many },
+    };
+    const planned = await runInDurableObject(t.stub, (instance: WorkspaceDO) =>
+      instance.planSlack(paged),
+    );
+    expect(planned).toMatchObject({
+      send: true,
+      job: `lookup:${many[0]}`,
+      work: { kind: "lookup", userIds: many.slice(0, SLACK_LOOKUP_BATCH) },
+    });
+  });
+});
+
+/** An action as `slackAct` takes it. */
+type SlackActRequestAction = Parameters<typeof slackAct>[1]["action"];
+
+describe("revoking: the Events API and Disconnect", () => {
+  test("app_uninstalled marks the connection revoked, forgets the token, and nothing more is sent", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await slackRevoked(env, { teamId, reason: "uninstalled" });
+    const { row, token } = await t.withShard((shard) => ({
+      row: shard.store.get("slack", SLACK_ROW_ID),
+      token: shard.store.get("slack_tokens", SLACK_ROW_ID),
+    }));
+    expect(row).toMatchObject({
+      teamId,
+      revokedReason: "uninstalled",
+      revokedAt: expect.any(Number),
+    });
+    expect(token).toBeUndefined();
+    expect((await eventsOf(t, "slack.revoked")).map((one) => one.data)).toEqual([
+      { teamId, reason: "uninstalled" },
+    ]);
+    await t.run(
+      "incident.declare",
+      { id: newId("inc", Date.now(), random), title: "Down" },
+      owner(t),
+    );
+    const slack = slackApi();
+    await deliver(await eventsOf(t, "incident.declared"), slack.send);
+    expect(slack.calls).toHaveLength(0);
+    // Connecting again clears it (the channel stays: the same team).
+    await connect(t, teamId, null);
+    const again = await t.withShard((shard) => shard.store.get("slack", SLACK_ROW_ID));
+    expect(again).toMatchObject({ revokedAt: null, revokedReason: null });
+  });
+
+  test("tokens_revoked counts only for this workspace's bot", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await slackRevoked(env, { teamId, reason: "tokens_revoked", botUserIds: ["U0OTHERBOT"] });
+    expect(
+      await t.withShard((shard) => shard.store.get("slack_tokens", SLACK_ROW_ID)),
+    ).toBeDefined();
+    await slackRevoked(env, { teamId, reason: "tokens_revoked", botUserIds: ["U0BOT00001"] });
+    expect(
+      await t.withShard((shard) => shard.store.get("slack_tokens", SLACK_ROW_ID)),
+    ).toBeUndefined();
+  });
+
+  test("Disconnect gives the token back to Slack with auth.revoke, once, and forgets it", async () => {
+    const t = await team();
+    await connect(t);
+    await t.run("slack.disconnect", {}, owner(t));
+    const kept = await t.withShard((shard) => shard.store.scan("slack_revocations"));
+    expect(kept).toHaveLength(1);
+    // Sealed, never the token itself.
+    expect(JSON.stringify(kept)).not.toContain(BOT_TOKEN);
+    const slack = slackApi();
+    const disconnected = await eventsOf(t, "slack.disconnected");
+    await deliver(disconnected, slack.send);
+    await deliver(disconnected, slack.send);
+    expect(slack.calls.map((call) => call.method)).toEqual(["auth.revoke"]);
+    expect(await t.withShard((shard) => shard.store.scan("slack_revocations"))).toEqual([]);
+    expect(await eventsOf(t, "slack.token_forgotten")).toHaveLength(1);
+  });
+
+  test("a reinstall Slack answered with the same token keeps it", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    await t.run("slack.disconnect", {}, owner(t));
+    await connect(t, teamId, null);
+    const slack = slackApi();
+    await deliver(await eventsOf(t, "slack.disconnected"), slack.send);
+    expect(slack.calls).toHaveLength(0);
+    expect(
+      await t.withShard((shard) => shard.store.get("slack_tokens", SLACK_ROW_ID)),
+    ).toBeDefined();
+  });
+});
+
+describe("the declare form and the channel picker", () => {
+  test("/inc declare alone opens the form with the workspace's types and services", async () => {
+    const t = await team();
+    const teamId = await connect(t);
+    const slack = slackApi();
+    const send: Fetch = (request) =>
+      request.url.endsWith("/users.info") ? usersInfo(request) : slack.send(request);
+    const opened = await openSlackDeclare(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.caio.email),
+        triggerId: "1000000000.1000000000.test",
+        responseUrl: "https://hooks.slack.com/commands/T0/1/test",
+        severity: "sev2",
+      },
+      send,
+    );
+    expect(opened).toEqual({ ok: true });
+    const view = slack.calls[0];
+    expect(view?.method).toBe("views.open");
+    expect(view?.body.trigger_id).toBe("1000000000.1000000000.test");
+    expect(JSON.stringify(view?.body.view)).toContain("brigade_declare");
+    // A viewer is told they cannot, without a form.
+    const viewer = await openSlackDeclare(
+      env,
+      {
+        teamId,
+        slackUserId: slackUser(teamId, t.duda.email),
+        triggerId: "1000000000.1000000000.test",
+        responseUrl: "https://hooks.slack.com/commands/T0/1/test",
+        severity: "sev3",
+      },
+      send,
+    );
+    expect(viewer).toMatchObject({ ok: false, code: "forbidden" });
+  });
+
+  test("GET /workspaces/:id/slack/channels lists the channels Brigade can post in, for owners and admins", async () => {
+    const t = await team();
+    await connect(t);
+    const slack = slackApi({
+      "conversations.list": () =>
+        Response.json({
+          ok: true,
+          channels: [
+            { id: "C0CHAN0002", name: "incidents", is_private: false, is_member: false },
+            { id: "G0PRIV0001", name: "sre-private", is_private: true, is_member: true },
+            { id: "G0PRIV0002", name: "hr", is_private: true, is_member: false },
+            { id: "C0CHAN0001", name: "general", is_private: false },
+          ],
+          response_metadata: { next_cursor: "" },
+        }),
+    });
+    const list = (by: Person) => {
+      const request = new Request(`${ORIGIN}/workspaces/${t.id}/slack/channels`, {
+        headers: { Cookie: by.cookie },
+      });
+      return listSlackChannels(
+        request,
+        env,
+        () => workerAuth(env, createExecutionContext(), request),
+        t.id,
+        slack.send,
+      );
+    };
+    const response = await list(t.bia);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      channels: [
+        { id: "C0CHAN0001", name: "general", private: false },
+        { id: "C0CHAN0002", name: "incidents", private: false },
+        { id: "G0PRIV0001", name: "sre-private", private: true },
+      ],
+    });
+    expect(slack.calls[0]?.body).toMatchObject({
+      types: "public_channel,private_channel",
+      exclude_archived: "true",
+    });
+    expect((await list(t.caio)).status).toBe(403);
+    const other = await team();
+    const none = new Request(`${ORIGIN}/workspaces/${other.id}/slack/channels`, {
+      headers: { Cookie: other.ana.cookie },
+    });
+    const refused = await listSlackChannels(
+      none,
+      env,
+      () => workerAuth(env, createExecutionContext(), none),
+      other.id,
+      slack.send,
+    );
+    expect(refused.status).toBe(409);
+  });
 });

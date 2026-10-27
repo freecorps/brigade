@@ -5,11 +5,12 @@ import worker, { WorkspaceDO } from "../src/index.ts";
 import { sessionCookie } from "./session.ts";
 
 // store_rows, shard_meta, change_log, mutation_results, outbox, outbox_drain, page_deliveries, page_events, page_steps,
-// page_urgent, page_replays, receipt_key, receipt_rate, email_sends, email_keys, probe_pushes, member_repair, invitation_sends,
-// invitation_repair, slack_states, slack_commands, slack_messages, slack_events, webhook_events, webhook_sends,
+// page_urgent, page_replays, page_held, receipt_key, receipt_rate, email_sends, email_keys, probe_pushes, member_repair,
+// invitation_sends, invitation_repair, slack_states, slack_commands, slack_messages, slack_events, slack_jobs,
+// slack_channels, slack_inbound, slack_claims, slack_lookups, slack_updates, webhook_events, webhook_sends,
 // webhook_emails, status_emails, status_email_days, status_confirm_days, status_subscriber_events and ended_session,
 // created when the shard starts.
-const SYNC_TABLES = 32;
+const SYNC_TABLES = 38;
 
 const ORIGIN = "http://api.test";
 const api = (path: string, init?: RequestInit) => exports.default.fetch(`${ORIGIN}${path}`, init);

@@ -143,7 +143,7 @@ function fire(
   from: {
     index: number;
     round: number;
-    reason: "started" | "timeout" | "undelivered";
+    reason: "started" | "timeout" | "undelivered" | "manual";
     /** For `undelivered`: the level none of whose pushes any device took. */
     unreached?: number;
   },
@@ -443,6 +443,74 @@ export const unreachedEscalation = defineMutation({
         null,
       ),
     );
+  },
+});
+
+/**
+ * Server only, as a member who may update incidents (`/inc escalate` in Slack, RFC 0011): pages the run's next level
+ * now instead of at its timeout, as the alarm would (after the last level, level 1 of the next round while repeats
+ * are left; past the last repeat everyone who can respond, not the commander first, as after a run nobody
+ * acknowledged, and the run ends), with `reason: "manual"`. `step` is the run's page count the person saw: a run
+ * that moved past it since (another member escalated, or the level timed out) is `conflict`, never escalated past a
+ * level nobody saw. Slack sends the step its button or message carried; a typed command knows none, so Slack sends the
+ * run's own unless its last page moved a level too recently to have been seen (`SLACK_ESCALATE_WINDOW_MS`). `not_found`
+ * without a run under way; `conflict` for an incident acknowledged or no longer active.
+ */
+export const escalateNow = defineMutation({
+  name: "escalation.now",
+  args: v.object({
+    incidentId: v.id("inc"),
+    step: v.integer({ min: 1, max: Number.MAX_SAFE_INTEGER }),
+  }),
+  permission: "incident:update",
+  apply(store, args, ctx) {
+    const incident = store.get("incidents", args.incidentId);
+    if (!incident) return fail("not_found", "Incident not found");
+    if (!isActive(incident.status) || incident.acknowledgedAt != null) {
+      return fail("conflict", "Incident is not waiting for a page");
+    }
+    const run = incident.escalation;
+    if (!run || run.status !== "running") return fail("not_found", "No escalation under way");
+    const last = run.pages[run.pages.length - 1];
+    if (run.paged !== args.step || !last) return fail("conflict", "The run moved on");
+    const index = last.level ?? run.levels.length;
+    if (index < run.levels.length) {
+      return ok(
+        ...fire(store, incident, run, { index, round: last.round, reason: "manual" }, ctx, null),
+      );
+    }
+    if (last.round < run.repeat) {
+      return ok(
+        ...fire(
+          store,
+          incident,
+          run,
+          { index: 0, round: last.round + 1, reason: "manual" },
+          ctx,
+          null,
+        ),
+      );
+    }
+    // Past the last repeat the run ends, as the alarm's would: `escalation.exhausted` for whoever acts on it.
+    const events = paged(
+      store,
+      incident,
+      run,
+      pageOf(null, last.round, [], [], "manual", ctx.now),
+      [],
+      ctx,
+    );
+    const exhausted: EscalationExhausted = {
+      type: "escalation.exhausted",
+      subject: incident.id,
+      data: {
+        incidentId: incident.id,
+        policyId: run.policyId,
+        levels: run.levels.length,
+        rounds: run.repeat + 1,
+      },
+    };
+    return ok(...events, exhausted);
   },
 });
 

@@ -6,29 +6,55 @@ _metadata:
   minor_version: 1
 display_information:
   name: Brigade
-  description: Declare and acknowledge incidents, and follow them in a channel.
+  description: Run incidents from Slack, give each one a channel, and follow its timeline there.
   background_color: "#1f2937"
 features:
   bot_user:
     display_name: brigade
     always_online: true
+  shortcuts:
+    # A message in an incident's channel (or its thread) as an update on its timeline.
+    - name: Post to Brigade timeline
+      type: message
+      callback_id: brigade_post_update
+      description: Post this message as an update on the incident's timeline
   slash_commands:
     - command: /inc
       url: https://brigade.example.com/slack/commands
-      description: Declare or acknowledge an incident
-      usage_hint: "declare <title> [sev1-sev4] | ack [INC-12]"
-      should_escape: false
+      description: Declare and run incidents
+      usage_hint: "declare [title] [sev1-sev4] | ack | update <text> | sev <1-4> | resolve | role <role> @someone | escalate"
+      # Escaped, so `/inc role commander @someone` names a Slack user (`<@U…>`) rather than a display name.
+      should_escape: true
 oauth_config:
   redirect_urls:
     - https://brigade.example.com/slack/oauth/callback
   scopes:
     bot:
+      # /inc and the message shortcut.
       - commands
+      # The incident's message, the timeline mirror, and answers to `!update`.
       - chat:write
       - chat:write.public
+      # Who a Slack user is, and the Slack users an incident channel invites (by their verified email).
       - users:read
       - users:read.email
+      # The channel picker on the dashboard's Slack card (private channels: the ones Brigade was invited to).
+      - channels:read
+      - groups:read
+      # A channel per incident: create, invite, archive; groups:write for private incident channels.
+      - channels:manage
+      - groups:write
+      # `!update <text>` messages in incident channels (Events API: message.channels, message.groups).
+      - channels:history
+      - groups:history
 settings:
+  event_subscriptions:
+    request_url: https://brigade.example.com/slack/events
+    bot_events:
+      - app_uninstalled
+      - tokens_revoked
+      - message.channels
+      - message.groups
   interactivity:
     is_enabled: true
     request_url: https://brigade.example.com/slack/interactions

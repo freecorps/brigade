@@ -48,6 +48,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "page_nobody_else" | "Nobody else was paged: only the person who declared it can respond" |
 * | "escalation_exhausted" | "Nobody acknowledged after every level, so everyone who can respond was paged" |
 * | "escalated_everyone_stalled" | "An escalation level kept failing to fire, so everyone who can respond was paged" |
+* | "escalated_manual" | "{actor} escalated, so level {a} was paged now: {b}" |
+* | "escalated_everyone_manual" | "{actor} escalated past the last level, so everyone who can respond was paged" |
 * | "page_escalation_stalled" | "An escalation level couldn't fire. Brigade keeps trying, and pages everyone who can respond if it still can't" |
 * | "email_failed_unpaged" | "Couldn't email {a} that the page didn't reach them" |
 * | "email_failed_nobody_paged" | "Couldn't email {a} that nobody could be paged" |
@@ -126,6 +128,8 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "page_nobody_else") return /** @type {LocalizedString} */ (`Ninguém mais foi chamado: só quem declarou pode responder`);
 		if (i?.kind === "escalation_exhausted") return /** @type {LocalizedString} */ (`Ninguém confirmou depois de todos os níveis, então todos que podem responder foram chamados`);
 		if (i?.kind === "escalated_everyone_stalled") return /** @type {LocalizedString} */ (`Um nível de escalonamento continuou falhando, então todos que podem responder foram chamados`);
+		if (i?.kind === "escalated_manual") return /** @type {LocalizedString} */ (`${i?.actor} escalou, então o nível ${i?.a} foi chamado na hora: ${i?.b}`);
+		if (i?.kind === "escalated_everyone_manual") return /** @type {LocalizedString} */ (`${i?.actor} escalou depois do último nível, então todos que podem responder foram chamados`);
 		if (i?.kind === "page_escalation_stalled") return /** @type {LocalizedString} */ (`Um nível de escalonamento não pôde ser disparado. O Brigade continua tentando e chama todos que podem responder se ainda falhar`);
 		if (i?.kind === "email_failed_unpaged") return /** @type {LocalizedString} */ (`Não foi possível enviar email para ${i?.a} avisando que a chamada não chegou`);
 		if (i?.kind === "email_failed_nobody_paged") return /** @type {LocalizedString} */ (`Não foi possível enviar email para ${i?.a} avisando que ninguém pôde ser chamado`);
@@ -198,6 +202,8 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "page_nobody_else") return /** @type {LocalizedString} */ (`Nobody else was paged: only the person who declared it can respond`);
 		if (i?.kind === "escalation_exhausted") return /** @type {LocalizedString} */ (`Nobody acknowledged after every level, so everyone who can respond was paged`);
 		if (i?.kind === "escalated_everyone_stalled") return /** @type {LocalizedString} */ (`An escalation level kept failing to fire, so everyone who can respond was paged`);
+		if (i?.kind === "escalated_manual") return /** @type {LocalizedString} */ (`${i?.actor} escalated, so level ${i?.a} was paged now: ${i?.b}`);
+		if (i?.kind === "escalated_everyone_manual") return /** @type {LocalizedString} */ (`${i?.actor} escalated past the last level, so everyone who can respond was paged`);
 		if (i?.kind === "page_escalation_stalled") return /** @type {LocalizedString} */ (`An escalation level couldn't fire. Brigade keeps trying, and pages everyone who can respond if it still can't`);
 		if (i?.kind === "email_failed_unpaged") return /** @type {LocalizedString} */ (`Couldn't email ${i?.a} that the page didn't reach them`);
 		if (i?.kind === "email_failed_nobody_paged") return /** @type {LocalizedString} */ (`Couldn't email ${i?.a} that nobody could be paged`);

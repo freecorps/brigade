@@ -39,7 +39,7 @@ import type { MemberChangeResult } from "./members.ts";
 import { emailSender } from "./email.ts";
 import { consumeDeadLetters, consumeEvents, type NotifyEnv } from "./notify.ts";
 import { receiptWorkspace } from "./receipts.ts";
-import { beginSlackInstall } from "./slack-bridge.ts";
+import { beginSlackInstall, listSlackChannels } from "./slack-bridge.ts";
 import { configureStatusPage, serveStatusPage } from "./status-route.ts";
 import {
   serveSubscribers,
@@ -79,6 +79,7 @@ const INVITATION_PATH = /^\/workspaces\/([^/]+)\/invitations\/([^/]+?)(\/resend)
 const INVITEE_PATH = /^\/invitations\/([^/]+?)(?:\/(accept|decline))?$/;
 const ACK_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/ack$/;
 const SLACK_INSTALL_PATH = /^\/workspaces\/([^/]+)\/slack\/install$/;
+const SLACK_CHANNELS_PATH = /^\/workspaces\/([^/]+)\/slack\/channels$/;
 const WEBHOOKS_PATH = /^\/workspaces\/([^/]+)\/webhooks(?:\/([^/]+)\/rotate)?$/;
 const SYNC_PATH = /^\/sync\/([^/]+)$/;
 const HEARTBEAT_PATH = /^\/heartbeat\/([^/]+)$/;
@@ -193,6 +194,8 @@ export default {
     if (ack) return acknowledgeIncident(request, env, auth, ack[1]!, ack[2]!, waitUntil);
     const slackInstall = SLACK_INSTALL_PATH.exec(pathname)?.[1];
     if (slackInstall !== undefined) return beginSlackInstall(request, env, auth, slackInstall);
+    const slackChannels = SLACK_CHANNELS_PATH.exec(pathname)?.[1];
+    if (slackChannels !== undefined) return listSlackChannels(request, env, auth, slackChannels);
     // Postmortem drafts and exports (RFC 0013).
     const draft = DRAFT_PATH.exec(pathname);
     if (draft) return requestDraftRoute(request, env, ctx, auth, draft[1]!, draft[2]!);

@@ -10,7 +10,12 @@ import type { FollowUpStatus } from "./followups.ts";
 import type { POSTMORTEM_DRAFT_FAILURES } from "./postmortems.ts";
 import type { EscalationTargetKind } from "./policies.ts";
 import type { RotationUnit } from "./schedules.ts";
-import type { SlackFailure, SlackLocale } from "./slack.ts";
+import type {
+  SlackFailure,
+  SlackIncidentChannels,
+  SlackLocale,
+  SlackRevokedReason,
+} from "./slack.ts";
 import type { ComponentStatus, PublicStatus, StatusCorrection, StatusLocale } from "./status.ts";
 import type { WebhookDisabledReason, WebhookError, WebhookEventType } from "./webhooks.ts";
 import type {
@@ -152,7 +157,8 @@ export type EscalationMiss = {
  * Why a level was paged: the run `started`, the level before timed out, the ones before were `unreachable`, or
  * every push of the level before failed (`undelivered`: no device took it, `escalation.unreached`); for the interim
  * rule (`level` null) also `exhausted` (every level and repeat paged, nobody acknowledged) or `stalled` (a level kept
- * failing to fire, `escalation.fallback`).
+ * failing to fire, `escalation.fallback`). `manual`: a member asked for the next level now (`escalation.now`, `/inc
+ * escalate` in Slack).
  */
 export type EscalationReason =
   | "started"
@@ -160,7 +166,8 @@ export type EscalationReason =
   | "unreachable"
   | "undelivered"
   | "exhausted"
-  | "stalled";
+  | "stalled"
+  | "manual";
 
 /** One level an escalation run paged. */
 export type EscalationPage = {
@@ -685,6 +692,20 @@ export type SlackRow = {
   channelId: string | null;
   /** The language channel messages are written in. */
   locale: SlackLocale;
+  /** The channel's name as Slack listed it when it was picked (`general`, no `#`); absent or null: not known. */
+  channelName?: string | null;
+  /** Whether declaring an incident creates a channel for it (RFC 0011 "A channel per incident"); absent: `off`. */
+  incidentChannels?: SlackIncidentChannels;
+  /** Whether those channels are private (the bot needs `groups:write`); absent: public. */
+  privateChannels?: boolean;
+  /** Hours after the incident is resolved or declined before its channel is archived; null or absent: kept. */
+  archiveAfterHours?: number | null;
+  /**
+   * When Slack said the app was removed or its token revoked (Events API, `slack.markRevoked`): the token is gone and
+   * nothing is sent until an owner or admin connects again. Absent or null: connected.
+   */
+  revokedAt?: number | null;
+  revokedReason?: SlackRevokedReason | null;
   connectedAt: number;
   connectedBy: string;
   updatedAt: number;
@@ -697,6 +718,17 @@ export type SlackTokenRow = {
   botUserId: string;
   token: string;
   scopes: string[];
+};
+
+/**
+ * A bot token Brigade let go of (`slack.disconnect`, or `slack.connect` to another team), kept sealed until the Slack
+ * notifier gives it back to Slack with `auth.revoke` (`slack.forgetToken`); server-only. One per team (`id` is its id).
+ */
+export type SlackRevocationRow = {
+  id: string;
+  teamId: string;
+  token: string;
+  at: number;
 };
 
 /**
@@ -1102,6 +1134,7 @@ export type BrigadeTables = {
   escalation_timers: EscalationTimerRow;
   slack: SlackRow;
   slack_tokens: SlackTokenRow;
+  slack_revocations: SlackRevocationRow;
   status_page: StatusPageRow;
   status_components: StatusComponentRow;
   status_incidents: StatusIncidentRow;
@@ -1150,6 +1183,7 @@ export const TABLES = {
   escalation_timers: { serverOnly: true },
   slack: { serverOnly: false },
   slack_tokens: { serverOnly: true },
+  slack_revocations: { serverOnly: true },
   status_page: { serverOnly: false },
   status_components: { serverOnly: false },
   status_incidents: { serverOnly: false },

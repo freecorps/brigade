@@ -1051,12 +1051,13 @@ export class Pager {
       const data = event.data as EscalationPaged["data"];
       const missed = (data.missed ?? []).map(fromMiss);
       // The interim rule as the last fallback: whoever caused the run's first page still knows. After nobody
-      // acknowledged (or a level kept failing) it is everyone, not the commander first: the commander had their chance.
+      // acknowledged (or a level kept failing, or someone escalated past the last level of the last round) it is
+      // everyone, not the commander first: the commander had their chance.
       if (data.level === null) {
         return this.interim(
           incident,
           missed,
-          data.reason === "exhausted" || data.reason === "stalled",
+          data.reason === "exhausted" || data.reason === "stalled" || data.reason === "manual",
         );
       }
       return { ...this.devicesOf(data.userIds ?? [], null), skipped: missed };

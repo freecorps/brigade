@@ -7,7 +7,10 @@ import type {
   SlackBridgeApi,
   SlackInstall,
   SlackInstallResult,
+  SlackOpenDeclare,
+  SlackOpenDeclareResult,
   SlackRequester,
+  SlackRevocation,
 } from "../src/bridge.ts";
 import type { SlackLocale } from "@freecorps/brigade-schema";
 import type { Deps } from "../src/deps.ts";
@@ -80,9 +83,12 @@ export function fakeBridge(
     result?: SlackActResult | ((request: SlackActRequest) => SlackActResult);
     locale?: SlackLocale;
     install?: SlackInstallResult;
+    open?: SlackOpenDeclareResult;
   } = {},
 ) {
   const acts: SlackActRequest[] = [];
+  const opens: SlackOpenDeclare[] = [];
+  const revocations: SlackRevocation[] = [];
   const locales: SlackRequester[] = [];
   const installs: { state: string; install: SlackInstall }[] = [];
   const bridge: SlackBridgeApi = {
@@ -101,12 +107,19 @@ export function fakeBridge(
       };
       return typeof result === "function" ? result(request) : result;
     },
+    openDeclare: async (request) => {
+      opens.push(request);
+      return options.open ?? { ok: true };
+    },
+    revoked: async (revocation) => {
+      revocations.push(revocation);
+    },
     completeInstall: async (state, install) => {
       installs.push({ state, install });
       return options.install ?? { ok: true };
     },
   };
-  return { bridge, acts, locales, installs };
+  return { bridge, acts, locales, installs, opens, revocations };
 }
 
 /** Deps with the fakes, a fixed clock, and the `waitUntil` work collected so a test can await it. */
@@ -141,6 +154,30 @@ export async function slashCommand(
     ...fields,
   }).toString();
   return signed("/slack/commands", body, at);
+}
+
+/** An interaction payload as Slack sends it, signed. */
+export async function interact(payload: Record<string, unknown>): Promise<Request> {
+  return signed(
+    "/slack/interactions",
+    new URLSearchParams({ payload: JSON.stringify(payload) }).toString(),
+    Math.floor(NOW / 1000),
+  );
+}
+
+/** An Events API request as Slack sends it (JSON), signed. */
+export async function slackEvent(payload: Record<string, unknown>): Promise<Request> {
+  const body = JSON.stringify(payload);
+  const at = Math.floor(NOW / 1000);
+  return new Request("https://brigade.test/slack/events", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Slack-Request-Timestamp": String(at),
+      "X-Slack-Signature": await signSlackRequest(body, SECRET, at),
+    },
+    body,
+  });
 }
 
 /** A button click as Slack sends it, signed. */

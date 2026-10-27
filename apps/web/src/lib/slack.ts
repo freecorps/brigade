@@ -78,3 +78,49 @@ export function checkChannel(input: string): { ok: true; value: string | null } 
   if (value === "") return { ok: true, value: null };
   return isSlackChannelId(value) ? { ok: true, value } : { ok: false };
 }
+
+/** A channel the card can pick, as the API lists it from Slack (`conversations.list`). */
+export type SlackChannel = { id: string; name: string; private: boolean };
+
+/** The channel list on the card: loading, listed, or not (the card then takes an id). */
+export type SlackChannels =
+  | { status: "loading" }
+  | { status: "ready"; channels: SlackChannel[] }
+  | { status: "failed" };
+
+/**
+ * The channels Brigade can post in, from the API's `GET /workspaces/:id/slack/channels` (owners and admins; the bot
+ * token stays in the API). Anything but a list is `failed`: the card falls back to a typed id.
+ */
+export async function listSlackChannels(
+  workspaceId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<SlackChannels> {
+  try {
+    const response = await fetcher(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/slack/channels`,
+      { headers: { Accept: "application/json" } },
+    );
+    const body = (await response.json().catch(() => ({}))) as { channels?: unknown };
+    if (!response.ok || !Array.isArray(body.channels)) return { status: "failed" };
+    const channels = body.channels.flatMap((one: unknown): SlackChannel[] => {
+      const channel = Object(one) as Record<string, unknown>;
+      return typeof channel.id === "string" &&
+        isSlackChannelId(channel.id) &&
+        typeof channel.name === "string"
+        ? [{ id: channel.id, name: channel.name, private: channel.private === true }]
+        : [];
+    });
+    return { status: "ready", channels };
+  } catch {
+    return { status: "failed" };
+  }
+}
+
+/** How a channel reads on the card: `#name` when known, else its id. */
+export function channelLabel(id: string, name: string | null | undefined): string {
+  return name ? `#${name}` : id;
+}
+
+/** Archive delays the card offers, in hours; null keeps the channel. */
+export const ARCHIVE_CHOICES = [null, 0, 1, 24, 168] as const;

@@ -48,6 +48,8 @@ export type Timeline_EntryInputs = {
 * | "page_nobody_else" | "Nobody else was paged: only the person who declared it can respond" |
 * | "escalation_exhausted" | "Nobody acknowledged after every level, so everyone who can respond was paged" |
 * | "escalated_everyone_stalled" | "An escalation level kept failing to fire, so everyone who can respond was paged" |
+* | "escalated_manual" | "{actor} escalated, so level {a} was paged now: {b}" |
+* | "escalated_everyone_manual" | "{actor} escalated past the last level, so everyone who can respond was paged" |
 * | "page_escalation_stalled" | "An escalation level couldn't fire. Brigade keeps trying, and pages everyone who can respond if it still can't" |
 * | "email_failed_unpaged" | "Couldn't email {a} that the page didn't reach them" |
 * | "email_failed_nobody_paged" | "Couldn't email {a} that nobody could be paged" |

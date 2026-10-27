@@ -34,6 +34,21 @@ export function slackLocale(value: unknown): SlackLocale | null {
   return (match as SlackLocale | undefined) ?? null;
 }
 
+/**
+ * Whether Slack vouches for `user` (a user object from `users.info` or `users.lookupByEmail`) as `teamId`'s own
+ * person with a confirmed email: the same team, not a Slack Connect stranger, not deleted, not a bot. Who a Slack
+ * user is, and who an incident's channel invites by email, both go by it.
+ */
+export function vouchedFor(user: Record<string, unknown>, teamId: string): boolean {
+  return (
+    user.team_id === teamId &&
+    user.is_stranger !== true &&
+    user.deleted !== true &&
+    user.is_bot !== true &&
+    user.is_email_confirmed === true
+  );
+}
+
 export async function lookUpPerson(
   teamId: string,
   userId: string,
@@ -55,13 +70,7 @@ export async function lookUpPerson(
   const email = typeof profile.email === "string" ? profile.email.trim().toLowerCase() : "";
   const locale = slackLocale(user?.locale);
   const info: SlackPersonInfo =
-    user &&
-    user.team_id === teamId &&
-    user.is_stranger !== true &&
-    user.deleted !== true &&
-    user.is_bot !== true &&
-    user.is_email_confirmed === true &&
-    email
+    user && vouchedFor(user, teamId) && email
       ? { ok: true, email, locale }
       : { ok: false, reason: "unconfirmed", locale };
   // Oldest first: a Map iterates in insertion order.

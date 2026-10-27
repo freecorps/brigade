@@ -42,7 +42,9 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   (RFC 0005): `declared`, `status_changed`, `severity_changed`, `acknowledged`, `role_assigned` (stored with the
   previous and new holder; the dashboard words it as assigned, unassigned, taken or stepped down), `update`, and
   `alert_resolved` when the alert of the monitor that opened it resolves (recovered, or the monitor paused or
-  deleted), by `sys_monitors` or the member who did it; `alerts_resolved` when every alert-source alert on an incident
+  deleted), by `sys_monitors` or the member who did it; `alert_grouped` when a `group` route puts an alert onto the
+  incident (a monitor's, "<monitor> went down and was grouped here", or an alert source's, by its title; RFC 0007
+  "Monitor alerts through the routes"), since grouping pages nobody by itself; `alerts_resolved` when every alert-source alert on an incident
   people worked on resolved, which leaves it open for them (RFC 0005 "Alert sources"). The outbox is server-only and drained, while clients need
   entries live and optimistic, so deriving the timeline from events would need a projection anyway. Entries are
   numbered per incident (`<incident id>:<seq>`, from the incident's `timelineSeq`), so a client's optimistic entry

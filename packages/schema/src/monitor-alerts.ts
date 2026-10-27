@@ -10,14 +10,14 @@ import {
   ALERTS_ACTOR,
   CAPACITY_TITLE,
   groupIncident,
-  MAX_ALERT_ROWS,
-  MAX_OPEN_ALERTS,
+  noteGrouped,
   orderedRoutes,
   pickRoute,
   pruneSourceAlerts,
   raiseIncident,
   rerouteSourceAlert,
   ROUTE_LOUDNESS,
+  sourceAlertsToReroute,
   routeIncident,
   runIncidentMutation,
   targetSeverity,
@@ -34,7 +34,7 @@ import {
   type MutationResult,
   type MutationStore,
 } from "./mutation.ts";
-import type { AlertRouteRow, AlertRow, MonitorRow, RouteAction } from "./tables.ts";
+import type { AlertRouteRow, AlertRow, MonitorRow, RouteAction, SourceAlertRow } from "./tables.ts";
 import { v } from "./validate.ts";
 
 /** The severity of the incident a monitor opens, unless it names its own (`MonitorRow.severity`). */
@@ -84,12 +84,21 @@ export type MonitorAlertDropped = DomainEvent<
   { id: string; fingerprint: string; monitorId: string; routeId: string; routeName: string }
 >;
 /**
- * A monitor's alert stopped firing: it recovered, was paused or deleted, or (`rerouted`) a quiet one was routed
- * again into a new alert because the routes changed.
+ * A monitor's alert stopped firing: it recovered, was paused or deleted, people closed the incident it was on
+ * (`incident_closed`, while the monitor may still be down: it alerts again at its next report), or (`rerouted`) a
+ * quiet one was routed again into a new alert because the routes changed. `quiet`: the alert had no incident (a route
+ * suppressed or dropped it), so it never reached webhook receivers as fired and does not as resolved either.
+ * `resolvedIncident`: the incident resolved with it (an alert source's incident it was grouped onto, nobody worked on).
  */
 export type AlertResolved = DomainEvent<
   "alert.resolved",
-  { id: string; monitorId: string; reason: "recovered" | "paused" | "deleted" | "rerouted" }
+  {
+    id: string;
+    monitorId: string;
+    reason: "recovered" | "paused" | "deleted" | "incident_closed" | "rerouted";
+    quiet?: true;
+    resolvedIncident?: string;
+  }
 >;
 
 /** What the shard makes for a monitor that may open an incident: ids and the title (mutations make neither). */
@@ -246,8 +255,9 @@ function fireRouted(
   const groupKey =
     action.kind === "group" ? `${route.id}:${alert.labels[action.groupBy] ?? ""}` : null;
   const holder = groupKey === null ? undefined : groupIncident(store, groupKey);
-  if (holder) {
+  if (holder && !taken(store, holder)) {
     const row: AlertRow = { ...base, outcome: "grouped", groupKey, incidentId: holder };
+    noteGrouped(store, holder, { monitorId: monitor.id, name: monitor.name }, ctx);
     // A SEV1 monitor joining a group of warnings raises the group's incident, which pages again.
     return done(row, [firedEvent(row), ...raiseIncident(store, holder, severity, ctx)]);
   }
@@ -266,8 +276,27 @@ function fireRouted(
   );
   if (!declared.ok) return undefined;
   routeIncident(store, open.incidentId, route, action.policyId, ctx);
-  const row: AlertRow = { ...base, outcome: "opened", groupKey, incidentId: open.incidentId };
+  // Opened beside a group's incident someone has taken: the group keeps its incident, so this one holds no key.
+  const row: AlertRow = {
+    ...base,
+    outcome: "opened",
+    groupKey: holder ? null : groupKey,
+    incidentId: open.incidentId,
+  };
   return done(row, [...declared.events, firedEvent(row)]);
+}
+
+/**
+ * Whether people have taken `incidentId` (acknowledged it, or moved it to `monitoring`, mitigated): a page on it is
+ * not sent any more (apps/api `Pager.plan`), so a monitor that goes down and groups onto it would page nobody. Such a
+ * monitor opens its own incident through the route instead, which pages (RFC 0007 "Monitor alerts through the
+ * routes"). An incident still paging (unacknowledged, not mitigated) takes it, with a timeline entry.
+ */
+function taken(store: MutationStore, incidentId: string): boolean {
+  const incident = store.get("incidents", incidentId);
+  return (
+    incident !== undefined && (incident.acknowledgedAt != null || incident.status === "monitoring")
+  );
 }
 
 function firedEvent(row: AlertRow): AlertFired {
@@ -334,7 +363,7 @@ function rerouteMonitorAlert(
   const resolved: AlertResolved = {
     type: "alert.resolved",
     subject: row.id,
-    data: { id: row.id, monitorId: monitor.id, reason: "rerouted" },
+    data: { id: row.id, monitorId: monitor.id, reason: "rerouted", quiet: true },
   };
   // Declared as the monitors, as any incident a monitor opens.
   const fired = fireMonitorAlert(store, monitor, open, { ...ctx, actor: MONITOR_ACTOR });
@@ -352,18 +381,45 @@ const rerouteItem = v.object({
   title: v.optional(v.string({ min: 1, max: INCIDENT_TITLE_MAX })),
 });
 
+/** The most rows one `alert.reroute` takes: the shard sends more in chunks (apps/api `AlertIntake.reroute`). */
+export const REROUTE_CHUNK = 50;
+
+/**
+ * Every quiet alert the routes would now do something louder with, an alert source's or a monitor's, oldest first:
+ * what the shard routes again, `REROUTE_CHUNK` at a time, after the routes changed and on its alarm until none is left.
+ */
+export function alertsToReroute(
+  store: Pick<MutationStore, "scan" | "get">,
+): ({ kind: "source"; row: SourceAlertRow } | { kind: "monitor"; row: AlertRow })[] {
+  return [
+    ...sourceAlertsToReroute(store).map((row) => ({
+      kind: "source" as const,
+      row,
+      at: row.firedAt,
+    })),
+    ...monitorAlertsToReroute(store).map((row) => ({
+      kind: "monitor" as const,
+      row,
+      at: row.firedAt,
+    })),
+  ]
+    .sort((a, b) => a.at - b.at || (a.row.id < b.row.id ? -1 : 1))
+    .map(({ at: _at, ...one }) => one);
+}
+
 /**
  * Server only, as `ALERTS_ACTOR`, right after the routes changed (created, changed, moved, deleted or disabled by a
  * takeover): every suppressed or dropped alert still firing, an alert source's or a monitor's, is routed again, and
  * becomes a new alert where the routes now do something louder with it, so deleting the route that suppressed an
  * alert pages it now rather than at its next repeat (or, for a monitor, which never repeats, not until it recovers).
  * Rows already routed again, or no longer firing, are skipped; none to route is a `conflict`. The shard runs it with
- * the ids; if it fails, an alert source's next repeat routes it again anyway.
+ * the ids, `REROUTE_CHUNK` rows at a time; a chunk that fails is all or nothing, so the shard runs its rows one by one
+ * and leaves a row that fails alone for later (logged), never holding the others back.
  */
 export const rerouteAlerts = defineMutation({
   name: "alert.reroute",
   args: v.object({
-    rows: v.array(rerouteItem, { max: MAX_OPEN_ALERTS + MAX_ALERT_ROWS }),
+    rows: v.array(rerouteItem, { max: REROUTE_CHUNK }),
     capacityTitle: v.optional(v.string({ min: 1, max: ALERT_TITLE_MAX })),
   }),
   permission: "alert:manage",

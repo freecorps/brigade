@@ -9,7 +9,9 @@ import {
   applyMapping,
   pickRoute,
   can,
+  namesMonitor,
   ROUTE_ALL_MONITORS,
+  ROUTE_ALL_SOURCES,
   formatIncidentNumber,
   MAX_ALERT_ROUTES,
   MAX_ALERT_SOURCES,
@@ -1037,6 +1039,19 @@ function UrlPanel({ shown, onDismiss }: { shown: ShownUrl; onDismiss: () => void
 
 const severityText = (severity: AlertSeverity) => say(`severity_${severity}`);
 
+/**
+ * A route's `sourceIds` from the editor's picks: no monitor and every source is the empty list, as before monitors;
+ * with monitors, every source is said explicitly (`ROUTE_ALL_SOURCES`), so adding monitors never drops the sources.
+ */
+export function matchSourceIds(
+  everySource: boolean,
+  sources: readonly string[],
+  monitors: readonly string[],
+): string[] {
+  if (everySource) return monitors.length > 0 ? [ROUTE_ALL_SOURCES, ...monitors] : [];
+  return [...sources, ...monitors];
+}
+
 /** One line saying what a route matches. */
 function matchText(
   match: RouteMatch,
@@ -1048,11 +1063,13 @@ function matchText(
     parts.push(
       match.sourceIds
         .map((id) =>
-          id === ROUTE_ALL_MONITORS
-            ? say("every_monitor")
-            : id.startsWith("mon_")
-              ? (monitors.find((monitor) => monitor.id === id)?.name ?? say("deleted_monitor"))
-              : (sources.find((source) => source.id === id)?.name ?? say("deleted_source")),
+          id === ROUTE_ALL_SOURCES
+            ? say("every_source")
+            : id === ROUTE_ALL_MONITORS
+              ? say("every_monitor")
+              : id.startsWith("mon_")
+                ? (monitors.find((monitor) => monitor.id === id)?.name ?? say("deleted_monitor"))
+                : (sources.find((source) => source.id === id)?.name ?? say("deleted_source")),
         )
         .join(", "),
     );
@@ -1236,7 +1253,17 @@ function RouteForm({
 }) {
   const action = route?.action;
   const [name, setName] = useState(route?.name ?? "");
-  const [sourceIds, setSourceIds] = useState<string[]>(route?.match.sourceIds ?? []);
+  const saved = route?.match.sourceIds ?? [];
+  // The route's sources and monitors are picked apart (`routeMatches`): every source is a choice of its own, so
+  // naming monitors never changes which sources a route takes. An empty list (every route saved before monitors) is
+  // every source.
+  const [everySource, setEverySource] = useState(
+    saved.includes(ROUTE_ALL_SOURCES) || saved.length === 0,
+  );
+  const [pickedSources, setPickedSources] = useState<string[]>(
+    saved.filter((id) => id !== ROUTE_ALL_SOURCES && !namesMonitor(id)),
+  );
+  const [monitorIds, setMonitorIds] = useState<string[]>(saved.filter(namesMonitor));
   const [severities, setSeverities] = useState<AlertSeverity[]>(route?.match.severities ?? []);
   const [labels, setLabels] = useState(route ? formatLabels(route.match.labels) : "");
   const [kind, setKind] = useState<ActionKind>(action?.kind ?? "open");
@@ -1271,6 +1298,9 @@ function RouteForm({
     if (name.trim() === "") problems.name = "route_name_required";
     if (!parsed) problems.labels = "labels_invalid";
     if (kind === "group" && groupBy.trim() === "") problems.groupBy = "group_by_required";
+    if (!everySource && pickedSources.length === 0 && monitorIds.length === 0) {
+      problems.sources = "match_nothing";
+    }
     setInvalid(problems);
     if (Object.keys(problems).length > 0 || !parsed) return;
     const paging = {
@@ -1292,17 +1322,27 @@ function RouteForm({
     setState("busy");
     void onSave({
       name: name.trim(),
-      match: { sourceIds, severities, labels: parsed },
+      match: {
+        sourceIds: matchSourceIds(everySource, pickedSources, monitorIds),
+        severities,
+        labels: parsed,
+      },
       action: next,
     }).then((ok) => setState(ok ? "idle" : "failed"));
   };
   const toggle = <T,>(list: T[], value: T) =>
     list.includes(value) ? list.filter((one) => one !== value) : [...list, value];
-  const everyMonitor = sourceIds.includes(ROUTE_ALL_MONITORS);
+  const everyMonitor = monitorIds.includes(ROUTE_ALL_MONITORS);
   // A route that names monitors and no source takes no alert source at all (`routeMatches`).
-  const monitorsOnly =
-    sourceIds.some((id) => id === ROUTE_ALL_MONITORS || id.startsWith("mon_")) &&
-    !sourceIds.some((id) => id.startsWith("src_"));
+  const monitorsOnly = !everySource && pickedSources.length === 0 && monitorIds.length > 0;
+  // Monitors carry only the labels `monitor` and `kind`: grouping them by another puts them all in one incident.
+  const groupKey = groupBy.trim().toLowerCase();
+  const groupsMonitorsTogether =
+    kind === "group" &&
+    monitorIds.length > 0 &&
+    groupKey !== "" &&
+    groupKey !== "monitor" &&
+    groupKey !== "kind";
   const error = (key: string) => {
     const part = invalid[key];
     return part ? say(part) : undefined;
@@ -1321,26 +1361,41 @@ function RouteForm({
       />
       <fieldset className="flex min-w-0 flex-col gap-2" aria-describedby={ids.sources}>
         <legend className="mb-1.5 text-sm font-medium">{say("match_sources")}</legend>
-        {monitorsOnly ? (
-          <p className="text-sm text-muted-foreground">{say("monitors_only")}</p>
-        ) : null}
-        {sources.length === 0 && !monitorsOnly ? (
-          <p id={ids.sources} className="text-sm text-muted-foreground">
-            {say("any_source")}
+        <label className="flex min-h-6 items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="size-4 shrink-0 accent-primary"
+            checked={everySource}
+            // Every source stands for the ones picked one by one: they are dropped, not kept hidden.
+            onChange={() => {
+              setEverySource(!everySource);
+              setPickedSources([]);
+            }}
+          />
+          {say("every_source")}
+        </label>
+        {everySource
+          ? null
+          : sources.map((source) => (
+              <label key={source.id} className="flex min-h-6 items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4 shrink-0 accent-primary"
+                  checked={pickedSources.includes(source.id)}
+                  onChange={() => setPickedSources((list) => toggle(list, source.id))}
+                />
+                <span className="min-w-0 [overflow-wrap:anywhere]">{source.name}</span>
+              </label>
+            ))}
+        {error("sources") ? (
+          <p id={ids.sources} role="alert" className="text-sm text-destructive">
+            {error("sources")}
           </p>
-        ) : (
-          sources.map((source) => (
-            <label key={source.id} className="flex min-h-6 items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="size-4 shrink-0 accent-primary"
-                checked={sourceIds.includes(source.id)}
-                onChange={() => setSourceIds((list) => toggle(list, source.id))}
-              />
-              <span className="min-w-0 [overflow-wrap:anywhere]">{source.name}</span>
-            </label>
-          ))
-        )}
+        ) : monitorsOnly ? (
+          <p id={ids.sources} className="text-sm text-muted-foreground">
+            {say("monitors_only")}
+          </p>
+        ) : null}
       </fieldset>
       <fieldset className="flex min-w-0 flex-col gap-2" aria-describedby={ids.monitors}>
         <legend className="mb-1.5 text-sm font-medium">{say("match_monitors")}</legend>
@@ -1351,11 +1406,7 @@ function RouteForm({
             checked={everyMonitor}
             onChange={() =>
               // Every monitor stands for the ones picked one by one: they are dropped, not kept hidden.
-              setSourceIds((list) =>
-                everyMonitor
-                  ? list.filter((id) => id !== ROUTE_ALL_MONITORS)
-                  : [...list.filter((id) => !id.startsWith("mon_")), ROUTE_ALL_MONITORS],
-              )
+              setMonitorIds(everyMonitor ? [] : [ROUTE_ALL_MONITORS])
             }
           />
           {say("every_monitor")}
@@ -1369,8 +1420,8 @@ function RouteForm({
                 <input
                   type="checkbox"
                   className="size-4 shrink-0 accent-primary"
-                  checked={sourceIds.includes(monitor.id)}
-                  onChange={() => setSourceIds((list) => toggle(list, monitor.id))}
+                  checked={monitorIds.includes(monitor.id)}
+                  onChange={() => setMonitorIds((list) => toggle(list, monitor.id))}
                 />
                 <span className="min-w-0 [overflow-wrap:anywhere]">{monitor.name}</span>
               </label>
@@ -1437,6 +1488,15 @@ function RouteForm({
           error={error("groupBy")}
           onChange={(event) => setGroupBy(event.target.value)}
         />
+      ) : null}
+      {groupsMonitorsTogether ? (
+        // A warning, not an error: one incident for every monitor may be what the owner wants.
+        <p
+          role="status"
+          className="text-sm text-muted-foreground [overflow-wrap:anywhere] sm:col-span-2"
+        >
+          {say("group_monitor_labels")}
+        </p>
       ) : null}
       {paging ? (
         <>

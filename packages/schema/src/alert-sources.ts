@@ -104,12 +104,23 @@ export const MAX_RESOLVE_MARKERS = 200;
 export const CAPACITY_TITLE = "Alert capacity reached";
 /** The capacity alert's key; it is told apart by its `reason`, `capacity`, which no sender can give. */
 export const CAPACITY_KEY = "capacity";
+/** Alert sources a route may name (`src_…` ids, or every source), counted apart from its monitors. */
 export const MAX_ROUTE_SOURCES = 20;
+/**
+ * Monitors a route may name one by one: the instance's default monitor cap (`MAX_MONITORS_PER_WORKSPACE`), so a route
+ * can name every monitor of a workspace at the default. A workspace allowed more names them all as every monitor.
+ */
+export const MAX_ROUTE_MONITORS = 100;
 /**
  * In a route's `sourceIds`: every monitor (RFC 0007 "Monitor alerts through the routes"). A monitor matches only a
  * route that names it or this, so routes that name no monitor never catch one.
  */
 export const ROUTE_ALL_MONITORS = "monitors";
+/**
+ * In a route's `sourceIds`: every alert source, said explicitly, for a route that also names monitors (an empty list
+ * is every source too, but a list naming only monitors takes no source). See `routeMatches`.
+ */
+export const ROUTE_ALL_SOURCES = "sources";
 export const MAX_ROUTE_LABELS = 10;
 /** A source's `lastReceivedAt` moves at most this often, so a storm does not make a shard version a payload. */
 export const SOURCE_SEEN_EVERY_MS = 60_000;
@@ -182,20 +193,46 @@ const labelMatch = v.object({
   value: v.string({ max: ALERT_LABEL_VALUE_MAX }),
 });
 
-/** What a route's `sourceIds` may name: an alert source, a monitor, or every monitor. */
+/** Whether a route's `sourceIds` entry names monitors (a monitor, or every monitor) rather than alert sources. */
+export const namesMonitor = (id: string): boolean => id === ROUTE_ALL_MONITORS || isId("mon", id);
+
+/** What a route's `sourceIds` may name: an alert source, every source, a monitor, or every monitor. */
 const routeSourceId: Validator<string> = (input, path = "") =>
-  input === ROUTE_ALL_MONITORS || isId("src", input) || isId("mon", input)
+  input === ROUTE_ALL_SOURCES ||
+  input === ROUTE_ALL_MONITORS ||
+  isId("src", input) ||
+  isId("mon", input)
     ? { ok: true, value: input as string }
     : {
         ok: false,
         issues: [
-          { path, message: `Expected an alert source, a monitor or "${ROUTE_ALL_MONITORS}"` },
+          {
+            path,
+            message: `Expected an alert source, a monitor, "${ROUTE_ALL_SOURCES}" or "${ROUTE_ALL_MONITORS}"`,
+          },
         ],
       };
 
+/** A route's `sourceIds`: at most `MAX_ROUTE_SOURCES` sources and, apart, at most `MAX_ROUTE_MONITORS` monitors. */
+const routeSourceIds: Validator<string[]> = (input, path = "") => {
+  const result = v.array(routeSourceId, {
+    max: MAX_ROUTE_SOURCES + MAX_ROUTE_MONITORS,
+    unique: true,
+  })(input, path);
+  if (!result.ok) return result;
+  const monitors = result.value.filter(namesMonitor).length;
+  if (result.value.length - monitors > MAX_ROUTE_SOURCES) {
+    return { ok: false, issues: [{ path, message: `At most ${MAX_ROUTE_SOURCES} alert sources` }] };
+  }
+  if (monitors > MAX_ROUTE_MONITORS) {
+    return { ok: false, issues: [{ path, message: `At most ${MAX_ROUTE_MONITORS} monitors` }] };
+  }
+  return result;
+};
+
 const routeMatch: Validator<RouteMatch> = (input, path = "") => {
   const result = v.object({
-    sourceIds: v.array(routeSourceId, { max: MAX_ROUTE_SOURCES, unique: true }),
+    sourceIds: routeSourceIds,
     severities: v.array(v.picklist(ALERT_SEVERITIES), {
       max: ALERT_SEVERITIES.length,
       unique: true,
@@ -866,16 +903,21 @@ export function dropPolicyFromRoutes(
 
 /**
  * Whether `route` matches an alert from `sourceId` (an alert source, or a monitor's id): every condition it sets holds
- * (an empty one holds always). A monitor must be named, by its id or as every monitor (`ROUTE_ALL_MONITORS`): an
- * empty list is every alert source and no monitor, so a route saved before monitors were routed (a catch-all `drop`)
- * never silences one.
+ * (empty severities or labels hold always). `sourceIds` is read in two halves:
+ *
+ * - **Monitors** must be named, by id or as every monitor (`ROUTE_ALL_MONITORS`): naming none takes no monitor, so a
+ *   route saved before monitors were routed (a catch-all `drop`) never silences one.
+ * - **Alert sources**: every source (`ROUTE_ALL_SOURCES`), the sources named, or, naming no source, every source when
+ *   the route names no monitor either (an empty list, as every route saved before monitors) and none when it does (a
+ *   route for monitors only). So a route saved before keeps its meaning, and the editor writes every source
+ *   explicitly whenever it adds monitors to a route that took every source.
  */
 export function routeMatches(match: RouteMatch, sourceId: string, alert: NormalizedAlert): boolean {
   if (isId("mon", sourceId)) {
     if (!match.sourceIds.includes(ROUTE_ALL_MONITORS) && !match.sourceIds.includes(sourceId)) {
       return false;
     }
-  } else if (match.sourceIds.length > 0 && !match.sourceIds.includes(sourceId)) return false;
+  } else if (!matchesSource(match.sourceIds, sourceId)) return false;
   if (match.severities.length > 0 && !match.severities.includes(alert.severity)) return false;
   return match.labels.every((one) => {
     const value = Object.prototype.hasOwnProperty.call(alert.labels, one.key)
@@ -883,6 +925,13 @@ export function routeMatches(match: RouteMatch, sourceId: string, alert: Normali
       : undefined;
     return one.value === "" ? value !== undefined : value === one.value;
   });
+}
+
+/** The alert-source half of `routeMatches`. */
+function matchesSource(sourceIds: readonly string[], sourceId: string): boolean {
+  if (sourceIds.includes(ROUTE_ALL_SOURCES) || sourceIds.includes(sourceId)) return true;
+  // Naming no source at all: every source for an empty list, none for a list of monitors only.
+  return sourceIds.length === 0;
 }
 
 /** The default route: open an incident at the alert's own severity, paged through the default policy. */
@@ -979,6 +1028,22 @@ export function groupIncident(store: MutationStore, groupKey: string): string | 
   return holder?.incidentId ?? undefined;
 }
 
+/**
+ * Says on `incidentId`'s timeline that an alert was grouped onto it (`alert_grouped`): an alert source's, by its
+ * title, or a monitor's, by its name. Grouping pages nobody by itself, so the incident's people see it there.
+ */
+export function noteGrouped(
+  store: MutationStore,
+  incidentId: string,
+  alert: { sourceId: string; name: string } | { monitorId: string; name: string },
+  ctx: MutationContext,
+): void {
+  const incident = store.get("incidents", incidentId);
+  if (!incident) return;
+  store.update("incidents", incident.id, { updatedAt: ctx.now });
+  appendTimeline(store, incident, { kind: "alert_grouped", ...alert }, ctx);
+}
+
 /** Whether a row still holds its incident: an alert whose incident people closed is over. */
 export function incidentOpen(store: MutationStore, incidentId: string | null): boolean {
   if (incidentId === null) return false;
@@ -1006,7 +1071,7 @@ function untouched(store: MutationStore, incident: IncidentRow): boolean {
  * entry. Returns its events (none while another alert still fires on it, or for an incident already over) and
  * whether it resolved.
  */
-function settleIncident(
+export function settleIncident(
   store: MutationStore,
   incidentId: string | null,
   ctx: MutationContext,
@@ -1631,6 +1696,7 @@ function fire(
         incidentNumber: store.get("incidents", holder)?.number ?? null,
       };
       store.insert("source_alerts", row);
+      noteGrouped(store, holder, { sourceId, name: alert.title }, ctx);
       // A critical alert joining a group of warnings raises the group's incident.
       const raised = raiseIncident(store, holder, targetSeverity(store, action, alert), ctx);
       return { events: [...events, firedEvent(row), ...raised] };
@@ -1771,6 +1837,21 @@ export function quietAlerts(store: Pick<MutationStore, "scan">): SourceAlertRow[
       (row) =>
         row.status === "firing" && (row.outcome === "suppressed" || row.outcome === "dropped"),
     );
+}
+
+/**
+ * The quiet alert source rows the routes would now do something louder with (`rerouteSourceAlert` would fire them
+ * again): what the shard routes again, in chunks, after the routes changed and on its alarm.
+ */
+export function sourceAlertsToReroute(
+  store: Pick<MutationStore, "scan" | "get">,
+): SourceAlertRow[] {
+  const routes = orderedRoutes(store);
+  return quietAlerts(store).filter((row) => {
+    if (!store.get("alert_sources", row.sourceId)) return false;
+    const { action } = pickRoute(routes, row.sourceId, { ...row, status: "firing" }, false);
+    return ROUTE_LOUDNESS[action.kind] > ROUTE_LOUDNESS[row.outcome];
+  });
 }
 
 /**

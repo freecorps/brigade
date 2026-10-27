@@ -707,6 +707,7 @@ const ENTRY_GLYPHS: Record<Exclude<TimelineRow["kind"], "status_changed">, Glyph
   role_assigned: PERSON_GLYPH,
   update: { ios: "text.bubble", android: "chat", web: "chat" },
   alert_resolved: { ios: "heart.text.square", android: "monitor_heart", web: "monitor_heart" },
+  alert_grouped: { ios: "bell.badge", android: "notification_add", web: "notification_add" },
   alerts_resolved: { ios: "checkmark.circle", android: "check_circle", web: "check_circle" },
   page_failed: { ios: "phone.down", android: "phone_missed", web: "phone_missed" },
   email_failed: { ios: "envelope.badge", android: "unsubscribe", web: "unsubscribe" },

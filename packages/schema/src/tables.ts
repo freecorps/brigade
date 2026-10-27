@@ -290,6 +290,12 @@ export type TimelineEntry =
       reason: "recovered" | "paused" | "deleted";
     }
   /**
+   * An alert joined the incident through a `group` route (RFC 0005 "Alert sources", RFC 0007 "Monitor alerts through
+   * the routes"): an alert source's (`sourceId`, `name` its title then) or a monitor's (`monitorId`, `name` its name
+   * then). Grouping pages nobody by itself, so it is said here.
+   */
+  | { kind: "alert_grouped"; sourceId?: string; monitorId?: string; name: string }
+  /**
    * Every alert-source alert on the incident resolved, but people had already worked on it (acknowledged, took a
    * role, wrote an update or moved it on), so it stays open for them to close (`alert.ingest`).
    */
@@ -1082,10 +1088,12 @@ export type AlertSourceSecretRow = {
 };
 
 /**
- * What an alert route matches; an empty list matches anything. A label `value` of "" matches any value.
- * `sourceIds` names alert sources (`src_…`), monitors (`mon_…`) or every monitor (`ROUTE_ALL_MONITORS`). A monitor
- * matches only a route that names it or every monitor, so an empty list (every route saved before monitors were
- * routed) matches every alert source and no monitor.
+ * What an alert route matches: every condition it sets. Empty `severities` or `labels` match any; a label `value` of
+ * "" matches any value. `sourceIds` names alert sources (`src_…`) or every source (`ROUTE_ALL_SOURCES`), at most
+ * `MAX_ROUTE_SOURCES`, and monitors (`mon_…`) or every monitor (`ROUTE_ALL_MONITORS`), at most `MAX_ROUTE_MONITORS`
+ * (`routeMatches`). A monitor matches only a route that names it or every monitor. An alert source matches a route
+ * that names it or every source, or that names no source and no monitor (an empty list, as every route saved before
+ * monitors were routed); a list naming only monitors takes no alert source.
  */
 export type RouteMatch = {
   sourceIds: string[];

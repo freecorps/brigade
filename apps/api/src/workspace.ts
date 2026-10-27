@@ -8,7 +8,6 @@ import {
   fitMemberName,
   isRole,
   MAX_EXPORT_BYTES,
-  monitorAlertsToReroute,
   newId,
   ROLES,
   nextMaintenanceAt,
@@ -1063,7 +1062,7 @@ export class WorkspaceDO extends DurableObject<Env> {
             route.createdBy === userId && (!route.disabled || route.disabled === "takeover"),
         ).length;
       this.serverMutation("alertSource.takeOver", { tokenHash, userId });
-      if (routes > 0) this.alerts.reroute();
+      if (routes > 0) this.rerouteAlerts();
       const paused = this.shard.store
         .scan("monitors")
         .filter((monitor) => !monitor.paused)
@@ -1826,13 +1825,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("monitor tick failed", { error });
     }
-    // A down monitor a route kept quiet, which the routes would page now: routing it again right after the routes
-    // changed failed. Monitors never send again while down, so the alarm is what retries it (RFC 0007 "Monitor alerts
-    // through the routes"). Never throws.
+    // Quiet alerts the routes would page now, left after the routes changed: more than one run takes, or routing
+    // them again failed. Monitors never send again while down, so the alarm is what pages them (RFC 0007 "Monitor
+    // alerts through the routes"). Never throws.
     try {
-      if (monitorAlertsToReroute(this.shard.store).length > 0) this.alerts.reroute();
+      if (this.alerts.rerouteDue().length > 0) this.alerts.reroute();
     } catch (error) {
-      this.log("routing quiet monitor alerts again failed", { error });
+      this.log("routing quiet alerts again failed", { error });
     }
     // Webhook deliveries due again go back to the queue with the drain below (src/webhooks.ts `redrive`).
     try {
@@ -1981,6 +1980,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("reading the maintenance windows failed", { error });
     }
+    let rerouteAt: number | null = null;
+    try {
+      const at = this.alerts.rerouteAt(Date.now());
+      rerouteAt = at === null ? null : Math.max(at, Date.now() + MONITOR_TICK_MS);
+    } catch (error) {
+      this.log("reading the quiet alerts to route again failed", { error });
+    }
     let reminderAt: number | null = null;
     try {
       const at = this.nextReminder();
@@ -1993,7 +1999,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     const next = earliest(
       earliest(
         earliest(monitors, escalationAt),
-        earliest(repair, earliest(armed, earliest(maintenanceAt, reminderAt))),
+        earliest(repair, earliest(armed, earliest(maintenanceAt, earliest(reminderAt, rerouteAt)))),
       ),
       earliest(
         earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
@@ -2147,6 +2153,14 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("arming the status page push failed", { error: String(error) });
     }
+  }
+
+  /**
+   * After the routes changed: routes the quiet alerts they would page now (`AlertIntake.reroute`), and leaves what one
+   * run does not take to the alarm, a tick from now. Never throws.
+   */
+  private rerouteAlerts(): void {
+    if (this.alerts.reroute()) this.wake(Date.now() + MONITOR_TICK_MS, "alarm for quiet alerts");
   }
 
   /** Brings the alarm forward to `at` unless it is already set sooner. Fire and forget; a failure is logged. */
@@ -2454,7 +2468,7 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (result.ok) {
       this.broadcast(result.version, changes, ws);
       // The routes changed: what they kept quiet is routed again now (RFC 0005 "Alert sources"). Never throws.
-      if (changes.some((change) => change.table === "alert_routes")) this.alerts.reroute();
+      if (changes.some((change) => change.table === "alert_routes")) this.rerouteAlerts();
       // A monitor changed: the alarm pushes it to its probes (and keeps watching its heartbeats) right away.
       if (changes.some((change) => change.table === "monitors")) {
         this.ctx.storage.setAlarm(Date.now()).catch((error: unknown) => {

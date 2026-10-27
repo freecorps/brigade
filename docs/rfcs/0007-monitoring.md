@@ -303,18 +303,33 @@ results (a new monitor is up on its first success).
 - **Monitor alerts through the routes (built).** A monitor that turns down is matched against the workspace's ordered
   routes like an alert source's alert (`fireMonitorAlert` in `packages/schema/src/monitor-alerts.ts`, called by
   `moveTo` in `monitors.ts`), all in the shard and in the report's transaction.
-  1. **Matching.** A route's `sourceIds` may also name monitors (`mon_…`) or every monitor (`monitors`,
-     `ROUTE_ALL_MONITORS`); the dashboard's route editor has a Monitors list with "Every monitor". A monitor matches
-     only a route that names it or every monitor: an empty list keeps matching every alert source and no monitor, so
-     routes saved before this never catch one (a catch-all `drop` would otherwise silence monitors that page today),
-     and a route naming only monitors takes no alert source (the editor says so). A monitor's alert matches with its
-     severity (SEV1 critical, SEV2 high, SEV3 warning, SEV4 info, from the monitor's own) and the labels `monitor`
-     (its name) and `kind` (`http`, `tcp`, `heartbeat`). A route naming a deleted monitor matches nothing from it.
+  1. **Matching.** A route's `sourceIds` names alert sources (`src_…`, at most 20) or every source (`sources`,
+     `ROUTE_ALL_SOURCES`), and, counted apart, monitors (`mon_…`, at most 100, `MAX_ROUTE_MONITORS`, the default
+     monitor cap) or every monitor (`monitors`, `ROUTE_ALL_MONITORS`); the route editor has "Every source" above the
+     sources and "Every monitor" above the monitors. A monitor matches only a route that names it or every monitor, so
+     routes saved before this never catch one (a catch-all `drop` would otherwise silence monitors that page today).
+     An alert source matches a route that names it or every source, or one naming no source and no monitor: an empty
+     list keeps meaning every source, so a route saved before keeps its exact meaning. A route naming only monitors
+     takes no alert source (the editor says so). Adding monitors never changes which sources a route takes: the editor
+     writes every source explicitly (`["sources", "mon_…"]`) when a route that took every source names monitors, and
+     saves a route with no monitor as before (`[]`). A monitor's alert matches with its severity (SEV1 critical, SEV2
+     high, SEV3 warning, SEV4 info, from the monitor's own) and the labels `monitor` (its name) and `kind` (`http`,
+     `tcp`, `heartbeat`), and no other: the editor warns when a `group` route that names monitors groups by another
+     label, which would put every monitor it takes into one incident. A route naming a deleted monitor matches nothing
+     from it.
   2. **Actions.** `open` declares with the route's severity (else the type's, else the monitor's), type and services,
      and keeps the route in `incident_routes`, so its policy pages first, then the type's, the first service's, the
-     monitor's, the default (RFC 0006). `group` joins the open incident of the same group key across `alerts` and
-     `source_alerts` (so one route can put a monitor and a Grafana alert labelled with its name in one incident),
-     raising it to the monitor's severity if that is higher, else opens one. `suppress` and `drop` record the alert
+     monitor's, the default (RFC 0006). `group` joins the open incident of the same group key across `alerts` and `source_alerts` (so
+     one route can put a monitor and a Grafana alert labelled with its name in one incident), raising it to the
+     monitor's severity if that is higher, and says so on its timeline ("<monitor> went down and was grouped here",
+     `alert_grouped`; an alert source's alert grouping onto an incident gets the same line), else opens one.
+     **Grouping onto a taken incident (decided).** A page is not sent for an acknowledged incident (apps/api
+     `Pager.plan`), so a monitor that joined one would page nobody. So a monitor groups only onto an incident still
+     paging: not acknowledged and not `monitoring` (mitigated). When the group's incident is acknowledged or
+     mitigated, the monitor opens its own incident through the route instead (holding no group key, so the group keeps
+     its incident), whose declaration pages through the route's policy as any `open`; the people on the group's
+     incident see both. Alert sources' alerts still group onto a taken incident (their sender repeats, and the
+     incident's people asked to be left alone), with the timeline line. `suppress` and `drop` record the alert
      (`outcome`, `routeId`, `routeName` on the `alerts` row) with no incident, and the monitor row keeps a summary
      (`alertRoute`), which the Monitors card shows ("Kept quiet by route …: no incident"). The monitor still holds its
      one alert, so it is not alerted twice while down. Monitors add at most one firing alert each, so their alerts
@@ -325,24 +340,40 @@ results (a new monitor is up on its first success).
      it out), one naming a deleted policy had it taken off (`dropPolicyFromRoutes`) and pages through the monitor's
      policy, and a `group` whose incident is closed or gone opens a new one. A routed declare that is refused anyway
      (a route stored with something the declare does not take) falls back to that default declare, and only then
-     fails the report (the probe retries), as before.
-  4. **Recovery (decided).** Recovery, pausing and deleting resolve the monitor's alert whatever a route did with it,
-     and note it on the incident it is on, opened or grouped, as before: a monitor never resolves an incident, which
-     stays for people. The other way round, an alert source's resolve does not resolve an untouched incident a
-     monitor is still firing on (`settleIncident` counts firing monitor alerts too).
-  5. **Re-routing.** Monitors do not repeat while down, so `alert.reroute` (now in `monitor-alerts.ts`) takes quiet
+     fails the report (the probe retries), as before. Only the monitor whose alert opened an incident counts as "the
+     monitor that opened it" for its policy (RFC 0006 "Who is paged", 4): one grouped onto it never does.
+  4. **Recovery and closing (decided).** Recovery, pausing and deleting resolve the monitor's alert whatever a route
+     did with it, and note it on the incident it is on. An incident a monitor opened stays for people, as before. One
+     an alert source opened that a monitor grouped onto settles when the monitor recovers last as when the source's
+     own alert resolves (`settleIncident`, as `sys_alerts`): untouched, it resolves; worked on, it gets the "every
+     alert resolved" line. An alert source's resolve does not resolve an untouched incident a monitor is still firing
+     on (`settleIncident` counts firing monitor alerts too). **Closing an incident** (resolved or declined) releases
+     every monitor alert on it, opened or grouped (`incident.setStatus`, `alert.resolved` with `incident_closed`): the
+     monitor lets go of it, and if it is still down its next report (probes send one at least every
+     `REPORT_EVERY_MS`, a missed heartbeat too) alerts again through the routes, with a new incident that pages. A
+     monitor still down after people resolved its incident is a problem that is not over, and is never silent until it
+     recovers; this matches what an alert source's alert sent again does after its incident closed (RFC 0005 "Room").
+     Someone who means to stop it pauses the monitor.
+  5. **Re-routing.** Monitors do not repeat while down, so `alert.reroute` (in `monitor-alerts.ts`) takes quiet
      monitor alerts too, with the title the shard renders for them: when the routes now do something louder (the
      suppress or drop route deleted, changed, moved below another or disabled by a takeover), the quiet alert resolves
      (`rerouted`) and the monitor fires a new one through them, declared as `sys_monitors`. The shard runs it after
-     every route change; if that fails, its alarm (at least once a minute while monitors run) sees a quiet monitor
-     alert the routes would page (`monitorAlertsToReroute`) and runs it again, so a deleted suppress route never
-     leaves a down monitor unpaged until it recovers.
-  6. **Tests.** `packages/schema/tests/monitor-alerts.test.ts`: routes saved before never match a monitor, today's
-     rows and events unchanged with no route, each action, the route's, a service's and the monitor's policy, a
-     deleted policy, type or service and a refused declare each still paging, a grouped incident held by a down
-     monitor, recovery of a grouped monitor, and re-routing; `apps/api/test/monitors.test.ts` ("a down monitor a
-     deleted suppress route kept quiet is paged by the shard alarm if routing it again failed"). Every monitor test
-     from before passes unchanged.
+     every route change, for the quiet alerts the routes would now page (`alertsToReroute`), at most 200 a run in
+     mutations of 50 (`REROUTE_CHUNK`), the rest on its alarm a tick later. A chunk that fails is run a row at a time,
+     and a row that still fails is logged and left for `REROUTE_RETRY_MS` (10 minutes) before the alarm tries it again,
+     so one bad row never keeps the others from paging, and a deleted suppress route never leaves a down monitor
+     unpaged until it recovers.
+  6. **Tests.** `packages/schema/tests/monitor-alerts.test.ts`: routes saved before never match a monitor and keep
+     their sources, every source beside monitors, the separate caps, today's rows and events unchanged with no route,
+     each action, the route's, a service's and the monitor's policy, a grouped monitor's policy never paging, a
+     deleted policy, type or service and a refused declare each still paging, the timeline line for a grouped alert, a
+     monitor opening its own incident beside an acknowledged or mitigated one, a grouped incident held by a down
+     monitor and settled by its recovery, closing an incident a down monitor opened or grouped onto (it alerts again),
+     and re-routing; `packages/schema/tests/webhooks.test.ts` (a quiet alert's resolve reaches no receiver);
+     `apps/web/test/alerts-card.test.tsx` (adding monitors keeps a route's sources, the group warning);
+     `apps/api/test/monitors.test.ts` ("a down monitor a deleted suppress route kept quiet is paged by the shard alarm
+     if routing it again failed", "quiet monitor alerts are routed again in chunks, a run at a time, and a row that
+     fails alone waits").
 
 ## Watching the watcher
 

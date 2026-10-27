@@ -8,8 +8,8 @@ import {
   alertIssues,
   newId,
   normalizeAlerts,
-  quietAlerts,
-  monitorAlertsToReroute,
+  alertsToReroute,
+  REROUTE_CHUNK,
   type AlertHeaders,
   type AlertSourceRow,
   type IngestItem,
@@ -29,6 +29,14 @@ export type AlertIntakeResult =
   | { status: "accepted"; alerts: number; malformed: boolean }
   | { status: "ignored" }
   | { status: "busy" };
+
+/**
+ * Quiet alerts one `reroute` routes again at most, in chunks of `REROUTE_CHUNK`: what is left waits for the shard's
+ * next alarm, so a workspace with hundreds of quiet monitors never holds the shard in one long run.
+ */
+export const REROUTE_PER_RUN = 200;
+/** How long a quiet alert that failed to route again on its own is left alone before it is tried again. */
+export const REROUTE_RETRY_MS = 10 * 60 * 1000;
 
 /** Largest alert payload the Worker reads, in bytes: a Grafana group of many alerts fits, a flood does not. */
 export const MAX_ALERT_BODY = 256 * 1024;
@@ -121,6 +129,9 @@ function unreadable(
 const CAPACITY_TITLE = () => alert_incident_title({ part: "capacity", name: "" }, { locale: "en" });
 
 export class AlertIntake {
+  /** Quiet rows that failed to route again on their own, and when they may be tried again (`REROUTE_RETRY_MS`). */
+  private readonly rerouteFailed = new Map<string, number>();
+
   constructor(private readonly options: AlertIntakeOptions) {}
 
   /**
@@ -300,39 +311,85 @@ export class AlertIntake {
   }
 
   /**
-   * After the routes changed: routes every suppressed or dropped alert still firing again (`alert.reroute`), an alert
-   * source's or a monitor's, so one a deleted or changed route kept quiet pages now. Never throws: the route change
-   * is committed, and if this fails, each source alert's next repeat routes it again anyway. A monitor never repeats
-   * while down, so its quiet alert is only routed again by the next route change; the failure is logged.
+   * The quiet alerts (an alert source's or a monitor's, suppressed or dropped and still firing) the routes would now
+   * page, less those left alone after failing on their own (`REROUTE_RETRY_MS`): what `reroute` takes next.
    */
-  reroute(): void {
-    const { shard, randomBytes: random, log } = this.options;
+  rerouteDue(now = Date.now()): ReturnType<typeof alertsToReroute> {
+    for (const [id, at] of this.rerouteFailed) if (at <= now) this.rerouteFailed.delete(id);
+    return alertsToReroute(this.options.shard.store).filter(
+      (one) => !this.rerouteFailed.has(one.row.id),
+    );
+  }
+
+  /**
+   * When the alarm should route quiet alerts again: now while any is due, else when the first one left alone after
+   * failing may be tried again; null when there is none.
+   */
+  rerouteAt(now: number): number | null {
+    if (this.rerouteDue(now).length > 0) return now;
+    let at: number | null = null;
+    for (const retry of this.rerouteFailed.values()) at = at === null ? retry : Math.min(at, retry);
+    return at;
+  }
+
+  /**
+   * After the routes changed, and on the shard's alarm while any is left: routes the quiet alerts the routes would now
+   * page again (`alert.reroute`), so one a deleted or changed route kept quiet pages now. At most `perRun` of them, in
+   * chunks of `chunk` (one mutation each); the rest wait for the alarm. A chunk refused or failing is run again one row
+   * at a time, and a row that fails alone is logged and left for `REROUTE_RETRY_MS`, so one bad row never holds the
+   * others back. Never throws. Returns whether any is left for the alarm to route.
+   */
+  reroute(chunk = REROUTE_CHUNK, perRun = REROUTE_PER_RUN): boolean {
+    const { log } = this.options;
     try {
-      const store = shard.store;
-      const quiet = [
-        ...quietAlerts(store).map((row) => ({ id: row.id })),
-        ...monitorAlertsToReroute(store).map((row) => ({
-          id: row.id,
-          // TODO(RFC 0008): the workspace's default locale, as for the incidents monitors open.
-          title: monitor_incident_title(
-            { name: store.get("monitors", row.monitorId)?.name ?? row.monitorId },
-            { locale: "en" },
-          ),
-        })),
-      ];
-      if (quiet.length === 0) return;
+      const due = this.rerouteDue();
       const now = Date.now();
+      const batch = due.slice(0, perRun);
+      for (let at = 0; at < batch.length; at += chunk) {
+        const rows = batch.slice(at, at + chunk);
+        if (rows.length === 1) this.rerouteRows(rows, now, true);
+        else if (this.rerouteRows(rows, now) === "failed") {
+          for (const one of rows) this.rerouteRows([one], now, true);
+        }
+      }
+      return due.length > batch.length;
+    } catch (error) {
+      log("routing quiet alerts again failed", { error: String(error) });
+      return true;
+    }
+  }
+
+  /**
+   * One `alert.reroute` of `rows`: `done` (or nothing to route, a `conflict`), else `failed`. `alone`: a single row run
+   * on its own after its chunk failed, recorded so it is left alone for a while.
+   */
+  private rerouteRows(
+    rows: ReturnType<typeof alertsToReroute>,
+    now: number,
+    alone = false,
+  ): "done" | "failed" {
+    const { shard, randomBytes: random, log } = this.options;
+    const store = shard.store;
+    let outcome: "done" | "failed" = "failed";
+    let reason: Record<string, unknown> = {};
+    try {
       const { result, changes } = shard.mutate({
         clientId: "alerts:reroute",
         mutationId: newId("rrt", now, random),
         actor: ALERTS_ACTOR,
         name: "alert.reroute",
         args: {
-          rows: quiet.map((row) => ({
-            rowId: row.id,
+          rows: rows.map((one) => ({
+            rowId: one.row.id,
             alertId: newId("alt", now, random),
             incidentId: newId("inc", now, random),
-            ...("title" in row && { title: row.title }),
+            ...(one.kind === "monitor" && {
+              // TODO(RFC 0008): the workspace's default locale, as for the incidents monitors open.
+              title: monitor_incident_title(
+                { name: store.get("monitors", one.row.monitorId)?.name ?? one.row.monitorId },
+                { locale: "en" },
+              ),
+            }),
           })),
           capacityTitle: CAPACITY_TITLE(),
         },
@@ -340,14 +397,16 @@ export class AlertIntake {
         internal: true,
       });
       if (result.ok) this.options.committed(result.version, changes);
-      else if (result.error.code !== "conflict") {
-        log("routing quiet alerts again refused", {
-          code: result.error.code,
-          message: result.error.message,
-        });
-      }
+      if (result.ok || result.error.code === "conflict") outcome = "done";
+      else reason = { code: result.error.code, message: result.error.message };
     } catch (error) {
-      log("routing quiet alerts again failed", { error: String(error) });
+      reason = { error: String(error) };
     }
+    if (outcome === "failed" && alone) {
+      const id = rows[0]!.row.id;
+      this.rerouteFailed.set(id, now + REROUTE_RETRY_MS);
+      log("routing a quiet alert again failed; tried again later", { row: id, ...reason });
+    }
+    return outcome;
   }
 }

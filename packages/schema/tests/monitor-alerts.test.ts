@@ -14,7 +14,10 @@ import {
   newId,
   pickRoute,
   quietMonitorAlerts,
+  MAX_ROUTE_MONITORS,
+  MAX_ROUTE_SOURCES,
   ROUTE_ALL_MONITORS,
+  ROUTE_ALL_SOURCES,
   runMutation,
   serverMutations,
   type BrigadeTables,
@@ -265,6 +268,71 @@ describe("matching monitors", () => {
     expect(pickRoute([route([ROUTE_ALL_MONITORS, source])], source, alert, false).reason).toBe(
       "matched",
     );
+  });
+
+  test("every source said explicitly keeps a route's sources when it names monitors; routes saved before keep their meaning", () => {
+    const route = (sourceIds: string[]) => ({
+      id: "rte_x",
+      name: "R",
+      position: 0,
+      match: { sourceIds, severities: [], labels: [] },
+      action: { kind: "drop" as const },
+      createdAt: T,
+      createdBy: "usr_ana",
+      updatedAt: T,
+    });
+    const monitor = newId("mon", T, random);
+    const source = newId("src", T, random);
+    const other = newId("src", T, random);
+    const alert: NormalizedAlert = {
+      dedupKey: "k",
+      title: "Checkout is down",
+      severity: "high",
+      status: "firing",
+      link: null,
+      labels: { monitor: "Checkout", kind: "http" },
+    };
+    const matched = (sourceIds: string[], from: string) =>
+      pickRoute([route(sourceIds)], from, alert, false).reason === "matched";
+    // Saved before monitors were routed: empty is every source and no monitor; named sources are those only.
+    expect([matched([], source), matched([], monitor)]).toEqual([true, false]);
+    expect([matched([source], source), matched([source], other)]).toEqual([true, false]);
+    // Every source beside monitors: every source and those monitors.
+    expect(
+      [source, other, monitor].map((from) => matched([ROUTE_ALL_SOURCES, monitor], from)),
+    ).toEqual([true, true, true]);
+    expect(matched([ROUTE_ALL_SOURCES], monitor)).toBe(false);
+    // Monitors only: no source.
+    expect([matched([monitor], source), matched([monitor], monitor)]).toEqual([false, true]);
+  });
+
+  test("a route names up to 20 sources and, apart, up to 100 monitors", () => {
+    const db = store();
+    const create = (sourceIds: string[]) =>
+      runMutation(
+        mutations,
+        "alertRoute.create",
+        {
+          id: newId("rte", T, random),
+          name: "R",
+          match: { sourceIds, severities: [], labels: [] },
+          action: { kind: "suppress" },
+        },
+        db,
+        as("admin"),
+      );
+    const sources = Array.from({ length: MAX_ROUTE_SOURCES }, () => newId("src", T, random));
+    const many = Array.from({ length: MAX_ROUTE_MONITORS }, () => newId("mon", T, random));
+    expect(create([...sources, ...many])).toMatchObject({ ok: true });
+    expect(create([ROUTE_ALL_SOURCES, ...many])).toMatchObject({ ok: true });
+    expect(create([...sources, newId("src", T, random)])).toMatchObject({
+      ok: false,
+      error: { issues: [{ message: "At most 20 alert sources" }] },
+    });
+    expect(create([...many, newId("mon", T, random)])).toMatchObject({
+      ok: false,
+      error: { issues: [{ message: "At most 100 monitors" }] },
+    });
   });
 
   test("routes save monitors and every monitor, and refuse anything else", () => {
@@ -528,6 +596,12 @@ describe("route actions", () => {
       alertRoute: { outcome: "grouped" },
     });
     expect(db.get("incidents", incident!.id)?.severity).toBe("sev1");
+    // Grouping pages nobody by itself: the incident's timeline says the monitor joined it.
+    expect(
+      evaluateQuery(incidentTimeline, { id: incident!.id }, db).filter(
+        (entry) => entry.kind === "alert_grouped",
+      ),
+    ).toEqual([expect.objectContaining({ monitorId: id, name: "Checkout", actor: "sys_monitors" })]);
 
     // The Grafana alert resolving does not close an incident the monitor still holds.
     ok(
@@ -547,18 +621,24 @@ describe("route actions", () => {
     );
     expect(db.get("incidents", incident!.id)?.status).toBe("triage");
 
-    // The monitor's recovery resolves its alert and notes it on the incident, which stays for people, as always.
-    expect(types(report(db, id, true, T + 5000))).toEqual([
+    // The monitor recovering last settles the incident as the Grafana alert's resolve would have: nobody worked on
+    // it, so it resolves, as the alerts' actor (an incident the monitor opened would stay for people).
+    const recovered = ok(report(db, id, true, T + 5000));
+    expect(types(recovered)).toEqual([
       "monitor.checked",
       "monitor.status_changed",
       "alert.resolved",
+      "incident.status_changed",
     ]);
-    expect(db.get("incidents", incident!.id)?.status).toBe("triage");
-    expect(evaluateQuery(incidentTimeline, { id: incident!.id }, db).at(-1)).toMatchObject({
-      kind: "alert_resolved",
-      monitorId: id,
+    expect(recovered.events[2]?.data).toMatchObject({
       reason: "recovered",
+      resolvedIncident: incident!.id,
     });
+    expect(db.get("incidents", incident!.id)?.status).toBe("resolved");
+    expect(evaluateQuery(incidentTimeline, { id: incident!.id }, db).slice(-2)).toMatchObject([
+      { kind: "alert_resolved", monitorId: id, reason: "recovered" },
+      { kind: "status_changed", to: "resolved", actor: "sys_alerts" },
+    ]);
   });
 
   test("group with no open incident for its key opens one; a closed one is not joined", () => {
@@ -662,7 +742,7 @@ describe("re-routing quiet monitor alerts", () => {
     expect(monitorAlertsToReroute(db).map((row) => row.id)).toEqual([quiet]);
     const result = ok(reroute(db, T + 5000));
     expect(types(result)).toEqual(["alert.resolved", "incident.declared", "alert.fired"]);
-    expect(result.events[0]?.data).toEqual({ id: quiet, monitorId: id, reason: "rerouted" });
+    expect(result.events[0]?.data).toEqual({ quiet: true, id: quiet, monitorId: id, reason: "rerouted" });
     const monitor = db.get("monitors", id)!;
     expect(monitor.alertId).not.toBe(quiet);
     expect(monitor).toMatchObject({ status: "down", incidentId: expect.any(String) });
@@ -737,5 +817,171 @@ describe("re-routing quiet monitor alerts", () => {
         }),
       ),
     ).toBe("forbidden");
+  });
+});
+
+describe("grouping a monitor onto an incident", () => {
+  const grafanaAlert = (status: "firing" | "resolved"): NormalizedAlert => ({
+    dedupKey: "checkout-latency",
+    title: "Checkout is slow",
+    severity: "warning",
+    status,
+    link: null,
+    labels: { monitor: "Checkout" },
+  });
+
+  /** A Grafana alert opens the group's incident; returns it, the source and a monitor that groups onto it. */
+  function grouped(db: Db, policyId?: string) {
+    const source = createSource(db);
+    const id = createMonitor(db, "Checkout", undefined, policyId);
+    createRoute(
+      db,
+      { sourceIds: [source, ROUTE_ALL_MONITORS] },
+      { ...OPEN, kind: "group", groupBy: "monitor" },
+      "By monitor",
+    );
+    ok(ingest(db, source, grafanaAlert("firing"), T + 1000));
+    const [incident] = db.scan("incidents");
+    return { source, id, incident: incident!.id };
+  }
+
+  test("an alert source's alert grouped onto an incident is said on its timeline", () => {
+    const db = store();
+    const { source, incident } = grouped(db);
+    ok(ingest(db, source, { ...grafanaAlert("firing"), dedupKey: "checkout-errors", title: "Checkout errors" }, T + 2000));
+    expect(
+      evaluateQuery(incidentTimeline, { id: incident }, db).filter(
+        (entry) => entry.kind === "alert_grouped",
+      ),
+    ).toEqual([
+      expect.objectContaining({ sourceId: source, name: "Checkout errors", actor: "sys_alerts" }),
+    ]);
+  });
+
+  test.each(["acknowledged", "monitoring"] as const)(
+    "a monitor that goes down while the group's incident is %s opens its own incident, which pages",
+    (taken) => {
+      const db = store();
+      const { id, incident } = grouped(db);
+      if (taken === "acknowledged") {
+        ok(runMutation(mutations, "incident.ack", { id: incident }, db, as("responder", T + 1500)));
+      } else {
+        ok(
+          runMutation(
+            mutations,
+            "incident.setStatus",
+            { id: incident, status: "monitoring" },
+            db,
+            as("responder", T + 1500),
+          ),
+        );
+      }
+      const result = ok(down(db, id, T + 3000));
+      // Not silent: a new incident, whose declaration pages (apps/api `asksForPage`).
+      expect(types(result)).toEqual([
+        "monitor.checked",
+        "monitor.status_changed",
+        "incident.declared",
+        "alert.fired",
+      ]);
+      const monitor = db.get("monitors", id)!;
+      expect(monitor.incidentId).not.toBe(incident);
+      expect(monitor.alertRoute).toMatchObject({ outcome: "opened" });
+      // The group keeps its incident: the new one holds no group key.
+      expect(db.get("alerts", monitor.alertId!)).toMatchObject({ groupKey: null });
+      expect(
+        evaluateQuery(incidentTimeline, { id: incident }, db).some(
+          (entry) => entry.kind === "alert_grouped",
+        ),
+      ).toBe(false);
+    },
+  );
+
+  test("a grouped monitor's policy never pages the incident an alert source opened", () => {
+    const db = store();
+    const policy = createPolicy(db, "Checkout on-call");
+    const fallback = createPolicy(db, "Default", true);
+    const { id, incident } = grouped(db, policy);
+    ok(down(db, id, T + 3000));
+    expect(db.get("monitors", id)?.incidentId).toBe(incident);
+    expect(incidentPolicy(db, incident)).toMatchObject({ policy: { id: fallback }, monitor: null });
+  });
+});
+
+describe("closing an incident a down monitor is on", () => {
+  const close = (db: Db, incident: string, at: number) =>
+    ok(
+      runMutation(
+        mutations,
+        "incident.setStatus",
+        { id: incident, status: "resolved" },
+        db,
+        as("responder", at),
+      ),
+    );
+
+  test("the monitor it opened lets go of its alert and alerts again at its next report", () => {
+    const db = store();
+    const id = createMonitor(db);
+    ok(down(db, id));
+    const first = db.get("monitors", id)!;
+    const result = close(db, first.incidentId!, T + 3000);
+    expect(types(result)).toEqual(["incident.status_changed", "alert.resolved"]);
+    expect(result.events[1]?.data).toEqual({
+      id: first.alertId,
+      monitorId: id,
+      reason: "incident_closed",
+    });
+    expect(db.get("monitors", id)).toMatchObject({ status: "down", alertId: null, incidentId: null });
+    expect(db.get("alerts", first.alertId!)).toMatchObject({ status: "resolved" });
+    // Still down: its next report alerts again (no status change), and the new incident pages.
+    expect(types(report(db, id, false, T + 4000))).toEqual([
+      "incident.declared",
+      "alert.fired",
+    ]);
+    const again = db.get("monitors", id)!;
+    expect(again.incidentId).not.toBe(first.incidentId);
+    expect(again.alertId).not.toBe(first.alertId);
+    // And once it fires again, the next report changes nothing.
+    expect(types(report(db, id, false, T + 5000))).toEqual([]);
+  });
+
+  test("a monitor grouped onto it lets go too, and alerts again through its route", () => {
+    const db = store();
+    const source = createSource(db);
+    const id = createMonitor(db, "Checkout");
+    createRoute(
+      db,
+      { sourceIds: [source, ROUTE_ALL_MONITORS] },
+      { ...OPEN, kind: "group", groupBy: "monitor" },
+      "By monitor",
+    );
+    ok(
+      ingest(
+        db,
+        source,
+        {
+          dedupKey: "checkout-latency",
+          title: "Checkout is slow",
+          severity: "warning",
+          status: "firing",
+          link: null,
+          labels: { monitor: "Checkout" },
+        },
+        T + 1000,
+      ),
+    );
+    ok(down(db, id, T + 2000));
+    const incident = db.get("monitors", id)!.incidentId!;
+    expect(db.get("monitors", id)?.alertRoute?.outcome).toBe("grouped");
+    expect(types(close(db, incident, T + 3000))).toEqual([
+      "incident.status_changed",
+      "alert.resolved",
+      "alert.resolved",
+    ]);
+    expect(db.get("monitors", id)).toMatchObject({ alertId: null, incidentId: null, alertRoute: null });
+    expect(types(report(db, id, false, T + 4000))).toEqual(["incident.declared", "alert.fired"]);
+    expect(db.get("monitors", id)).toMatchObject({ alertRoute: { outcome: "opened" } });
+    expect(db.get("monitors", id)?.incidentId).not.toBe(incident);
   });
 });

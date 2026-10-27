@@ -112,6 +112,9 @@ export type Alerts_CardInputs = {
 * | "monitors_hint" | "A route takes a monitor's alert only when it names it here. With no route taking it, a monitor that goes down opens its incident at its own severity, paged t..." |
 * | "monitors_empty" | "No monitors yet." |
 * | "monitors_only" | "No source is picked, so this route takes only the monitors below." |
+* | "every_source" | "Every source" |
+* | "match_nothing" | "Pick every source, a source or a monitor." |
+* | "group_monitor_labels" | "Monitors carry only the labels monitor and kind. Grouping by another label puts every monitor this route takes into one incident." |
 * | "deleted_monitor" | "a deleted monitor" |
 * | "recent_title" | "Recent alerts" |
 * | "recent_empty" | "No alerts received yet." |

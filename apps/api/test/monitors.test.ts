@@ -21,6 +21,7 @@ import {
   type HttpCheckConfig,
   type TcpCheckConfig,
 } from "../src/check.ts";
+import { AlertIntake, REROUTE_RETRY_MS } from "../src/alert-intake.ts";
 import { receiveHeartbeat } from "../src/index.ts";
 import { probeName, type ProbeDO, type ProbeReport } from "../src/probe.ts";
 import { Shard } from "../src/shard.ts";
@@ -672,6 +673,92 @@ describe("monitor down → alert → incident", () => {
         "incident.declared by sys_alerts",
         "alert.fired by sys_alerts",
       ]);
+    });
+  });
+
+  test("quiet monitor alerts are routed again in chunks, a run at a time, and a row that fails alone waits", async () => {
+    const ws = await workspace();
+    const at = Date.now();
+    const ids = Array.from({ length: 7 }, () => newId("mon", at, random));
+    for (const [index, id] of ids.entries()) {
+      await ws.run("monitor.createHttp", {
+        id,
+        name: `Checkout ${index + 1}`,
+        url: "https://example.com/health",
+        method: "GET",
+        expectedStatus: null,
+        keyword: null,
+        intervalSeconds: 60,
+        timeoutSeconds: 5,
+        regions: ["weur"],
+      });
+    }
+    const routeId = newId("rte", at, random);
+    await ws.run("alertRoute.create", {
+      id: routeId,
+      name: "Quiet monitors",
+      match: { sourceIds: ["monitors"], severities: [], labels: [] },
+      action: { kind: "suppress" },
+    });
+    const verdict = (id: string, up: boolean, when: number) => ({
+      reportId: newId("rep", when, random),
+      id,
+      at: when,
+      up,
+      latencyMs: 80,
+      colo: "CDG",
+      httpStatus: up ? 200 : 503,
+      error: up ? null : "status",
+    });
+    const now = Date.now();
+    expect(await ws.stub.report("weur", ids.map((id) => verdict(id, true, now - 2)))).toEqual(
+      ids.map(() => true),
+    );
+    expect(await ws.stub.report("weur", ids.map((id) => verdict(id, false, now - 1)))).toEqual(
+      ids.map(() => true),
+    );
+    // Deleted outside a member's socket: the shard has not routed them again yet.
+    await ws.run("alertRoute.delete", { id: routeId });
+    await ws.withShard((shard) => {
+      const logs: string[] = [];
+      const mutations: number[] = [];
+      let bad: string | undefined;
+      // One row whose `alert.reroute` is always refused: its chunk fails, so the chunk is run a row at a time.
+      const flaky = {
+        store: shard.store,
+        mutate: (input: Parameters<Shard["mutate"]>[0]) => {
+          const rows = (input.args as { rows: { rowId: string }[] }).rows;
+          mutations.push(rows.length);
+          if (rows.some((row) => row.rowId === bad)) {
+            return { result: { ok: false, error: { code: "internal", message: "boom" } }, changes: [] };
+          }
+          return shard.mutate(input);
+        },
+      } as unknown as Shard;
+      const intake = new AlertIntake({
+        shard: flaky,
+        randomBytes: random,
+        log: (message) => logs.push(message),
+        committed: () => {},
+        allow: async () => true,
+      });
+      const due = intake.rerouteDue();
+      expect(due).toHaveLength(7);
+      bad = due[0]!.row.id;
+      const paged = () => ids.filter((id) => shard.store.get("monitors", id)?.incidentId).length;
+      // At most 4 a run, 2 a chunk: the first chunk fails, then runs as two single rows.
+      expect(intake.reroute(2, 4)).toBe(true);
+      expect(mutations).toEqual([2, 1, 1, 2]);
+      expect(paged()).toBe(3);
+      expect(logs).toEqual(["routing a quiet alert again failed; tried again later"]);
+      // The next run (the alarm's) takes the rest, and leaves the failed row alone for now.
+      expect(intake.reroute(2, 4)).toBe(false);
+      expect(paged()).toBe(6);
+      expect(intake.rerouteDue()).toEqual([]);
+      const later = Date.now();
+      expect(intake.rerouteAt(later)).toBeGreaterThan(later);
+      // Once its wait is over, it is tried again.
+      expect(intake.rerouteDue(later + REROUTE_RETRY_MS).map((one) => one.row.id)).toEqual([bad]);
     });
   });
 

@@ -3,6 +3,7 @@
 // down when a quorum of its sources is down, which fires one alert per monitor and opens an incident through
 // `incident.declare`, run as the monitors' system actor (RFC 0003 "Alert → incident flow", RFC 0004).
 
+import { ALERTS_ACTOR, settleIncident } from "./alert-sources.ts";
 import { ACCOUNT_ACTOR } from "./devices.ts";
 import { idTime, isId } from "./id.ts";
 import { ID_CLOCK_SKEW_MS, INCIDENT_TITLE_MAX } from "./incidents.ts";
@@ -1226,14 +1227,16 @@ export const rotateHeartbeat = defineMutation({
 
 /**
  * Resolves the monitor's firing alert, if any. The incident it opened stays for people to close; its timeline
- * says why the alert ended (the monitor recovered, or someone paused or deleted it).
+ * says why the alert ended (the monitor recovered, or someone paused or deleted it). One it was grouped onto that an
+ * alert source opened settles as when that source's alert resolves (`settleIncident`): once the monitor recovers and
+ * nothing else fires on it, it resolves if nobody worked on it, as the alerts' actor.
  */
 function resolveAlert(
   store: MutationStore,
   monitor: MonitorRow,
-  reason: Exclude<AlertResolved["data"]["reason"], "rerouted">,
+  reason: Exclude<AlertResolved["data"]["reason"], "rerouted" | "incident_closed">,
   ctx: MutationContext,
-): AlertResolved[] {
+): DomainEvent[] {
   if (monitor.alertId === null) return [];
   const alert = store.get("alerts", monitor.alertId);
   if (!alert || alert.status !== "firing") return [];
@@ -1248,13 +1251,31 @@ function resolveAlert(
       ctx,
     );
   }
-  return [
-    {
-      type: "alert.resolved",
-      subject: alert.id,
-      data: { id: alert.id, monitorId: monitor.id, reason },
+  const settled =
+    reason === "recovered" &&
+    alert.outcome === "grouped" &&
+    !openedByMonitor(store, alert.incidentId)
+      ? settleIncident(store, alert.incidentId, { ...ctx, actor: ALERTS_ACTOR })
+      : { events: [], resolved: false };
+  const resolved: AlertResolved = {
+    type: "alert.resolved",
+    subject: alert.id,
+    data: {
+      id: alert.id,
+      monitorId: monitor.id,
+      reason,
+      ...(alert.incidentId === null && { quiet: true as const }),
+      ...(settled.resolved && alert.incidentId !== null && { resolvedIncident: alert.incidentId }),
     },
-  ];
+  };
+  return [resolved, ...settled.events];
+}
+
+/** Whether a monitor's alert opened `incidentId` (rather than grouping onto it): a monitor's incident stays for people. */
+function openedByMonitor(store: MutationStore, incidentId: string | null): boolean {
+  return store
+    .scan("alerts")
+    .some((row) => row.incidentId === incidentId && row.outcome !== "grouped");
 }
 
 /**
@@ -1440,7 +1461,15 @@ function moveTo(
   ctx: MutationContext,
   patch: Partial<Omit<MonitorRow, "id">>,
 ): { events: DomainEvent[] } | { failed: MutationResult } {
-  if (status === monitor.status) return { events: [] };
+  if (status === monitor.status) {
+    // Still down with no alert: people closed the incident it was on (`incident.setStatus` released it), so it
+    // alerts again, through the routes, as an alert source's alert sent again would (RFC 0007).
+    if (status !== "down" || monitor.alertId !== null) return { events: [] };
+    const fired = fireMonitorAlert(store, monitor, open, ctx);
+    if ("failed" in fired) return fired;
+    Object.assign(patch, fired.patch);
+    return { events: fired.events };
+  }
   const { id } = monitor;
   patch.status = status;
   patch.since = ctx.now;

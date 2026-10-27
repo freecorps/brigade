@@ -22,6 +22,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "alert_recovered" | "{a} recovered, so its alert resolved" |
 * | "alert_paused" | "{actor} paused {a}, so its alert resolved" |
 * | "alert_deleted" | "{actor} deleted {a}, so its alert resolved" |
+* | "alert_grouped_monitor" | "{a} went down and was grouped here" |
+* | "alert_grouped_source" | "The alert {a} fired and was grouped here" |
 * | "page_failed_undelivered" | "Couldn't page {a}: the push didn't go through" |
 * | "page_failed_unsupported" | "Couldn't page {a}: Brigade can't push to Android phones yet" |
 * | "page_failed_not_configured" | "Couldn't page {a}: push notifications aren't set up on this server" |
@@ -102,6 +104,8 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "alert_recovered") return /** @type {LocalizedString} */ (`${i?.a} se recuperou, e o alerta foi resolvido`);
 		if (i?.kind === "alert_paused") return /** @type {LocalizedString} */ (`${i?.actor} pausou ${i?.a}, e o alerta foi resolvido`);
 		if (i?.kind === "alert_deleted") return /** @type {LocalizedString} */ (`${i?.actor} excluiu ${i?.a}, e o alerta foi resolvido`);
+		if (i?.kind === "alert_grouped_monitor") return /** @type {LocalizedString} */ (`${i?.a} caiu e foi agrupado aqui`);
+		if (i?.kind === "alert_grouped_source") return /** @type {LocalizedString} */ (`O alerta ${i?.a} disparou e foi agrupado aqui`);
 		if (i?.kind === "page_failed_undelivered") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: o push não foi entregue`);
 		if (i?.kind === "page_failed_unsupported") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: o Brigade ainda não envia pushes para Android`);
 		if (i?.kind === "page_failed_not_configured") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: as notificações push não estão configuradas neste servidor`);
@@ -176,6 +180,8 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "alert_recovered") return /** @type {LocalizedString} */ (`${i?.a} recovered, so its alert resolved`);
 		if (i?.kind === "alert_paused") return /** @type {LocalizedString} */ (`${i?.actor} paused ${i?.a}, so its alert resolved`);
 		if (i?.kind === "alert_deleted") return /** @type {LocalizedString} */ (`${i?.actor} deleted ${i?.a}, so its alert resolved`);
+		if (i?.kind === "alert_grouped_monitor") return /** @type {LocalizedString} */ (`${i?.a} went down and was grouped here`);
+		if (i?.kind === "alert_grouped_source") return /** @type {LocalizedString} */ (`The alert ${i?.a} fired and was grouped here`);
 		if (i?.kind === "page_failed_undelivered") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: the push didn't go through`);
 		if (i?.kind === "page_failed_unsupported") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: Brigade can't push to Android phones yet`);
 		if (i?.kind === "page_failed_not_configured") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: push notifications aren't set up on this server`);

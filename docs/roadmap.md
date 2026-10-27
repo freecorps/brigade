@@ -346,8 +346,10 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Also done: monitor alerts through the routes (RFC 0007 "Monitor alerts through the routes"): a route takes a
     monitor only when it names it or every monitor (picked in the route editor), so routes saved before never do;
     open, group (with alert sources' alerts too), suppress and drop apply, a quiet monitor is routed again when the
-    routes change (and by the shard alarm if that failed), and no route or a route that cannot be carried out opens
-    the incident as before.
+    routes change (in chunks, the rest and any failed row by the shard alarm), and no route or a route that cannot be
+    carried out opens the incident as before. A route says "every source" explicitly beside its monitors; grouping is
+    said on the incident's timeline, and a monitor opens its own incident beside an acknowledged or mitigated one;
+    closing an incident a down monitor is on lets it alert again.
   - Left: Slack naming the alerts' actor; email ingest.
 - [x] Service catalog; custom fields; incident types; role definitions
   - Done: services per workspace (name, description, tier, owners: schedules or members, an optional escalation

@@ -113,6 +113,9 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "monitors_hint" | "A route takes a monitor's alert only when it names it here. With no route taking it, a monitor that goes down opens its incident at its own severity, paged t..." |
 * | "monitors_empty" | "No monitors yet." |
 * | "monitors_only" | "No source is picked, so this route takes only the monitors below." |
+* | "every_source" | "Every source" |
+* | "match_nothing" | "Pick every source, a source or a monitor." |
+* | "group_monitor_labels" | "Monitors carry only the labels monitor and kind. Grouping by another label puts every monitor this route takes into one incident." |
 * | "deleted_monitor" | "a deleted monitor" |
 * | "recent_title" | "Recent alerts" |
 * | "recent_empty" | "No alerts received yet." |
@@ -282,6 +285,9 @@ export const alerts_card = /** @type {((inputs: Alerts_CardInputs, options?: { l
 		if (i?.part === "monitors_hint") return /** @type {LocalizedString} */ (`Uma rota só recebe o alerta de um monitor quando o seleciona aqui. Sem rota que o receba, um monitor que cai abre seu incidente com a própria severidade, acionado pela sua política.`);
 		if (i?.part === "monitors_empty") return /** @type {LocalizedString} */ (`Nenhum monitor ainda.`);
 		if (i?.part === "monitors_only") return /** @type {LocalizedString} */ (`Nenhuma fonte selecionada: esta rota recebe só os monitores abaixo.`);
+		if (i?.part === "every_source") return /** @type {LocalizedString} */ (`Todas as fontes`);
+		if (i?.part === "match_nothing") return /** @type {LocalizedString} */ (`Escolha todas as fontes, uma fonte ou um monitor.`);
+		if (i?.part === "group_monitor_labels") return /** @type {LocalizedString} */ (`Monitores só têm os rótulos monitor e kind. Agrupar por outro rótulo coloca todos os monitores desta rota em um único incidente.`);
 		if (i?.part === "deleted_monitor") return /** @type {LocalizedString} */ (`um monitor excluído`);
 		if (i?.part === "recent_title") return /** @type {LocalizedString} */ (`Alertas recentes`);
 		if (i?.part === "recent_empty") return /** @type {LocalizedString} */ (`Nenhum alerta recebido ainda.`);
@@ -445,6 +451,9 @@ export const alerts_card = /** @type {((inputs: Alerts_CardInputs, options?: { l
 		if (i?.part === "monitors_hint") return /** @type {LocalizedString} */ (`A route takes a monitor's alert only when it names it here. With no route taking it, a monitor that goes down opens its incident at its own severity, paged through its policy.`);
 		if (i?.part === "monitors_empty") return /** @type {LocalizedString} */ (`No monitors yet.`);
 		if (i?.part === "monitors_only") return /** @type {LocalizedString} */ (`No source is picked, so this route takes only the monitors below.`);
+		if (i?.part === "every_source") return /** @type {LocalizedString} */ (`Every source`);
+		if (i?.part === "match_nothing") return /** @type {LocalizedString} */ (`Pick every source, a source or a monitor.`);
+		if (i?.part === "group_monitor_labels") return /** @type {LocalizedString} */ (`Monitors carry only the labels monitor and kind. Grouping by another label puts every monitor this route takes into one incident.`);
 		if (i?.part === "deleted_monitor") return /** @type {LocalizedString} */ (`a deleted monitor`);
 		if (i?.part === "recent_title") return /** @type {LocalizedString} */ (`Recent alerts`);
 		if (i?.part === "recent_empty") return /** @type {LocalizedString} */ (`No alerts received yet.`);

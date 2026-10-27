@@ -151,6 +151,11 @@ const MAX_SALVAGE_LENGTH = 1024 * 1024;
 export const REPAIR_BUDGET_MS = 5 * 1000;
 /** How long the alarm waits on a status page push (RFC 0012) before it lets the push finish in the background. */
 export const STATUS_PUSH_BUDGET_MS = 5 * 1000;
+/**
+ * The least the alarm waits on a status page push when an escalation level is due sooner than
+ * `STATUS_PUSH_BUDGET_MS`, so a level due at once (or one whose timer failed) still leaves the push a moment.
+ */
+export const STATUS_PUSH_MIN_BUDGET_MS = 100;
 
 export class WorkspaceDO extends DurableObject<Env> {
   /** `REPAIR_BUDGET_MS`; a field so tests can shorten it. */
@@ -801,12 +806,23 @@ export class WorkspaceDO extends DurableObject<Env> {
     await this.drainOutbox();
     // The status page after the outbox: a page never waits on KV. Never throws; KV calls have no deadline of their
     // own, so past `STATUS_PUSH_BUDGET_MS` the push carries on in the background, the push backs off (the alarm does
-    // not come straight back for it) and the alarm goes on (the next escalation's time is set below).
+    // not come straight back for it) and the alarm goes on (the next escalation's time is set below). The wait ends
+    // sooner when an escalation level falls due first, so a slow push never makes a level late.
     const workspace = this.shard.workspace();
     if (workspace !== undefined) {
+      let budget = this.statusBudgetMs;
+      try {
+        const level = this.escalations.nextAt();
+        if (level !== null) {
+          budget = Math.min(budget, Math.max(STATUS_PUSH_MIN_BUDGET_MS, level - Date.now()));
+        }
+      } catch (error) {
+        budget = Math.min(budget, STATUS_PUSH_MIN_BUDGET_MS);
+        this.log("reading the escalation timers failed", { error });
+      }
       let timer: ReturnType<typeof setTimeout> | undefined;
       const late = new Promise<"late">((resolve) => {
-        timer = setTimeout(() => resolve("late"), this.statusBudgetMs);
+        timer = setTimeout(() => resolve("late"), budget);
       });
       const outcome = await Promise.race([
         this.status.publish(workspace, Date.now()),

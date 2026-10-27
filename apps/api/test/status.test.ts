@@ -7,6 +7,7 @@ import { describe, expect, test, vi } from "vite-plus/test";
 import type { BrigadeEvent } from "../src/outbox.ts";
 import { Shard } from "../src/shard.ts";
 import {
+  STATUS_PUSH_ABANDON_MS,
   STATUS_REFRESH_MS,
   STATUS_SLUG_GRACE_MS,
   statusKey,
@@ -154,6 +155,50 @@ const owners = async (address: string) =>
   ).results.map((row) => row.workspace_id);
 
 const snapshot = (address: string) => env.STATUS!.get<StatusSnapshot>(statusKey(address), "json");
+
+/**
+ * A KV whose first put hangs until `settle`: `true` lands its write then (late), `false` fails it. Every other call
+ * goes to the real namespace.
+ */
+function hangingFirstPut() {
+  let release: ((ok: boolean) => void) | undefined;
+  let puts = 0;
+  const kv = {
+    put: (key: string, value: string) => {
+      if (++puts > 1) return env.STATUS!.put(key, value);
+      return new Promise<void>((resolve, reject) => {
+        release = (ok) => {
+          if (ok) void env.STATUS!.put(key, value).then(() => resolve(), reject);
+          else reject(new Error("KV gave up"));
+        };
+      });
+    },
+    delete: (key: string) => env.STATUS!.delete(key),
+  } as unknown as KVNamespace;
+  return { kv, puts: () => puts, settle: (ok: boolean) => release!(ok) };
+}
+
+/** A publisher on the shard's own storage with `kv`, recording its logs and the alarm times it asks for. */
+function publisherWith(state: DurableObjectState, kv: KVNamespace, db: D1Database = env.DB) {
+  const shard = new Shard(state.storage, {
+    shard: "workspace",
+    randomBytes: random,
+    log: () => {},
+  });
+  const logs: string[] = [];
+  const wakes: number[] = [];
+  const publisher = new StatusPublisher({
+    shard,
+    sql: state.storage.sql,
+    kv,
+    db,
+    randomBytes: random,
+    log: (message) => logs.push(message),
+    committed: () => {},
+    wake: (at) => wakes.push(at),
+  });
+  return { shard, publisher, logs, wakes };
+}
 
 describe("PUT /workspaces/:id/status-page", () => {
   test("an owner sets the page up: the slug in D1, the row and its event in the shard", async () => {
@@ -503,6 +548,182 @@ describe("the snapshot", () => {
     expect(result.afterSecond!).toBeGreaterThan(result.second + 400);
     expect(result.configured).toEqual({ ok: true });
     expect(logs).toContain("publishing the status page failed");
+  });
+
+  test("a push that hangs, then lands, brings the alarm back at once for a change made meanwhile", async () => {
+    const t = await team();
+    const address = slug();
+    await configure(t, t.ana, settings(address));
+    const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {
+      const kv = hangingFirstPut();
+      const { publisher, logs, wakes } = publisherWith(state, kv.kv);
+      const start = Date.now() + 60_000;
+      const hung = publisher.publish(t.id, start);
+      expect(kv.puts()).toBe(1);
+      expect(
+        await publisher.configure(t.id, ana, settings(address, { title: "Acme Status" })),
+      ).toEqual({ ok: true });
+      // Due again while the first is out: no second push beside it, and it backs off.
+      await publisher.publish(t.id, start + 2000);
+      expect(kv.puts()).toBe(1);
+      expect(logs.filter((m) => m === "publishing the status page failed")).toHaveLength(1);
+      // Within the backoff nothing is due: nothing is logged.
+      await publisher.publish(t.id, start + 2001);
+      expect(logs.filter((m) => m === "publishing the status page failed")).toHaveLength(1);
+      kv.settle(true);
+      await hung;
+      // Landed: the change made meanwhile is still to push, and the alarm is asked back for it now.
+      expect(wakes.at(-1)!).toBeLessThanOrEqual(start + STATUS_PUSH_ABANDON_MS);
+      const at = publisher.nextAt(start + 3000);
+      expect(at).toBe(start + 3000);
+      await publisher.publish(t.id, at!);
+      expect(kv.puts()).toBe(2);
+    });
+    expect(await snapshot(address)).toMatchObject({ title: "Acme Status" });
+  });
+
+  for (const lands of [true, false]) {
+    test(`a push hung past the ceiling is abandoned, and when it ${lands ? "lands late" : "fails"} the page is pushed again`, async () => {
+      const t = await team();
+      const address = slug();
+      await configure(t, t.ana, settings(address));
+      const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+      await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {
+        const kv = hangingFirstPut();
+        const { publisher, logs, wakes } = publisherWith(state, kv.kv);
+        const start = Date.now() + 60_000;
+        const hung = publisher.publish(t.id, start);
+        expect(
+          await publisher.configure(t.id, ana, settings(address, { title: "Acme Status" })),
+        ).toEqual({ ok: true });
+        // Still out after the ceiling: given up on, and a new push writes the change.
+        await publisher.publish(t.id, start + STATUS_PUSH_ABANDON_MS);
+        expect(logs).toContain("abandoning a stuck status page push");
+        expect(kv.puts()).toBe(2);
+        expect(await snapshot(address)).toMatchObject({ title: "Acme Status" });
+        // The abandoned one settles; landing, its older snapshot would be the last write.
+        kv.settle(lands);
+        await hung;
+        if (lands) expect(await snapshot(address)).toMatchObject({ title: "Acme" });
+        expect(logs).not.toContain("publishing the status page failed");
+        const later = start + STATUS_PUSH_ABANDON_MS + 2000;
+        expect(wakes.at(-1)!).toBeLessThanOrEqual(later);
+        expect(publisher.nextAt(later)).toBe(later);
+        await publisher.publish(t.id, later);
+        expect(kv.puts()).toBe(3);
+        expect(publisher.nextAt(later + 2000)).toBeGreaterThan(later + 2000);
+      });
+      expect(await snapshot(address)).toMatchObject({ title: "Acme Status" });
+    });
+  }
+
+  test("a slug taken back and given up again while D1 releases it keeps the newer record, released after its grace", async () => {
+    const t = await team();
+    const first = slug();
+    const second = slug();
+    const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    await configure(t, t.ana, settings(first));
+    await configure(t, t.ana, settings(second));
+    await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {
+      let publisher: StatusPublisher | undefined;
+      let interposed = false;
+      // The push's release of `first`: before it reaches D1, the page takes `first` back and gives it up again.
+      const db = {
+        batch: env.DB.batch.bind(env.DB),
+        prepare: (query: string) => {
+          const statement = env.DB.prepare(query);
+          if (interposed || !query.startsWith("delete from status_slug")) return statement;
+          interposed = true;
+          return {
+            bind: (...values: unknown[]) => ({
+              run: async () => {
+                expect(await publisher!.configure(t.id, ana, settings(first))).toEqual({
+                  ok: true,
+                });
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                expect(await publisher!.configure(t.id, ana, settings(second))).toEqual({
+                  ok: true,
+                });
+                return statement.bind(...values).run();
+              },
+            }),
+          };
+        },
+      } as unknown as D1Database;
+      const made = publisherWith(state, env.STATUS!, db);
+      publisher = made.publisher;
+      const { shard } = made;
+      const before = shard.store.get("status_retired", first)!;
+      const start = Date.now() + 60_000;
+      await publisher.publish(t.id, start);
+      await publisher.publish(t.id, start + STATUS_SLUG_GRACE_MS + 2000);
+      expect(interposed).toBe(true);
+      // The newer retirement stays, with the slug still held for it.
+      const after = shard.store.get("status_retired", first);
+      expect(after?.at).toBeGreaterThan(before.at);
+      expect(await owners(first)).toEqual([t.id]);
+      // Its own push deletes the snapshot again, and releases the slug after its grace.
+      await publisher.publish(t.id, start + STATUS_SLUG_GRACE_MS + 4000);
+      const cleared = shard.store.get("status_retired", first)?.cleared;
+      expect(cleared).toBe(start + STATUS_SLUG_GRACE_MS + 4000);
+      await publisher.publish(t.id, cleared! + STATUS_SLUG_GRACE_MS + 2000);
+      expect(shard.store.get("status_retired", first)).toBeUndefined();
+    });
+    expect(await owners(first)).toEqual([]);
+    expect(await owners(second)).toEqual([t.id]);
+  });
+
+  test("editing or removing a published update changes the snapshot in KV", async () => {
+    const t = await team();
+    const address = slug();
+    await configure(t, t.ana, settings(address));
+    const caio: Actor = { kind: "user", id: t.caio.id, role: "responder" };
+    const incident = newId("inc", Date.now(), random);
+    await t.run(
+      "incident.declare",
+      { id: incident, title: "Checkout is down", severity: "sev2" },
+      caio,
+    );
+    for (const body of ["We're looking into it.", "A fix is rolling out."]) {
+      expect(
+        await t.run(
+          "incident.publishUpdate",
+          {
+            id: incident,
+            title: "Checkout errors",
+            status: "identified",
+            impact: "degraded",
+            componentIds: [],
+            body,
+          },
+          caio,
+        ),
+      ).toMatchObject({ ok: true });
+    }
+    await t.push();
+    const bodies = async () =>
+      (await snapshot(address))!.active
+        .flatMap((shown) => shown.updates.map((update) => update.body))
+        .sort();
+    expect(await bodies()).toEqual(["A fix is rolling out.", "We're looking into it."]);
+    const [older, newer] = await t.withShard(
+      (shard) => shard.store.get("status_incidents", incident)!.updates,
+    );
+    expect(
+      await t.run(
+        "incident.editPublishedUpdate",
+        { id: incident, updateId: older!.id, body: "We're looking into slow checkouts." },
+        caio,
+      ),
+    ).toMatchObject({ ok: true });
+    await t.push();
+    expect(await bodies()).toEqual(["A fix is rolling out.", "We're looking into slow checkouts."]);
+    expect(
+      await t.run("incident.removePublishedUpdate", { id: incident, updateId: newer!.id }, caio),
+    ).toMatchObject({ ok: true });
+    await t.push();
+    expect(await bodies()).toEqual(["We're looking into slow checkouts."]);
   });
 
   test("the shard's alarm pushes it", async () => {

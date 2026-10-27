@@ -110,11 +110,12 @@ the same kind of decision as what monitors watch, so it is an admin's call.
   (`cleared`), and deletes the D1 row only `STATUS_SLUG_GRACE_MS` (5 minutes) later: a KV delete takes up to a
   minute to reach every location, and KV's cache and the edge cache may each keep the old page 30 s after that.
   Otherwise another workspace could claim the slug and have its fresh snapshot deleted, or served next to the old
-  one. Taking a slug back before that ran just drops it from the list. Without a `STATUS` binding nothing was ever
+  one. Taking a slug back before that ran just drops it from the list; a release only ever deletes the record it
+  read, so a slug taken back and given up again meanwhile keeps its newer record and is released after its own grace. Without a `STATUS` binding nothing was ever
   published under a slug, so one given up is released at once.
 - **Claims and releases need no lock.** Each claim stamps the D1 row with its time (`created_at`; claiming a slug the
-  workspace already holds rewrites it), and a release deletes only a row stamped no later than what it releases (the
-  claim it undoes, or when the slug was given up). A release that lands late, after the slug was taken back, finds
+  workspace already holds rewrites it), and a release deletes only a row stamped no later than the claim it undoes,
+  or stamped before the slug was given up (strictly: a claim in the same millisecond is a claim made since). A release that lands late, after the slug was taken back, finds
   a newer stamp and leaves it. So `configure` never waits on a push, and a push stuck on KV never holds it.
 - **Custom domains are later**: a domain would map to a slug (Cloudflare for SaaS custom hostnames) and the same
   route would serve it.
@@ -145,9 +146,14 @@ contains the internal title, any member, workspace, incident or component id).
 - **A slow KV never holds the paging path.** KV calls have no deadline of their own. The alarm waits on a push at most
   `STATUS_PUSH_BUDGET_MS` (5 s); past that the push carries on in the background and backs off as if it had failed,
   so the alarm comes back later, not at once. One push runs at a time (two could land in KV out of order): an alarm
-  that finds the last one still out does not wait on it and backs off again, doubling to 5 minutes. Escalation levels
-  fire before the push in every alarm and the alarm's next time includes theirs, so a level is never late because of
-  the page (tested with a KV that never answers).
+  that finds the last one still out when a push is due does not wait on it and backs off again, doubling to 5
+  minutes. A push still out after `STATUS_PUSH_ABANDON_MS` (3 minutes) is abandoned and the next due push starts;
+  the abandoned one records nothing, and when it settles it marks the page to be pushed again (`status_repush`,
+  cleared only by a push started after it), so its write, landing late, is never the last. Whenever a push settles
+  it brings the alarm forward for what is due by then, so a change made while it was out goes out at once. Escalation
+  levels fire before the push in every alarm, the alarm's next time includes theirs, and the alarm waits on the push
+  no longer than until the next level is due (at least 100 ms), so a level is never late because of the page (tested
+  with a KV that never answers and with one that answers after 3 s).
 - **Rebuilt daily.** A public page is pushed again at least once a day (`STATUS_REFRESH_MS`) even when nothing changed,
   under the same backoff, so the 90-day history drops what aged out and "Updated" stays true on a quiet page. One KV
   write a day per page.

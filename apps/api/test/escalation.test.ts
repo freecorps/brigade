@@ -505,6 +505,63 @@ describe("fallbacks (the paging path's)", () => {
     }
   });
 
+  test("a slow status page push stops holding the alarm when a level falls due, so the level fires on time", async () => {
+    const ws = await workspace();
+    for (const member of [caio, eva]) await ws.device(member);
+    await withPolicy(ws);
+    const { event, incident } = await ws.declare(MONITOR_ACTOR);
+    await deliver(event, relay().send);
+    await ws.run(ana, "statusPage.configure", {
+      slug: `esc-${Date.now().toString(36)}`,
+      title: "Acme",
+      locale: "en",
+      enabled: true,
+    });
+    // A KV that answers, but only after 3 s: inside the push budget (5 s), long after the level is due.
+    const slow = () => new Promise<void>((resolve) => setTimeout(resolve, 3000));
+    const real = await ws.withShard((shard, state, instance) => {
+      const real: unknown = Reflect.get(instance, "status");
+      Reflect.set(
+        instance,
+        "status",
+        new StatusPublisher({
+          shard,
+          sql: state.storage.sql,
+          kv: { put: slow, delete: slow } as unknown as KVNamespace,
+          db: env.DB,
+          randomBytes: random,
+          log: () => {},
+          committed: () => {},
+          wake: () => {},
+        }),
+      );
+      return real;
+    });
+    try {
+      const dueAt = await ws.withShard((shard) => {
+        const at = Date.now() + 300;
+        const row = shard.store.get("incidents", incident)!;
+        shard.store.update("incidents", incident, {
+          escalation: { ...row.escalation!, nextAt: at },
+        });
+        shard.store.update("escalation_timers", incident, { at });
+        return at;
+      });
+      const firstDone = await ws.withShard(async (_shard, _state, instance) => {
+        await instance.alarm();
+        return Date.now();
+      });
+      // The alarm stopped waiting on the push when the level fell due, and came back for the level (the runtime may
+      // have run that alarm already; if not, it runs now).
+      expect(firstDone - dueAt).toBeLessThan(500);
+      await runDurableObjectAlarm(ws.stub);
+      expect(await ws.levels(incident)).toHaveLength(2);
+      expect(Date.now() - dueAt).toBeLessThan(1000);
+    } finally {
+      await ws.withShard((_shard, _state, instance) => Reflect.set(instance, "status", real));
+    }
+  });
+
   test("a dead-lettered level is recorded on the timeline", async () => {
     const ws = await workspace();
     for (const member of [caio, eva]) await ws.device(member);

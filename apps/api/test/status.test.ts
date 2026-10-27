@@ -185,6 +185,32 @@ function hangingFirstPut() {
   return { kv, puts: () => puts, settle: (ok: boolean) => release!(ok) };
 }
 
+/**
+ * Parks the shard's own publisher: its alarm, armed by configuring, would otherwise race a test's own publisher on
+ * the same storage (push the change first, or fail it once more and double the backoff). `unparkStatus` puts it back.
+ */
+const parkStatus = (t: Team) =>
+  runInDurableObject(t.stub, (instance: WorkspaceDO) => {
+    const real = Reflect.get(instance, "status") as StatusPublisher;
+    const parked = new Proxy(real, {
+      get: (target, key) => {
+        if (key === "publish") return () => Promise.resolve();
+        const value: unknown = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    Reflect.set(instance, "status", parked);
+    Reflect.set(instance, "parkedStatus", real);
+  });
+
+/** Puts the shard's own publisher back to work, and answers it. */
+const unparkStatus = (t: Team) =>
+  runInDurableObject(t.stub, (instance: WorkspaceDO) => {
+    const real = Reflect.get(instance, "parkedStatus") as StatusPublisher;
+    Reflect.set(instance, "status", real);
+    return real;
+  });
+
 /** A publisher on the shard's own storage with `kv`, recording its logs and the alarm times it asks for. */
 function publisherWith(state: DurableObjectState, kv: KVNamespace, db: D1Database = env.DB) {
   const shard = new Shard(state.storage, {
@@ -569,20 +595,8 @@ describe("the snapshot", () => {
   test("a failed push keeps the change pending and backs off", async () => {
     const t = await team();
     const address = slug();
-    // The shard's own publisher stays parked until the end: its alarm, armed by configuring, would otherwise race the
-    // failing push below (push the change first, or fail it once more and double the backoff).
-    await runInDurableObject(t.stub, (instance: WorkspaceDO) => {
-      const real = Reflect.get(instance, "status") as StatusPublisher;
-      const parked = new Proxy(real, {
-        get: (target, key) => {
-          if (key === "publish") return () => Promise.resolve();
-          const value: unknown = Reflect.get(target, key);
-          return typeof value === "function" ? value.bind(target) : value;
-        },
-      });
-      Reflect.set(instance, "status", parked);
-      Reflect.set(instance, "parkedStatus", real);
-    });
+    // The shard's own publisher stays parked until the end, so only the failing push below runs.
+    await parkStatus(t);
     await configure(t, t.ana, settings(address));
     const logs: string[] = [];
     await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {
@@ -614,11 +628,8 @@ describe("the snapshot", () => {
     });
     expect(logs).toContain("publishing the status page failed");
     // Past the backoff, the shard's own publisher, back at work, pushes it.
-    await runInDurableObject(t.stub, async (instance: WorkspaceDO) => {
-      const publisher = Reflect.get(instance, "parkedStatus") as StatusPublisher;
-      Reflect.set(instance, "status", publisher);
-      await publisher.publish(t.id, Date.now() + 120_000);
-    });
+    const publisher = await unparkStatus(t);
+    await runInDurableObject(t.stub, () => publisher.publish(t.id, Date.now() + 120_000));
     expect(await snapshot(address)).toMatchObject({ title: "Acme" });
   });
 
@@ -682,6 +693,8 @@ describe("the snapshot", () => {
   test("a push that hangs, then lands, brings the alarm back at once for a change made meanwhile", async () => {
     const t = await team();
     const address = slug();
+    // Only the hanging publisher below pushes: the shard's own, run by the alarm configuring arms, would push first.
+    await parkStatus(t);
     await configure(t, t.ana, settings(address));
     const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
     await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {
@@ -716,6 +729,7 @@ describe("the snapshot", () => {
     test(`a push hung past the ceiling is abandoned, and when it ${lands ? "lands late" : "fails"} the page is pushed again`, async () => {
       const t = await team();
       const address = slug();
+      await parkStatus(t);
       await configure(t, t.ana, settings(address));
       const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
       await runInDurableObject(t.stub, async (_instance: WorkspaceDO, state) => {

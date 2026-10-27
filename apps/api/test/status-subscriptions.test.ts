@@ -93,9 +93,14 @@ async function signUp(name: string): Promise<Person> {
   return { id: body.user.id, cookie: await sessionCookie(email, PASSWORD) };
 }
 
-/** Ana owns a workspace with a public page; Caio is a responder there. */
-async function team(locale = "en") {
-  const [ana, caio] = await Promise.all(["Ana", "Caio"].map((name) => signUp(name)));
+/**
+ * Ana owns a workspace with a public page; Caio is a responder there. `crew` reuses an earlier team's Ana and Caio:
+ * signing up hashes passwords, the slowest part of a team, so a test needing many pages signs up once.
+ */
+async function team(locale = "en", crew?: { ana: Person; caio: Person }) {
+  const [ana, caio] = crew
+    ? [crew.ana, crew.caio]
+    : await Promise.all(["Ana", "Caio"].map((name) => signUp(name)));
   const created = await api("/workspaces", {
     method: "POST",
     headers: { Cookie: ana!.cookie },
@@ -398,16 +403,19 @@ describe("double opt-in", () => {
     expect(await forged.text()).toContain("This link has expired");
   });
 
+  // Six workspaces, each with its page and a confirmation: on a loaded runner that passes the default 5 s.
   test(`at most ${STATUS_CONFIRM_DAILY_CAP} confirmations a day to one address, from every page`, async () => {
     const email = visitor();
     const { sent, sender } = recorder();
+    let crew: Team | undefined;
     for (let index = 0; index < STATUS_CONFIRM_DAILY_CAP + 1; index++) {
-      const t = await team();
+      const t = await team("en", crew);
+      crew ??= t;
       await subscribe(t.address, { email });
       await deliver(await t.events("status_subscriber.requested"), sender);
     }
     expect(sent).toHaveLength(STATUS_CONFIRM_DAILY_CAP);
-  });
+  }, 20_000);
 });
 
 describe("notifications", () => {
@@ -566,6 +574,7 @@ describe("one inbox, many spellings", () => {
     expect(canonicalEmail("+only@example.com")).toBe("+only@example.com");
   });
 
+  // Seven workspaces, as above.
   test("every spelling is one subscriber on a page, and one inbox's cap across pages", async () => {
     const local = `victim${Date.now().toString(36)}${++addresses}`;
     const spelling = (n: number) => `${local.slice(0, 3)}.${local.slice(3)}+${n}@googlemail.com`;
@@ -575,12 +584,12 @@ describe("one inbox, many spellings", () => {
     expect(await rows(t.id)).toMatchObject([{ email: `${local}@gmail.com`, confirm_sends: 2 }]);
     const { sent, sender } = recorder();
     for (let index = 0; index < STATUS_CONFIRM_DAILY_CAP + 1; index++) {
-      const other = await team();
+      const other = await team("en", t);
       await subscribe(other.address, { email: spelling(index + 2) });
       await deliver(await other.events("status_subscriber.requested"), sender);
     }
     expect(sent).toHaveLength(STATUS_CONFIRM_DAILY_CAP);
-  });
+  }, 20_000);
 
   test(`a domain gets at most ${STATUS_CONFIRM_DOMAIN_DAILY_CAP} confirmations a day, from every page`, async () => {
     const domain = `catch-all-${Date.now().toString(36)}-${++addresses}.example.com`;
@@ -1017,7 +1026,8 @@ describe("paging comes first", () => {
         await take();
         mailPeak = Math.max(mailPeak, ++mailOpen);
         try {
-          await new Promise((resolve) => setTimeout(resolve, 1500));
+          // 1.2 s: waves start at 0, 1.2 and 2.4 s, none on the 3 s budget's edge (`STATUS_EMAIL_BUDGET_MS`).
+          await new Promise((resolve) => setTimeout(resolve, 1200));
           mailed++;
           return { ok: true };
         } finally {
@@ -1056,9 +1066,19 @@ describe("paging comes first", () => {
     expect(relayAt!).toBeLessThan(1000);
     expect(mailPeak).toBeLessThanOrEqual(SIDE_CONNECTIONS);
     expect(result.explicitAcks).toContain(`msg-${requested.length}`);
-    // The confirmations that found no slot in time come back later, none lost.
+    // The confirmations that found no slot in time come back later, none lost. A send still under way when its
+    // delivery let go (`STATUS_EMAIL_BUDGET_MS` plus one send's bound) finishes under `waitUntil` and is counted in
+    // `mailed`, yet its message is retried too (the retry finds it sent): so every message is acked or retried, an
+    // acked one was mailed, and at least the unmailed ones come back.
     expect(mailed).toBeLessThan(requested.length);
-    expect(result.retryMessages.length).toBe(requested.length - mailed);
+    const confirmations = requested.map((_, index) => `msg-${index}`);
+    const acked = confirmations.filter((id) => result.explicitAcks.includes(id));
+    const retried = confirmations.filter((id) =>
+      result.retryMessages.some((retry) => retry.msgId === id),
+    );
+    expect(acked.length + retried.length).toBe(requested.length);
+    expect(acked.length).toBeLessThanOrEqual(mailed);
+    expect(retried.length).toBeGreaterThanOrEqual(requested.length - mailed);
   }, 30_000);
 });
 

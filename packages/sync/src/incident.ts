@@ -3,19 +3,23 @@
 // changes in flight. Shared by the web dashboard and the mobile app (issue #20); their wording is in
 // `@freecorps/brigade-i18n/incident`.
 import {
+  allows,
   answeredEntries,
   canTransition,
   INCIDENT_STATUSES,
   lookup,
   MAX_PAGE_AGAIN_ENTRIES,
+  mayRemoveUpdate,
   mutations,
   pagesAgain,
   trimSpace,
   UPDATE_BODY_MAX,
+  wroteUpdate,
   type IncidentRow,
   type IncidentStatus,
   type MemberRow,
   type PageFailure,
+  type Role,
   type Severity,
   type TimelineRow,
 } from "@freecorps/brigade-schema";
@@ -96,6 +100,41 @@ export function checkUpdate(
   if (result.ok) return { ok: true, args: result.value as { id: string; body: string } };
   const blank = Array.from(body).every((char) => /\s/u.test(char));
   return { ok: false, reason: blank ? "empty" : "invalid" };
+}
+
+const editUpdate = lookup(mutations, "incident.editUpdate")!;
+
+/** Like `checkUpdate`, for the new text of an edited update (`incident.editUpdate`). */
+export function checkEdit(
+  id: string,
+  entryId: string,
+  body: string,
+):
+  | { ok: true; args: { id: string; entryId: string; body: string } }
+  | { ok: false; reason: UpdateProblem } {
+  if (updateLength(body) > UPDATE_BODY_MAX) return { ok: false, reason: "long" };
+  const result = editUpdate.args({ id, entryId, body });
+  if (result.ok) {
+    return { ok: true, args: result.value as { id: string; entryId: string; body: string } };
+  }
+  const blank = Array.from(body).every((char) => /\s/u.test(char));
+  return { ok: false, reason: blank ? "empty" : "invalid" };
+}
+
+/**
+ * What the member `self`, as `role`, may do to a timeline entry: edit a written update of their own, and remove it
+ * (owners and admins anyone's), as `incident.editUpdate` and `incident.deleteUpdate` check. Nothing on a removed
+ * update, nor on any other entry.
+ */
+export function updateActions(
+  entry: TimelineRow,
+  self: string,
+  role: Role,
+): { edit: boolean; remove: boolean } {
+  if (entry.kind !== "update" || entry.removed) return { edit: false, remove: false };
+  const actor = { kind: "user" as const, id: self, role };
+  if (!allows(actor, "incident:update")) return { edit: false, remove: false };
+  return { edit: wroteUpdate(entry, actor), remove: mayRemoveUpdate(entry, actor) };
 }
 
 /** The update's length as the shard counts it: UTF-16 code units, after trimming. */

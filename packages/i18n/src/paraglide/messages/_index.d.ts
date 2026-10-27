@@ -142,6 +142,7 @@ export * from './incident_status_triage.js';
 export * from './incident_unnumbered_not_sent.js';
 export * from './incident_unnumbered_saving.js';
 export * from './incident_update_announced.js';
+export * from './incident_update_change.js';
 export * from './incident_update_length.js';
 export * from './incident_updates_announced.js';
 export * from './incidents_active_count.js';

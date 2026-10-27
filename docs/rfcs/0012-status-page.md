@@ -58,7 +58,8 @@ Visitor ──GET /status/:slug[/feed.atom|/feed.json]──▶ web Worker (forw
   components it touches and the text (1 to 4000 characters, the update rules of RFC 0003). Each publish may change
   all of them. Nothing is copied from the incident: its internal title, severity, roles, members and timeline never
   reach the page. The dashboard's form starts the public title from what the public was last told, never from the
-  internal title.
+  internal title. Editing or removing a written update on the timeline (RFC 0003) therefore never changes what was
+  published: that is corrected here, on its own.
 - **The row** (`status_incidents`, keyed by the incident id): the public title, status, impact and components, and
   the updates, at most 50 per incident (`limit_reached` past that). `resolved` records when it was first resolved;
   publishing again with another status reopens it on the page.

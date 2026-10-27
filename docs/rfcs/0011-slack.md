@@ -284,6 +284,8 @@ incident's claim covers every job, so two events of one incident never create a 
 | `incident.status_changed`          | update both messages, mirror; a closed incident's channel comes due           |
 | `incident.severity_changed`        | update both messages, mirror                                                  |
 | `incident.update_posted`           | mirror (not an update that came from a Slack message)                         |
+| `incident.update_edited`           | rewrite the mirrored message (`chat.update`), if the mirror posted one        |
+| `incident.update_deleted`          | delete the mirrored message (`chat.delete`), if the mirror posted one         |
 | `incident.role_assigned`           | look up and invite the new holder, mirror                                     |
 | `escalation.paged`                 | look up and invite whoever was paged                                          |
 | `slack.archive_due`                | archive the channel, if the incident is still closed                          |
@@ -328,7 +330,14 @@ null to keep it. A workspace without a main channel can still have incident chan
 channel ("Ana changed the severity to SEV2 · High", "Update from Ana" and the text), or, without an incident channel,
 as a reply in the thread of the incident's message in the main channel. Rendered from the event (who did it, to
 what) in the connection's language, with people's text escaped, and idempotent per event like the rest (the `entry`
-job).
+job). The shard keeps which message mirrored each written update (`slack_mirrored`: entry, channel, `ts`), so when
+its author edits it (RFC 0003 "Editing and removing an update") the message is rewritten with `chat.update` (Slack
+marks it "edited") and when it is removed the message is deleted with `chat.delete`. Best effort and never blocking:
+a message, or channel, already gone or archived counts as done, other failures are retried like any job and then only
+logged, never a `slack_failed` entry. An update that came from a Slack message follows the same rules in Brigade (only
+its author edits it, the author, owners and admins remove it), but its Slack message is the person's own, which the
+bot cannot change: it is left as is. Editing a message in Slack does not edit the update. The kept messages go with
+their incident's other Slack rows once it has been closed for the ledger's retention.
 
 **Slack to Brigade.** A person's message in an incident's channel (or in the thread of an incident's message) that
 starts with `!update ` becomes `incident.postUpdate` as the member they map to; so does the message shortcut "Post to

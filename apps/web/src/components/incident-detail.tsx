@@ -11,6 +11,7 @@ import {
   type IncidentRow,
   type IncidentStatus,
   type MemberRow,
+  type Role,
   type RoleDefinition,
   type Severity,
   type TimelineRow,
@@ -100,6 +101,7 @@ import { usePageTitle } from "@/lib/page-title";
 import {
   assignable,
   bodyParts,
+  checkEdit,
   checkUpdate,
   entryTime,
   itemText,
@@ -109,6 +111,7 @@ import {
   personName,
   timelineItems,
   UPDATE_COUNT_FROM,
+  updateActions,
   updateLength,
   type People,
   type TimelineItem,
@@ -448,6 +451,8 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
               locale={locale}
               now={now}
               pageAgain={canPageAgain ? row.id : undefined}
+              incidentId={row.id}
+              role={member.role}
             />
           </CardContent>
         </Card>
@@ -828,6 +833,8 @@ function Timeline({
   locale,
   now,
   pageAgain,
+  incidentId,
+  role,
 }: {
   rows: readonly TimelineRow[];
   ready: boolean;
@@ -836,6 +843,9 @@ function Timeline({
   now: number;
   /** The incident's id when the member may page a failed page again; undefined offers nothing. */
   pageAgain?: string;
+  incidentId: string;
+  /** The member's role, for what they may do to an update (`updateActions`). */
+  role: Role;
 }) {
   const announcements = useAnnouncements(rows, ready, who);
   const announcer = (
@@ -898,10 +908,20 @@ function Timeline({
                   >
                     {entryTime(entry.at, now, locale, TIME_ZONE)}
                   </time>
+                  {entry.kind === "update" && entry.edited && !entry.removed ? (
+                    <EditedMarker at={entry.edited.at} locale={locale} />
+                  ) : null}
                 </p>
-                {entry.kind === "update" ||
-                entry.kind === "status_published" ||
-                entry.kind === "status_corrected" ? (
+                {entry.kind === "update" ? (
+                  entry.removed ? null : (
+                    <WrittenUpdate
+                      incidentId={incidentId}
+                      entry={entry}
+                      actions={updateActions(entry, who.self, role)}
+                      locale={locale}
+                    />
+                  )
+                ) : entry.kind === "status_published" || entry.kind === "status_corrected" ? (
                   <UpdateBody body={entry.body} />
                 ) : null}
                 {item.kind === "pages_failed" ? <FailedNames item={item} who={who} /> : null}
@@ -914,6 +934,237 @@ function Timeline({
         })}
       </ol>
     </>
+  );
+}
+
+/** "edited" after an update's time, with when on hover and for screen readers. */
+function EditedMarker({ at, locale }: { at: number; locale: Locale }) {
+  const when = m.incident_update_change({
+    part: "edited_at",
+    time: formatDateTime(at, locale, TIME_ZONE),
+    reason: "",
+  });
+  return (
+    <span className="text-xs text-muted-foreground" title={when}>
+      <span aria-hidden>{m.incident_update_change({ part: "edited", time: "", reason: "" })}</span>
+      <span className="sr-only">{when}</span>
+    </span>
+  );
+}
+
+type WrittenUpdateRow = Extract<TimelineRow, { kind: "update" }>;
+
+/**
+ * A written update's text, with Edit (its author) and Remove (its author, owners and admins) under it. Edit swaps the
+ * text for a field in place; Remove asks first, inline. Both are optimistic: a refusal puts the text back and says
+ * why. Editing never changes what was published on the status page.
+ */
+function WrittenUpdate({
+  incidentId,
+  entry,
+  actions,
+  locale,
+}: {
+  incidentId: string;
+  entry: WrittenUpdateRow;
+  actions: { edit: boolean; remove: boolean };
+  locale: Locale;
+}) {
+  const editUpdate = useMutation("incident.editUpdate");
+  const deleteUpdate = useMutation("incident.deleteUpdate");
+  const [mode, setMode] = useState<"view" | "edit" | "confirm">("view");
+  const [draft, setDraft] = useState(entry.body);
+  const [invalid, setInvalid] = useState<UpdateProblem | null>(null);
+  const [pending, setPending] = useState<"edit" | "remove" | null>(null);
+  const [refused, setRefused] = useState<string | null>(null);
+  const fieldId = useId();
+  const noteId = useId();
+  const errorId = useId();
+  const field = useRef<HTMLTextAreaElement>(null);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const say = (part: string, reason = "") => m.incident_update_change({ part, time: "", reason });
+  const refusal = (code: string, failed: "edit_failed" | "remove_failed") =>
+    code === "conflict" && failed === "edit_failed"
+      ? say("unchanged")
+      : code === "conflict"
+        ? say("gone")
+        : say(failed, mutationErrorReason(code as Parameters<typeof mutationErrorReason>[0]));
+
+  useEffect(() => {
+    if (mode === "edit") field.current?.focus();
+  }, [mode]);
+
+  const startEdit = () => {
+    setDraft(entry.body);
+    setInvalid(null);
+    setRefused(null);
+    setMode("edit");
+  };
+  const close = () => {
+    setMode("view");
+    setInvalid(null);
+    // Back to where the member was, so a keyboard does not land on the page's top.
+    requestAnimationFrame(() => editButton.current?.focus());
+  };
+  const save = (event?: FormEvent) => {
+    event?.preventDefault();
+    if (draft === entry.body) return close();
+    const checked = checkEdit(incidentId, entry.id, draft);
+    if (!checked.ok) {
+      setInvalid(checked.reason);
+      field.current?.focus();
+      return;
+    }
+    const typed = draft;
+    setMode("view");
+    setPending("edit");
+    void editUpdate(checked.args).then((outcome) => {
+      setPending(null);
+      if (outcome.ok) return;
+      setRefused(refusal(outcome.error.code, "edit_failed"));
+      // The text stays to try again, unless the update is gone.
+      if (outcome.error.code === "invalid_args") {
+        setDraft(typed);
+        setMode("edit");
+      }
+    });
+  };
+  const remove = () => {
+    setMode("view");
+    setPending("remove");
+    setRefused(null);
+    void deleteUpdate({ id: incidentId, entryId: entry.id }).then((outcome) => {
+      setPending(null);
+      if (!outcome.ok) setRefused(refusal(outcome.error.code, "remove_failed"));
+    });
+  };
+
+  if (mode === "edit") {
+    const length = updateLength(draft);
+    return (
+      <form onSubmit={save} noValidate className="flex flex-col gap-1.5">
+        <label htmlFor={fieldId} className="sr-only">
+          {say("edit_label")}
+        </label>
+        <textarea
+          ref={field}
+          id={fieldId}
+          value={draft}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            if (invalid) setInvalid(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) save();
+            if (event.key === "Escape") close();
+          }}
+          rows={3}
+          aria-invalid={invalid !== null}
+          aria-describedby={[invalid && errorId, noteId].filter(Boolean).join(" ")}
+          className="field-sizing-content max-h-80 min-h-24 w-full min-w-0 resize-y rounded-md border border-input bg-card px-3 py-2.5 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive"
+        />
+        {invalid ? (
+          <p
+            id={errorId}
+            role="alert"
+            className="flex items-start gap-1.5 text-sm text-destructive"
+          >
+            <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+            {invalid === "long"
+              ? m.auth_error_too_long({ max: formatNumber(UPDATE_BODY_MAX, locale) })
+              : m.incident_page({
+                  part: invalid === "empty" ? "update_empty" : "update_invalid",
+                })}
+          </p>
+        ) : null}
+        <p id={noteId} className="text-xs text-muted-foreground">
+          {say("status_page_note")}
+          {length >= UPDATE_COUNT_FROM ? (
+            <span
+              className={cn(
+                "ml-2 whitespace-nowrap tabular-nums",
+                length > UPDATE_BODY_MAX && "font-medium text-destructive",
+              )}
+            >
+              {formatNumber(length, locale)} / {formatNumber(UPDATE_BODY_MAX, locale)}
+            </span>
+          ) : null}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button type="submit">{say("save")}</Button>
+          <Button type="button" variant="ghost" onClick={close}>
+            {say("cancel")}
+          </Button>
+        </div>
+      </form>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <div className={cn("self-stretch", pending === "remove" && "opacity-60")}>
+        <UpdateBody body={entry.body} />
+      </div>
+      {mode === "confirm" ? (
+        <div
+          role="group"
+          aria-labelledby={`${fieldId}-confirm`}
+          className="flex flex-col gap-2 self-stretch rounded-md border border-destructive/40 bg-destructive/5 p-3"
+        >
+          <p id={`${fieldId}-confirm`} className="text-sm font-medium">
+            {say("remove_title")}
+          </p>
+          <p className="text-sm text-muted-foreground">{say("remove_body")}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="destructive" onClick={remove}>
+              {say("remove_confirm")}
+            </Button>
+            <Button
+              variant="ghost"
+              autoFocus
+              onClick={() => {
+                setMode("view");
+              }}
+            >
+              {say("cancel")}
+            </Button>
+          </div>
+        </div>
+      ) : actions.edit || actions.remove ? (
+        <div className="-ml-1 flex flex-wrap items-center gap-x-1">
+          {actions.edit ? (
+            <Button
+              ref={editButton}
+              variant="link"
+              className="px-1"
+              disabled={pending !== null}
+              onClick={startEdit}
+            >
+              {pending === "edit" ? say("saving") : say("edit")}
+            </Button>
+          ) : null}
+          {actions.remove ? (
+            <Button
+              variant="link"
+              className="px-1 text-destructive"
+              disabled={pending !== null}
+              onClick={() => {
+                setRefused(null);
+                setMode("confirm");
+              }}
+            >
+              {pending === "remove" ? say("removing") : say("remove")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {refused ? (
+        <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive">
+          <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <span className="min-w-0">{refused}</span>
+        </p>
+      ) : null}
+    </div>
   );
 }
 

@@ -25,6 +25,7 @@ import {
   SEVERITIES,
   UPDATE_BODY_MAX,
   type IncidentRow,
+  type Role,
   type RoleDefinition,
   type TimelineRow,
 } from "@freecorps/brigade-schema";
@@ -32,6 +33,7 @@ import {
   adjustBusy,
   assignable,
   bodyParts,
+  checkEdit,
   checkUpdate,
   nextFailed,
   nextStatuses,
@@ -39,6 +41,7 @@ import {
   syncView,
   timelineItems,
   UPDATE_COUNT_FROM,
+  updateActions,
   updateLength,
   type MutationOutcome,
   type SyncView,
@@ -77,7 +80,7 @@ import {
   View,
 } from "react-native";
 import { useGlyphSize } from "@/components/badge";
-import { useChoiceSheet } from "@/components/choice-sheet";
+import { useChoiceSheet, type Choice as SheetChoice } from "@/components/choice-sheet";
 import { IncidentDetails } from "@/components/incident-details";
 import { STATUS_GLYPHS, type Glyph } from "@/components/glyphs";
 import {
@@ -503,6 +506,7 @@ function Incident({ row, view, state }: { row: IncidentRow; view: SyncView; stat
           unsent={busy.get("update") ?? 0}
           online={online}
           pageAgain={canPageAgain(member.role, row) ? row.id : undefined}
+          role={member.role}
         />
       </View>
       {sheet}
@@ -759,6 +763,7 @@ function Timeline({
   unsent,
   online,
   pageAgain,
+  role,
 }: {
   incidentId: string;
   who: People;
@@ -767,6 +772,8 @@ function Timeline({
   online: boolean;
   /** The incident's id when the member may page a failed page again; undefined offers nothing. */
   pageAgain?: string;
+  /** The member's role, for what they may do to an update (`updateActions`). */
+  role: Role;
 }) {
   const colors = useTheme();
   const glyphSize = useGlyphSize(fontSize.base.size);
@@ -834,11 +841,24 @@ function Timeline({
                 ) : (
                   <ThemedText variant="caption" style={{ fontVariant: ["tabular-nums"] }}>
                     {entryTime(entry.at, now, locale, timeZone)}
+                    {entry.kind === "update" && entry.edited && !entry.removed
+                      ? ` · ${m.incident_update_change({ part: "edited", time: "", reason: "" })}`
+                      : ""}
                   </ThemedText>
                 )}
-                {entry.kind === "update" ||
-                entry.kind === "status_published" ||
-                entry.kind === "status_corrected" ? (
+                {entry.kind === "update" ? (
+                  entry.removed ? null : (
+                    <WrittenUpdate
+                      incidentId={incidentId}
+                      entry={entry}
+                      actions={
+                        waiting.has(entry.id)
+                          ? { edit: false, remove: false }
+                          : updateActions(entry, who.self, role)
+                      }
+                    />
+                  )
+                ) : entry.kind === "status_published" || entry.kind === "status_corrected" ? (
                   <UpdateBody body={entry.body} />
                 ) : null}
                 {item.kind === "pages_failed" ? <FailedNames item={item} who={who} /> : null}
@@ -850,6 +870,205 @@ function Timeline({
           </Row>
         );
       })}
+    </View>
+  );
+}
+
+const MORE_GLYPH: Glyph = { ios: "ellipsis.circle", android: "more_horiz", web: "more_horiz" };
+
+type WrittenUpdateRow = Extract<TimelineRow, { kind: "update" }>;
+
+/**
+ * A written update's text, with a More button (and a long press on the text) for Edit (its author) and Remove (its
+ * author, owners and admins), as on the dashboard. Edit swaps the text for a field in place; Remove asks first. Both
+ * are optimistic: a refusal puts the text back and says why. Editing never changes the status page.
+ */
+function WrittenUpdate({
+  incidentId,
+  entry,
+  actions,
+}: {
+  incidentId: string;
+  entry: WrittenUpdateRow;
+  actions: { edit: boolean; remove: boolean };
+}) {
+  const colors = useTheme();
+  const { locale } = useLocale();
+  const glyph = useGlyphSize(fontSize.base.size);
+  const { choose, sheet } = useChoiceSheet();
+  const editUpdate = useMutation("incident.editUpdate");
+  const deleteUpdate = useMutation("incident.deleteUpdate");
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(entry.body);
+  const [invalid, setInvalid] = useState<UpdateProblem | null>(null);
+  const [refused, setRefused] = useState<string | null>(null);
+  const reveal = use(RevealContext);
+  const form = useRef<ComponentRef<typeof View>>(null);
+  const say = (part: string, reason = "") => m.incident_update_change({ part, time: "", reason });
+  const refuse = (code: Parameters<typeof mutationErrorReason>[0], failed: string) => {
+    const text =
+      code === "conflict"
+        ? say(failed === "edit_failed" ? "unchanged" : "gone")
+        : say(failed, mutationErrorReason(code));
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+    setRefused(text);
+    if (process.env.EXPO_OS === "ios") AccessibilityInfo.announceForAccessibility(text);
+  };
+
+  const save = () => {
+    if (draft === entry.body) return setEditing(false);
+    const checked = checkEdit(incidentId, entry.id, draft);
+    if (!checked.ok) return setInvalid(checked.reason);
+    const typed = draft;
+    setEditing(false);
+    setRefused(null);
+    void editUpdate(checked.args).then((outcome) => {
+      if (outcome.ok) return;
+      refuse(outcome.error.code, "edit_failed");
+      if (outcome.error.code === "invalid_args") {
+        setDraft(typed);
+        setEditing(true);
+      }
+    });
+  };
+  const remove = () => {
+    setRefused(null);
+    void deleteUpdate({ id: incidentId, entryId: entry.id }).then((outcome) => {
+      if (outcome.ok) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        return;
+      }
+      refuse(outcome.error.code, "remove_failed");
+    });
+  };
+  const confirmRemove = () =>
+    Alert.alert(say("remove_title"), say("remove_body"), [
+      { text: say("cancel"), style: "cancel" },
+      { text: say("remove_confirm"), style: "destructive", onPress: remove },
+    ]);
+  const offered = actions.edit || actions.remove;
+  const openActions = () => {
+    const choices: SheetChoice<"edit" | "remove">[] = [];
+    if (actions.edit) choices.push({ value: "edit", label: say("edit") });
+    if (actions.remove) choices.push({ value: "remove", label: say("remove") });
+    choose(say("actions"), choices, (picked) => {
+      if (picked === "remove") return confirmRemove();
+      setDraft(entry.body);
+      setInvalid(null);
+      setRefused(null);
+      setEditing(true);
+    });
+  };
+
+  if (editing) {
+    return (
+      <View ref={form} style={{ gap: spacing[2] }}>
+        <TextInput
+          value={draft}
+          autoFocus
+          onFocus={() => reveal(form.current)}
+          onContentSizeChange={() => reveal(form.current)}
+          onChangeText={(text) => {
+            setDraft(text);
+            if (invalid) setInvalid(null);
+          }}
+          multiline
+          accessibilityLabel={say("edit_label")}
+          accessibilityHint={say("status_page_note")}
+          style={{
+            minHeight: spacing[16] + spacing[8],
+            maxHeight: spacing[16] * 4,
+            padding: spacing[3],
+            borderRadius: radius.md,
+            borderCurve: "continuous",
+            borderWidth: 1,
+            borderColor: invalid ? colors.destructive : colors.input,
+            color: colors.foreground,
+            fontSize: fontSize.base.size,
+            textAlignVertical: "top",
+          }}
+        />
+        {invalid ? (
+          <ThemedText
+            selectable
+            accessibilityLiveRegion="polite"
+            style={{ color: colors.destructive }}
+          >
+            {invalid === "long"
+              ? m.auth_error_too_long({ max: formatNumber(UPDATE_BODY_MAX, locale) })
+              : m.incident_page({ part: invalid === "empty" ? "update_empty" : "update_invalid" })}
+          </ThemedText>
+        ) : null}
+        <ThemedText variant="caption">{say("status_page_note")}</ThemedText>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing[2] }}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={save}
+            style={({ pressed }) => ({
+              minHeight: spacing[12],
+              justifyContent: "center",
+              paddingHorizontal: spacing[4],
+              borderRadius: radius.md,
+              borderCurve: "continuous",
+              backgroundColor: colors.primary,
+              opacity: pressed ? 0.8 : 1,
+            })}
+          >
+            <ThemedText style={{ color: colors.primaryForeground }}>{say("save")}</ThemedText>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setEditing(false)}
+            style={({ pressed }) => ({
+              minHeight: spacing[12],
+              justifyContent: "center",
+              paddingHorizontal: spacing[4],
+              opacity: pressed ? 0.6 : 1,
+            })}
+          >
+            <ThemedText style={{ color: colors.primary }}>{say("cancel")}</ThemedText>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ gap: spacing[1], alignItems: "flex-start" }}>
+      <Pressable
+        disabled={!offered}
+        onLongPress={openActions}
+        accessible={false}
+        style={{ alignSelf: "stretch" }}
+      >
+        <UpdateBody body={entry.body} />
+      </Pressable>
+      {offered ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={say("actions")}
+          onPress={openActions}
+          hitSlop={spacing[2]}
+          style={({ pressed }) => ({
+            minHeight: spacing[12],
+            minWidth: spacing[12],
+            justifyContent: "center",
+            opacity: pressed ? 0.6 : 1,
+          })}
+        >
+          <SymbolView name={MORE_GLYPH} tintColor={colors.mutedForeground} size={glyph} />
+        </Pressable>
+      ) : null}
+      {refused ? (
+        <ThemedText
+          selectable
+          accessibilityLiveRegion="polite"
+          style={{ color: colors.destructive }}
+        >
+          {refused}
+        </ThemedText>
+      ) : null}
+      {sheet}
     </View>
   );
 }

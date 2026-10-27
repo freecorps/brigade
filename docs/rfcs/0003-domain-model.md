@@ -48,7 +48,8 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   people worked on resolved, which leaves it open for them (RFC 0005 "Alert sources"). The outbox is server-only and drained, while clients need
   entries live and optimistic, so deriving the timeline from events would need a projection anyway. Entries are
   numbered per incident (`<incident id>:<seq>`, from the incident's `timelineSeq`), so a client's optimistic entry
-  and the server's share an id; nothing edits or deletes one. "Edit timeline" for responders means adding to it.
+  and the server's share an id; nothing deletes one, and only a written update changes after it is written (edited
+  or removed in place, below). "Edit timeline" for responders means adding to it.
   A client numbers from the highest of `timelineSeq` and the entries it holds, since its subscriptions resume one
   by one; when another change landed first, its entry is re-applied under the next number. The query reads one
   incident's entries as an id range (`<id>:` up to `<id>;`) off the store's `(tbl, id)` key, not a scan of every
@@ -61,6 +62,20 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
   entry) with text written for the public, never a copy of an update (RFC 0012 "Publishing"). What was published
   can be corrected or taken off the page (`incident.editPublishedUpdate`, `.removePublishedUpdate`, `.unpublish`,
   `status:publish`, a `status_corrected` timeline entry; RFC 0012 "Corrections").
+- **Editing and removing an update** (`incident.editUpdate`, `incident.deleteUpdate`, `incident:update`, events
+  `incident.update_edited` and `incident.update_deleted`). Only its **author** edits an update (the member, or an API
+  token that posted it or acts for the member who did): an owner or admin rewriting someone's words would put words in
+  their name, so they cannot. The author, an **owner** or an **admin** removes one (a pasted secret, a wrong channel),
+  anyone's. Both change the entry in place, so it keeps its number, time and author and the timeline's order never
+  changes, and never silently: an edited entry keeps its last edit (`edited`: when, by whom, how many edits, and the
+  text it replaced as `previous`) and reads "edited" with the time; `incident.update_edited` carries both texts, so
+  webhooks and the event log keep every version. A removed entry becomes a tombstone (`removed`: when and by whom; the
+  text and `previous` emptied) that reads "<author> posted an update, removed by <who>"; `incident.update_deleted`
+  names the entry and its author, never the text. A removed update can be neither edited nor removed again
+  (`conflict`), nor can an edit that changes nothing; another kind of entry is `not_found`. Editing never touches the
+  status page, whose published text is a separate copy corrected on its own (RFC 0012 "Corrections"). Exports carry
+  the current text with `edited` or `removed`, and the AI postmortem draft reads the current text, leaving removed
+  updates out (RFC 0013). A mirrored update's Slack message follows (RFC 0011 "Timeline mirror").
 - **Roles** (`incident.assignRole`, `incident:update`, event `incident.role_assigned`): the built-ins `commander`,
   `communications` and `operations` plus the workspace's own ("Role definitions" below), at most one member each,
   stored on the incident by role id (`roles`). `userId: null` unassigns. The assignee must be in the shard's member

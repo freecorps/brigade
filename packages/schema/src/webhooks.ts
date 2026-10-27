@@ -80,6 +80,8 @@ export const WEBHOOK_EVENT_TYPES = [
   "incident.severity_changed",
   "incident.acknowledged",
   "incident.update_posted",
+  "incident.update_edited",
+  "incident.update_deleted",
   "incident.role_assigned",
   "alert.fired",
   "alert.resolved",
@@ -878,7 +880,27 @@ export type WebhookPayload =
     >
   /** `by`: the actor's id, a member's (`usr_…`) or an API token's (`tok_…`). */
   | Envelope<"incident.acknowledged", { incident: WebhookIncident; by: string }>
-  | Envelope<"incident.update_posted", { incident: WebhookIncident; body: string }>
+  /**
+   * `entryId`: the update's timeline entry (`<incident id>:<seq>`), the same in its `incident.update_edited` and
+   * `incident.update_deleted`; left out (undefined) for events written before edits existed.
+   */
+  | Envelope<
+      "incident.update_posted",
+      { incident: WebhookIncident; entryId: string | undefined; body: string }
+    >
+  /** Its author edited an update (RFC 0003 "Update"): `body` is the text now, `previous` the text it replaced. */
+  | Envelope<
+      "incident.update_edited",
+      { incident: WebhookIncident; entryId: string; body: string; previous: string }
+    >
+  /**
+   * An update was removed: its author or an owner or admin (the event's `actor`). `author` wrote it. The text is not
+   * sent again.
+   */
+  | Envelope<
+      "incident.update_deleted",
+      { incident: WebhookIncident; entryId: string; author: string }
+    >
   /**
    * `roleId`: the role's id, a built-in's name or a workspace role's `rol_…` (RFC 0003 "Role definitions"); `role`:
    * the built-in's name, or `custom`; `roleName`: the workspace's name for it, null for a built-in under its own.
@@ -1078,8 +1100,24 @@ export function webhookPayload(
     }
     case "incident.update_posted": {
       const body = text("body");
+      const entryId = text("entryId");
       return incident && body !== undefined
-        ? { ...base, type, data: { incident, body } }
+        ? { ...base, type, data: { incident, entryId, body } }
+        : undefined;
+    }
+    case "incident.update_edited": {
+      const entryId = text("entryId");
+      const body = text("body");
+      const previous = text("previous");
+      return incident && entryId !== undefined && body !== undefined && previous !== undefined
+        ? { ...base, type, data: { incident, entryId, body, previous } }
+        : undefined;
+    }
+    case "incident.update_deleted": {
+      const entryId = text("entryId");
+      const author = text("author");
+      return incident && entryId !== undefined && author !== undefined
+        ? { ...base, type, data: { incident, entryId, author } }
         : undefined;
     }
     case "incident.role_assigned": {
@@ -1227,6 +1265,14 @@ function envelope<const Type extends string, const S extends Record<string, Vali
   );
 }
 
+const updateText = v.string({
+  min: 1,
+  max: WEBHOOK_PAYLOAD_TEXT_MAX,
+  multiline: true,
+  joiners: true,
+});
+const updateEntryId = v.string({ min: 1, max: OPEN_VALUE_MAX });
+
 const statusChange = { from: known(INCIDENT_STATUSES), to: known(INCIDENT_STATUSES) };
 const severityChange = { from: known(SEVERITIES), to: known(SEVERITIES) };
 
@@ -1247,7 +1293,19 @@ export const WEBHOOK_PAYLOADS = {
   }),
   "incident.update_posted": envelope("incident.update_posted", {
     incident: payloadIncident,
-    body: v.string({ min: 1, max: WEBHOOK_PAYLOAD_TEXT_MAX, multiline: true, joiners: true }),
+    entryId: v.omittable(updateEntryId),
+    body: updateText,
+  }),
+  "incident.update_edited": envelope("incident.update_edited", {
+    incident: payloadIncident,
+    entryId: updateEntryId,
+    body: updateText,
+    previous: updateText,
+  }),
+  "incident.update_deleted": envelope("incident.update_deleted", {
+    incident: payloadIncident,
+    entryId: updateEntryId,
+    author: actorId,
   }),
   "incident.role_assigned": envelope("incident.role_assigned", {
     incident: payloadIncident,

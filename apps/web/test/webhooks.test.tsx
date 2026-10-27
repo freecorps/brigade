@@ -267,7 +267,7 @@ describe("WebhooksPanel", () => {
     expect(container.querySelector("form")).not.toBeNull();
     // Every event is picked to start with.
     const boxes = [...container.querySelectorAll<HTMLInputElement>("input[type=checkbox]")];
-    expect(boxes.length).toBe(10);
+    expect(boxes.length).toBe(12);
     expect(boxes.every((box) => box.checked)).toBe(true);
   });
 

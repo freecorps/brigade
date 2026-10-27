@@ -14,10 +14,12 @@ export {
 export {
   assignable,
   bodyParts,
+  checkEdit,
   checkUpdate,
   pageAgainEntries,
   timelineItems,
   UPDATE_COUNT_FROM,
+  updateActions,
   updateLength,
   type BodyPart,
   type TimelineItem,

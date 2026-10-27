@@ -1270,6 +1270,55 @@ describe("a channel per incident, and the timeline mirror", () => {
     ).toEqual(["Rolled back", "From a message"]);
   });
 
+  test("editing a mirrored update rewrites its message, removing it deletes it; one written in Slack is left alone", async () => {
+    const t = await team();
+    const teamId = await withChannels(t);
+    const slack = slackApi();
+    await deliver([await declare(t, teamId, "Checkout down")], slack.send);
+    const channel = "C0INC00001";
+    await as(t, teamId, t.caio.email, { kind: "update", body: "Rolled back", channelId: channel });
+    await as(t, teamId, t.caio.email, {
+      kind: "update",
+      body: "From a message",
+      channelId: channel,
+      fromMessage: true,
+    });
+    for (const one of await eventsOf(t, "incident.update_posted")) await deliver([one], slack.send);
+    const timeline = await t.withShard((shard) => shard.store.scan("timeline"));
+    const [mirrored, inbound] = timeline.filter((row) => row.kind === "update");
+    const caio = { kind: "user" as const, id: t.caio.id, role: "responder" as const };
+    for (const row of [mirrored!, inbound!]) {
+      await t.run(
+        "incident.editUpdate",
+        { id: row.incidentId, entryId: row.id, body: "Edited" },
+        caio,
+      );
+    }
+    const before = slack.calls.length;
+    for (const one of await eventsOf(t, "incident.update_edited")) await deliver([one], slack.send);
+    const edits = slack.calls.slice(before);
+    // Only the update the mirror posted: the one written in Slack is the person's own message.
+    expect(edits.map((call) => call.method)).toEqual(["chat.update"]);
+    expect(edits[0]?.body).toMatchObject({ channel, text: "*Update from Caio*\nEdited" });
+    expect(typeof edits[0]?.body.ts).toBe("string");
+    await t.run(
+      "incident.deleteUpdate",
+      { id: mirrored!.incidentId, entryId: mirrored!.id },
+      owner(t),
+    );
+    const removing = slack.calls.length;
+    // Slack says the message is gone already (deleted by hand): done, not a failure.
+    const gone = slackApi({
+      "chat.delete": () => Response.json({ ok: false, error: "message_not_found" }),
+    });
+    for (const one of await eventsOf(t, "incident.update_deleted")) await deliver([one], gone.send);
+    expect(slack.calls.length).toBe(removing);
+    expect(gone.calls.map((call) => call.method)).toEqual(["chat.delete"]);
+    expect(gone.calls[0]?.body).toEqual({ channel, ts: edits[0]?.body.ts });
+    const after = await t.withShard((shard) => shard.store.scan("timeline"));
+    expect(after.some((row) => row.kind === "slack_failed")).toBe(false);
+  });
+
   test("resolving archives the channel after the workspace's delay; a reopened incident keeps it", async () => {
     const t = await team();
     const teamId = await withChannels(t);

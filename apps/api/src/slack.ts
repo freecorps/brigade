@@ -81,6 +81,8 @@ const INCIDENT_EVENTS = new Set([
   "incident.status_changed",
   "incident.severity_changed",
   "incident.update_posted",
+  "incident.update_edited",
+  "incident.update_deleted",
   "incident.role_assigned",
   "escalation.paged",
   "slack.archive_due",
@@ -163,6 +165,14 @@ const SCHEMA = `
     entry_id text not null,
     at integer not null
   ) without rowid;
+  -- The message the mirror posted for a written update, so editing or removing it changes that message.
+  create table if not exists slack_mirrored (
+    entry_id text primary key,
+    incident_id text not null,
+    channel text not null,
+    ts text not null,
+    at integer not null
+  ) without rowid;
 `;
 
 /** What a Slack user asked for, as the bridge passes it on (the assignee of `role` already mapped to a member). */
@@ -210,6 +220,10 @@ export type SlackWork =
   | { kind: "invite"; channel: string; users: string[] }
   /** Mirror a timeline entry: in the incident's channel, or under the main message (`threadTs`). */
   | { kind: "entry"; channel: string; threadTs: string | null; entry: SlackEntryView }
+  /** Rewrite the mirrored message of an edited update (`chat.update`). */
+  | { kind: "entry_edit"; channel: string; ts: string; entry: SlackEntryView }
+  /** Remove the mirrored message of a removed update (`chat.delete`). */
+  | { kind: "entry_delete"; channel: string; ts: string }
   | { kind: "archive"; channel: string }
   /**
    * Give a token Brigade let go of back to Slack (`auth.revoke`), unless it is the one the workspace holds again for
@@ -977,6 +991,33 @@ export class SlackDesk {
       case "incident.update_posted":
         mirror();
         break;
+      // Only an update the mirror posted: one written in Slack is the person's own message, which Brigade leaves as is.
+      case "incident.update_edited": {
+        const mirrored = this.mirrored(event);
+        const body = Reflect.get(Object(event.data), "body");
+        if (mirrored && typeof body === "string") {
+          jobs.push({
+            key: "entry:edit",
+            work: {
+              kind: "entry_edit",
+              channel: mirrored.channel,
+              ts: mirrored.ts,
+              entry: { kind: "update", by: this.person(event.actor.id), body },
+            },
+          });
+        }
+        break;
+      }
+      case "incident.update_deleted": {
+        const mirrored = this.mirrored(event);
+        if (mirrored) {
+          jobs.push({
+            key: "entry:delete",
+            work: { kind: "entry_delete", channel: mirrored.channel, ts: mirrored.ts },
+          });
+        }
+        break;
+      }
       case "escalation.paged": {
         const userIds = Reflect.get(Object(event.data), "userIds");
         invite(Array.isArray(userIds) ? userIds.filter((id) => typeof id === "string") : []);
@@ -1039,6 +1080,7 @@ export class SlackDesk {
     const incidentId = event.subject?.startsWith("inc_") ? event.subject : null;
     if (outcome.ok) {
       this.kept(job, incidentId, outcome, now, event.id);
+      this.mirroredKept(event, job, incidentId, outcome, now);
       this.doneJob(event.id, job, now);
       return { retryAt: null };
     }
@@ -1075,6 +1117,8 @@ export class SlackDesk {
         event.id,
       );
     }
+    // Editing or removing a mirrored update is best effort: a failure is logged, never a `slack_failed` entry.
+    if (job === "entry:edit" || job === "entry:delete") return { retryAt: null };
     // A token that could not be given back is forgotten anyway: Brigade keeps nothing it does not use.
     if (job.startsWith("revoke:")) {
       this.kept(job, null, { ok: true, channel: "", ts: "" }, now);
@@ -1400,6 +1444,46 @@ export class SlackDesk {
       .toArray()[0];
   }
 
+  /** The message the mirror posted for the update `event` names, if it posted one. */
+  private mirrored(event: BrigadeEvent) {
+    const entryId = Reflect.get(Object(event.data), "entryId");
+    if (typeof entryId !== "string") return undefined;
+    return this.sql
+      .exec<{ channel: string; ts: string }>(
+        "select channel, ts from slack_mirrored where entry_id = ?",
+        entryId,
+      )
+      .toArray()[0];
+  }
+
+  /**
+   * Keeps which message mirrored a written update (RFC 0011 "Timeline mirror"), for its edit or removal later; and
+   * forgets it once removed.
+   */
+  private mirroredKept(
+    event: BrigadeEvent,
+    job: string,
+    incidentId: string | null,
+    outcome: Extract<SlackPostOutcome, { ok: true }>,
+    now: number,
+  ): void {
+    const entryId = Reflect.get(Object(event.data), "entryId");
+    if (typeof entryId !== "string" || !incidentId) return;
+    if (job === "entry" && event.type === "incident.update_posted" && outcome.ts) {
+      this.sql.exec(
+        `insert into slack_mirrored (entry_id, incident_id, channel, ts, at) values (?, ?, ?, ?, ?)
+         on conflict (entry_id) do update set channel = excluded.channel, ts = excluded.ts, at = excluded.at`,
+        entryId,
+        incidentId,
+        outcome.channel,
+        outcome.ts,
+        now,
+      );
+    } else if (job === "entry:delete") {
+      this.sql.exec("delete from slack_mirrored where entry_id = ?", entryId);
+    }
+  }
+
   private channel(incidentId: string) {
     return this.sql
       .exec<{ channel_id: string; ts: string | null; archive_at: number | null; archived: number }>(
@@ -1451,6 +1535,22 @@ export class SlackDesk {
           if (table === "slack_channels" && this.channel(incident_id)?.archive_at != null) continue;
           this.sql.exec(`delete from ${table} where incident_id = ?`, incident_id);
         }
+      }
+      // An update's mirrored message, kept while its incident is active or was last touched recently.
+      const mirrored = this.sql
+        .exec<{ incident_id: string }>(
+          "select distinct incident_id from slack_mirrored where at < ?",
+          before,
+        )
+        .toArray();
+      for (const { incident_id } of mirrored) {
+        const incident = store.get("incidents", incident_id);
+        if (incident && isActive(incident.status)) continue;
+        this.sql.exec(
+          "delete from slack_mirrored where incident_id = ? and at < ?",
+          incident_id,
+          before,
+        );
       }
       this.sql.exec("delete from slack_commands where at < ?", before);
       this.sql.exec("delete from slack_states where expires_at <= ?", now);

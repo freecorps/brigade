@@ -19,6 +19,8 @@ export type Timeline_EntryInputs = {
 * | "role_taken" | "{actor} took the {a} role" |
 * | "role_left" | "{actor} stepped down as {a}" |
 * | "update" | "{actor} posted an update" |
+* | "update_removed" | "{actor} posted an update, removed by {a}" |
+* | "update_removed_own" | "{actor} posted an update and removed it" |
 * | "alert_recovered" | "{a} recovered, so its alert resolved" |
 * | "alert_paused" | "{actor} paused {a}, so its alert resolved" |
 * | "alert_deleted" | "{actor} deleted {a}, so its alert resolved" |

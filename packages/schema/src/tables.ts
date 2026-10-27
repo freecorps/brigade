@@ -262,6 +262,9 @@ export type EscalationPolicyRow = {
  */
 export type EscalationTimerRow = { id: string; at: number; failingSince?: number | null };
 
+/** A written update's last edit (RFC 0003 "Update"). */
+export type UpdateEdit = { at: number; by: string; count: number; previous?: string };
+
 /** What a timeline entry records, by `kind` (RFC 0003 "TimelineEntry"). */
 export type TimelineEntry =
   | { kind: "declared"; title: string; severity: Severity }
@@ -280,8 +283,22 @@ export type TimelineEntry =
       from: string | null;
       to: string | null;
     }
-  /** A written update (`incident.postUpdate`). */
-  | { kind: "update"; body: string }
+  /**
+   * A written update (`incident.postUpdate`). Its author may edit it (`incident.editUpdate`) and remove it
+   * (`incident.deleteUpdate`; owners and admins remove anyone's), in place: the entry keeps its number and time.
+   */
+  | {
+      kind: "update";
+      /** The text as it reads now; empty once removed. */
+      body: string;
+      /**
+       * The last edit: when, by whom (its author), how many edits so far and the text it replaced (`previous`, left
+       * out once the update is removed). Absent on an update never edited.
+       */
+      edited?: UpdateEdit;
+      /** Removed: when and by whom. The entry stays as a tombstone ("update removed by …"), its text gone. */
+      removed?: { at: number; by: string };
+    }
   /** The alert of the monitor that opened the incident resolved; the monitor's name as it was then. */
   | {
       kind: "alert_resolved";
@@ -406,7 +423,7 @@ export type TimelineEntry =
 
 /**
  * One entry of an incident's timeline: append-only, written by the mutation that made the change, in its
- * transaction (RFC 0003). The id is `<incident id>:<seq>`, so client and server number an entry alike.
+ * transaction (RFC 0003). Only a written update changes after it is written (edited or removed, in place). The id is `<incident id>:<seq>`, so client and server number an entry alike.
  */
 export type TimelineRow = {
   id: string;

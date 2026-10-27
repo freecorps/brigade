@@ -117,11 +117,22 @@ export type AuthBindings = {
    * opened with it in each of the user's workspaces, and with `deviceId` (the mobile app signing out names its device,
    * `DEVICE_HEADER`) takes that phone off them too (src/index.ts). Must not throw.
    */
-  onSessionEnded?: (session: {
-    userId: string;
-    sessionId: string;
-    deviceId?: string;
-  }) => Promise<void>;
+  onSessionEnded?: (session: EndingSession) => Promise<void>;
+  /**
+   * Called before a session's row is deleted: records the end durably (D1's `session_end`, src/session-end.ts), so
+   * what `onSessionEnded` cannot finish is finished later. Throws when it could not: a sign-out then answers 503 with
+   * its session kept, so the client signs out again later (the app keeps the sign-out, src/lib/sign-out.ts); any other
+   * way a session ends goes on, with `onSessionEnded` alone.
+   */
+  onSessionEnding?: (session: EndingSession) => Promise<void>;
+};
+
+/** A session that ends: whose, which, the phone that names itself on `/sign-out`, and when. */
+export type EndingSession = {
+  userId: string;
+  sessionId: string;
+  deviceId?: string;
+  endedAt: number;
 };
 
 /**
@@ -142,10 +153,18 @@ export const RATE_LIMIT = { window: 60, max: 100 };
  * address from anywhere (`SIGN_IN_ACCOUNT_LIMIT`, counted in D1's `rateLimit` table for any address, account or not,
  * so a 429 says nothing about whether it has one), which is what bounds guessing one account's password from many
  * addresses. The cost: whoever knows an address can keep its sign-in at the limit, a minute at a time; a signed-in
- * phone or dashboard keeps its session, and a password reset still works.
+ * phone or dashboard keeps its session. A password reset ends every session, so its owner's way back in is
+ * `SIGN_IN_AFTER_RESET`.
  */
 export const SIGN_IN_IP_LIMIT = { window: 60, max: 30 };
 export const SIGN_IN_ACCOUNT_LIMIT = { window: 60, max: 5 };
+/**
+ * After a successful password reset, sign-ins for that address from the client IP that reset it skip
+ * `SIGN_IN_ACCOUNT_LIMIT` for this many seconds (the per-IP rule still applies): the reset signed its owner out
+ * everywhere, and someone holding the address at its limit must not keep them out. Keyed by IP, which whoever holds
+ * the address at the limit does not have.
+ */
+export const SIGN_IN_AFTER_RESET = { window: 15 * 60 };
 /**
  * "Someone tried to sign up with your address" emails (`onExistingUserSignUp`), per account: a sign-up with a taken
  * address answers as for a new one, and its owner is told, at most this often, so sign-ups cannot flood an inbox.
@@ -272,14 +291,32 @@ async function checkSignIn(
   const email: unknown = Reflect.get(Object(ctx.body), "email");
   // Anything else is Better Auth's to refuse (400).
   if (typeof email !== "string" || email.length > 254) return;
-  const key = `signin:${email.trim().toLowerCase()}`;
+  const address = email.trim().toLowerCase();
+  // Only something that could be an address gets a counter of its own (Better Auth refuses the rest).
+  if (!/^[^\s@]+@[^\s@]+$/.test(address)) return;
+  const now = Date.now();
+  const ip = ctx.headers?.get("cf-connecting-ip") ?? "";
+  if (ip && (await resetLately(bindings.database, address, ip, now))) return;
+  const key = `signin:${address}`;
   const { window, max } = SIGN_IN_ACCOUNT_LIMIT;
-  if ((await countRequest(bindings.database, key, window, Date.now())) > max) {
+  if ((await countRequest(bindings.database, key, window, now)) > max) {
     throw APIError.from("TOO_MANY_REQUESTS", {
       code: "TOO_MANY_REQUESTS",
       message: "Too many sign-in attempts for this account",
     });
   }
+}
+
+/** The `rateLimit` row that records a password reset of `address` from `ip` (`SIGN_IN_AFTER_RESET`). */
+const resetKey = (address: string, ip: string) => `signin-reset:${address}:${ip}`;
+
+/** Whether `address`'s password was reset from `ip` within `SIGN_IN_AFTER_RESET`. */
+async function resetLately(db: D1Database, address: string, ip: string, now: number) {
+  const row = await db
+    .prepare(`select "lastRequest" from "rateLimit" where key = ?`)
+    .bind(resetKey(address, ip))
+    .first<{ lastRequest: number }>();
+  return row !== null && now - row.lastRequest <= SIGN_IN_AFTER_RESET.window * 1000;
 }
 
 /** What `/request-password-reset` answers, for every address. Better Auth's own words, so both paths say the same. */
@@ -369,6 +406,20 @@ export async function countRequest(
   return row?.count ?? 0;
 }
 
+/**
+ * Rate-limit counters older than every window (the longest is a day): deleted by the API Worker's cron, since counters
+ * are kept for any key a request names (an address with no account, a made-up one).
+ */
+export const RATE_LIMIT_KEEP_MS = 2 * 24 * 60 * 60 * 1000;
+
+/** Deletes the `rateLimit` rows whose window ended more than `RATE_LIMIT_KEEP_MS` ago. */
+export async function pruneRateLimits(db: D1Database, now: number): Promise<void> {
+  await db
+    .prepare(`delete from "rateLimit" where "lastRequest" < ?`)
+    .bind(now - RATE_LIMIT_KEEP_MS)
+    .run();
+}
+
 const randomBytes: RandomBytes = (length) => crypto.getRandomValues(new Uint8Array(length));
 
 const checkName = async (ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) => {
@@ -406,8 +457,28 @@ export function safeNext(value: string | null | undefined): string | undefined {
   return /^\/invitations\/inv_[0-9A-HJKMNP-TV-Z]{26}$/.test(value) ? value : undefined;
 }
 
+/** The answer to a sign-out whose end could not be recorded (`onSessionEnding`): its session stays. */
+export const SIGN_OUT_FAILED_CODE = "SIGN_OUT_FAILED";
+
+/** The session ending, with the device the mobile app names on `/sign-out` (`DEVICE_HEADER`), if any. */
+function endingSession(
+  session: { id: string; userId: string },
+  ctx: { path?: string; headers?: Headers } | null | undefined,
+): EndingSession {
+  const named = ctx?.path === "/sign-out" ? ctx.headers?.get(DEVICE_HEADER) : null;
+  const deviceId = named && DEVICE_ID.test(named) ? named : undefined;
+  return {
+    userId: session.userId,
+    sessionId: session.id,
+    endedAt: Date.now(),
+    ...(deviceId ? { deviceId } : {}),
+  };
+}
+
 export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self: Self = noSelf) {
   const random = randomBytes;
+  // One instance per request (src/index.ts `workerAuth`), so this is the request's own.
+  const unrecorded = { failed: false };
   return {
     appName: "Brigade",
     basePath: AUTH_BASE_PATH,
@@ -508,9 +579,30 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
       },
       // After Better Auth set the password, consumed the token and deleted every session. `user` is as it was
       // before the reset.
-      onPasswordReset: async ({ user }) => {
+      onPasswordReset: async ({ user }, request) => {
         const at = Date.now();
         await self.resetDone(user.id, at);
+        // Its owner signs in again from where they reset it, whoever holds the address at its limit
+        // (`SIGN_IN_AFTER_RESET`). Never in the reset's way.
+        const ip = request?.headers.get("cf-connecting-ip");
+        if (ip) {
+          const address = user.email.toLowerCase();
+          await bindings.database
+            .prepare(
+              `insert into "rateLimit" (id, key, count, "lastRequest") values (?1, ?2, 1, ?3)
+               on conflict (key) do update set count = 1, "lastRequest" = ?3`,
+            )
+            .bind(authId("rateLimit", at, randomBytes), resetKey(address, ip), at)
+            .run()
+            .catch((error: unknown) =>
+              console.error(
+                JSON.stringify({
+                  message: "recording a reset for sign-in failed",
+                  error: String(error),
+                }),
+              ),
+            );
+        }
         await bindings.onPasswordReset?.(user.id, { takeOver: !user.emailVerified, at });
       },
     },
@@ -570,7 +662,21 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
     },
     // The dashboard is same-origin (Better Auth trusts its own base URL); the mobile app is `APP_ORIGIN`.
     trustedOrigins: [APP_ORIGIN],
-    hooks: { before: beforeHook(bindings, self.requestReset) },
+    hooks: {
+      before: beforeHook(bindings, self.requestReset),
+      // A sign-out whose end could not be recorded kept its session (`onSessionEnding`): say so, so the client
+      // tries again, instead of Better Auth's 200.
+      after: createAuthMiddleware(async (ctx) => {
+        const failed = unrecorded.failed;
+        unrecorded.failed = false;
+        if (ctx.path === "/sign-out" && failed) {
+          throw APIError.from("SERVICE_UNAVAILABLE", {
+            code: SIGN_OUT_FAILED_CODE,
+            message: "Signing out failed; try again",
+          });
+        }
+      }),
+    },
     // Stated, not left to the default: the mobile app keeps a session from an offline sign-out this long at most.
     session: { expiresIn: SESSION_LIFETIME_S },
     // Off by default on Workers (Better Auth enables it only when NODE_ENV is "production"). The in-memory store
@@ -605,16 +711,32 @@ export function authOptions(bindings: AuthBindings, store?: WorkspaceStore, self
         // Every way a session ends (sign-out, revoking one or all, a password reset, an expired one found) deletes
         // its row through here: its sockets close in every workspace (RFC 0004 "Session revocation").
         delete: {
+          // Recorded first, so a shard the hook below cannot reach still hears of it (src/session-end.ts).
+          before: async (session, ctx) => {
+            const ending = bindings.onSessionEnding;
+            if (!ending) return;
+            try {
+              await ending(endingSession(session, ctx));
+            } catch (error) {
+              console.error(
+                JSON.stringify({
+                  message: "recording a session's end failed",
+                  error: String(error),
+                }),
+              );
+              // A sign-out keeps its session and answers 503 (the `after` hook): the client signs out again.
+              if (ctx?.path === "/sign-out") {
+                unrecorded.failed = true;
+                throw error;
+              }
+            }
+          },
           after: async (session, ctx) => {
             const ended = bindings.onSessionEnded;
             if (!ended) return;
-            const named = ctx?.path === "/sign-out" ? ctx.headers?.get(DEVICE_HEADER) : null;
-            const deviceId = named && DEVICE_ID.test(named) ? named : undefined;
-            const done = ended({
-              userId: session.userId,
-              sessionId: session.id,
-              ...(deviceId ? { deviceId } : {}),
-            }).catch((error: unknown) =>
+            const ending = endingSession(session, ctx);
+            const { deviceId } = ending;
+            const done = ended(ending).catch((error: unknown) =>
               console.error(
                 JSON.stringify({ message: "ending a session failed", error: String(error) }),
               ),

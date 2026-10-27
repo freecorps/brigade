@@ -31,13 +31,27 @@ export const SESSION_HEADER = "Brigade-Session";
 export function sessionTag(sessionId: string): string {
   return `session:${sessionId}`;
 }
+/**
+ * Set next to `SESSION_HEADER`: when that session expires (ms since the epoch). Better Auth deletes an expired session
+ * only when someone next presents it, so no hook fires at expiry: the shard closes the socket then itself
+ * (`WorkspaceDO.expireSockets`, RFC 0004 "Session revocation").
+ */
+export const SESSION_EXPIRES_HEADER = "Brigade-Session-Expires";
 
 /**
- * `name`: the member's name from Better Auth; `resetAt`: when their password was last reset, if ever; `sessionId`: the
- * session the upgrade came with. All absent for the dev actor, which has no user.
+ * `name`: the member's name from Better Auth; `resetAt`: when their password was last reset, if ever; `sessionId` and
+ * `sessionExpiresAt`: the session the upgrade came with and when it expires. All absent for the dev actor, which has
+ * no user.
  */
 export type ActorResult =
-  | { ok: true; actor: Actor; name?: string; resetAt?: number; sessionId?: string }
+  | {
+      ok: true;
+      actor: Actor;
+      name?: string;
+      resetAt?: number;
+      sessionId?: string;
+      sessionExpiresAt?: number;
+    }
   | { ok: false; response: Response };
 
 /** Hosts a local run serves on: the dev actor never applies to a request for any other host. */
@@ -104,6 +118,7 @@ export async function resolveActor(
     actor: { kind: "user", id: session.user.id, role: member.role },
     name: session.user.name,
     sessionId: session.session.id,
+    ...expiry(session.session.expiresAt),
     ...(member.resetAt !== null ? { resetAt: member.resetAt } : {}),
   };
 }
@@ -142,6 +157,19 @@ export function readActor(headers: Headers): Actor | undefined {
 /** When the member's password was last reset, as the Worker set it on a forwarded upgrade, or undefined. */
 export function readResetAt(headers: Headers): number | undefined {
   const raw = headers.get(RESET_AT_HEADER);
+  if (raw === null || !/^\d{1,16}$/.test(raw)) return undefined;
+  const at = Number(raw);
+  return Number.isSafeInteger(at) ? at : undefined;
+}
+
+function expiry(expiresAt: Date | string | undefined): { sessionExpiresAt?: number } {
+  const at = expiresAt === undefined ? NaN : new Date(expiresAt).getTime();
+  return Number.isSafeInteger(at) ? { sessionExpiresAt: at } : {};
+}
+
+/** When the upgrade's session expires, as the Worker set it on a forwarded upgrade, or undefined. */
+export function readSessionExpiresAt(headers: Headers): number | undefined {
+  const raw = headers.get(SESSION_EXPIRES_HEADER);
   if (raw === null || !/^\d{1,16}$/.test(raw)) return undefined;
   const at = Number(raw);
   return Number.isSafeInteger(at) ? at : undefined;

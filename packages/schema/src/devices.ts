@@ -290,7 +290,8 @@ export const expireDevice = defineMutation({
  * only the devices last registered before then (the reset's time, when the shard catches up on a sign-out that
  * failed: `WorkspaceDO.fetch`). `deviceId`: only that device, as `unregistered`, when its member signed out on it (the
  * phone names itself on sign-out, so a phone registered in several of the member's workspaces comes off all of them,
- * RFC 0006 "Device registration"). Nothing to drop is a `conflict`.
+ * RFC 0006 "Device registration"); with `before` the sign-out's time, so a sign-out acted on late never drops the
+ * phone its member signed in on again since. Nothing to drop is a `conflict`.
  */
 export const signOutDevices = defineMutation({
   name: "device.signOut",
@@ -307,7 +308,7 @@ export const signOutDevices = defineMutation({
     const events =
       args.deviceId === undefined
         ? dropDevices(store, args.userId, "password_reset", args.before ?? Infinity)
-        : dropDevices(store, args.userId, "unregistered", Infinity, args.deviceId);
+        : dropDevices(store, args.userId, "unregistered", args.before ?? Infinity, args.deviceId);
     if (events.length === 0) return fail("conflict", "No devices to sign out");
     return ok(...events);
   },

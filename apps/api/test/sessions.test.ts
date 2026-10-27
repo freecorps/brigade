@@ -3,16 +3,41 @@
 // session that ends (sign-out, a revoked session) closed in every workspace of the account, with the phone that signed
 // out taken off all of them.
 import { env, exports } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
+import {
+  createExecutionContext,
+  runDurableObjectAlarm,
+  runInDurableObject,
+  waitOnExecutionContext,
+} from "cloudflare:test";
 import { DEVICE_HEADER, newId, type Actor } from "@freecorps/brigade-schema";
 import { PROTOCOL_VERSION } from "@freecorps/brigade-sync/protocol";
 import { afterEach, describe, expect, test, vi } from "vite-plus/test";
-import { sessionTag } from "../src/actor.ts";
-import { SIGN_IN_ACCOUNT_LIMIT, SIGN_IN_IP_LIMIT, SIGN_UP_NOTICE_LIMIT } from "../src/auth.ts";
+import {
+  ACTOR_HEADER,
+  MEMBER_NAME_HEADER,
+  SESSION_EXPIRES_HEADER,
+  SESSION_HEADER,
+  sessionTag,
+} from "../src/actor.ts";
+import {
+  pruneRateLimits,
+  RATE_LIMIT_KEEP_MS,
+  SIGN_IN_ACCOUNT_LIMIT,
+  SIGN_IN_AFTER_RESET,
+  SIGN_IN_IP_LIMIT,
+  SIGN_OUT_FAILED_CODE,
+  SIGN_UP_NOTICE_LIMIT,
+} from "../src/auth.ts";
+import { DEVICES_REGISTER_PATH } from "../src/device-route.ts";
 import { renderSignUpAttemptEmail } from "../src/email-templates.ts";
-import { endSessionWith } from "../src/index.ts";
+import { endSessionWith, workerAuth } from "../src/index.ts";
+import {
+  recordSessionEnd,
+  SESSION_END_SWEEP_AFTER_MS,
+  sweepSessionEnds,
+} from "../src/session-end.ts";
 import { Shard } from "../src/shard.ts";
-import type { SocketState, WorkspaceDO } from "../src/workspace.ts";
+import { WORKSPACE_HEADER, type SocketState, type WorkspaceDO } from "../src/workspace.ts";
 import { sessionCookie } from "./session.ts";
 
 const ORIGIN = "http://api.test";
@@ -389,7 +414,7 @@ describe("a session that ends", () => {
       },
     };
     const end = endSessionWith({ ...env, WORKSPACE: flaky } as unknown as Env, 1);
-    await end({ userId: gil.id, sessionId: id });
+    await end({ userId: gil.id, sessionId: id, endedAt: Date.now() });
     expect(calls).toBe(2);
     expect(await closed).toBe(1012);
 
@@ -403,9 +428,387 @@ describe("a session that ends", () => {
     )({
       userId: gil.id,
       sessionId: id,
+      endedAt: Date.now(),
     });
     expect(errors.mock.calls.flat().join("\n")).toContain(
       "closing an ended session's sockets failed",
     );
+  });
+});
+
+/** A D1 whose statements touching `table` fail, every other one going through. */
+function failing(table: string): D1Database {
+  return new Proxy(env.DB, {
+    get(target, key) {
+      if (key === "prepare") {
+        return (query: string) =>
+          query.includes(table)
+            ? {
+                bind: () => ({
+                  run: () => Promise.reject(new Error("D1 is down")),
+                  all: () => Promise.reject(new Error("D1 is down")),
+                  first: () => Promise.reject(new Error("D1 is down")),
+                }),
+              }
+            : target.prepare(query);
+      }
+      const value: unknown = Reflect.get(target, key);
+      return typeof value === "function" ? (value as () => unknown).bind(target) : value;
+    },
+  });
+}
+
+const pendingEnds = (sessionId: string) =>
+  env.DB.prepare(`select "workspaceId" from session_end where "sessionId" = ?`)
+    .bind(sessionId)
+    .all<{ workspaceId: string }>()
+    .then(({ results }) => results.map((row) => row.workspaceId).sort());
+
+/** A phone's `device.register` args under `id`. */
+const phoneArgs = (id: string) => ({
+  id,
+  platform: "ios",
+  environment: "sandbox",
+  pushToken: "f".repeat(64),
+  voipToken: null,
+  publicKey: `B${"b".repeat(86)}`,
+});
+
+const registerOver = (cookie: string, workspaces: string[], device: object) =>
+  api(DEVICES_REGISTER_PATH, {
+    method: "POST",
+    headers: { Cookie: cookie },
+    body: JSON.stringify({ device, workspaces }),
+  });
+
+// A paging path (AGENTS.md): the phone a member signs out of must come off every workspace even when the shard cannot
+// be told at once, or it pages them (and stays `taken` for whoever signs in on it next).
+describe("a sign-out the shards could not hear of at once", () => {
+  test("D1 cannot record it: the sign-out answers 503 and keeps its session, so the app signs out again", async () => {
+    const hana = await signUp("Hana");
+    await workspaceOf(hana);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const request = new Request(`${ORIGIN}/auth/sign-out`, {
+      method: "POST",
+      headers: { Origin: ORIGIN, "Content-Type": "application/json", Cookie: hana.cookie },
+      body: "{}",
+    });
+    const ctx = createExecutionContext();
+    const out = await workerAuth({ ...env, DB: failing("session_end") }, ctx, request).handler(
+      request,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(out.status).toBe(503);
+    expect(((await out.json()) as { code: string }).code).toBe(SIGN_OUT_FAILED_CODE);
+    expect(errors.mock.calls.flat().join("\n")).toContain("recording a session's end failed");
+    // Still signed in: the kept sign-out is tried again with this cookie.
+    const session = await api("/auth/get-session", { headers: { Cookie: hana.cookie } });
+    expect(await session.json()).toMatchObject({ user: { id: hana.id } });
+    // Once D1 is back, it goes through and is recorded.
+    const again = await api("/auth/sign-out", {
+      method: "POST",
+      headers: { Cookie: hana.cookie },
+      body: "{}",
+    });
+    expect(again.status).toBe(200);
+  });
+
+  test("one shard fails every try: its row stays, and the sweep takes the phone off and closes the socket later", async () => {
+    const ivo = await signUp("Ivo");
+    const first = await workspaceOf(ivo, "One");
+    const second = await workspaceOf(ivo, "Two");
+    const phone = newId("dev", 0, random);
+    const owner: Actor = { kind: "user", id: ivo.id, role: "owner" };
+    await register(first, owner, phone);
+    await register(second, owner, phone);
+    const id = await sessionId(ivo.cookie);
+    const { closed } = await connect(second, ivo.cookie);
+    const ended = { userId: ivo.id, sessionId: id, deviceId: phone, endedAt: Date.now() };
+    await recordSessionEnd(env.DB, ended);
+    expect(await pendingEnds(id)).toEqual([first.id, second.id].sort());
+
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const real = env.WORKSPACE;
+    const halfBroken = {
+      getByName: (name: string) =>
+        name === second.id
+          ? { endSession: () => Promise.reject(new Error("shard unavailable")) }
+          : real.getByName(name),
+    };
+    await endSessionWith({ ...env, WORKSPACE: halfBroken } as unknown as Env, 1)(ended);
+    expect(errors.mock.calls.flat().join("\n")).toContain(
+      "closing an ended session's sockets failed",
+    );
+    expect(await devices(first)).toEqual([]);
+    expect(await devices(second)).toEqual([phone]);
+    expect(await pendingEnds(id)).toEqual([second.id]);
+
+    // Too soon for the sweep: the hook may still be trying.
+    await sweepSessionEnds(env, Date.now());
+    expect(await devices(second)).toEqual([phone]);
+    await sweepSessionEnds(env, Date.now() + SESSION_END_SWEEP_AFTER_MS + 1000);
+    expect(await devices(second)).toEqual([]);
+    expect(await closed).toBe(1012);
+    expect(await pendingEnds(id)).toEqual([]);
+  });
+
+  test("whoever signs in on that phone next registers it there, the end caught up first", async () => {
+    const jade = await signUp("Jade");
+    const kai = await signUp("Kai");
+    const w = await workspaceOf(jade);
+    await addMember(w.id, kai.id, "responder");
+    const phone = newId("dev", 0, random);
+    await register(w, { kind: "user", id: jade.id, role: "owner" }, phone);
+    // Jade signed out on the phone; the shard never heard of it.
+    await recordSessionEnd(env.DB, {
+      userId: jade.id,
+      sessionId: await sessionId(jade.cookie),
+      deviceId: phone,
+      endedAt: Date.now(),
+    });
+    const answer = await registerOver(kai.cookie, [w.id], phoneArgs(phone));
+    expect(answer.status).toBe(200);
+    expect(await answer.json()).toEqual({ workspaces: { [w.id]: "ok" } });
+    const owners = await w.withShard((shard) =>
+      shard.store.scan("devices").map((device) => device.userId),
+    );
+    expect(owners).toEqual([kai.id]);
+  });
+
+  test("a sign-out acted on late never drops the phone its member signed in on again since", async () => {
+    const lia = await signUp("Lia");
+    const w = await workspaceOf(lia);
+    const phone = newId("dev", 0, random);
+    const endedAt = Date.now();
+    await recordSessionEnd(env.DB, {
+      userId: lia.id,
+      sessionId: await sessionId(lia.cookie),
+      deviceId: phone,
+      endedAt,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await register(w, { kind: "user", id: lia.id, role: "owner" }, phone);
+    expect(await w.stub.catchUpSessionEnds(w.id)).toBe(true);
+    expect(await devices(w)).toEqual([phone]);
+  });
+});
+
+describe("registering a phone in every workspace it was opened in", () => {
+  test("one request registers it in each, and says which are not the member's", async () => {
+    const mia = await signUp("Mia");
+    const nico = await signUp("Nico");
+    const mine = await workspaceOf(mia, "One");
+    const also = await workspaceOf(mia, "Two");
+    const theirs = await workspaceOf(nico, "Theirs");
+    const phone = newId("dev", 0, random);
+    const answer = await registerOver(mia.cookie, [mine.id, also.id, theirs.id], phoneArgs(phone));
+    expect(answer.status).toBe(200);
+    expect(await answer.json()).toEqual({
+      workspaces: { [mine.id]: "ok", [also.id]: "ok", [theirs.id]: "not_a_member" },
+    });
+    expect(await devices(mine)).toEqual([phone]);
+    expect(await devices(also)).toEqual([phone]);
+    expect(await devices(theirs)).toEqual([]);
+    // Nothing changed: still `ok`.
+    expect(await (await registerOver(mia.cookie, [mine.id], phoneArgs(phone))).json()).toEqual({
+      workspaces: { [mine.id]: "ok" },
+    });
+  });
+
+  test("another member's device is `forbidden` there; bad bodies and no session are refused", async () => {
+    const otto = await signUp("Otto");
+    const pia = await signUp("Pia");
+    const w = await workspaceOf(otto);
+    await addMember(w.id, pia.id, "responder");
+    const phone = newId("dev", 0, random);
+    await register(w, { kind: "user", id: otto.id, role: "owner" }, phone);
+    expect(await (await registerOver(pia.cookie, [w.id], phoneArgs(phone))).json()).toEqual({
+      workspaces: { [w.id]: "forbidden" },
+    });
+    expect((await registerOver(pia.cookie, [], phoneArgs(phone))).status).toBe(400);
+    expect((await registerOver(pia.cookie, ["nope"], phoneArgs(phone))).status).toBe(400);
+    expect((await registerOver("", [w.id], phoneArgs(phone))).status).toBe(401);
+    expect(
+      (
+        await api(DEVICES_REGISTER_PATH, {
+          method: "POST",
+          headers: { Cookie: pia.cookie, Origin: "https://evil.example" },
+          body: JSON.stringify({ device: phoneArgs(phone), workspaces: [w.id] }),
+        })
+      ).status,
+    ).toBe(403);
+  });
+});
+
+/** A sync upgrade as the Worker forwards it, sent straight to the shard (one it authenticated a moment ago). */
+const forwarded = (w: Workspace, actor: Actor, headers: Record<string, string>) =>
+  w.stub.fetch(`${ORIGIN}/sync/${w.id}`, {
+    headers: {
+      Upgrade: "websocket",
+      [WORKSPACE_HEADER]: w.id,
+      [ACTOR_HEADER]: JSON.stringify(actor),
+      [MEMBER_NAME_HEADER]: encodeURIComponent("Quin"),
+      ...headers,
+    },
+  });
+
+describe("sockets of a session that ended or expired", () => {
+  test("an upgrade the Worker let through just before its session ended is refused by the shard", async () => {
+    const quin = await signUp("Quin");
+    const w = await workspaceOf(quin);
+    const actor: Actor = { kind: "user", id: quin.id, role: "owner" };
+    const id = await sessionId(quin.cookie);
+    expect(await w.stub.endSession(w.id, { userId: quin.id, sessionId: id })).toEqual({ ok: true });
+    expect((await forwarded(w, actor, { [SESSION_HEADER]: id })).status).toBe(401);
+    // Another session of theirs still opens.
+    const other = await sessionId(await sessionCookie(quin.email, PASSWORD));
+    const opened = await forwarded(w, actor, { [SESSION_HEADER]: other });
+    expect(opened.status).toBe(101);
+    opened.webSocket!.accept();
+    open.push(opened.webSocket!);
+  });
+
+  test("a socket closes when its session expires: refused if already expired, closed on its next frame or by the alarm", async () => {
+    const rui = await signUp("Rui");
+    const w = await workspaceOf(rui);
+    const actor: Actor = { kind: "user", id: rui.id, role: "owner" };
+    const id = await sessionId(rui.cookie);
+    expect(
+      (
+        await forwarded(w, actor, {
+          [SESSION_HEADER]: id,
+          [SESSION_EXPIRES_HEADER]: String(Date.now() - 1),
+        })
+      ).status,
+    ).toBe(401);
+
+    const accept = async (expiresAt: number) => {
+      const response = await forwarded(w, actor, {
+        [SESSION_HEADER]: id,
+        [SESSION_EXPIRES_HEADER]: String(expiresAt),
+      });
+      expect(response.status).toBe(101);
+      const socket = response.webSocket!;
+      socket.accept();
+      open.push(socket);
+      const closed = new Promise<{ code: number; reason: string }>((resolve) =>
+        socket.addEventListener("close", (event) =>
+          resolve({ code: event.code, reason: event.reason }),
+        ),
+      );
+      return { socket, closed };
+    };
+    // Idle: the alarm the upgrade armed for its expiry closes it.
+    const idle = await accept(Date.now() + 200);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await runDurableObjectAlarm(w.stub);
+    expect(await idle.closed).toEqual({ code: 1012, reason: "session expired" });
+
+    // Talking: its next frame after the expiry closes it, whether or not the alarm ran.
+    const talking = await accept(Date.now() + 60 * 60 * 1000);
+    await runInDurableObject(w.stub, (_instance, state) => {
+      for (const ws of state.getWebSockets(sessionTag(id))) {
+        const socket = ws.deserializeAttachment() as SocketState;
+        if (!socket.closed) ws.serializeAttachment({ ...socket, expiresAt: Date.now() - 1 });
+      }
+    });
+    talking.socket.send(
+      JSON.stringify({ type: "hello", protocol: PROTOCOL_VERSION, clientId: "t" }),
+    );
+    expect(await talking.closed).toEqual({ code: 1012, reason: "session expired" });
+  });
+
+  test("the Worker passes the session's expiry with the upgrade", async () => {
+    const sol = await signUp("Sol");
+    const w = await workspaceOf(sol);
+    await connect(w, sol.cookie);
+    const expiries = await runInDurableObject(w.stub, (_instance, state) =>
+      state.getWebSockets().map((ws) => (ws.deserializeAttachment() as SocketState).expiresAt),
+    );
+    expect(expiries).toHaveLength(1);
+    expect(expiries[0]).toBeGreaterThan(Date.now());
+  });
+});
+
+describe("signing in after a password reset", () => {
+  test("from where it was reset, the address's own limit no longer keeps its owner out; from elsewhere it still does", async () => {
+    // Signed up without signing in, so no try is counted yet.
+    const tom = { email: address("Tom") };
+    expect((await signUpRequest("Tom", tom.email)).status).toBe(200);
+    for (let i = 0; i < SIGN_IN_ACCOUNT_LIMIT.max; i++) {
+      expect((await signIn(tom.email, "not the password")).status).toBe(401);
+    }
+    const home = "192.0.2.240";
+    expect((await signIn(tom.email, PASSWORD, home)).status).toBe(429);
+    // The reset, from `home`, as the dashboard's reset page sends it.
+    const sent = outbox();
+    const resets = () =>
+      sent().filter((one) => one.to.email === tom.email && one.text.includes("/reset-password#"));
+    expect(
+      (
+        await api("/auth/request-password-reset", {
+          method: "POST",
+          headers: { "cf-connecting-ip": home },
+          body: JSON.stringify({ email: tom.email }),
+        })
+      ).status,
+    ).toBe(200);
+    await vi.waitFor(() => expect(resets().length).toBeGreaterThan(0));
+    const link = new URL(/https?:\/\/\S+/.exec(resets().at(-1)!.text)![0]);
+    const token = new URLSearchParams(link.hash.slice(1)).get("token")!;
+    const newPassword = "a whole new password here";
+    const done = await api("/auth/reset-password", {
+      method: "POST",
+      headers: { "cf-connecting-ip": home },
+      body: JSON.stringify({ token, newPassword }),
+    });
+    expect(done.status).toBe(200);
+    expect((await signIn(tom.email, newPassword, home)).status).toBe(200);
+    expect((await signIn(tom.email, newPassword)).status).toBe(429);
+    const row = await env.DB.prepare(`select "lastRequest" from "rateLimit" where key = ?`)
+      .bind(`signin-reset:${tom.email}:${home}`)
+      .first<{ lastRequest: number }>();
+    expect(Date.now() - row!.lastRequest).toBeLessThan(SIGN_IN_AFTER_RESET.window * 1000);
+  });
+});
+
+describe("rate-limit counters", () => {
+  test("the cron deletes those past every window", async () => {
+    const insert = (key: string, at: number) =>
+      env.DB.prepare(`insert into "rateLimit" (id, key, count, "lastRequest") values (?, ?, 1, ?)`)
+        .bind(newId("rl", at, random), key, at)
+        .run();
+    const now = Date.now();
+    await insert("signin:old@example.com", now - RATE_LIMIT_KEEP_MS - 1000);
+    await insert("signin:new@example.com", now - 1000);
+    await pruneRateLimits(env.DB, now);
+    const keys = await env.DB.prepare(
+      `select key from "rateLimit" where key in ('signin:old@example.com', 'signin:new@example.com')`,
+    ).all<{ key: string }>();
+    expect(keys.results.map((row) => row.key)).toEqual(["signin:new@example.com"]);
+  });
+
+  test("a member change is counted only in a workspace that is the caller's", async () => {
+    const uma = await signUp("Uma");
+    // Made-up workspaces: nobody's, existing or not.
+    for (const workspace of [`ws_${"0".repeat(26)}`, `ws_${"1".repeat(26)}`]) {
+      const answer = await api(`/workspaces/${workspace}/members/${uma.id}`, {
+        method: "DELETE",
+        headers: { Cookie: uma.cookie },
+      });
+      expect(answer.status).toBe(403);
+    }
+    const counted = await env.DB.prepare(`select count(*) as n from "rateLimit" where key like ?`)
+      .bind(`member-change:%:${uma.id}`)
+      .first<{ n: number }>();
+    expect(counted?.n).toBe(0);
+  });
+
+  test("a sign-in with something that is no address leaves no counter", async () => {
+    expect((await signIn("not an address", PASSWORD)).status).toBe(400);
+    const counted = await env.DB.prepare(`select count(*) as n from "rateLimit" where key = ?`)
+      .bind("signin:not an address")
+      .first<{ n: number }>();
+    expect(counted?.n).toBe(0);
   });
 });

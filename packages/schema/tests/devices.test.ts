@@ -364,4 +364,23 @@ describe("device.signOut", () => {
     ).toMatchObject({ ok: false, error: { code: "conflict" } });
     expect(store.get("devices", theirs)).toBeDefined();
   });
+
+  test("with `deviceId` and `before`, a phone its member registered again since the sign-out stays", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const phone = deviceId();
+    run(store, ana, "device.register", args(phone));
+    store.update("devices", phone, { updatedAt: T + 10 });
+    expect(
+      run(store, ACCOUNT_ACTOR, "device.signOut", { userId: "usr_ana", deviceId: phone, before: T }),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(store.get("devices", phone)).toBeDefined();
+    expect(
+      run(store, ACCOUNT_ACTOR, "device.signOut", {
+        userId: "usr_ana",
+        deviceId: phone,
+        before: T + 11,
+      }).ok,
+    ).toBe(true);
+    expect(store.get("devices", phone)).toBeUndefined();
+  });
 });

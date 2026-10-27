@@ -16,12 +16,14 @@ import {
   memberRole,
   RESET_AT_HEADER,
   resolveActor,
+  SESSION_EXPIRES_HEADER,
   SESSION_HEADER,
 } from "./actor.ts";
 import {
   AUTH_BASE_PATH,
   countRequest,
   createAuth,
+  pruneRateLimits,
   WORKSPACE_LIMIT_CODE,
   type Auth,
   type AuthBindings,
@@ -52,6 +54,8 @@ import { webhookRequest } from "./webhook-routes.ts";
 import { MAX_ALERT_BODY } from "./alert-intake.ts";
 import { ACK_STATUS, INVITATION_STATUS, MEMBER_STATUS, RECEIPT_STATUS, USER_ID } from "./http.ts";
 import { WATCHDOG_NAME, type PagingHealth } from "./watchdog.ts";
+import { forgetSessionEnd, recordSessionEnd, sweepSessionEnds } from "./session-end.ts";
+import { DEVICES_REGISTER_PATH, registerDevices } from "./device-route.ts";
 import {
   IDEMPOTENCY_KEY_HEADER,
   ORGANIZATION_ID,
@@ -87,6 +91,8 @@ const EXPORT_PATH = /^\/workspaces\/([^/]+)\/exports\/([^/]+)$/;
 const EXPORT_SWEEP_MINUTE = 17;
 /** Minute of the hour the cron deletes status page subscribers who never confirmed (src/status-subscribers.ts). */
 const SUBSCRIBER_SWEEP_MINUTE = 37;
+/** Minute of the hour the cron deletes rate-limit counters past every window (`pruneRateLimits`). */
+const RATE_LIMIT_PRUNE_MINUTE = 23;
 /** `/status/<slug>`; `/status` and `/status/` alone are the page's 404 (no slug). */
 const PUBLIC_STATUS_PATH = /^\/status(?:\/([^/]*))?$/;
 const READ_METHODS = ["GET", "HEAD"];
@@ -202,6 +208,7 @@ export default {
     if (webhooks) return webhookRequest(request, env, auth, webhooks[1]!, webhooks[2]);
     const heartbeat = HEARTBEAT_PATH.exec(pathname)?.[1];
     if (heartbeat !== undefined) return receiveHeartbeat(request, env, heartbeat);
+    if (pathname === DEVICES_REGISTER_PATH) return registerDevices(request, env, auth);
     if (pathname === "/receipts") return receiveReceipt(request, env);
     const alerts = ALERTS_PATH.exec(pathname)?.[1];
     if (alerts !== undefined) return receiveAlerts(request, env, alerts);
@@ -247,6 +254,18 @@ export default {
         console.error(JSON.stringify({ message: "subscriber sweep failed", error: String(error) })),
       );
       ctx?.waitUntil(sweep);
+    }
+    // Ended sessions a shard has yet to act on (src/session-end.ts), every run; and the rate-limit counters past
+    // every window, once an hour. Never in the heartbeat's way.
+    ctx?.waitUntil(sweepSessionEnds(env, Date.now()));
+    if (new Date(controller.scheduledTime).getUTCMinutes() === RATE_LIMIT_PRUNE_MINUTE) {
+      ctx?.waitUntil(
+        pruneRateLimits(env.DB, Date.now()).catch((error: unknown) =>
+          console.error(
+            JSON.stringify({ message: "rate limit prune failed", error: String(error) }),
+          ),
+        ),
+      );
     }
     await env.WATCHDOG.getByName(WATCHDOG_NAME).beat();
   },
@@ -371,6 +390,7 @@ export function workerAuth(
     secureCookies: new URL(request.url).protocol === "https:",
     onWorkspaceCreated: onWorkspaceCreated ?? provisionWith(env),
     onPasswordReset: signOutWith(env),
+    onSessionEnding: (session) => recordSessionEnd(env.DB, session),
     onSessionEnded: endSessionWith(env),
     // Made only when a verification email goes out, so other requests never read the email settings.
     get email() {
@@ -382,9 +402,10 @@ export function workerAuth(
 /**
  * When a Better Auth session ends (RFC 0004 "Session revocation"): asks the shard of every workspace the user is in
  * (D1's `member`) to close the sockets opened with it, and with `deviceId` to take that phone off too
- * (`WorkspaceDO.endSession`), each tried `SIGN_OUT_ATTEMPTS` times. Never throws. A shard that still fails is logged:
- * its sockets stay open until they next reconnect (refused then, the session being gone), and a phone it still
- * pages for the member is what the app's own `device.unregister` of the workspace it had open does not cover.
+ * (`WorkspaceDO.endSession`), each tried `SIGN_OUT_ATTEMPTS` times, then deletes that workspace's row in D1's
+ * `session_end` (written before the session went, `recordSessionEnd`). Never throws. A shard that still fails (or
+ * D1, reading the workspaces) is logged and keeps its row, which the shard acts on before a phone next registers in
+ * it or after its next sync upgrade, or the cron within a minute or two (src/session-end.ts).
  */
 export function endSessionWith(
   env: Env,
@@ -414,8 +435,9 @@ export function endSessionWith(
         for (let attempt = 1; attempt <= SIGN_OUT_ATTEMPTS; attempt++) {
           if (attempt > 1) await new Promise((resolve) => setTimeout(resolve, retryMs * attempt));
           try {
-            // `not_found`: a shard never provisioned has no sockets; nothing to retry.
+            // `not_found`: a shard never provisioned has no sockets or devices; nothing to retry.
             await env.WORKSPACE.getByName(workspaceId).endSession(workspaceId, session);
+            await forgetSessionEnd(env.DB, workspaceId, session.sessionId);
             return;
           } catch (error) {
             failure = error;
@@ -739,17 +761,6 @@ export async function changeMember(
   }
   const session = await lazyAuth().api.getSession({ headers: request.headers });
   if (!session) return json({ error: "unauthenticated" }, 401);
-  // Each change reads D1 and wakes the shard: bounded per member and workspace before either.
-  try {
-    const { window, max } = MEMBER_CHANGE_LIMIT;
-    const key = `member-change:${workspaceId}:${session.user.id}`;
-    if ((await countRequest(env.DB, key, window, Date.now())) > max) {
-      return json({ error: "rate_limited" }, 429, { "Retry-After": String(window) });
-    }
-  } catch (error) {
-    console.error(JSON.stringify({ message: "member change count failed", error: String(error) }));
-    return json({ error: "unavailable" }, 503);
-  }
 
   let change: MemberChange = { kind: "remove" };
   if (request.method === "PATCH") {
@@ -783,6 +794,18 @@ export async function changeMember(
     }
   } catch (error) {
     console.error(JSON.stringify({ message: "member lookup failed", error: String(error) }));
+    return json({ error: "unavailable" }, 503);
+  }
+  // Each change wakes the shard (and it reads D1): bounded per member and workspace. Counted only once the workspace
+  // is known to be theirs (or to exist, for a leave sent again), so made-up ids leave no counter behind.
+  try {
+    const { window, max } = MEMBER_CHANGE_LIMIT;
+    const key = `member-change:${workspaceId}:${session.user.id}`;
+    if ((await countRequest(env.DB, key, window, Date.now())) > max) {
+      return json({ error: "rate_limited" }, 429, { "Retry-After": String(window) });
+    }
+  } catch (error) {
+    console.error(JSON.stringify({ message: "member change count failed", error: String(error) }));
     return json({ error: "unavailable" }, 503);
   }
   let result: MemberChangeResult;
@@ -1054,8 +1077,8 @@ export async function acknowledgeIncident(
  * `GET /sync/:workspaceId` with `Upgrade: websocket`: hands the socket to the workspace's shard (RFC 0004
  * "Socket topology"). The Worker authenticates the upgrade (`resolveActor`: 401 without a session, 403 for a
  * non-member or another site's page) and forwards a request it builds itself, carrying only the upgrade, the
- * workspace id and the verified actor (with the member's name, when their password was last reset and the session's
- * id, which tags the socket), so no client header reaches the shard.
+ * workspace id and the verified actor (with the member's name, when their password was last reset, and the session's
+ * id, which tags the socket, and expiry, when the shard closes it), so no client header reaches the shard.
  */
 async function openSync(
   request: Request,
@@ -1081,6 +1104,9 @@ async function openSync(
   }
   if (resolved.resetAt !== undefined) headers.set(RESET_AT_HEADER, String(resolved.resetAt));
   if (resolved.sessionId !== undefined) headers.set(SESSION_HEADER, resolved.sessionId);
+  if (resolved.sessionExpiresAt !== undefined) {
+    headers.set(SESSION_EXPIRES_HEADER, String(resolved.sessionExpiresAt));
+  }
   try {
     return await env.WORKSPACE.getByName(workspace).fetch(request.url, { headers });
   } catch (error) {

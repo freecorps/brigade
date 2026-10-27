@@ -832,7 +832,9 @@ function RouteForm({
       typeId: typeId !== "" && catalog.types.some((one) => one.id === typeId) ? typeId : null,
       // Services deleted since the route was saved are dropped when it is saved again.
       serviceIds: serviceIds.filter((id) => catalog.services.some((one) => one.id === id)),
-      policyId: policyId === "" ? null : policyId,
+      // Likewise a policy deleted while the form was open: the route falls back to the default policy.
+      policyId:
+        policyId !== "" && catalog.policies.some((one) => one.id === policyId) ? policyId : null,
     };
     const next: RouteAction =
       kind === "open"

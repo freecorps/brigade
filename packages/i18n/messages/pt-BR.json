@@ -2081,14 +2081,16 @@
         "part=components_title": "Componentes",
         "part=components_empty": "Nenhum componente listado ainda.",
         "part=affects": "Afeta {list}",
-        "part=updated": "Atualizado em {time} UTC",
-        "part=update_at": "{time} UTC",
-        "part=resolved_at": "Resolvido em {time} UTC",
+        "part=updated": "Atualizado em {time}",
+        "part=update_at": "{time}",
+        "part=resolved_at": "Resolvido em {time}",
         "part=not_found_title": "Nenhuma página de status aqui",
         "part=not_found_body": "Este endereço não tem página de status, ou ela não está pública agora.",
         "part=unavailable_title": "Página de status indisponível",
         "part=unavailable_body": "A página de status não pode ser exibida agora. Tente de novo em um minuto.",
         "part=powered": "Página de status do Brigade",
+        "part=feed_atom": "Feed Atom",
+        "part=feed_json": "Feed JSON",
         "part=component_maintenance": "Em manutenção",
         "part=overall_maintenance": "Manutenção programada em andamento",
         "part=*": "Status"
@@ -2179,6 +2181,19 @@
         "part=uptime_no_monitors": "Ainda não há monitores. Adicione um em Monitores para mostrar uma barra de disponibilidade.",
         "part=uptime_from": "Disponibilidade de {name}",
         "part=uptime_limit": "No máximo 5 monitores por componente.",
+        "part=order_hint": "A página pública mostra nesta ordem, os sem grupo primeiro; um grupo aparece onde está o primeiro componente dele.",
+        "part=move_up": "Mover {name} para cima",
+        "part=move_down": "Mover {name} para baixo",
+        "part=move_group_up": "Mover o grupo {name} para cima",
+        "part=move_group_down": "Mover o grupo {name} para baixo",
+        "part=moved": "{name} mudou de posição.",
+        "part=reorder_failed": "Não foi possível mudar a ordem. Tente de novo.",
+        "part=services_label": "Serviços",
+        "part=services_hint": "Um incidente com um destes serviços já começa com este componente marcado ao publicar na página. Nada é publicado sozinho.",
+        "part=services_none": "Ainda não há serviços. Cadastre-os em Serviços para vinculá-los aqui.",
+        "part=services_limit": "No máximo 10 serviços por componente.",
+        "part=services_from": "Serviços: {name}",
+        "part=preselected": "Marcados a partir dos serviços do incidente. Confira antes de publicar.",
         "part=*": "Página de status"
       }
     }
@@ -2869,8 +2884,8 @@
       "match": {
         "part=active_title": "Manutenção em andamento",
         "part=upcoming_title": "Manutenção programada",
-        "part=window_upcoming": "De {time} a {until} UTC",
-        "part=window_active": "Até {until} UTC",
+        "part=window_upcoming": "De {time} a {until}",
+        "part=window_active": "Até {until}",
         "part=*": "Manutenção"
       }
     }
@@ -2983,7 +2998,7 @@
         "part=components_label": "Componentes afetados",
         "part=starts_label": "Início",
         "part=ends_label": "Fim",
-        "part=times_hint": "No seu fuso horário ({name}). A página pública mostra UTC.",
+        "part=times_hint": "No seu fuso horário ({name}). Cada visitante vê a página pública no próprio fuso.",
         "part=save": "Programar",
         "part=saving": "Salvando…",
         "part=update": "Salvar",

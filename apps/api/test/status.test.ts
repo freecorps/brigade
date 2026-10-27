@@ -11,6 +11,7 @@ import {
 } from "@freecorps/brigade-schema";
 import { describe, expect, test, vi } from "vite-plus/test";
 import type { BrigadeEvent } from "../src/outbox.ts";
+import { feedUrls, renderAtomFeed } from "../src/status-feed.ts";
 import { Shard, touchesStatusPage } from "../src/shard.ts";
 import {
   STATUS_OUTAGE_REFRESH_MS,
@@ -312,7 +313,10 @@ describe("the snapshot", () => {
     expect(html).toContain("Slow &lt;API&gt; responses");
     expect(html).not.toContain("<API>");
     expect(html).toContain("Some systems are down");
-    expect(html).not.toContain("<script");
+    // One script, the local times', allowed by its hash; nothing else may run.
+    expect(html.match(/<script[\s>]/g) ?? []).toHaveLength(1);
+    expect(response.headers.get("Content-Security-Policy")).toMatch(/script-src 'sha256-[^']+'/);
+    expect(html).toContain('href="/status/' + address + '/feed.atom"');
     const head = await exports.default.fetch(`${ORIGIN}/status/${address}`, { method: "HEAD" });
     expect(head.status).toBe(200);
     expect(await head.text()).toBe("");
@@ -832,6 +836,14 @@ describe("the snapshot", () => {
         .flatMap((shown) => shown.updates.map((update) => update.body))
         .sort();
     expect(await bodies()).toEqual(["A fix is rolling out.", "We're looking into it."]);
+    // The feed entry's own `<updated>`: a reader replaces the text it kept only when it moves.
+    const updated = async () => {
+      const xml = renderAtomFeed((await snapshot(address))!, feedUrls(ORIGIN, address));
+      return Date.parse(/<entry>.*?<updated>([^<]+)<\/updated>/s.exec(xml)![1]!);
+    };
+    const later = () => new Promise((resolve) => setTimeout(resolve, 5));
+    const published = await updated();
+    await later();
     const [older, newer] = await t.withShard(
       (shard) => shard.store.get("status_incidents", incident)!.updates,
     );
@@ -844,11 +856,15 @@ describe("the snapshot", () => {
     ).toMatchObject({ ok: true });
     await t.push();
     expect(await bodies()).toEqual(["A fix is rolling out.", "We're looking into slow checkouts."]);
+    const edited = await updated();
+    expect(edited).toBeGreaterThan(published);
+    await later();
     expect(
       await t.run("incident.removePublishedUpdate", { id: incident, updateId: newer!.id }, caio),
     ).toMatchObject({ ok: true });
     await t.push();
     expect(await bodies()).toEqual(["We're looking into slow checkouts."]);
+    expect(await updated()).toBeGreaterThan(edited);
   });
 
   test("the shard's alarm pushes it", async () => {
@@ -926,5 +942,68 @@ describe("the snapshot", () => {
       expect(await response.text()).toContain("No status page here");
     }
     expect((await exports.default.fetch(`${ORIGIN}/status`)).status).toBe(404);
+  });
+
+  test("the feeds come from the snapshot in KV, cached like the page", async () => {
+    const t = await team();
+    const address = slug();
+    await configure(t, t.ana, settings(address));
+    const ana: Actor = { kind: "user", id: t.ana.id, role: "owner" };
+    const incident = newId("inc", Date.now(), random);
+    await t.run(
+      "incident.declare",
+      { id: incident, title: "db-7 OOM killed", severity: "sev1" },
+      ana,
+    );
+    await t.run(
+      "incident.publishUpdate",
+      {
+        id: incident,
+        title: "Slow API",
+        status: "investigating",
+        impact: "degraded",
+        componentIds: [],
+        body: "Looking & checking.",
+      },
+      ana,
+    );
+    await t.push();
+    const json = await exports.default.fetch(`${ORIGIN}/status/${address}/feed.json`);
+    expect(json.status).toBe(200);
+    expect(json.headers.get("Content-Type")).toBe("application/feed+json; charset=utf-8");
+    expect(json.headers.get("Cache-Control")).toBe("public, max-age=30");
+    expect(json.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    const feed = (await json.json()) as { feed_url: string; items: { title: string }[] };
+    expect(feed.feed_url).toBe(`${ORIGIN}/status/${address}/feed.json`);
+    expect(feed.items.map((item) => item.title)).toEqual(["Slow API"]);
+    const text = JSON.stringify(feed);
+    for (const internal of ["db-7 OOM", t.ana.id, t.id, incident])
+      expect(text).not.toContain(internal);
+
+    const atom = await exports.default.fetch(`${ORIGIN}/status/${address}/feed.atom`);
+    expect(atom.status).toBe(200);
+    expect(atom.headers.get("Content-Type")).toBe("application/atom+xml; charset=utf-8");
+    const xml = await atom.text();
+    expect(xml).toContain('<title type="text">Slow API</title>');
+    expect(xml).toContain("Looking &amp; checking.");
+    expect(atom.headers.get("Cache-Control")).toBe("public, max-age=30");
+    expect(atom.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    for (const internal of ["db-7 OOM", t.ana.id, t.id, incident])
+      expect(xml).not.toContain(internal);
+    const head = await exports.default.fetch(`${ORIGIN}/status/${address}/feed.atom`, {
+      method: "HEAD",
+    });
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
+    expect(
+      (await exports.default.fetch(`${ORIGIN}/status/${address}/feed.json`, { method: "POST" }))
+        .status,
+    ).toBe(405);
+    for (const missing of [slug(), "Bad_Slug"]) {
+      expect((await exports.default.fetch(`${ORIGIN}/status/${missing}/feed.json`)).status).toBe(
+        404,
+      );
+    }
+    expect((await exports.default.fetch(`${ORIGIN}/status/${address}/feed.rss`)).status).toBe(404);
   });
 });

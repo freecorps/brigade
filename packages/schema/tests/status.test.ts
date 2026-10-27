@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vite-plus/test";
 import {
+  componentsForServices,
   componentStatus,
   createMemoryStore,
+  MAX_COMPONENT_SERVICES,
   isStatusSlug,
   MAX_COMPONENTS,
   MAX_PUBLIC_UPDATES,
@@ -204,6 +206,178 @@ describe("components", () => {
       events: [{ type: "status_component.deleted", data: { id: api, incidents: 1 } }],
     });
     expect(store.get("status_incidents", incident)?.componentIds).toEqual([web]);
+  });
+});
+
+describe("statusComponent.reorder", () => {
+  const order = (store: Store) =>
+    (
+      runQuery(queries, "statusComponents.all", {}, store, "viewer") as { rows: { id: string }[] }
+    ).rows.map((row) => row.id);
+
+  test("owners and admins set the order, with an event; it moves the page's groups too", () => {
+    const { store, api, web } = ready();
+    const db = newId("cmp", T + 2, () => new Uint8Array(10).fill(3));
+    run(store, "statusComponent.create", { id: db, name: "Database", group: "Core" });
+    expect(order(store)).toEqual([api, web, db]);
+    expect(
+      runMutation(
+        mutations,
+        "statusComponent.reorder",
+        { ids: [db, web, api] },
+        store,
+        ctx("responder"),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(
+      runMutation(
+        mutations,
+        "statusComponent.reorder",
+        { ids: [db, web, api] },
+        store,
+        ctx("admin"),
+      ),
+    ).toMatchObject({
+      ok: true,
+      events: [{ type: "status_component.reordered", data: { ids: [db, web, api] } }],
+    });
+    expect(order(store)).toEqual([db, web, api]);
+    // Groups follow their first component; the ungrouped ones still come first.
+    expect(statusSnapshot(store, T)?.groups.map((group) => group.name)).toEqual([
+      null,
+      "Core",
+      "Apps",
+    ]);
+    // A component added later comes last.
+    const cdn = newId("cmp", T + 3, () => new Uint8Array(10).fill(4));
+    run(store, "statusComponent.create", { id: cdn, name: "CDN", group: null });
+    expect(order(store)).toEqual([db, web, api, cdn]);
+  });
+
+  test("components from before reordering keep coming first, oldest first", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const legacy = (id: string, name: string, at: number) =>
+      store.insert("status_components", {
+        id,
+        name,
+        group: null,
+        status: "operational",
+        createdAt: at,
+        updatedAt: at,
+      });
+    const api = newId("cmp", T, () => new Uint8Array(10).fill(1));
+    const web = newId("cmp", T + 1, () => new Uint8Array(10).fill(2));
+    legacy(web, "Website", T + 1);
+    legacy(api, "API", T);
+    const db = newId("cmp", T + 2, () => new Uint8Array(10).fill(3));
+    run(store, "statusComponent.create", { id: db, name: "Database", group: null });
+    expect(store.get("status_components", db)?.position).toBe(0);
+    expect(order(store)).toEqual([api, web, db]);
+  });
+
+  test("a stale or partial order is refused, never dropping a component; the same order is a conflict", () => {
+    const { store, api, web } = ready();
+    expect(run(store, "statusComponent.reorder", { ids: [web] })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args" },
+    });
+    const gone = newId("cmp", T + 9, () => new Uint8Array(10).fill(9));
+    expect(run(store, "statusComponent.reorder", { ids: [web, api, gone] })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args", issues: [{ path: "ids[2]" }] },
+    });
+    expect(run(store, "statusComponent.reorder", { ids: [api, web] })).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(order(store)).toEqual([api, web]);
+  });
+
+  test("runs optimistically on a client too", () => {
+    const { store, api, web } = ready();
+    expect(
+      runMutation(
+        mutations,
+        "statusComponent.reorder",
+        { ids: [web, api] },
+        store,
+        ctx("owner", T, false),
+      ),
+    ).toMatchObject({ ok: true });
+    expect(order(store)).toEqual([web, api]);
+  });
+});
+
+describe("statusComponent.linkServices", () => {
+  const SVC = "svc_01JB0000000000000000000001";
+  const SVC2 = "svc_01JB0000000000000000000002";
+  const service = (id: string, name: string) => ({
+    id,
+    name,
+    description: "",
+    tier: "tier1",
+    owners: [],
+    escalationPolicyId: null,
+  });
+
+  test("owners and admins link services, with an event; the incident's services pick the components", () => {
+    const { store, api, web } = ready();
+    run(store, "service.create", service(SVC, "Checkout"));
+    run(store, "service.create", service(SVC2, "Search"));
+    expect(
+      runMutation(
+        mutations,
+        "statusComponent.linkServices",
+        { id: api, serviceIds: [SVC] },
+        store,
+        ctx("responder"),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(
+      run(store, "statusComponent.linkServices", { id: api, serviceIds: [SVC] }, ctx("admin")),
+    ).toMatchObject({
+      ok: true,
+      events: [{ type: "status_component.services_linked", data: { id: api, serviceIds: [SVC] } }],
+    });
+    run(store, "statusComponent.linkServices", { id: web, serviceIds: [SVC, SVC2] });
+    const components = store.scan("status_components").sort((a, b) => a.createdAt - b.createdAt);
+    expect(componentsForServices(components, [SVC2])).toEqual([web]);
+    expect(componentsForServices(components, [SVC])).toEqual([api, web]);
+    expect(componentsForServices(components, [])).toEqual([]);
+    // Nothing about the services reaches the public page.
+    const text = JSON.stringify(statusSnapshot(store, T));
+    for (const internal of ["svc_", "Checkout", "Search"]) expect(text).not.toContain(internal);
+  });
+
+  test("services that exist, at most MAX_COMPONENT_SERVICES; unchanged is a conflict; empty unlinks", () => {
+    const { store, api } = ready();
+    expect(
+      run(store, "statusComponent.linkServices", { id: api, serviceIds: [SVC] }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args", issues: [{ path: "serviceIds[0]" }] },
+    });
+    const many = Array.from({ length: MAX_COMPONENT_SERVICES + 1 }, (_, index) =>
+      newId("svc", T + index, random),
+    );
+    expect(run(store, "statusComponent.linkServices", { id: api, serviceIds: many })).toMatchObject(
+      {
+        ok: false,
+        error: { code: "invalid_args" },
+      },
+    );
+    run(store, "service.create", service(SVC, "Checkout"));
+    run(store, "statusComponent.linkServices", { id: api, serviceIds: [SVC] });
+    expect(
+      run(store, "statusComponent.linkServices", { id: api, serviceIds: [SVC] }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(run(store, "statusComponent.linkServices", { id: api, serviceIds: [] })).toMatchObject({
+      ok: true,
+    });
+    expect(store.get("status_components", api)?.serviceIds).toEqual([]);
   });
 });
 

@@ -40,7 +40,8 @@ import { emailSender } from "./email.ts";
 import { consumeDeadLetters, consumeEvents, type NotifyEnv } from "./notify.ts";
 import { receiptWorkspace } from "./receipts.ts";
 import { beginSlackInstall, listSlackChannels } from "./slack-bridge.ts";
-import { configureStatusPage, serveStatusPage } from "./status-route.ts";
+import type { FeedFormat } from "./status-feed.ts";
+import { configureStatusPage, serveStatusFeed, serveStatusPage } from "./status-route.ts";
 import {
   serveSubscribers,
   serveSubscription,
@@ -89,6 +90,8 @@ const STATUS_PAGE_PATH = /^\/workspaces\/([^/]+)\/status-page$/;
 const SUBSCRIBERS_PATH = /^\/workspaces\/([^/]+)\/status-page\/subscribers(\/export)?$/;
 /** `/status/<slug>/<action>`: subscribing to a page by email (RFC 0012 "Email subscriptions"). */
 const SUBSCRIPTION_PATH = /^\/status\/([^/]+)\/(subscribe|confirm|manage|unsubscribe)$/;
+/** `/status/<slug>/feed.atom` and `.json`: the page's feeds (RFC 0012 "Feeds"). */
+const STATUS_FEED_PATH = /^\/status\/([^/]+)\/feed\.(atom|json)$/;
 const DRAFT_PATH = /^\/workspaces\/([^/]+)\/incidents\/([^/]+)\/postmortem\/draft$/;
 const EXPORTS_PATH = /^\/workspaces\/([^/]+)\/exports$/;
 const EXPORT_PATH = /^\/workspaces\/([^/]+)\/exports\/([^/]+)$/;
@@ -224,7 +227,9 @@ export default {
         subscription[2] as SubscriptionAction,
       );
     }
-    // The public status page (RFC 0012): no session, read from KV, never from the shard.
+    // The public status page (RFC 0012) and its feeds: no session, read from KV, never from the shard.
+    const feed = STATUS_FEED_PATH.exec(pathname);
+    if (feed) return serveStatusFeed(request, env, ctx, feed[1]!, feed[2] as FeedFormat);
     const publicStatus = PUBLIC_STATUS_PATH.exec(pathname);
     if (publicStatus) return serveStatusPage(request, env, ctx, publicStatus[1] ?? "");
     const webhooks = WEBHOOKS_PATH.exec(pathname);

@@ -89,6 +89,19 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "uptime_no_monitors" | "No monitors yet. Add one under Monitors to show an uptime bar." |
 * | "uptime_from" | "Uptime from {name}" |
 * | "uptime_limit" | "At most 5 monitors per component." |
+* | "order_hint" | "The public page lists them in this order, ungrouped ones first; a group comes where its first component is." |
+* | "move_up" | "Move {name} up" |
+* | "move_down" | "Move {name} down" |
+* | "move_group_up" | "Move the {name} group up" |
+* | "move_group_down" | "Move the {name} group down" |
+* | "moved" | "Moved {name}." |
+* | "reorder_failed" | "Couldn't change the order. Try again." |
+* | "services_label" | "Services" |
+* | "services_hint" | "An incident naming one of these services starts with this component ticked when publishing to the page. Nothing is published on its own." |
+* | "services_none" | "No services yet. Add them under Services to link them here." |
+* | "services_limit" | "At most 10 services per component." |
+* | "services_from" | "Services: {name}" |
+* | "preselected" | "Ticked from the incident's services. Check them before publishing." |
 * | * | "Status page" |
 *
 * @param {Status_CardInputs} inputs
@@ -177,6 +190,19 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "uptime_no_monitors") return /** @type {LocalizedString} */ (`Ainda não há monitores. Adicione um em Monitores para mostrar uma barra de disponibilidade.`);
 		if (i?.part === "uptime_from") return /** @type {LocalizedString} */ (`Disponibilidade de ${i?.name}`);
 		if (i?.part === "uptime_limit") return /** @type {LocalizedString} */ (`No máximo 5 monitores por componente.`);
+		if (i?.part === "order_hint") return /** @type {LocalizedString} */ (`A página pública mostra nesta ordem, os sem grupo primeiro; um grupo aparece onde está o primeiro componente dele.`);
+		if (i?.part === "move_up") return /** @type {LocalizedString} */ (`Mover ${i?.name} para cima`);
+		if (i?.part === "move_down") return /** @type {LocalizedString} */ (`Mover ${i?.name} para baixo`);
+		if (i?.part === "move_group_up") return /** @type {LocalizedString} */ (`Mover o grupo ${i?.name} para cima`);
+		if (i?.part === "move_group_down") return /** @type {LocalizedString} */ (`Mover o grupo ${i?.name} para baixo`);
+		if (i?.part === "moved") return /** @type {LocalizedString} */ (`${i?.name} mudou de posição.`);
+		if (i?.part === "reorder_failed") return /** @type {LocalizedString} */ (`Não foi possível mudar a ordem. Tente de novo.`);
+		if (i?.part === "services_label") return /** @type {LocalizedString} */ (`Serviços`);
+		if (i?.part === "services_hint") return /** @type {LocalizedString} */ (`Um incidente com um destes serviços já começa com este componente marcado ao publicar na página. Nada é publicado sozinho.`);
+		if (i?.part === "services_none") return /** @type {LocalizedString} */ (`Ainda não há serviços. Cadastre-os em Serviços para vinculá-los aqui.`);
+		if (i?.part === "services_limit") return /** @type {LocalizedString} */ (`No máximo 10 serviços por componente.`);
+		if (i?.part === "services_from") return /** @type {LocalizedString} */ (`Serviços: ${i?.name}`);
+		if (i?.part === "preselected") return /** @type {LocalizedString} */ (`Marcados a partir dos serviços do incidente. Confira antes de publicar.`);
 		return /** @type {LocalizedString} */ (`Página de status`)
 	}
 	{
@@ -259,6 +285,19 @@ export const status_card = /** @type {((inputs: Status_CardInputs, options?: { l
 		if (i?.part === "uptime_no_monitors") return /** @type {LocalizedString} */ (`No monitors yet. Add one under Monitors to show an uptime bar.`);
 		if (i?.part === "uptime_from") return /** @type {LocalizedString} */ (`Uptime from ${i?.name}`);
 		if (i?.part === "uptime_limit") return /** @type {LocalizedString} */ (`At most 5 monitors per component.`);
+		if (i?.part === "order_hint") return /** @type {LocalizedString} */ (`The public page lists them in this order, ungrouped ones first; a group comes where its first component is.`);
+		if (i?.part === "move_up") return /** @type {LocalizedString} */ (`Move ${i?.name} up`);
+		if (i?.part === "move_down") return /** @type {LocalizedString} */ (`Move ${i?.name} down`);
+		if (i?.part === "move_group_up") return /** @type {LocalizedString} */ (`Move the ${i?.name} group up`);
+		if (i?.part === "move_group_down") return /** @type {LocalizedString} */ (`Move the ${i?.name} group down`);
+		if (i?.part === "moved") return /** @type {LocalizedString} */ (`Moved ${i?.name}.`);
+		if (i?.part === "reorder_failed") return /** @type {LocalizedString} */ (`Couldn't change the order. Try again.`);
+		if (i?.part === "services_label") return /** @type {LocalizedString} */ (`Services`);
+		if (i?.part === "services_hint") return /** @type {LocalizedString} */ (`An incident naming one of these services starts with this component ticked when publishing to the page. Nothing is published on its own.`);
+		if (i?.part === "services_none") return /** @type {LocalizedString} */ (`No services yet. Add them under Services to link them here.`);
+		if (i?.part === "services_limit") return /** @type {LocalizedString} */ (`At most 10 services per component.`);
+		if (i?.part === "services_from") return /** @type {LocalizedString} */ (`Services: ${i?.name}`);
+		if (i?.part === "preselected") return /** @type {LocalizedString} */ (`Ticked from the incident's services. Check them before publishing.`);
 		return /** @type {LocalizedString} */ (`Status page`)
 	}
 });

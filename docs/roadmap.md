@@ -343,7 +343,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     custom fields listed, read, made and changed (services removed), and incidents listed by status, severity, type
     and service, through the same mutations, with a session or an API token (`catalog:read`, `catalog:manage`;
     `incident:read` for incidents).
-  - Left for later items: a monitor naming the service it watches; linking services to status page components;
+  - Left for later items: a monitor naming the service it watches;
     filtering incidents by field; deleting types and fields and editing role definitions over HTTP; alert routes
     paging a service's policy; enforcing required fields
     at a chosen status (opt-in); editing details from the app.
@@ -380,10 +380,15 @@ Validate the risky assumptions before writing product code. Each spike produces 
     uptime bars (90 daily buckets from linked monitors' alerts, with a text alternative); scheduled maintenance
     (planned by responders and up, started and ended by the shard's alarm, shown on the page and the components). The
     dashboard's Scheduled maintenance card.
+  - Done (slice 3): components and groups reordered on the dashboard's Status page card with move up and down buttons
+    (`statusComponent.reorder`, the whole order checked so a stale one drops nothing); local times on the page (UTC
+    text in `<time datetime>`, rewritten in the visitor's zone by one inline script allowed by its hash in the CSP, the
+    cached page the same for everyone); Atom and JSON feeds (`/status/<slug>/feed.atom`, `feed.json`) from the same
+    KV snapshot and caches, linked from the page; services linked to components (`statusComponent.linkServices`),
+    ticking those components on an incident's first publish, as a suggestion only.
   - Left: staging's and production's KV namespaces (`dev` binds `brigade-status-dev`), applying migrations 0008 and
     0009 to staging's and production's databases (owner's call, apps/api README "Status page"); custom domains;
-    reordering components; local times on the page; a JSON or RSS feed; per-component subscriptions; the mobile app's
-    publish and maintenance actions; Q23.
+    per-component subscriptions; the mobile app's publish and maintenance actions; Q23.
 - [ ] Outbound webhooks; OpenAPI reference; `packages/sdk` published
   - Done: outbound webhooks (RFC 0005 "Outbound webhooks"): owners and admins register up to 20 endpoints per
     workspace on the dashboard's Webhooks card (URL, description, event filter from the public catalog, on and off),

@@ -89,6 +89,19 @@ export type Status_CardInputs = {
 * | "uptime_no_monitors" | "No monitors yet. Add one under Monitors to show an uptime bar." |
 * | "uptime_from" | "Uptime from {name}" |
 * | "uptime_limit" | "At most 5 monitors per component." |
+* | "order_hint" | "The public page lists them in this order, ungrouped ones first; a group comes where its first component is." |
+* | "move_up" | "Move {name} up" |
+* | "move_down" | "Move {name} down" |
+* | "move_group_up" | "Move the {name} group up" |
+* | "move_group_down" | "Move the {name} group down" |
+* | "moved" | "Moved {name}." |
+* | "reorder_failed" | "Couldn't change the order. Try again." |
+* | "services_label" | "Services" |
+* | "services_hint" | "An incident naming one of these services starts with this component ticked when publishing to the page. Nothing is published on its own." |
+* | "services_none" | "No services yet. Add them under Services to link them here." |
+* | "services_limit" | "At most 10 services per component." |
+* | "services_from" | "Services: {name}" |
+* | "preselected" | "Ticked from the incident's services. Check them before publishing." |
 * | * | "Status page" |
 *
 * @param {Status_CardInputs} inputs

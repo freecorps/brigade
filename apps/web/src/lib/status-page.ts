@@ -142,3 +142,78 @@ export async function removeSubscriber(
     return "failed";
   }
 }
+
+/** Components as the public page lists them: the ungrouped ones first, then each group where its first one comes. */
+export type ComponentBlock<T> = { group: string | null; components: T[] };
+
+export function componentBlocks<T extends { group: string | null }>(
+  components: readonly T[],
+): ComponentBlock<T>[] {
+  const blocks: ComponentBlock<T>[] = [];
+  for (const component of components) {
+    let block = blocks.find((candidate) => candidate.group === component.group);
+    if (!block) {
+      block = { group: component.group, components: [] };
+      if (component.group === null) blocks.unshift(block);
+      else blocks.push(block);
+    }
+    block.components.push(component);
+  }
+  return blocks;
+}
+
+const flatten = <T extends { id: string }>(blocks: readonly ComponentBlock<T>[]) =>
+  blocks.flatMap((block) => block.components.map((component) => component.id));
+
+/**
+ * Every component's id once a component moves `by` places within its group (`statusComponent.reorder` takes them
+ * all); null when it cannot move that way.
+ */
+export function moveComponent<T extends { id: string; group: string | null }>(
+  components: readonly T[],
+  id: string,
+  by: -1 | 1,
+): string[] | null {
+  const blocks = componentBlocks(components);
+  for (const block of blocks) {
+    const at = block.components.findIndex((component) => component.id === id);
+    if (at < 0) continue;
+    const to = at + by;
+    if (to < 0 || to >= block.components.length) return null;
+    const moved = [...block.components];
+    [moved[at], moved[to]] = [moved[to]!, moved[at]!];
+    block.components = moved;
+    return flatten(blocks);
+  }
+  return null;
+}
+
+/** Every component's id once a group moves `by` places among the groups (the ungrouped ones stay first); or null. */
+export function moveGroup<T extends { id: string; group: string | null }>(
+  components: readonly T[],
+  group: string,
+  by: -1 | 1,
+): string[] | null {
+  const blocks = componentBlocks(components);
+  const first = blocks[0]?.group === null ? 1 : 0;
+  const at = blocks.findIndex((block) => block.group === group);
+  const to = at + by;
+  if (at < 0 || to < first || to >= blocks.length) return null;
+  [blocks[at], blocks[to]] = [blocks[to]!, blocks[at]!];
+  return flatten(blocks);
+}
+
+/**
+ * The services to link a component to once its form is saved, or null when that changes nothing. Compared with what
+ * the row stores minus the services known to be deleted, never with an empty list: before the workspace's services
+ * have loaded (`known` undefined) nothing is linked or unlinked, so a rename cannot take every link off.
+ */
+export function servicesToLink(
+  stored: readonly string[],
+  known: readonly { id: string }[] | undefined,
+  chosen: readonly string[],
+): string[] | null {
+  if (!known) return null;
+  const kept = stored.filter((id) => known.some((service) => service.id === id));
+  return chosen.join() === kept.join() ? null : [...chosen];
+}

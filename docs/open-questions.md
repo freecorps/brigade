@@ -171,6 +171,9 @@ the email Slack confirmed for one of the connected team's own users (RFC 0011 "W
 - Responders may publish to the status page (`status:publish`), as they post updates. Should it be owners, admins
   and whoever holds the incident's communications role only? Role definitions exist now (RFC 0003), but a workspace
   may take that role out, so the rule would need a fallback.
+- The page now carries one inline script, allowed by its hash, that shows times in the visitor's zone; without it
+  they read in UTC (RFC 0012 "Local times"). Is a script on the public page acceptable, or should it stay script-free
+  and UTC only? The feeds answer `Access-Control-Allow-Origin: *` so another site can show them; should they?
 - The page shows when its snapshot was built and nothing else about freshness. Should it also say "this page may be
   out of date" past a threshold? The shard now rebuilds a public page at least daily, so a snapshot older than a day
   or two means the shard or KV is stuck, which a visitor could be told.

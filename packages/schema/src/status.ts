@@ -20,7 +20,7 @@ import type {
   StatusPageRow,
 } from "./tables.ts";
 import { appendTimeline } from "./timeline.ts";
-import { UPDATE_BODY_MAX } from "./incidents.ts";
+import { MAX_INCIDENT_SERVICES, UPDATE_BODY_MAX } from "./incidents.ts";
 import { v, type Validator } from "./validate.ts";
 import { MAX_COMPONENT_MONITORS, uptime, type Uptime } from "./uptime.ts";
 
@@ -49,6 +49,8 @@ export const COMPONENT_NAME_MAX = 80;
 export const COMPONENT_GROUP_MAX = 80;
 export const PUBLIC_TITLE_MAX = 200;
 export const MAX_COMPONENTS = 50;
+/** Services a component stands for (`statusComponent.linkServices`): as many as an incident names. */
+export const MAX_COMPONENT_SERVICES = MAX_INCIDENT_SERVICES;
 /** Published updates kept per incident; a 51st is `limit_reached`. */
 export const MAX_PUBLIC_UPDATES = 50;
 /** How far back the page lists resolved incidents. */
@@ -82,6 +84,18 @@ export const statusSlug: Validator<string> = (input, path = "") =>
 export function isStatusSlug(value: string): boolean {
   return STATUS_SLUG.test(value);
 }
+
+/**
+ * The page's order (`statusComponent.reorder`): by position, components from before reordering (none) first, then
+ * oldest first, ids breaking ties. Groups are listed in the order their first component comes, ungrouped first.
+ */
+export const componentOrder = (
+  a: Pick<StatusComponentRow, "id" | "position" | "createdAt">,
+  b: Pick<StatusComponentRow, "id" | "position" | "createdAt">,
+) =>
+  (a.position ?? -1) - (b.position ?? -1) ||
+  a.createdAt - b.createdAt ||
+  (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /** The worse of two statuses. */
 export function worseStatus(a: ComponentStatus, b: ComponentStatus): ComponentStatus {
@@ -193,9 +207,12 @@ export const createStatusComponent = defineMutation({
     if (store.scan("status_components").length >= MAX_COMPONENTS) {
       return fail("limit_reached", `At most ${MAX_COMPONENTS} components per status page`);
     }
+    // Last on the page: after every component, those placed by a reorder included.
+    const last = Math.max(-1, ...store.scan("status_components").map((row) => row.position ?? -1));
     const row: StatusComponentRow = {
       ...args,
       status: "operational",
+      position: last + 1,
       createdAt: ctx.now,
       updatedAt: ctx.now,
     };
@@ -316,6 +333,101 @@ export const linkComponentMonitors = defineMutation({
     return ok(event);
   },
 });
+
+export type StatusComponentsReordered = DomainEvent<
+  "status_component.reordered",
+  { ids: string[] }
+>;
+
+/**
+ * Sets the order the page lists components in (RFC 0012 "Order"): `ids` is every component, once, in its new order.
+ * Groups follow their first component, the ungrouped ones still first. A list that misses a component or names one that
+ * is gone (another member added or deleted one meanwhile) is `invalid_args`, so a stale order never drops anything;
+ * the same order is a `conflict`. Owners and admins, like the rest of the components.
+ */
+export const reorderStatusComponents = defineMutation({
+  name: "statusComponent.reorder",
+  args: v.object({ ids: v.array(componentId, { max: MAX_COMPONENTS, unique: true }) }),
+  permission: "status:manage",
+  apply(store, args, ctx) {
+    const rows = store.scan("status_components").sort(componentOrder);
+    const missing = args.ids.findIndex((id: string) => !store.get("status_components", id));
+    if (missing >= 0) {
+      const message = "No such component";
+      return fail("invalid_args", message, [{ path: `ids[${missing}]`, message }]);
+    }
+    if (args.ids.length !== rows.length) {
+      const message = "Every component, once";
+      return fail("invalid_args", message, [{ path: "ids", message }]);
+    }
+    if (rows.map((row) => row.id).join() === args.ids.join()) {
+      return fail("conflict", "The order is unchanged");
+    }
+    args.ids.forEach((id: string, position: number) => {
+      if (store.get("status_components", id)?.position === position) return;
+      store.update("status_components", id, { position, updatedAt: ctx.now });
+    });
+    const event: StatusComponentsReordered = {
+      type: "status_component.reordered",
+      subject: STATUS_PAGE_ID,
+      data: { ids: [...args.ids] },
+    };
+    return ok(event);
+  },
+});
+
+export type StatusComponentServicesLinked = DomainEvent<
+  "status_component.services_linked",
+  { id: string; serviceIds: string[] }
+>;
+
+/**
+ * Links a component to the services it stands for (RFC 0012 "Services", RFC 0003 "Service catalog"): an incident
+ * naming one of them pre-selects the component when someone publishes to the page. Nothing is published by it. Owners
+ * and admins (`status:manage`): what the public sees for a service is the page's call, not the catalog's. An empty
+ * list unlinks; unchanged is a `conflict`. A deleted service stays in the list, skipped, as on incidents.
+ */
+export const linkComponentServices = defineMutation({
+  name: "statusComponent.linkServices",
+  args: v.object({
+    id: componentId,
+    serviceIds: v.array(v.id("svc"), { max: MAX_COMPONENT_SERVICES, unique: true }),
+  }),
+  permission: "status:manage",
+  apply(store, args, ctx) {
+    const current = store.get("status_components", args.id);
+    if (!current) return fail("not_found", "Component not found");
+    const missing = args.serviceIds.findIndex((id: string) => !store.get("services", id));
+    if (missing >= 0) {
+      const message = "Service not found";
+      return fail("invalid_args", message, [{ path: `serviceIds[${missing}]`, message }]);
+    }
+    if ((current.serviceIds ?? []).join() === args.serviceIds.join()) {
+      return fail("conflict", "The component's services are unchanged");
+    }
+    store.update("status_components", args.id, { serviceIds: args.serviceIds, updatedAt: ctx.now });
+    const event: StatusComponentServicesLinked = {
+      type: "status_component.services_linked",
+      subject: args.id,
+      data: args,
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * The components an incident's services stand for, in the page's order: what the publish form starts with when nothing
+ * about the incident is published yet. A suggestion only; publishing stays a person's choice.
+ */
+export function componentsForServices(
+  components: readonly Pick<StatusComponentRow, "id" | "serviceIds">[],
+  serviceIds: readonly string[],
+): string[] {
+  if (serviceIds.length === 0) return [];
+  return components
+    .filter((component) => (component.serviceIds ?? []).some((id) => serviceIds.includes(id)))
+    .map((component) => component.id);
+}
 
 /** A published update, by its id (the incident's `status_published` entry, `<incident id>:<seq>`). */
 const updateId = v.string({ min: 1, max: 64 });
@@ -567,17 +679,13 @@ export const statusPageConfig = defineQuery({
   sort: () => 0,
 });
 
-/** Groups in the order they first appear, ungrouped first; then oldest first, ids breaking ties. */
-const byCreation = (a: StatusComponentRow, b: StatusComponentRow) =>
-  a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-
 export const statusComponents = defineQuery({
   name: "statusComponents.all",
   args: v.object({}),
   permission: "status:read",
   table: "status_components",
   filter: () => true,
-  sort: byCreation,
+  sort: componentOrder,
 });
 
 /** What the status page says about one incident, if anything was published. */
@@ -603,6 +711,9 @@ export type SnapshotMaintenance = {
   components: string[];
   startsAt: number;
   endsAt: number;
+  /** When it was planned, and when anything the public reads about it last changed. Absent from older snapshots. */
+  publishedAt?: number;
+  updatedAt?: number;
 };
 export type SnapshotGroup = { name: string | null; components: SnapshotComponent[] };
 export type SnapshotIncident = {
@@ -615,6 +726,11 @@ export type SnapshotIncident = {
   resolvedAt: number | null;
   /** Newest first. */
   updates: { at: number; status: PublicStatus; body: string }[];
+  /**
+   * When what the page says about it last changed: a publish, a correction, a component taken out. Absent from older
+   * snapshots.
+   */
+  updatedAt?: number;
 };
 
 /**
@@ -648,7 +764,7 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
   const page = store.get("status_page", STATUS_PAGE_ID);
   if (!page?.enabled) return null;
   const incidents = store.scan("status_incidents");
-  const components = store.scan("status_components").sort(byCreation);
+  const components = store.scan("status_components").sort(componentOrder);
   const names = new Map(components.map((component) => [component.id, component.name]));
   const windows = store.scan("status_maintenance");
   const inProgress = windows
@@ -685,6 +801,8 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
     components: row.componentIds.flatMap((id) => names.get(id) ?? []),
     startsAt: row.startsAt,
     endsAt: row.endsAt,
+    publishedAt: row.createdAt,
+    updatedAt: row.updatedAt,
   });
   const upcoming = windows
     .filter((row) => row.phase === "scheduled")
@@ -700,6 +818,7 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
     updates: row.updates
       .map(({ at, status, body }) => ({ at, status, body }))
       .sort((a, b) => b.at - a.at),
+    updatedAt: row.updatedAt,
   });
   const active = incidents
     .filter((row) => row.status !== "resolved")
@@ -739,6 +858,8 @@ export const statusMutations = [
   updateStatusComponent,
   deleteStatusComponent,
   linkComponentMonitors,
+  reorderStatusComponents,
+  linkComponentServices,
   publishIncidentUpdate,
   editPublishedUpdate,
   removePublishedUpdate,

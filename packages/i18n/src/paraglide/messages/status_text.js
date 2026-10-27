@@ -29,14 +29,16 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "components_title" | "Components" |
 * | "components_empty" | "No components listed yet." |
 * | "affects" | "Affects {list}" |
-* | "updated" | "Updated {time} UTC" |
-* | "update_at" | "{time} UTC" |
-* | "resolved_at" | "Resolved {time} UTC" |
+* | "updated" | "Updated {time}" |
+* | "update_at" | "{time}" |
+* | "resolved_at" | "Resolved {time}" |
 * | "not_found_title" | "No status page here" |
 * | "not_found_body" | "This address has no status page, or it isn't public right now." |
 * | "unavailable_title" | "Status page unavailable" |
 * | "unavailable_body" | "The status page can't be shown right now. Try again in a minute." |
 * | "powered" | "Status page by Brigade" |
+* | "feed_atom" | "Atom feed" |
+* | "feed_json" | "JSON feed" |
 * | "component_maintenance" | "Under maintenance" |
 * | "overall_maintenance" | "Scheduled maintenance in progress" |
 * | * | "Status" |
@@ -67,14 +69,16 @@ export const status_text = /** @type {((inputs: Status_TextInputs, options?: { l
 		if (i?.part === "components_title") return /** @type {LocalizedString} */ (`Componentes`);
 		if (i?.part === "components_empty") return /** @type {LocalizedString} */ (`Nenhum componente listado ainda.`);
 		if (i?.part === "affects") return /** @type {LocalizedString} */ (`Afeta ${i?.list}`);
-		if (i?.part === "updated") return /** @type {LocalizedString} */ (`Atualizado em ${i?.time} UTC`);
-		if (i?.part === "update_at") return /** @type {LocalizedString} */ (`${i?.time} UTC`);
-		if (i?.part === "resolved_at") return /** @type {LocalizedString} */ (`Resolvido em ${i?.time} UTC`);
+		if (i?.part === "updated") return /** @type {LocalizedString} */ (`Atualizado em ${i?.time}`);
+		if (i?.part === "update_at") return /** @type {LocalizedString} */ (`${i?.time}`);
+		if (i?.part === "resolved_at") return /** @type {LocalizedString} */ (`Resolvido em ${i?.time}`);
 		if (i?.part === "not_found_title") return /** @type {LocalizedString} */ (`Nenhuma página de status aqui`);
 		if (i?.part === "not_found_body") return /** @type {LocalizedString} */ (`Este endereço não tem página de status, ou ela não está pública agora.`);
 		if (i?.part === "unavailable_title") return /** @type {LocalizedString} */ (`Página de status indisponível`);
 		if (i?.part === "unavailable_body") return /** @type {LocalizedString} */ (`A página de status não pode ser exibida agora. Tente de novo em um minuto.`);
 		if (i?.part === "powered") return /** @type {LocalizedString} */ (`Página de status do Brigade`);
+		if (i?.part === "feed_atom") return /** @type {LocalizedString} */ (`Feed Atom`);
+		if (i?.part === "feed_json") return /** @type {LocalizedString} */ (`Feed JSON`);
 		if (i?.part === "component_maintenance") return /** @type {LocalizedString} */ (`Em manutenção`);
 		if (i?.part === "overall_maintenance") return /** @type {LocalizedString} */ (`Manutenção programada em andamento`);
 		return /** @type {LocalizedString} */ (`Status`)
@@ -99,14 +103,16 @@ export const status_text = /** @type {((inputs: Status_TextInputs, options?: { l
 		if (i?.part === "components_title") return /** @type {LocalizedString} */ (`Components`);
 		if (i?.part === "components_empty") return /** @type {LocalizedString} */ (`No components listed yet.`);
 		if (i?.part === "affects") return /** @type {LocalizedString} */ (`Affects ${i?.list}`);
-		if (i?.part === "updated") return /** @type {LocalizedString} */ (`Updated ${i?.time} UTC`);
-		if (i?.part === "update_at") return /** @type {LocalizedString} */ (`${i?.time} UTC`);
-		if (i?.part === "resolved_at") return /** @type {LocalizedString} */ (`Resolved ${i?.time} UTC`);
+		if (i?.part === "updated") return /** @type {LocalizedString} */ (`Updated ${i?.time}`);
+		if (i?.part === "update_at") return /** @type {LocalizedString} */ (`${i?.time}`);
+		if (i?.part === "resolved_at") return /** @type {LocalizedString} */ (`Resolved ${i?.time}`);
 		if (i?.part === "not_found_title") return /** @type {LocalizedString} */ (`No status page here`);
 		if (i?.part === "not_found_body") return /** @type {LocalizedString} */ (`This address has no status page, or it isn't public right now.`);
 		if (i?.part === "unavailable_title") return /** @type {LocalizedString} */ (`Status page unavailable`);
 		if (i?.part === "unavailable_body") return /** @type {LocalizedString} */ (`The status page can't be shown right now. Try again in a minute.`);
 		if (i?.part === "powered") return /** @type {LocalizedString} */ (`Status page by Brigade`);
+		if (i?.part === "feed_atom") return /** @type {LocalizedString} */ (`Atom feed`);
+		if (i?.part === "feed_json") return /** @type {LocalizedString} */ (`JSON feed`);
 		if (i?.part === "component_maintenance") return /** @type {LocalizedString} */ (`Under maintenance`);
 		if (i?.part === "overall_maintenance") return /** @type {LocalizedString} */ (`Scheduled maintenance in progress`);
 		return /** @type {LocalizedString} */ (`Status`)

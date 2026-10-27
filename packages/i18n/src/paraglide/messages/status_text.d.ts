@@ -28,14 +28,16 @@ export type Status_TextInputs = {
 * | "components_title" | "Components" |
 * | "components_empty" | "No components listed yet." |
 * | "affects" | "Affects {list}" |
-* | "updated" | "Updated {time} UTC" |
-* | "update_at" | "{time} UTC" |
-* | "resolved_at" | "Resolved {time} UTC" |
+* | "updated" | "Updated {time}" |
+* | "update_at" | "{time}" |
+* | "resolved_at" | "Resolved {time}" |
 * | "not_found_title" | "No status page here" |
 * | "not_found_body" | "This address has no status page, or it isn't public right now." |
 * | "unavailable_title" | "Status page unavailable" |
 * | "unavailable_body" | "The status page can't be shown right now. Try again in a minute." |
 * | "powered" | "Status page by Brigade" |
+* | "feed_atom" | "Atom feed" |
+* | "feed_json" | "JSON feed" |
 * | "component_maintenance" | "Under maintenance" |
 * | "overall_maintenance" | "Scheduled maintenance in progress" |
 * | * | "Status" |

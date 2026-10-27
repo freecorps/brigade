@@ -46,13 +46,68 @@ const sayUptime = (
     { locale },
   );
 
-/** Times in UTC, said so on the page: the Worker does not know the visitor's time zone, and no script asks. */
-const when = (at: number, locale: Locale) =>
-  new Intl.DateTimeFormat(locale, {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "UTC",
-  }).format(at);
+/** How a time reads: the date, the time and its zone's short name. The page's script uses it with the visitor's zone. */
+const TIME_FORMAT = {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZoneName: "short",
+} as const;
+
+/**
+ * A time in UTC, the zone named ("Oct 27, 2026, 12:05 PM UTC"): what every visitor reads without script, and what the
+ * feeds say. The Worker does not know the visitor's zone, and the page must stay one cached document for everyone.
+ */
+export const when = (at: number, locale: Locale) =>
+  new Intl.DateTimeFormat(locale, { ...TIME_FORMAT, timeZone: "UTC" }).format(at);
+
+/**
+ * A time on the page: UTC as its text, the instant in `datetime`, and `data-local` so `LOCAL_TIMES_SCRIPT` shows it in
+ * the visitor's own zone (the UTC text then moves to its tooltip).
+ */
+const stamp = (at: number, locale: Locale) =>
+  `<time datetime="${new Date(at).toISOString()}" data-local>${escape(when(at, locale))}</time>`;
+
+/**
+ * The page's one script (RFC 0012 "Local times"), allowed by its hash and nothing else: it rewrites each `<time
+ * data-local>` in the visitor's zone, in the page's language, the UTC text kept as its tooltip. Without it, or where
+ * it fails, the page reads exactly as before, in UTC. It reads nothing but the page and sends nothing anywhere, so the
+ * cached document is the same for everyone. Changing a character changes `LOCAL_TIMES_SCRIPT_HASH` (tested).
+ */
+export const LOCAL_TIMES_SCRIPT = `document.querySelectorAll("time[data-local]").forEach(function(t){try{var f=new Intl.DateTimeFormat(document.documentElement.lang,${JSON.stringify(TIME_FORMAT)}),s=f.format(new Date(t.dateTime));if(s!==t.textContent){t.title=t.textContent;t.textContent=s}}catch(e){}})`;
+
+/** `script-src` for the page: the SHA-256 of `LOCAL_TIMES_SCRIPT`, base64. */
+export const LOCAL_TIMES_SCRIPT_HASH = "sha256-NYl3lCSOTW1KfpEt8yxY2Nt8aWKg033ZBb3BoTwNLko=";
+
+/**
+ * A message with a time (or two) in it, as HTML: the message escaped, each time in its own `<time>`. The times go in as
+ * markers first, since the message is escaped whole.
+ */
+const withTimes = (
+  render: (args: { time: string; until: string }) => string,
+  locale: Locale,
+  times: { time?: number; until?: number },
+) => {
+  const marker = { time: "\uE000time\uE000", until: "\uE000until\uE000" };
+  let html = escape(render(marker));
+  for (const key of ["time", "until"] as const) {
+    const at = times[key];
+    if (at !== undefined) html = html.replace(marker[key], stamp(at, locale));
+  }
+  return html;
+};
+
+const sayAt = (locale: Locale, part: string, time: number) =>
+  withTimes(({ time }) => status_text({ part, time, list: "" }, { locale }), locale, { time });
+
+const sayWindowAt = (locale: Locale, part: string, times: { time?: number; until?: number }) =>
+  withTimes(
+    ({ time, until }) => status_maintenance({ part, time, until }, { locale }),
+    locale,
+    times,
+  );
 
 /** A component status's colours, from the design tokens: green for working, then SEV3, SEV2, SEV1 tints. */
 function componentColors(theme: ThemeName, status: ComponentStatus): BadgeColors {
@@ -162,12 +217,13 @@ button:active{transform:scale(.97)}
 a{color:inherit}
 @media (prefers-reduced-motion:reduce){button{transition:none}}
 .hint{margin:-.5rem 0 .75rem}
+.feeds{display:flex;flex-wrap:wrap;gap:1rem}
 footer{margin-top:2.5rem;color:var(--muted);font-size:.875rem;display:flex;flex-wrap:wrap;justify-content:space-between;gap:.5rem}
 ${[...COMPONENT_STATUSES, "maintenance"].map((s) => `.c-${s}{background:var(--c-${s}-bg);color:var(--c-${s}-fg)}`).join("")}
 ${PUBLIC_STATUSES.map((s) => `.p-${s}{background:var(--p-${s}-bg);color:var(--p-${s}-fg)}`).join("")}
 `;
 
-function document(locale: Locale, title: string, body: string): string {
+function document(locale: Locale, title: string, body: string, head = "", script = false): string {
   return `<!doctype html>
 <html lang="${escape(locale)}">
 <head>
@@ -176,9 +232,9 @@ function document(locale: Locale, title: string, body: string): string {
 <meta name="theme-color" content="${themes.light.background}" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="${themes.dark.background}" media="(prefers-color-scheme: dark)">
 <title>${title}</title>
-<style>${STYLE}</style>
+<style>${STYLE}</style>${head}
 </head>
-<body><main>${body}</main></body>
+<body><main>${body}</main>${script ? `<script>${LOCAL_TIMES_SCRIPT}</script>` : ""}</body>
 </html>`;
 }
 
@@ -196,7 +252,7 @@ function incidentBody(locale: Locale, incident: SnapshotIncident): string {
   const updates = incident.updates
     .map(
       (update) =>
-        `<li><p>${publicChip(locale, update.status)} <span class="meta"><time datetime="${new Date(update.at).toISOString()}">${say(locale, "update_at", { time: when(update.at, locale) })}</time></span></p><p class="body">${escape(update.body)}</p></li>`,
+        `<li><p>${publicChip(locale, update.status)} <span class="meta">${sayAt(locale, "update_at", update.at)}</span></p><p class="body">${escape(update.body)}</p></li>`,
     )
     .join("");
   return `${affects}<ol class="updates">${updates}</ol>`;
@@ -210,7 +266,7 @@ function pastIncident(locale: Locale, incident: SnapshotIncident): string {
   const resolved =
     incident.resolvedAt === null
       ? ""
-      : `<p class="meta">${say(locale, "resolved_at", { time: when(incident.resolvedAt, locale) })}</p>`;
+      : `<p class="meta">${sayAt(locale, "resolved_at", incident.resolvedAt)}</p>`;
   return `<details class="incident"><summary><h3>${escape(incident.title)}</h3>${resolved}</summary>${incidentBody(locale, incident)}</details>`;
 }
 
@@ -255,16 +311,34 @@ function maintenanceWindow(locale: Locale, window: SnapshotMaintenance, active: 
       ? `<p class="meta">${say(locale, "affects", { list: window.components.join(", ") })}</p>`
       : "";
   const range = active
-    ? sayWindow(locale, "window_active", { until: when(window.endsAt, locale) })
-    : sayWindow(locale, "window_upcoming", {
-        time: when(window.startsAt, locale),
-        until: when(window.endsAt, locale),
-      });
-  return `<article class="incident"><header><h3>${escape(window.title)}</h3>${active ? componentChip(locale, "maintenance") : ""}</header><p class="window"><time datetime="${new Date(window.startsAt).toISOString()}">${range}</time></p>${affects}<p class="body">${escape(window.body)}</p></article>`;
+    ? sayWindowAt(locale, "window_active", { until: window.endsAt })
+    : sayWindowAt(locale, "window_upcoming", { time: window.startsAt, until: window.endsAt });
+  return `<article class="incident"><header><h3>${escape(window.title)}</h3>${active ? componentChip(locale, "maintenance") : ""}</header><p class="window">${range}</p>${affects}<p class="body">${escape(window.body)}</p></article>`;
 }
 
 function subscribeForm(locale: Locale, slug: string): string {
   return `<section class="subscribe" aria-labelledby="subscribe"><h2 id="subscribe">${saySubscribe(locale, "form_title")}</h2><p class="meta">${saySubscribe(locale, "form_hint")}</p><form method="post" action="/status/${escape(slug)}/subscribe"><label for="subscribe-email">${saySubscribe(locale, "email_label")}</label><input id="subscribe-email" name="email" type="email" required maxlength="254" autocomplete="email" autocapitalize="none" spellcheck="false" enterkeyhint="send"><span class="trap" aria-hidden="true"><label for="subscribe-website">${saySubscribe(locale, "honeypot")}</label><input id="subscribe-website" name="website" type="text" tabindex="-1" autocomplete="off"></span><button type="submit">${saySubscribe(locale, "submit")}</button></form></section>`;
+}
+
+/** The page's feeds (src/status-feed.ts), by address: the same snapshot as the page, nothing more. */
+const feedPaths = (slug: string) => ({
+  atom: `/status/${escape(slug)}/feed.atom`,
+  json: `/status/${escape(slug)}/feed.json`,
+});
+
+/** `<link rel="alternate">` for each feed, so feed readers find them from the page's address. */
+function feedAlternates(title: string, slug: string | undefined): string {
+  if (!slug) return "";
+  const paths = feedPaths(slug);
+  return `
+<link rel="alternate" type="application/atom+xml" title="${escape(title)}" href="${paths.atom}">
+<link rel="alternate" type="application/feed+json" title="${escape(title)}" href="${paths.json}">`;
+}
+
+function feedLinks(locale: Locale, slug: string | undefined): string {
+  if (!slug) return "";
+  const paths = feedPaths(slug);
+  return `<span class="feeds"><a href="${paths.atom}">${say(locale, "feed_atom")}</a><a href="${paths.json}">${say(locale, "feed_json")}</a></span>`;
 }
 
 /**
@@ -324,8 +398,14 @@ ${active}
 ${planned}
 <section aria-labelledby="history"><h2 id="history">${say(locale, "history_title")}</h2><p class="meta hint">${say(locale, "history_hint")}</p>${history}</section>
 ${form}
-<footer><span>${say(locale, "updated", { time: when(snapshot.generatedAt, locale) })}</span><span>${say(locale, "powered")}</span></footer>`;
-  return document(locale, `${escape(snapshot.title)} · ${say(locale, "*")}`, body);
+<footer><span>${sayAt(locale, "updated", snapshot.generatedAt)}</span>${feedLinks(locale, options.slug)}<span>${say(locale, "powered")}</span></footer>`;
+  return document(
+    locale,
+    `${escape(snapshot.title)} · ${say(locale, "*")}`,
+    body,
+    feedAlternates(snapshot.title, options.slug),
+    true,
+  );
 }
 
 /** What a subscription route shows (src/status-subscribers.ts). */

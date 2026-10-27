@@ -16,7 +16,13 @@ import {
   type Correction,
   type PublishArgs,
 } from "../src/components/status-publish";
-import { saveStatusPage } from "../src/lib/status-page";
+import {
+  componentBlocks,
+  moveComponent,
+  moveGroup,
+  saveStatusPage,
+  servicesToLink,
+} from "../src/lib/status-page";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -173,7 +179,7 @@ describe("StatusPagePanel", () => {
     });
     expect(container.textContent).toContain("API");
     expect(container.textContent).toContain("Major outage");
-    expect(container.textContent).toContain("No group");
+    expect(container.querySelector("h4")?.textContent).toBe("Apps");
     const add = container.querySelectorAll("form")[1]!;
     const [name, group] = [...add.querySelectorAll("input")];
     act(() => type(name!, "  Checkout "));
@@ -182,9 +188,135 @@ describe("StatusPagePanel", () => {
     expect(created).toEqual([{ name: "Checkout", group: "Apps" }]);
   });
 
+  test("components move up and down by keyboard, within their group, and groups move as a whole", async () => {
+    const orders: string[][] = [];
+    const { container } = card({
+      page,
+      components: [
+        component("cmp_1", "API"),
+        component("cmp_2", "Website", "Apps"),
+        component("cmp_3", "Search"),
+        component("cmp_4", "iOS", "Apps"),
+        component("cmp_5", "Database", "Core"),
+      ],
+      onReorder: async (ids) => {
+        orders.push(ids);
+        return true;
+      },
+    });
+    const move = (label: string) =>
+      container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+    // At the top of its group nothing goes up; a group of one has no buttons.
+    expect(move("Move API up").disabled).toBe(true);
+    expect(move("Move the Apps group up").disabled).toBe(true);
+    expect(move("Move Database up")).toBeNull();
+    await act(async () => move("Move API down").click());
+    await act(async () => move("Move iOS up").click());
+    await act(async () => move("Move the Apps group down").click());
+    expect(orders).toEqual([
+      ["cmp_3", "cmp_1", "cmp_2", "cmp_4", "cmp_5"],
+      ["cmp_1", "cmp_3", "cmp_4", "cmp_2", "cmp_5"],
+      ["cmp_1", "cmp_3", "cmp_5", "cmp_2", "cmp_4"],
+    ]);
+    expect(container.textContent).toContain("Moved Apps.");
+  });
+
+  test("a move is announced once the server takes it, a refused one only as refused", async () => {
+    let settle: (ok: boolean) => void = () => {};
+    const { container } = card({
+      page,
+      components: [component("cmp_1", "API"), component("cmp_2", "Website")],
+      onReorder: () => new Promise((resolve) => (settle = resolve)),
+    });
+    const status = container.querySelector(
+      'section[aria-labelledby="status-components-title"] [role="status"]',
+    )!;
+    const down = () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Move API down"]')!;
+    await act(async () => down().click());
+    // Not yet confirmed: nothing said.
+    expect(status.textContent).toBe("");
+    await act(async () => settle(false));
+    expect(status.textContent).toBe("");
+    expect(container.textContent).toContain("Couldn't change the order");
+    await act(async () => down().click());
+    expect(container.textContent).not.toContain("Couldn't change the order");
+    await act(async () => settle(true));
+    expect(status.textContent).toBe("Moved API.");
+  });
+
+  test("a component is linked to services, and shows them", async () => {
+    const linked: unknown[] = [];
+    const { container } = card({
+      page,
+      components: [{ ...component("cmp_1", "API"), serviceIds: ["svc_1", "svc_gone"] }],
+      services: [
+        { id: "svc_1", name: "Checkout" },
+        { id: "svc_2", name: "Search" },
+      ],
+      onLinkServices: async (id, serviceIds) => {
+        linked.push({ id, serviceIds });
+        return true;
+      },
+    });
+    // A deleted service is skipped.
+    expect(container.textContent).toContain("Services: Checkout");
+    expect(container.textContent).not.toContain("svc_gone");
+    act(() => button(container, "Edit").click());
+    expect(container.textContent).toContain("starts with this component ticked");
+    const search = [...container.querySelectorAll("label")].find(
+      (label) => label.textContent === "Search",
+    )!;
+    act(() => search.querySelector("input")!.click());
+    await act(async () => button(container.querySelector("li form")!, "Save").click());
+    expect(linked).toEqual([{ id: "cmp_1", serviceIds: ["svc_1", "svc_2"] }]);
+  });
+
+  test("a component is not edited before the services load, so a rename keeps its links", async () => {
+    const linked: unknown[] = [];
+    const updated: unknown[] = [];
+    const props = {
+      page,
+      components: [{ ...component("cmp_1", "API"), serviceIds: ["svc_1"] }],
+      onUpdate: async (row: unknown) => {
+        updated.push(row);
+        return true;
+      },
+      onLinkServices: async (id: string, serviceIds: string[]) => {
+        linked.push({ id, serviceIds });
+        return true;
+      },
+    };
+    const { container } = card({ ...props, services: undefined });
+    expect(button(container, "Edit").disabled).toBe(true);
+    act(() => root?.unmount());
+    const loaded = card({ ...props, services: [{ id: "svc_1", name: "Checkout" }] });
+    act(() => button(loaded.container, "Edit").click());
+    const name = loaded.container.querySelector<HTMLInputElement>("li form input")!;
+    act(() => type(name, "Public API"));
+    await act(async () => button(loaded.container.querySelector("li form")!, "Save").click());
+    expect(updated).toHaveLength(1);
+    expect(linked).toEqual([]);
+  });
+
+  test("services are linked only when the choice differs from what is stored and still exists", () => {
+    const known = [{ id: "svc_1" }, { id: "svc_2" }];
+    // Not loaded yet: nothing to link or unlink, whatever the form holds.
+    expect(servicesToLink(["svc_1"], undefined, [])).toBeNull();
+    expect(servicesToLink(["svc_1", "svc_gone"], known, ["svc_1"])).toBeNull();
+    expect(servicesToLink(["svc_1"], known, ["svc_1", "svc_2"])).toEqual(["svc_1", "svc_2"]);
+    expect(servicesToLink(["svc_1"], known, [])).toEqual([]);
+  });
+
   test("everyone else reads it, with no form", () => {
-    const { container } = card({ page, manage: false, components: [component("cmp_1", "API")] });
+    const { container } = card({
+      page,
+      manage: false,
+      components: [component("cmp_1", "API"), component("cmp_2", "Web")],
+      onReorder: async () => true,
+    });
     expect(container.querySelectorAll("form")).toHaveLength(0);
+    expect(container.querySelector("button[data-move]")).toBeNull();
     expect(container.textContent).toContain("Only owners and admins");
     expect(container.textContent).not.toContain("Edit");
   });
@@ -338,9 +470,83 @@ describe("StatusPublishPanel", () => {
     expect(container.querySelector("button")).toBeNull();
   });
 
+  test("a first publish starts with the components of the incident's services ticked, saying so", async () => {
+    const { container, published } = panel({
+      serviceIds: ["svc_1"],
+      components: [
+        component("cmp_1", "API"),
+        { ...component("cmp_2", "Website", "Apps"), serviceIds: ["svc_1"] },
+      ],
+    });
+    // Nothing is published by itself.
+    expect(published).toEqual([]);
+    act(() => button(container, "Publish an update").click());
+    const boxes = [...container.querySelectorAll<HTMLInputElement>("input[type=checkbox]")];
+    expect(boxes.map((box) => box.checked)).toEqual([false, true]);
+    expect(container.textContent).toContain("Ticked from the incident's services");
+    act(() => type(input(container, "Public title"), "Website down"));
+    act(() => type(container.querySelector("textarea")!, "Looking."));
+    await act(async () => button(container, "Publish").click());
+    expect(published[0]?.componentIds).toEqual(["cmp_2"]);
+  });
+
+  test("a later publish starts from what the page says, not the services", () => {
+    const { container } = panel({
+      serviceIds: ["svc_1"],
+      components: [
+        component("cmp_1", "API"),
+        { ...component("cmp_2", "Website"), serviceIds: ["svc_1"] },
+      ],
+      published: {
+        id: "inc_1",
+        title: "Slow API",
+        status: "investigating",
+        impact: "degraded",
+        componentIds: ["cmp_1"],
+        updates: [{ id: "inc_1:1", at: 0, status: "investigating", body: "Looking." }],
+        publishedAt: 0,
+        resolvedAt: null,
+        updatedAt: 0,
+      },
+    });
+    act(() => button(container, "Publish an update").click());
+    const boxes = [...container.querySelectorAll<HTMLInputElement>("input[type=checkbox]")];
+    expect(boxes.map((box) => box.checked)).toEqual([true, false]);
+    expect(container.textContent).not.toContain("Ticked from the incident's services");
+  });
+
   test("viewers read it and cannot publish", () => {
     const { container } = panel({ allowed: false });
     expect(container.textContent).toContain("Owners, admins and responders can publish");
     expect(container.querySelector("button")).toBeNull();
+  });
+});
+
+describe("component order", () => {
+  const rows = [
+    { id: "a", group: "Apps" },
+    { id: "b", group: null },
+    { id: "c", group: "Core" },
+    { id: "d", group: "Apps" },
+  ];
+
+  test("blocks as the page lists them: ungrouped first, then groups by their first component", () => {
+    expect(
+      componentBlocks(rows).map((block) => [block.group, block.components.map((r) => r.id)]),
+    ).toEqual([
+      [null, ["b"]],
+      ["Apps", ["a", "d"]],
+      ["Core", ["c"]],
+    ]);
+  });
+
+  test("moves stay inside a group, and groups stay after the ungrouped ones", () => {
+    expect(moveComponent(rows, "d", -1)).toEqual(["b", "d", "a", "c"]);
+    expect(moveComponent(rows, "a", -1)).toBeNull();
+    expect(moveComponent(rows, "b", 1)).toBeNull();
+    expect(moveComponent(rows, "missing", 1)).toBeNull();
+    expect(moveGroup(rows, "Core", -1)).toEqual(["b", "c", "a", "d"]);
+    expect(moveGroup(rows, "Apps", -1)).toBeNull();
+    expect(moveGroup(rows, "Core", 1)).toBeNull();
   });
 });

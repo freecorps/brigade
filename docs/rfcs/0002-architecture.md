@@ -104,18 +104,22 @@ dashboard's Worker.
 | `GET`, `POST /workspaces/:id/incidents`; `GET`, `PATCH …/:incidentId`; `POST …/updates` | Declaring, reading and updating from scripts       |
 | `GET`, `POST /workspaces/:id/services`; `GET`, `PATCH`, `DELETE …/:serviceId`           | Keeping the service catalog from a source of truth |
 | `GET`, `POST /workspaces/:id/incident-types`, `…/custom-fields`; `GET`, `PATCH …/:id`   | The same for incident types and custom fields      |
+| `POST /workspaces/:id/webhooks`, `POST …/:webhookId/rotate`, `PUT …/:webhookId/headers` | Managing outbound webhooks from config as code     |
+| `PUT /workspaces/:id/status-page`                                                       | Setting up the public status page                  |
+| `POST /workspaces/:id/exports`, `GET …/:exportId`                                       | Taking incidents out for analysis or archive       |
+| `POST /workspaces/:id/incidents/:incidentId/postmortem/draft`                           | Starting an AI postmortem draft from a pipeline    |
 | `GET /sync/:id`                                                                         | The sync WebSocket: described, frames not modeled  |
 
 Internal, not part of the contract, may change without notice: `/auth/*` (Better Auth's; only sign-in, sign-out and
 the session are relied on, and the reference says how), `GET /workspaces/:id` (the dashboard's stack check),
 `/account/takeover` (the dashboard's notice), `/workspaces/:id/slack/install` (a browser redirect, RFC 0011),
 `POST /receipts` (the iOS extension's delivery receipts, RFC 0006), `POST /devices/register` (the app registering
-its phone in every workspace it was opened in, RFC 0006 "Device registration"), `PUT /workspaces/:id/status-page` (the
-dashboard's status page settings), `POST /workspaces/:id/webhooks` and `POST /workspaces/:id/webhooks/:webhookId/rotate`
-(the dashboard's Webhooks card: they answer a new signing secret once, RFC 0005 "Outbound webhooks"; cookie only for
-now, RFC 0014 "Not in this slice"), `POST /workspaces/:id/api-tokens` and `DELETE /workspaces/:id/api-tokens/:tokenId`
-(the dashboard's API tokens card: the token is answered once, RFC 0014), `POST /workspaces/:id/incidents/:incidentId/postmortem/draft`, `POST` and `GET /workspaces/:id/exports…`
-and `GET /features` (the dashboard's AI drafts and exports, RFC 0013) and `/slack/*`. `GET /status/:slug` is the
+its phone in every workspace it was opened in, RFC 0006 "Device registration"), the status page's subscribers
+(`GET`, `DELETE /workspaces/:id/status-page/subscribers`, `GET …/export`: the public's addresses, cookie only),
+`POST /workspaces/:id/api-tokens` and `DELETE /workspaces/:id/api-tokens/:tokenId` (the dashboard's API tokens card:
+the token is answered once, RFC 0014), `GET /features` (what the deployment has, RFC 0013) and `/slack/*`. The
+webhook, status page, export and draft routes were internal (cookie only) until API tokens reached them: they are in
+the reference now, with the dashboard still their main caller. `GET /status/:slug` is the
 public status page itself (RFC 0012): HTML
 for people, not an API. A JSON read of a status page does not exist yet.
 
@@ -145,7 +149,8 @@ incident's title (no mutation changes it yet), roles, deleting types and fields,
 
 **Source of truth.** Request bodies are converted from the `v.*` validators the routes run (`toJsonSchema` in
 `packages/schema`), refusal codes from the status maps the routes answer with (`apps/api/src/http.ts`); the route
-list, auth and answers are written by hand in `apps/api/src/openapi.ts`. `vp run --filter @freecorps/brigade-api
+list, auth and answers are written by hand in `apps/api/src/openapi.ts`, and so are the parts of a body whose
+validator is hand-written (a webhook's URL, a status page's slug, an export's scope), around the parts converted. `vp run --filter @freecorps/brigade-api
 openapi` writes the file; `apps/api/test/openapi.test.ts` fails when it is stale, when a documented path answers other
 methods than documented, and unless every operation answers its documented status, with a body its schema accepts,
 for a basic case (and `401` without a session).
@@ -153,7 +158,8 @@ for a basic case (and `401` without a session).
 **Auth.** The Better Auth session cookie, with cookie-authenticated writes refusing another site's `Origin`, or an
 **API token** (RFC 0014): per workspace, minted by owners and admins with scopes and an optional expiry, hashed at
 rest, sent as `Authorization: Bearer brg_…`, acting as a `token` actor with its creator's current role and never
-beyond its scopes. The members, invitations (the workspace's side), ack, incident, catalog and sync routes above take one; `POST
+beyond its scopes. The members, invitations (the workspace's side), ack, incident, catalog, webhook, status page,
+export, draft and sync routes above take one; `POST
 /workspaces` and the invitee's routes do not. A bearer request skips the `Origin` check and ignores any cookie; the
 reference marks these operations `bearerAuth`, and its test runs each with a token.
 

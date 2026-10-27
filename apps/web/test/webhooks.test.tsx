@@ -494,7 +494,7 @@ describe("custom headers", () => {
     expect(sent[0]!.url).toBe("/api/workspaces/ws_x/webhooks/whk_x/headers");
     expect(sent[0]!.init.method).toBe("PUT");
     expect(new Headers(sent[0]!.init.headers).get("Idempotency-Key")).toBe("k".repeat(16));
-    expect(JSON.parse(String(sent[0]!.init.body))).toEqual({
+    expect(JSON.parse(sent[0]!.init.body as string)).toEqual({
       headers: [{ name: "Authorization" }],
     });
     const refused = await requestHeaders("ws_x", "whk_x", [], (async () =>

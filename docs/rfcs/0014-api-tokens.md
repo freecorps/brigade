@@ -68,13 +68,17 @@ copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving
   (`incident:ack`), incidents (`incident:read` to list and read them, `incident:declare` to declare,
   `incident:update` to change their type, services, fields, severity and status and to post updates), the catalog
   (`catalog:read` to list and read services, incident types and custom fields, `catalog:manage` to make, change and
-  remove them; RFC 0002 "Public HTTP API") and the sync WebSocket (each query and mutation checked against the
-  scopes). A `PATCH` of an incident or a catalog entry answers the row it changed, so it needs the read scope as well
+  remove them; RFC 0002 "Public HTTP API"), the dashboard's own routes that need the server (outbound webhooks:
+  creating one, rotating its secret and setting its custom headers, `webhook:manage`; the status page's settings,
+  `status:manage`; making and downloading an export, `data:export`; asking for an AI postmortem draft,
+  `incident:update`) and the sync WebSocket (each query and mutation checked against the scopes). A `PATCH` of an incident or a catalog entry answers the row it changed, so it needs the read scope as well
   (`incident:update` and `incident:read`; `catalog:manage` and `catalog:read`): a write-only token is not handed rows
   it may not read, even by an empty `PATCH`. Creates answer only the row they made, and the other writes
   `{ ok: true }`, so they need no read scope. No scope was added for them: they are the permissions those mutations and queries already need. Not: `POST
   /workspaces` (a token belongs to a workspace that exists) and the invitee's routes (they are about one person's
-  own address). The dashboard's internal routes (webhooks, the status page, exports, drafts) stay cookie-only.
+  own address). No scope was added for the dashboard's routes either: each takes the permission its mutation already
+  needs. The status page's subscriber list and its CSV (addresses of the public) stay cookie-only, as do `GET
+  /features` and minting and revoking tokens.
 - **As an actor** (RFC 0004): `{ kind: "token", id: "tok_…", role, by: "usr_…", scopes }`, where `role` is the
   creator's current role and `by` the creator. The shard records `tok_…` as the actor of what it does (timeline
   entries, events' `actor`), and the dashboard names it "API token <name> (by Ana)" from the synced list. Outbound
@@ -129,8 +133,7 @@ token never works. They are not outbound webhook types yet.
 
 ## Not in this slice
 
-- Tokens for the dashboard's internal routes (outbound webhooks, the status page settings, exports, AI drafts):
-  they become public routes with their own scopes when someone needs them.
+- Tokens on the status page's subscriber list and its CSV export: it holds the public's addresses, so a person's call.
 - Rotating a token in place (mint a new one and revoke the old instead), per-token IP allow lists, and an audit
   view of each token's requests beyond its timeline entries and events.
 - Per-user personal tokens across workspaces.

@@ -53,7 +53,8 @@ or `member_removed` when its owner left), `follow_up.completed`, `follow_up.reop
 with `id`, `incidentId`, `title`, `ownerId`, `dueDate`, `status`); `postmortem.saved` (`incidentId`, `revision`,
 `characters`: never the text), `postmortem.draft_requested` (`incidentId`, `requestId`, `by`), `postmortem.drafted`
 (the same as saved, plus `requestId` and `model`) and `postmortem.draft_failed` (`incidentId`, `requestId`, `reason`);
-and `workspace.exported` (`id`, `scope`, `incidents`, `bytes`, `expiresAt`). No notifier acts on them yet; none pages.
+and `workspace.exported` (`id`, `scope`, `incidents`, `bytes`, `expiresAt`). No notifier acts on them yet and none pages; they are not in the outbound webhook catalog
+(`WEBHOOK_EVENT_TYPES`) yet either.
 
 On-call schedules (RFC 0003 "Schedules") emit `schedule.created` (`id`, `name`, `timeZone`, `layers`: how many),
 `schedule.updated` (the same, plus `reason`: `edited`, or `member_removed` with the `userId` taken out of the

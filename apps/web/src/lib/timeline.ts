@@ -15,6 +15,7 @@ export {
   assignable,
   bodyParts,
   checkEdit,
+  checkRename,
   checkUpdate,
   pageAgainEntries,
   timelineItems,

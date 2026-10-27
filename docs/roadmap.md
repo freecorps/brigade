@@ -158,8 +158,12 @@ Validate the risky assumptions before writing product code. Each spike produces 
     replaced kept) and removed (the author, owners and admins; a tombstone saying who removed it stays in place) from
     the dashboard and the app (`incident.editUpdate`, `incident.deleteUpdate`; `incident.update_edited` and
     `incident.update_deleted` in the webhook catalog); a mirrored Slack message follows, best effort; the status page
-    never changes with them (RFC 0003 "Editing and removing an update", RFC 0011 "Timeline mirror"). Left: REST
-    routes for editing and removing an update; editing a Slack message editing its update.
+    never changes with them (RFC 0003 "Editing and removing an update", RFC 0011 "Timeline mirror"), also over HTTP
+    (`PATCH`, `DELETE …/updates/:entryId`; posting answers the `entryId`). Left: editing a Slack message editing its
+    update.
+  - Renaming an incident (`incident.rename`, a `renamed` timeline entry, `incident.renamed` in the webhook catalog),
+    in place on the dashboard's incident page and over HTTP; Slack's message shows the new title and the rename is
+    mirrored, while an incident channel keeps the name it was made with. Left: renaming from the app.
   - Role definitions are done (Phase 3 item). Publishing an update to the status page
     is done (Phase 3 item). Members who join by invitation are in the shard's member list from the moment they accept. The mobile incident screen is done (Mobile item).
 - [ ] Brigade Sync in production for web + mobile
@@ -474,7 +478,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     custom fields listed, read, made and changed (services removed). Each write is the named mutation the apps send,
     as the member or API token (`incident:read`, `incident:declare`, `incident:update`, `catalog:read`,
     `catalog:manage`), with an `Idempotency-Key`.
-  - Left: changing an incident's title or roles over HTTP (no title mutation yet); publishing 0.2.0 to npm (owner).
+  - Done (`@freecorps/brigade-sdk` 0.3.0): the incident `PATCH` renames (`title`, `incident.rename`) and hands out
+    roles (`roles`, a user id or `null` by role id, each an `incident.assignRole`), with the same partial
+    application; written updates edited and removed (`editIncidentUpdate`, `deleteIncidentUpdate`, the same author,
+    owner and admin rules as the apps); `postIncidentUpdate` answers the update's `entryId`.
+  - Left: publishing the SDK to npm (owner).
   - Done: API tokens on the dashboard's routes that need the server, now in the reference and the SDK: creating a
     webhook, rotating its secret and setting its headers (`webhook:manage`), the status page's settings
     (`status:manage`), making and downloading exports (`data:export`) and AI postmortem drafts (`incident:update`),

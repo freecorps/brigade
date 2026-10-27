@@ -102,6 +102,7 @@ dashboard's Worker.
 | `GET /invitations/:id`, `POST …/accept`, `POST …/decline`                               | The invitee's side                                 |
 | `POST /workspaces/:id/incidents/:incidentId/ack`                                        | Acknowledging from outside the apps                |
 | `GET`, `POST /workspaces/:id/incidents`; `GET`, `PATCH …/:incidentId`; `POST …/updates` | Declaring, reading and updating from scripts       |
+| `PATCH`, `DELETE /workspaces/:id/incidents/:incidentId/updates/:entryId`                | Correcting or removing an update a script posted   |
 | `GET`, `POST /workspaces/:id/services`; `GET`, `PATCH`, `DELETE …/:serviceId`           | Keeping the service catalog from a source of truth |
 | `GET`, `POST /workspaces/:id/incident-types`, `…/custom-fields`; `GET`, `PATCH …/:id`   | The same for incident types and custom fields      |
 | `POST /workspaces/:id/webhooks`, `POST …/:webhookId/rotate`, `PUT …/:webhookId/headers` | Managing outbound webhooks from config as code     |

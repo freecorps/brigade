@@ -766,6 +766,21 @@
       }
     }
   ],
+  "incident_rename": [
+    {
+      "declarations": ["input part", "input reason"],
+      "selectors": ["part"],
+      "match": {
+        "part=action": "Rename",
+        "part=label": "Incident title",
+        "part=save": "Save",
+        "part=cancel": "Cancel",
+        "part=invalid": "Give it a title with visible characters.",
+        "part=failed": "Couldn't rename it. {reason}",
+        "part=*": "Rename"
+      }
+    }
+  ],
   "incident_update_change": [
     {
       "declarations": ["input part", "input time", "input reason"],

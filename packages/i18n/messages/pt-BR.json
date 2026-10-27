@@ -766,6 +766,21 @@
       }
     }
   ],
+  "incident_rename": [
+    {
+      "declarations": ["input part", "input reason"],
+      "selectors": ["part"],
+      "match": {
+        "part=action": "Renomear",
+        "part=label": "Título do incidente",
+        "part=save": "Salvar",
+        "part=cancel": "Cancelar",
+        "part=invalid": "Dê a ele um título com caracteres visíveis.",
+        "part=failed": "Não foi possível renomeá-lo. {reason}",
+        "part=*": "Renomear"
+      }
+    }
+  ],
   "incident_update_change": [
     {
       "declarations": ["input part", "input time", "input reason"],

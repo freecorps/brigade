@@ -3,6 +3,7 @@ import { roleLabel } from "@freecorps/brigade-i18n/incident";
 import {
   can,
   formatIncidentNumber,
+  INCIDENT_TITLE_MAX,
   incidentRoleList,
   isActive,
   missingRoles,
@@ -41,6 +42,7 @@ import {
   MessageSquareTextIcon,
   MailWarningIcon,
   MessageSquareWarningIcon,
+  PencilIcon,
   PencilLineIcon,
   PhoneCallIcon,
   PhoneMissedIcon,
@@ -104,6 +106,7 @@ import {
   assignable,
   bodyParts,
   checkEdit,
+  checkRename,
   checkUpdate,
   entryTime,
   itemText,
@@ -377,9 +380,7 @@ function Incident({ row, why }: { row: IncidentRow; why?: string }) {
             </span>
           ) : null}
         </p>
-        <h1 className="text-2xl font-semibold text-balance [overflow-wrap:anywhere]">
-          {row.title}
-        </h1>
+        <IncidentTitle id={row.id} title={row.title} editable={editable} />
         <div className="-ml-1.5 flex flex-wrap items-center gap-1">
           <SeverityMenu
             severity={row.severity}
@@ -956,6 +957,126 @@ function EditedMarker({ at, locale }: { at: number; locale: Locale }) {
 }
 
 type WrittenUpdateRow = Extract<TimelineRow, { kind: "update" }>;
+
+/**
+ * The incident's title, and for those who may change the incident a Rename button that swaps it for a field in place
+ * (Enter saves, Esc cancels). Optimistic like every change here: a refusal puts the title back and says why.
+ */
+function IncidentTitle({ id, title, editable }: { id: string; title: string; editable: boolean }) {
+  const rename = useMutation("incident.rename");
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+  const [invalid, setInvalid] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
+  const fieldId = useId();
+  const errorId = useId();
+  const field = useRef<HTMLInputElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const say = (part: string, reason = "") => m.incident_rename({ part, reason });
+
+  useEffect(() => {
+    if (!editing) return;
+    field.current?.focus();
+    field.current?.select();
+  }, [editing]);
+
+  const close = () => {
+    setEditing(false);
+    setInvalid(false);
+    // Back to the button, so a keyboard does not land on the page's top.
+    requestAnimationFrame(() => button.current?.focus());
+  };
+  const save = (event?: FormEvent) => {
+    event?.preventDefault();
+    const checked = checkRename(id, draft);
+    if (!checked.ok) {
+      setInvalid(true);
+      field.current?.focus();
+      return;
+    }
+    if (checked.args.title === title) return close();
+    close();
+    setRefused(null);
+    void rename(checked.args).then((outcome) => {
+      if (!outcome.ok) setRefused(say("failed", mutationErrorReason(outcome.error.code)));
+    });
+  };
+
+  if (editing) {
+    return (
+      <form onSubmit={save} noValidate className="flex flex-col gap-2">
+        <label htmlFor={fieldId} className="sr-only">
+          {say("label")}
+        </label>
+        <input
+          ref={field}
+          id={fieldId}
+          value={draft}
+          maxLength={INCIDENT_TITLE_MAX}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            if (invalid) setInvalid(false);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") close();
+          }}
+          aria-invalid={invalid}
+          aria-describedby={invalid ? errorId : undefined}
+          className="h-12 w-full min-w-0 rounded-md border border-input bg-card px-3 text-2xl font-semibold outline-none focus-visible:ring-3 focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:focus-visible:ring-destructive"
+        />
+        {invalid ? (
+          <p
+            id={errorId}
+            role="alert"
+            className="flex items-start gap-1.5 text-sm text-destructive"
+          >
+            <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+            {say("invalid")}
+          </p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Button type="submit">{say("save")}</Button>
+          <Button type="button" variant="ghost" onClick={close}>
+            {say("cancel")}
+          </Button>
+        </div>
+      </form>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-start gap-1">
+        <h1 className="min-w-0 flex-1 text-2xl font-semibold text-balance [overflow-wrap:anywhere]">
+          {title}
+        </h1>
+        {editable ? (
+          <Button
+            ref={button}
+            variant="ghost"
+            size="icon"
+            className="-mt-1.5 shrink-0 text-muted-foreground"
+            aria-label={say("action")}
+            title={say("action")}
+            onClick={() => {
+              setDraft(title);
+              setRefused(null);
+              setEditing(true);
+            }}
+          >
+            <PencilIcon aria-hidden />
+          </Button>
+        ) : null}
+      </div>
+      {refused ? (
+        <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive">
+          <CircleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <span className="min-w-0">{refused}</span>
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * A written update's text, with Edit (its author) and Remove (its author, owners and admins) under it. Edit swaps the

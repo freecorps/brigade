@@ -31,7 +31,10 @@ Workspace ─┬─ Member (User + role: owner | admin | responder | viewer)
 
 `triage → investigating ⇄ fixing ⇄ monitoring → resolved` (resolved can reopen); `triage → declined`.
 Implemented in `packages/schema` (`canTransition`). Severity is independent of status and can change any time
-(every change is a timeline entry).
+(every change is a timeline entry). So is the title: `incident.rename` (`incident:update`, any status, so a resolved
+incident can get a better name for its postmortem; the declare's limits, 1 to 200 characters; the same title is a
+`conflict`) writes a `renamed` timeline entry with both titles ("Ana renamed the incident from “…” to “…”") and emits
+`incident.renamed` (`from`, `to`). The dashboard renames in place on the incident page; the app does not yet.
 
 ## Timeline, updates and roles
 
@@ -39,7 +42,7 @@ First slice, in `WorkspaceDO` until `IncidentDO` exists (the tables move with th
 
 - **Timeline** (`timeline` table, query `incident.timeline`): its own synced, append-only table, not a view of the
   outbox. Every mutation that changes an incident appends one entry in its own transaction, next to its event
-  (RFC 0005): `declared`, `status_changed`, `severity_changed`, `acknowledged`, `role_assigned` (stored with the
+  (RFC 0005): `declared`, `renamed`, `status_changed`, `severity_changed`, `acknowledged`, `role_assigned` (stored with the
   previous and new holder; the dashboard words it as assigned, unassigned, taken or stepped down), `update`, and
   `alert_resolved` when the alert of the monitor that opened it resolves (recovered, or the monitor paused or
   deleted), by `sys_monitors` or the member who did it; `alert_grouped` when a `group` route puts an alert onto the

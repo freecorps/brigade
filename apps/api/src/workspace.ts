@@ -1840,10 +1840,10 @@ export class WorkspaceDO extends DurableObject<Env> {
     // Maintenance windows that started or ended (RFC 0012 "Scheduled maintenance"): their events go out with the drain
     // below, and the push after it shows them.
     this.advanceMaintenance(Date.now());
-    // Reminders of follow-ups due (RFC 0013 "Reminders"): `follow_up.reminder_due` events, out with the drain below,
-    // after every page above.
-    this.remind(Date.now());
     await this.drainOutbox();
+    // Reminders of follow-ups due (RFC 0013 "Reminders"), after the drain: reading the follow-ups never holds back a
+    // page's events. Their `follow_up.reminder_due` events arm the drain again, so they go out on the next run.
+    this.remind(Date.now());
     // The status page after the outbox: a page never waits on KV. Never throws; KV calls have no deadline of their
     // own, so past `STATUS_PUSH_BUDGET_MS` the push carries on in the background, the push backs off (the alarm does
     // not come straight back for it) and the alarm goes on (the next escalation's time is set below). The wait ends

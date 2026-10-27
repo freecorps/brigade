@@ -16,6 +16,7 @@ export type Email_ReminderInputs = {
 * | "item_overdue" | "{title} ({incident}), overdue since {date}" |
 * | "open" | "Open your follow-ups" |
 * | "off" | "To stop these reminders, turn off Follow-up reminders in the Email card on the dashboard, or under Email in the Brigade app's account settings." |
+* | "settings" | "Email settings" |
 * | "footer" | "You get this email because you own follow-ups in {workspace} on Brigade." |
 * | * | "Follow-ups due in {workspace}" |
 *

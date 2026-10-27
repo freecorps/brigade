@@ -15,6 +15,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "item_overdue" | "{title} ({incident}), overdue since {date}" |
 * | "open" | "Open your follow-ups" |
 * | "off" | "To stop these reminders, turn off Follow-up reminders in the Email card on the dashboard, or under Email in the Brigade app's account settings." |
+* | "settings" | "Email settings" |
 * | "footer" | "You get this email because you own follow-ups in {workspace} on Brigade." |
 * | * | "Follow-ups due in {workspace}" |
 *
@@ -30,6 +31,7 @@ export const email_reminder = /** @type {((inputs: Email_ReminderInputs, options
 		if (i?.part === "item_overdue") return /** @type {LocalizedString} */ (`${i?.title} (${i?.incident}), atrasada desde ${i?.date}`);
 		if (i?.part === "open") return /** @type {LocalizedString} */ (`Abrir suas ações de acompanhamento`);
 		if (i?.part === "off") return /** @type {LocalizedString} */ (`Para parar estes lembretes, desative Lembretes de ações no cartão Email do painel, ou em Email nos ajustes de conta do app do Brigade.`);
+		if (i?.part === "settings") return /** @type {LocalizedString} */ (`Ajustes de email`);
 		if (i?.part === "footer") return /** @type {LocalizedString} */ (`Você está recebendo este email porque é responsável por ações de acompanhamento em ${i?.workspace} no Brigade.`);
 		return /** @type {LocalizedString} */ (`Ações de acompanhamento com prazo em ${i?.workspace}`)
 	}
@@ -39,6 +41,7 @@ export const email_reminder = /** @type {((inputs: Email_ReminderInputs, options
 		if (i?.part === "item_overdue") return /** @type {LocalizedString} */ (`${i?.title} (${i?.incident}), overdue since ${i?.date}`);
 		if (i?.part === "open") return /** @type {LocalizedString} */ (`Open your follow-ups`);
 		if (i?.part === "off") return /** @type {LocalizedString} */ (`To stop these reminders, turn off Follow-up reminders in the Email card on the dashboard, or under Email in the Brigade app's account settings.`);
+		if (i?.part === "settings") return /** @type {LocalizedString} */ (`Email settings`);
 		if (i?.part === "footer") return /** @type {LocalizedString} */ (`You get this email because you own follow-ups in ${i?.workspace} on Brigade.`);
 		return /** @type {LocalizedString} */ (`Follow-ups due in ${i?.workspace}`)
 	}

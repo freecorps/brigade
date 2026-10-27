@@ -30,6 +30,7 @@ import { useLocale } from "@/hooks/use-locale";
 import { useTheme } from "@/hooks/use-theme";
 import { authClient } from "@/lib/auth-client";
 import type { Paging } from "@/lib/device";
+import { caughtUp } from "@/lib/picked";
 import { CHECK_GLYPH } from "@/components/glyphs";
 
 const PAGING: Record<Paging, Parameters<typeof m.mobile_session>[0]["part"]> = {
@@ -358,14 +359,20 @@ function EmailChoices() {
   useEffect(() => {
     if (ready && timeZone && timeZone !== keptZone) void setTimeZone({ timeZone });
   }, [ready, timeZone, keptZone, setTimeZone]);
+  // What was switched shows until the synced row agrees (src/lib/picked.ts), or the save fails and it goes back.
+  useEffect(() => {
+    if (picked !== null && caughtUp(picked, value)) setPicked(null);
+  }, [picked, value]);
   const text = (part: string) => m.member_email_settings({ part });
   const flip = (key: keyof MemberEmail, on: boolean) => {
     const next = { ...shown, [key]: on };
     setPicked(next);
     setFailed(false);
     void setEmail(next).then((outcome) => {
+      // A conflict is no change: the synced row already says so.
+      if (outcome.ok) return;
       setPicked(null);
-      if (!outcome.ok && outcome.error.code !== "conflict") setFailed(true);
+      if (outcome.error.code !== "conflict") setFailed(true);
     });
   };
   const rows: { key: keyof MemberEmail; note?: string }[] = [

@@ -3290,6 +3290,7 @@
         "part=item_overdue": "{title} ({incident}), atrasada desde {date}",
         "part=open": "Abrir suas ações de acompanhamento",
         "part=off": "Para parar estes lembretes, desative Lembretes de ações no cartão Email do painel, ou em Email nos ajustes de conta do app do Brigade.",
+        "part=settings": "Ajustes de email",
         "part=footer": "Você está recebendo este email porque é responsável por ações de acompanhamento em {workspace} no Brigade.",
         "part=*": "Ações de acompanhamento com prazo em {workspace}"
       }

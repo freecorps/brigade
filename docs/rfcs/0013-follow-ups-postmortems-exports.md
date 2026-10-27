@@ -54,19 +54,28 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
 
 - **What.** Once a day, each member who owns open follow-ups due that day or overdue gets one email listing them
   (soonest due first, at most 20, the rest counted), each with its incident, a link to `/follow-ups`, and how to turn
-  reminders off. In the member's language (`user.locale`), plain text and escaped HTML like every email (RFC 0005
-  "Email"). A due date is a calendar day, so "today" is the member's own.
+  reminders off, with a link to the dashboard's Email card (`/#email`). In the member's language (`user.locale`), plain
+  text and escaped HTML like every email (RFC 0005 "Email"). A due date is a calendar day, so "today" is the member's
+  own.
 - **When.** At 09:00 (`REMINDER_HOUR`) on the member's clock: the time zone their devices send
   (`member.setTimeZone`, kept on their `member_settings` row, synced like their call choice; the dashboard and the app
-  send the device's own when it differs from the one kept, so the last device used wins), else UTC.
-- **How.** The shard's alarm (after every page it fires and the drain) asks who is due (`remindersDue`) and runs
-  the server-only `followUp.remind` for each, which writes the day in a server-only ledger (`follow_up_reminders`,
-  one row per member: at most one reminder a day) and emits `follow_up.reminder_due` (`userId`, `date`, `count`)
-  through the outbox. The alarm wakes for the next one due (`nextReminderAt`), armed again after every change. The
-  queue consumer (`src/notify-reminder.ts`) asks the shard for the email (`planReminder`: what is still due, read
-  then, claimed in the email notifier's ledger as `reminder:<member>:<day>`), reads the verified address and language
-  from D1, and sends within the same caps (5 an hour per user, 200 a day per workspace), with the same retries (30 s
+  send the device's own when it differs from the one kept, so the last device used wins), else UTC. The row is synced
+  to every member, so every member can see every other member's time zone (RFC 0003 "A member's own settings").
+- **How.** The shard's alarm (after every page it fires and the drain) asks who is due (`remindersDue`, one pass
+  over the follow-ups) and runs the server-only `followUp.remind` for each, at most 50 a run
+  (`REMINDERS_PER_RUN`; the alarm comes back a minute later for the rest). It writes the day in a server-only ledger
+  (`follow_up_reminders`, one row per member: at most one reminder a day) and emits `follow_up.reminder_due`
+  (`userId`, `date`, `count`) through the outbox. Only members are reminded: follow-ups a removed member still owns
+  remind nobody. The alarm wakes for the next one due (`nextReminderAt`), kept by the shard and read again only after
+  a change to follow-ups, members or member settings, or a run of reminders, so a page, an acknowledgement or an
+  escalation never pays for reminders (tested). The queue consumer (`src/notify-reminder.ts`) asks the shard for the
+  email (`planReminder`: what is still due, read then, claimed in the email notifier's ledger as
+  `reminder:<member>:<day>`), reads the verified address and language from D1, and sends with the same retries (30 s
   to 4 minutes, 5 attempts). A failure past them is only logged: a reminder has no incident timeline.
+- **Caps of their own.** At most 200 reminders a day per workspace (`REMINDER_WORKSPACE_DAILY_CAP`) and 2 a day per
+  user (`REMINDER_USER_DAILY_CAP`); over either, the reminder is dropped and logged. They are separate from the caps
+  on the emails about pages (RFC 0005 "Email", "Abuse"): reminders never count toward those and never spend them, so
+  200 reminders at 09:00 can never drop a later "a page reached nobody" or missed-page email (tested).
 - **Opting out.** `member.setEmail` (`followUpReminders`, RFC 0005 "Email") from the dashboard's Email card or the
   app's account settings; on by default. A reminder already asked for is not sent once turned off, nor when
   everything it would list was done meanwhile.

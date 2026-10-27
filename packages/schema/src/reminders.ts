@@ -54,56 +54,81 @@ export function followUpsDue(
     .sort(byDue);
 }
 
+/** The most reminders one run of the shard's alarm sends; the rest go on the next run, a tick later. */
+export const REMINDERS_PER_RUN = 50;
+
+/** A member's email choices from their settings row alone (`memberEmailOf` without scanning the table). */
+const choicesOf = (settings: MemberSettingsRow | undefined, userId: string) =>
+  memberEmailOf(settings ? [settings] : [], userId);
+
 /**
- * Per owner of an open follow-up with a due date who wants reminders, the earliest due date among theirs. Members
- * who turned reminders off are left out.
+ * Per owner of an open follow-up with a due date who is still a member and wants reminders, the earliest due date
+ * among theirs and their settings row. A removed member's follow-ups remind nobody until someone takes them over.
  */
-function owners(store: ReadStore): Map<string, string> {
-  const settings = store.scan("member_settings");
+function owners(
+  store: ReadStore,
+): Map<string, { earliest: string; settings: MemberSettingsRow | undefined }> {
   const earliest = new Map<string, string>();
   for (const row of store.scan("follow_ups")) {
     if (row.status !== "open" || row.ownerId === null || row.dueDate === null) continue;
     const known = earliest.get(row.ownerId);
     if (known === undefined || row.dueDate < known) earliest.set(row.ownerId, row.dueDate);
   }
-  for (const userId of earliest.keys()) {
-    if (!memberEmailOf(settings, userId).followUpReminders) earliest.delete(userId);
+  const wanted = new Map<string, { earliest: string; settings: MemberSettingsRow | undefined }>();
+  for (const [userId, date] of earliest) {
+    if (store.get("members", userId) === undefined) continue;
+    const settings = store.get("member_settings", userId);
+    if (!choicesOf(settings, userId).followUpReminders) continue;
+    wanted.set(userId, { earliest: date, settings });
   }
-  return earliest;
+  return wanted;
 }
 
 /**
  * When the member's next reminder is due: `REMINDER_HOUR` on the first day that is today or later, not before their
- * earliest due date, and after the last day they were reminded.
+ * earliest due date, and after the last day they were reminded. With the calendar day it is for.
  */
-function reminderAt(store: ReadStore, userId: string, earliest: string, now: number): number {
-  const zone = reminderTimeZone(store.get("member_settings", userId));
+function reminderAt(
+  store: ReadStore,
+  userId: string,
+  owner: { earliest: string; settings: MemberSettingsRow | undefined },
+  now: number,
+): { at: number; zone: string } {
+  const zone = reminderTimeZone(owner.settings);
   const today = localDate(now, zone);
   const last = store.get("follow_up_reminders", userId)?.date;
-  let day = earliest > today ? earliest : today;
+  let day = owner.earliest > today ? owner.earliest : today;
   if (last !== undefined && last >= day) day = nextDay(last);
   const hour = `${String(REMINDER_HOUR).padStart(2, "0")}:00`;
-  return zonedInstant(wallMinute(day, hour)!, zone);
+  return { at: zonedInstant(wallMinute(day, hour)!, zone), zone };
 }
 
-/** The members whose reminder is due at `now`, each with the day (their calendar) it is for. */
-export function remindersDue(store: ReadStore, now: number): { userId: string; date: string }[] {
-  const due: { userId: string; date: string }[] = [];
-  for (const [userId, earliest] of owners(store)) {
-    if (reminderAt(store, userId, earliest, now) > now) continue;
-    due.push({
-      userId,
-      date: localDate(now, reminderTimeZone(store.get("member_settings", userId))),
-    });
+/**
+ * The members whose reminder is due at `now`, each with the day (their calendar) it is for: at most `limit`, the
+ * longest due first, so a run cut short leaves the rest for the next one. One pass over the follow-ups.
+ */
+export function remindersDue(
+  store: ReadStore,
+  now: number,
+  limit = REMINDERS_PER_RUN,
+): { userId: string; date: string }[] {
+  const due: { userId: string; date: string; at: number }[] = [];
+  for (const [userId, owner] of owners(store)) {
+    const { at, zone } = reminderAt(store, userId, owner, now);
+    if (at > now) continue;
+    due.push({ userId, date: localDate(now, zone), at });
   }
-  return due;
+  return due
+    .sort((a, b) => a.at - b.at || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0))
+    .slice(0, limit)
+    .map(({ userId, date }) => ({ userId, date }));
 }
 
 /** When the next reminder in the workspace is due (now or earlier when one is due already), or null for none. */
 export function nextReminderAt(store: ReadStore, now: number): number | null {
   let next: number | null = null;
-  for (const [userId, earliest] of owners(store)) {
-    const at = reminderAt(store, userId, earliest, now);
+  for (const [userId, owner] of owners(store)) {
+    const { at } = reminderAt(store, userId, owner, now);
     if (next === null || at < next) next = at;
   }
   return next;
@@ -122,7 +147,7 @@ const day: Validator<string> = (input, path = "") =>
 /**
  * Server only, from the shard's alarm: records that `userId` is reminded for `date` and emits
  * `follow_up.reminder_due`, which the email path turns into the email. A member already reminded that day (or a later
- * one), who turned reminders off, or with nothing due is a `conflict`.
+ * one), no longer a member, who turned reminders off, or with nothing due is a `conflict`.
  */
 export const remindFollowUps = defineMutation({
   name: "followUp.remind",
@@ -130,7 +155,8 @@ export const remindFollowUps = defineMutation({
   permission: "workspace:manage",
   apply(store, args, ctx) {
     if (ctx.actor.kind !== "system") return fail("forbidden", "Only Brigade sends reminders");
-    if (!memberEmailOf(store.scan("member_settings"), args.userId).followUpReminders) {
+    if (store.get("members", args.userId) === undefined) return fail("conflict", "Not a member");
+    if (!choicesOf(store.get("member_settings", args.userId), args.userId).followUpReminders) {
       return fail("conflict", "Reminders are off");
     }
     const due = followUpsDue(store.scan("follow_ups"), args.userId, args.date);

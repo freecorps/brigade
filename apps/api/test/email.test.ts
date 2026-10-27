@@ -21,6 +21,8 @@ import {
   EMAIL_CLAIM_MS,
   EMAIL_USER_HOURLY_CAP,
   EMAIL_WORKSPACE_DAILY_CAP,
+  REMINDER_USER_DAILY_CAP,
+  REMINDER_WORKSPACE_DAILY_CAP,
 } from "../src/mailer.ts";
 import { consumeEvents, type Fetch, type NotifyEnv } from "../src/notify.ts";
 import { emailRetryDelay, MAX_EMAIL_ATTEMPTS } from "../src/notify-email.ts";
@@ -1037,6 +1039,23 @@ describe("reminders of follow-ups due", () => {
     );
     expect(await runDurableObjectAlarm(stub)).toBe(true);
   };
+  /** Ledger rows as if `count` emails keyed `<key>:<i>` had gone to `userId` (or to as many users) `ago` ms back. */
+  const seedSends = (
+    ws: Awaited<ReturnType<typeof workspace>>,
+    count: number,
+    ago: number,
+    { userId, key = "seed" }: { userId?: string; key?: string } = {},
+  ) =>
+    ws.withShard((_shard, sql) => {
+      for (let i = 0; i < count; i++) {
+        sql.exec(
+          "insert into email_sends (key, user_id, at) values (?, ?, ?)",
+          `${key}:${i}`,
+          userId ?? `usr_seed${i}`,
+          Date.now() - ago,
+        );
+      }
+    });
   /** A workspace where Bia (pt-BR) owns a follow-up due today and an overdue one, on a clock past 09:00. */
   async function setUp() {
     const ws = await workspace({ [bia.id]: "pt-BR" });
@@ -1092,6 +1111,7 @@ describe("reminders of follow-ups due", () => {
     );
     expect(bias.text).toContain("- <b>Rotate</b> the keys (INC-1 Checkout is down), prazo");
     expect(bias.text).toContain("https://brigade.example.com/follow-ups");
+    expect(bias.text).toContain("Ajustes de email: https://brigade.example.com/#email");
     expect(bias.html).not.toContain("<b>Rotate");
     expect(bias.html).toContain("&lt;b&gt;Rotate&lt;/b&gt;");
     const anas = mail.sent.find((one) => one.to.email === ws.address(ws.people.ana))!;
@@ -1119,7 +1139,7 @@ describe("reminders of follow-ups due", () => {
     expect(mail.sent).toEqual([]);
   });
 
-  test("a failing send is retried like the other emails, then given up; the caps hold", async () => {
+  test("a failing send is retried like the other emails, then given up; the reminders' caps hold", async () => {
     const { ws } = await setUp();
     await alarm(ws);
     const due = (await ws.events("follow_up.reminder_due")).filter(
@@ -1138,21 +1158,112 @@ describe("reminders of follow-ups due", () => {
     await deliver(due, mail.sender, { attempts: MAX_EMAIL_ATTEMPTS + 1 });
     expect(mail.sent).toEqual([]);
 
-    // Ana got as many emails as an hour allows: her reminder is dropped, not retried.
-    await ws.withShard((_shard, sql) => {
-      for (let i = 0; i < EMAIL_USER_HOURLY_CAP; i++) {
-        sql.exec(
-          "insert into email_sends (key, user_id, at) values (?, ?, ?)",
-          `seed:${i}`,
-          ws.people.ana.id,
-          Date.now() - 60_000,
-        );
-      }
-    });
+    // Ana got as many reminders as a day allows: hers is dropped, not retried.
     const anas = (await ws.events("follow_up.reminder_due")).filter(
       (e) => (e.data as { userId: string }).userId === ws.people.ana.id,
     );
+    await seedSends(ws, REMINDER_USER_DAILY_CAP, 3 * 60 * 60_000, {
+      userId: ws.people.ana.id,
+      key: "reminder:seed",
+    });
     expect(await deliver(anas, mail.sender)).toEqual({ acked: ["msg-0"], retried: [] });
     expect(mail.sent).toEqual([]);
+  });
+
+  test("reminders have caps of their own: a day of page emails never holds one back, a day of reminders does", async () => {
+    const { ws } = await setUp();
+    await alarm(ws);
+    const due = await ws.events("follow_up.reminder_due");
+    const bias = due.filter((e) => (e.data as { userId: string }).userId === ws.people.bia.id);
+    const anas = due.filter((e) => (e.data as { userId: string }).userId === ws.people.ana.id);
+    // The paging emails' caps are spent, for the workspace and for Bia.
+    await seedSends(ws, EMAIL_WORKSPACE_DAILY_CAP, 60_000);
+    await seedSends(ws, EMAIL_USER_HOURLY_CAP, 60_000, {
+      userId: ws.people.bia.id,
+      key: "unpaged:seed",
+    });
+    const mail = recorder();
+    await deliver(bias, mail.sender);
+    expect(mail.to()).toEqual([ws.address(ws.people.bia)]);
+    // The reminders' own day is spent: Ana's is dropped.
+    await seedSends(ws, REMINDER_WORKSPACE_DAILY_CAP, 60_000, { key: "reminder:seed" });
+    expect(await deliver(anas, mail.sender)).toEqual({ acked: ["msg-0"], retried: [] });
+    expect(mail.to()).toEqual([ws.address(ws.people.bia)]);
+  });
+
+  test("a day of reminders never keeps a page's emails from going out", async () => {
+    const { ws } = await setUp();
+    await alarm(ws);
+    // Bia's reminder goes out at her 09:00 ...
+    const mail = recorder();
+    await deliver(
+      (await ws.events("follow_up.reminder_due")).filter(
+        (e) => (e.data as { userId: string }).userId === ws.people.bia.id,
+      ),
+      mail.sender,
+    );
+    expect(mail.to()).toEqual([ws.address(ws.people.bia)]);
+    // ... as do as many reminders as the workspace sends in a day, and Bia got all but one email an hour allows.
+    await seedSends(ws, REMINDER_WORKSPACE_DAILY_CAP, 60_000, { key: "reminder:seed" });
+    await seedSends(ws, EMAIL_USER_HOURLY_CAP - 1, 60_000, {
+      userId: ws.people.bia.id,
+      key: "unpaged:seed",
+    });
+    // Then a SEV1 page reaches nobody: Bia's missed-page email and the owners' "nobody" email both go out.
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    await deliver([event], undefined);
+    const failures = await ws.failures();
+    const paging = recorder();
+    await deliver(failures, paging.sender);
+    await deliver(failures, paging.sender, { attempts: 2 });
+    expect(paging.sent.some((one) => one.subject.startsWith("Nobody"))).toBe(true);
+    expect(
+      paging.sent.filter((one) => one.to.email === ws.address(ws.people.bia)).length,
+    ).toBeGreaterThan(0);
+    expect(paging.to()).toEqual(
+      expect.arrayContaining([
+        ws.address(ws.people.ana),
+        ws.address(ws.people.bia),
+        ws.address(ws.people.olga),
+      ]),
+    );
+  });
+
+  test("a page, an acknowledgement or an escalation never reads the follow-ups; a follow-up's change does", async () => {
+    const { ws } = await setUp();
+    const stub = env.WORKSPACE.getByName(ws.id);
+    await runInDurableObject(stub, (instance: WorkspaceDO) => {
+      const shard = (instance as unknown as { shard: Shard }).shard;
+      const scan = vi.spyOn(shard.store, "scan");
+      const reads = () =>
+        scan.mock.calls.filter(([table]) => table === "follow_ups" || table === "member_settings");
+      const run = (name: string, args: object, actor: Actor = ws.people.ana) =>
+        expect(
+          shard.mutate({
+            clientId: "test",
+            mutationId: `m${++mutations}`,
+            actor,
+            name,
+            args,
+            now: Date.now(),
+            internal: true,
+          }).result,
+          name,
+        ).toMatchObject({ ok: true });
+      const incident = newId("inc", Date.now(), random);
+      run("incident.declare", { id: incident, title: "Checkout is down", severity: "sev1" });
+      run("incident.ack", { id: incident });
+      expect(reads()).toEqual([]);
+      run("followUp.create", {
+        id: newId("fup", Date.now(), random),
+        incidentId: incident,
+        title: "Write the runbook",
+        ownerId: ws.people.bia.id,
+        dueDate: "2000-01-04",
+        link: null,
+      });
+      expect(reads().length).toBeGreaterThan(0);
+      scan.mockRestore();
+    });
   });
 });

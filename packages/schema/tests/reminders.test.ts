@@ -10,6 +10,7 @@ import {
   mutations,
   nextReminderAt,
   REMINDER_HOUR,
+  REMINDERS_PER_RUN,
   remindersDue,
   runMutation,
   serverMutations,
@@ -238,5 +239,60 @@ describe("reminders of follow-ups due", () => {
     });
     expect(nextReminderAt(store, T)).toBe(Date.UTC(2026, 9, 27, REMINDER_HOUR));
     expect(localDate(T, "Asia/Tokyo")).toBe("2026-10-27");
+  });
+
+  test("a member removed from the workspace is not reminded of what they still own", () => {
+    const store = shard();
+    addFollowUp(store, 1, caio.id, "2026-10-20");
+    const at = T + HOUR;
+    expect(remindersDue(store, at)).toEqual([{ userId: caio.id, date: "2026-10-27" }]);
+    store.delete("members", caio.id);
+    expect(remindersDue(store, at)).toEqual([]);
+    expect(nextReminderAt(store, at)).toBeNull();
+    expect(
+      server(store, "followUp.remind", { userId: caio.id, date: "2026-10-27" }, at),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+  });
+
+  test("one run reminds at most REMINDERS_PER_RUN members, the longest due first; the next run takes the rest", () => {
+    const store = shard();
+    const extra = REMINDERS_PER_RUN + 5;
+    // Straight into the store: more than one incident takes through `followUp.create`.
+    const owe = (n: number, ownerId: string) =>
+      store.insert("follow_ups", {
+        id: `fup_m${n}`,
+        incidentId: INC,
+        incidentNumber: 1,
+        incidentTitle: "Checkout down",
+        title: `Follow-up ${n}`,
+        ownerId,
+        dueDate: "2026-10-20",
+        link: null,
+        status: "open",
+        createdAt: 0,
+        createdBy: ana.id,
+        doneAt: null,
+        doneBy: null,
+        updatedAt: 0,
+      });
+    for (let n = 0; n < extra; n++) {
+      const id = `usr_m${String(n).padStart(3, "0")}`;
+      store.insert("members", { id, name: id, role: "responder", updatedAt: 0 });
+      owe(n, id);
+    }
+    // Tokyo's 09:00 came first: Ana is due before everyone on UTC.
+    owe(extra, ana.id);
+    run(store, ana, "member.setTimeZone", { timeZone: "Asia/Tokyo" });
+    const at = T + HOUR;
+    const first = remindersDue(store, at);
+    expect(first).toHaveLength(REMINDERS_PER_RUN);
+    expect(first[0]).toEqual({ userId: ana.id, date: "2026-10-27" });
+    for (const reminder of first) {
+      expect(server(store, "followUp.remind", reminder, at)).toMatchObject({ ok: true });
+    }
+    const rest = remindersDue(store, at);
+    expect(rest).toHaveLength(extra + 1 - REMINDERS_PER_RUN);
+    expect(rest.filter((one) => first.some((done) => done.userId === one.userId))).toEqual([]);
+    expect(nextReminderAt(store, at)).toBeLessThanOrEqual(at);
   });
 });

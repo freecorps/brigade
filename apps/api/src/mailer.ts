@@ -40,6 +40,13 @@ export const EMAIL_CLAIM_MS = 60_000;
  */
 export const EMAIL_USER_HOURLY_CAP = 5;
 export const EMAIL_WORKSPACE_DAILY_CAP = 200;
+/**
+ * Reminders of follow-ups due have caps of their own (RFC 0013 "Reminders"): the most a workspace sends in a day, and
+ * one user gets in a day. They never count toward the caps above and never spend them, so reminders can never crowd
+ * out an email about a page that failed.
+ */
+export const REMINDER_WORKSPACE_DAILY_CAP = 200;
+export const REMINDER_USER_DAILY_CAP = 2;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -136,8 +143,10 @@ export function asksForReminder(event: BrigadeEvent): boolean {
   return typeof data?.userId === "string" && typeof data.date === "string";
 }
 
-/** A reminder's key in the email ledger: one per member and day. */
+/** A reminder's key in the email ledger: one per member and day. Its prefix keeps reminders out of the paging caps. */
 const reminderKey = (userId: string, date: string) => `reminder:${userId}:${date}`;
+/** Ledger rows that are reminders (`reminderKey`), in SQL. */
+const IS_REMINDER = "substr(key, 1, 9) = 'reminder:'";
 
 /**
  * What one recipient's send did, as the consumer reports it. `capped`: not sent, because the recipient or the
@@ -237,7 +246,7 @@ export class Mailer {
       },
       workspace: workspace.name,
       jobs,
-      budget: this.budget(now),
+      budget: this.budget(now, "paging"),
       ...(heldUntil === undefined ? {} : { heldUntil }),
     };
   }
@@ -336,7 +345,7 @@ export class Mailer {
         overdue: row.dueDate! < date,
       })),
       total: due.length,
-      budget: this.budget(now),
+      budget: this.budget(now, "reminder"),
     };
   }
 
@@ -420,23 +429,30 @@ export class Mailer {
     );
   }
 
-  /** What the caps leave now (see `EmailBudget`); capped recipients do not count. */
-  private budget(now: number): EmailBudget {
+  /**
+   * What the caps leave now (see `EmailBudget`); capped recipients do not count. `paging`: the emails about pages
+   * (`EMAIL_WORKSPACE_DAILY_CAP`, `EMAIL_USER_HOURLY_CAP`, `users` over the last hour), reminders left out;
+   * `reminder`: the reminders' own (`REMINDER_WORKSPACE_DAILY_CAP`, `REMINDER_USER_DAILY_CAP`, `users` over the last
+   * day), nothing else counted.
+   */
+  private budget(now: number, kind: "paging" | "reminder"): EmailBudget {
     const { sql } = this.options.storage;
+    const which = kind === "reminder" ? IS_REMINDER : `not ${IS_REMINDER}`;
     const today = sql
       .exec<{ sends: number }>(
-        "select count(*) as sends from email_sends where capped = 0 and at > ?",
+        `select count(*) as sends from email_sends where capped = 0 and at > ? and ${which}`,
         now - DAY_MS,
       )
       .one().sends;
     const users: Record<string, number> = {};
     for (const row of sql.exec<{ user_id: string; sends: number }>(
-      "select user_id, count(*) as sends from email_sends where capped = 0 and at > ? group by user_id",
-      now - HOUR_MS,
+      `select user_id, count(*) as sends from email_sends where capped = 0 and at > ? and ${which} group by user_id`,
+      now - (kind === "reminder" ? DAY_MS : HOUR_MS),
     )) {
       users[row.user_id] = row.sends;
     }
-    return { workspace: Math.max(0, EMAIL_WORKSPACE_DAILY_CAP - today), users };
+    const cap = kind === "reminder" ? REMINDER_WORKSPACE_DAILY_CAP : EMAIL_WORKSPACE_DAILY_CAP;
+    return { workspace: Math.max(0, cap - today), users };
   }
 
   /**

@@ -358,14 +358,16 @@ export function renderWebhookDisabledEmail(
 
 /**
  * The daily reminder of a member's follow-ups due (RFC 0013 "Reminders"): each open follow-up due on `date` or before
- * it, with its incident, up to `REMINDER_MAX_LISTED` (the rest counted), and how to turn reminders off. Titles and the
- * workspace's name are what members typed. A due date is a calendar day, written in the recipient's language.
+ * it, with its incident, up to `REMINDER_MAX_LISTED` (the rest counted), and how to turn reminders off, with a link to
+ * the dashboard's Email card. Titles and the workspace's name are what members typed. A due date is a calendar day, written in the recipient's language.
  */
 export function renderReminderEmail(
   facts: { workspace: string; items: ReminderItem[]; total: number },
   to: { email: string; name?: string },
   url: string | undefined,
   locale: Locale,
+  /** The dashboard's Email card, where reminders are turned off; absent without a dashboard origin. */
+  settingsUrl?: string,
 ): OutgoingEmail {
   const text = (part: string, item?: ReminderItem) =>
     email_reminder(
@@ -391,6 +393,7 @@ export function renderReminderEmail(
       ...(url ? { link: { label: text("open"), url } } : {}),
       after: [...(more > 0 ? [email_reminder_more({ count: more }, { locale })] : []), text("off")],
       footer: text("footer"),
+      ...(settingsUrl ? { footerLinks: [{ label: text("settings"), url: settingsUrl }] } : {}),
     },
     to,
     locale,

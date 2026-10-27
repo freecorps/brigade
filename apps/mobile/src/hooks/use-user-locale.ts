@@ -5,7 +5,7 @@ import * as SecureStore from "expo-secure-store";
 import { useEffect } from "react";
 import { useLocale } from "@/hooks/use-locale";
 import { authClient } from "@/lib/auth-client";
-import { localeAction, SENT_LOCALE_KEY } from "@/lib/locale";
+import { localeAction, sentLocaleKey } from "@/lib/locale";
 
 export function useUserLocale(user: { id: string; locale?: string | null } | undefined): void {
   const { locale } = useLocale();
@@ -16,14 +16,16 @@ export function useUserLocale(user: { id: string; locale?: string | null } | und
     let cancelled = false;
     void (async () => {
       try {
-        const lastSent = await SecureStore.getItemAsync(SENT_LOCALE_KEY);
+        // Per user: another account on this phone has its own (src/lib/locale.ts `sentLocaleKey`).
+        const key = sentLocaleKey(userId);
+        const lastSent = await SecureStore.getItemAsync(key);
         const action = localeAction(locale, userLocale, lastSent);
         if (cancelled || action === "nothing") return;
         if (action === "send") {
           const { error } = await authClient.updateUser({ locale });
           if (error) return;
         }
-        await SecureStore.setItemAsync(SENT_LOCALE_KEY, locale);
+        await SecureStore.setItemAsync(key, locale);
       } catch {
         // Offline or storage unavailable: the next launch tries again.
       }

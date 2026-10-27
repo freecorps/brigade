@@ -141,6 +141,11 @@ export class Shard {
        * outbox drain. Must not throw.
        */
       onOutbox?: () => void;
+      /**
+       * Called after every mutation commits (outside its transaction, after `onOutbox`), with the rows it changed, so
+       * the owner can react to the tables it cares about only. Must not throw.
+       */
+      onCommit?: (changes: readonly RowChange[]) => void;
     },
   ) {
     this.sql = storage.sql;
@@ -329,6 +334,7 @@ export class Shard {
 
     if (outcome.ok && done.committed) {
       if (outcome.events.length > 0) this.options.onOutbox?.();
+      this.options.onCommit?.(done.committed.changes);
       return done.committed;
     }
     const result: MutationResultMessage = outcome.ok

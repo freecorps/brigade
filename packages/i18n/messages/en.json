@@ -3290,6 +3290,7 @@
         "part=item_overdue": "{title} ({incident}), overdue since {date}",
         "part=open": "Open your follow-ups",
         "part=off": "To stop these reminders, turn off Follow-up reminders in the Email card on the dashboard, or under Email in the Brigade app's account settings.",
+        "part=settings": "Email settings",
         "part=footer": "You get this email because you own follow-ups in {workspace} on Brigade.",
         "part=*": "Follow-ups due in {workspace}"
       }

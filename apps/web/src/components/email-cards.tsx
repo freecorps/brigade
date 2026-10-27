@@ -59,6 +59,7 @@ export function EmailPanel({
 }) {
   return (
     <TogglePanel
+      id="email"
       text={memberText}
       value={value}
       loading={loading}
@@ -152,6 +153,7 @@ type Toggle<K extends string> = {
  * synced row agrees, or the save fails and it goes back.
  */
 function TogglePanel<K extends string>({
+  id,
   text,
   value,
   toggles,
@@ -160,6 +162,8 @@ function TogglePanel<K extends string>({
   failed,
   onChange,
 }: {
+  /** The card's anchor on the page, for links to it (the reminder email's `/#email`). */
+  id?: string;
   /** The card's messages: `title`, `description`, `loading`, `load_failed`, `saving`, `saved`, `failed`. */
   text: (part: string) => string;
   value: Record<K, boolean>;
@@ -192,7 +196,7 @@ function TogglePanel<K extends string>({
     });
   };
   return (
-    <Card aria-labelledby={titleId}>
+    <Card id={id} aria-labelledby={titleId}>
       <div className="flex flex-col gap-1 px-4 sm:px-6">
         <CardTitle id={titleId}>{text("title")}</CardTitle>
         <p className="max-w-prose text-sm text-muted-foreground">{text("description")}</p>

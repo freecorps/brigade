@@ -1,14 +1,15 @@
 // Reminders of follow-ups due (RFC 0013 "Reminders"), run by the `brigade-events` consumer (src/notify.ts) for
 // `follow_up.reminder_due`, which the shard's alarm emits at most once per member and day. The shard plans the email
 // (src/mailer.ts `planReminder`: what is still due, claimed in the email ledger), this reads the member's address and
-// language from D1, renders it (src/email-templates.ts), sends it within the notifier's caps and reports back. It
-// shares the email notifier's ledger, caps and retries, and is never on a paging path: nothing pages from here, and a
+// language from D1, renders it (src/email-templates.ts), sends it within its caps and reports back. It
+// shares the email notifier's ledger and retries but has caps of its own (src/mailer.ts `REMINDER_*_CAP`), which never
+// spend the paging emails' caps, and is never on a paging path: nothing pages from here, and a
 // page in the same batch goes out without waiting for it.
 
 import { resolveLocale } from "@freecorps/brigade-i18n";
 import { dashboardLink, renderReminderEmail } from "./email-templates.ts";
 import type { EmailSender } from "./email.ts";
-import { EMAIL_USER_HOURLY_CAP, type EmailOutcome } from "./mailer.ts";
+import { REMINDER_USER_DAILY_CAP, type EmailOutcome } from "./mailer.ts";
 import {
   emailRetryDelay,
   heldDelay,
@@ -51,15 +52,18 @@ export async function notifyReminder(
     return undefined;
   }
   const sends = plan.budget.users[plan.userId] ?? 0;
-  if (plan.budget.workspace <= 0 || sends >= EMAIL_USER_HOURLY_CAP) {
+  if (plan.budget.workspace <= 0 || sends >= REMINDER_USER_DAILY_CAP) {
     await workspace.recordReminder(event, { userId: plan.userId, ok: false, capped: true }, true);
     return undefined;
   }
+  // The dashboard's Email card (`id="email"` on the overview), where reminders are turned off.
+  const home = dashboardLink("/", {}, env.DASHBOARD_URL, undefined);
   const email = renderReminderEmail(
     { workspace: plan.workspace, items: plan.items, total: plan.total },
     { email: recipient.email, ...(recipient.name ? { name: recipient.name } : {}) },
     dashboardLink("/follow-ups", {}, env.DASHBOARD_URL, undefined),
     resolveLocale(recipient.locale ?? undefined),
+    home && `${home}#email`,
   );
   const result = await sender.send(email);
   if (!result.ok) {

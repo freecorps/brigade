@@ -13,8 +13,14 @@ export function pickLocale(languageTags: readonly (string | null | undefined)[])
   return baseLocale;
 }
 
-/** Where the app remembers the language it last stored on the user (`user.locale`), in secure storage. */
-export const SENT_LOCALE_KEY = "brigade_sent_locale";
+/**
+ * Where the app remembers the language it last stored on `userId` (`user.locale`), in secure storage: one key per
+ * user, so a second account signed in on the same phone starts afresh and never overwrites the language it picked
+ * on the dashboard. Secure storage keys take letters, digits, `.`, `-` and `_` only.
+ */
+export function sentLocaleKey(userId: string): string {
+  return `brigade_sent_locale.${userId.replace(/[^A-Za-z0-9._-]/g, "_")}`;
+}
 
 /**
  * Whether the app stores its language on the signed-in user, so emails come in it (RFC 0008), as the dashboard does

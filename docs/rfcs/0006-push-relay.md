@@ -25,15 +25,23 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   `packages/i18n`. The extension shows the same strings when it cannot decrypt.
 - **Encryption: HPKE (RFC 9180)**, base mode, single shot, DHKEM(P-256, HKDF-SHA256) + HKDF-SHA256 + AES-128-GCM,
   `info` = `"app.freecorps.brigade push v1"` (decided in spike S1, [write-up](../spikes/s1-apns-encryption.md)). It is
-  one CryptoKit call in the iOS extension (`HPKE.Recipient`, iOS 17+; iOS 16 shows the fallback) and Tink's HPKE on
-  Android, and `packages/push` implements it on WebCrypto with no dependency (RFC 9180 test vector A.3.1 in its
+  one CryptoKit call in the iOS extension (`HPKE.Recipient`, iOS 17+; iOS 16 shows the fallback) and, on Android, the
+  key schedule in plain JCA around a Keystore ECDH (`modules/brigade-push/android` `Hpke.kt`: Tink's HPKE needs the raw
+  private key, which the Keystore never gives out), and `packages/push` implements it on WebCrypto with no dependency (RFC 9180 test vector A.3.1 in its
   tests). Web Push encryption (RFC 8291) was rejected: no native API on either platform. P-256 rather than X25519 so
   the device key can move into the Secure Enclave or StrongBox later. The APNs payload is
   `{ aps: { alert: <fallback keys>, mutable-content: 1, … }, brigade: { v: 1, enc, ct } }`, with `enc` and `ct`
   base64url and at most 2048 bytes of plaintext.
 - **Device key:** created by the app on first use; on iOS a Keychain item in the App Group
   `group.app.freecorps.brigade` (which is also its Keychain access group), readable after first unlock, this device
-  only, so the extension can read it while the phone is locked.
+  only, so the extension can read it while the phone is locked. On Android (decided with FCM, `DeviceKey.kt`), the
+  same P-256 key: from Android 12 (API 31) it is made inside the Android Keystore with `PURPOSE_AGREE_KEY` and the
+  Keystore does the ECDH, so the private key never leaves it. Android 7 to 11 cannot agree keys with a Keystore key,
+  so there (the closest safe option) the key pair is made in software and its private key kept encrypted with
+  AES-256-GCM under a Keystore key, in the app's no-backup directory, decrypted in memory only to open a page. Neither
+  needs the user to authenticate or the phone to be unlocked (after the first unlock), so pages decrypt on a locked
+  phone; neither is in a backup, so a restored phone registers a new device. A phone updated from 11 to 12 keeps the
+  key it has. StrongBox is not asked for yet (not every StrongBox agrees keys).
 - **What the relay can still do.** It cannot read content, but in the spike's base-mode envelope it could replay
   an old push or raise its urgency (`interruption-level` is in clear), and anyone with a device public key and
   relay access could forge one. Before production: seal `iat`, the instance id and the urgency inside the
@@ -68,6 +76,27 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   iOS terminates an app that receives a VoIP push and reports no call. Devices register a separate PushKit token for
   calls (spike S6, [write-up](../spikes/s6-voip-call-screen.md)). A refused call is answered like a refused alert
   (`502` with APNs' `status` and `reason`), which is how the instance knows to clear a VoIP token APNs says is gone.
+  On Android a call is an FCM data message of `kind: "call"` (below) to the device's FCM token, which the app also
+  registers as its call token (`voipToken`) when it has the call module; the app rings it through its
+  `ConnectionService` (RFC 0010).
+- **Android: FCM HTTP v1** (`apps/relay/src/fcm.ts`). `POST /send` with `platform: "android"` goes to
+  `https://fcm.googleapis.com/v1/projects/<project>/messages:send` instead of APNs; the instance sends it for an
+  Android device and leaves it out for an iPhone, so an iPhone's body is what every relay takes. The relay
+  authenticates as a Google service account (`FCM_SERVICE_ACCOUNT`, the key file's JSON, a Worker secret; the project
+  id is read from it): an RS256 JWT signed with Web Crypto for the `firebase.messaging` scope is exchanged for an
+  OAuth2 access token (the JWT bearer flow), cached per isolate until 5 minutes before it expires and fetched again
+  when FCM answers 401 (the send is tried once more); neither is ever logged. Every message is **data only** (no
+  `notification`, so FCM never shows anything the app did not decrypt): `data` is `{ v, enc, ct, kind, urgency,
+  callId?, tag? }`, all strings, at most 4 KB (the 2 KB plaintext seals to about 2.8 KB), with `android.priority:
+  HIGH` (`NORMAL` for `low`) and `android.ttl` from the same expirations as APNs (pages 15 minutes, calls 60 s).
+  `tag` is the APNs collapse id's role: the app's notification tag, so a repeat replaces it. FCM's refusals are
+  answered like APNs' (`502` with FCM's `status` and its error code as `reason`): `UNREGISTERED`, `SENDER_ID_MISMATCH`
+  and an `INVALID_ARGUMENT` about the token add `tokenInvalid: true`, which the instance treats as APNs'
+  `BadDeviceToken` (the device dropped, or for a call its call token cleared); `QUOTA_EXCEEDED` (429), `UNAVAILABLE`
+  and `INTERNAL` (5xx) are retried, like APNs' 429 and 5xx; FCM or Google's token endpoint out of reach is `502
+  fcm_unreachable`, retried; a missing or refused service account is `500 relay_misconfigured`. The delivery rows keep
+  their names (`apns_refused`, `apns_unavailable` mean the push service, Apple's or Google's) and FCM's code as the
+  reason. Tests: `apps/relay/test/fcm.test.ts` (a fake token endpoint and a fake FCM), `apps/api/test/notify.test.ts`.
 - **The relay is part of this repo** (`apps/relay`). Anyone can run their own with their own store credentials.
 - **How the instance reaches it.** An instance whose relay runs on the same Cloudflare account binds it as a service
   (`RELAY`, apps/api wrangler.jsonc): Cloudflare answers a Worker's fetch to another workers.dev Worker on the same
@@ -96,8 +125,11 @@ relay's bearer token):
   drops the phone they registered again since, and the session they registered it with (`sessionId`). Sign out
   unregisters it first (`device.unregister`, given up after 5 s so signing out offline still works; the device then
   stays registered until someone signs out on it online or APNs drops its token), then ends the session. The account
-  section says whether the phone is paged: on, notifications off, no device key yet (Android until FCM), taken by the
-  last member signed in on it, or failed.
+  section says whether the phone is paged: on, notifications off, not on this phone (an Android build without
+  Firebase, below), taken by the last member signed in on it, or failed. Android registers like iOS (the same
+  triggers: sign-in, the foreground, a new FCM token through `addPushTokenListener`, a workspace opened), with its FCM
+  token from `getDevicePushTokenAsync()`, its device key, `environment` `production` (FCM has none) and, with the call
+  module, the FCM token again as its call token.
 - **Several workspaces (decided).** The app registers the phone in each workspace the member opens on it and keeps
   the earlier registrations when they switch: switching to look at another workspace must never stop the pages of
   the one they are on call in, since "Who is paged" resolves targets per workspace and a phone missing from one is
@@ -380,7 +412,8 @@ shard's copy whenever that check fails. How the copy follows D1 (RFC 0003 "Membe
   - **The kept session is gone** (it expired, or was revoked from elsewhere, before the phone came back): nothing
     can take the device off as that member, so the leftover is dropped and the device stays theirs on that shard.
     Taking over a device id on proof of the device key (a signature over a server nonce) would close this, but the
-    key is HPKE-only today (P-256 key agreement in the Keychain) and Android has none; it waits for FCM. Removing the
+    key is HPKE-only on both platforms (P-256 key agreement, in the Keychain and the Android Keystore): a signing key
+    beside it is left for later. Removing the
     member from the workspace (above) drops their devices, which frees the phone for the next member.
   - **Removed from the workspace before the phone came back**: the removal already deleted every device of theirs
     in the shard (above), so the phone no longer pages them and the next member's `device.register` for the same
@@ -435,9 +468,39 @@ mutation, RBAC and event as acknowledging in the app (RFC 0004 "Acknowledging fr
   the ack.
 - **Calls** (`kind: "call"`, RFC 0010) keep their own ack: 1 on CallKit's keypad or the call screen, over Brigade
   Sync. Only the notification posted when CallKit refuses a call has the action.
-- **Android** gets the same JavaScript path (`page-action.ts`, `use-page-actions.ts`) with a notification action
-  button once pages reach Android (FCM); the hook registers nothing there yet. Its background time comes from the
-  notification's broadcast receiver, not a background task.
+- **Android** pages show without the action for now: a tap opens the incident (below). The action button is left:
+  the same JavaScript path (`page-action.ts`, `use-page-actions.ts`), its background time from the notification's
+  broadcast receiver, not a background task.
+
+## Android pages
+
+Pages reach Android as the FCM data messages above. The app's `FirebaseMessagingService`
+(`modules/brigade-push/android` `BrigadeMessagingService.kt`, extending expo-notifications' so every new token still
+reaches `addPushTokenListener`, and declared at a higher priority so FCM delivers to it) handles them in native code,
+so a page shows with the app killed and before JavaScript loads, as the iOS extension does:
+
+- **Opens** the envelope with the device key (`Hpke.kt`, `DeviceKey.kt`) and checks the plaintext as the extension
+  does (`PushPayload.kt`; a receipt only as `packages/push` `parseReceipt` takes it).
+- **Shows** a page on the "Pages" channel (`brigade_pages`, from the call module: alarm sound, vibration, high
+  importance, lock screen visible) and anything less urgent on "Incident updates" (`brigade_updates`, default sound),
+  tagged with `tag` so a repeat replaces it. The pages channel asks Do Not Disturb to let it through
+  (`setBypassDnd`), which only takes effect once the member grants Brigade that access in Settings; the app does not
+  ask for it.
+- **A tap opens the incident**, in its workspace: the notification's intent carries the decrypted incident and
+  workspace ids, and the app switches to that workspace when another is open, then opens the incident
+  (`src/hooks/use-page-taps.ts`, `src/lib/page-taps.ts`).
+- **A call** (`kind: "call"`) rings through the existing ring (`Calls.ring` in `modules/brigade-call`), with its
+  fallbacks (RFC 0010).
+- **Unreadable** (malformed, another version, not for this key): the fallback text from `packages/i18n`
+  (`push_fallback_title`, `push_fallback_body`), on the pages channel for a page or anything unreadable, never
+  silent.
+- **Receipts** as the extension sends them (below): only for a page it opened, only to the origin the app registered
+  with (kept in the app's preferences, `setReceiptOrigin`), 5 s, no retry, the token never logged.
+- **No Firebase in the build** (no `google-services.json`, `apps/mobile/README.md`): the app builds without an FCM
+  token and says pages are not set up on the phone (`unsupported`), as before.
+
+Tests: the Kotlin crypto and parsing on the JVM (`HpkeTest.kt`: RFC 9180 vector A.3.1 and a page sealed by
+`packages/push`), the JavaScript in Node (`device.test.ts`, `page-taps.test.ts`).
 
 ## Delivery receipts
 
@@ -514,9 +577,9 @@ token rides in the sealed plaintext only when it fits; a page that would not fit
 it (tested: one envelope reaches the relay, with no receipt inside, and the row reaches `accepted`). The
 extension starts the receipt request and shows the page at once, without waiting for it (5 s timeout, ephemeral
 session, no cookies, no retry, the token never logged), and only for a page it decrypted: the fallback text has no
-token. So receipts are **best effort**: iOS may end the extension before the request leaves, a phone offline after
-showing the page never reports, and VoIP call pushes (RFC 0010, whose rows stop at accepted) and Android send none
-yet. A missing receipt means
+token. Android's `FirebaseMessagingService` does the same after showing the page ("Android pages"). So receipts are
+**best effort**: iOS may end the extension before the request leaves, a phone offline after showing the page never
+reports, and call pushes (RFC 0010, whose rows stop at accepted) send none. A missing receipt means
 "not confirmed", never "not shown", and the dashboard says so.
 
 **Privacy.** A receipt says when a phone was reachable. Rows and device summaries are synced only within the
@@ -608,7 +671,10 @@ their own app build need their own grant from Apple.
   App Group and time-sensitive entitlements (and Critical Alerts with `BRIGADE_CRITICAL_ALERTS=1`), and the fallback
   strings for both targets. The extension compiles
   `BrigadePushCrypto.swift` and `BrigadePage.swift` from the app's module.
-- Use `getDevicePushTokenAsync()` (native token), not Expo push tokens.
+- Use `getDevicePushTokenAsync()` (native token), not Expo push tokens: APNs' on iOS, FCM's on Android.
+- Android's Firebase project comes from `google-services.json`, never committed: `app.config.ts` reads its path
+  from `GOOGLE_SERVICES_FILE`, else `~/.config/brigade/google-services.json` when it exists, and sets
+  `android.googleServicesFile` (`plugins/google-services.ts`).
 
 ## APNs requires HTTP/2
 

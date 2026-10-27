@@ -55,8 +55,8 @@ export function pagingText(paging: Paging): string {
 }
 
 /**
- * Whether the phone not paging is something the member should act on or know: `unsupported` is how every Android
- * phone is until FCM (RFC 0006), not a fault, so it is muted and gets no notice.
+ * Whether the phone not paging is something the member should act on or know: `unsupported` is an Android build made
+ * without Firebase (RFC 0006), not something the member can fix, so it is muted and gets no notice.
  */
 function pagingProblem(paging: Paging): boolean {
   return paging === "off" || paging === "taken" || paging === "failed";

@@ -444,12 +444,21 @@ export function collapseIdOf(incidentId: string, urgency: Urgency): string {
 }
 
 /**
- * APNs' reasons for a token that will never work again: the device is dropped, or for a call its VoIP token cleared.
+ * APNs' and FCM's reasons for a token that will never work again: the device is dropped, or for a call its VoIP token
+ * cleared. The relay also flags FCM's (`tokenInvalid`): an `INVALID_ARGUMENT` is about the token only sometimes.
  */
-const TOKEN_GONE: readonly string[] = ["BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"];
+const TOKEN_GONE: readonly string[] = [
+  "BadDeviceToken",
+  "Unregistered",
+  "DeviceTokenNotForTopic",
+  "UNREGISTERED",
+];
 
-/** The relay's answer to a send it did not take: its own `error`, or APNs' `status` and `reason`. */
-type RelayAnswer = { error?: string; status?: number; reason?: string };
+/**
+ * The relay's answer to a send it did not take: its own `error`, or the push service's `status` and `reason` (APNs'
+ * or FCM's), and for FCM whether the token is done.
+ */
+type RelayAnswer = { error?: string; status?: number; reason?: string; tokenInvalid?: boolean };
 
 /**
  * What a send the relay did not take (a push or a call) says, for its delivery row: who said no (`error`), APNs' own
@@ -459,13 +468,18 @@ function refusal(
   httpStatus: number,
   answer: RelayAnswer,
 ): { error: DeliveryError; apnsReason?: string; gone: boolean; permanent: boolean } {
-  // APNs' own reason, for the delivery row: letters only, as APNs sends them.
+  // The push service's own reason, for the delivery row: letters only as APNs sends them, or FCM's codes
+  // (`QUOTA_EXCEEDED`).
   const apnsReason =
-    typeof answer.reason === "string" && /^[A-Za-z]{1,64}$/.test(answer.reason)
+    typeof answer.reason === "string" && /^[A-Za-z_]{1,64}$/.test(answer.reason)
       ? answer.reason
       : undefined;
   const reason = apnsReason === undefined ? {} : { apnsReason };
-  if (answer.status === 410 || TOKEN_GONE.includes(answer.reason as string)) {
+  if (
+    answer.status === 410 ||
+    TOKEN_GONE.includes(answer.reason as string) ||
+    answer.tokenInvalid === true
+  ) {
     return { error: "token_invalid", ...reason, gone: true, permanent: true };
   }
   // A request the relay or APNs will refuse again (bad body, bad credentials, a wrong relay URL); the relay being
@@ -480,7 +494,9 @@ function refusal(
   // the relay's reach, or something in front of the relay.
   const error: DeliveryError = apnsRefused
     ? "apns_refused"
-    : answer.status !== undefined || answer.error === "apns_unreachable"
+    : answer.status !== undefined ||
+        answer.error === "apns_unreachable" ||
+        answer.error === "fcm_unreachable"
       ? "apns_unavailable"
       : permanent || answer.error === "relay_misconfigured"
         ? "relay_refused"
@@ -527,8 +543,6 @@ async function pushOne(
   });
   const post = relayPost(env, send);
   if (!post) return failed("not_configured", "not_configured");
-  // The relay speaks APNs only; Android needs FCM (RFC 0006).
-  if (target.platform !== "ios") return failed("unsupported", "unsupported");
 
   const { incident } = plan;
   const content: PushContent = {
@@ -569,6 +583,8 @@ async function pushOne(
       },
       body: JSON.stringify({
         deviceToken: target.pushToken,
+        // The relay sends an Android device's push through FCM, an iPhone's through APNs (RFC 0006).
+        ...platformOf(target),
         envelope,
         urgency: plan.urgency,
         environment: target.environment,
@@ -644,9 +660,19 @@ async function pushOne(
 }
 
 /**
- * Rings one device as a call (RFC 0010): a VoIP push through the relay (`kind: "call"`) to its PushKit token. Only
- * an iOS device with a VoIP token: PushKit requires the app to report every VoIP push to CallKit, which the app does
- * for every push it gets (a malformed one included), so a call goes only to a token the app itself registered. The
+ * `platform` for the relay's body: only for Android, so an iPhone's send is the body every relay takes (one from
+ * before FCM refuses an Android token as a malformed APNs one, `400`, which drops nothing).
+ */
+function platformOf(target: Pick<PageTarget, "platform">): { platform?: "android" } {
+  return target.platform === "android" ? { platform: "android" } : {};
+}
+
+/**
+ * Rings one device as a call (RFC 0010) through the relay (`kind: "call"`): on iOS a VoIP push to its PushKit token,
+ * on Android a data message to its FCM token, which the app registers as its call token when it can ring (the
+ * ConnectionService). Only a device with a call token: PushKit requires the app to report every VoIP push to
+ * CallKit, which the app does for every push it gets (a malformed one included), so a call goes only to a token the
+ * app itself registered. The
  * call carries no receipt token (the extension, which reports receipts, never sees it). Best effort: never throws;
  * what the relay answered goes on the call's own delivery row (and a token APNs says is gone is cleared), while the
  * page is retried, escalated and recorded on the alert's outcome alone. Undefined when no call was sent.
@@ -659,7 +685,7 @@ async function ringOne(
   post: (init: RequestInit) => Promise<Response>,
 ): Promise<CallOutcome | undefined> {
   const { deviceId, voipToken } = target;
-  if (target.platform !== "ios" || !voipToken) return undefined;
+  if (!voipToken) return undefined;
   let envelope;
   try {
     envelope = await sealPush(target.publicKey, content);
@@ -679,6 +705,7 @@ async function ringOne(
         kind: "call",
         callId,
         deviceToken: voipToken,
+        ...platformOf(target),
         envelope,
         urgency: "page",
         environment: target.environment,

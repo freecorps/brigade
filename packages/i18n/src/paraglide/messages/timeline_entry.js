@@ -28,10 +28,10 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "alert_grouped_monitor" | "{a} went down and was grouped here" |
 * | "alert_grouped_source" | "The alert {a} fired and was grouped here" |
 * | "page_failed_undelivered" | "Couldn't page {a}: the push didn't go through" |
-* | "page_failed_unsupported" | "Couldn't page {a}: Brigade can't push to Android phones yet" |
+* | "page_failed_unsupported" | "Couldn't page {a}: Brigade couldn't push to Android phones then" |
 * | "page_failed_not_configured" | "Couldn't page {a}: push notifications aren't set up on this server" |
 * | "page_failed_no_devices" | "Couldn't page {a}: no registered device" |
-* | "page_failed_token_invalid" | "Couldn't page {a}: Apple refused this phone's token, so it was removed. Opening the Brigade app registers it again" |
+* | "page_failed_token_invalid" | "Couldn't page {a}: Apple or Google refused this phone's token, so it was removed. Opening the Brigade app registers it again" |
 * | "page_failed_over_limit" | "Couldn't page {a}: this page went to too many phones" |
 * | "page_nobody" | "Nobody was paged: no one who can respond has Brigade on their phone" |
 * | "page_dead_lettered" | "A page may not have gone out: Brigade kept failing to send it" |
@@ -113,10 +113,10 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "alert_grouped_monitor") return /** @type {LocalizedString} */ (`${i?.a} caiu e foi agrupado aqui`);
 		if (i?.kind === "alert_grouped_source") return /** @type {LocalizedString} */ (`O alerta ${i?.a} disparou e foi agrupado aqui`);
 		if (i?.kind === "page_failed_undelivered") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: o push não foi entregue`);
-		if (i?.kind === "page_failed_unsupported") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: o Brigade ainda não envia pushes para Android`);
+		if (i?.kind === "page_failed_unsupported") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: o Brigade ainda não enviava pushes para Android`);
 		if (i?.kind === "page_failed_not_configured") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: as notificações push não estão configuradas neste servidor`);
 		if (i?.kind === "page_failed_no_devices") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: nenhum aparelho registrado`);
-		if (i?.kind === "page_failed_token_invalid") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: a Apple recusou o token deste celular, então ele foi removido. Abrir o app do Brigade registra o celular de novo`);
+		if (i?.kind === "page_failed_token_invalid") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: a Apple ou o Google recusou o token deste celular, então ele foi removido. Abrir o app do Brigade registra o celular de novo`);
 		if (i?.kind === "page_failed_over_limit") return /** @type {LocalizedString} */ (`Não foi possível chamar ${i?.a}: a chamada foi para celulares demais`);
 		if (i?.kind === "page_nobody") return /** @type {LocalizedString} */ (`Ninguém foi chamado: ninguém que pode responder tem o Brigade no celular`);
 		if (i?.kind === "page_dead_lettered") return /** @type {LocalizedString} */ (`Uma chamada pode não ter saído: o Brigade não conseguiu enviá-la`);
@@ -192,10 +192,10 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "alert_grouped_monitor") return /** @type {LocalizedString} */ (`${i?.a} went down and was grouped here`);
 		if (i?.kind === "alert_grouped_source") return /** @type {LocalizedString} */ (`The alert ${i?.a} fired and was grouped here`);
 		if (i?.kind === "page_failed_undelivered") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: the push didn't go through`);
-		if (i?.kind === "page_failed_unsupported") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: Brigade can't push to Android phones yet`);
+		if (i?.kind === "page_failed_unsupported") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: Brigade couldn't push to Android phones then`);
 		if (i?.kind === "page_failed_not_configured") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: push notifications aren't set up on this server`);
 		if (i?.kind === "page_failed_no_devices") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: no registered device`);
-		if (i?.kind === "page_failed_token_invalid") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: Apple refused this phone's token, so it was removed. Opening the Brigade app registers it again`);
+		if (i?.kind === "page_failed_token_invalid") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: Apple or Google refused this phone's token, so it was removed. Opening the Brigade app registers it again`);
 		if (i?.kind === "page_failed_over_limit") return /** @type {LocalizedString} */ (`Couldn't page ${i?.a}: this page went to too many phones`);
 		if (i?.kind === "page_nobody") return /** @type {LocalizedString} */ (`Nobody was paged: no one who can respond has Brigade on their phone`);
 		if (i?.kind === "page_dead_lettered") return /** @type {LocalizedString} */ (`A page may not have gone out: Brigade kept failing to send it`);

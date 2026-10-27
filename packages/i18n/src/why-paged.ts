@@ -237,8 +237,9 @@ export function deliveryError(row: DeliveryRow): string[] {
   return lines;
 }
 
-/** "iPhone · App Store build". */
+/** "iPhone · App Store build"; just "Android" (FCM tokens have no build environment). */
 export function deviceLabel(device: Pick<DeviceSummaryRow, "platform" | "environment">): string {
+  if (device.platform === "android") return say("platform_android");
   return `${say(`platform_${device.platform}`)} · ${say(`env_${device.environment}`)}`;
 }
 

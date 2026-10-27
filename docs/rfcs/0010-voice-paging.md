@@ -129,15 +129,16 @@ iPhone") is still left.
 For each device of a page that rings, the queue consumer (apps/api/src/notify.ts) sends:
 
 1. the **alert push**, as for every page (RFC 0006); then,
-2. only once the relay took the alert, and only for an **iOS device that registered a VoIP token**, the **call**:
-   `kind: "call"` on `POST /send`, to the device's PushKit token in its APNs environment, sealed to the device's key
-   like the alert, without a receipt token.
+2. only once the relay took the alert, and only for a **device that registered a call token**, the **call**:
+   `kind: "call"` on `POST /send`, sealed to the device's key like the alert, without a receipt token. On iOS to the
+   device's PushKit token in its APNs environment; on Android (`platform: "android"`) to its FCM token, which the app
+   registers as its call token when it has the call module (RFC 0006 "Android: FCM HTTP v1").
 
 The call is best effort and never changes the page: the page's retries, its alert delivery rows, the escalation and
 `notification.failed` follow the alert alone. A call the relay refuses or never answers is logged and recorded on the
 call's own delivery row (below); an alert that failed is retried, and the attempt that delivers it rings. A device
-without a VoIP token, an Android device (no FCM yet), a member whose choice leaves this page out and any page that does
-not ring get the alert only.
+without a call token, a member whose choice leaves this page out and any page that does not ring get the alert only.
+Android follows the member's choice exactly as iOS does.
 
 **Delivery rows for calls** (RFC 0006 "Delivery receipts"). Each device the page rings gets a second row, `kind:
 "call"`, planned with the alert's: sent and accepted by APNs, or the error with APNs' reason. It has no delivered stage,
@@ -170,13 +171,15 @@ and the app reports even a malformed payload, under a new UUID. A call lives 60 
 minutes): a phone that comes online later gets the stored alert push, not a stale call. The sealed plaintext gains
 an optional `incident` (the id the ack names).
 
-On Android the same payload will arrive as a high-priority FCM data message (`{ kind: "call", id, enc, ct }`); the
-app's `FirebaseMessagingService` decrypts it with Tink's HPKE and calls the same `Calls.ring` the spike's debug
-broadcast calls. FCM is not set up yet.
+On Android the same call arrives as a high-priority FCM data message (`{ v, enc, ct, kind: "call", urgency: "page",
+callId }`, 60 s TTL); the app's `FirebaseMessagingService` (modules/brigade-push) opens it with the device key (RFC
+0006 "Android pages") and calls the same `Calls.ring` the spike's debug broadcast calls, with its fallbacks above. One
+it cannot open shows the fallback page notification instead of ringing. FCM refusing a call's token as gone clears
+the call token (`device.expireVoip`), as for PushKit; the device keeps its alert pushes.
 
 ### Left
 
-- Real phones (the write-up's list), the voice bot, and FCM.
+- Real phones (the write-up's list; an Android phone through FCM end to end), and the voice bot.
 - A per-phone choice of calls ("calls off on this iPhone"); the member's own choice is done ("Who a call rings").
 - Any member with `incident:ack` can acknowledge, not only the page's targets; escalation runs decide whether the
   ack is limited to them.

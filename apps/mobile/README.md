@@ -40,11 +40,11 @@ without it, a release build has no server and sign-in says so.
 - **The sync socket** (`src/lib/sync-client.ts`) sends the same `Cookie` header on the upgrade; the API checks it like
   the dashboard's and hands the shard the member (RFC 0004 "Socket topology"). One client per member and workspace
   (`src/components/session.tsx`), closed on sign-out, so no socket or row outlives its session.
-- **Pages:** after sign-in the app registers the phone with `device.register` (its key, permission and APNs token,
-  `src/lib/device.ts`); Sign out asks first, unregisters it (`device.unregister`, giving up after 5 s offline) and then
+- **Pages:** after sign-in the app registers the phone with `device.register` (its key, permission and APNs or FCM
+  token, `src/lib/device.ts`); Sign out asks first, unregisters it (`device.unregister`, giving up after 5 s offline) and then
   ends the session. Offline it signs out on the phone only, keeps the session aside and finishes both once it is back
-  online, before anyone else registers the phone (`src/lib/sign-out.ts`, RFC 0006 "A handed-over phone"). Android has
-  no device key until FCM, so it shows "Not on this phone yet", muted.
+  online, before anyone else registers the phone (`src/lib/sign-out.ts`, RFC 0006 "A handed-over phone"). An Android
+  build without Firebase (below) has no FCM token, so it shows "Not on this phone yet", muted.
 
 ## Run it
 
@@ -161,6 +161,21 @@ vp run build            # cached expo export of the Android and iOS JS bundles i
   does the same from a shell. The paging decisions live in `src/lib/call-route.ts`, tested in CI, and the native code
   mirrors them; the Kotlin copy also has JVM tests: `./gradlew :brigade-call:testDebugUnitTest` in the prebuilt
   `android/` (with `ANDROID_HOME` set). See the S6 write-up.
+- **Android pages (FCM):** `modules/brigade-push/android` keeps the device key in the Android Keystore and its
+  `FirebaseMessagingService` opens each page, shows it on the "Pages" channel (or rings it through
+  `modules/brigade-call`), opens the incident on a tap and posts the receipt (RFC 0006 "Android pages"). Its HPKE and
+  payload parsing have JVM tests: `./gradlew :brigade-push:testDebugUnitTest` in the prebuilt `android/`. The build
+  needs the Firebase project's `google-services.json`, which is never committed:
+  1. In the Firebase console, create the project (or use the team's) and add an Android app with the package name
+     `app.freecorps.brigade`.
+  2. Download `google-services.json` outside the repository, to `~/.config/brigade/google-services.json` (picked up
+     when it exists) or anywhere with `GOOGLE_SERVICES_FILE=/path/to/google-services.json` at build time
+     (`plugins/google-services.ts` sets `android.googleServicesFile`). For EAS builds, upload it as a file
+     environment variable named `GOOGLE_SERVICES_FILE`.
+  3. Give the relay a service account of the same project (apps/relay/README.md, "Setting up FCM").
+
+  Without the file the app builds and runs with no FCM: the account section says pages are not set up on the phone.
+
 - **Autolinking:** `expo-router`'s optional peers (Reanimated, Worklets, Gesture Handler) are installed by Bun
   but excluded from autolinking until the app uses them.
 

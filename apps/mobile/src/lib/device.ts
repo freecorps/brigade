@@ -64,7 +64,7 @@ export type Paging =
   | "on"
   /** Notifications are not allowed. */
   | "off"
-  /** No device key on this platform (Android until FCM, RFC 0006). */
+  /** No device key or push token on this build (an Android build without Firebase, RFC 0006). */
   | "unsupported"
   /** Another member's device has this id: they never signed out on this phone (RFC 0006 "A handed-over phone"). */
   | "taken"
@@ -85,14 +85,15 @@ export type RegisterAnswer =
 export type DeviceDeps = {
   platform: "ios" | "android";
   apsEnvironment: unknown;
-  /** The device key's public half; null where the platform has none yet. */
+  /** The device key's public half; null where the build cannot be paged (Android without Firebase). */
   publicKey: (() => Promise<string>) | null;
   /** Asks for notification permission once; true when granted. */
   permission: () => Promise<boolean>;
   pushToken: () => Promise<string>;
   /**
-   * iOS: PushKit's token, so pages can ring as calls (RFC 0010); null without one. Absent where the app cannot report a
-   * VoIP push to CallKit (no call module): the phone then never gets a call, only alerts.
+   * The token pages ring as calls through (RFC 0010): PushKit's on iOS, the FCM token again on Android (a call is a
+   * data message the app rings for); null without one. Absent where the app cannot ring (no call module): the phone
+   * then never gets a call, only alerts.
    */
   voipToken?: () => Promise<string | null>;
   /**
@@ -244,10 +245,6 @@ export function registrationsLeft(registrations: Registrations): boolean {
   return Object.values(registrations).some((paging) => paging === "taken" || paging === "failed");
 }
 
-/**
- * The VoIP token to register: iOS only (Android rings through FCM, not yet set up), and never in registration's way:
- * without it the phone gets alerts and no calls.
- */
 /** How long registering waits for PushKit after the alert token is in hand. */
 export const VOIP_GRACE_MS = 500;
 
@@ -255,8 +252,9 @@ function later<T>(ms: number, value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
 }
 
+/** The call token to register, never in registration's way: without it the phone gets alerts and no calls. */
 async function callToken(deps: DeviceDeps): Promise<string | null> {
-  if (deps.platform !== "ios" || !deps.voipToken) return null;
+  if (!deps.voipToken) return null;
   try {
     return (await deps.voipToken()) || null;
   } catch {

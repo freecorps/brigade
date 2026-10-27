@@ -290,6 +290,7 @@ export * from './push_ack_inactive.js';
 export * from './push_ack_not_found.js';
 export * from './push_ack_signed_out.js';
 export * from './push_action_ack.js';
+export * from './push_channel_updates.js';
 export * from './push_device_token.js';
 export * from './push_error.js';
 export * from './push_fallback_body.js';

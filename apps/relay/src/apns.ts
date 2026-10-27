@@ -198,7 +198,8 @@ export class ApnsTokenCache {
   }
 }
 
-function pemToDer(pem: string): Uint8Array<ArrayBuffer> {
+/** A PKCS #8 PEM's DER bytes (the APNs `.p8` key, a Google service account's key). */
+export function pemToDer(pem: string): Uint8Array<ArrayBuffer> {
   const body = pem.replace(/-----(BEGIN|END) PRIVATE KEY-----/g, "").replace(/\s+/g, "");
   const binary = atob(body);
   const out = new Uint8Array(binary.length);

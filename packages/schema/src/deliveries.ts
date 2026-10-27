@@ -25,13 +25,15 @@ export const MAX_DELIVERIES_PER_DEVICE = MAX_ESCALATION_PAGES;
 /**
  * Why a device's push did not get past the relay, as the notifier classifies the relay's answer:
  * - `not_configured`: this instance has no relay;
- * - `unsupported`: a platform the relay cannot reach yet (Android until FCM);
+ * - `unsupported`: a platform the relay could not reach then (Android before FCM; no longer recorded);
  * - `seal_failed`: the device's key could not be used to encrypt the page;
  * - `relay_unreachable`: the relay did not answer in time, or not at all;
  * - `relay_refused`: the relay refused the request itself (its token, the body);
- * - `token_invalid`: APNs said the token is gone (`BadDeviceToken`, `Unregistered`): the device was dropped;
- * - `apns_refused`: APNs refused the push for another reason (`reason` says which);
- * - `apns_unavailable`: APNs throttled or failed (429, 5xx).
+ * - `token_invalid`: the push service said the token is gone (APNs `BadDeviceToken`, `Unregistered`; FCM
+ *   `UNREGISTERED`): the device was dropped;
+ * - `apns_refused`: the push service (APNs, or FCM for Android) refused the push for another reason (`reason` says
+ *   which);
+ * - `apns_unavailable`: the push service throttled or failed (429, 5xx).
  */
 export const DELIVERY_ERRORS = [
   "not_configured",
@@ -94,9 +96,12 @@ export function parseDeliveryId(
   return { incidentId, eventId, deviceId };
 }
 
-/** APNs' reason for refusing a push (`BadDeviceToken`, `TooManyRequests`): letters only, bounded. */
+/**
+ * The push service's reason for refusing a push: APNs' (`BadDeviceToken`, `TooManyRequests`) or FCM's
+ * (`QUOTA_EXCEEDED`): letters and underscores only, bounded.
+ */
 const apnsReason: Validator<string> = (input, path = "") =>
-  typeof input === "string" && /^[A-Za-z]{1,64}$/.test(input)
+  typeof input === "string" && /^[A-Za-z_]{1,64}$/.test(input)
     ? { ok: true, value: input }
     : { ok: false, issues: [{ path, message: "Expected an APNs reason" }] };
 

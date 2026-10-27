@@ -200,8 +200,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
     tablet.
   - Done on an iPhone (2026-10-27, `dev`): signed in and registered, a page received on the locked phone and
     acknowledged from the notification ([write-up](spikes/s1-apns-encryption.md#real-iphone)).
-  - Left: the Acknowledge action from a cold background launch; FCM for Android (until then Android
-    says it is not paged); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
+  - Done: Android pages through FCM: the device key in the Android Keystore, a `FirebaseMessagingService` that opens
+    a page and shows it on the "Pages" channel (or rings it), a tap that opens the incident in its workspace, and
+    receipts (RFC 0006 "Android pages").
+  - Left: the Acknowledge action from a cold background launch, and on Android at all; Android pages tried on a real
+    phone (a Firebase project and `FCM_SERVICE_ACCOUNT` on the relay first); OAuth/OIDC with PKCE and QR pairing; switching workspaces in the app (it opens the
     session's active one); creating an account or workspace from the app; a tablet layout beyond a readable width.
 - [ ] Event outbox + queue + push notifier
   - Done: the shard alarm drains the outbox to `brigade-events` (`-dev`, `-staging`) in commit order, in bounded
@@ -219,8 +222,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     ([write-up](spikes/s1-apns-encryption.md#real-iphone)).
   - Left: the production and staging queues (owner approval); `RELAY_SEND_TOKEN` on the deployed API (dev reaches
     its relay through the `RELAY` service binding; production and staging add theirs with their relay's first deploy);
-    VoIP call pages on a real iPhone (sent since Phase 2, RFC 0010); FCM for Android
-    (Android devices are recorded as `unsupported`); a lower-urgency push for another incident can still replace a
+    VoIP call pages on a real iPhone (sent since Phase 2, RFC 0010); `FCM_SERVICE_ACCOUNT` on the deployed relays
+    (Android pages go out through FCM since the relay's FCM sender, RFC 0006); a lower-urgency push for another incident can still replace a
     page stored for an offline phone (the app re-syncing open pages is the fallback, RFC 0006 "Offline phones");
     what is left of who is paged (Q18).
   - Done: "Page again" for a failed page (owners and admins, `incident.pageAgain`, a new page through the outbox, never
@@ -328,7 +331,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     0010 "Who a call rings").
   - Tried on an iPhone (a local release build on `dev`): a SEV1 page rings as a call on the locked phone, answering
     reads it aloud and 1 acknowledges, and "Never" in Account → Calls leaves only the push.
-  - Left: a per-phone choice of calls; Android calls (FCM).
+  - Done since: Android calls: an FCM data message of `kind: "call"` that the app rings through its
+    `ConnectionService`, following the member's choice like iOS (RFC 0010).
+  - Left: a per-phone choice of calls; Android calls tried on a real phone.
 - [ ] Mobile: on-call view, "I'm on call" widget, critical/time-sensitive notification setup
   - Done: the on-call screen (shifts, overrides, who each schedule has now, covering a shift); pages are
     time-sensitive. The iOS "I'm on call" widget (home screen small, lock screen rectangular and inline): on call
@@ -338,15 +343,18 @@ Validate the risky assumptions before writing product code. Each spike produces 
     device's capability in `device.register`, and SEV1 pages critical only on phones that allow them, falling back
     to time-sensitive.
   - Tried on an iPhone: the widget on the home and lock screens, and pages as time-sensitive notifications.
-  - Left: Apple's Critical Alerts grant (Q8), then turning it on and trying it; an Android widget; Android's alarm
-    channel and DND access (FCM first).
+  - Done since: Android pages on the "Pages" channel (alarm sound, vibration), less urgent pushes on "Incident
+    updates" (RFC 0006 "Android pages").
+  - Left: Apple's Critical Alerts grant (Q8), then turning it on and trying it; an Android widget; asking for Do Not
+    Disturb access on Android (the pages channel already asks DND to let it through once granted).
 - [x] Delivery receipts and "why wasn't I paged" debugging view
   - Each page is a row per device (`deliveries`, synced to members): planned, handed to the relay, accepted by
     APNs (or the error, with APNs' reason), opened on the phone. The iOS Notification Service Extension reports
     the last with a single-page token sealed inside the page (`POST /receipts`, no session), never waiting on it.
     The incident page lists who was paged; `?why=<member>` explains it step by step (RFC 0006 "Delivery receipts").
   - Done since: call rows (RFC 0010), each up to accepted by APNs (a call has no receipt), shown apart from the page's.
-  - Left: receipts from Android (FCM); "shown" and "opened by the person" stages;
+  - Done since: receipts from Android, posted by its `FirebaseMessagingService` like the iOS extension.
+  - Left: "shown" and "opened by the person" stages;
     escalating early when every push of a level is refused (Q18).
   - Done since: the mobile app's own why-not-paged screen: "Who was paged" on the incident screen (the member's own
     first), each row opening the step-by-step explanation, call lines included, from the same `whyPaged` and the

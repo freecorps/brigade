@@ -66,19 +66,19 @@ export type Page_WhyInputs = {
 * | "calls" | "Takes calls" |
 * | "stage_planned" | "Planned" |
 * | "stage_sent" | "Sent by Brigade" |
-* | "stage_accepted" | "Accepted by Apple" |
+* | "stage_accepted" | "Accepted by Apple or Google" |
 * | "stage_delivered" | "Opened on the phone" |
 * | "no_receipt" | "No receipt from the phone. Receipts are best effort: the page may still have shown." |
 * | "attempts" | "Attempts: {detail}" |
 * | "error_not_configured" | "Push notifications aren't set up on this server" |
-* | "error_unsupported" | "Brigade can't push to Android phones yet" |
+* | "error_unsupported" | "Brigade couldn't push to Android phones then" |
 * | "error_seal_failed" | "The page couldn't be encrypted for this phone" |
 * | "error_relay_unreachable" | "Brigade's sending service didn't answer" |
 * | "error_relay_refused" | "Brigade's sending service refused the request" |
-* | "error_token_invalid" | "Apple said this phone's token is no longer valid, so the phone was removed" |
-* | "error_apns_refused" | "Apple refused the push" |
-* | "error_apns_unavailable" | "Apple was busy or failing" |
-* | "apns_reason" | "Apple said: {detail}" |
+* | "error_token_invalid" | "Apple or Google said this phone's token is no longer valid, so the phone was removed" |
+* | "error_apns_refused" | "Apple or Google refused the push" |
+* | "error_apns_unavailable" | "Apple or Google was busy or failing" |
+* | "apns_reason" | "Apple or Google said: {detail}" |
 * | "email_expected" | "Brigade will email {name} once about a page that missed them." |
 * | "email_failed" | "Couldn't email {name} about the missed page." |
 * | "email_capped" | "Not emailed: the limit on Brigade's emails was reached." |
@@ -97,8 +97,8 @@ export type Page_WhyInputs = {
 * | "pages_show_all" | "Show all {detail} pages" |
 * | "miss_no_devices" | "no phone registered" |
 * | "miss_undelivered" | "the page didn't go through" |
-* | "miss_token_invalid" | "Apple refused this phone's token, so it was removed. Opening the Brigade app registers it again" |
-* | "miss_unsupported" | "Brigade can't page Android phones yet" |
+* | "miss_token_invalid" | "Apple or Google refused this phone's token, so it was removed. Opening the Brigade app registers it again" |
+* | "miss_unsupported" | "Brigade couldn't page Android phones then" |
 * | "miss_not_configured" | "notifications aren't set up on this server" |
 * | "miss_over_limit" | "the page went to too many phones" |
 * | "miss_dead_lettered" | "the page was lost on the way" |
@@ -108,8 +108,8 @@ export type Page_WhyInputs = {
 * | "miss_escalation_stalled" | "the escalation stalled" |
 * | "miss_nobody_else" | "nobody else could respond" |
 * | "call_label" | "Call · {detail}" |
-* | "call_not_sent" | "Not rung: Brigade rings a phone only after the page's notification gets through to Apple." |
-* | "call_error_token_invalid" | "Apple said this phone's call token is no longer valid, so Brigade stopped calling it. Pages still reach it as notifications." |
+* | "call_not_sent" | "Not rung: Brigade rings a phone only after the page's notification gets through to Apple or Google." |
+* | "call_error_token_invalid" | "Apple or Google said this phone's call token is no longer valid, so Brigade stopped calling it. Pages still reach it as notifications." |
 * | "call_note" | "Calls ring after the notification and never change whether the page got through." |
 * | "short_call_accepted" | "Call sent" |
 * | "short_call_sending" | "Calling" |

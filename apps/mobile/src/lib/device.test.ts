@@ -94,7 +94,7 @@ test("signing in registers the phone, and signing in again changes nothing", asy
   expect(store.scan("devices")).toMatchObject([{ id: deviceId(KEY), userId: ANA.id }]);
 });
 
-test("an iPhone registers its PushKit token so pages can ring; without one, or on Android, it registers none", async () => {
+test("a phone registers its call token so pages can ring; without one it registers none", async () => {
   const store = createMemoryStore<BrigadeTables>();
   const as = shard(store);
   const voip = "cd".repeat(32);
@@ -113,13 +113,22 @@ test("an iPhone registers its PushKit token so pages can ring; without one, or o
   expect(await registerPhone(phone(as(ANA), { voipToken: failing }))).toBe("on");
   expect(store.scan("devices")).toMatchObject([{ voipToken: null }]);
 
+  // Android rings through FCM: its call token is its FCM token again (RFC 0010), and the device takes calls.
   const other = createMemoryStore<BrigadeTables>();
+  const fcm = "fcm-token:" + "x".repeat(140);
   expect(
     await registerPhone(
-      phone(shard(other)(ANA), { platform: "android", voipToken: async () => voip }),
+      phone(shard(other)(ANA), {
+        platform: "android",
+        pushToken: async () => fcm,
+        voipToken: async () => fcm,
+      }),
     ),
   ).toBe("on");
-  expect(other.scan("devices")).toMatchObject([{ voipToken: null }]);
+  expect(other.scan("devices")).toMatchObject([
+    { platform: "android", environment: "production", pushToken: fcm, voipToken: fcm },
+  ]);
+  expect(other.scan("member_devices")).toMatchObject([{ platform: "android", voip: true }]);
 });
 
 test("Critical Alerts are reported only when allowed, so an instance from before them still registers the phone", async () => {

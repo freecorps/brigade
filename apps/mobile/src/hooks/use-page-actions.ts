@@ -63,7 +63,7 @@ async function handle(response: ActionResponse): Promise<void> {
 /**
  * Mounted once at the root, signed in or not: registers the pages' Acknowledge action in the app's language (again
  * when it changes) and handles its taps, including the one that launched the app in the background. iOS only for
- * now; Android gets the same action from its notification once pages reach it (FCM, RFC 0006).
+ * now: Android pages show without the action (a tap opens the incident, src/hooks/use-page-taps.ts; RFC 0006).
  */
 export function usePageActions(locale: string): void {
   useEffect(() => {

@@ -10,6 +10,9 @@ import type { Infer, Role, workspaceName } from "@freecorps/brigade-schema";
 
 export type Ok = { ok: true };
 
+/** What an alert source took from a payload: how many alerts it held, and whether Brigade could not read it. */
+export type AlertsAccepted = { ok: true; alerts: number; malformed?: boolean };
+
 export type Workspace = { id: string; name: Infer<typeof workspaceName> };
 
 export type PagingHealthReason =
@@ -92,6 +95,7 @@ export const OPERATION_ERRORS = {
   getHealth: [],
   getPagingHealth: ["unavailable"],
   pingHeartbeat: ["not_found", ...SHARD_FAILED],
+  sendAlerts: ["not_found", "too_large", ...SHARD_FAILED],
   createWorkspace: [...SIGNED_IN, "invalid_args", "workspace_limit", "internal"],
   changeMemberRole: [...MEMBER, "invalid_args"],
   removeMember: MEMBER,
@@ -297,6 +301,17 @@ export function createClient(options: ClientOptions) {
      */
     pingHeartbeat: (token: string) =>
       call<Ok, "pingHeartbeat">("pingHeartbeat", "POST", () => `/heartbeat/${segment(token)}`),
+
+    /**
+     * `POST /alerts/:token`: sends `payload` to an alert source, as JSON; for a generic source,
+     * `{ "title", "dedup_key", "severity", "status", "link", "labels" }` or `{ "alerts": [...] }`. `token` is the
+     * source URL's last segment; no session needed. A wrong token is `not_found`; `unavailable` (over a rate limit
+     * too) is worth retrying.
+     */
+    sendAlerts: (token: string, payload: unknown) =>
+      call<AlertsAccepted, "sendAlerts">("sendAlerts", "POST", () => `/alerts/${segment(token)}`, {
+        body: payload,
+      }),
 
     /** `POST /workspaces`: the signed-in user becomes its owner. */
     createWorkspace: (body: { name: Infer<typeof workspaceName> }) =>

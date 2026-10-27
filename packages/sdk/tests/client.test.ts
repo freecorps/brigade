@@ -61,6 +61,7 @@ const CALLS: Record<keyof BrigadeClient, (client: BrigadeClient) => Promise<unkn
   getHealth: (c) => c.getHealth(),
   getPagingHealth: (c) => c.getPagingHealth(),
   pingHeartbeat: (c) => c.pingHeartbeat(`${WS}.mon_x.secret`),
+  sendAlerts: (c) => c.sendAlerts(`${WS}.mon_x.secret`, { title: "Checkout is down" }),
   createWorkspace: (c) => c.createWorkspace({ name: "Acme" }),
   changeMemberRole: (c) => c.changeMemberRole(WS, USER, { role: "admin" }),
   removeMember: (c) => c.removeMember(WS, USER),

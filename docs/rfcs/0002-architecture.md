@@ -123,14 +123,23 @@ for people, not an API. A JSON read of a status page does not exist yet.
 side, as `WorkspaceDO.restRead` and `restWrite`). Bodies are the schema package's validators (`packages/schema`
 `rest.ts`), built from the arguments of the mutation each route runs: `incident.declare`; `incident.setType`,
 `setServices`, `setField` per field, `setSeverity` and `setStatus` for a `PATCH`, in that order, each its own change
-(one asking for what already is counts as done; the first refusal stops the rest, the ones before it stay made);
+(one asking for what already is counts as done; the first refusal stops the rest, the ones before it stay made, and
+the same key answers that refusal again, so a fixed request goes with a new key, the steps already made coming back
+as no change);
 `incident.postUpdate`; `service.create`, `update`, `delete`; `incidentType.create`, `update`; `customField.create`,
 `update` (a `PATCH` sends what changes, and the shard fills in the rest from the row). The server makes the ids. Every
 write needs an `Idempotency-Key` (the ack's pattern): each mutation's id is made from it and the id a create makes
-from it too (with the time the first run was stored), so a retry within the results' retention (a day) answers the
-first request and changes nothing. Reads come from the shard's rows, held to the permission (`incident:read`,
-`catalog:read`); incidents come newest first by id, 50 a page (at most 100), filtered by status and severity (lists),
-type and service, with a cursor (the last id). Catalog lists are whole (their caps: 100, 20, 25). Answers are
+from it too (with the time the first run was stored), so a retry within the results' retention (7 days, the sync
+protocol's `MUTATION_RETENTION_MS`) answers the first request, refusals included, and changes nothing. The shard ties
+the key, per actor, to a SHA-256 of the request's route, target and checked body (keys sorted) for the same 7 days;
+the same key with another request is `422 idempotency_key_reused` and runs nothing, rather than answering the first
+request or mixing its steps with the new one's. A `PATCH` answers the row, so it also needs the read permission
+(`incident:read`, `catalog:read`; only an API token can lack it). Reads come from the shard's rows, held to the
+permission (`incident:read`, `catalog:read`); incidents come newest first by id, 50 a page (at most 100), filtered by
+status and severity (lists), type and service, with a cursor (the id the page stopped below). The list reads the
+store's key descending a hundred at a time, at most 1000 incidents a request (`INCIDENT_SCAN_CAP`): the shard that
+pages people never parses every incident for one page. Past the cap it answers the page so far, maybe short or
+empty, with a cursor where it stopped. Catalog lists are whole (their caps: 100, 20, 25). Answers are
 projections (`publicIncident` and its siblings): deleted services, types, fields and options left out. Not here: the
 incident's title (no mutation changes it yet), roles, deleting types and fields, and role definitions.
 

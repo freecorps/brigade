@@ -47,6 +47,11 @@ export type Sent<T> = T extends readonly (infer Item)[]
 /** Incidents one page of `GET /workspaces/:id/incidents` holds by default, and at most. */
 export const INCIDENT_PAGE_DEFAULT = 50;
 export const INCIDENT_PAGE_MAX = 100;
+/**
+ * Most incidents one list request reads: past it the page so far is answered, with a cursor where the read stopped,
+ * so the shard that pages people never reads every incident for one request.
+ */
+export const INCIDENT_SCAN_CAP = 1000;
 
 const serviceIds = v.array(v.id("svc"), { max: MAX_INCIDENT_SERVICES, unique: true });
 

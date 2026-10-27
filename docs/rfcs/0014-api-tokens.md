@@ -69,7 +69,10 @@ copy, the mutations), `apps/api/src/api-tokens.ts` (minting, revoking, resolving
   `incident:update` to change their type, services, fields, severity and status and to post updates), the catalog
   (`catalog:read` to list and read services, incident types and custom fields, `catalog:manage` to make, change and
   remove them; RFC 0002 "Public HTTP API") and the sync WebSocket (each query and mutation checked against the
-  scopes). No scope was added for them: they are the permissions those mutations and queries already need. Not: `POST
+  scopes). A `PATCH` of an incident or a catalog entry answers the row it changed, so it needs the read scope as well
+  (`incident:update` and `incident:read`; `catalog:manage` and `catalog:read`): a write-only token is not handed rows
+  it may not read, even by an empty `PATCH`. Creates answer only the row they made, and the other writes
+  `{ ok: true }`, so they need no read scope. No scope was added for them: they are the permissions those mutations and queries already need. Not: `POST
   /workspaces` (a token belongs to a workspace that exists) and the invitee's routes (they are about one person's
   own address). The dashboard's internal routes (webhooks, the status page, exports, drafts) stay cookie-only.
 - **As an actor** (RFC 0004): `{ kind: "token", id: "tok_…", role, by: "usr_…", scopes }`, where `role` is the

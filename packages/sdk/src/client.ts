@@ -95,8 +95,9 @@ export type IncidentPage = { incidents: Incident[]; nextCursor: string | null };
 /** What every write of the incident and catalog routes takes. */
 export type WriteOptions = {
   /**
-   * 1 to 64 letters, digits, `_`, `:` or `-`; a random one by default. Send the same again to retry after a lost
-   * answer: the request runs once, and a create answers the same entry.
+   * 1 to 64 letters, digits, `_`, `:` or `-`; a random one by default. Send the same again with the same request to
+   * retry after a lost answer (within 7 days): the request runs once, a create answers the same entry and a refusal
+   * the same refusal. With another request it is refused (`idempotency_key_reused`): use a new key for each request.
    */
   idempotencyKey?: string;
 };
@@ -151,8 +152,11 @@ const REST_READ = [
   ...SHARD_FAILED,
   ...BEARER,
 ] as const;
-/** And their writes: a body or key the route refuses (`body.issues` says what). */
-const REST_WRITE = [...REST_READ, "invalid_args"] as const;
+/**
+ * And their writes: a body or key the route refuses (`body.issues` says what), and an `idempotencyKey` already sent
+ * with another request (422).
+ */
+const REST_WRITE = [...REST_READ, "invalid_args", "idempotency_key_reused"] as const;
 
 /** The `error` codes each operation answers with, as the reference lists them. */
 export const OPERATION_ERRORS = {
@@ -507,7 +511,8 @@ export function createClient(options: ClientOptions) {
 
     /**
      * `GET /workspaces/:id/incidents`: one page, newest first. Pass `nextCursor` back as `cursor` for the next one;
-     * it is null on the last.
+     * it is null on the last. A request reads at most 1000 incidents, so a narrow filter may answer a short or empty
+     * page with a `nextCursor`: follow it until it is null.
      */
     listIncidents: (workspaceId: string, filter: IncidentFilter = {}) =>
       call<IncidentPage, "listIncidents">("listIncidents", "GET", () => {
@@ -544,7 +549,9 @@ export function createClient(options: ClientOptions) {
 
     /**
      * `PATCH /workspaces/:id/incidents/:incidentId`: type, services, custom fields (`null` clears one), severity,
-     * status, each changed in that order; the first refusal stops the rest (those before it stay made).
+     * status, each changed in that order; the first refusal stops the rest (those before it stay made). The same key
+     * answers the same refusal again: once fixed, retry with a new key (the changes made come back as no change).
+     * With an API token, needs `incident:read` as well as `incident:update`, since it answers the incident.
      */
     updateIncident: (
       workspaceId: string,

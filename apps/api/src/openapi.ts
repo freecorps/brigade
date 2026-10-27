@@ -14,6 +14,7 @@ import {
   FIELD_KINDS,
   idPattern,
   INCIDENT_PAGE_DEFAULT,
+  INCIDENT_SCAN_CAP,
   INCIDENT_PAGE_MAX,
   INCIDENT_STATUSES,
   incidentPatchFields,
@@ -82,10 +83,10 @@ export type Operation = {
   /** `session`: the Better Auth session cookie; `optional`: answers more with one; `none`: no auth. */
   auth: "session" | "optional" | "none";
   /**
-   * Also takes an API token (`Authorization: Bearer`, RFC 0014) with this scope; `"frames"` when each frame is checked
-   * against the token's scopes instead (the sync socket).
+   * Also takes an API token (`Authorization: Bearer`, RFC 0014) with this scope (or every one of these); `"frames"`
+   * when each frame is checked against the token's scopes instead (the sync socket).
    */
-  bearer?: Permission | "frames";
+  bearer?: Permission | readonly [Permission, ...Permission[]] | "frames";
   parameters?: readonly Parameter[];
   body?: JsonSchema;
   responses: Readonly<Record<number, Answer>>;
@@ -192,8 +193,10 @@ const idempotencyKey: Parameter = {
   in: "header",
   description:
     "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it " +
-    "once: the same key again, within a day, answers what the first request did (a create, the same entry) and " +
-    "changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+    "once: the same key with the same request again, within 7 days, answers what the first request did (a create, " +
+    "the same entry; a refusal, the same refusal) and changes nothing more. The key is tied to that request (its " +
+    "route, target and body): sent with another one it is `422 idempotency_key_reused` and runs nothing. A key is " +
+    "the caller's own: another member or token reusing it makes a new request.",
   schema: { type: "string", pattern: IDEMPOTENCY_KEY_PATTERN },
 };
 
@@ -229,7 +232,7 @@ const REST_READ = refusals(
 function restWrite(...extra: (keyof typeof REST_STATUS)[]): Record<number, string[]> {
   return refusals(
     REST_READ,
-    { 400: ["invalid_args"], 401: ["unauthenticated"] },
+    { 400: ["invalid_args"], 401: ["unauthenticated"], 422: ["idempotency_key_reused"] },
     codesBy(Object.fromEntries(extra.map((code) => [code, REST_STATUS[code]]))),
   );
 }
@@ -636,7 +639,9 @@ const LISTED: readonly Operation[] = [
     description:
       `Newest first (by id: when the declaring client made it), ${INCIDENT_PAGE_DEFAULT} a page by default. Every ` +
       "member may read them. Filters combine; `status` and `severity` take a comma-separated list. `nextCursor` is " +
-      "the next page's `cursor`, null on the last.",
+      `the next page's \`cursor\`, null on the last. A request reads at most ${INCIDENT_SCAN_CAP} incidents: past ` +
+      "that it answers the page so far, maybe short or empty, with a `nextCursor` where it stopped, so follow " +
+      "`nextCursor` until it is null rather than stopping at a short page.",
     auth: "session",
     bearer: "incident:read",
     parameters: [
@@ -668,7 +673,7 @@ const LISTED: readonly Operation[] = [
         name: "cursor",
         in: "query",
         required: false,
-        description: "The `nextCursor` of the page before.",
+        description: "The `nextCursor` of the page before: this page starts below it.",
         schema: { type: "string", pattern: idPattern("inc") },
       },
       {
@@ -740,11 +745,13 @@ const LISTED: readonly Operation[] = [
       "Each change is its own named mutation, as in the app, in this order: `incident.setType`, " +
       "`incident.setServices`, `incident.setField` per field, `incident.setSeverity`, `incident.setStatus` (each " +
       "with its timeline entry and event). One that asks for what already is changes nothing. The first refusal " +
-      "stops the rest and is the answer; the changes before it stay made, and the same request with the same key " +
-      "runs only what is left. Responders and up. `409 invalid_transition`: the status cannot follow the current " +
-      "one. The title is not changed here.",
+      "stops the rest and is the answer; the changes before it stay made. The same request with the same key answers " +
+      "the same refusal again (results are kept, refusals too); once what refused it is fixed, send it with a new " +
+      "key: the changes already made come back as changing nothing, and the rest run. Responders and up. " +
+      "`409 invalid_transition`: the status cannot follow the current one. The title is not changed here. The " +
+      "answer is the incident, so an API token needs `incident:read` too.",
     auth: "session",
-    bearer: "incident:update",
+    bearer: ["incident:update", "incident:read"],
     parameters: [workspaceId, incidentId, idempotencyKey],
     body: {
       ...toJsonSchema(incidentPatchFields),
@@ -835,9 +842,9 @@ const LISTED: readonly Operation[] = [
     summary: "Change a service",
     description:
       "Runs `service.update` with what is sent over what the service has. Owners and admins. Nothing to change " +
-      "answers the service as it is.",
+      "answers the service as it is. The answer is the service, so an API token needs `catalog:read` too.",
     auth: "session",
-    bearer: "catalog:manage",
+    bearer: ["catalog:manage", "catalog:read"],
     parameters: [workspaceId, serviceId, idempotencyKey],
     body: toJsonSchema(servicePatchRequest),
     responses: answers(
@@ -917,9 +924,10 @@ const LISTED: readonly Operation[] = [
     summary: "Change an incident type",
     description:
       "Runs `incidentType.update` with what is sent over what the type has. Owners and admins. New `roles` without " +
-      "`requiredRoles` keep required those still listed. Incidents of the type keep their severity.",
+      "`requiredRoles` keep required those still listed. Incidents of the type keep their severity. The answer is " +
+      "the type, so an API token needs `catalog:read` too.",
     auth: "session",
-    bearer: "catalog:manage",
+    bearer: ["catalog:manage", "catalog:read"],
     parameters: [workspaceId, typeId, idempotencyKey],
     body: toJsonSchema(incidentTypePatchRequest),
     responses: answers(
@@ -984,9 +992,10 @@ const LISTED: readonly Operation[] = [
     summary: "Change a custom field",
     description:
       "Runs `customField.update`: its name, description and options (the list sent replaces the old one: keep an " +
-      "option by its id). Its kind never changes. Owners and admins.",
+      "option by its id). Its kind never changes. Owners and admins. The answer is the field, so an API token needs " +
+      "`catalog:read` too.",
     auth: "session",
-    bearer: "catalog:manage",
+    bearer: ["catalog:manage", "catalog:read"],
     parameters: [workspaceId, fieldId, idempotencyKey],
     body: toJsonSchema(customFieldPatchRequest),
     responses: answers(
@@ -1470,8 +1479,10 @@ function toOperation(operation: Operation): Record<string, unknown> {
     operation.description,
     operation.bearer === "frames"
       ? "With an API token, each query and mutation needs its permission among the token's scopes."
-      : operation.bearer
+      : typeof operation.bearer === "string"
         ? `With an API token: the \`${operation.bearer}\` scope.`
+        : operation.bearer
+          ? `With an API token: the ${operation.bearer.map((scope) => `\`${scope}\``).join(" and ")} scopes.`
         : undefined,
   ]
     .filter(Boolean)

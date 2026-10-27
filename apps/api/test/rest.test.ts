@@ -10,7 +10,13 @@ import {
   runInDurableObject,
 } from "cloudflare:test";
 import { generateRecipient, toBase64url } from "@freecorps/brigade-push";
-import { newId, type Actor, type Permission, type PublicIncident } from "@freecorps/brigade-schema";
+import {
+  INCIDENT_SCAN_CAP,
+  newId,
+  type Actor,
+  type Permission,
+  type PublicIncident,
+} from "@freecorps/brigade-schema";
 import { beforeEach, describe, expect, test } from "vite-plus/test";
 import { forgetAllTokens } from "../src/api-tokens.ts";
 import { consumeEvents, type Fetch } from "../src/notify.ts";
@@ -364,6 +370,49 @@ describe("API tokens on these routes", () => {
     );
   });
 
+  test("a PATCH answers the row, so a token needs the read scope too, even for an empty one", async () => {
+    const t = await team();
+    const incident = newId("inc", Date.now(), random);
+    await t.run("incident.declare", { id: incident, title: "Checkout down", severity: "sev3" });
+    const service = newId("svc", Date.now(), random);
+    await t.run("service.create", {
+      id: service,
+      name: "Checkout",
+      description: "",
+      tier: "tier1",
+      owners: [],
+      escalationPolicyId: null,
+    });
+    const writeOnly = await mint(t, t.ana, ["incident:update", "catalog:manage"]);
+    for (const [path, body] of [
+      [`/workspaces/${t.id}/incidents/${incident}`, {}],
+      [`/workspaces/${t.id}/incidents/${incident}`, { severity: "sev1" }],
+      [`/workspaces/${t.id}/services/${service}`, {}],
+    ] as const) {
+      const response = await call(path, writeOnly.token, { method: "PATCH", body });
+      expect(response.status, path).toBe(403);
+      expect(await response.json()).toEqual({ error: "forbidden" });
+    }
+    expect((await t.withShard((shard) => shard.store.get("incidents", incident)))?.severity).toBe(
+      "sev3",
+    );
+    // The writes that answer no row still work without it.
+    const posted = await call(`/workspaces/${t.id}/incidents/${incident}/updates`, writeOnly.token, {
+      method: "POST",
+      body: { body: "Looking." },
+    });
+    expect(posted.status).toBe(201);
+    expect(await posted.json()).toEqual({ ok: true });
+
+    const both = await mint(t, t.ana, ["incident:update", "incident:read"]);
+    const changed = await call(`/workspaces/${t.id}/incidents/${incident}`, both.token, {
+      method: "PATCH",
+      body: { severity: "sev1" },
+    });
+    expect(changed.status).toBe(200);
+    expect(await changed.json()).toMatchObject({ incident: { id: incident, severity: "sev1" } });
+  });
+
   test("a token acts with its creator's current role: demoted to viewer, its write scopes are refused", async () => {
     const t = await team();
     const role = (to: string) =>
@@ -485,6 +534,65 @@ describe("reading incidents", () => {
     expect(missing.status).toBe(404);
     const outsider = await call(`/workspaces/${t.id}/incidents`, t.eva);
     expect(outsider.status).toBe(403);
+  });
+
+  test("a request reads at most INCIDENT_SCAN_CAP incidents; the cursor goes on from where it stopped, skipping and repeating none", async () => {
+    const t = await team();
+    const template = newId("inc", Date.now(), random);
+    await t.run("incident.declare", { id: template, title: "Template", severity: "sev3" });
+    // 2100 incidents, newest first by index; sev1 at a few, around the cap's edge too.
+    const total = 2100;
+    const matching = new Set([0, 499, 999, 1000, 1001, 2099]);
+    const start = Date.now() - total * 1000;
+    const ids = Array.from({ length: total }, (_, index) =>
+      newId("inc", start + (total - index) * 1000, random),
+    );
+    await t.withShard((shard) => {
+      const row = shard.store.get("incidents", template)!;
+      shard.store.delete("incidents", template);
+      shard.store.transaction(() => {
+        ids.forEach((id, index) => {
+          shard.store.insert("incidents", {
+            ...row,
+            id,
+            number: index + 1,
+            severity: matching.has(index) ? "sev1" : "sev3",
+          });
+        });
+      });
+    });
+    expect(INCIDENT_SCAN_CAP).toBe(1000);
+    const page = async (query: string) => {
+      const response = await call(`/workspaces/${t.id}/incidents${query}`, t.duda);
+      expect(response.status, query).toBe(200);
+      return (await response.json()) as { incidents: PublicIncident[]; nextCursor: string | null };
+    };
+
+    // The first request stops at the cap: the matches within it, and the 1000th incident as the cursor.
+    const first = await page("?severity=sev1&limit=100");
+    expect(first.incidents.map((i) => i.id)).toEqual([ids[0], ids[499], ids[999]]);
+    expect(first.nextCursor).toBe(ids[999]);
+
+    // Followed to the end, a page at a time: every match once, in order.
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let requests = 0;
+    do {
+      const next = await page(`?severity=sev1&limit=2${cursor ? `&cursor=${cursor}` : ""}`);
+      seen.push(...next.incidents.map((i) => i.id));
+      cursor = next.nextCursor;
+      requests++;
+    } while (cursor && requests < 20);
+    expect(cursor).toBeNull();
+    expect(seen).toEqual([...matching].sort((a, b) => a - b).map((index) => ids[index]));
+
+    // A short page from the cap: nothing matched in the first 1000 below the cursor.
+    const empty = await page(`?severity=sev1&cursor=${ids[1001]}`);
+    expect(empty.incidents).toEqual([]);
+    expect(empty.nextCursor).toBe(ids[2001]);
+    const rest = await page(`?severity=sev1&cursor=${empty.nextCursor}`);
+    expect(rest.incidents.map((i) => i.id)).toEqual([ids[2099]]);
+    expect(rest.nextCursor).toBeNull();
   });
 });
 
@@ -612,6 +720,106 @@ describe("changing an incident", () => {
   });
 });
 
+describe("Idempotency-Key", () => {
+  test("a refused PATCH answers the same refusal for its key; a new key once fixed runs the rest, the steps made as no change", async () => {
+    const t = await team();
+    const incident = newId("inc", Date.now(), random);
+    await t.run("incident.declare", { id: incident, title: "Checkout down", severity: "sev3" });
+    await t.run("incident.setStatus", { id: incident, status: "resolved" });
+    const path = `/workspaces/${t.id}/incidents/${incident}`;
+    const events = async () =>
+      (await outbox(t)).filter((event) => event.subject === incident).map((event) => event.type);
+    const before = await events();
+
+    const body = { severity: "sev2", status: "triage" };
+    const first = await call(path, t.caio, { method: "PATCH", key: "fix-1", body });
+    expect(first.status).toBe(409);
+    expect(await first.json()).toEqual({ error: "invalid_transition" });
+    expect(await events()).toEqual([...before, "incident.severity_changed"]);
+    // Even once the status could change, the same key answers what it did: the stored refusal.
+    const again = await call(path, t.caio, { method: "PATCH", key: "fix-1", body });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({ error: "invalid_transition" });
+    expect(await events()).toEqual([...before, "incident.severity_changed"]);
+
+    // Fixed, with a new key: the severity comes back as no change, the status runs.
+    const fixed = await call(path, t.caio, {
+      method: "PATCH",
+      key: "fix-2",
+      body: { severity: "sev2", status: "investigating" },
+    });
+    expect(fixed.status).toBe(200);
+    expect(((await fixed.json()) as { incident: PublicIncident }).incident).toMatchObject({
+      severity: "sev2",
+      status: "investigating",
+    });
+    expect(await events()).toEqual([
+      ...before,
+      "incident.severity_changed",
+      "incident.status_changed",
+    ]);
+  });
+
+  test("the same key with another request is 422 and runs nothing: another body, target or route", async () => {
+    const t = await team();
+    const one = newId("inc", Date.now(), random);
+    const other = newId("inc", Date.now() + 1, random);
+    for (const id of [one, other]) {
+      await t.run("incident.declare", { id, title: "Checkout down", severity: "sev3" });
+    }
+    const path = (id: string) => `/workspaces/${t.id}/incidents/${id}`;
+    const subjectEvents = async () =>
+      (await outbox(t)).filter((event) => event.type !== "incident.declared").length;
+    const made = await call(path(one), t.caio, {
+      method: "PATCH",
+      key: "same",
+      body: { severity: "sev2", status: "investigating" },
+    });
+    expect(made.status).toBe(200);
+    const after = await subjectEvents();
+
+    // The same request with its keys in another order is the same request.
+    const reordered = await call(path(one), t.caio, {
+      method: "PATCH",
+      key: "same",
+      body: { status: "investigating", severity: "sev2" },
+    });
+    expect(reordered.status).toBe(200);
+
+    const reused = [
+      // Another body, mixing a new step with the first request's.
+      call(path(one), t.caio, {
+        method: "PATCH",
+        key: "same",
+        body: { severity: "sev1", status: "investigating" },
+      }),
+      // Another target.
+      call(path(other), t.caio, { method: "PATCH", key: "same", body: { severity: "sev2" } }),
+      // Another route.
+      call(`${path(one)}/updates`, t.caio, { method: "POST", key: "same", body: { body: "Hi" } }),
+      call(`/workspaces/${t.id}/incidents`, t.caio, {
+        method: "POST",
+        key: "same",
+        body: { title: "Another" },
+      }),
+    ];
+    for (const response of await Promise.all(reused)) {
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({ error: "idempotency_key_reused" });
+    }
+    expect(await subjectEvents()).toBe(after);
+    expect(await declares(t)).toHaveLength(2);
+    expect((await t.withShard((shard) => shard.store.get("incidents", one)))?.severity).toBe("sev2");
+    // Another caller's key is their own.
+    const ana = await call(path(other), t.ana, {
+      method: "PATCH",
+      key: "same",
+      body: { severity: "sev1" },
+    });
+    expect(ana.status).toBe(200);
+  });
+});
+
 describe("the catalog", () => {
   test("services: made, changed, unchanged, read and removed, as owners and admins only", async () => {
     const t = await team();
@@ -635,7 +843,7 @@ describe("the catalog", () => {
     const again = await call(base, t.ana, {
       method: "POST",
       key: "svc-1",
-      body: { name: "Checkout", tier: "tier1" },
+      body: { name: "Checkout", tier: "tier1", owners: [{ kind: "member", id: t.caio.id }] },
     });
     expect(((await again.json()) as { service: { id: string } }).service.id).toBe(service.id);
     const changed = await call(`${base}/${service.id}`, t.ana, {

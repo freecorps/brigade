@@ -68,6 +68,8 @@ export const REST_STATUS: Partial<Record<RestCode, number>> = {
   conflict: 409,
   invalid_transition: 409,
   limit_reached: 409,
+  // The `Idempotency-Key` was first sent with another request (src/rest.ts).
+  idempotency_key_reused: 422,
 };
 
 /** How each receipt result answers the phone: it only logs the status, and never retries a 4xx. */

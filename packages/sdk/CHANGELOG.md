@@ -8,7 +8,8 @@
   `listIncidentTypes`, `getIncidentType`, `createIncidentType`, `updateIncidentType`; `listCustomFields`,
   `getCustomField`, `createCustomField`, `updateCustomField`. Every write takes an `idempotencyKey` (random by
   default). With an API token, each needs its scope (`incident:read`, `incident:declare`, `incident:update`,
-  `catalog:read`, `catalog:manage`).
+  `catalog:read`, `catalog:manage`; a `PATCH` also needs the read scope, as it answers the row). An
+  `idempotencyKey` sent again with another request is `422 idempotency_key_reused`.
 - Types: `Incident`, `Service`, `IncidentType`, `CustomField`, `IncidentFilter`, `IncidentPage`, `WriteOptions`, the
   request bodies (`DeclareRequest`, `IncidentPatch`, `ServiceCreateRequest`, …), `FieldValue`, `FIELD_KINDS` and
   `SERVICE_TIERS`.

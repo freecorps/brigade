@@ -2737,7 +2737,7 @@
           "Incidents"
         ],
         "summary": "List incidents",
-        "description": "Newest first (by id: when the declaring client made it), 50 a page by default. Every member may read them. Filters combine; `status` and `severity` take a comma-separated list. `nextCursor` is the next page's `cursor`, null on the last. With an API token: the `incident:read` scope.",
+        "description": "Newest first (by id: when the declaring client made it), 50 a page by default. Every member may read them. Filters combine; `status` and `severity` take a comma-separated list. `nextCursor` is the next page's `cursor`, null on the last. A request reads at most 1000 incidents: past that it answers the page so far, maybe short or empty, with a `nextCursor` where it stopped, so follow `nextCursor` until it is null rather than stopping at a short page. With an API token: the `incident:read` scope.",
         "security": [
           {
             "session": []
@@ -2822,7 +2822,7 @@
           {
             "name": "cursor",
             "in": "query",
-            "description": "The `nextCursor` of the page before.",
+            "description": "The `nextCursor` of the page before: this page starts below it.",
             "schema": {
               "type": "string",
               "pattern": "^inc_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
@@ -3051,7 +3051,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key with the same request again, within 7 days, answers what the first request did (a create, the same entry; a refusal, the same refusal) and changes nothing more. The key is tied to that request (its route, target and body): sent with another one it is `422 idempotency_key_reused` and runs nothing. A key is the caller's own: another member or token reusing it makes a new request.",
             "schema": {
               "type": "string",
               "pattern": "^[\\w:-]{1,64}$"
@@ -3198,6 +3198,26 @@
                       "type": "string",
                       "enum": [
                         "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "idempotency_key_reused"
                       ]
                     }
                   },
@@ -3488,7 +3508,7 @@
           "Incidents"
         ],
         "summary": "Change an incident's type, services, fields, severity or status",
-        "description": "Each change is its own named mutation, as in the app, in this order: `incident.setType`, `incident.setServices`, `incident.setField` per field, `incident.setSeverity`, `incident.setStatus` (each with its timeline entry and event). One that asks for what already is changes nothing. The first refusal stops the rest and is the answer; the changes before it stay made, and the same request with the same key runs only what is left. Responders and up. `409 invalid_transition`: the status cannot follow the current one. The title is not changed here. With an API token: the `incident:update` scope.",
+        "description": "Each change is its own named mutation, as in the app, in this order: `incident.setType`, `incident.setServices`, `incident.setField` per field, `incident.setSeverity`, `incident.setStatus` (each with its timeline entry and event). One that asks for what already is changes nothing. The first refusal stops the rest and is the answer; the changes before it stay made. The same request with the same key answers the same refusal again (results are kept, refusals too); once what refused it is fixed, send it with a new key: the changes already made come back as changing nothing, and the rest run. Responders and up. `409 invalid_transition`: the status cannot follow the current one. The title is not changed here. The answer is the incident, so an API token needs `incident:read` too. With an API token: the `incident:update` and `incident:read` scopes.",
         "security": [
           {
             "session": []
@@ -3521,7 +3541,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key with the same request again, within 7 days, answers what the first request did (a create, the same entry; a refusal, the same refusal) and changes nothing more. The key is tied to that request (its route, target and body): sent with another one it is `422 idempotency_key_reused` and runs nothing. A key is the caller's own: another member or token reusing it makes a new request.",
             "schema": {
               "type": "string",
               "pattern": "^[\\w:-]{1,64}$"
@@ -3724,6 +3744,26 @@
               }
             }
           },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "idempotency_key_reused"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
           "429": {
             "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
             "content": {
@@ -3830,7 +3870,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key with the same request again, within 7 days, answers what the first request did (a create, the same entry; a refusal, the same refusal) and changes nothing more. The key is tied to that request (its route, target and body): sent with another one it is `422 idempotency_key_reused` and runs nothing. A key is the caller's own: another member or token reusing it makes a new request.",
             "schema": {
               "type": "string",
               "pattern": "^[\\w:-]{1,64}$"
@@ -3947,6 +3987,26 @@
                       "type": "string",
                       "enum": [
                         "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "idempotency_key_reused"
                       ]
                     }
                   },
@@ -4253,7 +4313,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key with the same request again, within 7 days, answers what the first request did (a create, the same entry; a refusal, the same refusal) and changes nothing more. The key is tied to that request (its route, target and body): sent with another one it is `422 idempotency_key_reused` and runs nothing. A key is the caller's own: another member or token reusing it makes a new request.",
             "schema": {
               "type": "string",
               "pattern": "^[\\w:-]{1,64}$"
@@ -4449,6 +4509,26 @@
                       "type": "string",
                       "enum": [
                         "limit_reached"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "idempotency_key_reused"
                       ]
                     }
                   },
@@ -4739,7 +4819,7 @@
           "Catalog"
         ],
         "summary": "Change a service",
-        "description": "Runs `service.update` with what is sent over what the service has. Owners and admins. Nothing to change answers the service as it is. With an API token: the `catalog:manage` scope.",
+        "description": "Runs `service.update` with what is sent over what the service has. Owners and admins. Nothing to change answers the service as it is. The answer is the service, so an API token needs `catalog:read` too. With an API token: the `catalog:manage` and `catalog:read` scopes.",
         "security": [
           {
             "session": []
@@ -4772,7 +4852,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key with the same request again, within 7 days, answers what the first request did (a create, the same entry; a refusal, the same refusal) and changes nothing more. The key is tied to that request (its route, target and body): sent with another one it is `422 idempotency_key_reused` and runs nothing. A key is the caller's own: another member or token reusing it makes a new request.",
             "schema": {
               "type": "string",
               "pattern": "^[\\w:-]{1,64}$"
@@ -4954,6 +5034,26 @@
               }
             }
           },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "idempotency_key_reused"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
           "429": {
             "description": "Too many requests (with an API token: its limit, `Retry-After` seconds).",
             "content": {
@@ -5058,7 +5158,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key with the same request again, within 7 days, answers what the first request did (a create, the same entry; a refusal, the same refusal) and changes nothing more. The key is tied to that request (its route, target and body): sent with another one it is `422 idempotency_key_reused` and runs nothing. A key is the caller's own: another member or token reusing it makes a new request.",
             "schema": {
               "type": "string",
               "pattern": "^[\\w:-]{1,64}$"
@@ -5154,6 +5254,26 @@
                       "type": "string",
                       "enum": [
                         "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "idempotency_key_reused"
                       ]
                     }
                   },
@@ -5460,7 +5580,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key with the same request again, within 7 days, answers what the first request did (a create, the same entry; a refusal, the same refusal) and changes nothing more. The key is tied to that request (its route, target and body): sent with another one it is `422 idempotency_key_reused` and runs nothing. A key is the caller's own: another member or token reusing it makes a new request.",
             "schema": {
               "type": "string",
               "pattern": "^[\\w:-]{1,64}$"
@@ -5666,6 +5786,26 @@
                       "type": "string",
                       "enum": [
                         "limit_reached"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "idempotency_key_reused"
                       ]
                     }
                   },
@@ -5956,7 +6096,7 @@
           "Catalog"
         ],
         "summary": "Change an incident type",
-        "description": "Runs `incidentType.update` with what is sent over what the type has. Owners and admins. New `roles` without `requiredRoles` keep required those still listed. Incidents of the type keep their severity. With an API token: the `catalog:manage` scope.",
+        "description": "Runs `incidentType.update` with what is sent over what the type has. Owners and admins. New `roles` without `requiredRoles` keep required those still listed. Incidents of the type keep their severity. The answer is the type, so an API token needs `catalog:read` too. With an API token: the `catalog:manage` and `catalog:read` scopes.",
         "security": [
           {
             "session": []
@@ -5989,7 +6129,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key with the same request again, within 7 days, answers what the first request did (a create, the same entry; a refusal, the same refusal) and changes nothing more. The key is tied to that request (its route, target and body): sent with another one it is `422 idempotency_key_reused` and runs nothing. A key is the caller's own: another member or token reusing it makes a new request.",
             "schema": {
               "type": "string",
               "pattern": "^[\\w:-]{1,64}$"
@@ -6172,6 +6312,26 @@
                       "type": "string",
                       "enum": [
                         "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "idempotency_key_reused"
                       ]
                     }
                   },
@@ -6478,7 +6638,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key with the same request again, within 7 days, answers what the first request did (a create, the same entry; a refusal, the same refusal) and changes nothing more. The key is tied to that request (its route, target and body): sent with another one it is `422 idempotency_key_reused` and runs nothing. A key is the caller's own: another member or token reusing it makes a new request.",
             "schema": {
               "type": "string",
               "pattern": "^[\\w:-]{1,64}$"
@@ -6661,6 +6821,26 @@
                       "type": "string",
                       "enum": [
                         "limit_reached"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "idempotency_key_reused"
                       ]
                     }
                   },
@@ -6951,7 +7131,7 @@
           "Catalog"
         ],
         "summary": "Change a custom field",
-        "description": "Runs `customField.update`: its name, description and options (the list sent replaces the old one: keep an option by its id). Its kind never changes. Owners and admins. With an API token: the `catalog:manage` scope.",
+        "description": "Runs `customField.update`: its name, description and options (the list sent replaces the old one: keep an option by its id). Its kind never changes. Owners and admins. The answer is the field, so an API token needs `catalog:read` too. With an API token: the `catalog:manage` and `catalog:read` scopes.",
         "security": [
           {
             "session": []
@@ -6984,7 +7164,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key again, within a day, answers what the first request did (a create, the same entry) and changes nothing more. A key is the caller's own: another member or token reusing it makes a new request.",
+            "description": "Your id for this request (1 to 64 letters, digits, `_`, `:` or `-`), so a retry after a lost answer runs it once: the same key with the same request again, within 7 days, answers what the first request did (a create, the same entry; a refusal, the same refusal) and changes nothing more. The key is tied to that request (its route, target and body): sent with another one it is `422 idempotency_key_reused` and runs nothing. A key is the caller's own: another member or token reusing it makes a new request.",
             "schema": {
               "type": "string",
               "pattern": "^[\\w:-]{1,64}$"
@@ -7133,6 +7313,26 @@
                       "type": "string",
                       "enum": [
                         "not_found"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "idempotency_key_reused"
                       ]
                     }
                   },

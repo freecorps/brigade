@@ -5,7 +5,10 @@
 // outbox (RFC 0004, RFC 0005): declaring here pages exactly as declaring in the dashboard does.
 //
 // Idempotency: each mutation's id is made from the request's `Idempotency-Key` (and, for a create, the id it makes
-// is too), so a retry gets the stored results of the first request instead of running anything again.
+// is too), so a retry gets the stored results of the first request instead of running anything again. Refusals are
+// stored too: the same request with the same key answers the same refusal. The key is tied to the request it first
+// came with (`requestDigest`): the same key with another request is refused (`idempotency_key_reused`) instead of
+// answering, or mixing in, the first one's results.
 
 import {
   allCustomFields,
@@ -14,6 +17,7 @@ import {
   allServices,
   evaluateQuery,
   INCIDENT_PAGE_DEFAULT,
+  INCIDENT_SCAN_CAP,
   newId,
   prefixRange,
   publicCustomField,
@@ -80,7 +84,11 @@ export type RestWrite =
   | { kind: "createCustomField"; body: CustomFieldCreateRequest }
   | { kind: "updateCustomField"; id: string; body: CustomFieldPatchRequest };
 
-export type RestCode = MutationErrorCode | "not_a_member" | "unauthenticated";
+export type RestCode =
+  | MutationErrorCode
+  | "not_a_member"
+  | "unauthenticated"
+  | "idempotency_key_reused";
 
 export type RestResult =
   | { ok: true; body: Record<string, unknown> }
@@ -114,6 +122,21 @@ export const WRITE_PERMISSION: Record<RestWrite["kind"], Permission> = {
   createCustomField: "catalog:manage",
   updateCustomField: "catalog:manage",
 };
+
+/**
+ * What a write that answers the row it changed (a `PATCH`) also needs: the row is a read, so a token that may change
+ * but not read it is refused rather than handed the row (RFC 0014). Creates answer the row they made; the other writes
+ * answer only `{ ok: true }`.
+ */
+export const WRITE_READ_PERMISSION: Partial<Record<RestWrite["kind"], Permission>> = {
+  updateIncident: "incident:read",
+  updateService: "catalog:read",
+  updateIncidentType: "catalog:read",
+  updateCustomField: "catalog:read",
+};
+
+/** How many incidents `listIncidents` reads at a time. */
+const INCIDENT_SCAN_BATCH = 100;
 
 /** Answers a read as `actor` (already backed by the shard: `WorkspaceDO.tokenActor`). */
 export function readRest(shard: Shard, actor: Actor, read: RestRead): RestResult {
@@ -152,7 +175,10 @@ export function readRest(shard: Shard, actor: Actor, read: RestRead): RestResult
 
 /**
  * One page of the workspace's incidents, newest first by id (the time the declaring client made it), filtered, and
- * the cursor of the next page (null on the last). Reads the incidents below the cursor off the store's key.
+ * the cursor of the next page (null on the last). Reads the incidents below the cursor off the store's key, a batch at
+ * a time, and at most `INCIDENT_SCAN_CAP` of them: the shard that pages people never parses every incident for one
+ * request. Past the cap it answers the page so far (maybe empty) and a cursor where the scan stopped, so a filter
+ * that matches little is followed a cap at a time, never skipping or repeating an incident.
  */
 function listIncidents(
   shard: Shard,
@@ -161,22 +187,27 @@ function listIncidents(
   const { store } = shard;
   const limit = filter.limit ?? INCIDENT_PAGE_DEFAULT;
   const range = prefixRange("inc_");
-  const rows = store.range("incidents", range.from, filter.cursor ?? range.to);
   const page: PublicIncident[] = [];
-  let nextCursor: string | null = null;
-  for (let index = rows.length - 1; index >= 0; index--) {
-    const row = rows[index]!;
-    if (filter.status && !filter.status.includes(row.status)) continue;
-    if (filter.severity && !filter.severity.includes(row.severity)) continue;
-    if (filter.typeId && row.typeId !== filter.typeId) continue;
-    if (filter.serviceId && !(row.serviceIds ?? []).includes(filter.serviceId)) continue;
-    if (page.length === limit) {
-      nextCursor = page[page.length - 1]!.id;
-      break;
+  let below = filter.cursor ?? range.to;
+  let scanned = 0;
+  while (scanned < INCIDENT_SCAN_CAP) {
+    const size = Math.min(INCIDENT_SCAN_BATCH, INCIDENT_SCAN_CAP - scanned);
+    const rows = store.rangeDescending("incidents", range.from, below, size);
+    for (const row of rows) {
+      if (filter.status && !filter.status.includes(row.status)) continue;
+      if (filter.severity && !filter.severity.includes(row.severity)) continue;
+      if (filter.typeId && row.typeId !== filter.typeId) continue;
+      if (filter.serviceId && !(row.serviceIds ?? []).includes(filter.serviceId)) continue;
+      // Another match past a full page: there is a next one.
+      if (page.length === limit) return { incidents: page, nextCursor: page[limit - 1]!.id };
+      page.push(publicIncident(store, row));
     }
-    page.push(publicIncident(store, row));
+    if (rows.length < size) return { incidents: page, nextCursor: null };
+    scanned += rows.length;
+    below = rows[rows.length - 1]!.id;
   }
-  return { incidents: page, nextCursor };
+  // The cap: every incident from the page's last to `below` was read and none matched past the page.
+  return { incidents: page, nextCursor: below };
 }
 
 export type WriteContext = {
@@ -187,6 +218,8 @@ export type WriteContext = {
   key: string;
   /** 32 bytes made from the actor, the write's kind and the key (`keySeed`): what a create's ids are made of. */
   seed: Uint8Array;
+  /** What the request is (`requestDigest`): the key is tied to it. */
+  request: string;
   now: number;
   /** A mutation committed: its patch goes to the open sockets. */
   committed(version: number, changes: RowChange[]): void;
@@ -201,8 +234,37 @@ export async function keySeed(kind: string, actorId: string, key: string): Promi
   return new Uint8Array(digest);
 }
 
-/** Runs a write as `ctx.actor`. */
+/** JSON with every object's keys sorted: the same value, the same text. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * What a write is, as a SHA-256 hex digest of its route (`kind`), its target (`id`) and its checked body, keys
+ * sorted: the same request sent again has the same one, whatever order its JSON came in.
+ */
+export async function requestDigest(write: RestWrite): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical(write)));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Runs a write as `ctx.actor`. The key is claimed for this request first: one the actor already sent with another
+ * request is refused, and runs nothing.
+ */
 export function writeRest(ctx: WriteContext, write: RestWrite): RestResult {
+  const reads = WRITE_READ_PERMISSION[write.kind];
+  if (reads && !allows(ctx.actor, reads)) return refused("forbidden");
+  if (!ctx.shard.claimRequestKey(ctx.actor.id, ctx.key, ctx.request, ctx.now)) {
+    return refused("idempotency_key_reused");
+  }
   switch (write.kind) {
     case "declare":
       return declare(ctx, write.body);
@@ -299,8 +361,9 @@ function declare(ctx: WriteContext, body: DeclareRequest): RestResult {
 /**
  * Each change through its own mutation, in a fixed order: type, services, fields, severity, status (last, so a
  * resolve comes after the details it closes with). One that asks for what already is counts as done. The first
- * refusal stops the rest and is the answer; the ones before it stay made, and the same request again (same key) runs
- * only what is left.
+ * refusal stops the rest and is the answer; the ones before it stay made. Every step's result is stored, refusals
+ * too, so the same request with the same key answers the same refusal again; once what refused it is fixed, a new
+ * key runs it, and the steps already made come back as changing nothing.
  */
 function updateIncident(ctx: WriteContext, id: string, body: IncidentPatch): RestResult {
   if (!ctx.shard.store.get("incidents", id)) return refused("not_found");

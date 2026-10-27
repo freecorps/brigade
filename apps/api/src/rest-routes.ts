@@ -6,6 +6,7 @@
 // `restWrite`), with the same RBAC, timeline entries and outbox events as the dashboard's.
 
 import {
+  allows,
   customFieldCreateRequest,
   customFieldPatchRequest,
   declareRequest,
@@ -33,6 +34,7 @@ import { REST_STATUS } from "./http.ts";
 import {
   READ_PERMISSION,
   WRITE_PERMISSION,
+  WRITE_READ_PERMISSION,
   type IncidentFilter,
   type RestRead,
   type RestResult,
@@ -246,6 +248,9 @@ class Route {
     const kind = make(undefined as B).kind;
     const actor = await this.actor(WRITE_PERMISSION[kind]);
     if (actor instanceof Response) return actor;
+    // A `PATCH` answers the row: it needs the read too (the shard checks it again).
+    const reads = WRITE_READ_PERMISSION[kind];
+    if (reads && !allows(actor, reads)) return json({ error: "forbidden" }, 403);
     let body = undefined as B;
     if (validator) {
       const parsed = await readJson(this.request);

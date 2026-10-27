@@ -94,6 +94,7 @@ import type { RowChange } from "./store.ts";
 import {
   keySeed,
   readRest,
+  requestDigest,
   writeRest,
   type RestRead,
   type RestResult,
@@ -774,13 +775,17 @@ export class WorkspaceDO extends DurableObject<Env> {
     if (await this.membership.refuses(workspaceId, acting.by ?? acting.id, Date.now())) {
       return { ok: false, code: "not_a_member" };
     }
-    const seed = await keySeed(write.kind, acting.id, key);
+    const [seed, request] = await Promise.all([
+      keySeed(write.kind, acting.id, key),
+      requestDigest(write),
+    ]);
     return writeRest(
       {
         shard: this.shard,
         actor: acting,
         key,
         seed,
+        request,
         now: Date.now(),
         committed: (version, changes) => this.broadcast(version, changes, undefined),
       },

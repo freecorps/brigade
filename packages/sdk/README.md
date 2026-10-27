@@ -170,7 +170,11 @@ await brigade.createCustomField(workspaceId, {
 Each write runs the named mutation the apps send, with the same rules, timeline entry and event, as the member or
 token; every write takes an `idempotencyKey` (a random one by default). `updateIncident` changes the type, services,
 fields, severity and status in that order, each its own change; the first refusal stops the rest, and the ones before
-it stay made.
+it stay made. The same key answers the same refusal again (within 7 days): once it is fixed, retry with a new key, and
+the changes already made come back as no change. A key sent with another request is refused
+(`422 idempotency_key_reused`). A `PATCH` answers the row, so with a token it also needs the read scope
+(`incident:read`, `catalog:read`). `listIncidents` reads at most 1000 incidents a request: a narrow filter may answer
+a short or empty page with a `nextCursor`, so follow it until it is null.
 
 | Method                                                                                                       | Route                                             |
 | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |

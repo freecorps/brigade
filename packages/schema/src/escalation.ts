@@ -1,6 +1,7 @@
 // Escalation runs (RFC 0003 "Escalation run", RFC 0006 "Who is paged"): the first page of an incident starts one
-// on the policy of the monitor that opened it, or the workspace's default, and the shard's alarm fires each next
-// level when nobody acknowledged in time; a level every push of which failed fires the next one of its round at once.
+// on the policy of its type, else of the monitor that opened it, else the workspace's default (`incidentPolicy`); a
+// type changed while the run is under way does not change its levels. The shard's alarm fires each next level when
+// nobody acknowledged in time; a level every push of which failed fires the next one of its round at once.
 // A level is resolved when it fires: schedules to whoever is on call at that instant. A level nobody on it can be
 // reached at is skipped at once; when no level is left, when every level and repeat went unacknowledged, or when a
 // level keeps failing to fire, the run falls back to the interim rule (everyone who can respond) and ends.
@@ -284,9 +285,9 @@ function setTimer(store: MutationStore, incidentId: string, at: number): void {
 }
 
 /**
- * Server only, as `ESCALATION_ACTOR`: starts a run for the page `eventId` asked for, on the policy of the monitor that
- * opened the incident or else the default (`incidentPolicy`), and pages its first reachable level (RFC 0006 "Who is
- * paged"). `causedBy` (who caused that event) counts as reached without a push. `not_found` with neither policy (the
+ * Server only, as `ESCALATION_ACTOR`: starts a run for the page `eventId` asked for, on the policy of the incident's type,
+ * else of the monitor that opened the incident, else the default (`incidentPolicy`), and pages its first reachable level (RFC 0006 "Who is
+ * paged"). `causedBy` (who caused that event) counts as reached without a push. `not_found` with no policy (the
  * interim rule pages instead); `conflict` while a run is under way, or for an incident already acknowledged or no
  * longer active.
  */

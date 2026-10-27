@@ -575,9 +575,9 @@ export class Pager {
   }
 
   /**
-   * Starts a run for the page `event` asked for, on the policy of the monitor that opened the incident or the default
-   * (`escalation.start`, de-duplicated by the event), and brings the alarm forward to its next level. False with
-   * neither policy (the interim rule pages).
+   * Starts a run for the page `event` asked for, on the policy of the incident's type, else of the monitor that opened
+   * it, else the default (`escalation.start` by `incidentPolicy`, de-duplicated by the event), and brings the alarm
+   * forward to its next level. False with no policy (the interim rule pages).
    */
   private start(event: BrigadeEvent, incident: IncidentRow, now: number): boolean {
     if (!incidentPolicy(this.options.shard.store, incident.id)) return false;

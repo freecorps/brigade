@@ -3,8 +3,10 @@
 // policy an incident's pages use (RFC 0006 "Who is paged").
 import { describe, expect, test } from "vite-plus/test";
 import {
+  checkFieldValue,
   createMemoryStore,
   ESCALATION_ACTOR,
+  isFieldLink,
   liveValue,
   MAX_CUSTOM_FIELDS_PER_WORKSPACE,
   MAX_SERVICES_PER_WORKSPACE,
@@ -39,6 +41,7 @@ const SCH = "sch_01JB0000000000000000000001";
 const INC = "inc_01JB0000000000000000000001";
 const INC2 = "inc_01JB0000000000000000000002";
 const EVT = "evt_01JB0000000000000000000001";
+const MON = "mon_01JB0000000000000000000001";
 
 const ctx = (id: string, role: Role, now = T): MutationContext => ({
   actor: { kind: "user", id, role },
@@ -369,6 +372,36 @@ describe("references that go away", () => {
     run(store, "incident.setField", { id: INC, fieldId: FLD_NUM, value: 3 }, responder);
     expect(store.get("incidents", INC)!.fields).toEqual({ [FLD_NUM]: 3 });
   });
+
+  test("a deleted service's, type's or field's id is never taken again", () => {
+    const store = catalog();
+    declare(store, { typeId: TYP, serviceIds: [SVC] });
+    run(
+      store,
+      "incident.setField",
+      { id: INC, fieldId: FLD_TEXT, value: "javascript:alert(1)" },
+      responder,
+    );
+    run(store, "customField.delete", { id: FLD_TEXT });
+    run(store, "incidentType.delete", { id: TYP });
+    run(store, "service.delete", { id: SVC });
+    // A link field under the text field's old id would take its value as a link; a type, the incident and its policy.
+    for (const [name, args] of [
+      ["customField.create", field(FLD_TEXT, "link")],
+      ["incidentType.create", type()],
+      ["service.create", service()],
+    ] as const) {
+      expect(run(store, name, args)).toMatchObject({
+        ok: false,
+        error: { code: "conflict", message: "Id belonged to a deleted entry" },
+      });
+    }
+    expect(store.scan("catalog_deleted").map((row) => row.id)).toEqual([FLD_TEXT, SVC, TYP].sort());
+    // A new id is fine.
+    expect(
+      run(store, "customField.create", field("fld_01JB0000000000000000000009", "link")),
+    ).toMatchObject({ ok: true });
+  });
 });
 
 describe("incidents", () => {
@@ -421,6 +454,44 @@ describe("incidents", () => {
     expect(
       run(store, "incident.setType", { id: INC, typeId: TYP }, ctx("usr_duda", "viewer")),
     ).toMatchObject({ ok: false, error: { code: "forbidden" } });
+  });
+
+  test("changing away from a deleted type says so, not that a type was set", () => {
+    const store = catalog();
+    run(
+      store,
+      "incidentType.create",
+      type({ id: "typ_01JB0000000000000000000002", name: "Data loss" }),
+    );
+    declare(store, { typeId: TYP });
+    run(store, "incidentType.delete", { id: TYP });
+    expect(
+      run(
+        store,
+        "incident.setType",
+        { id: INC, typeId: "typ_01JB0000000000000000000002" },
+        responder,
+      ),
+    ).toMatchObject({ ok: true, events: [{ data: { from: TYP } }] });
+    expect(entries(store).slice(1)).toEqual([
+      { kind: "type_changed", from: null, to: "Data loss", fromDeleted: true },
+    ]);
+  });
+
+  test("reordering an incident's services is a change, since the order is the one picked", () => {
+    const store = catalog();
+    declare(store, { serviceIds: [SVC, SVC2] });
+    expect(
+      run(store, "incident.setServices", { id: INC, serviceIds: [SVC2, SVC] }, responder),
+    ).toMatchObject({
+      ok: true,
+      events: [{ data: { serviceIds: [SVC2, SVC], added: [], removed: [] } }],
+    });
+    expect(store.get("incidents", INC)!.serviceIds).toEqual([SVC2, SVC]);
+    expect(entries(store).slice(1)).toEqual([{ kind: "services_changed", added: [], removed: [] }]);
+    expect(
+      run(store, "incident.setServices", { id: INC, serviceIds: [SVC2, SVC] }, responder),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
   });
 
   test("services are replaced as a list, every one existing, the change by name", () => {
@@ -509,6 +580,53 @@ describe("incidents", () => {
     ]);
   });
 
+  test("the shard and clients run one check: text rules, number bounds, links, options", () => {
+    const store = catalog();
+    const row = (id: string) => store.get("custom_fields", id)!;
+    expect(checkFieldValue(row(FLD_TEXT), "  Gateway timeouts \n")).toEqual({
+      ok: true,
+      value: "Gateway timeouts",
+    });
+    expect(checkFieldValue(row(FLD_TEXT), `a${String.fromCharCode(7)}b`)).toMatchObject({ ok: false });
+    expect(checkFieldValue(row(FLD_TEXT), " ")).toMatchObject({ ok: false });
+    expect(checkFieldValue(row(FLD_NUM), 1e15)).toMatchObject({ ok: true });
+    expect(checkFieldValue(row(FLD_NUM), -1e16)).toMatchObject({ ok: false });
+    expect(checkFieldValue(row(FLD_NUM), Number.NaN)).toMatchObject({ ok: false });
+    expect(checkFieldValue(row(FLD_LINK), "https://example.com/a b")).toMatchObject({ ok: false });
+    expect(checkFieldValue(row(FLD_LINK), `https://example.com/${"a".repeat(1000)}`)).toMatchObject(
+      {
+        ok: false,
+      },
+    );
+    expect(checkFieldValue(row(FLD_MANY), Array(21).fill(OPT_A))).toMatchObject({ ok: false });
+    expect(checkFieldValue(row(FLD_MANY), [OPT_A, OPT_A])).toMatchObject({ ok: false });
+    expect(checkFieldValue(row(FLD_ONE), "opt_01JB0000000000000000000009")).toMatchObject({
+      ok: false,
+    });
+    expect(isFieldLink("https://example.com/runbook")).toBe(true);
+    expect(isFieldLink("javascript:alert(1)")).toBe(false);
+  });
+
+  test("a value not of its field's kind is read as nothing, and the next write drops it", () => {
+    const store = catalog();
+    declare(store);
+    // As a field of another kind once under these ids would have left them.
+    store.update("incidents", INC, {
+      fields: {
+        [FLD_LINK]: "javascript:alert(1)",
+        [FLD_NUM]: "12",
+        [FLD_ONE]: [OPT_A],
+        [FLD_MANY]: OPT_A,
+      },
+    });
+    const incident = store.get("incidents", INC)!;
+    for (const id of [FLD_LINK, FLD_NUM, FLD_ONE, FLD_MANY]) {
+      expect(liveValue(store.get("custom_fields", id)!, incident.fields![id])).toBeNull();
+    }
+    run(store, "incident.setField", { id: INC, fieldId: FLD_TEXT, value: "Timeouts" }, responder);
+    expect(store.get("incidents", INC)!.fields).toEqual({ [FLD_TEXT]: "Timeouts" });
+  });
+
   test("a required field can change but not be cleared; nothing else waits on it", () => {
     const store = catalog();
     declare(store, { typeId: TYP });
@@ -586,6 +704,71 @@ describe("the policy an incident's pages use", () => {
     declare(store, { typeId: TYP });
     expect(start(store)).toMatchObject({ ok: true });
     expect(store.get("incidents", INC)!.escalation).toMatchObject({ policyId: ESC_DEFAULT });
+  });
+
+  /** As if the monitor `MON`, naming `policyId`, opened the incident and still fires on it. */
+  const openedByMonitor = (store: MutationStore, policyId: string) =>
+    store.insert("monitors", {
+      id: MON,
+      name: "Checkout API",
+      policyId,
+      incidentId: INC,
+    } as unknown as BrigadeTables["monitors"]);
+
+  test("its type's policy wins over the policy of the monitor that opened it", () => {
+    const store = catalog();
+    run(store, "escalation.createPolicy", policy(ESC, false, "usr_eva"));
+    run(store, "escalation.createPolicy", policy(ESC_DEFAULT, true, "usr_caio"));
+    run(store, "incidentType.update", type({ requiredFields: [FLD_ONE], escalationPolicyId: ESC }));
+    declare(store, { typeId: TYP });
+    openedByMonitor(store, ESC_DEFAULT);
+    expect(start(store)).toMatchObject({ ok: true });
+    expect(store.get("incidents", INC)!.escalation).toMatchObject({ policyId: ESC, monitor: null });
+  });
+
+  test("a deleted type falls through to the monitor's policy, not the default", () => {
+    const store = catalog();
+    const ESC_MONITOR = "esc_01JB0000000000000000000003";
+    run(store, "escalation.createPolicy", policy(ESC, false, "usr_eva"));
+    run(store, "escalation.createPolicy", policy(ESC_DEFAULT, true, "usr_caio"));
+    run(store, "escalation.createPolicy", { ...policy(ESC_MONITOR, false), name: "Checkout" });
+    run(store, "incidentType.update", type({ requiredFields: [FLD_ONE], escalationPolicyId: ESC }));
+    declare(store, { typeId: TYP });
+    openedByMonitor(store, ESC_MONITOR);
+    run(store, "incidentType.delete", { id: TYP });
+    expect(start(store)).toMatchObject({ ok: true });
+    expect(store.get("incidents", INC)!.escalation).toMatchObject({
+      policyId: ESC_MONITOR,
+      monitor: { id: MON, name: "Checkout API" },
+    });
+  });
+
+  test("setting the type during a run leaves the run's policy and levels as they were", () => {
+    const store = catalog();
+    run(store, "escalation.createPolicy", policy(ESC, false, "usr_eva"));
+    // Ana caused the page, so she counts as reached and the run waits on her level.
+    run(store, "escalation.createPolicy", policy(ESC_DEFAULT, true, "usr_ana"));
+    run(store, "incidentType.update", type({ requiredFields: [FLD_ONE], escalationPolicyId: ESC }));
+    declare(store);
+    expect(start(store)).toMatchObject({ ok: true });
+    const before = store.get("incidents", INC)!.escalation;
+    expect(before).toMatchObject({ policyId: ESC_DEFAULT, status: "running" });
+    expect(run(store, "incident.setType", { id: INC, typeId: TYP }, responder)).toMatchObject({
+      ok: true,
+    });
+    expect(store.get("incidents", INC)!.escalation).toEqual(before);
+    // Its next step still walks the levels it started with.
+    expect(
+      runMutation(serverMutations, "escalation.advance", { incidentId: INC, step: 1 }, store, {
+        actor: ESCALATION_ACTOR,
+        now: T + 5 * 60_000,
+        server: true,
+      }),
+    ).toMatchObject({ ok: true });
+    expect(store.get("incidents", INC)!.escalation).toMatchObject({
+      policyId: ESC_DEFAULT,
+      levels: before!.levels,
+    });
   });
 
   test("a type's policy pages even without a default; with neither, nothing starts", () => {

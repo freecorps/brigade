@@ -50,6 +50,8 @@ export function DeclareForm({
   const [expanded, setExpanded] = useState(false);
   const [title, setTitle] = useState("");
   const [severity, setSeverity] = useState<Severity>("sev3");
+  /** The severity picked by hand (else the base default), which a type without a default gives back. */
+  const [ownSeverity, setOwnSeverity] = useState<Severity>("sev3");
   const [typeId, setTypeId] = useState("");
   const typed = types.length > 0;
   const typeSelectId = useId();
@@ -89,6 +91,7 @@ export function DeclareForm({
     setTitle("");
     // Back to the default each time, so a SEV1 chosen once cannot page people again by accident.
     setSeverity("sev3");
+    setOwnSeverity("sev3");
     setTypeId("");
     close();
     // A type deleted meanwhile is left out by the shard: the declare still goes through.
@@ -179,7 +182,7 @@ export function DeclareForm({
               onChange={(event) => {
                 setTypeId(event.target.value);
                 const type = types.find((one) => one.id === event.target.value);
-                if (type?.defaultSeverity) setSeverity(type.defaultSeverity);
+                setSeverity(type?.defaultSeverity ?? ownSeverity);
               }}
               className="h-11 w-full min-w-0 rounded-md border border-input bg-card px-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring md:col-start-2 md:row-start-2"
             >
@@ -232,7 +235,10 @@ export function DeclareForm({
                   name={groupName}
                   value={option}
                   checked={selected}
-                  onChange={() => setSeverity(option)}
+                  onChange={() => {
+                    setSeverity(option);
+                    setOwnSeverity(option);
+                  }}
                   className="sr-only"
                 />
                 <span className="flex items-center gap-0.5 font-bold">

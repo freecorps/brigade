@@ -188,14 +188,29 @@ const fieldFields = {
 
 const isSelect = (kind: FieldKind) => kind === "single_select" || kind === "multi_select";
 
-function checkNewId(id: string, ctx: MutationContext): MutationResult | undefined {
+/**
+ * A new service's, type's or field's id: not ahead of the server clock, and never one a deleted entry had. Incidents
+ * keep those ids, so an entry that took one over would inherit their values (as another kind of field) or their
+ * type and its policy.
+ */
+function checkNewId(
+  store: MutationStore,
+  id: string,
+  ctx: MutationContext,
+): MutationResult | undefined {
   if (ctx.server && idTime(id) - ctx.now > ID_CLOCK_SKEW_MS) {
     return fail("invalid_args", "Id time is ahead of the server clock", [
       { path: "id", message: "Id time is too far in the future" },
     ]);
   }
+  if (store.get("catalog_deleted", id)) return fail("conflict", "Id belonged to a deleted entry");
   return undefined;
 }
+
+/** Remembers a deleted entry's id, so `checkNewId` refuses it. */
+const retire = (store: MutationStore, id: string, ctx: MutationContext) => {
+  if (!store.get("catalog_deleted", id)) store.insert("catalog_deleted", { id, at: ctx.now });
+};
 
 /** Owners once each, schedules that exist, members who can respond (like escalation targets). */
 function checkOwners(store: MutationStore, owners: readonly EscalationTarget[]): Issue[] {
@@ -246,65 +261,84 @@ function checkOptions(kind: FieldKind, options: readonly FieldOption[]): Issue[]
 }
 
 const choices = v.array(v.id("opt"), { max: MAX_FIELD_CHOICES, unique: true });
-const text = v.string({ min: 1, max: FIELD_LINK_MAX, multiline: true, joiners: true });
+const text = v.string({ min: 1, max: FIELD_TEXT_MAX, multiline: true, joiners: true });
+const link = v.string({ min: 1, max: FIELD_LINK_MAX });
+const number: Validator<number> = (input, path = "") =>
+  typeof input === "number" && Number.isFinite(input) && Math.abs(input) <= FIELD_NUMBER_LIMIT
+    ? { ok: true, value: input }
+    : { ok: false, issues: [{ path, message: "Expected a finite number" }] };
 
-/** Any value a field may hold, before the field's kind is known: text, a number, or option ids. */
+/**
+ * Any value a field may hold, before the field's kind is known: text, a number, or option ids. Only the shape and
+ * the largest size; `checkFieldValue` is the check for the field.
+ */
 const anyValue: Validator<FieldValue> = (input, path = "") => {
-  if (typeof input === "number") {
-    return Number.isFinite(input) && Math.abs(input) <= FIELD_NUMBER_LIMIT
-      ? { ok: true, value: input }
-      : { ok: false, issues: [{ path, message: "Expected a finite number" }] };
-  }
-  return Array.isArray(input) ? choices(input, path) : text(input, path);
+  if (typeof input === "number") return number(input, path);
+  if (Array.isArray(input)) return choices(input, path);
+  return typeof input === "string" && input.length <= FIELD_LINK_MAX * 2 + 64
+    ? { ok: true, value: input }
+    : { ok: false, issues: [{ path, message: "Expected text, a number or options" }] };
 };
 
 const LINK = /^https?:\/\/[^\s/?#]+[^\s]*$/i;
 
-/** `value` as `field` takes it, or why not. Option ids must be the field's own (and live). */
-export function checkFieldValue(field: CustomFieldRow, value: FieldValue): Validated<FieldValue> {
+/** Whether `value` is a link a field may hold, and so one a client may render as a link: http(s) only. */
+export const isFieldLink = (value: unknown): value is string =>
+  typeof value === "string" && value.length <= FIELD_LINK_MAX && LINK.test(value);
+
+/**
+ * `value` as `field` takes it, or why not: the one check the shard and clients both run. Text is trimmed and held to
+ * the text rules, a number to `FIELD_NUMBER_LIMIT`, and option ids must be the field's own (and live).
+ */
+export function checkFieldValue(field: CustomFieldRow, value: unknown): Validated<FieldValue> {
   const no = (message: string): Validated<never> => ({
     ok: false,
     issues: [{ path: "value", message }],
   });
   switch (field.kind) {
     case "number":
-      return typeof value === "number" ? { ok: true, value } : no("Expected a number");
+      return number(value, "value");
     case "text":
-      if (typeof value !== "string") return no("Expected text");
-      return value.length <= FIELD_TEXT_MAX
-        ? { ok: true, value }
-        : no(`Expected at most ${FIELD_TEXT_MAX} characters`);
-    case "link":
-      if (typeof value !== "string" || !LINK.test(value)) return no("Expected an http(s) link");
-      return value.length <= FIELD_LINK_MAX
-        ? { ok: true, value }
-        : no(`Expected at most ${FIELD_LINK_MAX} characters`);
+      return text(value, "value");
+    case "link": {
+      const checked = link(value, "value");
+      if (!checked.ok) return checked;
+      return LINK.test(checked.value) ? checked : no("Expected an http(s) link");
+    }
     case "single_select":
     case "multi_select": {
-      const ids = typeof value === "string" ? [value] : Array.isArray(value) ? value : null;
-      if (ids === null || ids.length === 0) return no("Expected an option");
-      if (field.kind === "single_select" && (typeof value !== "string" || ids.length !== 1)) {
+      if (field.kind === "single_select" && typeof value !== "string") {
         return no("Expected one option");
       }
-      if (field.kind === "multi_select" && !Array.isArray(value)) return no("Expected options");
+      if (field.kind === "multi_select") {
+        if (!Array.isArray(value)) return no("Expected options");
+        const checked = choices(value, "value");
+        if (!checked.ok) return checked;
+        if (checked.value.length === 0) return no("Expected an option");
+      }
+      const ids: unknown[] = Array.isArray(value) ? value : [value];
       if (!ids.every((id) => field.options.some((option) => option.id === id))) {
         return no("Option not found");
       }
-      return { ok: true, value };
+      return { ok: true, value: value as FieldValue };
     }
   }
 }
 
-/** Whether a field holds something, once options that were taken out are left out. */
+/**
+ * What a field holds, as readers take it: null for nothing, for a value not of the field's kind (say, one written
+ * under an id a field of another kind had), and for options that were taken out.
+ */
 export function liveValue(field: CustomFieldRow, value: FieldValue | undefined): FieldValue | null {
   if (value === undefined) return null;
-  if (!isSelect(field.kind)) return value;
+  if (!isSelect(field.kind)) return checkFieldValue(field, value).ok ? value : null;
   const has = (id: unknown) => field.options.some((option) => option.id === id);
-  if (Array.isArray(value)) {
+  if (field.kind === "multi_select") {
+    if (!Array.isArray(value)) return null;
     const kept = value.filter(has);
     return kept.length ? kept : null;
   }
-  return has(value) ? value : null;
+  return typeof value === "string" && has(value) ? value : null;
 }
 
 /** The required fields of the incident's type that hold nothing yet, in the type's order. */
@@ -328,7 +362,7 @@ export const createService = defineMutation({
   args: v.object({ id: serviceId, ...serviceFields }),
   permission: "catalog:manage",
   apply(store, args, ctx) {
-    const clock = checkNewId(args.id, ctx);
+    const clock = checkNewId(store, args.id, ctx);
     if (clock) return clock;
     const issues = [
       ...checkOwners(store, args.owners),
@@ -405,10 +439,11 @@ export const deleteService = defineMutation({
   name: "service.delete",
   args: v.object({ id: serviceId }),
   permission: "catalog:manage",
-  apply(store, args) {
+  apply(store, args, ctx) {
     const service = store.get("services", args.id);
     if (!service) return fail("not_found", "Service not found");
     store.delete("services", args.id);
+    retire(store, args.id, ctx);
     const event: ServiceDeleted = {
       type: "service.deleted",
       subject: args.id,
@@ -438,7 +473,7 @@ export const createIncidentType = defineMutation({
   args: v.object({ id: typeId, ...typeFields }),
   permission: "catalog:manage",
   apply(store, args, ctx) {
-    const clock = checkNewId(args.id, ctx);
+    const clock = checkNewId(store, args.id, ctx);
     if (clock) return clock;
     const issues = checkType(store, args);
     if (issues.length) {
@@ -510,10 +545,11 @@ export const deleteIncidentType = defineMutation({
   name: "incidentType.delete",
   args: v.object({ id: typeId }),
   permission: "catalog:manage",
-  apply(store, args) {
+  apply(store, args, ctx) {
     const type = store.get("incident_types", args.id);
     if (!type) return fail("not_found", "Type not found");
     store.delete("incident_types", args.id);
+    retire(store, args.id, ctx);
     const event: IncidentTypeDeleted = {
       type: "incident_type.deleted",
       subject: args.id,
@@ -530,7 +566,7 @@ export const createCustomField = defineMutation({
   args: v.object({ id: fieldId, kind: v.picklist(FIELD_KINDS), ...fieldFields }),
   permission: "catalog:manage",
   apply(store, args, ctx) {
-    const clock = checkNewId(args.id, ctx);
+    const clock = checkNewId(store, args.id, ctx);
     if (clock) return clock;
     const issues = checkOptions(args.kind, args.options);
     if (issues.length) {
@@ -613,6 +649,7 @@ export const deleteCustomField = defineMutation({
     const field = store.get("custom_fields", args.id);
     if (!field) return fail("not_found", "Field not found");
     store.delete("custom_fields", args.id);
+    retire(store, args.id, ctx);
     const events: DomainEvent[] = [
       {
         type: "custom_field.deleted",
@@ -692,11 +729,16 @@ export function dropOwner(
 
 const incidentId = v.id("inc");
 
-/** The values an incident keeps: only fields that still exist (deleted ones fade on the next write). */
+/**
+ * The values an incident keeps: only fields that still exist and values they still take (`liveValue`); the rest fade
+ * on the next write.
+ */
 function liveFields(store: MutationStore, incident: IncidentRow): Record<string, FieldValue> {
   const kept: Record<string, FieldValue> = {};
   for (const [id, value] of Object.entries(incident.fields ?? {})) {
-    if (store.get("custom_fields", id)) kept[id] = value;
+    const field = store.get("custom_fields", id);
+    const live = field ? liveValue(field, value) : null;
+    if (live !== null) kept[id] = live;
   }
   return kept;
 }
@@ -723,11 +765,17 @@ export const setIncidentType = defineMutation({
       ]);
     }
     store.update("incidents", args.id, { typeId: args.typeId, updatedAt: ctx.now });
+    // A type deleted since has no name left: the entry says the incident changed from a deleted type.
     const previous = from ? store.get("incident_types", from) : undefined;
     appendTimeline(
       store,
       incident,
-      { kind: "type_changed", from: previous?.name ?? null, to: type?.name ?? null },
+      {
+        kind: "type_changed",
+        from: previous?.name ?? null,
+        to: type?.name ?? null,
+        ...(from !== null && !previous && { fromDeleted: true }),
+      },
       ctx,
     );
     const event: IncidentTypeChanged = {
@@ -762,7 +810,10 @@ export const setIncidentServices = defineMutation({
     const before = incident.serviceIds ?? [];
     const added = args.serviceIds.filter((id: string) => !before.includes(id));
     const removed = before.filter((id) => !args.serviceIds.includes(id));
-    if (!added.length && !removed.length) return fail("conflict", "Services are unchanged");
+    // The order is the one picked (the incident lists them so), so a reorder is a change too.
+    if (JSON.stringify(before) === JSON.stringify(args.serviceIds)) {
+      return fail("conflict", "Services are unchanged");
+    }
     store.update("incidents", args.id, { serviceIds: [...args.serviceIds], updatedAt: ctx.now });
     // By name as they are now; a deleted service has none left and is not named.
     const names = (ids: string[]) =>

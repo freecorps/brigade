@@ -61,6 +61,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "type_changed" | "{actor} changed the type from {a} to {b}" |
 * | "type_cleared" | "{actor} removed the type {a}" |
 * | "type_cleared_deleted" | "{actor} removed the type" |
+* | "type_changed_deleted" | "{actor} changed the type from a deleted one to {a}" |
 * | "services_added" | "{actor} named {a} as affected" |
 * | "services_removed" | "{actor} took {a} off the affected services" |
 * | "services_changed" | "{actor} named {a} as affected and took off {b}" |
@@ -127,6 +128,7 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "type_changed") return /** @type {LocalizedString} */ (`${i?.actor} mudou o tipo de ${i?.a} para ${i?.b}`);
 		if (i?.kind === "type_cleared") return /** @type {LocalizedString} */ (`${i?.actor} tirou o tipo ${i?.a}`);
 		if (i?.kind === "type_cleared_deleted") return /** @type {LocalizedString} */ (`${i?.actor} tirou o tipo`);
+		if (i?.kind === "type_changed_deleted") return /** @type {LocalizedString} */ (`${i?.actor} mudou o tipo de um tipo excluído para ${i?.a}`);
 		if (i?.kind === "services_added") return /** @type {LocalizedString} */ (`${i?.actor} citou ${i?.a} como afetado`);
 		if (i?.kind === "services_removed") return /** @type {LocalizedString} */ (`${i?.actor} tirou ${i?.a} dos serviços afetados`);
 		if (i?.kind === "services_changed") return /** @type {LocalizedString} */ (`${i?.actor} citou ${i?.a} como afetado e tirou ${i?.b}`);
@@ -187,6 +189,7 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "type_changed") return /** @type {LocalizedString} */ (`${i?.actor} changed the type from ${i?.a} to ${i?.b}`);
 		if (i?.kind === "type_cleared") return /** @type {LocalizedString} */ (`${i?.actor} removed the type ${i?.a}`);
 		if (i?.kind === "type_cleared_deleted") return /** @type {LocalizedString} */ (`${i?.actor} removed the type`);
+		if (i?.kind === "type_changed_deleted") return /** @type {LocalizedString} */ (`${i?.actor} changed the type from a deleted one to ${i?.a}`);
 		if (i?.kind === "services_added") return /** @type {LocalizedString} */ (`${i?.actor} named ${i?.a} as affected`);
 		if (i?.kind === "services_removed") return /** @type {LocalizedString} */ (`${i?.actor} took ${i?.a} off the affected services`);
 		if (i?.kind === "services_changed") return /** @type {LocalizedString} */ (`${i?.actor} named ${i?.a} as affected and took off ${i?.b}`);

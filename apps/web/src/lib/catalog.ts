@@ -270,8 +270,8 @@ export const valueProblem = (kind: FieldKind) =>
   kind === "number" ? "number" : kind === "link" ? "link" : isSelect(kind) ? "choice" : "text";
 
 /**
- * The draft as `incident.setField`'s value, by the shard's own check; `null` clears. A number is read in the
- * reader's notation too ("1,5" in pt-BR).
+ * The draft as `incident.setField`'s value, by the shard's own check (`checkFieldValue`); `null` clears. A number is
+ * read in the reader's notation too ("1,5" in pt-BR).
  */
 export function checkValue(
   field: CustomFieldRow,
@@ -290,12 +290,10 @@ export function checkValue(
       if (!Number.isFinite(number)) return { ok: false };
       value = number;
     } else {
-      if (text.length > FIELD_TEXT_MAX * 2 || textProblem(text, field.kind === "text")) {
-        return { ok: false };
-      }
       value = text;
     }
   }
+  // The shard's own check: text rules and sizes, `FIELD_NUMBER_LIMIT`, http(s) links, live options.
   const checked = checkFieldValue(field, value);
   return checked.ok ? { ok: true, value: checked.value } : { ok: false };
 }

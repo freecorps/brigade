@@ -61,6 +61,7 @@ export type Timeline_EntryInputs = {
 * | "type_changed" | "{actor} changed the type from {a} to {b}" |
 * | "type_cleared" | "{actor} removed the type {a}" |
 * | "type_cleared_deleted" | "{actor} removed the type" |
+* | "type_changed_deleted" | "{actor} changed the type from a deleted one to {a}" |
 * | "services_added" | "{actor} named {a} as affected" |
 * | "services_removed" | "{actor} took {a} off the affected services" |
 * | "services_changed" | "{actor} named {a} as affected and took off {b}" |

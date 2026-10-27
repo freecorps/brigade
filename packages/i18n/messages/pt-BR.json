@@ -757,6 +757,7 @@
         "kind=type_changed": "{actor} mudou o tipo de {a} para {b}",
         "kind=type_cleared": "{actor} tirou o tipo {a}",
         "kind=type_cleared_deleted": "{actor} tirou o tipo",
+        "kind=type_changed_deleted": "{actor} mudou o tipo de um tipo excluído para {a}",
         "kind=services_added": "{actor} citou {a} como afetado",
         "kind=services_removed": "{actor} tirou {a} dos serviços afetados",
         "kind=services_changed": "{actor} citou {a} como afetado e tirou {b}",

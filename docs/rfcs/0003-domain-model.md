@@ -353,9 +353,14 @@ First slice of Phase 3, in `packages/schema` (`catalog.ts`), stored in `Workspac
   schedule or removing a member (or making them a viewer) takes them out of every service's owners
   (`schedule_deleted`, `member_removed`; a service left with none reads as unowned). Deleting a service or a type does
   **not** rewrite the incidents that name it, which would sync every incident for a catalog edit: readers skip a
-  deleted service and show a deleted type as such, and the next change to that incident drops it.
-- Not yet: a monitor naming the service it watches, status page components mapped to services (the status page is
-  not on `main` yet), dependencies and links.
+  deleted service and show a deleted type as such, and the next change to that incident drops it. So a deleted
+  service's, type's or field's id is never taken again: the shard keeps it (`catalog_deleted`, server-only, one small
+  row per delete) and refuses to create an entry with it (`conflict`). Otherwise a new field of another kind would
+  inherit old values, or a new type the incidents of a deleted one and its policy.
+- Incidents list their services in the order picked, so reordering them is a change too (timeline
+  `services_changed` with nobody added or removed).
+- Not yet: a monitor naming the service it watches, status page components mapped to services (RFC 0012; a
+  component has no service yet), dependencies and links.
 
 ## Incident types
 
@@ -369,7 +374,9 @@ First slice of Phase 3, in `packages/schema` (`catalog.ts`), stored in `Workspac
   The type comes first: it is the choice someone made about this incident, the monitor's is about what it watches.
   The run keeps the policy it started with.
 - **Changing it later** is `incident.setType` (`incident:update`, event `incident.type_changed`, timeline
-  `type_changed` with the types' names then). It changes nothing else: severity defaults apply only when declaring.
+  `type_changed` with the types' names then; `fromDeleted` when the type it had was deleted, so it reads as a change
+  from a deleted type). It changes nothing else: severity defaults apply only when declaring, and a run under way
+  keeps its levels.
 
 ## Custom fields
 
@@ -378,9 +385,15 @@ First slice of Phase 3, in `packages/schema` (`catalog.ts`), stored in `Workspac
   `multi_select` (up to 20 choices), `number` (any finite number up to 1e15 either way) or `link` (`http(s)://`, up to
   1000). Selects have 1 to 50 options with ids (`opt_…`) and distinct labels, so renaming an option keeps every value.
 - **Values** live on the incident row (`fields`, by field id), set one at a time by `incident.setField` (value `null`
-  clears), checked against the field's kind in the mutation (`checkFieldValue`); event `incident.field_changed`,
-  timeline `field_changed` with the field's name and the value as it read then (a select's labels). The caps keep an
-  incident's values to a few KiB, within RFC 0004's frames.
+  clears), checked against the field's kind in the mutation (`checkFieldValue`, the same check the dashboard runs
+  before sending: text rules and sizes, the number bounds, `http(s)` links, live options); event
+  `incident.field_changed`, timeline `field_changed` with the field's name and the value as it read then (a select's
+  labels). Readers take a value only if it still fits its field (`liveValue`), and clients render a link only if it
+  passes the same link check.
+- **Size**: the caps bound an incident's values to about 25k UTF-16 code units (25 link fields of 1000), which is
+  about 25 KiB of UTF-8 for ASCII and at most about 73 KiB if every character takes three bytes. That rides on the
+  incident row in every snapshot and patch; one `incident.setField` frame carries one value, far inside RFC 0004's
+  client frame limit.
 - **Required fields** never hold anything up: declaring, paging and resolving do not wait for paperwork. A required
   field is flagged on the incident page until filled (`missingFields`), and once filled it can change but not be
   cleared (`invalid_args`). Enforcing them at a chosen status can come later, opt-in.

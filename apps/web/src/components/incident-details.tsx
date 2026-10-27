@@ -1,6 +1,7 @@
 import { m } from "@freecorps/brigade-i18n";
 import {
   can,
+  isFieldLink,
   MAX_INCIDENT_SERVICES,
   missingFields,
   type CustomFieldRow,
@@ -326,7 +327,7 @@ function FieldValueRow({
           ) : (
             <span className="text-muted-foreground">{catalogText("not_set")}</span>
           )
-        ) : field.kind === "link" ? (
+        ) : field.kind === "link" && isFieldLink(text) ? (
           <a
             href={text}
             target="_blank"

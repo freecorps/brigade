@@ -41,8 +41,20 @@ export function parseServiceId(raw: string): string | null {
 export function ServicePage({ id }: { id: string | null }) {
   usePreferences();
   const services = useQuery("services.all", {});
+  const navigate = useNavigate();
+  // Kept here, not in `Service`: a delete takes the row out at once, and a refusal brings it back to say why.
+  const [refused, setRefused] = useState<string | null>(null);
   const row = id ? services.rows.find((one) => one.id === id) : undefined;
-  if (row) return <Service row={row} />;
+  if (row) {
+    return (
+      <Service
+        row={row}
+        refused={refused}
+        onRefused={setRefused}
+        onDeleted={() => void navigate({ to: "/" })}
+      />
+    );
+  }
   if (services.status === "error") {
     return (
       <Problem
@@ -92,11 +104,22 @@ function Problem({ title, text }: { title: string; text: string }) {
   );
 }
 
-function Service({ row }: { row: ServiceRow }) {
+function Service({
+  row,
+  refused,
+  onRefused: setRefused,
+  onDeleted,
+}: {
+  row: ServiceRow;
+  /** Why the last change was refused, if it was. */
+  refused: string | null;
+  onRefused: (text: string | null) => void;
+  /** The shard deleted it: leave the page. */
+  onDeleted: () => void;
+}) {
   usePageTitle(row.name);
   const { role } = useMember();
   const manage = can(role, "catalog:manage");
-  const navigate = useNavigate();
   const incidents = useQuery("incidents.active", {});
   const schedules = useQuery("schedules.all", {});
   const overrides = useQuery("overrides.all", {});
@@ -105,7 +128,6 @@ function Service({ row }: { row: ServiceRow }) {
   const update = useMutation("service.update");
   const remove = useMutation("service.delete");
   const [editing, setEditing] = useState(false);
-  const [refused, setRefused] = useState<string | null>(null);
   const editRef = useRef<HTMLButtonElement>(null);
   const now = useNow(30_000);
   const policy = row.escalationPolicyId
@@ -155,10 +177,12 @@ function Service({ row }: { row: ServiceRow }) {
           loaded={schedules.status === "ready" && members.status === "ready"}
           onCancel={stopEditing}
           onDelete={() => {
+            setRefused(null);
+            // Leaves only once the shard has deleted it; a refusal brings the row back and says why.
             void remove({ id: row.id }).then((outcome) => {
-              if (!outcome.ok) setRefused(catalogRefusal(row.name, outcome.error.code));
+              if (outcome.ok) onDeleted();
+              else setRefused(catalogRefusal(row.name, outcome.error.code));
             });
-            void navigate({ to: "/" });
           }}
           onSubmit={(draft) => {
             const checked = checkService(row.id, draft);

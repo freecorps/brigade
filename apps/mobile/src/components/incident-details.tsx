@@ -31,9 +31,20 @@ function valueText(field: CustomFieldRow, value: FieldValue | undefined): string
  * while the workspace has no catalog and the incident names nothing from one.
  */
 export function IncidentDetails({ row }: { row: IncidentRow }) {
-  const types = useQuery("incidentTypes.all", {}).rows;
-  const services = useQuery("services.all", {}).rows;
-  const fields = useQuery("customFields.all", {}).rows;
+  const typesQuery = useQuery("incidentTypes.all", {});
+  const servicesQuery = useQuery("services.all", {});
+  const fieldsQuery = useQuery("customFields.all", {});
+  // Until the catalog has loaded, a type or service the incident names would read as deleted, or as none.
+  if (
+    typesQuery.status !== "ready" ||
+    servicesQuery.status !== "ready" ||
+    fieldsQuery.status !== "ready"
+  ) {
+    return null;
+  }
+  const types = typesQuery.rows;
+  const services = servicesQuery.rows;
+  const fields = fieldsQuery.rows;
   const typeId = row.typeId ?? null;
   const named = (row.serviceIds ?? []).flatMap((id) => {
     const service = services.find((one) => one.id === id);

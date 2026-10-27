@@ -159,6 +159,7 @@ export function entryText(entry: TimelineRow, who: People): string {
       if (entry.to === null) {
         return entry.from === null ? say("type_cleared_deleted") : say("type_cleared", entry.from);
       }
+      if (entry.fromDeleted) return say("type_changed_deleted", entry.to);
       return entry.from === null
         ? say("type_set", entry.to)
         : say("type_changed", entry.from, entry.to);

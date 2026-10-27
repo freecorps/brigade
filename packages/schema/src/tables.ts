@@ -283,8 +283,11 @@ export type TimelineEntry =
    * text), an update `removed` (`body`: the text taken down) or the incident `withdrawn` (`body`: its public title).
    */
   | { kind: "status_corrected"; change: StatusCorrection; body: string }
-  /** The incident's type changed (`incident.setType`): the types' names then; null: none. */
-  | { kind: "type_changed"; from: string | null; to: string | null }
+  /**
+   * The incident's type changed (`incident.setType`): the types' names then; null: none. `fromDeleted`: the type it
+   * had was deleted, so `from` is null (entries written before it read a null `from` with a null `to` that way).
+   */
+  | { kind: "type_changed"; from: string | null; to: string | null; fromDeleted?: boolean }
   /** Services named or taken off (`incident.setServices`), by their names then. */
   | { kind: "services_changed"; added: string[]; removed: string[] }
   /**
@@ -623,6 +626,12 @@ export type StatusIncidentRow = {
  */
 export type StatusRetiredRow = { id: string; at: number; cleared?: number };
 
+/**
+ * Server-only: the id of a deleted service, incident type or custom field (`id`), deleted at `at`. Incidents keep
+ * such ids, so a new catalog entry may never take one (RFC 0003 "Service catalog").
+ */
+export type CatalogDeletedRow = { id: string; at: number };
+
 /** Per-shard sequences, e.g. `{ id: "incident", value: 142 }`. Server-only. */
 export type CounterRow = { id: string; value: number };
 
@@ -651,6 +660,7 @@ export type BrigadeTables = {
   services: ServiceRow;
   incident_types: IncidentTypeRow;
   custom_fields: CustomFieldRow;
+  catalog_deleted: CatalogDeletedRow;
 };
 
 export type TableName = Extract<keyof BrigadeTables, string>;
@@ -681,6 +691,7 @@ export const TABLES = {
   services: { serverOnly: false },
   incident_types: { serverOnly: false },
   custom_fields: { serverOnly: false },
+  catalog_deleted: { serverOnly: true },
 } as const satisfies Record<TableName, { serverOnly: boolean }>;
 
 /** Tables clients may hold and queries may read. */

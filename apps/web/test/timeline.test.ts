@@ -254,3 +254,20 @@ test("pages one run could not send for the same reason are one line, with the na
     { kind: "entry", entry: failed(1, "usr_bia") },
   ]);
 });
+
+test("a type change reads by the types' names then, and as from a deleted type when it was deleted", async () => {
+  const type = (fields: Record<string, unknown>) =>
+    entryText(entry({ kind: "type_changed", ...fields }), who);
+  expect(type({ from: null, to: "Data loss" })).toBe("Bia Lima set the type to Data loss");
+  expect(type({ from: "Outage", to: "Data loss" })).toBe(
+    "Bia Lima changed the type from Outage to Data loss",
+  );
+  expect(type({ from: null, to: "Data loss", fromDeleted: true })).toBe(
+    "Bia Lima changed the type from a deleted one to Data loss",
+  );
+  expect(type({ from: null, to: null })).toBe("Bia Lima removed the type");
+  await setLocale("pt-BR");
+  expect(type({ from: null, to: "Perda de dados", fromDeleted: true })).toBe(
+    "Bia Lima mudou o tipo de um tipo excluído para Perda de dados",
+  );
+});

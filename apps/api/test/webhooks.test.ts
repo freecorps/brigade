@@ -59,9 +59,11 @@ describe("signature", () => {
   });
 
   test("a receiver's answer is kept as a short line of printable text", () => {
-    expect(snippet("  oops\n\tbad\u0000 gateway  ")).toBe("oops bad gateway");
+    const nul = String.fromCodePoint(0);
+    expect(snippet(`  oops\n\tbad${nul} gateway  `)).toBe("oops bad gateway");
     expect(snippet("x".repeat(500))).toHaveLength(200);
-    expect(snippet("​\u0007")).toBeNull();
+    // A zero-width space and a bell: nothing printable.
+    expect(snippet(String.fromCodePoint(0x200b, 0x7))).toBeNull();
   });
 });
 

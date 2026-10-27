@@ -352,6 +352,7 @@ In order, from `apps/api` unless noted:
    | `DASHBOARD_URL`      | Links in emails and Slack: `https://brigade-web-dev.<subdomain>.workers.dev`                                                 |
    | `EMAIL_FROM`         | Optional: the email sender ("Email" above); without it no email goes out, so addresses cannot be verified or passwords reset |
    | `SLACK_TOKEN_KEY`    | Optional until Slack: seals bot tokens ("Slack" below)                                                                       |
+   | `WEBHOOK_SECRET_KEY` | Optional: seals webhook signing secrets ("Webhooks" below, `openssl rand 32 \| base64 \| tr '+/' '-_' \| tr -d =`); without it webhooks are off |
    | `DEAD_MAN_URL`       | Optional: the external dead-man check's ping URL ("Dead-man switch" above)                                                   |
 
    No `RELAY_URL`: the `dev` environment reaches `brigade-relay-dev` through its `RELAY` service binding
@@ -410,6 +411,24 @@ then add `"kv_namespaces": [{ "binding": "STATUS", "id": "<that id>" }]` to `env
 with `brigade-status-staging` for `staging`, and give production's top-level entry its `id` with `brigade-status`
 before its first deploy, or wrangler provisions a namespace on its own), and apply `migrations/0008_status_slug.sql`
 to the environment's database. `migrations/0008_status_slug.sql` is applied to `brigade-db-dev` only.
+
+## Webhooks
+
+RFC 0005 "Outbound webhooks". Owners and admins register endpoints on the dashboard's Webhooks card (at most 20 per
+workspace). `POST /workspaces/:id/webhooks` and `POST /workspaces/:id/webhooks/:webhookId/rotate`
+(`src/webhook-routes.ts`) make the signing secret (`whsec_…`), seal it with AES-256-GCM under `WEBHOOK_SECRET_KEY`
+(optional secret, 32 bytes base64url; the same sealing as Slack's tokens, bound to the workspace and the endpoint)
+and run `webhook.create` / `webhook.rotateSecret` in the shard as the member; the answer is the only time the secret
+is shown. Edits, on and off, delete and "Send test event" are mutations over sync. Without the key, creating answers
+503 `not_configured` and nothing is delivered.
+
+The queue consumer delivers (`src/notify-webhooks.ts`): the shard's ledger (`src/webhooks.ts`) plans each event's
+endpoints and keeps the payload, the consumer signs it (Standard Webhooks, `src/webhook-sign.ts`), POSTs it under the
+monitors' target rules plus https only (no redirects followed, 5 s, at most 1 KB of the answer read) and reports back.
+Retries: 30 s, 2 min, 10 min, 1 h, 4 h, then given up. A page never waits on it: webhooks get at most
+`WEBHOOK_BUDGET_MS` (3 s) per event in a batch, like Slack. An endpoint failing for a day (10 attempts or more) is
+turned off, and its owners are emailed. Locally, an endpoint must be a public https URL (a tunnel to a local
+receiver works); set `WEBHOOK_SECRET_KEY` in `.dev.vars` to try it under `vp run dev`.
 
 ## Generated types
 

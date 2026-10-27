@@ -1473,7 +1473,9 @@
       "match": {
         "part=action": "Page again",
         "part=pending": "Paging again…",
-        "part=already": "Someone already paged this again.",
+        "part=already": "This was already paged again, by someone or by Brigade.",
+        "part=acked": "Someone acknowledged the incident, so there's nothing to page again.",
+        "part=resolved": "The incident is no longer active, so there's nothing to page again.",
         "part=failed": "Couldn't page again. {reason}",
         "part=*": "Page again"
       }

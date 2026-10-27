@@ -8,7 +8,9 @@ import {
   MAX_ESCALATION_PAGES,
   MAX_PAGE_MISSES,
   MEMBERS_ACTOR,
+  answeredEntries,
   mutations,
+  PAGE_AGAIN_CONFLICTS,
   runMutation,
   serverMutations,
   type BrigadeTables,
@@ -1400,17 +1402,74 @@ describe("incident.pageAgain", () => {
     expect(pageAgain(store, [eva])).toMatchObject({ ok: false, error: { code: "conflict" } });
   });
 
-  test("refused once the incident is acknowledged or resolved", () => {
+  test("refused once the incident is acknowledged or resolved, each saying which", () => {
     const store = shard();
     fail(store, { userId: "usr_caio", reason: "undelivered" });
     const caio = entry(store);
     store.update("incidents", INC, { acknowledgedAt: T, acknowledgedBy: "usr_caio" });
-    expect(pageAgain(store, [caio])).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(pageAgain(store, [caio])).toMatchObject({
+      ok: false,
+      error: { code: "conflict", message: PAGE_AGAIN_CONFLICTS.acknowledged },
+    });
     store.update("incidents", INC, {
       acknowledgedAt: null,
       acknowledgedBy: null,
       status: "resolved",
     });
-    expect(pageAgain(store, [caio])).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(pageAgain(store, [caio])).toMatchObject({
+      ok: false,
+      error: { code: "conflict", message: PAGE_AGAIN_CONFLICTS.inactive },
+    });
+  });
+
+  test("a lost level its run already paged again is answered: refused, and offered nowhere", () => {
+    const store = withPolicy({
+      levels: [
+        level(LVL1, [
+          { kind: "schedule", id: SCH },
+          { kind: "member", id: "usr_ana" },
+        ]),
+        level(LVL2, [{ kind: "member", id: "usr_eva" }], 10),
+      ],
+    });
+    start(store);
+    fail(store, { userId: null, reason: "dead_lettered", page: { run: EVT, step: 1 } });
+    const lost = entry(store);
+    expect(answeredEntries(store.scan("timeline"))).toEqual(new Set());
+    // The dead-letter consumer's own re-page of that level (RFC 0006 "A lost page").
+    expect(
+      runMutation(
+        serverMutations,
+        "escalation.repage",
+        { incidentId: INC, step: 1, lost: LOST },
+        store,
+        system(T + MINUTE),
+      ),
+    ).toMatchObject({ ok: true });
+    expect(timeline(store).at(-1)).toMatchObject({
+      kind: "escalated",
+      again: true,
+      repaged: { run: EVT, step: 1 },
+    });
+    expect(answeredEntries(store.scan("timeline"))).toEqual(new Set([lost]));
+    expect(pageAgain(store, [lost])).toMatchObject({
+      ok: false,
+      error: { code: "conflict", message: PAGE_AGAIN_CONFLICTS.answered },
+    });
+    expect(timeline(store).map((row) => row.kind)).not.toContain("paged_again");
+  });
+
+  test("a lost page leaves out who caused it, not who pages it again", () => {
+    const store = shard();
+    fail(store, { userId: null, reason: "dead_lettered", causedBy: "usr_ana" });
+    const lost = entry(store);
+    expect(store.get("timeline", lost)).toMatchObject({ causedBy: "usr_ana" });
+    expect(pageAgain(store, [lost])).toMatchObject({
+      ok: true,
+      events: [{ data: { everyone: true, causedBy: "usr_ana" } }],
+    });
+    // Only a lost page keeps who caused it.
+    fail(store, { userId: "usr_caio", reason: "undelivered", causedBy: "usr_ana" });
+    expect(store.get("timeline", entry(store))).not.toHaveProperty("causedBy");
   });
 });

@@ -1285,6 +1285,36 @@ describe("edits made outside Brigade", () => {
       expect(Date.now() - started).toBeLessThan(MEMBER_CHECK_BUDGET_MS);
     });
   });
+
+  test("a page whose check throws, rejects or never settles goes with the shard's copy, within 1.5 s", async () => {
+    const t = await team();
+    await connect(t, t.caio);
+    await device(t, user(t.caio, "responder"));
+    await olderBy(t, MEMBER_STALE_MS + 1);
+    const pages = [await declare(t), await declare(t), await declare(t)];
+    await runInDurableObject(t.stub, async (instance: WorkspaceDO) => {
+      const own = (
+        instance as unknown as {
+          membership: { reconcile: () => Promise<boolean>; checkAfter: number };
+        }
+      ).membership;
+      const checks: (() => Promise<boolean>)[] = [
+        () => {
+          throw new Error("reconcile threw");
+        },
+        () => Promise.reject(new Error("reconcile rejected")),
+        () => new Promise<boolean>(() => {}),
+      ];
+      for (const [i, check] of checks.entries()) {
+        own.reconcile = check;
+        own.checkAfter = 0;
+        const started = Date.now();
+        expect(reached(await instance.planPage(pages[i]!))).toEqual([t.caio.id]);
+        // The real budget, not a test's shorter one.
+        expect(Date.now() - started).toBeLessThan(MEMBER_CHECK_BUDGET_MS + 500);
+      }
+    });
+  });
 });
 
 describe("through an API token (RFC 0014)", () => {

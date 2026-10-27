@@ -36,7 +36,9 @@ address takes back an account someone else signed up with (RFC 0002 "Auth"), `mo
 `monitor.heartbeat_revoked` (`id`) with actor `sys_account`.
 
 Incidents emit `incident.declared`, `incident.status_changed`, `incident.severity_changed`,
-`incident.acknowledged`, `incident.update_posted` (`entryId`, `body`) and `incident.role_assigned` (`role`,
+`incident.acknowledged`, `incident.update_posted` (`entryId`, `body`), `incident.paged_again` (`entries`: the
+`page_failed` entries paged again, `userIds`, `everyone`, `causedBy`: who the interim rule leaves out; "Page again"
+below) and `incident.role_assigned` (`role`,
 `roleId`, `roleName`, `from`, `to`; `to` null when unassigned; `roleId` the role's id, a built-in's name or a
 workspace role's `rol_…`; `role` the built-in's name, or `custom`; `roleName` the workspace's name for it, null for a
 built-in under its own; events from before role definitions have `role` only, which is the id). Each of those mutations also appends the incident's timeline entry in
@@ -120,7 +122,9 @@ outside a run), with actor
 `notification.planned` (`incidentId`, `eventId`, `devices`: how many new, `page`, `dropped`: older delivery rows
 removed to keep the latest 20 per device, absent when none), `notification.sent` (`incidentId`,
 `eventId`, `accepted`, `failed`: one attempt's outcome) and `notification.delivered` (`incidentId`, `eventId`,
-`userId`, `deviceId`: the phone opened it), actor `sys_notifier`; no notifier acts on them. `notification.failed` rides with a `page_failed` timeline entry. The
+`userId`, `deviceId`: the phone opened it), actor `sys_notifier`; no notifier acts on them. A push held back behind
+a page (RFC 0006 "Offline phones") goes out on `notification.released` (`incidentId`, `eventId` of the push held,
+`deviceIds`), actor `sys_notifier`, which only the push notifier acts on. `notification.failed` rides with a `page_failed` timeline entry. The
 email notifier's own failures are `notification.failed` with `channel: "email"` (`incidentId`, `eventId`: the push
 failure the email was about, `userId`, `reason`: `undelivered`, or `capped` when a cap dropped it, `about`: `unpaged` or `nobody_paged`), with an
 `email_failed` entry ("Couldn't email Ana that nobody could be paged"). Changing who is emailed emits
@@ -224,7 +228,8 @@ or dependencies should not share the API's.
   SEV2 `incident.declared` the interim rule paged (no escalation run on the incident, so nothing else would page it
   again) is paged again once, `PAGE_REPLAY_DELAY_MS` (30 s) later, from the shard's alarm: `incident.pageAgain` as
   `sys_notifier`, de-duplicated by the lost event (`replay:<event id>`), refused once the incident was acknowledged,
-  resolved or paged again by hand, and whoever declared it still not pushed. Its own page lost too is only recorded.
+  resolved or paged again by hand, dropped once an escalation run started on the incident meanwhile (the run pages
+  it), and whoever declared it still not pushed. Its own page lost too is only recorded.
   If the shard still cannot be reached it logs `dead-lettered page could not be recorded` and retries in 2 minutes,
   up to 5 times (`max_retries: 5`, no dead-letter queue of its own, so spent retries delete the message: nothing
   loops).
@@ -234,9 +239,14 @@ or dependencies should not share the API's.
   It is a named mutation, `incident.pageAgain` (`packages/schema`), with RBAC and a `paged_again` timeline entry, and
   it pages through the outbox on an event of its own, `incident.paged_again`: the old event is never replayed (its
   ledger stays closed). It goes to the members the entries name; an entry for nobody in particular (a lost page)
-  goes to the escalation level it belonged to while the incident row keeps that page, else to the interim rule. It
-  never starts or moves an escalation run, each entry is paged again once (`conflict` after), and only while the
-  incident is active and unacknowledged. Tests: `apps/api/test/notify.test.ts` ("paging a failed page again",
+  goes to the escalation level it belonged to while the incident row keeps that page, else to the interim rule,
+  which leaves out whoever caused the lost page (who declared it; the entry keeps `causedBy`), not whoever asks. It
+  never starts or moves an escalation run, each entry is paged again once, never one whose run already paged it again
+  on its own (`escalation.repage`, `escalation.fallback`: the `escalated` entry's `repaged`), and only while the
+  incident is active and unacknowledged; each refusal is `conflict` with its own message (`PAGE_AGAIN_CONFLICTS`), so
+  the dashboard says whether it was acknowledged, resolved or already paged again, and offers nothing already
+  answered. A member named who left or became a viewer since is recorded as not paged (`not_a_member`), and a page
+  to everyone that finds only whoever caused it as `nobody_else`, so the `paged_again` line never stands alone. Tests: `apps/api/test/notify.test.ts` ("paging a failed page again",
   "paging a lost declaration again on its own"), `packages/schema/tests/escalation.test.ts` ("incident.pageAgain").
 - **The outbox.** A row the drain cannot read (not JSON) or too large for the Queue is logged and dropped, so it
   never blocks the events after it; any drain that throws (storage) backs off like a failed send.

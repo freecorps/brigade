@@ -45,11 +45,19 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   id and anything less urgent gets its own (`<incident id>:high`), so a lower-urgency push never takes a page's place
   on screen; and the shard holds a lower-urgency push for an incident back from each phone a `page` push of that
   incident may still be waiting on (APNs took it within `PAGE_HOLD_MS`, the page's 15-minute expiration, and the
-  phone has not sent its delivery receipt; a missing delivery row counts as unconfirmed). The shard plans every push
-  one at a time, so whichever is planned second sees the first: a page is never held back, and a page APNs never took
-  (still retrying, or failed) holds nothing back. A phone held back counts as reached on that push (its member was
-  paged for this incident already, more urgently), so it is never recorded as missed nor retried. Tests:
-  `apps/api/test/notify.test.ts` ("lower-urgency pushes behind a page"). Still open: a lower-urgency push for
+  phone has not sent its delivery receipt; a missing delivery row counts as unconfirmed). A page counts from the
+  moment it is planned, before the relay call (`PAGE_IN_FLIGHT_MS`, 60 s, until the relay answers): messages of one
+  batch are handled concurrently, so a lower-urgency push planned while the page is on its way is held back too,
+  and one planned before the page goes out first and is replaced by it (the page is the newer word). A page is
+  never held back, and a page the relay or APNs refused holds nothing back once its outcome is recorded. Held, not
+  dropped: the phone is pending on that push in the shard's ledger (`page_held`), never counted as reached, and its
+  member is not recorded as missed meanwhile. When the page's receipt arrives (at once, from the receipt) or its
+  hold ends (from the shard's alarm), whichever comes first, the latest push held for that phone and incident goes
+  out on an event of its own, `notification.released` (`notification.release`, through the outbox), with the
+  incident as it is then; older ones held for the same phone are passed over, and nothing goes for an incident
+  acknowledged or resolved by then. Each held push is released once per event and device. A hold that cannot be
+  written fails open: the push goes at once. A held push does not make its escalation level escalate early: it is
+  pending, not failed. Tests: `apps/api/test/notify.test.ts` ("lower-urgency pushes behind a page"). Still open: a lower-urgency push for
   **another** incident can still replace a stored page (holding it back would delay another incident); the app
   re-syncing open pages when it reconnects or comes to the foreground is the fallback for that, before production.
 - **Calls (RFC 0010).** `POST /send` with `kind: "call"` sends a PushKit VoIP push (`apns-push-type: voip`, topic
@@ -299,9 +307,15 @@ shard's copy whenever that check fails. How the copy follows D1 (RFC 0003 "Membe
     the page to the shard's copy, logged (`paging with the shard's member list`), with the check skipped for 30 s
     so an outage does not cost every page its wait, and the repair alarm armed.
     So a member removed or demoted outside Brigade is still paged for at most a period of activity, never past a page
-    planned while D1 answers. Tests: `apps/api/test/members.test.ts` ("a member deleted in D1 stops being paged at the
+    planned while D1 answers, in a workspace of at most `MAX_RECONCILED_MEMBERS` (1000) members. Above that a
+    reconcile catches up only on the members whose change the shard recorded as missed (above), so an edit made
+    straight in D1 is not caught before a page, or ever, until paged member lists come (RFC 0003). These reads go
+    to D1's primary: if D1 read replication is ever turned on, the reconcile's reads (and the member checks in
+    front of a page) need a session that starts at `first-primary`, or a replica's older copy could put a removed
+    member back. Tests: `apps/api/test/members.test.ts` ("a member deleted in D1 stops being paged at the
     next periodic reconcile", "a page checks a member list not checked against D1 lately first", "a page whose check
-    D1 fails or hangs goes with the shard's copy").
+    D1 fails or hangs goes with the shard's copy", "a page whose check throws, rejects or never settles goes with the
+    shard's copy, within 1.5 s").
 - Tests: `apps/api/test/members.test.ts` ("a removed member is deleted from D1 and the shard with every device, and is
   no longer paged", "a demoted member stops being paged at once", the "when one side fails" cases (among them "a
   failed leave: the leaver's own retry stops their pages", "a failed change is repaired by the shard's alarm" and "an

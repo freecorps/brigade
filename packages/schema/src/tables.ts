@@ -296,6 +296,11 @@ export type TimelineEntry =
        */
       run?: string;
       step?: number;
+      /**
+       * For a page the Queue gave up on (`dead_lettered`): who caused the lost event, so paging it again leaves them
+       * out as the lost page did (they declared it, and know). Absent on other entries.
+       */
+      causedBy?: string;
     }
   /**
    * An escalation level was paged (RFC 0006 "Who is paged"): `level` 1-based, or null for everyone who can respond;
@@ -313,6 +318,11 @@ export type TimelineEntry =
       causedBy?: string;
       /** The page before paged again, the same level and people: its event was lost. */
       again?: boolean;
+      /**
+       * With `again`: the run and step of the page whose event was lost, so its `page_failed` entry is answered and
+       * not offered to page again by hand (`answeredEntries`).
+       */
+      repaged?: { run: string; step: number };
       /** For `undelivered`: the level none of whose pushes any device took, so this one was paged at once. */
       unreached?: number;
     }

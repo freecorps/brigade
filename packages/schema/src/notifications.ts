@@ -114,6 +114,8 @@ export const failNotification = defineMutation({
     reason: v.picklist(PAGE_FAILURES),
     schedule: scheduleName,
     page: pageRef,
+    /** For `dead_lettered`: who caused the lost event (kept on the entry for `incident.pageAgain`). */
+    causedBy: v.omittable(v.string({ min: 1, max: 64 })),
   }),
   permission: "incident:update",
   apply(store, args, ctx) {
@@ -129,6 +131,9 @@ export const failNotification = defineMutation({
         reason: args.reason,
         ...(args.schedule == null ? {} : { schedule: args.schedule }),
         ...(args.page && { run: args.page.run, step: args.page.step }),
+        ...(args.reason === "dead_lettered" && args.causedBy !== undefined
+          ? { causedBy: args.causedBy }
+          : {}),
       },
       ctx,
     );
@@ -207,6 +212,40 @@ export const PAGE_AGAIN_REASONS = [
 /** At most this many `page_failed` entries in one `incident.pageAgain` (a grouped line on the timeline). */
 export const MAX_PAGE_AGAIN_ENTRIES = 50;
 
+/**
+ * Why `incident.pageAgain` refuses with `conflict`, as its error message, so a client can say which:
+ * the incident was acknowledged, it is no longer active (resolved or closed), or the failed page was paged again
+ * already (by hand, by Brigade, or by its escalation run's own re-page of a lost page).
+ */
+export const PAGE_AGAIN_CONFLICTS = {
+  acknowledged: "Incident is acknowledged",
+  inactive: "Incident is no longer active",
+  answered: "Already paged again",
+} as const;
+
+/**
+ * The `page_failed` entries of `timeline` (one incident's) already paged again: named by a `paged_again` entry, or
+ * a lost escalation page the run paged again on its own (`escalation.repage`, `escalation.fallback`: an `escalated`
+ * entry's `repaged`), so nobody pages that level a second time by hand.
+ */
+export function answeredEntries(timeline: readonly TimelineRow[]): Set<string> {
+  const answered = new Set<string>();
+  const repaged = new Set<string>();
+  for (const entry of timeline) {
+    if (entry.kind === "paged_again") for (const id of entry.entries) answered.add(id);
+    if (entry.kind === "escalated" && entry.repaged) {
+      repaged.add(`${entry.repaged.run}:${entry.repaged.step}`);
+    }
+  }
+  if (repaged.size === 0) return answered;
+  for (const entry of timeline) {
+    if (entry.kind === "page_failed" && repaged.has(`${entry.run}:${entry.step}`)) {
+      answered.add(entry.id);
+    }
+  }
+  return answered;
+}
+
 /** Whether `entry` is a failed page `incident.pageAgain` takes. */
 export function pagesAgain(
   entry: TimelineRow,
@@ -227,7 +266,10 @@ export type IncidentPagedAgain = DomainEvent<
     userIds: string[];
     /** Also the interim rule (commander, else everyone who can respond): a failed page for nobody in particular. */
     everyone: boolean;
-    /** Not pushed, as for the first page: who asked for it (or, done by Brigade, who caused the page that was lost). */
+    /**
+     * Left out of the interim rule (`everyone`), as for the first page: who caused the lost page (it declared it, and
+     * knows), else who asked for it.
+     */
     causedBy: string;
   }
 >;
@@ -237,9 +279,11 @@ export type IncidentPagedAgain = DomainEvent<
  * `page_failed` entries `entries` to be paged once more, as a new page with its own event (`incident.paged_again`),
  * never by replaying the old one. It goes to the members those entries name; an entry for nobody in particular (a page
  * the Queue gave up on) goes to the escalation level it belonged to when the incident row still has it, else to the
- * interim rule. Each entry is paged again once (`conflict` after); only while the incident is active and
- * unacknowledged (`conflict`). The shard runs it on its own once, as `sys_notifier`, for a lost SEV1 or SEV2
- * declaration (`causedBy`: who declared it, still not pushed); a member's `causedBy` is always themselves.
+ * interim rule, leaving out who caused the lost page (its entry's `causedBy`), not who asks. Each entry is paged
+ * again once, and not at all once its escalation run paged it again on its own (`answeredEntries`); only while the
+ * incident is active and unacknowledged. Each refusal is `conflict` with its own message (`PAGE_AGAIN_CONFLICTS`).
+ * The shard runs it on its own once, as `sys_notifier`, for a lost SEV1 or SEV2 declaration (`causedBy`: who
+ * declared it, for an entry from before it kept one).
  */
 export const pageAgain = defineMutation({
   name: "incident.pageAgain",
@@ -256,10 +300,11 @@ export const pageAgain = defineMutation({
   apply(store, args, ctx) {
     const incident = store.get("incidents", args.id);
     if (!incident) return fail("not_found", "Incident not found");
-    if (!isActive(incident.status) || incident.acknowledgedAt != null) {
-      return fail("conflict", "Incident is not waiting for a page");
+    if (!isActive(incident.status)) return fail("conflict", PAGE_AGAIN_CONFLICTS.inactive);
+    if (incident.acknowledgedAt != null) {
+      return fail("conflict", PAGE_AGAIN_CONFLICTS.acknowledged);
     }
-    const failed = [];
+    const failed: Extract<TimelineRow, { kind: "page_failed" }>[] = [];
     for (const id of args.entries) {
       const entry = store.get("timeline", id);
       if (!entry || entry.incidentId !== incident.id || !pagesAgain(entry)) {
@@ -268,11 +313,9 @@ export const pageAgain = defineMutation({
       failed.push(entry);
     }
     const { from, to } = prefixRange(`${incident.id}:`);
-    const asked = new Set(args.entries);
-    for (const entry of store.range("timeline", from, to)) {
-      if (entry.kind === "paged_again" && entry.entries.some((id) => asked.has(id))) {
-        return fail("conflict", "Already paged again");
-      }
+    const answered = answeredEntries(store.range("timeline", from, to));
+    if (args.entries.some((id: string) => answered.has(id))) {
+      return fail("conflict", PAGE_AGAIN_CONFLICTS.answered);
     }
     const run = incident.escalation;
     const userIds = new Set<string>();
@@ -290,7 +333,9 @@ export const pageAgain = defineMutation({
       } else everyone = true;
     }
     const auto = ctx.actor.kind === "system";
-    const causedBy = auto ? (args.causedBy ?? ctx.actor.id) : ctx.actor.id;
+    // A lost page left out whoever caused it (they declared it): so does paging it again, whoever asks.
+    const lostBy = failed.find((entry) => entry.userId === null && entry.causedBy)?.causedBy;
+    const causedBy = lostBy ?? (auto ? args.causedBy : undefined) ?? ctx.actor.id;
     store.update("incidents", incident.id, { updatedAt: ctx.now });
     appendTimeline(
       store,
@@ -314,6 +359,43 @@ export const pageAgain = defineMutation({
         everyone,
         causedBy,
       },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * A lower-urgency push the shard held back from phones while a page of the same incident may still have been waiting
+ * for them (RFC 0006 "Offline phones"), released once the page's receipt came or its hold ran out: the push notifier
+ * sends the incident as it is now to `deviceIds` (those still registered, to members who can respond).
+ */
+export type NotificationReleased = DomainEvent<
+  "notification.released",
+  { incidentId: string; eventId: string; deviceIds: string[] }
+>;
+
+/** At most this many devices in one `notification.release`. */
+export const MAX_RELEASED_DEVICES = 200;
+
+/**
+ * Server only, as the notifier, from the shard (its alarm, or a page's delivery receipt): sends the push of event
+ * `eventId` that was held back from `deviceIds`, through the outbox like every event (`notification.released`). No
+ * row changes: the shard's page ledger keeps what was held and released.
+ */
+export const releaseNotification = defineMutation({
+  name: "notification.release",
+  args: v.object({
+    incidentId: v.id("inc"),
+    eventId: v.id("evt"),
+    deviceIds: v.array(v.id("dev"), { min: 1, max: MAX_RELEASED_DEVICES, unique: true }),
+  }),
+  permission: "incident:update",
+  apply(store, args) {
+    if (!store.get("incidents", args.incidentId)) return fail("not_found", "Incident not found");
+    const event: NotificationReleased = {
+      type: "notification.released",
+      subject: args.incidentId,
+      data: { incidentId: args.incidentId, eventId: args.eventId, deviceIds: args.deviceIds },
     };
     return ok(event);
   },

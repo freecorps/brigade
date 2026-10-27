@@ -20,6 +20,7 @@ import {
 import {
   createMemoryStore,
   deliveryId,
+  ESCALATION_ACTOR,
   MONITOR_ACTOR,
   NOTIFIER_ACTOR,
   newId,
@@ -42,6 +43,7 @@ import type { BrigadeEvent } from "../src/outbox.ts";
 import {
   asksForPage,
   MAX_PAGE_DEVICES,
+  PAGE_HOLD_MS,
   PAGE_REPLAY_DELAY_MS,
   pageTargets,
   ringsAsCall,
@@ -1182,24 +1184,75 @@ describe("paging a failed page again", () => {
     expect((await ws.events(incident)).map((e) => e.type)).not.toContain("incident.paged_again");
   });
 
-  test("a lost page goes to whoever it was for: the interim rule, leaving out who asked", async () => {
-    const ws = await workspace();
+  test("a lost page goes to whoever it was for: the interim rule, leaving out who declared it, not who asks", async () => {
+    const duda = user("usr_duda", "admin");
+    const ws = await workspace([ana, bia, caio, duda]);
     const anaPhone = await ws.device(ana);
     const biaPhone = await ws.device(bia);
-    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    const dudaPhone = await ws.device(duda);
+    const { incident, event } = await ws.declare(ana);
     const batch = createMessageBatch("brigade-events-dlq", [
       { id: "dlq-0", timestamp: new Date(), attempts: 1, body: event },
     ]);
     await consumeDeadLetters(batch, { WORKSPACE: env.WORKSPACE });
     const lost = (await ws.timeline(incident)).find((row) => row.kind === "page_failed")!;
-    expect(lost).toMatchObject({ reason: "dead_lettered", userId: null });
-    await ws.run(ana, "incident.pageAgain", { id: incident, entries: [lost.id] });
+    expect(lost).toMatchObject({ reason: "dead_lettered", userId: null, causedBy: ana.id });
+    await ws.run(duda, "incident.pageAgain", { id: incident, entries: [lost.id] });
     const again = (await ws.events(incident)).find((e) => e.type === "incident.paged_again")!;
+    // Ana declared it (and knows); Duda asking is no reason to leave Duda out.
     expect(again.data).toMatchObject({ userIds: [], everyone: true, causedBy: ana.id });
     const fake = relay();
     await deliver(again, fake.send);
-    expect(fake.requests.map((r) => r.body.deviceToken)).toEqual([biaPhone.pushToken]);
+    expect(fake.requests.map((r) => r.body.deviceToken)).toEqual([
+      biaPhone.pushToken,
+      dudaPhone.pushToken,
+    ]);
     expect(fake.requests.map((r) => r.body.deviceToken)).not.toContain(anaPhone.pushToken);
+  });
+
+  test("a member paged again who left since is recorded as not paged, and nobody else as `nobody_else`", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    await deliver(event, refusing().send);
+    const failed = (await ws.timeline(incident)).find(
+      (row) => row.kind === "page_failed" && row.userId === bia.id,
+    )!;
+    await ws.run(ana, "incident.pageAgain", { id: incident, entries: [failed.id] });
+    const again = (await ws.events(incident)).find((e) => e.type === "incident.paged_again")!;
+    // Bia became a viewer before the page went out: the `paged_again` line is not the last word on her.
+    await ws.run(ana, "member.changeRole", { id: bia.id, from: "responder", to: "viewer" });
+    const fake = relay();
+    await deliver(again, fake.send);
+    expect(fake.requests).toHaveLength(0);
+    expect((await ws.timeline(incident)).at(-1)).toMatchObject({
+      kind: "page_failed",
+      userId: bia.id,
+      reason: "not_a_member",
+    });
+
+    // A lost page paged again to everyone, when only whoever declared it can respond.
+    const alone = await workspace([ana, caio]);
+    await alone.device(ana);
+    const lost = await alone.declare(ana);
+    await consumeDeadLetters(
+      createMessageBatch("brigade-events-dlq", [
+        { id: "dlq-0", timestamp: new Date(), attempts: 1, body: lost.event },
+      ]),
+      { WORKSPACE: env.WORKSPACE },
+    );
+    const entry = (await alone.timeline(lost.incident)).find((row) => row.kind === "page_failed")!;
+    await alone.run(ana, "incident.pageAgain", { id: lost.incident, entries: [entry.id] });
+    const everyone = (await alone.events(lost.incident)).find(
+      (e) => e.type === "incident.paged_again",
+    )!;
+    await deliver(everyone, fake.send);
+    expect(fake.requests).toHaveLength(0);
+    expect((await alone.timeline(lost.incident)).at(-1)).toMatchObject({
+      kind: "page_failed",
+      userId: null,
+      reason: "nobody_else",
+    });
   });
 });
 
@@ -1220,12 +1273,22 @@ describe("paging a lost declaration again on its own", () => {
     expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
   }
 
+  /** Runs the shard's alarm now, with nothing made due. */
+  async function alarm(ws: Awaited<ReturnType<typeof workspace>>) {
+    await runInDurableObject(ws.stub, (_instance: WorkspaceDO, state) =>
+      state.storage.setAlarm(Date.now() + 60_000),
+    );
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+  }
+
   test("a lost SEV1 declared by a monitor pages everyone who can respond once, after a delay", async () => {
     const ws = await workspace();
     const phone = await ws.device(bia);
     const { incident, event } = await ws.declare(MONITOR_ACTOR);
     await deadLetter(event);
-    // Not at once: the delay is for whatever stopped it to pass.
+    // Not at once: the delay is for whatever stopped it to pass. The alarm before it is due pages nothing.
+    expect((await ws.events(incident)).map((e) => e.type)).not.toContain("incident.paged_again");
+    await alarm(ws);
     expect((await ws.events(incident)).map((e) => e.type)).not.toContain("incident.paged_again");
     const queued = await ws.withShard((_shard, sql) =>
       sql.exec<{ at: number }>("select at from page_replays").toArray(),
@@ -1265,6 +1328,60 @@ describe("paging a lost declaration again on its own", () => {
     ).toHaveLength(1);
   });
 
+  test("dropped once someone paged it again by hand", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    await deadLetter(event);
+    const lost = (await ws.timeline(incident)).find((row) => row.kind === "page_failed")!;
+    await ws.run(ana, "incident.pageAgain", { id: incident, entries: [lost.id] });
+    await replay(ws);
+    expect(
+      (await ws.events(incident)).filter((e) => e.type === "incident.paged_again"),
+    ).toMatchObject([{ actor: { id: ana.id } }]);
+    expect((await ws.timeline(incident)).filter((row) => row.kind === "paged_again")).toEqual([
+      expect.not.objectContaining({ auto: true }),
+    ]);
+    await ws.withShard(async (_shard, sql) => {
+      expect(sql.exec("select * from page_replays").toArray()).toEqual([]);
+    });
+  });
+
+  test("dropped once an escalation run started on the incident: the run pages it", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    await deadLetter(event);
+    await ws.run(ana, "escalation.createPolicy", {
+      id: newId("esc", Date.now(), random),
+      name: "Checkout",
+      levels: [
+        {
+          id: newId("lvl", Date.now(), random),
+          targets: [{ kind: "member", id: bia.id }],
+          timeoutMinutes: 5,
+        },
+      ],
+      repeat: 0,
+      isDefault: true,
+    });
+    await ws.run(ESCALATION_ACTOR, "escalation.start", {
+      incidentId: incident,
+      eventId: newId("evt", Date.now(), random),
+      causedBy: ana.id,
+    });
+    await replay(ws);
+    expect((await ws.events(incident)).map((e) => e.type)).not.toContain("incident.paged_again");
+    expect(logged()).toContainEqual(
+      expect.objectContaining({
+        message: "paging a lost page again dropped: an escalation run pages it",
+      }),
+    );
+    await ws.withShard(async (_shard, sql) => {
+      expect(sql.exec("select * from page_replays").toArray()).toEqual([]);
+    });
+  });
+
   test("not for a SEV3, an incident acknowledged meanwhile, or a page a run pages again", async () => {
     const ws = await workspace();
     await ws.device(bia);
@@ -1301,7 +1418,8 @@ describe("lower-urgency pushes behind a page", () => {
     ]);
     await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
 
-    // APNs took the page and the phone has not said it got it: the SEV3 push is held back, and Bia counts as paged.
+    // APNs took the page and the phone has not said it got it: the SEV3 push is held back, pending, and Bia is not
+    // recorded as missed.
     const held = another(event);
     expect(await deliver(held, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
     expect(fake.requests).toHaveLength(1);
@@ -1321,6 +1439,214 @@ describe("lower-urgency pushes behind a page", () => {
       { urgency: "page", collapseId: incident },
       { urgency: "high", collapseId: `${incident}:high` },
     ]);
+  });
+
+  /** The shard's held-back pushes, oldest first. */
+  const held = (ws: Awaited<ReturnType<typeof workspace>>) =>
+    ws.withShard((_shard, sql) =>
+      sql
+        .exec<{ event_id: string; device_id: string; state: string }>(
+          "select event_id, device_id, state from page_held order by event_id",
+        )
+        .toArray(),
+    );
+  /** The `notification.released` events of `incident` in the outbox. */
+  const releases = async (ws: Awaited<ReturnType<typeof workspace>>, incident: string) =>
+    (await ws.events(incident)).filter((e) => e.type === "notification.released");
+  /** Runs the shard's alarm now. */
+  async function alarm(ws: Awaited<ReturnType<typeof workspace>>) {
+    await runInDurableObject(ws.stub, (_instance: WorkspaceDO, state) =>
+      state.storage.setAlarm(Date.now() + 60_000),
+    );
+    expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+  }
+  /** Moves every page's planned and accepted times `ms` into the past. */
+  const age = (ws: Awaited<ReturnType<typeof workspace>>, ms: number) =>
+    ws.withShard((_shard, sql) => {
+      sql.exec(
+        "update page_urgent set planned_at = planned_at - ?, accepted_at = accepted_at - ?",
+        ms,
+        ms,
+      );
+    });
+
+  test("a phone offline for 20 minutes still gets the latest push held, once, when the hold ends", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    const fake = relay();
+    await deliver(event, fake.send);
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
+    const first = another(event);
+    const latest = another(event);
+    await deliver(first, fake.send);
+    await deliver(latest, fake.send);
+    expect(fake.requests).toHaveLength(1);
+    // Pending, not reached: the ledger has no delivery for either.
+    expect(await held(ws)).toEqual([
+      { event_id: first.id, device_id: phone.deviceId, state: "held" },
+      { event_id: latest.id, device_id: phone.deviceId, state: "held" },
+    ]);
+    await ws.withShard((_shard, sql) => {
+      expect(
+        sql
+          .exec("select * from page_deliveries where event_id in (?, ?)", first.id, latest.id)
+          .toArray(),
+      ).toEqual([]);
+    });
+    await alarm(ws);
+    expect(await releases(ws, incident)).toEqual([]);
+
+    // Twenty minutes on, the phone still offline and the page never confirmed: the hold ran out.
+    await age(ws, 20 * 60 * 1000);
+    await alarm(ws);
+    const out = await releases(ws, incident);
+    expect(out).toMatchObject([
+      {
+        actor: { id: "sys_notifier" },
+        data: { incidentId: incident, eventId: latest.id, deviceIds: [phone.deviceId] },
+      },
+    ]);
+    expect(asksForPage(out[0]!)).toBe(true);
+    // Only the latest goes; the one before it is passed over.
+    expect((await held(ws)).map((row) => row.state)).toEqual(["superseded", "released"]);
+    await deliver(out[0]!, fake.send);
+    expect(fake.requests.map((r) => r.body)).toMatchObject([
+      { urgency: "page", collapseId: incident },
+      { urgency: "high", collapseId: `${incident}:high`, deviceToken: phone.pushToken },
+    ]);
+    const pushed = await opened(phone.recipient, fake.requests[1]!.body.envelope);
+    expect(pushed).toMatchObject({ incident, title: expect.stringMatching(/^SEV3 /) });
+
+    // Once: the alarm again, the release again, or either held push again sends nothing more.
+    await alarm(ws);
+    expect(await releases(ws, incident)).toHaveLength(1);
+    await deliver(out[0]!, fake.send);
+    await deliver(latest, fake.send);
+    await deliver(first, fake.send);
+    expect(fake.requests).toHaveLength(2);
+  });
+
+  test("the page's receipt releases a held push at once", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    const fake = relay();
+    const environment = {
+      ...relayEnv,
+      DASHBOARD_URL: "https://brigade.test",
+    } as Parameters<typeof consumeEvents>[1];
+    await deliver(event, fake.send, { environment });
+    const page = await opened(phone.recipient, fake.requests[0]!.body.envelope);
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
+    const later = another(event);
+    await deliver(later, fake.send, { environment });
+    expect(fake.requests).toHaveLength(1);
+    expect(await releases(ws, incident)).toEqual([]);
+
+    expect(await ws.stub.receipt(page.receipt!.token)).toBe("recorded");
+    const out = await releases(ws, incident);
+    expect(out).toMatchObject([{ data: { eventId: later.id, deviceIds: [phone.deviceId] } }]);
+    await deliver(out[0]!, fake.send, { environment });
+    expect(fake.requests.map((r) => r.body.urgency)).toEqual(["page", "high"]);
+  });
+
+  test("a receipt that never comes: released when the hold ends, which the alarm is set for", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    const fake = relay();
+    await deliver(event, fake.send);
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
+    const later = another(event);
+    await deliver(later, fake.send);
+    const accepted = await ws.withShard(
+      (_shard, sql) =>
+        sql.exec<{ accepted_at: number }>("select accepted_at from page_urgent").one().accepted_at,
+    );
+    const set = await runInDurableObject(ws.stub, (_instance: WorkspaceDO, state) =>
+      state.storage.getAlarm(),
+    );
+    expect(set).not.toBeNull();
+    expect(set!).toBeLessThanOrEqual(accepted + PAGE_HOLD_MS);
+
+    // A minute before the end, still held.
+    await age(ws, PAGE_HOLD_MS - 60_000);
+    await alarm(ws);
+    expect(await releases(ws, incident)).toEqual([]);
+    await age(ws, 60_000);
+    await alarm(ws);
+    expect(await releases(ws, incident)).toMatchObject([
+      { data: { eventId: later.id, deviceIds: [phone.deviceId] } },
+    ]);
+  });
+
+  test("a held push is dropped, not sent, once the incident is acknowledged", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    const fake = relay();
+    await deliver(event, fake.send);
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
+    await deliver(another(event), fake.send);
+    await ws.run(bia, "incident.ack", { id: incident });
+    await age(ws, PAGE_HOLD_MS + 1);
+    await alarm(ws);
+    expect(await releases(ws, incident)).toEqual([]);
+    expect((await held(ws)).map((row) => row.state)).toEqual(["dropped"]);
+  });
+
+  test("a push planned while a page is on its way to the relay waits for it too", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    // Another message of the same batch planned the page and is waiting on the relay: no outcome yet.
+    expect(await ws.stub.planPage(event)).toMatchObject({ send: true, urgency: "page" });
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
+    const fake = relay();
+    const later = another(event);
+    await deliver(later, fake.send);
+    expect(fake.requests).toHaveLength(0);
+    expect(await held(ws)).toMatchObject([{ event_id: later.id, state: "held" }]);
+
+    // The relay refused the page: no phone waits for it, so the held push goes at the next alarm.
+    await ws.stub.recordPage(
+      event,
+      [
+        {
+          deviceId: phone.deviceId,
+          userId: bia.id,
+          ok: false,
+          reason: "undelivered",
+          error: "relay_refused",
+        },
+      ],
+      true,
+      [],
+    );
+    await alarm(ws);
+    expect(await releases(ws, incident)).toMatchObject([
+      { data: { eventId: later.id, deviceIds: [phone.deviceId] } },
+    ]);
+  });
+
+  test("a hold that cannot be written sends the push at once (fail open)", async () => {
+    const ws = await workspace();
+    await ws.device(bia);
+    const { incident, event } = await ws.declare(ana);
+    const fake = relay();
+    await deliver(event, fake.send);
+    await ws.run(ana, "incident.setSeverity", { id: incident, severity: "sev3" });
+    await ws.withShard((_shard, sql) => {
+      sql.exec(
+        "create trigger no_hold before insert on page_held begin select raise(abort, 'storage failed'); end",
+      );
+    });
+    expect(await deliver(another(event), fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
+    expect(fake.requests.map((r) => r.body.urgency)).toEqual(["page", "high"]);
+    expect(logged()).toContainEqual(
+      expect.objectContaining({ message: "holding a push back failed, sending it now" }),
+    );
   });
 
   test("a page APNs never took holds nothing back, and a page is never held back", async () => {

@@ -1473,7 +1473,9 @@
       "match": {
         "part=action": "Chamar de novo",
         "part=pending": "Chamando de novo…",
-        "part=already": "Alguém já chamou de novo.",
+        "part=already": "Isso já foi chamado de novo, por alguém ou pelo Brigade.",
+        "part=acked": "Alguém confirmou o incidente, então não há o que chamar de novo.",
+        "part=resolved": "O incidente não está mais ativo, então não há o que chamar de novo.",
         "part=failed": "Não foi possível chamar de novo. {reason}",
         "part=*": "Chamar de novo"
       }

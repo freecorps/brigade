@@ -3,6 +3,7 @@
 // changes in flight. Shared by the web dashboard and the mobile app (issue #20); their wording is in
 // `@freecorps/brigade-i18n/incident`.
 import {
+  answeredEntries,
   canTransition,
   INCIDENT_STATUSES,
   lookup,
@@ -190,14 +191,12 @@ export function timelineItems(entries: readonly TimelineRow[]): TimelineItem[] {
 
 /**
  * The failed pages a timeline line offers to page again (`incident.pageAgain`, RFC 0005 "Notifiers"): its
- * `page_failed` entries of a kind paging again can help (`pagesAgain`) that no `paged_again` entry in `timeline`
- * answered yet. Empty: the line offers nothing. Who may, and whether the incident still waits for a page, is the
+ * `page_failed` entries of a kind paging again can help (`pagesAgain`) that nothing in `timeline` answered yet: a
+ * `paged_again` entry, or the escalation run paging a lost page again on its own (`answeredEntries`). Empty: the line offers nothing. Who may, and whether the incident still waits for a page, is the
  * caller's to check.
  */
 export function pageAgainEntries(item: TimelineItem, timeline: readonly TimelineRow[]): string[] {
-  const answered = new Set(
-    timeline.flatMap((entry) => (entry.kind === "paged_again" ? entry.entries : [])),
-  );
+  const answered = answeredEntries(timeline);
   const entries = item.kind === "entry" ? [item.entry] : item.entries;
   return entries
     .filter((entry) => pagesAgain(entry) && !answered.has(entry.id))

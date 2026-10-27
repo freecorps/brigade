@@ -433,6 +433,13 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("arming the page again failed", { error: String(error) });
     }
+    // Likewise a push held back behind a page (src/paging.ts `releaseDue`).
+    try {
+      const releaseAt = this.pager.releaseAt(Date.now());
+      if (releaseAt !== null) this.wake(releaseAt, "held push");
+    } catch (error) {
+      this.log("arming the release of held pushes failed", { error: String(error) });
+    }
   }
 
   info(): WorkspaceInfo {
@@ -1445,8 +1452,18 @@ export class WorkspaceDO extends DurableObject<Env> {
    * A phone's delivery receipt (RPC from the Worker's `POST /receipts`, which read nothing but the token's
    * workspace): see `Receipts.receive`. A shard that serves no workspace yet, or another, answers `invalid`.
    */
-  receipt(token: string): Promise<ReceiptResult> {
-    return this.receipts.receive(token, Date.now());
+  async receipt(token: string): Promise<ReceiptResult> {
+    const result = await this.receipts.receive(token, Date.now());
+    // The page the phone confirmed no longer holds a lower-urgency push back from it: that goes out now
+    // (src/paging.ts `releaseDue`). Never in the receipt's way: the alarm releases it otherwise.
+    if (result === "recorded") {
+      try {
+        if (this.pager.releaseDue(Date.now()) > 0) await this.drainOutbox();
+      } catch (error) {
+        this.log("releasing held pushes after a receipt failed", { error: String(error) });
+      }
+    }
+    return result;
   }
 
   /**
@@ -1641,6 +1658,12 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("paging lost pages again failed", { error });
     }
+    // Pushes held back behind a page whose hold ended (src/paging.ts `releaseDue`).
+    try {
+      if (this.pager.releaseDue(Date.now()) > 0) await this.drainOutbox();
+    } catch (error) {
+      this.log("releasing held pushes failed", { error });
+    }
     let monitors: number | null = now + MONITOR_TICK_MS;
     try {
       monitors = await this.monitoring.tick(now);
@@ -1760,6 +1783,14 @@ export class WorkspaceDO extends DurableObject<Env> {
     } catch (error) {
       this.log("reading the pages to page again failed", { error });
     }
+    let releaseAt: number | null = now + MONITOR_TICK_MS;
+    try {
+      const at = this.pager.releaseAt(Date.now());
+      // One that could not go is tried again a tick later, not in a loop.
+      releaseAt = at === null ? null : Math.max(at, Date.now() + (at <= now ? MONITOR_TICK_MS : 0));
+    } catch (error) {
+      this.log("reading the held pushes failed", { error });
+    }
     let maintenanceAt: number | null = null;
     try {
       const at = nextMaintenanceAt(this.shard.store.scan("status_maintenance"));
@@ -1773,7 +1804,10 @@ export class WorkspaceDO extends DurableObject<Env> {
       earliest(earliest(monitors, escalationAt), earliest(repair, earliest(armed, maintenanceAt))),
       earliest(
         earliest(this.drainPaused ? null : this.drain.nextWake(Date.now()), statusAt),
-        earliest(webhookAt, earliest(expiryAt, earliest(tokenAt, earliest(replayAt, periodic)))),
+        earliest(
+          webhookAt,
+          earliest(expiryAt, earliest(tokenAt, earliest(replayAt, earliest(releaseAt, periodic)))),
+        ),
       ),
     );
     if (next === null) await this.ctx.storage.deleteAlarm();

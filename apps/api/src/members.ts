@@ -737,7 +737,9 @@ export class Membership {
    * Before a page (RFC 0006 "Who is paged", Q18): when the member list last agreed with D1 more than `MEMBER_STALE_MS`
    * ago, reconciles first, so a member removed or demoted outside Brigade is not paged. Fails open: waits at most
    * `MEMBER_CHECK_BUDGET_MS` (the reconcile then finishes in the background), and a D1 that fails or is late leaves
-   * the page to the shard's copy, logged, with the check skipped for `MEMBER_CHECK_BACKOFF_MS`. Never throws.
+   * the page to the shard's copy, logged, with the check skipped for `MEMBER_CHECK_BACKOFF_MS`. Never throws or
+   * rejects, whatever the reconcile does (throws, rejects, never settles): a page waits `MEMBER_CHECK_BUDGET_MS` at
+   * most and then goes with the copy.
    */
   async fresh(workspaceId: string, now: number): Promise<void> {
     try {
@@ -752,16 +754,30 @@ export class Membership {
     const late = new Promise<"late">((resolve) => {
       timer = setTimeout(() => resolve("late"), this.checkBudgetMs);
     });
-    const outcome = await Promise.race([this.reconcile(workspaceId), late]).finally(() =>
-      clearTimeout(timer),
-    );
+    // `reconcile` resolves false rather than reject, but a page must not rely on it: a throw or a rejection is a
+    // failed check, never a failed page.
+    const check = Promise.resolve()
+      .then(() => this.reconcile(workspaceId))
+      .catch((error: unknown) => {
+        try {
+          this.options.log("member reconcile before a page threw", { error: String(error) });
+        } catch {
+          // Logging is not worth the page.
+        }
+        return false;
+      });
+    const outcome = await Promise.race([check, late]).finally(() => clearTimeout(timer));
     if (outcome === true) return;
     this.checkAfter = Date.now() + MEMBER_CHECK_BACKOFF_MS;
-    this.options.log("paging with the shard's member list: checking it against D1 failed", {
-      outcome: outcome === "late" ? "late" : "failed",
-    });
-    // The alarm keeps at it, so the copy catches up without waiting for the next page.
-    if (outcome === false) this.armRepair(Date.now());
+    try {
+      this.options.log("paging with the shard's member list: checking it against D1 failed", {
+        outcome: outcome === "late" ? "late" : "failed",
+      });
+      // The alarm keeps at it, so the copy catches up without waiting for the next page.
+      if (outcome === false) this.armRepair(Date.now());
+    } catch {
+      // The alarm's periodic reconcile still catches the copy up.
+    }
   }
 
   /** `MEMBER_CHECK_BUDGET_MS`; a field so tests can shorten it. */

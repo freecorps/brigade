@@ -6,6 +6,7 @@ import {
   incidentRoleList,
   isActive,
   missingRoles,
+  PAGE_AGAIN_CONFLICTS,
   UPDATE_BODY_MAX,
   type IncidentRow,
   type IncidentStatus,
@@ -924,9 +925,11 @@ function PageAgain({ incidentId, entries }: { incidentId: string; entries: strin
     void pageAgain({ id: incidentId, entries }).then((outcome) => {
       setPending(false);
       if (outcome.ok) return;
+      const conflict =
+        outcome.error.code === "conflict" ? CONFLICT_PARTS[outcome.error.message] : undefined;
       setRefused(
-        outcome.error.code === "conflict"
-          ? m.incident_page_again({ part: "already", reason: "" })
+        conflict !== undefined
+          ? m.incident_page_again({ part: conflict, reason: "" })
           : m.incident_page_again({
               part: "failed",
               reason: mutationErrorReason(outcome.error.code),
@@ -953,6 +956,13 @@ function PageAgain({ incidentId, entries }: { incidentId: string; entries: strin
     </div>
   );
 }
+
+/** What each of `incident.pageAgain`'s refusals says (`PAGE_AGAIN_CONFLICTS`, its error messages). */
+const CONFLICT_PARTS: Partial<Record<string, "already" | "acked" | "resolved">> = {
+  [PAGE_AGAIN_CONFLICTS.answered]: "already",
+  [PAGE_AGAIN_CONFLICTS.acknowledged]: "acked",
+  [PAGE_AGAIN_CONFLICTS.inactive]: "resolved",
+};
 
 /** Who a group of failed pages was for, behind Show names. */
 function FailedNames({

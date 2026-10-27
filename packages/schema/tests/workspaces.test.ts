@@ -51,6 +51,7 @@ describe("workspace.create", () => {
       "monitor.takeOver",
       "notification.fail",
       "notification.failEmail",
+      "notification.release",
       "delivery.plan",
       "delivery.report",
       "delivery.confirm",

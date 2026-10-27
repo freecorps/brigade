@@ -25,7 +25,7 @@ import {
   touchDevice,
   unregisterDevice,
 } from "./devices.ts";
-import { failEmail, failNotification, pageAgain } from "./notifications.ts";
+import { failEmail, failNotification, pageAgain, releaseNotification } from "./notifications.ts";
 import {
   allMonitors,
   evaluateMonitor,
@@ -188,6 +188,7 @@ export const serverMutations = defineRegistry([
   takeOverMonitors,
   failNotification,
   failEmail,
+  releaseNotification,
   planDeliveries,
   reportDeliveries,
   confirmDelivery,

@@ -10,7 +10,9 @@ export type Incident_Page_AgainInputs = {
 * | --- | --- |
 * | "action" | "Page again" |
 * | "pending" | "Paging again…" |
-* | "already" | "Someone already paged this again." |
+* | "already" | "This was already paged again, by someone or by Brigade." |
+* | "acked" | "Someone acknowledged the incident, so there's nothing to page again." |
+* | "resolved" | "The incident is no longer active, so there's nothing to page again." |
 * | "failed" | "Couldn't page again. {reason}" |
 * | * | "Page again" |
 *

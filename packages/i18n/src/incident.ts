@@ -181,6 +181,11 @@ export function entryText(entry: TimelineRow, who: People): string {
       );
     case "status_corrected":
       return say(`status_corrected_${entry.change}`);
+    // Follow-ups and the postmortem (RFC 0013), by the follow-up's title then.
+    case "follow_up":
+      return say(`follow_up_${entry.change}`, entry.title);
+    case "postmortem":
+      return say(`postmortem_${entry.change}`);
     default:
       // A kind a newer shard wrote that this build does not know: a line saying something changed, never a blank.
       return say("unknown");

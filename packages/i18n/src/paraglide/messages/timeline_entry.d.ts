@@ -68,6 +68,13 @@ export type Timeline_EntryInputs = {
 * | "services_updated" | "{actor} changed the affected services" |
 * | "field_set" | "{actor} set {a} to {b}" |
 * | "field_cleared" | "{actor} cleared {a}" |
+* | "follow_up_added" | "{actor} added the follow-up {a}" |
+* | "follow_up_edited" | "{actor} edited the follow-up {a}" |
+* | "follow_up_done" | "{actor} completed the follow-up {a}" |
+* | "follow_up_reopened" | "{actor} reopened the follow-up {a}" |
+* | "follow_up_removed" | "{actor} removed the follow-up {a}" |
+* | "postmortem_started" | "{actor} started the postmortem" |
+* | "postmortem_ai_drafted" | "Workers AI drafted the postmortem" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs

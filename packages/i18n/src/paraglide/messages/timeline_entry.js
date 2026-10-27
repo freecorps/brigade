@@ -68,6 +68,13 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "services_updated" | "{actor} changed the affected services" |
 * | "field_set" | "{actor} set {a} to {b}" |
 * | "field_cleared" | "{actor} cleared {a}" |
+* | "follow_up_added" | "{actor} added the follow-up {a}" |
+* | "follow_up_edited" | "{actor} edited the follow-up {a}" |
+* | "follow_up_done" | "{actor} completed the follow-up {a}" |
+* | "follow_up_reopened" | "{actor} reopened the follow-up {a}" |
+* | "follow_up_removed" | "{actor} removed the follow-up {a}" |
+* | "postmortem_started" | "{actor} started the postmortem" |
+* | "postmortem_ai_drafted" | "Workers AI drafted the postmortem" |
 * | * | "{actor} changed the incident" |
 *
 * @param {Timeline_EntryInputs} inputs
@@ -135,6 +142,13 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "services_updated") return /** @type {LocalizedString} */ (`${i?.actor} mudou os serviços afetados`);
 		if (i?.kind === "field_set") return /** @type {LocalizedString} */ (`${i?.actor} definiu ${i?.a} como ${i?.b}`);
 		if (i?.kind === "field_cleared") return /** @type {LocalizedString} */ (`${i?.actor} limpou ${i?.a}`);
+		if (i?.kind === "follow_up_added") return /** @type {LocalizedString} */ (`${i?.actor} adicionou a ação ${i?.a}`);
+		if (i?.kind === "follow_up_edited") return /** @type {LocalizedString} */ (`${i?.actor} editou a ação ${i?.a}`);
+		if (i?.kind === "follow_up_done") return /** @type {LocalizedString} */ (`${i?.actor} concluiu a ação ${i?.a}`);
+		if (i?.kind === "follow_up_reopened") return /** @type {LocalizedString} */ (`${i?.actor} reabriu a ação ${i?.a}`);
+		if (i?.kind === "follow_up_removed") return /** @type {LocalizedString} */ (`${i?.actor} removeu a ação ${i?.a}`);
+		if (i?.kind === "postmortem_started") return /** @type {LocalizedString} */ (`${i?.actor} começou o postmortem`);
+		if (i?.kind === "postmortem_ai_drafted") return /** @type {LocalizedString} */ (`O Workers AI escreveu um rascunho do postmortem`);
 		return /** @type {LocalizedString} */ (`${i?.actor} alterou o incidente`)
 	}
 	{
@@ -196,6 +210,13 @@ export const timeline_entry = /** @type {((inputs: Timeline_EntryInputs, options
 		if (i?.kind === "services_updated") return /** @type {LocalizedString} */ (`${i?.actor} changed the affected services`);
 		if (i?.kind === "field_set") return /** @type {LocalizedString} */ (`${i?.actor} set ${i?.a} to ${i?.b}`);
 		if (i?.kind === "field_cleared") return /** @type {LocalizedString} */ (`${i?.actor} cleared ${i?.a}`);
+		if (i?.kind === "follow_up_added") return /** @type {LocalizedString} */ (`${i?.actor} added the follow-up ${i?.a}`);
+		if (i?.kind === "follow_up_edited") return /** @type {LocalizedString} */ (`${i?.actor} edited the follow-up ${i?.a}`);
+		if (i?.kind === "follow_up_done") return /** @type {LocalizedString} */ (`${i?.actor} completed the follow-up ${i?.a}`);
+		if (i?.kind === "follow_up_reopened") return /** @type {LocalizedString} */ (`${i?.actor} reopened the follow-up ${i?.a}`);
+		if (i?.kind === "follow_up_removed") return /** @type {LocalizedString} */ (`${i?.actor} removed the follow-up ${i?.a}`);
+		if (i?.kind === "postmortem_started") return /** @type {LocalizedString} */ (`${i?.actor} started the postmortem`);
+		if (i?.kind === "postmortem_ai_drafted") return /** @type {LocalizedString} */ (`Workers AI drafted the postmortem`);
 		return /** @type {LocalizedString} */ (`${i?.actor} changed the incident`)
 	}
 });

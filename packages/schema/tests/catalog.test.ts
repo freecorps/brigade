@@ -587,7 +587,9 @@ describe("incidents", () => {
       ok: true,
       value: "Gateway timeouts",
     });
-    expect(checkFieldValue(row(FLD_TEXT), `a${String.fromCharCode(7)}b`)).toMatchObject({ ok: false });
+    expect(checkFieldValue(row(FLD_TEXT), `a${String.fromCharCode(7)}b`)).toMatchObject({
+      ok: false,
+    });
     expect(checkFieldValue(row(FLD_TEXT), " ")).toMatchObject({ ok: false });
     expect(checkFieldValue(row(FLD_NUM), 1e15)).toMatchObject({ ok: true });
     expect(checkFieldValue(row(FLD_NUM), -1e16)).toMatchObject({ ok: false });

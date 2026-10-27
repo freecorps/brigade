@@ -412,6 +412,23 @@ describe("POST /workspaces/:id/webhooks", () => {
     const { secret: first } = (await made.json()) as { secret: string };
     expect(await remade.json()).toEqual({ id, secret: first });
     expect(await eventsOf(t, "webhook.created")).toHaveLength(1);
+    // The same key for another endpoint is another request: that endpoint is made too, with its own secret.
+    const other = newId("whk", Date.now(), random);
+    const elsewhere = await api(`/workspaces/${t.id}/webhooks`, {
+      method: "POST",
+      headers: { Cookie: t.ana.cookie, "Idempotency-Key": "create-0123456789abcdef" },
+      // Not subscribed to declares, so the signature check below sees only the first endpoint's delivery.
+      body: JSON.stringify({
+        id: other,
+        url: HOOK,
+        description: "",
+        events: ["incident.acknowledged"],
+      }),
+    });
+    expect(elsewhere.status).toBe(201);
+    const { secret: otherSecret } = (await elsewhere.json()) as { secret: string };
+    expect(otherSecret).not.toBe(first);
+    expect(await eventsOf(t, "webhook.created")).toHaveLength(2);
 
     const rotate = (key: string, by = t.ana) =>
       api(`/workspaces/${t.id}/webhooks/${id}/rotate`, {

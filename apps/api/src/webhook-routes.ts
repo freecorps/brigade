@@ -105,7 +105,11 @@ export async function webhookRequest(
       { kind: "user", id: session.user.id, role },
       rotate === undefined ? "webhook.create" : "webhook.rotateSecret",
       { id, ...fields, secret: sealed },
-      `${action}:${idempotencyKey ?? crypto.randomUUID()}`,
+      // Scoped like the derived secret: the same key for another endpoint or member is another request, never a
+      // replay of this one (whose stored result would not match the secret answered here).
+      idempotencyKey === null
+        ? `${action}:${crypto.randomUUID()}`
+        : `${action}:${id}:${session.user.id}:${idempotencyKey}`,
     );
   } catch (error) {
     log("WorkspaceDO.webhookRun failed", { workspace: workspaceId, error: String(error) });

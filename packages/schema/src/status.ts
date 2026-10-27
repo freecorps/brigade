@@ -711,6 +711,9 @@ export type SnapshotMaintenance = {
   components: string[];
   startsAt: number;
   endsAt: number;
+  /** When it was planned, and when anything the public reads about it last changed. Absent from older snapshots. */
+  publishedAt?: number;
+  updatedAt?: number;
 };
 export type SnapshotGroup = { name: string | null; components: SnapshotComponent[] };
 export type SnapshotIncident = {
@@ -723,6 +726,11 @@ export type SnapshotIncident = {
   resolvedAt: number | null;
   /** Newest first. */
   updates: { at: number; status: PublicStatus; body: string }[];
+  /**
+   * When what the page says about it last changed: a publish, a correction, a component taken out. Absent from older
+   * snapshots.
+   */
+  updatedAt?: number;
 };
 
 /**
@@ -793,6 +801,8 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
     components: row.componentIds.flatMap((id) => names.get(id) ?? []),
     startsAt: row.startsAt,
     endsAt: row.endsAt,
+    publishedAt: row.createdAt,
+    updatedAt: row.updatedAt,
   });
   const upcoming = windows
     .filter((row) => row.phase === "scheduled")
@@ -808,6 +818,7 @@ export function statusSnapshot(store: SnapshotStore, now: number): StatusSnapsho
     updates: row.updates
       .map(({ at, status, body }) => ({ at, status, body }))
       .sort((a, b) => b.at - a.at),
+    updatedAt: row.updatedAt,
   });
   const active = incidents
     .filter((row) => row.status !== "resolved")

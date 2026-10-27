@@ -16,7 +16,13 @@ import {
   type Correction,
   type PublishArgs,
 } from "../src/components/status-publish";
-import { componentBlocks, moveComponent, moveGroup, saveStatusPage } from "../src/lib/status-page";
+import {
+  componentBlocks,
+  moveComponent,
+  moveGroup,
+  saveStatusPage,
+  servicesToLink,
+} from "../src/lib/status-page";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -215,16 +221,28 @@ describe("StatusPagePanel", () => {
     expect(container.textContent).toContain("Moved Apps.");
   });
 
-  test("a refused order says so", async () => {
+  test("a move is announced once the server takes it, a refused one only as refused", async () => {
+    let settle: (ok: boolean) => void = () => {};
     const { container } = card({
       page,
       components: [component("cmp_1", "API"), component("cmp_2", "Website")],
-      onReorder: async () => false,
+      onReorder: () => new Promise((resolve) => (settle = resolve)),
     });
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>('button[aria-label="Move API down"]')!.click(),
-    );
+    const status = container.querySelector(
+      'section[aria-labelledby="status-components-title"] [role="status"]',
+    )!;
+    const down = () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Move API down"]')!;
+    await act(async () => down().click());
+    // Not yet confirmed: nothing said.
+    expect(status.textContent).toBe("");
+    await act(async () => settle(false));
+    expect(status.textContent).toBe("");
     expect(container.textContent).toContain("Couldn't change the order");
+    await act(async () => down().click());
+    expect(container.textContent).not.toContain("Couldn't change the order");
+    await act(async () => settle(true));
+    expect(status.textContent).toBe("Moved API.");
   });
 
   test("a component is linked to services, and shows them", async () => {
@@ -252,6 +270,42 @@ describe("StatusPagePanel", () => {
     act(() => search.querySelector("input")!.click());
     await act(async () => button(container.querySelector("li form")!, "Save").click());
     expect(linked).toEqual([{ id: "cmp_1", serviceIds: ["svc_1", "svc_2"] }]);
+  });
+
+  test("a component is not edited before the services load, so a rename keeps its links", async () => {
+    const linked: unknown[] = [];
+    const updated: unknown[] = [];
+    const props = {
+      page,
+      components: [{ ...component("cmp_1", "API"), serviceIds: ["svc_1"] }],
+      onUpdate: async (row: unknown) => {
+        updated.push(row);
+        return true;
+      },
+      onLinkServices: async (id: string, serviceIds: string[]) => {
+        linked.push({ id, serviceIds });
+        return true;
+      },
+    };
+    const { container } = card({ ...props, services: undefined });
+    expect(button(container, "Edit").disabled).toBe(true);
+    act(() => root?.unmount());
+    const loaded = card({ ...props, services: [{ id: "svc_1", name: "Checkout" }] });
+    act(() => button(loaded.container, "Edit").click());
+    const name = loaded.container.querySelector<HTMLInputElement>("li form input")!;
+    act(() => type(name, "Public API"));
+    await act(async () => button(loaded.container.querySelector("li form")!, "Save").click());
+    expect(updated).toHaveLength(1);
+    expect(linked).toEqual([]);
+  });
+
+  test("services are linked only when the choice differs from what is stored and still exists", () => {
+    const known = [{ id: "svc_1" }, { id: "svc_2" }];
+    // Not loaded yet: nothing to link or unlink, whatever the form holds.
+    expect(servicesToLink(["svc_1"], undefined, [])).toBeNull();
+    expect(servicesToLink(["svc_1", "svc_gone"], known, ["svc_1"])).toBeNull();
+    expect(servicesToLink(["svc_1"], known, ["svc_1", "svc_2"])).toEqual(["svc_1", "svc_2"]);
+    expect(servicesToLink(["svc_1"], known, [])).toEqual([]);
   });
 
   test("everyone else reads it, with no form", () => {

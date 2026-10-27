@@ -172,6 +172,7 @@ const isOneOf = (values: readonly string[], value: unknown) =>
 const isArrayOf = (value: unknown, item: (value: unknown) => boolean) =>
   Array.isArray(value) && value.every(item);
 const isString = (value: unknown) => typeof value === "string";
+const isOptionalTime = (value: unknown) => value === undefined || isTime(value);
 
 const isIncident = (value: unknown) =>
   isRecord(value) &&
@@ -181,6 +182,7 @@ const isIncident = (value: unknown) =>
   isArrayOf(value.components, isString) &&
   isTime(value.publishedAt) &&
   (value.resolvedAt === null || isTime(value.resolvedAt)) &&
+  isOptionalTime(value.updatedAt) &&
   isArrayOf(
     value.updates,
     (update) =>
@@ -196,7 +198,9 @@ const isWindow = (value: unknown) =>
   isString(value.body) &&
   isArrayOf(value.components, isString) &&
   isTime(value.startsAt) &&
-  isTime(value.endsAt);
+  isTime(value.endsAt) &&
+  isOptionalTime(value.publishedAt) &&
+  isOptionalTime(value.updatedAt);
 
 const isUptime = (value: unknown) =>
   value === undefined ||

@@ -11,6 +11,7 @@ import {
 } from "@freecorps/brigade-schema";
 import { describe, expect, test, vi } from "vite-plus/test";
 import type { BrigadeEvent } from "../src/outbox.ts";
+import { feedUrls, renderAtomFeed } from "../src/status-feed.ts";
 import { Shard, touchesStatusPage } from "../src/shard.ts";
 import {
   STATUS_OUTAGE_REFRESH_MS,
@@ -313,7 +314,7 @@ describe("the snapshot", () => {
     expect(html).not.toContain("<API>");
     expect(html).toContain("Some systems are down");
     // One script, the local times', allowed by its hash; nothing else may run.
-    expect(html.match(/<script>/g)).toHaveLength(1);
+    expect(html.match(/<script[\s>]/g) ?? []).toHaveLength(1);
     expect(response.headers.get("Content-Security-Policy")).toMatch(/script-src 'sha256-[^']+'/);
     expect(html).toContain('href="/status/' + address + '/feed.atom"');
     const head = await exports.default.fetch(`${ORIGIN}/status/${address}`, { method: "HEAD" });
@@ -835,6 +836,14 @@ describe("the snapshot", () => {
         .flatMap((shown) => shown.updates.map((update) => update.body))
         .sort();
     expect(await bodies()).toEqual(["A fix is rolling out.", "We're looking into it."]);
+    // The feed entry's own `<updated>`: a reader replaces the text it kept only when it moves.
+    const updated = async () => {
+      const xml = renderAtomFeed((await snapshot(address))!, feedUrls(ORIGIN, address));
+      return Date.parse(/<entry>.*?<updated>([^<]+)<\/updated>/s.exec(xml)![1]!);
+    };
+    const later = () => new Promise((resolve) => setTimeout(resolve, 5));
+    const published = await updated();
+    await later();
     const [older, newer] = await t.withShard(
       (shard) => shard.store.get("status_incidents", incident)!.updates,
     );
@@ -847,11 +856,15 @@ describe("the snapshot", () => {
     ).toMatchObject({ ok: true });
     await t.push();
     expect(await bodies()).toEqual(["A fix is rolling out.", "We're looking into slow checkouts."]);
+    const edited = await updated();
+    expect(edited).toBeGreaterThan(published);
+    await later();
     expect(
       await t.run("incident.removePublishedUpdate", { id: incident, updateId: newer!.id }, caio),
     ).toMatchObject({ ok: true });
     await t.push();
     expect(await bodies()).toEqual(["We're looking into slow checkouts."]);
+    expect(await updated()).toBeGreaterThan(edited);
   });
 
   test("the shard's alarm pushes it", async () => {
@@ -973,6 +986,9 @@ describe("the snapshot", () => {
     const xml = await atom.text();
     expect(xml).toContain('<title type="text">Slow API</title>');
     expect(xml).toContain("Looking &amp; checking.");
+    expect(atom.headers.get("Cache-Control")).toBe("public, max-age=30");
+    expect(atom.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    for (const internal of ["db-7 OOM", t.ana.id, t.id, incident]) expect(xml).not.toContain(internal);
     const head = await exports.default.fetch(`${ORIGIN}/status/${address}/feed.atom`, {
       method: "HEAD",
     });

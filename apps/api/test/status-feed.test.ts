@@ -74,7 +74,7 @@ describe("local times", () => {
 
     const html = renderStatusPage(snapshot(), { slug: "acme" });
     expect(html).toContain(`<script>${LOCAL_TIMES_SCRIPT}</script>`);
-    expect(html.match(/<script/g)).toHaveLength(1);
+    expect(html.match(/<script[\s>]/g) ?? []).toHaveLength(1);
     // UTC as the text, the instant in `datetime`: the page reads right without the script.
     expect(html).toContain(
       `<time datetime="${new Date(T).toISOString()}" data-local>Oct 27, 2026, 12:05 PM UTC</time>`,
@@ -155,6 +155,31 @@ describe("feeds", () => {
     expect(xml).toContain(`<updated>${new Date(T - HOUR).toISOString()}</updated>`);
     expect(xml.match(/<entry>/g)).toHaveLength(3);
     expect(xml).toContain("Identificado");
+  });
+
+  test("an entry is dated by its last change: a correction moves it, a window's start never does", () => {
+    const shown = snapshot({
+      active: [{ ...snapshot().active[0]!, updatedAt: T - 30 * 60 * 1000 }],
+      upcoming: [{ ...snapshot().upcoming![0]!, publishedAt: T - 3 * HOUR, updatedAt: T - 2 * HOUR }],
+    });
+    const items = JSON.parse(renderJsonFeed(shown, urls)).items;
+    // The incident's newest update is an hour old; it was corrected since.
+    expect(items[0].date_modified).toBe(new Date(T - 30 * 60 * 1000).toISOString());
+    // Planned three hours ago, changed two hours ago, starting tomorrow: dated by the first two.
+    expect(items[1].date_published).toBe(new Date(T - 3 * HOUR).toISOString());
+    expect(items[1].date_modified).toBe(new Date(T - 2 * HOUR).toISOString());
+    expect(items[1].content_text).toContain("Oct 28, 2026, 12:05 PM UTC");
+    const feedUpdated = (xml: string) => /<\/title>\n<updated>([^<]+)<\/updated>/.exec(xml)![1];
+    expect(feedUpdated(renderAtomFeed(shown, urls))).toBe(
+      new Date(T - 30 * 60 * 1000).toISOString(),
+    );
+    // A snapshot from before the window carried its dates: as of when it was built, never in the future.
+    const older = snapshot();
+    const xml = renderAtomFeed(older, urls);
+    expect(feedUpdated(xml)).toBe(new Date(T).toISOString());
+    for (const [, at] of xml.matchAll(/<(?:published|updated)>([^<]+)</g)) {
+      expect(Date.parse(at!)).toBeLessThanOrEqual(T);
+    }
   });
 
   test("an empty page is an empty feed, dated by its snapshot", () => {

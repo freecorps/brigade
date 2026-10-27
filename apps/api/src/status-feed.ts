@@ -54,15 +54,21 @@ function incidentEntry(locale: Locale, urls: FeedUrls, incident: SnapshotInciden
     title: incident.title,
     text: lines.join("\n"),
     published: incident.publishedAt,
-    updated: incident.updates[0]?.at ?? incident.publishedAt,
+    // A correction or a removed update moves it too, so a reader replaces the text it kept.
+    updated: incident.updatedAt ?? incident.updates[0]?.at ?? incident.publishedAt,
   };
 }
 
+/**
+ * A window is dated when it was planned and last changed, never by its start: an upcoming one would otherwise sit in
+ * the future. Its times are in the text. Older snapshots carry neither date, so it reads as of when they were built.
+ */
 function windowEntry(
   locale: Locale,
   urls: FeedUrls,
   window: SnapshotMaintenance,
   active: boolean,
+  generatedAt: number,
 ): Entry {
   const range = status_maintenance(
     {
@@ -81,18 +87,22 @@ function windowEntry(
     id: `${urls.page}#maintenance-${window.startsAt}`,
     title: window.title,
     text: lines.join("\n"),
-    published: window.startsAt,
-    updated: window.startsAt,
+    published: window.publishedAt ?? Math.min(window.startsAt, generatedAt),
+    updated: window.updatedAt ?? Math.min(window.startsAt, generatedAt),
   };
 }
 
 /** Open incidents, maintenance under way, upcoming maintenance, then the history: the page's order. */
 function entries(snapshot: StatusSnapshot, urls: FeedUrls): Entry[] {
-  const { locale } = snapshot;
+  const { locale, generatedAt } = snapshot;
   return [
     ...snapshot.active.map((incident) => incidentEntry(locale, urls, incident)),
-    ...(snapshot.maintenance ?? []).map((window) => windowEntry(locale, urls, window, true)),
-    ...(snapshot.upcoming ?? []).map((window) => windowEntry(locale, urls, window, false)),
+    ...(snapshot.maintenance ?? []).map((window) =>
+      windowEntry(locale, urls, window, true, generatedAt),
+    ),
+    ...(snapshot.upcoming ?? []).map((window) =>
+      windowEntry(locale, urls, window, false, generatedAt),
+    ),
     ...snapshot.history.map((incident) => incidentEntry(locale, urls, incident)),
   ];
 }

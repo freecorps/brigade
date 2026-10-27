@@ -43,6 +43,7 @@ import {
   type SubscriberCounts,
   saveErrorPart,
   saveStatusPage,
+  servicesToLink,
   statusCardText as say,
   statusText,
   statusUrl,
@@ -103,7 +104,11 @@ function StatusPageLive({ onRetry }: { onRetry: () => void }) {
       origin={window.location.origin}
       monitors={monitors.rows.map((row) => ({ id: row.id, name: row.name }))}
       onLink={async (id, monitorIds) => (await link({ id, monitorIds })).ok}
-      services={services.rows.map((row) => ({ id: row.id, name: row.name }))}
+      services={
+        services.status === "ready"
+          ? services.rows.map((row) => ({ id: row.id, name: row.name }))
+          : undefined
+      }
       onLinkServices={async (id, serviceIds) => (await linkServices({ id, serviceIds })).ok}
       onReorder={async (ids) => (await reorder({ ids })).ok}
       subscribers={
@@ -141,7 +146,10 @@ type PanelProps = {
   /** The workspace's monitors a component's uptime bar may come from. */
   monitors?: readonly { id: string; name: string }[];
   onLink?: (id: string, monitorIds: string[]) => Promise<boolean>;
-  /** The workspace's services a component may stand for (RFC 0012 "Services"). */
+  /**
+   * The workspace's services a component may stand for (RFC 0012 "Services"); undefined until they load, and no
+   * component is edited before, so a save never takes off links the form could not show.
+   */
   services?: readonly { id: string; name: string }[];
   onLinkServices?: (id: string, serviceIds: string[]) => Promise<boolean>;
   /** Every component's id in its new order (`statusComponent.reorder`). */
@@ -421,7 +429,7 @@ function Components({
   onDelete,
   monitors = [],
   onLink,
-  services = [],
+  services,
   onLinkServices,
   onReorder,
 }: PanelProps) {
@@ -431,10 +439,9 @@ function Components({
   const canMove = manage && onReorder !== undefined;
   const move = (ids: string[] | null, name: string) => {
     if (!ids || !onReorder) return;
-    setMoved({ name });
-    void onReorder(ids).then((ok) => {
-      if (!ok) setMoved({ failed: true });
-    });
+    // Said once the server took the order, never before: a refusal must not follow a "Moved".
+    setMoved(null);
+    void onReorder(ids).then((ok) => setMoved(ok ? { name } : { failed: true }));
   };
   return (
     <section
@@ -523,7 +530,7 @@ function ComponentRow({
   onDelete,
   monitors = [],
   onLink,
-  services = [],
+  services,
   onLinkServices,
   mover,
 }: Pick<
@@ -535,9 +542,10 @@ function ComponentRow({
 }) {
   const linked = component.monitorIds ?? [];
   // A deleted service stays on the row until the next change; it is skipped wherever it is read.
-  const serving = (component.serviceIds ?? []).filter((id) =>
-    services.some((service) => service.id === id),
+  const serving = (component.serviceIds ?? []).filter(
+    (id) => !services || services.some((service) => service.id === id),
   );
+  const servicesLoading = onLinkServices !== undefined && services === undefined;
   const [chosen, setChosen] = useState<string[]>(linked);
   const [chosenServices, setChosenServices] = useState<string[]>(serving);
   const [mode, setMode] = useState<"view" | "edit" | "confirm">("view");
@@ -571,7 +579,7 @@ function ComponentRow({
             <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
               {say("services_from", {
                 name: serving
-                  .map((id) => services.find((service) => service.id === id)?.name ?? "…")
+                  .map((id) => services?.find((service) => service.id === id)?.name ?? "…")
                   .join(", "),
               })}
             </span>
@@ -584,6 +592,7 @@ function ComponentRow({
               variant="ghost"
               // "Edit API", not one "Edit" per row, in a screen reader's list of buttons.
               aria-labelledby={`${editId} ${nameId}`}
+              disabled={servicesLoading}
               onClick={() => {
                 setName(component.name);
                 setGroup(component.group ?? "");
@@ -649,8 +658,8 @@ function ComponentRow({
             next.group !== component.group ||
             next.status !== component.status;
           const monitorsChanged = chosen.join() !== linked.join();
-          const servicesChanged = chosenServices.join() !== serving.join();
-          if (!fieldsChanged && !monitorsChanged && !servicesChanged) {
+          const serviceIds = servicesToLink(component.serviceIds ?? [], services, chosenServices);
+          if (!fieldsChanged && !monitorsChanged && !serviceIds) {
             setMode("view");
             return;
           }
@@ -659,9 +668,7 @@ function ComponentRow({
             const ok =
               (!fieldsChanged || (await onUpdate(next))) &&
               (!monitorsChanged || !onLink || (await onLink(component.id, chosen))) &&
-              (!servicesChanged ||
-                !onLinkServices ||
-                (await onLinkServices(component.id, chosenServices)));
+              (!serviceIds || !onLinkServices || (await onLinkServices(component.id, serviceIds)));
             setBusy(false);
             if (ok) setMode("view");
             else setFailed("save_failed");
@@ -741,9 +748,9 @@ function ComponentRow({
           <fieldset className="flex min-w-0 flex-col gap-1 sm:col-span-3">
             <legend className="mb-1 text-sm font-medium">{say("services_label")}</legend>
             <p className="mb-1 text-sm text-muted-foreground">
-              {say(services.length === 0 ? "services_none" : "services_hint")}
+              {say((services ?? []).length === 0 ? "services_none" : "services_hint")}
             </p>
-            {services.map((service) => {
+            {(services ?? []).map((service) => {
               const checked = chosenServices.includes(service.id);
               const full = !checked && chosenServices.length >= MAX_COMPONENT_SERVICES;
               return (

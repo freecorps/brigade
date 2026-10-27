@@ -202,3 +202,18 @@ export function moveGroup<T extends { id: string; group: string | null }>(
   [blocks[at], blocks[to]] = [blocks[to]!, blocks[at]!];
   return flatten(blocks);
 }
+
+/**
+ * The services to link a component to once its form is saved, or null when that changes nothing. Compared with what
+ * the row stores minus the services known to be deleted, never with an empty list: before the workspace's services
+ * have loaded (`known` undefined) nothing is linked or unlinked, so a rename cannot take every link off.
+ */
+export function servicesToLink(
+  stored: readonly string[],
+  known: readonly { id: string }[] | undefined,
+  chosen: readonly string[],
+): string[] | null {
+  if (!known) return null;
+  const kept = stored.filter((id) => known.some((service) => service.id === id));
+  return chosen.join() === kept.join() ? null : [...chosen];
+}

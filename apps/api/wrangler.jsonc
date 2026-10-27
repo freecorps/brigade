@@ -82,9 +82,9 @@
   "kv_namespaces": [{ "binding": "STATUS" }],
   // Exports (RFC 0013, src/exports.ts): files owners and admins export, under `workspaces/<id>/`, never public, read
   // back through `GET /workspaces/:id/exports/:exportId`. Without a `bucket_name` this binding is for local runs and the
-  // tests only (Miniflare simulates it). `dev` and `staging` have none until their buckets exist (apps/api/README.md
-  // "Exports"), and exporting answers 503 there, the dashboard hiding it. Workers AI (`AI`, postmortem drafts) is bound
-  // nowhere yet: the same README says how to turn it on; without it the "Draft with AI" button is hidden.
+  // tests only (Miniflare simulates it). `dev` binds `brigade-exports-dev` and Workers AI (`AI`, postmortem drafts);
+  // `staging` has neither until its bucket exists (apps/api/README.md "Exports"), and there exporting answers 503 and
+  // the "Draft with AI" button is hidden.
   "r2_buckets": [{ "binding": "EXPORTS" }],
   // Set with `wrangler secret put` (deployed) or apps/api/.dev.vars (local, gitignored); never in this file.
   // RELAY_SEND_TOKEN (src/notify.ts) is optional: paging needs it and the relay, reached through the `RELAY` service
@@ -143,6 +143,9 @@
       ],
       // `brigade-status-dev`, the dev status page snapshots (RFC 0012).
       "kv_namespaces": [{ "binding": "STATUS", "id": "cc29234582db43538204e0ae375d8ec8" }],
+      // `brigade-exports-dev` (8-day lifecycle rule on `workspaces/`) and Workers AI for postmortem drafts (RFC 0013).
+      "r2_buckets": [{ "binding": "EXPORTS", "bucket_name": "brigade-exports-dev" }],
+      "ai": { "binding": "AI" },
       "secrets": { "required": ["BETTER_AUTH_SECRET"] },
       // The relay on this account (apps/relay). A Worker's fetch to another workers.dev Worker on the same account is
       // answered 404, so the API reaches it through this binding and RELAY_URL is not used. Only `dev` has one: a

@@ -378,7 +378,8 @@ In order, from `apps/api` unless noted:
    turns on `workers_dev`.
 5. **Slack**, later: integrations/slack/README.md, then add the `SLACK` binding to apps/web's `dev` environment and
    deploy the web Worker again.
-6. **Exports and AI drafts** (RFC 0013), optional: without them the dashboard hides exporting and "Draft with AI", and
+6. **Exports and AI drafts** (RFC 0013), optional (done for `dev`: `brigade-exports-dev` with its lifecycle rule, and
+   both bindings): without them the dashboard hides exporting and "Draft with AI", and
    their routes answer 503. Paging needs neither. From `apps/api`:
 
    ```bash

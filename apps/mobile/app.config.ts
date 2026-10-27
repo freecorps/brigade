@@ -38,6 +38,9 @@ const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
   scheme: "brigade",
   version: "0.1.0",
   orientation: "portrait",
+  // Placeholder until the real icon: the dashboard's two rank chevrons (apps/web site-header.tsx) in white on the
+  // brand hue (packages/ui `--primary`), opaque as the App Store requires.
+  icon: "./assets/icon.png",
   // Follow the system light/dark setting; the app picks packages/ui's theme from it.
   userInterfaceStyle: "automatic",
   // The window behind the app before React draws: the page ground. The root layout updates it to
@@ -55,6 +58,11 @@ const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
   },
   android: {
     package: APP_ID,
+    // The same chevrons inside the adaptive icon's safe zone, over the brand hue.
+    adaptiveIcon: {
+      foregroundImage: "./assets/adaptive-icon.png",
+      backgroundColor: themes.light.primary,
+    },
     predictiveBackGestureEnabled: false,
   },
   web: {

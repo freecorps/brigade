@@ -275,7 +275,8 @@ results (a new monitor is up on its first success).
 - **Restarts:** creating a monitor, changing its target, resuming it and rotating a heartbeat's URL set `restartedAt`; results from before it are
   refused. A status change does not move it, so a report computed before another region flipped the status and
   delivered after it still counts (no false recovery, no second incident). Alert routes exist for alert sources
-  (RFC 0005 "Alert sources"), but monitor alerts do not go through them yet, and `AlertGroupDO` is later work (below);
+  (RFC 0005 "Alert sources"), but monitor alerts do not go through them yet (planned below, "Monitor alerts through
+  the routes"), and `AlertGroupDO` is later work (below);
   until then the workspace shard is the alert's home: the server-only mutation `monitor.report`, run as the system actor
   `sys_monitors` (RFC 0004 "Server-side writes"), records the result, and when the quorum turns down it fires one alert
   per monitor (`alerts` table, fingerprint `monitor:<id>`; no second one while it fires) and opens an incident through
@@ -286,13 +287,44 @@ results (a new monitor is up on its first success).
   (`policyId`): the incident it opens pages through that policy instead of the workspace's default (RFC 0003
   "Escalation policies").
 
-- **`AlertGroupDO` (later).** Alert sources (RFC 0005) and monitors keep their alerts in the workspace shard, with caps
-  per workspace (20 sources, 50 routes, 200 alerts firing at once, 300 kept). The firing cap never refuses an alert:
-  closed incidents release theirs, idle quiet ones expire after 24 hours, and past it a new alert pages as one
-  "Alert capacity reached" alert (RFC 0005 "Alert sources", "Room"). An `AlertGroupDO` per fingerprint (or
-  per route group) is the next step once one workspace's alert volume outgrows its shard: deduplication and grouping
-  move there, and the shard only sees the alerts that open or join an incident. Monitor alerts move onto the routes
-  in the same step.
+- **`AlertGroupDO` (later; decided: not with monitor routing).** Alert sources (RFC 0005) and monitors keep their
+  alerts in the workspace shard, with caps per workspace (20 sources, 50 routes, 200 alerts firing at once, 300
+  kept). The firing cap never refuses an alert: closed incidents release theirs, idle quiet ones expire after 24
+  hours, and past it a new alert pages as one "Alert capacity reached" alert (RFC 0005 "Alert sources", "Room").
+  Monitors add at most one firing alert each (the monitor cap), so routing them adds no volume worth another object;
+  and grouping must see an incident's state in the transaction that declares or joins it, which the shard has and an
+  `AlertGroupDO` would need an RPC for (with a fallback when it is unreachable, on a paging path). So the shard keeps
+  routing, deduplication and grouping. What moves them into an `AlertGroupDO` per fingerprint (or per route group),
+  the shard then seeing only the alerts that open or join an incident: a workspace whose alert writes slow its
+  shard's other mutations (alerts are a scan of up to 500 rows a payload), or raising `MAX_OPEN_ALERTS` /
+  `MAX_ALERT_ROWS` past what one scan should read, or per-source rate limits no longer keeping one sender from
+  starving the rest.
+
+- **Monitor alerts through the routes (plan, not built).** Today a monitor that turns down opens its incident
+  directly (`moveTo` in `monitors.ts`), paged through the monitor's policy, else the default. The plan, in the shard:
+  1. **Matching.** A route's `sourceIds` may also name monitors (`mon_…`) or every monitor (`monitors`). An empty
+     list keeps matching every alert source and no monitor, so routes saved before this never catch a monitor (a
+     catch-all `drop` would otherwise silence monitors that page today). A monitor's alert matches with its severity
+     (SEV1 critical, SEV2 high, SEV3 warning, SEV4 info, from the monitor's own) and the labels `monitor` (name) and
+     `kind`.
+  2. **Actions.** `open` declares with the route's severity (else the type's, else the monitor's), type and services,
+     and keeps the route in `incident_routes`, so its policy pages first, then the type's, the first service's, the
+     monitor's, the default (RFC 0006). `group` joins the open incident of the same group key across `alerts` and
+     `source_alerts` (so a route grouping by `service` can put a monitor and a Grafana alert in one incident).
+     `suppress` and `drop` record the alert (`outcome`, `routeId` on the `alerts` row) with no incident; the
+     Monitors card says so.
+  3. **Default and fallbacks (paging path).** No route matching declares exactly as today: the monitor's severity, no
+     type, no services, the monitor's policy, else the default. A routed declare that fails falls back to that
+     default declare, and only then fails the report (the probe retries), as today. A route naming a deleted
+     policy, type or service is handled as for alert sources.
+  4. **Re-routing.** Monitors do not repeat while down, so `alert.reroute` must take quiet monitor alerts too (with
+     the title the shard renders for them), or deleting a suppress route would leave a down monitor unpaged until it
+     recovers.
+  5. **Tests.** Today's monitor tests unchanged under the default; one per action; a routed declare that fails
+     paging through the default; a quiet monitor alert paged once its route is deleted; a service named by a route
+     paging a monitor's incident.
+  The service's policy already pages (RFC 0006 "Who is paged"); monitors' incidents name no services until routes
+  give them some.
 
 ## Watching the watcher
 

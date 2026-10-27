@@ -47,6 +47,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "policy_default" | "Policy: {name}, the workspace default" |
 * | "policy_monitor" | "Policy: {name}, set on the monitor {who}" |
 * | "policy_route" | "Policy: {name}, set on the alert route {who}" |
+* | "policy_service" | "Policy: {name}, set on the service {who}" |
 * | "early" | "Paged now: nobody on level {level} could be reached" |
 * | * | "Escalation" |
 *
@@ -94,6 +95,7 @@ export const escalation_text = /** @type {((inputs: Escalation_TextInputs, optio
 		if (i?.text === "policy_default") return /** @type {LocalizedString} */ (`Política: ${i?.name}, a padrão do workspace`);
 		if (i?.text === "policy_monitor") return /** @type {LocalizedString} */ (`Política: ${i?.name}, definida no monitor ${i?.who}`);
 		if (i?.text === "policy_route") return /** @type {LocalizedString} */ (`Política: ${i?.name}, definida na rota de alertas ${i?.who}`);
+		if (i?.text === "policy_service") return /** @type {LocalizedString} */ (`Política: ${i?.name}, definida no serviço ${i?.who}`);
 		if (i?.text === "early") return /** @type {LocalizedString} */ (`Chamado na hora: ninguém no nível ${i?.level} pôde ser alcançado`);
 		return /** @type {LocalizedString} */ (`Escalonamento`)
 	}
@@ -135,6 +137,7 @@ export const escalation_text = /** @type {((inputs: Escalation_TextInputs, optio
 		if (i?.text === "policy_default") return /** @type {LocalizedString} */ (`Policy: ${i?.name}, the workspace default`);
 		if (i?.text === "policy_monitor") return /** @type {LocalizedString} */ (`Policy: ${i?.name}, set on the monitor ${i?.who}`);
 		if (i?.text === "policy_route") return /** @type {LocalizedString} */ (`Policy: ${i?.name}, set on the alert route ${i?.who}`);
+		if (i?.text === "policy_service") return /** @type {LocalizedString} */ (`Policy: ${i?.name}, set on the service ${i?.who}`);
 		if (i?.text === "early") return /** @type {LocalizedString} */ (`Paged now: nobody on level ${i?.level} could be reached`);
 		return /** @type {LocalizedString} */ (`Escalation`)
 	}

@@ -144,7 +144,8 @@ may carry the receiver's token), its secret or a header's value. The webhook not
 
 Alert sources (below, "Alert sources") emit `alert_source.created` and `alert_source.updated` (`id`, `name`, `kind`,
 `headerName`, `signed`; never the token, the header value or the signing secret), `alert_source.rotated` (`id`),
-`alert_source.deleted` (`id`, `resolved`: how many firing alerts it resolved) and, on a takeover (RFC 0002 "Auth"),
+`alert_source.mapping_changed` (`id`, `mapping`: the title template and severity map, or null; "Alert sources",
+"Mapping"), `alert_source.deleted` (`id`, `resolved`: how many firing alerts it resolved) and, on a takeover (RFC 0002 "Auth"),
 `alert_source.revoked` (`id`, actor `sys_account`); routes emit `alert_route.created` and `alert_route.updated` (`id`,
 `name`, `position`, `match`, `action`, and `reason`: `policy_deleted` when the policy it named was deleted, or
 `takeover` when a takeover disabled it),
@@ -432,6 +433,26 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   pages as that alert alone: a refusal that would repeat is never a `503` the sender retries forever. Repeats of it
   are one alert, like any other key. Sentry's `installation` hook and resources that are no alert are answered `202`
   and ignored.
+- **Mapping** (`alertSource.setMapping`, owners and admins, `alert:manage`; `packages/schema` `alert-mapping.ts`): per
+  source, how its alerts are named and how urgent they are, applied in `alert.ingest` to every alert it sends before
+  anything else reads it, so the routes match the mapped severity and dedup keys are untouched. A source without one
+  (every source from before) keeps the sender's title and severity. **Title template**: literal text and
+  placeholders, `{title}`, `{severity}` (the mapped one) and `{labels.<key>}`, at most 200 characters and 10
+  placeholders; `{` and `}` mean nothing else, so a template is parsed, never run, and one with an unknown
+  placeholder, an unclosed `{` or a stray `}` is refused when saved. A label the alert lacks is empty. The result is
+  fitted like any sender text (`fitText`: hidden and control characters become spaces, cut to 200 UTF-16 units
+  without splitting a pair) and shown as text wherever titles are (escaped in email, plain text in the dashboard).
+  **Severity map**: the value is the sender's own word (`providerSeverity`, kept by the normalizer: Grafana's
+  `severity` label, Datadog's priority or alert type, Sentry's level or metric action, the generic `severity`) or a
+  label's value; at most 20 rules, each value once, matched ignoring case and surrounding space; then a fallback,
+  else the severity Brigade read. **Never in a page's way**: a template that cannot be parsed (stored before a rule
+  changed, or written by hand), or one that leaves nothing visible, gives the alert's own title; a rule or a fallback
+  that is not a known severity is skipped. Brigade's own alerts (unreadable, capacity) are never mapped. The row keeps
+  the alert as sent (`received`: title, severity, sender's word), which the dashboard's preview maps with the form's
+  draft; alerts already in are not mapped again (a quiet one is, on its next repeat, and routed again like any
+  repeat). Tests: `packages/schema/tests/alert-mapping.test.ts` ("a stored template or map that cannot be read still
+  pages…", "a template that leaves nothing visible pages with the alert's own title"), `apps/api/test/alerts.test.ts`
+  ("a source's mapping names and ranks its incidents; one stored broken still pages as sent").
 - **Ingesting** (`alert.ingest`, server only, as `sys_alerts`, in one transaction per payload): the same source and
   key while firing is the same alert: refreshed, counted (`repeats`), no event and no page, so a dedup storm pages
   once. Two repeats do more. A repeat the routes kept quiet (suppressed or dropped) is routed again, and becomes a new
@@ -486,7 +507,8 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   (`disabled: "takeover"`, skipped by routing, their quiet alerts routed again) besides revoking every source URL, and
   the takeover notice counts both. Saving a disabled route enables it.
 - **Paging** is the incident's: `incident.declare` as `sys_alerts`, through the same path as monitors, with the
-  route's policy first in the policy order (RFC 0006 "Who is paged"). The route an incident was opened through is kept
+  route's policy first in the policy order (RFC 0006 "Who is paged"), then the type's, then the first of the
+  incident's services (the route's `serviceIds`) that names a policy, then the default. The route an incident was opened through is kept
   with it (server-only `incident_routes`, by incident id, written with the declaration), so its policy pages the
   incident for as long as it lives, however many of its alert rows were pruned since. One row per incident: a flap
   reopening the incident replaces it with the route that matches the alert now (deleting it when that is the default
@@ -508,8 +530,8 @@ First slice of Phase 3's alert sources (`packages/schema` `alert-sources.ts` and
   paste in Grafana, Datadog or Sentry, the routes in order with the default last, and the latest alerts with what
   became of each (opened or added to which incident, suppressed, dropped, held by a resolve that came first, and by
   which route).
-- **Not yet.** Monitor alerts through the routes; `AlertGroupDO`; a service's own policy (the catalog keeps one, unused for pages); a title or
-  severity mapping per source; email ingest; Slack naming `sys_alerts` (it reads "a teammate" today).
+- **Not yet.** Monitor alerts through the routes (planned in RFC 0007 "Monitor alerts through the routes");
+  `AlertGroupDO`; email ingest; Slack naming `sys_alerts` (it reads "a teammate" today).
 
 ## Provider interfaces (published in `packages/sdk`, MIT)
 

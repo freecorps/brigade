@@ -49,6 +49,7 @@ export type Escalation_TextInputs = {
 * | "policy_default" | "Policy: {name}, the workspace default" |
 * | "policy_monitor" | "Policy: {name}, set on the monitor {who}" |
 * | "policy_route" | "Policy: {name}, set on the alert route {who}" |
+* | "policy_service" | "Policy: {name}, set on the service {who}" |
 * | "early" | "Paged now: nobody on level {level} could be reached" |
 * | * | "Escalation" |
 *

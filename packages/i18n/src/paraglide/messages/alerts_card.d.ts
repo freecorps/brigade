@@ -124,6 +124,43 @@ export type Alerts_CardInputs = {
 * | "route_disabled" | "Off since the account that created it was taken back. Save it to turn it on again." |
 * | "source_link" | "Open in the source" |
 * | "an_incident" | "an incident" |
+* | "mapping" | "Title and severity" |
+* | "mapping_title" | "Title and severity for {name}" |
+* | "mapping_hint" | "Applied to every alert this source sends from now on, before the routes see it. Alerts already in keep theirs." |
+* | "mapped" | "Title and severity mapped" |
+* | "template_label" | "Title template (optional)" |
+* | "template_hint" | "Empty: the alert's own title. A label the alert doesn't have is left blank." |
+* | "template_fields" | "Placeholders the alert fills in:" |
+* | "template_any_label" | "or any label:" |
+* | "template_insert" | "Add {name} to the title" |
+* | "template_unknown_field" | "Use only the placeholders listed below." |
+* | "template_unclosed" | "A placeholder is never closed." |
+* | "template_stray_brace" | "A closing brace closes nothing." |
+* | "template_too_many_fields" | "Use at most 10 placeholders." |
+* | "severity_source" | "Read the severity from" |
+* | "severity_source_provider" | "The sender's own severity or priority" |
+* | "severity_source_label" | "A label" |
+* | "severity_label_key" | "Label" |
+* | "severity_label_required" | "Name the label to read." |
+* | "rules_title" | "Map these values" |
+* | "rules_empty" | "No values mapped: the severity Brigade read stays, unless you pick one for anything else." |
+* | "rule_value" | "Value" |
+* | "rule_severity" | "Severity" |
+* | "add_rule" | "Add value" |
+* | "remove_rule" | "Remove {name}" |
+* | "rule_value_required" | "Enter the value, or remove the row." |
+* | "rule_duplicate" | "Each value once." |
+* | "rules_limit" | "At most {value} values." |
+* | "fallback_label" | "Anything else" |
+* | "fallback_keep" | "The severity Brigade read" |
+* | "preview_title" | "Preview with the latest alert" |
+* | "preview_empty" | "No alert from this source yet. The preview appears once one arrives." |
+* | "preview_sent" | "Sent" |
+* | "preview_becomes" | "Becomes" |
+* | "preview_sender_word" | "Sender's severity: {value}" |
+* | "preview_no_word" | "The sender gave no severity" |
+* | "mapping_reset" | "Use the sender's" |
+* | "mapping_save_failed" | "Couldn't save the title and severity. Try again." |
 * | * | "Alert sources" |
 *
 * @param {Alerts_CardInputs} inputs

@@ -1,6 +1,7 @@
 import type { Permission, Role } from "./access.ts";
 import type { AlertOutcome, AlertRouteReason } from "./alert-sources.ts";
 import type { AlertSeverity, AlertSourceKind } from "./alert-normalize.ts";
+import type { AlertMapping } from "./alert-mapping.ts";
 import type { CallChoice } from "./calls.ts";
 import type { DeliveryError, DeliveryKind } from "./deliveries.ts";
 import type { DevicePlatform, PushEnvironment } from "./devices.ts";
@@ -208,6 +209,8 @@ export type Escalation = {
   monitor?: { id: string; name: string } | null;
   /** Likewise the alert route whose policy this is, for an incident an alert source opened through it. */
   route?: { id: string; name: string } | null;
+  /** Likewise the service whose policy this is (its name when the run started), the first of the incident's that has one. */
+  service?: { id: string; name: string } | null;
   levels: EscalationLevel[];
   repeat: number;
   /** The event whose page started the run: a redelivery of it pages the same level again, never a new run. */
@@ -1016,6 +1019,11 @@ export type AlertSourceRow = {
   signed: boolean;
   /** When a payload last arrived, to the minute (`SOURCE_SEEN_EVERY_MS`); null: never. */
   lastReceivedAt: number | null;
+  /**
+   * How its alerts are named and how urgent they are (`alertSource.setMapping`, RFC 0005 "Alert sources"); absent or
+   * null: as the sender said.
+   */
+  mapping?: AlertMapping | null;
   createdAt: number;
   createdBy: string;
   updatedAt: number;
@@ -1109,6 +1117,11 @@ export type SourceAlertRow = {
   resolvedAt: number | null;
   /** How many more times it was sent while firing (deduplicated). */
   repeats: number;
+  /**
+   * The alert as the sender sent it, before its source's mapping (`title`, `severity`): what the dashboard previews a
+   * mapping with. Absent on rows from before mappings, and on Brigade's own alerts.
+   */
+  received?: { title: string; severity: AlertSeverity; providerSeverity: string | null } | null;
   updatedAt: number;
 };
 

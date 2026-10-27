@@ -20,6 +20,8 @@ export const ALERT_LABEL_KEY_MAX = 64;
 export const ALERT_LABEL_VALUE_MAX = 200;
 /** Alerts read from one payload (a Grafana group can carry many); the rest are left out and logged. */
 export const MAX_ALERTS_PER_PAYLOAD = 50;
+/** The longest sender's word for severity kept (`providerSeverity`). */
+export const PROVIDER_SEVERITY_MAX = 64;
 
 /** One alert as Brigade understands it, whatever sent it. */
 export type NormalizedAlert = {
@@ -31,6 +33,11 @@ export type NormalizedAlert = {
   /** Where to look in the sender's tool; null when it gave no http(s) link. */
   link: string | null;
   labels: Record<string, string>;
+  /**
+   * The sender's own word for how urgent it is (Grafana's `severity` label, Datadog's priority, Sentry's level…), as
+   * sent, for a source's severity mapping (alert-mapping.ts). Absent when it gave none.
+   */
+  providerSeverity?: string;
   /**
    * When the sender says it happened, in milliseconds: a firing's start, a resolve's end. Absent when it does not
    * say. Only an early resolve reads it (`alert.ingest`): a firing that started after that resolve is a new problem.
@@ -233,6 +240,10 @@ function entries(value: unknown): [string, unknown][] {
   return object ? Object.entries(object) : [];
 }
 
+/** The sender's word for severity, fitted; undefined when it gave none. */
+const providerWord = (...values: unknown[]): string | undefined =>
+  firstText(PROVIDER_SEVERITY_MAX, ...values);
+
 const firstText = (max: number, ...values: unknown[]): string | undefined => {
   for (const value of values) {
     const text = fitText(value, max);
@@ -256,8 +267,14 @@ function alert(
   rest: Omit<NormalizedAlert, "dedupKey" | "title">,
 ): NormalizedAlert | undefined {
   if (key === undefined || title === undefined) return undefined;
-  const { at, ...others } = rest;
-  return { dedupKey: key, title, ...others, ...(at != null && { at }) };
+  const { at, providerSeverity, ...others } = rest;
+  return {
+    dedupKey: key,
+    title,
+    ...others,
+    ...(providerSeverity !== undefined && { providerSeverity }),
+    ...(at != null && { at }),
+  };
 }
 
 function collect(
@@ -299,6 +316,7 @@ function generic(body: unknown): Normalized {
     const status = (word(one.status) || "firing").toLowerCase();
     return alert(firstKey("", one.dedup_key, one.dedupKey, one.fingerprint, one.id, title), title, {
       severity: severityFrom(one.severity) ?? "high",
+      providerSeverity: providerWord(one.severity),
       status:
         status === "resolved" || status === "ok" || status === "recovered" ? "resolved" : "firing",
       link: fitLink(one.link ?? one.url),
@@ -325,6 +343,7 @@ function grafana(body: unknown): Normalized {
     const resolved = one.status === "resolved";
     return alert(fitKey("", one.fingerprint), title, {
       severity: severityFrom(labels.severity) ?? "high",
+      providerSeverity: providerWord(labels.severity),
       status: resolved ? "resolved" : "firing",
       link: fitLink(one.panelURL) ?? fitLink(one.dashboardURL) ?? fitLink(one.generatorURL),
       labels: fitLabels(Object.entries(labels)),
@@ -400,6 +419,7 @@ function datadog(body: unknown): Normalized {
       (title !== undefined ? `datadog:hash:${keyHash(`${named}\n${tagged}`)}` : undefined);
     return alert(key, title, {
       severity,
+      providerSeverity: providerWord(one.priority, bracket?.[1], alertType),
       status: resolved ? "resolved" : "firing",
       link: fitLink(one.link),
       labels,
@@ -434,6 +454,7 @@ function sentry(body: unknown, headers: AlertHeaders): Normalized {
         firstText(ALERT_TITLE_MAX, event.title, data.triggered_rule),
         {
           severity: severityFrom(event.level) ?? "high",
+          providerSeverity: providerWord(event.level),
           status: "firing",
           link: fitLink(event.web_url),
           labels: fitLabels(tags),
@@ -449,6 +470,7 @@ function sentry(body: unknown, headers: AlertHeaders): Normalized {
         firstText(ALERT_TITLE_MAX, data.description_title, metric.title),
         {
           severity: action === "warning" ? "warning" : "critical",
+          providerSeverity: providerWord(action),
           status: action === "resolved" ? "resolved" : "firing",
           link: fitLink(data.web_url),
           labels: {},
@@ -463,6 +485,7 @@ function sentry(body: unknown, headers: AlertHeaders): Normalized {
     return collect([issue], () =>
       alert(fitKey("sentry:issue:", issue.id), firstText(ALERT_TITLE_MAX, issue.title), {
         severity: severityFrom(issue.level) ?? "high",
+        providerSeverity: providerWord(issue.level),
         status: action === "resolved" ? "resolved" : "firing",
         link: fitLink(issue.permalink ?? issue.web_url),
         labels: {},

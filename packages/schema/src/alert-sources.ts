@@ -6,6 +6,17 @@
 
 import type { Role } from "./access.ts";
 import {
+  applyMapping,
+  MAX_SEVERITY_RULES,
+  parseTemplate,
+  SEVERITY_FIELDS,
+  SEVERITY_VALUE_MAX,
+  TITLE_TEMPLATE_MAX,
+  type AlertMapping,
+  type SeverityMapping,
+  type TemplateProblem,
+} from "./alert-mapping.ts";
+import {
   ALERT_AT_MAX,
   ALERT_AT_MIN,
   ALERT_KEY_MAX,
@@ -17,6 +28,7 @@ import {
   ALERT_SOURCE_KINDS,
   ALERT_TITLE_MAX,
   MAX_ALERTS_PER_PAYLOAD,
+  PROVIDER_SEVERITY_MAX,
   type AlertSeverity,
   type NormalizedAlert,
 } from "./alert-normalize.ts";
@@ -257,7 +269,66 @@ const normalizedAlert = v.object({
   status: v.picklist(["firing", "resolved"] as const),
   link: v.nullable(linkValue),
   labels: labelsRecord,
+  providerSeverity: v.optional(v.string({ min: 1, max: PROVIDER_SEVERITY_MAX })),
   at: v.optional(v.nullable(v.integer({ min: ALERT_AT_MIN, max: ALERT_AT_MAX }))),
+});
+
+const TEMPLATE_PROBLEMS: Record<TemplateProblem, string> = {
+  unknown_field: "Use {title}, {severity} or {labels.<key>}",
+  unclosed: "A { is never closed",
+  stray_brace: "A } closes nothing",
+  too_many_fields: "Use at most 10 placeholders",
+};
+
+/** A title template: text and `{field}` placeholders that `parseTemplate` reads (alert-mapping.ts). */
+const titleTemplate: Validator<string> = (input, path = "") => {
+  const result = v.string({ min: 1, max: TITLE_TEMPLATE_MAX })(input, path);
+  if (!result.ok) return result;
+  const parsed = parseTemplate(result.value);
+  return parsed.ok
+    ? result
+    : { ok: false, issues: [{ path, message: TEMPLATE_PROBLEMS[parsed.problem] }] };
+};
+
+const severityRule = v.object({
+  value: v.string({ min: 1, max: SEVERITY_VALUE_MAX }),
+  severity: v.picklist(ALERT_SEVERITIES),
+});
+
+/** A severity map: a label to read when it reads one, each value once (ignoring case). */
+const severityMapping: Validator<SeverityMapping> = (input, path = "") => {
+  const result = v.object({
+    from: v.picklist(SEVERITY_FIELDS),
+    label: v.nullable(v.string({ min: 1, max: ALERT_LABEL_KEY_MAX })),
+    rules: v.array(severityRule, { max: MAX_SEVERITY_RULES }),
+    fallback: v.nullable(v.picklist(ALERT_SEVERITIES)),
+  })(input, path);
+  if (!result.ok) return result;
+  const at = (key: string) => (path ? `${path}.${key}` : key);
+  const { from, label, rules, fallback } = result.value;
+  if (from === "label" && label === null) {
+    return { ok: false, issues: [{ path: at("label"), message: "Name the label to read" }] };
+  }
+  const seen = new Set<string>();
+  for (const [index, rule] of rules.entries()) {
+    const value = rule.value.toLowerCase();
+    if (seen.has(value)) {
+      return {
+        ok: false,
+        issues: [{ path: at(`rules[${index}].value`), message: "Each value once" }],
+      };
+    }
+    seen.add(value);
+  }
+  return {
+    ok: true,
+    value: { from, label: from === "label" ? label!.toLowerCase() : null, rules, fallback },
+  };
+};
+
+const alertMapping = v.object({
+  titleTemplate: v.nullable(titleTemplate),
+  severity: v.nullable(severityMapping),
 });
 
 function checkNewId(id: string, ctx: MutationContext): MutationResult | undefined {
@@ -276,6 +347,11 @@ export type AlertSourceEvent = DomainEvent<
   Pick<AlertSourceRow, "id" | "name" | "kind" | "headerName" | "signed">
 >;
 export type AlertSourceRotated = DomainEvent<"alert_source.rotated", { id: string }>;
+/** A source's title and severity mapping changed; `mapping` null: as the sender says again. */
+export type AlertSourceMappingChanged = DomainEvent<
+  "alert_source.mapping_changed",
+  { id: string; mapping: AlertMapping | null }
+>;
 export type AlertSourceDeleted = DomainEvent<
   "alert_source.deleted",
   { id: string; resolved: number }
@@ -466,6 +542,35 @@ export const updateAlertSource = defineMutation({
       updatedAt: ctx.now,
     });
     return ok(sourceEvent("alert_source.updated", row));
+  },
+});
+
+/**
+ * How a source's alerts are named and how urgent they are (RFC 0005 "Alert sources", "Mapping"): a title template and
+ * a severity map, applied to every alert it sends from the next payload on, before the routes see it. A mapping with
+ * neither, or null, is the sender's own title and severity again. The alerts already in are left as they are; a quiet
+ * one that comes again is mapped and routed again like any repeat.
+ */
+export const setAlertSourceMapping = defineMutation({
+  name: "alertSource.setMapping",
+  args: v.object({ id: sourceId, mapping: v.nullable(alertMapping) }),
+  permission: "alert:manage",
+  apply(store, args, ctx) {
+    const source = store.get("alert_sources", args.id);
+    if (!source) return fail("not_found", "Alert source not found");
+    const given = args.mapping;
+    const mapping =
+      given && (given.titleTemplate !== null || given.severity !== null) ? given : null;
+    if (JSON.stringify(source.mapping ?? null) === JSON.stringify(mapping)) {
+      return fail("conflict", "Nothing to change");
+    }
+    store.update("alert_sources", args.id, { mapping, updatedAt: ctx.now });
+    const event: AlertSourceMappingChanged = {
+      type: "alert_source.mapping_changed",
+      subject: args.id,
+      data: { id: args.id, mapping },
+    };
+    return ok(event);
   },
 });
 
@@ -1060,6 +1165,8 @@ type Intake = {
   routes: readonly AlertRouteRow[];
   malformed: boolean;
   capacityTitle: string;
+  /** The alert as sent, before its source's mapping, kept on its row (`SourceAlertRow.received`). */
+  received: SourceAlertRow["received"];
   ctx: MutationContext;
 };
 
@@ -1111,12 +1218,23 @@ export const ingestAlerts = defineMutation({
       routes: orderedRoutes(store),
       malformed: args.malformed,
       capacityTitle: args.capacityTitle ?? CAPACITY_TITLE,
+      received: null,
       ctx,
     };
     const events: DomainEvent[] = sweep(store, ctx);
-    for (const { alert, alertId, incidentId, malformed: unreadable } of args.alerts) {
+    for (const { alert: sent, alertId, incidentId, malformed: unreadable } of args.alerts) {
       const malformed = args.malformed || unreadable === true;
       intake.malformed = malformed;
+      // Brigade's own alert stands for what could not be read: no mapping applies to it. Every other alert is
+      // mapped before anything else reads it, so the routes match the severity the mapping gives.
+      const alert = malformed ? sent : applyMapping(source.mapping, sent);
+      intake.received = malformed
+        ? null
+        : {
+            title: sent.title,
+            severity: sent.severity,
+            providerSeverity: sent.providerSeverity ?? null,
+          };
       const current = firingRow(store, source.id, alert.dedupKey, malformed);
       if (alert.status === "resolved") {
         events.push(...resolveOne(store, current, alert, intake));
@@ -1142,6 +1260,7 @@ export const ingestAlerts = defineMutation({
         severity: alert.severity,
         link: alert.link,
         labels: alert.labels,
+        ...(intake.received && { received: intake.received }),
         lastSeenAt: ctx.now,
         repeats: current.repeats + 1,
         updatedAt: ctx.now,
@@ -1324,7 +1443,7 @@ function routeIncident(
 function newRow(
   alert: NormalizedAlert,
   alertId: string,
-  { sourceId, ctx }: Intake,
+  { sourceId, received, ctx }: Intake,
 ): SourceAlertRow {
   return {
     id: alertId,
@@ -1347,6 +1466,7 @@ function newRow(
     lastSeenAt: ctx.now,
     resolvedAt: null,
     repeats: 0,
+    ...(received && { received }),
     updatedAt: ctx.now,
   };
 }
@@ -1534,7 +1654,7 @@ function capacity(
     ...newRow(
       { ...alert, dedupKey: CAPACITY_KEY, title: intake.capacityTitle, labels: {}, link: null },
       ids.alertId,
-      intake,
+      { ...intake, received: null },
     ),
     severity: moreUrgent(alert.severity, "high") ? alert.severity : "high",
     outcome: "opened",
@@ -1588,6 +1708,8 @@ export const rerouteAlerts = defineMutation({
         routes,
         malformed: false,
         capacityTitle: args.capacityTitle ?? CAPACITY_TITLE,
+        // Already mapped when it came in: routed as it is, never mapped twice.
+        received: row.received ?? null,
         ctx,
       };
       const { action } = pickRoute(routes, row.sourceId, alert, false);
@@ -1663,6 +1785,7 @@ export const alertSourceMutations = [
   createAlertSource,
   updateAlertSource,
   rotateAlertSource,
+  setAlertSourceMapping,
   deleteAlertSource,
   createAlertRoute,
   updateAlertRoute,

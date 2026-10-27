@@ -351,8 +351,9 @@ First slice of Phase 3, in `packages/schema` (`catalog.ts`), stored in `Workspac
 - **Service** (`services` table, query `services.all`, most critical first): a name (1 to 80), an optional
   description (up to 500, multi-line), a **tier** (`tier1` critical, `tier2` important, `tier3` supporting), its
   **owners** (0 to 10 schedules or members who can respond, the same targets as an escalation level; no teams yet)
-  and an optional escalation policy. The policy is kept for alert routes (Phase 3) and does not page yet: pages
-  follow the incident's type, then the monitor that opened it, then the default policy. At most 100 services per workspace (every client holds them).
+  and an optional escalation policy, which pages the incidents that name the service: after the alert route's and
+  the type's, before the monitor's and the default (RFC 0006 "Who is paged"; the first of the incident's services
+  that names one, when the run starts). At most 100 services per workspace (every client holds them).
 - **Incidents name the services they affect** (`serviceIds` on the incident row, at most 10, `incident.setServices`
   replacing the list, event `incident.services_changed`, timeline `services_changed` by the names they had then).
   `incident.declare` takes them too.

@@ -3,6 +3,7 @@
 // recent alerts with what Brigade did with each, with demo data and with the worst case.
 import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
 import type {
+  AlertMapping,
   AlertRouteRow,
   AlertSourceRow,
   EscalationPolicyRow,
@@ -132,6 +133,7 @@ function panel(overrides: Partial<Parameters<typeof AlertsPanel>[0]> = {}) {
       onCreate={async () => "https://brigade.example.com/api/alerts/x"}
       onRotate={async () => null}
       onDelete={async () => true}
+      onSetMapping={async () => true}
       onCreateRoute={async () => true}
       onUpdateRoute={async () => true}
       onMoveRoute={async () => true}
@@ -381,6 +383,110 @@ describe("AlertsPanel", () => {
         action: { kind: "drop" },
       },
     ]);
+  });
+
+  test("a source's title and severity are previewed on its latest alert as sent, then saved", async () => {
+    const saved: (AlertMapping | null)[] = [];
+    const container = mount(
+      panel({
+        onSetMapping: async (_id, mapping) => (saved.push(mapping), true),
+        recent: [
+          alert("alt_1", {
+            title: "checkout: High memory usage on web-1",
+            labels: { service: "checkout", env: "production" },
+            received: {
+              title: "High memory usage on web-1",
+              severity: "high",
+              providerSeverity: "P2",
+            },
+          }),
+        ],
+      }),
+    );
+    click(button(container, "Title and severity"));
+    expect(container.textContent).toContain("Sender's severity: P2");
+    expect(container.textContent).toContain("High memory usage on web-1 · High");
+    // The latest alert's labels are offered as placeholders.
+    click(button(container, "{labels.service}"));
+    type(input(container, "Title template (optional)"), "{labels.service}: {title}");
+    click(button(container, "Add value"));
+    type(input(container, "Value"), "p2");
+    type(input(container, "Severity"), "critical");
+    expect(container.textContent).toContain("checkout: High memory usage on web-1 · Critical");
+    await act(async () => {
+      button(container, "Save").closest("form")!.requestSubmit();
+    });
+    expect(saved).toEqual([
+      {
+        titleTemplate: "{labels.service}: {title}",
+        severity: {
+          from: "provider",
+          label: null,
+          rules: [{ value: "p2", severity: "critical" }],
+          fallback: null,
+        },
+      },
+    ]);
+    // Saved: the form closes (the source's row says it is mapped once the shard's row comes back).
+    expect(container.textContent).not.toContain("Preview with the latest alert");
+  });
+
+  test("the mapping's worst case: a broken template, an empty value, no alert yet, a label nobody sends", async () => {
+    const saved: (AlertMapping | null)[] = [];
+    const long = "x".repeat(200);
+    const container = mount(
+      panel({
+        sources: [
+          source("src_grafana", "Grafana production", {
+            mapping: {
+              titleTemplate: "{labels.team} {title}",
+              severity: { from: "label", label: "priority", rules: [], fallback: "warning" },
+            },
+          }),
+        ],
+        onSetMapping: async (_id, mapping) => (saved.push(mapping), true),
+      }),
+    );
+    expect(container.textContent).toContain("Last alert 5 minutes ago · Title and severity mapped");
+    click(button(container, "Title and severity"));
+    expect(container.textContent).toContain(
+      "No alert from this source yet. The preview appears once one arrives.",
+    );
+    type(input(container, "Title template (optional)"), `{title ${long}`);
+    click(button(container, "Add value"));
+    await act(async () => {
+      button(container, "Save").closest("form")!.requestSubmit();
+    });
+    expect(container.textContent).toContain("A placeholder is never closed.");
+    expect(container.textContent).toContain("Enter the value, or remove the row.");
+    expect(saved).toEqual([]);
+    // Back to the sender's own title and severity.
+    await act(async () => {
+      click(button(container, "Use the sender's"));
+    });
+    expect(saved).toEqual([null]);
+  });
+
+  test("a mapping previews a long label and emoji fitted to a title, never past its length", () => {
+    const container = mount(
+      panel({
+        sources: [
+          source("src_grafana", "Grafana production", {
+            mapping: { titleTemplate: "{labels.service} — {title}", severity: null },
+          }),
+        ],
+        recent: [
+          alert("alt_1", {
+            labels: { service: "🔥".repeat(100) },
+            received: { title: "Disk full", severity: "warning", providerSeverity: null },
+          }),
+        ],
+      }),
+    );
+    click(button(container, "Title and severity"));
+    expect(container.textContent).toContain("The sender gave no severity");
+    const becomes = [...container.querySelectorAll("dd")][1]!.firstChild!.textContent!;
+    expect(becomes).toBe("🔥".repeat(100));
   });
 
   test("pt-BR", () => {

@@ -443,7 +443,11 @@ describe("AlertsPanel", () => {
       }),
     );
     const edit = (index: number) =>
-      click([...container.querySelectorAll("button")].filter((one) => one.textContent === "Edit")[index]!);
+      click(
+        [...container.querySelectorAll("button")].filter((one) => one.textContent === "Edit")[
+          index
+        ]!,
+      );
     const save = () =>
       act(async () => {
         button(container, "Save").closest("form")!.requestSubmit();
@@ -471,7 +475,8 @@ describe("AlertsPanel", () => {
     click(button(container, "Add route"));
     type(input(container, "Then"), "group");
     type(input(container, "Group by label"), "service");
-    const warning = "Grouping by another label puts every monitor this route takes into one incident.";
+    const warning =
+      "Grouping by another label puts every monitor this route takes into one incident.";
     // No monitor named: alert sources carry any label.
     expect(container.textContent).not.toContain(warning);
     click(input(container, "Docs"));

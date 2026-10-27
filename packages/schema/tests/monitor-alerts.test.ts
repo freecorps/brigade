@@ -601,7 +601,9 @@ describe("route actions", () => {
       evaluateQuery(incidentTimeline, { id: incident!.id }, db).filter(
         (entry) => entry.kind === "alert_grouped",
       ),
-    ).toEqual([expect.objectContaining({ monitorId: id, name: "Checkout", actor: "sys_monitors" })]);
+    ).toEqual([
+      expect.objectContaining({ monitorId: id, name: "Checkout", actor: "sys_monitors" }),
+    ]);
 
     // The Grafana alert resolving does not close an incident the monitor still holds.
     ok(
@@ -742,7 +744,12 @@ describe("re-routing quiet monitor alerts", () => {
     expect(monitorAlertsToReroute(db).map((row) => row.id)).toEqual([quiet]);
     const result = ok(reroute(db, T + 5000));
     expect(types(result)).toEqual(["alert.resolved", "incident.declared", "alert.fired"]);
-    expect(result.events[0]?.data).toEqual({ quiet: true, id: quiet, monitorId: id, reason: "rerouted" });
+    expect(result.events[0]?.data).toEqual({
+      quiet: true,
+      id: quiet,
+      monitorId: id,
+      reason: "rerouted",
+    });
     const monitor = db.get("monitors", id)!;
     expect(monitor.alertId).not.toBe(quiet);
     expect(monitor).toMatchObject({ status: "down", incidentId: expect.any(String) });
@@ -848,7 +855,14 @@ describe("grouping a monitor onto an incident", () => {
   test("an alert source's alert grouped onto an incident is said on its timeline", () => {
     const db = store();
     const { source, incident } = grouped(db);
-    ok(ingest(db, source, { ...grafanaAlert("firing"), dedupKey: "checkout-errors", title: "Checkout errors" }, T + 2000));
+    ok(
+      ingest(
+        db,
+        source,
+        { ...grafanaAlert("firing"), dedupKey: "checkout-errors", title: "Checkout errors" },
+        T + 2000,
+      ),
+    );
     expect(
       evaluateQuery(incidentTimeline, { id: incident }, db).filter(
         (entry) => entry.kind === "alert_grouped",
@@ -932,13 +946,14 @@ describe("closing an incident a down monitor is on", () => {
       monitorId: id,
       reason: "incident_closed",
     });
-    expect(db.get("monitors", id)).toMatchObject({ status: "down", alertId: null, incidentId: null });
+    expect(db.get("monitors", id)).toMatchObject({
+      status: "down",
+      alertId: null,
+      incidentId: null,
+    });
     expect(db.get("alerts", first.alertId!)).toMatchObject({ status: "resolved" });
     // Still down: its next report alerts again (no status change), and the new incident pages.
-    expect(types(report(db, id, false, T + 4000))).toEqual([
-      "incident.declared",
-      "alert.fired",
-    ]);
+    expect(types(report(db, id, false, T + 4000))).toEqual(["incident.declared", "alert.fired"]);
     const again = db.get("monitors", id)!;
     expect(again.incidentId).not.toBe(first.incidentId);
     expect(again.alertId).not.toBe(first.alertId);
@@ -979,7 +994,11 @@ describe("closing an incident a down monitor is on", () => {
       "alert.resolved",
       "alert.resolved",
     ]);
-    expect(db.get("monitors", id)).toMatchObject({ alertId: null, incidentId: null, alertRoute: null });
+    expect(db.get("monitors", id)).toMatchObject({
+      alertId: null,
+      incidentId: null,
+      alertRoute: null,
+    });
     expect(types(report(db, id, false, T + 4000))).toEqual(["incident.declared", "alert.fired"]);
     expect(db.get("monitors", id)).toMatchObject({ alertRoute: { outcome: "opened" } });
     expect(db.get("monitors", id)?.incidentId).not.toBe(incident);

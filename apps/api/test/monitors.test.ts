@@ -711,12 +711,18 @@ describe("monitor down → alert → incident", () => {
       error: up ? null : "status",
     });
     const now = Date.now();
-    expect(await ws.stub.report("weur", ids.map((id) => verdict(id, true, now - 2)))).toEqual(
-      ids.map(() => true),
-    );
-    expect(await ws.stub.report("weur", ids.map((id) => verdict(id, false, now - 1)))).toEqual(
-      ids.map(() => true),
-    );
+    expect(
+      await ws.stub.report(
+        "weur",
+        ids.map((id) => verdict(id, true, now - 2)),
+      ),
+    ).toEqual(ids.map(() => true));
+    expect(
+      await ws.stub.report(
+        "weur",
+        ids.map((id) => verdict(id, false, now - 1)),
+      ),
+    ).toEqual(ids.map(() => true));
     // Deleted outside a member's socket: the shard has not routed them again yet.
     await ws.run("alertRoute.delete", { id: routeId });
     await ws.withShard((shard) => {
@@ -730,7 +736,10 @@ describe("monitor down → alert → incident", () => {
           const rows = (input.args as { rows: { rowId: string }[] }).rows;
           mutations.push(rows.length);
           if (rows.some((row) => row.rowId === bad)) {
-            return { result: { ok: false, error: { code: "internal", message: "boom" } }, changes: [] };
+            return {
+              result: { ok: false, error: { code: "internal", message: "boom" } },
+              changes: [],
+            };
           }
           return shard.mutate(input);
         },

@@ -82,14 +82,15 @@ async function workspace() {
       role: member.role,
     });
   }
-  const device = async (actor: Actor) => {
+  /** With `voip`, the phone registers a PushKit token too, so a page can ring it (RFC 0010). */
+  const device = async (actor: Actor, voip = false) => {
     const recipient = await generateRecipient();
     await run(actor, "device.register", {
       id: newId("dev", Date.now(), random),
       platform: "ios",
       environment: "sandbox",
       pushToken: toBase64url(random(32)).replace(/[-_]/g, "a"),
-      voipToken: null,
+      voipToken: voip ? toBase64url(random(32)).replace(/[-_]/g, "b") : null,
       publicKey: toBase64url(recipient.publicKey),
     });
   };
@@ -347,6 +348,41 @@ describe("paging through the default policy", () => {
     // The alarm again, before the next timeout: nothing fires twice.
     expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
     expect(await ws.levels(incident)).toHaveLength(2);
+  });
+
+  test("a SEV2's escalation level rings members on the default, not those with calls for SEV1 only; a refused call never escalates early", async () => {
+    for (const calls of ["sev1_sev2", "sev1"] as const) {
+      const ws = await workspace();
+      await ws.device(caio, true);
+      await ws.device(eva, true);
+      await ws.run(eva, "member.setCalls", { calls });
+      await withPolicy(ws);
+      const { event, incident } = await ws.declare(MONITOR_ACTOR, "sev2");
+      const kinds: string[] = [];
+      // Every call is refused: only the alert push decides the page.
+      const send: Fetch = async (request) => {
+        const body = (await request.json()) as { kind?: string };
+        kinds.push(body.kind ?? "alert");
+        return body.kind === "call"
+          ? Response.json({ status: 400, reason: "BadDeviceToken" }, { status: 502 })
+          : Response.json({ status: 200 });
+      };
+      await deliver(event, send);
+      // A SEV2's first page does not ring.
+      expect(kinds).toEqual(["alert"]);
+      // No early escalation: level 1's alert got through.
+      expect(await ws.levels(incident)).toHaveLength(1);
+      await ws.due(incident);
+      expect(await runDurableObjectAlarm(ws.stub)).toBe(true);
+      const paged = (await ws.events(incident)).filter((e) => e.type === "escalation.paged")[1]!;
+      await deliver(paged, send);
+      expect(kinds, calls).toEqual(
+        calls === "sev1" ? ["alert", "alert"] : ["alert", "alert", "call"],
+      );
+      // The refused call left the level as its alert made it: no retry, no failure, no early next level.
+      expect((await ws.timeline(incident)).map((row) => row.kind)).not.toContain("page_failed");
+      expect(await ws.levels(incident)).toHaveLength(2);
+    }
   });
 
   test("an ack stops the run: no level fires after it, and a level already queued is not sent", async () => {

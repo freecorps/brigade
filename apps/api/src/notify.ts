@@ -19,6 +19,7 @@ import { notifyWebhookDisabled, notifyWebhooks, type WebhookNotifyEnv } from "./
 import type { BrigadeEvent } from "./outbox.ts";
 import {
   asksForPage,
+  type CallOutcome,
   type DeviceOutcome,
   type PagePlan,
   type PageTarget,
@@ -436,15 +437,58 @@ export function collapseIdOf(incidentId: string, urgency: Urgency): string {
   return urgency === "page" ? incidentId : `${incidentId}:${urgency}`;
 }
 
-/** APNs' reasons for a token that will never work again: the device is dropped. */
+/**
+ * APNs' reasons for a token that will never work again: the device is dropped, or for a call its VoIP token cleared.
+ */
 const TOKEN_GONE: readonly string[] = ["BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"];
+
+/** The relay's answer to a send it did not take: its own `error`, or APNs' `status` and `reason`. */
+type RelayAnswer = { error?: string; status?: number; reason?: string };
+
+/**
+ * What a send the relay did not take (a push or a call) says, for its delivery row: who said no (`error`), APNs' own
+ * `apnsReason`, whether the token is `gone` and whether the same request would be refused again (`permanent`).
+ */
+function refusal(
+  httpStatus: number,
+  answer: RelayAnswer,
+): { error: DeliveryError; apnsReason?: string; gone: boolean; permanent: boolean } {
+  // APNs' own reason, for the delivery row: letters only, as APNs sends them.
+  const apnsReason =
+    typeof answer.reason === "string" && /^[A-Za-z]{1,64}$/.test(answer.reason)
+      ? answer.reason
+      : undefined;
+  const reason = apnsReason === undefined ? {} : { apnsReason };
+  if (answer.status === 410 || TOKEN_GONE.includes(answer.reason as string)) {
+    return { error: "token_invalid", ...reason, gone: true, permanent: true };
+  }
+  // A request the relay or APNs will refuse again (bad body, bad credentials, a wrong relay URL); the relay being
+  // unreachable, APNs throttling or failing, or anything unknown may pass.
+  const apnsRefused =
+    answer.status !== undefined &&
+    answer.status >= 400 &&
+    answer.status < 500 &&
+    answer.status !== 429;
+  const permanent = [400, 401, 403, 404].includes(httpStatus) || apnsRefused;
+  // Who said no: APNs (with its status), the relay itself (its token, the body, its own configuration), APNs out of
+  // the relay's reach, or something in front of the relay.
+  const error: DeliveryError = apnsRefused
+    ? "apns_refused"
+    : answer.status !== undefined || answer.error === "apns_unreachable"
+      ? "apns_unavailable"
+      : permanent || answer.error === "relay_misconfigured"
+        ? "relay_refused"
+        : "relay_unreachable";
+  return { error, ...reason, gone: false, permanent };
+}
 
 /** One device's outcome, and whether trying again may help. */
 type Sent = { outcome: DeviceOutcome; retry: boolean };
 
 /**
  * Seals and sends one device's push; classifies the relay's answer. Once the relay took the alert, rings the device
- * as well when `callId` is given (`ringOne`). Never throws.
+ * as well when `callId` is given and the plan rings it (`ringOne`), and reports the call with the alert's outcome
+ * without letting it change it. Never throws.
  */
 async function pushOne(
   workspaceId: string,
@@ -564,14 +608,17 @@ async function pushOne(
     await response.body?.cancel();
     // Step 2 of the ladder (RFC 0010): the alert is out, so the phone can ring. Whatever the call does, the alert's
     // outcome stands.
-    if (callId !== undefined) await ringOne(callId, target, content, env, post);
-    return { outcome: { deviceId, userId, ok: true, ms }, retry: false };
+    // A shard from before the member's choice of calls leaves `call` out: its plan's `call` decides.
+    const call =
+      callId !== undefined && target.call !== false
+        ? await ringOne(callId, target, content, env, post)
+        : undefined;
+    return {
+      outcome: { deviceId, userId, ok: true, ms, ...(call === undefined ? {} : { call }) },
+      retry: false,
+    };
   }
-  const answer = (await response.json().catch(() => ({}))) as {
-    error?: string;
-    status?: number;
-    reason?: string;
-  };
+  const answer = (await response.json().catch(() => ({}))) as RelayAnswer;
   // Never the token or the envelope.
   log("relay refused a push", {
     device: deviceId,
@@ -580,34 +627,13 @@ async function pushOne(
     apnsStatus: answer.status,
     reason: answer.reason,
   });
+  const { error, apnsReason, gone, permanent } = refusal(response.status, answer);
   // APNs says the token is gone: drop the device, and retry the page while attempts remain, so the next plan sees
   // this member without that device (a commander's page then falls back to everyone who can respond).
-  // APNs' own reason, for the delivery row: letters only, as APNs sends them.
-  const apnsReason =
-    typeof answer.reason === "string" && /^[A-Za-z]{1,64}$/.test(answer.reason)
-      ? answer.reason
-      : undefined;
-  if (answer.status === 410 || TOKEN_GONE.includes(answer.reason as string)) {
+  if (gone) {
     return failed("token_invalid", "token_invalid", { expired: true, retry: true, apnsReason });
   }
-  // A request the relay or APNs will refuse again (bad body, bad credentials, a wrong relay URL) is not retried, so
-  // the failure reaches the timeline at once; the relay being unreachable, APNs throttling or failing, or anything
-  // unknown is.
-  const apnsRefused =
-    answer.status !== undefined &&
-    answer.status >= 400 &&
-    answer.status < 500 &&
-    answer.status !== 429;
-  const permanent = [400, 401, 403, 404].includes(response.status) || apnsRefused;
-  // For the delivery row: who said no. APNs (with its status), the relay itself (its token, the body, its own
-  // configuration), APNs out of the relay's reach, or something in front of the relay.
-  const error: DeliveryError = apnsRefused
-    ? "apns_refused"
-    : answer.status !== undefined || answer.error === "apns_unreachable"
-      ? "apns_unavailable"
-      : permanent || answer.error === "relay_misconfigured"
-        ? "relay_refused"
-        : "relay_unreachable";
+  // A request the relay or APNs will refuse again is not retried, so the failure reaches the timeline at once.
   return failed("undelivered", error, { ...(permanent ? {} : { retry: true }), apnsReason });
 }
 
@@ -615,9 +641,9 @@ async function pushOne(
  * Rings one device as a call (RFC 0010): a VoIP push through the relay (`kind: "call"`) to its PushKit token. Only
  * an iOS device with a VoIP token: PushKit requires the app to report every VoIP push to CallKit, which the app does
  * for every push it gets (a malformed one included), so a call goes only to a token the app itself registered. The
- * call carries no receipt token (the extension, which reports receipts, never sees it). Best effort: never throws,
- * and a failure is only logged; the alert push already reached the relay, and the page is retried, escalated and
- * recorded on the alert's outcome alone.
+ * call carries no receipt token (the extension, which reports receipts, never sees it). Best effort: never throws;
+ * what the relay answered goes on the call's own delivery row (and a token APNs says is gone is cleared), while the
+ * page is retried, escalated and recorded on the alert's outcome alone. Undefined when no call was sent.
  */
 async function ringOne(
   callId: string,
@@ -625,11 +651,18 @@ async function ringOne(
   content: PushContent,
   env: NotifyEnv,
   post: (init: RequestInit) => Promise<Response>,
-): Promise<void> {
+): Promise<CallOutcome | undefined> {
   const { deviceId, voipToken } = target;
-  if (target.platform !== "ios" || !voipToken) return;
+  if (target.platform !== "ios" || !voipToken) return undefined;
+  let envelope;
   try {
-    const envelope = await sealPush(target.publicKey, content);
+    envelope = await sealPush(target.publicKey, content);
+  } catch (error) {
+    log("sealing a call failed", { device: deviceId, error: String(error) });
+    return { ok: false, error: "seal_failed" };
+  }
+  const started = Date.now();
+  try {
     const response = await post({
       method: "POST",
       headers: {
@@ -646,16 +679,13 @@ async function ringOne(
       }),
       signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
     });
+    const ms = Date.now() - started;
     if (response.ok) {
       await response.body?.cancel();
       log("call sent", { device: deviceId });
-      return;
+      return { ok: true, ms };
     }
-    const answer = (await response.json().catch(() => ({}))) as {
-      error?: string;
-      status?: number;
-      reason?: string;
-    };
+    const answer = (await response.json().catch(() => ({}))) as RelayAnswer;
     // Never the token or the envelope.
     log("relay refused a call", {
       device: deviceId,
@@ -664,8 +694,18 @@ async function ringOne(
       apnsStatus: answer.status,
       reason: answer.reason,
     });
+    const { error, apnsReason, gone } = refusal(response.status, answer);
+    return {
+      ok: false,
+      error,
+      ms,
+      ...(apnsReason === undefined ? {} : { apnsReason }),
+      // The token the call went to, so a device that registered a new one meanwhile keeps it.
+      ...(gone ? { expiredVoipToken: voipToken } : {}),
+    };
   } catch (error) {
     log("call not sent", { device: deviceId, error: String(error) });
+    return { ok: false, error: "relay_unreachable", ms: Date.now() - started };
   }
 }
 

@@ -46,6 +46,7 @@ const page = (step: number, fields: Partial<WhyPage> = {}): WhyPage => ({
   schedules: [],
   reached: [],
   deliveries: [],
+  calls: [],
   misses: [{ reason: "no_devices", at: T + step * 60_000, schedule: null }],
   ...fields,
 });

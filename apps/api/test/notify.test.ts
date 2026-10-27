@@ -18,6 +18,7 @@ import {
   type HpkeRecipient,
 } from "@freecorps/brigade-push";
 import {
+  callDeliveryId,
   createMemoryStore,
   deliveryId,
   ESCALATION_ACTOR,
@@ -28,6 +29,7 @@ import {
   type BrigadeTables,
   type Role,
   type TimelineRow,
+  wantsCall,
 } from "@freecorps/brigade-schema";
 import {
   callIdOf,
@@ -544,11 +546,24 @@ describe("pages that ring as a call (RFC 0010)", () => {
   });
 
   test("a call the relay refuses or never answers leaves the alert delivered, with no retry", async () => {
-    for (const fails of [
-      () => Response.json({ status: 400, reason: "BadDeviceToken" }, { status: 502 }),
-      () => Response.json({ error: "relay_misconfigured" }, { status: 500 }),
-      () => Promise.reject(new Error("connection reset")),
-    ]) {
+    for (const [fails, error, reason] of [
+      [
+        () => Response.json({ status: 400, reason: "BadDeviceToken" }, { status: 502 }),
+        "token_invalid",
+        "BadDeviceToken",
+      ],
+      [
+        () => Response.json({ status: 400, reason: "BadTopic" }, { status: 502 }),
+        "apns_refused",
+        "BadTopic",
+      ],
+      [
+        () => Response.json({ error: "relay_misconfigured" }, { status: 500 }),
+        "relay_refused",
+        null,
+      ],
+      [() => Promise.reject(new Error("connection reset")), "relay_unreachable", null],
+    ] as const) {
       const ws = await workspace();
       const phone = await ws.device(bia, { voip: true });
       const { incident, event } = await ws.declare(ana, "sev1");
@@ -558,9 +573,21 @@ describe("pages that ring as a call (RFC 0010)", () => {
 
       expect(await deliver(event, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
       expect(fake.requests.map((r) => r.body.kind ?? "alert")).toEqual(["alert", "call"]);
-      const [row] = await deliveries(ws, incident);
-      expect(row).toMatchObject({ deviceId: phone.deviceId, error: null });
+      // The alert's row is untouched by the call; the call's own row says what went wrong.
+      const [row, callRow] = await deliveries(ws, incident);
+      expect(row).toMatchObject({ deviceId: phone.deviceId, error: null, attempts: 1 });
+      expect(row!.kind).toBeUndefined();
       expect(row!.acceptedAt).not.toBeNull();
+      expect(callRow).toMatchObject({
+        id: callDeliveryId(incident, event.id, phone.deviceId),
+        kind: "call",
+        deviceId: phone.deviceId,
+        acceptedAt: null,
+        error,
+        reason,
+        attempts: 1,
+      });
+      expect(callRow!.sentAt).not.toBeNull();
       expect((await ws.timeline(incident)).map((r) => r.kind)).toEqual(["declared"]);
       // The device stays: a refused VoIP token never drops the phone's alert token.
       expect(
@@ -575,6 +602,139 @@ describe("pages that ring as a call (RFC 0010)", () => {
       await deliver(event, fake.send, { attempts: 2 });
       expect(fake.requests).toHaveLength(2);
     }
+  });
+
+  test("each call has its own delivery row next to the alert's, synced like it", async () => {
+    const ws = await workspace();
+    const anaPhone = await ws.device(ana, { voip: true });
+    const biaPhone = await ws.device(bia);
+    const { incident, event } = await ws.declare(MONITOR_ACTOR, "sev1");
+    await deliver(event, relay().send);
+
+    const rows = await deliveries(ws, incident);
+    expect(rows.map((row) => [row.deviceId, row.kind ?? "push"])).toEqual(
+      expect.arrayContaining([
+        [anaPhone.deviceId, "push"],
+        [anaPhone.deviceId, "call"],
+        [biaPhone.deviceId, "push"],
+      ]),
+    );
+    expect(rows).toHaveLength(3);
+    const call = rows.find((row) => row.kind === "call")!;
+    expect(call).toMatchObject({ userId: ana.id, error: null, attempts: 1 });
+    expect(call.acceptedAt).not.toBeNull();
+    const planned = (await ws.events(incident)).filter((e) => e.type === "notification.planned");
+    expect(planned.map((e) => e.data)).toEqual([expect.objectContaining({ devices: 2, calls: 1 })]);
+    const sent = (await ws.events(incident)).filter((e) => e.type === "notification.sent");
+    expect(sent.map((e) => e.data)).toEqual([
+      expect.objectContaining({ accepted: 2, failed: 0, calls: { accepted: 1, failed: 0 } }),
+    ]);
+  });
+
+  test("a call that never went out (its alert never got through) stays planned, and the page settles on the alert", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia, { voip: true });
+    const { incident, event } = await ws.declare(ana, "sev1");
+    const fake = relay(() => Response.json({ status: 400, reason: "BadTopic" }, { status: 502 }));
+    await deliver(event, fake.send);
+    expect(fake.requests.map((r) => r.body.kind ?? "alert")).toEqual(["alert"]);
+    const [row, callRow] = await deliveries(ws, incident);
+    expect(row).toMatchObject({ error: "apns_refused", reason: "BadTopic" });
+    expect(callRow).toMatchObject({ kind: "call", sentAt: null, error: null });
+    expect((await ws.timeline(incident)).map((r) => r.kind)).toEqual(["declared", "page_failed"]);
+    expect(
+      await ws.withShard((shard) => shard.store.get("devices", phone.deviceId)?.voipToken),
+    ).toBe(phone.voipToken);
+  });
+
+  test("a VoIP token APNs refuses as gone is cleared; the phone keeps its alert pushes and stops ringing", async () => {
+    for (const reason of ["BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"]) {
+      const ws = await workspace();
+      const phone = await ws.device(bia, { voip: true });
+      const fake = relay((body) =>
+        body.kind === "call"
+          ? Response.json(
+              { status: reason === "Unregistered" ? 410 : 400, reason },
+              { status: 502 },
+            )
+          : Response.json({ status: 200 }),
+      );
+      const first = await ws.declare(ana, "sev1");
+      expect(await deliver(first.event, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
+
+      const device = await ws.withShard((shard) => shard.store.get("devices", phone.deviceId));
+      expect(device, reason).toMatchObject({ pushToken: phone.pushToken, voipToken: null });
+      expect(
+        await ws.withShard((shard) => shard.store.get("member_devices", phone.deviceId)?.voip),
+      ).toBe(false);
+      const cleared = (await ws.events(phone.deviceId)).filter(
+        (e) => e.type === "device.voip_cleared",
+      );
+      expect(cleared.map((e) => e.data)).toEqual([
+        { id: phone.deviceId, userId: bia.id, reason: "token_invalid" },
+      ]);
+      expect((await ws.events(phone.deviceId)).map((e) => e.type)).not.toContain(
+        "device.unregistered",
+      );
+
+      // The next page is an alert push only, to the same alert token.
+      const second = await ws.declare(ana, "sev1");
+      await deliver(second.event, fake.send);
+      expect(fake.requests.map((r) => r.body.kind ?? "alert")).toEqual(["alert", "call", "alert"]);
+      expect(fake.requests[2]!.body.deviceToken).toBe(phone.pushToken);
+    }
+  });
+
+  test("a VoIP token registered again while the call was out is kept", async () => {
+    const ws = await workspace();
+    const phone = await ws.device(bia, { voip: true });
+    const { event } = await ws.declare(ana, "sev1");
+    const fresh = "c".repeat(64);
+    const fake = relay(async (body) => {
+      if (body.kind !== "call") return Response.json({ status: 200 });
+      // The app registers a new PushKit token while the call to the old one is out.
+      await ws.withShard((shard) =>
+        shard.store.update("devices", phone.deviceId, { voipToken: fresh }),
+      );
+      return Response.json({ status: 400, reason: "BadDeviceToken" }, { status: 502 });
+    });
+    await deliver(event, fake.send);
+    expect(
+      await ws.withShard((shard) => shard.store.get("devices", phone.deviceId)?.voipToken),
+    ).toBe(fresh);
+  });
+
+  test("a member's choice of calls: never rings nobody, and SEV1 only keeps SEV1 pages ringing", async () => {
+    const ws = await workspace();
+    const anaPhone = await ws.device(ana, { voip: true });
+    const biaPhone = await ws.device(bia, { voip: true });
+    await ws.run(ana, "member.setCalls", { calls: "never" });
+    await ws.run(bia, "member.setCalls", { calls: "sev1" });
+    const fake = relay();
+    const { incident, event } = await ws.declare(MONITOR_ACTOR, "sev1");
+    expect(await deliver(event, fake.send)).toEqual({ acked: ["msg-0"], retried: [] });
+
+    // Calls off: Ana still gets the alert push, and no call row is planned for her.
+    const sent = (token: string | null) =>
+      fake.requests.filter((r) => r.body.deviceToken === token).map((r) => r.body.kind ?? "alert");
+    expect(sent(anaPhone.pushToken)).toEqual(["alert"]);
+    expect(sent(anaPhone.voipToken)).toEqual([]);
+    expect(sent(biaPhone.pushToken)).toEqual(["alert"]);
+    expect(sent(biaPhone.voipToken)).toEqual(["call"]);
+    const rows = await deliveries(ws, incident);
+    expect(rows.filter((row) => row.kind === "call").map((row) => row.userId)).toEqual([bia.id]);
+    expect(rows.filter((row) => row.kind !== "call").every((row) => row.acceptedAt !== null)).toBe(
+      true,
+    );
+  });
+
+  test("a call's choice per member and severity", () => {
+    expect(wantsCall(undefined, "sev1")).toBe(true);
+    expect(wantsCall(undefined, "sev2")).toBe(true);
+    expect(wantsCall("sev1_sev2", "sev2")).toBe(true);
+    expect(wantsCall("sev1", "sev1")).toBe(true);
+    expect(wantsCall("sev1", "sev2")).toBe(false);
+    expect(wantsCall("never", "sev1")).toBe(false);
   });
 
   test("an alert that fails is not followed by a call; the retry that delivers it rings, under the same call id", async () => {

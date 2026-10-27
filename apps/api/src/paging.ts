@@ -5,6 +5,7 @@
 
 import {
   ALERTS_ACTOR,
+  callChoiceOf,
   deliveryId,
   type DeliveryError,
   ESCALATION_ACTOR,
@@ -18,6 +19,7 @@ import {
   type EscalationPaged,
   type DevicePlatform,
   incidentPolicy,
+  isCallDelivery,
   type IncidentPagedAgain,
   type IncidentRow,
   type IncidentSeverityChanged,
@@ -29,6 +31,7 @@ import {
   type PushEnvironment,
   type Severity,
   type Store,
+  wantsCall,
 } from "@freecorps/brigade-schema";
 import type { BrigadeEvent } from "./outbox.ts";
 import type { Shard } from "./shard.ts";
@@ -147,6 +150,12 @@ export type PageTarget = {
   criticalAlerts?: boolean;
   /** This page's delivery receipt token for the device (src/receipts.ts); absent when none could be minted. */
   receipt?: string;
+  /**
+   * Whether the page rings this device as a call after its alert push (RFC 0010): the page rings (`ringsAsCall`), the
+   * device is an iPhone with a VoIP token, and its member's choice of calls takes this page (`wantsCall`). Absent from
+   * a shard of the version before the choice (during a deploy): the plan's `call` and the VoIP token decide.
+   */
+  call?: boolean;
 };
 
 /**
@@ -166,8 +175,8 @@ export type PagePlan =
       incident: Pick<IncidentRow, "id" | "number" | "title" | "severity">;
       urgency: Urgency;
       /**
-       * Whether the page also rings as a call on devices with a VoIP token (`ringsAsCall`), after its alert push.
-       * Absent from a shard of the version before calls (during a deploy): no call.
+       * Whether the page rings any of its devices as a call after its alert push (`ringsAsCall`, then each target's
+       * `call`). Absent from a shard of the version before calls (during a deploy): no call.
        */
       call?: boolean;
       targets: PageTarget[];
@@ -204,9 +213,21 @@ export type SendFailure = Extract<
  */
 export type DeliveryDetail = { ms?: number; error?: DeliveryError; apnsReason?: string };
 
+/**
+ * What the relay answered for one device's call (RFC 0010), for its delivery row: never part of the page's own outcome.
+ * `expiredVoipToken`: APNs said the PushKit token the call went to is gone, so it is cleared (`device.expireVoip`).
+ */
+export type CallOutcome = { ok: boolean; expiredVoipToken?: string } & DeliveryDetail;
+
 /** One device's outcome, as the notifier reports it. */
 export type DeviceOutcome =
-  | ({ deviceId: string; userId: string; ok: true } & DeliveryDetail)
+  | ({
+      deviceId: string;
+      userId: string;
+      ok: true;
+      /** The call that rang the device after the alert push; absent when none was sent. */
+      call?: CallOutcome;
+    } & DeliveryDetail)
   | ({
       deviceId: string;
       userId: string;
@@ -519,9 +540,19 @@ export class Pager {
       });
       for (const userId of missed) skipped.push({ userId, reason: "over_limit" });
     }
+    const rings = urgency === "page" && ringsAsCall(event, incident.severity);
+    const settings = rings ? this.options.shard.store.scan("member_settings") : [];
+    const called = targets.map((target) => ({
+      ...target,
+      call:
+        rings &&
+        target.platform === "ios" &&
+        Boolean(target.voipToken) &&
+        wantsCall(callChoiceOf(settings, target.userId), incident.severity),
+    }));
     this.planStep(event, incident.id, now);
-    this.planDeliveries(event, incident.id, targets, now);
-    if (urgency === "page") this.planUrgent(event, incident.id, targets, now);
+    this.planDeliveries(event, incident.id, called, now);
+    if (urgency === "page") this.planUrgent(event, incident.id, called, now);
     return {
       send: true,
       incident: {
@@ -531,8 +562,8 @@ export class Pager {
         severity: incident.severity,
       },
       urgency,
-      call: ringsAsCall(event, incident.severity),
-      targets,
+      call: called.some((target) => target.call),
+      targets: called,
       skipped,
     };
   }
@@ -982,11 +1013,12 @@ export class Pager {
           incidentId,
           eventId: event.id,
           page: this.pageOf(event, incidentId) ?? null,
-          devices: fresh.map(({ deviceId, userId, platform, environment }) => ({
+          devices: fresh.map(({ deviceId, userId, platform, environment, call }) => ({
             deviceId,
             userId,
             platform,
             environment,
+            ...(call === true && { call }),
           })),
         },
         now,
@@ -1000,13 +1032,23 @@ export class Pager {
     }
   }
 
-  /** Records what the relay answered for each device of one attempt (`delivery.report`); never throws. */
+  /**
+   * Records what the relay answered for each device of one attempt (`delivery.report`), each call that rang after an
+   * alert push included (`kind: "call"`); never throws.
+   */
   private reportDeliveries(
     event: BrigadeEvent,
     outcomes: readonly DeviceOutcome[],
     now: number,
   ): void {
     if (outcomes.length === 0) return;
+    const row = (deviceId: string, outcome: DeliveryDetail & { ok: boolean }) => ({
+      deviceId,
+      ok: outcome.ok,
+      error: outcome.ok ? null : (outcome.error ?? null),
+      reason: outcome.ok ? null : (outcome.apnsReason ?? null),
+      ms: Math.min(60_000, Math.max(0, Math.round(outcome.ms ?? 0))),
+    });
     try {
       this.run(
         NOTIFIER_ACTOR,
@@ -1016,13 +1058,12 @@ export class Pager {
         {
           incidentId: event.subject!,
           eventId: event.id,
-          outcomes: outcomes.map((outcome) => ({
-            deviceId: outcome.deviceId,
-            ok: outcome.ok,
-            error: outcome.ok ? null : (outcome.error ?? null),
-            reason: outcome.ok ? null : (outcome.apnsReason ?? null),
-            ms: Math.min(60_000, Math.max(0, Math.round(outcome.ms ?? 0))),
-          })),
+          outcomes: outcomes.flatMap((outcome) => [
+            row(outcome.deviceId, outcome),
+            ...(outcome.ok && outcome.call
+              ? [{ ...row(outcome.deviceId, outcome.call), kind: "call" as const }]
+              : []),
+          ]),
         },
         now,
       );
@@ -1194,6 +1235,9 @@ export class Pager {
           event.id,
           outcome.deviceId,
         );
+        if (outcome.call?.expiredVoipToken !== undefined) {
+          this.expireVoip(event, outcome.deviceId, outcome.call.expiredVoipToken, now);
+        }
         continue;
       }
       // A page the relay did not take is not on its way: it holds nothing back (`holding`).
@@ -1238,6 +1282,29 @@ export class Pager {
     this.settle(event, event.subject!, missed, now);
     this.finish(event.id, now);
     this.unreached(event, event.subject!, now);
+  }
+
+  /**
+   * Clears a device's PushKit token APNs refused a call to as gone (`device.expireVoip`), so later pages do not call
+   * it; its alert token stays. Never throws: a call never stands in a page's way.
+   */
+  private expireVoip(event: BrigadeEvent, deviceId: string, voipToken: string, now: number): void {
+    try {
+      this.run(
+        NOTIFIER_ACTOR,
+        "notifier",
+        `expire-voip:${event.id}:${deviceId}`,
+        "device.expireVoip",
+        { id: deviceId, voipToken },
+        now,
+      );
+    } catch (error) {
+      this.options.log("clearing a refused VoIP token failed", {
+        event: event.id,
+        device: deviceId,
+        error: String(error),
+      });
+    }
   }
 
   /**
@@ -1354,9 +1421,13 @@ export class Pager {
       .toArray();
     if (again.length > 0) return true;
     const { from, to } = prefixRange(`${incidentId}:`);
+    // A call is never what reached a device: only its alert push counts.
     return this.options.shard.store
       .range("deliveries", from, to)
-      .some((row) => row.run === runId && row.step === step && row.acceptedAt !== null);
+      .some(
+        (row) =>
+          !isCallDelivery(row) && row.run === runId && row.step === step && row.acceptedAt !== null,
+      );
   }
 
   /**
@@ -1580,7 +1651,8 @@ export class Pager {
     return new Set(
       this.options.shard.store
         .range("deliveries", from, to)
-        .filter((row) => row.error === "token_invalid")
+        // A call's refused VoIP token only stops calls: the device is still paged.
+        .filter((row) => !isCallDelivery(row) && row.error === "token_invalid")
         .map((row) => row.userId),
     );
   }

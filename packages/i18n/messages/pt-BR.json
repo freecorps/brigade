@@ -1631,6 +1631,17 @@
         "text=miss_not_a_member": "não pode mais responder",
         "text=miss_escalation_stalled": "o escalonamento travou",
         "text=miss_nobody_else": "ninguém mais podia responder",
+        "text=call_label": "Chamada · {detail}",
+        "text=call_not_sent": "Não tocou: o Brigade só liga para um celular depois que a notificação do acionamento chega à Apple.",
+        "text=call_error_token_invalid": "A Apple disse que o token de chamadas deste celular não vale mais, então o Brigade parou de ligar para ele. Os acionamentos continuam chegando como notificações.",
+        "text=call_note": "As chamadas tocam depois da notificação e nunca mudam se o acionamento chegou.",
+        "text=short_call_accepted": "Chamada enviada",
+        "text=short_call_sending": "Chamando",
+        "text=short_call_failed": "Chamada falhou",
+        "text=short_call_not_sent": "Chamada não enviada",
+        "text=calls_choice_sev1_sev2": "Os iPhones de {name} tocam como chamada em acionamentos SEV1 e escalonamentos SEV2",
+        "text=calls_choice_sev1": "Os iPhones de {name} tocam como chamada só em acionamentos SEV1",
+        "text=calls_choice_never": "{name} desligou as chamadas: os acionamentos chegam só como notificações",
         "text=*": "Quem foi acionado"
       }
     }
@@ -3170,5 +3181,29 @@
       }
     }
   ],
-  "api_token_actor": "Token de API {name} (por {by})"
+  "api_token_actor": "Token de API {name} (por {by})",
+  "call_settings": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Chamadas",
+        "part=description": "Em um iPhone com o app do Brigade, um acionamento urgente também pode tocar como uma ligação, logo depois da notificação. Escolha quais acionamentos tocam. A notificação sempre chega.",
+        "part=legend": "Quais acionamentos tocam como chamada",
+        "part=sev1_sev2": "Acionamentos SEV1 e escalonamentos SEV2",
+        "part=sev1_sev2_hint": "Padrão. Um SEV2 só toca quando um nível escala porque ninguém reconheceu.",
+        "part=sev1": "Só acionamentos SEV1",
+        "part=sev1_hint": "Escalonamentos SEV2 chegam como notificações.",
+        "part=never": "Nunca",
+        "part=never_hint": "Todo acionamento chega só como notificação.",
+        "part=saving": "Salvando…",
+        "part=saved": "Salvo",
+        "part=failed": "Não foi possível salvar sua escolha. Tente de novo.",
+        "part=loading": "Carregando sua escolha…",
+        "part=load_failed": "Não foi possível carregar sua escolha.",
+        "part=sheet_title": "Quais acionamentos tocam como chamada?",
+        "part=*": "Chamadas"
+      }
+    }
+  ]
 }

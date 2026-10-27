@@ -1631,6 +1631,17 @@
         "text=miss_not_a_member": "they can no longer respond",
         "text=miss_escalation_stalled": "the escalation stalled",
         "text=miss_nobody_else": "nobody else could respond",
+        "text=call_label": "Call · {detail}",
+        "text=call_not_sent": "Not rung: Brigade rings a phone only after the page's notification gets through to Apple.",
+        "text=call_error_token_invalid": "Apple said this phone's call token is no longer valid, so Brigade stopped calling it. Pages still reach it as notifications.",
+        "text=call_note": "Calls ring after the notification and never change whether the page got through.",
+        "text=short_call_accepted": "Call sent",
+        "text=short_call_sending": "Calling",
+        "text=short_call_failed": "Call failed",
+        "text=short_call_not_sent": "Call not sent",
+        "text=calls_choice_sev1_sev2": "{name}'s iPhones ring as a call for SEV1 pages and SEV2 escalations",
+        "text=calls_choice_sev1": "{name}'s iPhones ring as a call for SEV1 pages only",
+        "text=calls_choice_never": "{name} turned calls off: pages come as notifications only",
         "text=*": "Who was paged"
       }
     }
@@ -3170,5 +3181,29 @@
       }
     }
   ],
-  "api_token_actor": "API token {name} (by {by})"
+  "api_token_actor": "API token {name} (by {by})",
+  "call_settings": [
+    {
+      "declarations": ["input part"],
+      "selectors": ["part"],
+      "match": {
+        "part=title": "Calls",
+        "part=description": "On an iPhone with the Brigade app, an urgent page can also ring like a phone call, right after its notification. Choose which pages ring. The notification always comes.",
+        "part=legend": "Which pages ring as a call",
+        "part=sev1_sev2": "SEV1 pages and SEV2 escalations",
+        "part=sev1_sev2_hint": "Default. A SEV2 rings only when a level escalates because nobody acknowledged.",
+        "part=sev1": "SEV1 pages only",
+        "part=sev1_hint": "SEV2 escalations come as notifications.",
+        "part=never": "Never",
+        "part=never_hint": "Every page comes as a notification only.",
+        "part=saving": "Saving…",
+        "part=saved": "Saved",
+        "part=failed": "Couldn't save your choice. Try again.",
+        "part=loading": "Loading your choice…",
+        "part=load_failed": "Couldn't load your choice.",
+        "part=sheet_title": "Which pages ring as a call?",
+        "part=*": "Calls"
+      }
+    }
+  ]
 }

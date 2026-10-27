@@ -1,7 +1,8 @@
 # RFC 0010 — In-app voice paging (VoIP call screen)
 
 - Status: Draft — spike S6 done on the Android emulator and the iOS Simulator; devices left
-  ([write-up](../spikes/s6-voip-call-screen.md)). iOS call pages are sent by the instance ("When a page rings").
+  ([write-up](../spikes/s6-voip-call-screen.md)). iOS call pages are sent by the instance ("When a page rings"), with
+  delivery rows of their own, refused VoIP tokens cleared and a per-member choice ("Who a call rings").
 
 ## Goal
 
@@ -105,8 +106,25 @@ A page rings as a call (`ringsAsCall`, apps/api/src/paging.ts) when it is at `pa
   The rule reads the event type (`escalation.paged`), so a SEV2 first page the Queue dead-lettered and
   `escalation.repage` made again also rings: a page that was lost once rings the second time.
 
-A SEV2's first page and anything SEV3 or lower stay an alert push only. There is no setting yet: the rule is the
-same for every workspace and member, and a per-member preference (or "calls off" on a phone) is left.
+A SEV2's first page and anything SEV3 or lower stay an alert push only.
+
+### Who a call rings
+
+Each member chooses which of those pages ring their iPhones (`member.setCalls`, packages/schema `calls.ts`; a member
+sets only their own, any role, never an API token), from the dashboard's Calls card or the mobile app's account
+section, kept in `member_settings` (synced to every member, so "why wasn't I paged?" can say it):
+
+| Choice                                       | Rings                                                   |
+| -------------------------------------------- | ------------------------------------------------------- |
+| `sev1_sev2`: SEV1 pages and SEV2 escalations | every page `ringsAsCall` takes (the default, as before) |
+| `sev1`: SEV1 pages only                      | a SEV1's pages, not a SEV2's escalation levels          |
+| `never`                                      | nothing: every page is an alert push only               |
+
+The shard decides it per device when it plans the page (`PageTarget.call`: the page rings, an iPhone with a VoIP
+token, and the member's choice takes it, `wantsCall`); a member without a row has the default. The choice only takes
+a call away, never the page: the alert push is sent either way (tested). The choice changes `member.calls_changed`
+(`userId`, `calls`) through the outbox; a member who leaves loses it with their devices. Per phone ("calls off on this
+iPhone") is still left.
 
 For each device of a page that rings, the queue consumer (apps/api/src/notify.ts) sends:
 
@@ -115,10 +133,24 @@ For each device of a page that rings, the queue consumer (apps/api/src/notify.ts
    `kind: "call"` on `POST /send`, to the device's PushKit token in its APNs environment, sealed to the device's key
    like the alert, without a receipt token.
 
-The call is best effort and never changes the page: the page's retries, its delivery rows, the escalation and
-`notification.failed` follow the alert alone. A call the relay refuses or never answers is logged; an alert that
-failed is retried, and the attempt that delivers it rings. A device without a VoIP token, an Android device (no FCM
-yet) and any page that does not ring get the alert only.
+The call is best effort and never changes the page: the page's retries, its alert delivery rows, the escalation and
+`notification.failed` follow the alert alone. A call the relay refuses or never answers is logged and recorded on the
+call's own delivery row (below); an alert that failed is retried, and the attempt that delivers it rings. A device
+without a VoIP token, an Android device (no FCM yet), a member whose choice leaves this page out and any page that does
+not ring get the alert only.
+
+**Delivery rows for calls** (RFC 0006 "Delivery receipts"). Each device the page rings gets a second row, `kind:
+"call"`, planned with the alert's: sent and accepted by APNs, or the error with APNs' reason. It has no delivered stage,
+and stays planned when its alert never got through (no call was sent). The incident page shows the calls next to each
+member's outcome and `?why=<member>` as their own line per page; neither ever changes the verdict, which is the alert
+push's.
+
+**A VoIP token APNs refuses is cleared.** When APNs answers a call with `BadDeviceToken`, `Unregistered` (or `410`) or
+`DeviceTokenNotForTopic`, the shard clears that device's PushKit token (`device.expireVoip`, server only, as
+`sys_notifier`; `device.voip_cleared` with `reason: token_invalid`), only if it is still the token the call went to,
+so later pages do not keep calling a dead token. The device and its alert token stay: its pages keep coming as pushes.
+The app gives PushKit's token again the next time it registers the phone. The relay already answers a refused call as
+it answers a refused alert (`502` with APNs' `status` and `reason`): no relay change.
 
 **The call id** is a UUID (version 8) derived from the page's event id: a redelivery of the event rings under the
 same id (CallKit and `knownCall` de-duplicate it), and the next page, another event, rings anew.
@@ -126,8 +158,8 @@ same id (CallKit and `knownCall` de-duplicate it), and the next page, another ev
 **Never a VoIP push the app cannot report.** The app reports every VoIP push to CallKit, a malformed one included.
 The instance only sends calls to a token the app registered (`device.register`'s `voipToken`): the app gives it only
 from the call module, waiting up to 5 seconds for PushKit at launch, and registers again whenever PushKit gives a new
-token or withdraws it (`onVoipToken`), so a withdrawn token is cleared on the instance. A call to a token APNs refuses
-is only logged, and the device keeps its alert token.
+token or withdraws it (`onVoipToken`), so a withdrawn token is cleared on the instance. A token APNs refuses as gone
+is cleared too (`device.expireVoip`, above), and the device keeps its alert token.
 
 ### Payload: nothing the app could ignore
 
@@ -145,8 +177,7 @@ broadcast calls. FCM is not set up yet.
 ### Left
 
 - Real phones (the write-up's list), the voice bot, and FCM.
-- Delivery rows for calls (today only the alert has one), clearing a VoIP token APNs says is gone, and a per-member
-  or per-phone choice of calls.
+- A per-phone choice of calls ("calls off on this iPhone"); the member's own choice is done ("Who a call rings").
 - Any member with `incident:ack` can acknowledge, not only the page's targets; escalation runs decide whether the
   ack is limited to them.
 

@@ -1,7 +1,10 @@
 // "Why wasn't I paged?" (RFC 0006 "Delivery receipts"): for one incident and one member, what paging did with them,
 // step by step, from what every member already holds (the incident and its escalation run, the timeline, the
-// delivery rows and the device summaries). Pure and string-free; the dashboard words it.
+// delivery rows and the device summaries). Pure and string-free; the dashboard words it. A call that rang after a
+// page's alert push (RFC 0010) is told apart: it never changes the answer, which is the alert push's.
 import {
+  callChoiceOf,
+  type CallChoice,
   deliveryStage,
   type DeliveryRow,
   type DeliveryStage,
@@ -10,7 +13,9 @@ import {
   type EscalationPage,
   type EscalationReason,
   type IncidentRow,
+  isCallDelivery,
   type MemberRow,
+  type MemberSettingsRow,
   type PageFailure,
   type Role,
   type ScheduleRow,
@@ -77,12 +82,20 @@ export type WhyPage = {
   reached: string[];
   /** The member's devices this page went to, each with its stages. */
   deliveries: WhyDelivery[];
+  /** The calls this page rang the member's devices with after their alert push (RFC 0010), each with its stages. */
+  calls: WhyDelivery[];
   /** Why it did not reach them, as the timeline recorded it. */
   misses: WhyMiss[];
 };
 
 /** One device's page: its furthest stage, and whether it was planned but never sent (`PAGE_STUCK_MS`). */
 export type WhyDelivery = { row: DeliveryRow; stage: DeliveryStage; stuck: boolean };
+
+/**
+ * The calls in a word, best first: Apple took one (`accepted`); one is on its way (`sending`); every one sent failed
+ * (`failed`); none went out, because no alert push before it got through (`not_sent`).
+ */
+export type WhyCall = "accepted" | "sending" | "failed" | "not_sent";
 
 /** What became of the email Brigade sends a member a SEV1 or SEV2 page missed (RFC 0005 "Email"). */
 export type WhyEmail = "expected" | "failed" | "capped" | "off";
@@ -95,6 +108,10 @@ export type WhyPaged = {
   pages: WhyPage[];
   /** Their devices registered now. */
   devices: DeviceSummaryRow[];
+  /** Which pages ring their phones as a call, as they chose it (RFC 0010). */
+  calls: CallChoice;
+  /** What the calls of this incident's pages did, in a word; null when none rang them. */
+  call: WhyCall | null;
   email: WhyEmail | null;
   acknowledged: { by: string; at: number } | null;
 };
@@ -111,6 +128,8 @@ export type WhyInput = {
   schedules: readonly ScheduleRow[];
   /** The workspace's email settings; absent: on. */
   email?: EmailSettings;
+  /** Members' own paging settings (`members.settings`); absent or without a row: the defaults. */
+  settings?: readonly MemberSettingsRow[];
   /** The time now, to tell a page still on its way from one that never went out. */
   now: number;
 };
@@ -141,7 +160,9 @@ export function whyPaged(input: WhyInput): WhyPaged {
   });
   const member = input.members.find((row) => row.id === userId);
   const status = !member ? "gone" : member.role === "viewer" ? "viewer" : "responder";
-  const mine = input.deliveries.filter((row) => row.userId === userId);
+  const ours = input.deliveries.filter((row) => row.userId === userId);
+  const mine = ours.filter((row) => !isCallDelivery(row));
+  const rang = ours.filter(isCallDelivery);
   const failed = input.timeline.flatMap((entry) =>
     entry.kind === "page_failed" && entry.userId === userId ? [entry] : [],
   );
@@ -159,6 +180,9 @@ export function whyPaged(input: WhyInput): WhyPaged {
     run.pages.forEach((page, index) => {
       const step = first + index;
       const deliveries = mine
+        .filter((row) => row.run === run.eventId && row.step === step)
+        .map(withStage);
+      const calls = rang
         .filter((row) => row.run === run.eventId && row.step === step)
         .map(withStage);
       const misses = failed
@@ -190,6 +214,7 @@ export function whyPaged(input: WhyInput): WhyPaged {
         schedules,
         reached: page.userIds.filter((id) => id !== userId),
         deliveries,
+        calls,
         misses,
       });
     });
@@ -219,6 +244,7 @@ export function whyPaged(input: WhyInput): WhyPaged {
       schedules: [],
       reached: [],
       deliveries: outside.map(withStage),
+      calls: rang.filter((row) => row.run === null || row.run !== run?.eventId).map(withStage),
       misses: outsideMisses,
     });
   }
@@ -250,6 +276,8 @@ export function whyPaged(input: WhyInput): WhyPaged {
       : { kind: "interim", commander: incident.roles?.commander ?? null },
     pages,
     devices: input.devices.filter((device) => device.userId === userId),
+    calls: callChoiceOf(input.settings ?? [], userId),
+    call: callOf(pages.flatMap((page) => page.calls)),
     email: emailOf(input, misses),
     acknowledged:
       incident.acknowledgedAt != null && incident.acknowledgedBy != null
@@ -291,6 +319,16 @@ function targeted(
   }
   if (who.names) return "excluded";
   return who.schedules ? "not_on_call" : "not_in_level";
+}
+
+function callOf(calls: readonly WhyDelivery[]): WhyCall | null {
+  if (calls.length === 0) return null;
+  if (calls.some(({ row }) => row.acceptedAt !== null)) return "accepted";
+  if (calls.some(({ row, stuck }) => row.acceptedAt === null && row.error === null && !stuck)) {
+    return "sending";
+  }
+  if (calls.some(({ row }) => row.error !== null)) return "failed";
+  return "not_sent";
 }
 
 function emailOf(input: WhyInput, misses: readonly WhyMiss[]): WhyEmail | null {

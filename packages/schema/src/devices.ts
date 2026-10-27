@@ -50,6 +50,14 @@ export type DeviceUnregistered = DomainEvent<
   "device.unregistered",
   { id: string; userId: string; reason: DeviceRemoval }
 >;
+/**
+ * A device's PushKit token was cleared, so it no longer rings as a call (RFC 0010); its alert pushes go on.
+ * `token_invalid`: APNs said the token is gone.
+ */
+export type DeviceVoipCleared = DomainEvent<
+  "device.voip_cleared",
+  { id: string; userId: string; reason: "token_invalid" }
+>;
 
 /**
  * Who reports what a page did (RFC 0005 "Notifiers"): the queue consumer records failed pages through it. Server-only
@@ -303,6 +311,35 @@ export const expireDevice = defineMutation({
     forgetDevice(store, args.id);
     const event: DeviceUnregistered = {
       type: "device.unregistered",
+      subject: args.id,
+      data: { id: args.id, userId: current.userId, reason: "token_invalid" },
+    };
+    return ok(event);
+  },
+});
+
+/**
+ * Server only, as the notifier: clears a device's PushKit token after APNs refused a call to it as gone
+ * (`BadDeviceToken`, `Unregistered`, `DeviceTokenNotForTopic`), so later pages do not keep calling a dead token. The
+ * device stays, and so does its alert token: its pages keep coming as pushes. `voipToken` is the token the call went
+ * to: a device registered again with another one meanwhile is kept as it is (`conflict`); so is a device whose token
+ * is already cleared. The app gives PushKit's token again when it next registers (RFC 0010).
+ */
+export const expireVoipToken = defineMutation({
+  name: "device.expireVoip",
+  args: v.object({ id: v.id("dev"), voipToken: pushToken }),
+  permission: "incident:update",
+  apply(store, args) {
+    const current = store.get("devices", args.id);
+    if (!current) return fail("not_found", "Device not found");
+    if (current.voipToken !== args.voipToken) {
+      return fail("conflict", "Device was registered again with another VoIP token");
+    }
+    store.update("devices", args.id, { voipToken: null });
+    const summary = store.get("member_devices", args.id);
+    if (summary) store.update("member_devices", args.id, { voip: false });
+    const event: DeviceVoipCleared = {
+      type: "device.voip_cleared",
       subject: args.id,
       data: { id: args.id, userId: current.userId, reason: "token_invalid" },
     };

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vite-plus/test";
 import {
+  callChoiceOf,
   createMemoryStore,
+  DEFAULT_CALL_CHOICE,
   MAX_DEVICES_PER_MEMBER,
   mutations,
   newId,
@@ -241,6 +243,95 @@ describe("device.unregister and device.expire", () => {
       run(store, NOTIFIER_ACTOR, "device.expire", { id, pushToken: "a".repeat(64) }),
     ).toMatchObject({ ok: false, error: { code: "conflict" } });
     expect(store.get("devices", id)?.pushToken).toBe("b".repeat(64));
+  });
+});
+
+describe("device.expireVoip", () => {
+  test("server only: clears a refused PushKit token, keeps the device and its alert token, and says so", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const id = deviceId();
+    run(store, ana, "device.register", args(id, { voipToken: "b".repeat(64) }));
+    expect(Object.keys(mutations)).not.toContain("device.expireVoip");
+    const result = run(store, NOTIFIER_ACTOR, "device.expireVoip", {
+      id,
+      voipToken: "b".repeat(64),
+    });
+    expect(result).toEqual({
+      ok: true,
+      events: [
+        {
+          type: "device.voip_cleared",
+          subject: id,
+          data: { id, userId: "usr_ana", reason: "token_invalid" },
+        },
+      ],
+    });
+    expect(store.get("devices", id)).toMatchObject({ pushToken: "a".repeat(64), voipToken: null });
+    expect(store.get("member_devices", id)).toMatchObject({ voip: false });
+    // Already cleared, and a device gone, change nothing.
+    expect(
+      run(store, NOTIFIER_ACTOR, "device.expireVoip", { id, voipToken: "b".repeat(64) }),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(
+      run(store, NOTIFIER_ACTOR, "device.expireVoip", {
+        id: deviceId(),
+        voipToken: "b".repeat(64),
+      }),
+    ).toMatchObject({ ok: false, error: { code: "not_found" } });
+  });
+
+  test("keeps a PushKit token registered again while the call was out", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const id = deviceId();
+    run(store, ana, "device.register", args(id, { voipToken: "b".repeat(64) }));
+    run(store, ana, "device.register", args(id, { voipToken: "c".repeat(64) }));
+    expect(
+      run(store, NOTIFIER_ACTOR, "device.expireVoip", { id, voipToken: "b".repeat(64) }),
+    ).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(store.get("devices", id)?.voipToken).toBe("c".repeat(64));
+  });
+});
+
+describe("member.setCalls", () => {
+  test("every role sets their own; the same choice again is a conflict; a script never sets it", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    expect(run(store, bia, "member.setCalls", { calls: "never" }, false)).toMatchObject({
+      ok: true,
+    });
+    expect(run(store, ana, "member.setCalls", { calls: "sev1" })).toEqual({
+      ok: true,
+      events: [
+        {
+          type: "member.calls_changed",
+          subject: "usr_ana",
+          data: { userId: "usr_ana", calls: "sev1" },
+        },
+      ],
+    });
+    expect(store.get("member_settings", "usr_ana")).toMatchObject({ calls: "sev1" });
+    expect(run(store, ana, "member.setCalls", { calls: "sev1" })).toMatchObject({
+      ok: false,
+      error: { code: "conflict" },
+    });
+    expect(run(store, ana, "member.setCalls", { calls: "never" })).toMatchObject({ ok: true });
+    expect(callChoiceOf(store.scan("member_settings"), "usr_ana")).toBe("never");
+    expect(callChoiceOf(store.scan("member_settings"), "usr_caio")).toBe(DEFAULT_CALL_CHOICE);
+    const token: Actor = { kind: "token", id: "usr_ana", role: "owner" };
+    expect(run(store, token, "member.setCalls", { calls: "sev1" })).toMatchObject({
+      ok: false,
+      error: { code: "forbidden" },
+    });
+    expect(run(store, ana, "member.setCalls", { calls: "always" })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args" },
+    });
+  });
+
+  test("goes when the member leaves", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    run(store, ana, "member.setCalls", { calls: "never" });
+    run(store, ana, "member.remove", { id: "usr_ana", role: "responder", reason: "left" });
+    expect(store.get("member_settings", "usr_ana")).toBeUndefined();
   });
 });
 

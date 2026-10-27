@@ -360,6 +360,33 @@ describe("member.changeRole, member.remove, member.reconcile", () => {
     expect(store.scan("devices").map((device) => device.id)).toEqual(["dev_3"]);
   });
 
+  test("reconcile forgets the call choice of someone with no copy", () => {
+    const store = shard();
+    // Their removal's sync failed: the copy went, the choice stayed.
+    store.insert("member_settings", { id: "usr_gone", calls: "never", updatedAt: T });
+    store.insert("member_settings", { id: "usr_ana", calls: "sev1", updatedAt: T });
+    const result = runMutation(
+      serverMutations,
+      "member.reconcile",
+      {
+        members: [
+          { id: "usr_ana", role: "owner" },
+          { id: "usr_bia", role: "admin" },
+          { id: "usr_caio", role: "responder" },
+          { id: "usr_duda", role: "viewer" },
+          { id: "usr_eva", role: "viewer" },
+        ],
+      },
+      store,
+      { ...ctx(MEMBERS_ACTOR.id, MEMBERS_ACTOR.role, "system") },
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      events: [{ type: "member.calls_changed", data: { userId: "usr_gone", calls: "sev1_sev2" } }],
+    });
+    expect(store.scan("member_settings").map((row) => row.id)).toEqual(["usr_ana"]);
+  });
+
   test("reconcile drops the devices a member last registered before their password was reset", () => {
     const store = shard();
     // Caio's second phone registered again after the reset (the owner signing in); Bia was never reset.

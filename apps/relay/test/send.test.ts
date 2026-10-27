@@ -189,6 +189,23 @@ describe("POST /send", () => {
     expect(payload.aps).toBeUndefined();
   });
 
+  test("a call APNs refuses is answered like a refused alert: a 502 with its status and reason", async () => {
+    const callId = "6f1c2a4e-9b3d-4c5e-8f70-1a2b3c4d5e6f";
+    for (const [status, reason] of [
+      [400, "BadDeviceToken"],
+      [410, "Unregistered"],
+      [400, "DeviceTokenNotForTopic"],
+    ] as const) {
+      const response = await handle(
+        post(await sendBody({ kind: "call", callId, urgency: undefined })),
+        env,
+        fakeApns(status, reason).send,
+      );
+      expect(response.status).toBe(502);
+      expect(await response.json()).toMatchObject({ status, reason });
+    }
+  });
+
   test("never sends a call the app could not ring for", async () => {
     const apns = fakeApns();
     const callId = "6f1c2a4e-9b3d-4c5e-8f70-1a2b3c4d5e6f";

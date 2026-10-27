@@ -2,8 +2,10 @@
 // every member sees (no token, no key).
 import { describe, expect, test } from "vite-plus/test";
 import {
+  callDeliveryId,
   createMemoryStore,
   deliveryId,
+  isCallDelivery,
   deliveryStage,
   evaluateQuery,
   incidentDeliveries,
@@ -278,6 +280,91 @@ describe("delivery.plan, report and confirm", () => {
     ]);
     expect(JSON.stringify([rows, devices])).not.toContain("aaaa");
     expect(JSON.stringify([rows, devices])).not.toContain(KEY);
+  });
+});
+
+describe("call rows (RFC 0010)", () => {
+  test("a device the page rings gets a call row next to its push's, reported on its own", () => {
+    const { store, incidentId, deviceId, eventId, id } = setup();
+    const device = { deviceId, userId: ana.id, platform: "ios", environment: "production" };
+    const planned = run(store, NOTIFIER_ACTOR, "delivery.plan", {
+      incidentId,
+      eventId,
+      page: null,
+      devices: [{ ...device, call: true }],
+    });
+    expect(planned.ok && planned.events[0]?.data).toMatchObject({ devices: 1, calls: 1 });
+    const callId = callDeliveryId(incidentId, eventId, deviceId);
+    expect(callId).toBe(`${id}:call`);
+    // A receipt can never confirm a call.
+    expect(parseDeliveryId(callId)).toBeUndefined();
+    expect(store.get("deliveries", callId)).toMatchObject({ kind: "call", sentAt: null });
+    expect(store.get("deliveries", id)?.kind).toBeUndefined();
+
+    const reported = run(
+      store,
+      NOTIFIER_ACTOR,
+      "delivery.report",
+      {
+        incidentId,
+        eventId,
+        outcomes: [
+          { deviceId, ok: true, error: null, reason: null, ms: 40 },
+          {
+            deviceId,
+            ok: false,
+            error: "token_invalid",
+            reason: "BadDeviceToken",
+            ms: 30,
+            kind: "call",
+          },
+        ],
+      },
+      T + 1000,
+    );
+    expect(reported.ok && reported.events[0]?.data).toEqual({
+      incidentId,
+      eventId,
+      accepted: 1,
+      failed: 0,
+      calls: { accepted: 0, failed: 1 },
+    });
+    expect(store.get("deliveries", id)).toMatchObject({ error: null, acceptedAt: T + 1000 });
+    expect(store.get("deliveries", callId)).toMatchObject({
+      error: "token_invalid",
+      reason: "BadDeviceToken",
+      acceptedAt: null,
+      attempts: 1,
+    });
+    expect(isCallDelivery(store.get("deliveries", callId)!)).toBe(true);
+    expect(run(store, NOTIFIER_ACTOR, "delivery.confirm", { id: callId })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_args" },
+    });
+  });
+
+  test(`calls count apart: each kind keeps its own latest ${MAX_DELIVERIES_PER_DEVICE} rows`, () => {
+    const { store, incidentId, deviceId } = setup();
+    const device = { deviceId, userId: ana.id, platform: "ios", environment: "production" };
+    for (let i = 0; i < MAX_DELIVERIES_PER_DEVICE + 2; i++) {
+      run(
+        store,
+        NOTIFIER_ACTOR,
+        "delivery.plan",
+        {
+          incidentId,
+          eventId: newId("evt", T + i, random),
+          page: null,
+          devices: [{ ...device, call: i % 2 === 0 }],
+        },
+        T + i,
+      );
+    }
+    const rows = store.scan("deliveries");
+    expect(rows.filter((row) => !isCallDelivery(row))).toHaveLength(MAX_DELIVERIES_PER_DEVICE);
+    expect(rows.filter(isCallDelivery)).toHaveLength(
+      Math.min(MAX_DELIVERIES_PER_DEVICE, Math.ceil((MAX_DELIVERIES_PER_DEVICE + 2) / 2)),
+    );
   });
 });
 

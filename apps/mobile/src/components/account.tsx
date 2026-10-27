@@ -1,4 +1,6 @@
 import { m } from "@freecorps/brigade-i18n";
+import { CALL_CHOICES, callChoiceOf, type CallChoice } from "@freecorps/brigade-schema";
+import { useMutation, useQuery } from "@freecorps/brigade-sync/react";
 import { radius, spacing } from "@freecorps/brigade-ui";
 import { useState } from "react";
 import { router } from "expo-router";
@@ -12,6 +14,7 @@ import {
   StyleSheet,
   View,
 } from "react-native";
+import { useChoiceSheet } from "@/components/choice-sheet";
 import { Row, Section } from "@/components/section";
 import { useMember } from "@/components/session";
 import { ThemedText } from "@/components/themed-text";
@@ -269,6 +272,60 @@ function Workspaces({
   );
 }
 
+/**
+ * Which pages ring the member's iPhones as a call (RFC 0010), in the open workspace, picked from a sheet and saved at
+ * once (`member.setCalls`; offline, when the phone is next online). The notification comes either way.
+ */
+function Calls() {
+  const { userId } = useMember();
+  const colors = useTheme();
+  const settings = useQuery("members.settings", {});
+  const setCalls = useMutation("member.setCalls");
+  const { choose, sheet } = useChoiceSheet();
+  const [failed, setFailed] = useState(false);
+  const current = callChoiceOf(settings.rows, userId);
+  const label = (choice: CallChoice) => m.call_settings({ part: choice });
+  const pick = () =>
+    choose(
+      m.call_settings({ part: "sheet_title" }),
+      CALL_CHOICES.map((choice) => ({ value: choice, label: label(choice) })),
+      (calls) => {
+        if (calls === current) return;
+        setFailed(false);
+        void setCalls({ calls }).then((outcome) => {
+          if (!outcome.ok && outcome.error.code !== "conflict") setFailed(true);
+        });
+      },
+    );
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityHint={m.call_settings({ part: "description" })}
+        disabled={settings.status !== "ready"}
+        onPress={pick}
+        style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+      >
+        <Row>
+          <ThemedText variant="label">{m.call_settings({ part: "title" })}</ThemedText>
+          <ThemedText style={{ color: colors.primary }}>
+            {settings.status === "ready"
+              ? label(current)
+              : m.call_settings({ part: settings.status === "error" ? "load_failed" : "loading" })}
+          </ThemedText>
+          <ThemedText variant="caption">{m.call_settings({ part: `${current}_hint` })}</ThemedText>
+          {failed ? (
+            <ThemedText accessibilityLiveRegion="polite" style={{ color: colors.destructive }}>
+              {m.call_settings({ part: "failed" })}
+            </ThemedText>
+          ) : null}
+        </Row>
+      </Pressable>
+      {sheet}
+    </>
+  );
+}
+
 /** Who is signed in, in which workspace, whether this phone is paged, and Sign out. */
 export function Account() {
   const member = useMember();
@@ -351,6 +408,7 @@ export function Account() {
           {paging}
         </ThemedText>
       </Row>
+      <Calls />
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ busy: leaving, disabled: leaving }}

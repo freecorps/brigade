@@ -3,6 +3,7 @@
 // tests, as a responder or a viewer.
 import { setLocale as setI18nLocale } from "@freecorps/brigade-i18n";
 import {
+  callDeliveryId,
   deliveryId,
   MONITOR_ACTOR,
   newId,
@@ -587,6 +588,60 @@ describe("who was paged, and why not", () => {
     expect(text).toContain("Everyone in this workspace sees each member's phones");
     const back = $$("a").find((a) => a.textContent?.startsWith("Back to INC-1"));
     expect(back?.getAttribute("href")).toBe("/incidents/1");
+  });
+
+  test("a call is its own line, in the list and step by step, and never the page's outcome", async () => {
+    const view = await mount("/incidents/1");
+    view.declare("Checkout down");
+    const id = view.shard.store.scan("incidents")[0]!.id;
+    const page = { ...view, id } as Awaited<ReturnType<typeof incidentPage>>;
+    deliver(page, { deliveredAt: T0 + 900 });
+    const eventId = "evt_01JBAAAAAAAAAAAAAAAAAAAAAA";
+    view.shard.store.insert("deliveries", {
+      id: callDeliveryId(id, eventId, DEV),
+      kind: "call",
+      incidentId: id,
+      eventId,
+      deviceId: DEV,
+      userId: "usr_bia",
+      platform: "ios",
+      environment: "production",
+      run: null,
+      step: null,
+      plannedAt: T0,
+      sentAt: T0 + 700,
+      acceptedAt: null,
+      deliveredAt: null,
+      attempts: 1,
+      error: "token_invalid",
+      reason: "BadDeviceToken",
+      updatedAt: T0,
+    });
+    view.shard.store.insert("member_settings", { id: "usr_bia", calls: "sev1", updatedAt: T0 });
+    await act(() => view.router.load());
+    await view.flush();
+    const bia = $$("li", card("Who was paged")!).find((row) =>
+      row.textContent?.includes(LONG_NAME),
+    )!;
+    expect(bia.textContent).toContain("Delivered");
+    expect(bia.textContent).toContain("Call failed");
+
+    await act(() =>
+      view.router.navigate({
+        to: "/incidents/$number",
+        params: { number: "1" },
+        search: { why: "usr_bia" },
+      }),
+    );
+    await view.flush();
+    const text = document.body.textContent ?? "";
+    expect(text).toContain(`The page reached ${LONG_NAME}'s phone`);
+    expect(text).toContain("Call · iPhone · App Store build");
+    expect(text).toContain("Brigade stopped calling it. Pages still reach it as notifications.");
+    expect(text).toContain("Apple said: BadDeviceToken");
+    expect(text).toContain(`${LONG_NAME}'s iPhones ring as a call for SEV1 pages only`);
+    // A call has no "opened on the phone" stage.
+    expect(text.match(/Opened on the phone/g)).toHaveLength(1);
   });
 
   test("a member with no phone is told how to get one, in Portuguese too", async () => {

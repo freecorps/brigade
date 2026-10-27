@@ -106,6 +106,17 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "miss_not_a_member" | "they can no longer respond" |
 * | "miss_escalation_stalled" | "the escalation stalled" |
 * | "miss_nobody_else" | "nobody else could respond" |
+* | "call_label" | "Call · {detail}" |
+* | "call_not_sent" | "Not rung: Brigade rings a phone only after the page's notification gets through to Apple." |
+* | "call_error_token_invalid" | "Apple said this phone's call token is no longer valid, so Brigade stopped calling it. Pages still reach it as notifications." |
+* | "call_note" | "Calls ring after the notification and never change whether the page got through." |
+* | "short_call_accepted" | "Call sent" |
+* | "short_call_sending" | "Calling" |
+* | "short_call_failed" | "Call failed" |
+* | "short_call_not_sent" | "Call not sent" |
+* | "calls_choice_sev1_sev2" | "{name}'s iPhones ring as a call for SEV1 pages and SEV2 escalations" |
+* | "calls_choice_sev1" | "{name}'s iPhones ring as a call for SEV1 pages only" |
+* | "calls_choice_never" | "{name} turned calls off: pages come as notifications only" |
 * | * | "Who was paged" |
 *
 * @param {Page_WhyInputs} inputs
@@ -211,6 +222,17 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "miss_not_a_member") return /** @type {LocalizedString} */ (`não pode mais responder`);
 		if (i?.text === "miss_escalation_stalled") return /** @type {LocalizedString} */ (`o escalonamento travou`);
 		if (i?.text === "miss_nobody_else") return /** @type {LocalizedString} */ (`ninguém mais podia responder`);
+		if (i?.text === "call_label") return /** @type {LocalizedString} */ (`Chamada · ${i?.detail}`);
+		if (i?.text === "call_not_sent") return /** @type {LocalizedString} */ (`Não tocou: o Brigade só liga para um celular depois que a notificação do acionamento chega à Apple.`);
+		if (i?.text === "call_error_token_invalid") return /** @type {LocalizedString} */ (`A Apple disse que o token de chamadas deste celular não vale mais, então o Brigade parou de ligar para ele. Os acionamentos continuam chegando como notificações.`);
+		if (i?.text === "call_note") return /** @type {LocalizedString} */ (`As chamadas tocam depois da notificação e nunca mudam se o acionamento chegou.`);
+		if (i?.text === "short_call_accepted") return /** @type {LocalizedString} */ (`Chamada enviada`);
+		if (i?.text === "short_call_sending") return /** @type {LocalizedString} */ (`Chamando`);
+		if (i?.text === "short_call_failed") return /** @type {LocalizedString} */ (`Chamada falhou`);
+		if (i?.text === "short_call_not_sent") return /** @type {LocalizedString} */ (`Chamada não enviada`);
+		if (i?.text === "calls_choice_sev1_sev2") return /** @type {LocalizedString} */ (`Os iPhones de ${i?.name} tocam como chamada em acionamentos SEV1 e escalonamentos SEV2`);
+		if (i?.text === "calls_choice_sev1") return /** @type {LocalizedString} */ (`Os iPhones de ${i?.name} tocam como chamada só em acionamentos SEV1`);
+		if (i?.text === "calls_choice_never") return /** @type {LocalizedString} */ (`${i?.name} desligou as chamadas: os acionamentos chegam só como notificações`);
 		return /** @type {LocalizedString} */ (`Quem foi acionado`)
 	}
 	{
@@ -310,6 +332,17 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "miss_not_a_member") return /** @type {LocalizedString} */ (`they can no longer respond`);
 		if (i?.text === "miss_escalation_stalled") return /** @type {LocalizedString} */ (`the escalation stalled`);
 		if (i?.text === "miss_nobody_else") return /** @type {LocalizedString} */ (`nobody else could respond`);
+		if (i?.text === "call_label") return /** @type {LocalizedString} */ (`Call · ${i?.detail}`);
+		if (i?.text === "call_not_sent") return /** @type {LocalizedString} */ (`Not rung: Brigade rings a phone only after the page's notification gets through to Apple.`);
+		if (i?.text === "call_error_token_invalid") return /** @type {LocalizedString} */ (`Apple said this phone's call token is no longer valid, so Brigade stopped calling it. Pages still reach it as notifications.`);
+		if (i?.text === "call_note") return /** @type {LocalizedString} */ (`Calls ring after the notification and never change whether the page got through.`);
+		if (i?.text === "short_call_accepted") return /** @type {LocalizedString} */ (`Call sent`);
+		if (i?.text === "short_call_sending") return /** @type {LocalizedString} */ (`Calling`);
+		if (i?.text === "short_call_failed") return /** @type {LocalizedString} */ (`Call failed`);
+		if (i?.text === "short_call_not_sent") return /** @type {LocalizedString} */ (`Call not sent`);
+		if (i?.text === "calls_choice_sev1_sev2") return /** @type {LocalizedString} */ (`${i?.name}'s iPhones ring as a call for SEV1 pages and SEV2 escalations`);
+		if (i?.text === "calls_choice_sev1") return /** @type {LocalizedString} */ (`${i?.name}'s iPhones ring as a call for SEV1 pages only`);
+		if (i?.text === "calls_choice_never") return /** @type {LocalizedString} */ (`${i?.name} turned calls off: pages come as notifications only`);
 		return /** @type {LocalizedString} */ (`Who was paged`)
 	}
 });

@@ -121,7 +121,8 @@ relay's bearer token):
   `production` for EAS builds; S1 found the sandbox relay refuses production tokens), the push token, the PushKit
   token for calls (or null) and the HPKE public key. A member registers only their own devices (another member's id
   is `forbidden`), at most 10 per workspace; the same token under a new id (a reinstall) replaces the old device. A new
-  device over the 10 replaces the member's least recently registered ones in the same mutation (`device.unregistered`
+  device over the 10 replaces the member's least recently alive ones in the same mutation (registered, or confirmed a
+  page with a receipt, whichever is later, so an on-call phone pages reach but nobody opens is kept; `device.unregistered`
   `replaced`, through the outbox), so their newest phone is never locked out by phones long gone: every reinstall is
   a new device id, and a token that changed with it is not caught by the rule before. Only ever the member's own
   devices, so it gives nobody a way to drop anyone else's, and a member's session could already unregister them one

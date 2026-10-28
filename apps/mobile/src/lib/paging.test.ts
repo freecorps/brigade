@@ -124,12 +124,13 @@ test("a registration that failed is tried again, every ten minutes at most", asy
   expect(time.pending()).toEqual([600_000]);
 });
 
-test("a phone still another member's is tried again every ten minutes; too many phones is left to the member", async () => {
+test("a phone still another member's is tried again on the backoff, settling at ten minutes; too many phones is left to the member", async () => {
   const time = clock();
   const taken = phone({ finish: ["none"], register: ["taken"] });
   pagingCycle({ ...taken, setTimer: time.setTimer, now: time.now, random: time.random });
   await time.settle();
-  expect(time.pending()).toEqual([600_000]);
+  // Soon at first: the other member's session may end right after this one signed in.
+  expect(time.pending()).toEqual([5_000]);
 
   const later = clock();
   const limit = phone({ finish: ["none"], register: ["limit", "on"] });

@@ -25,7 +25,7 @@ export function retryDelay(attempt: number, random = 0.5): number {
   return Math.round(step * (1 + RETRY_JITTER * (2 * random - 1)));
 }
 
-/** The slowest step: what a phone `taken` by another member waits between tries. */
+/** The slowest step: what a phone `taken` by another member settles at between tries. */
 const SLOWEST = RETRY_DELAYS.length - 1;
 
 export type PagingDeps = {
@@ -67,8 +67,8 @@ export type PagingCycle = {
 
 /**
  * When to try again after a try, as a step of the backoff: `failed` or a kept sign-out still pending from the next
- * step; `taken` only every `SLOWEST` step, since only the other member's session ending frees the phone (RFC 0006 "A
- * handed-over phone"); `limit` not on its own, since only the member can free a place (signing out on another phone).
+ * step; `taken` the same backoff, held at its `SLOWEST` step, since only the other member's session ending frees the
+ * phone (RFC 0006 "A handed-over phone") and that may happen right after signing in; `limit` not on its own, since only the member can free a place (signing out on another phone).
  * Undefined: nothing to try again on a timer.
  */
 export function nextTry(
@@ -134,7 +134,8 @@ export function pagingCycle(deps: PagingDeps): PagingCycle {
       attempt = 0;
       return;
     }
-    const ms = retryDelay(next === "slowest" ? SLOWEST : attempt, deps.random());
+    // `taken`: the normal backoff, held at its slowest step, so a phone freed soon after is picked up in minutes.
+    const ms = retryDelay(next === "slowest" ? Math.min(attempt, SLOWEST) : attempt, deps.random());
     attempt += 1;
     schedule(ms);
   };

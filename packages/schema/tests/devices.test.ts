@@ -159,6 +159,33 @@ describe("device.register", () => {
     expect(store.scan("devices").map((device) => device.id)).toEqual([fresh]);
   });
 
+  test("a phone that confirmed a page lately is kept over one only registered lately", () => {
+    const store = createMemoryStore<BrigadeTables>();
+    const at = (now: number, input: unknown) =>
+      runMutation(serverMutations, "device.register", input, store, {
+        actor: ana,
+        now,
+        server: true,
+      });
+    const ids: string[] = [];
+    for (let i = 0; i < MAX_DEVICES_PER_MEMBER; i++) {
+      const id = deviceId();
+      ids.push(id);
+      expect(at(T + i * 1000, args(id, { pushToken: i.toString(16).padStart(64, "0") })).ok).toBe(
+        true,
+      );
+    }
+    // The oldest registration is the on-call phone nobody opens, but a page reached it after every other registration.
+    store.update("member_devices", ids[0]!, { lastSeenAt: T + 60_000 });
+    const newest = deviceId();
+    const result = at(T + 120_000, args(newest, { pushToken: "f".repeat(64) }));
+    expect(result).toMatchObject({
+      ok: true,
+      events: [{ type: "device.unregistered", subject: ids[1] }, { type: "device.registered" }],
+    });
+    expect(store.get("devices", ids[0]!)).toBeDefined();
+  });
+
   test(`a new device over ${MAX_DEVICES_PER_MEMBER} replaces the member's least recently registered one`, () => {
     const store = createMemoryStore<BrigadeTables>();
     const at = (now: number, actor: Actor, input: unknown) =>

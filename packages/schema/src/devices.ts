@@ -229,9 +229,13 @@ export const registerDevice = defineMutation({
       }
       if (current) store.update("devices", args.id, row);
       else {
+        // Least recently alive first: registered, or confirmed a page (`lastSeenAt`, a receipt), whichever is later,
+        // so an on-call phone that pages reach but nobody opens is kept over a dead reinstall.
+        const alive = (device: DeviceRow) =>
+          Math.max(device.updatedAt, store.get("member_devices", device.id)?.lastSeenAt ?? 0);
         const kept = mine
           .filter((device) => device.pushToken !== args.pushToken)
-          .sort((a, b) => a.updatedAt - b.updatedAt || a.id.localeCompare(b.id));
+          .sort((a, b) => alive(a) - alive(b) || a.id.localeCompare(b.id));
         const over = Math.max(0, kept.length - (MAX_DEVICES_PER_MEMBER - 1));
         for (const stale of kept.slice(0, over)) {
           forgetDevice(store, stale.id);

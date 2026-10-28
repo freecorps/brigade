@@ -126,7 +126,8 @@ export async function registerDevices(
   );
   // Visible in `wrangler tail`: why a phone is not paged somewhere. Never the device's tokens or key.
   for (const [workspaceId, code] of Object.entries(answers)) {
-    if (code === "ok") continue;
+    // `not_a_member`: a workspace the phone still lists after the member left it, routine (the app forgets it).
+    if (code === "ok" || code === "not_a_member") continue;
     console.warn(
       JSON.stringify({ message: "device registration refused", workspace: workspaceId, code }),
     );

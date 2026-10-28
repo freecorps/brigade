@@ -1,0 +1,37 @@
+// The Android side of pages (RFC 0006): the device key in the Android Keystore, and the FirebaseMessagingService
+// that opens a page sealed with it, shows it on the "Pages" channel or rings it (modules/brigade-call), and reports
+// its receipt.
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'app.freecorps.brigade'
+version = '0.0.0'
+
+android {
+  namespace "app.freecorps.brigade.push"
+  defaultConfig {
+    versionCode 1
+    versionName "0.0.0"
+  }
+}
+
+dependencies {
+  // Pages that ring as calls (Calls.ring) and the "Pages" channel.
+  implementation project(':brigade-call')
+  // Its FirebaseMessagingService, which this one extends so new tokens still reach expo-notifications. The app links
+  // it, from source or (usually) as Expo's prebuilt publication, so only compiled against here.
+  if (findProject(':expo-notifications') != null) {
+    compileOnly project(':expo-notifications')
+  } else {
+    compileOnly 'host.exp.exponent:expo.modules.notifications:+'
+  }
+  // The version expo-notifications uses.
+  implementation 'com.google.firebase:firebase-messaging:25.0.1'
+  implementation "androidx.core:core:1.16.0"
+  // HPKE and the payload (Hpke.kt, PushPayload.kt) are plain Kotlin: `./gradlew :brigade-push:testDebugUnitTest`.
+  testImplementation 'junit:junit:4.13.2'
+  // android.jar's org.json is a stub in JVM tests.
+  testImplementation 'org.json:json:20250517'
+}

@@ -6,7 +6,7 @@ import { type ConfigPlugin, withDangerousMod, withInfoPlist } from "expo/config-
 // Pages that ring as calls (spike S6, RFC 0010), for modules/brigade-call:
 // - iOS: the `voip` background mode, so PushKit wakes the app for a VoIP push. CallKit's strings come from
 //   plugins/notification-service.ts (`call_caller` is one of its native keys).
-// - Android: the ringing screen's and channels' strings as resources, generated from packages/i18n in `en` and
+// - Android: the ringing screen's, the pages' and the channels' strings as resources, generated from packages/i18n in `en` and
 //   `pt-BR`. The module's manifest brings the permissions, the ConnectionService and the ringing activity.
 // See docs/spikes/s6-voip-call-screen.md.
 
@@ -18,6 +18,8 @@ export const ANDROID_STRING_KEYS = [
   "call_channel_pages",
   "push_fallback_title",
   "push_fallback_body",
+  // Pushes less urgent than a page (modules/brigade-push Pages.kt).
+  "push_channel_updates",
 ] as const;
 /** packages/i18n locale → Android resource qualifier. */
 export const ANDROID_LOCALES = { en: "values", "pt-BR": "values-pt-rBR" } as const;

@@ -1,7 +1,10 @@
 {
-  "platforms": ["apple"],
+  "platforms": ["apple", "android"],
   "apple": {
     "modules": ["BrigadePushModule"],
     "appDelegateSubscribers": ["BrigadePushAppDelegate"]
+  },
+  "android": {
+    "modules": ["app.freecorps.brigade.push.BrigadePushModule"]
   }
 }

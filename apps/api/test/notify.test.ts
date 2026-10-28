@@ -187,6 +187,8 @@ type RelayBody = {
   callId?: string;
   /** A Critical Alert (RFC 0006); absent otherwise. */
   critical?: boolean;
+  /** `android` for an Android phone (FCM); absent for an iPhone. */
+  platform?: string;
 };
 
 const relayEnv = {
@@ -759,13 +761,46 @@ describe("pages that ring as a call (RFC 0010)", () => {
     });
   });
 
-  test("an Android device never gets a call (no FCM yet), VoIP token or not", async () => {
+  test("an Android phone that registered a call token rings through FCM after its alert; one without does not", async () => {
     const ws = await workspace();
-    await ws.device(bia, { platform: "android", environment: "production", voip: true });
-    const { event } = await ws.declare(ana, "sev1");
+    const ringing = await ws.device(bia, {
+      platform: "android",
+      environment: "production",
+      voip: true,
+    });
+    const quiet = await ws.device(ana, { platform: "android", environment: "production" });
+    const { event } = await ws.declare(MONITOR_ACTOR, "sev1");
     const fake = relay();
     await deliver(event, fake.send);
-    expect(fake.requests).toHaveLength(0);
+    const call = fake.requests.find((r) => r.body.kind === "call");
+    expect(call?.body).toMatchObject({
+      platform: "android",
+      deviceToken: ringing.voipToken,
+      callId: await callIdOf(event.id),
+      urgency: "page",
+    });
+    expect(await opened(ringing.recipient, call!.body.envelope)).toMatchObject({
+      incident: event.subject,
+    });
+    // An alert to each phone's FCM token, and the call only after the ringing phone's alert.
+    const sends = fake.requests.map((r) => `${r.body.kind ?? "alert"}:${r.body.deviceToken}`);
+    expect(sends).toHaveLength(3);
+    expect(sends).toEqual(
+      expect.arrayContaining([`alert:${quiet.pushToken}`, `alert:${ringing.pushToken}`]),
+    );
+    expect(sends.indexOf(`call:${ringing.voipToken}`)).toBeGreaterThan(
+      sends.indexOf(`alert:${ringing.pushToken}`),
+    );
+  });
+
+  test("an Android phone's choice of calls is followed like an iPhone's", async () => {
+    const ws = await workspace();
+    await ws.device(bia, { platform: "android", environment: "production", voip: true });
+    await ws.run(bia, "member.setCalls", { calls: "never" });
+    const { event } = await ws.declare(MONITOR_ACTOR, "sev1");
+    const fake = relay();
+    await deliver(event, fake.send);
+    expect(fake.requests.map((r) => r.body.kind ?? "alert")).toEqual(["alert"]);
   });
 
   test("call ids: a UUID the relay takes, the same for one event and different for another", async () => {
@@ -1049,16 +1084,114 @@ describe("when paging fails (the paging path's fallback)", () => {
     }
   });
 
-  test("Android devices are not reachable yet (no FCM): recorded as unsupported", async () => {
+  test("an Android phone is paged through the relay's FCM path, sealed to its own key with its receipt", async () => {
     const ws = await workspace();
-    await ws.device(bia, { platform: "android", environment: "production" });
-    const { incident, event } = await ws.declare(MONITOR_ACTOR);
+    const iphone = await ws.device(ana);
+    const android = await ws.device(bia, { platform: "android", environment: "production" });
+    const { incident, event } = await ws.declare(MONITOR_ACTOR, "sev2");
     const fake = relay();
-    await deliver(event, fake.send);
-    expect(fake.requests).toHaveLength(0);
-    expect(await ws.timeline(incident)).toContainEqual(
-      expect.objectContaining({ kind: "page_failed", userId: "usr_bia", reason: "unsupported" }),
-    );
+    expect(
+      await deliver(event, fake.send, {
+        environment: { ...relayEnv, DASHBOARD_URL: "https://brigade.example.com" } as Parameters<
+          typeof consumeEvents
+        >[1],
+      }),
+    ).toEqual({ acked: ["msg-0"], retried: [] });
+    const request = fake.requests.find((r) => r.body.deviceToken === android.pushToken)!;
+    expect(request.body).toMatchObject({
+      platform: "android",
+      urgency: "page",
+      collapseId: incident,
+    });
+    expect(await opened(android.recipient, request.body.envelope)).toMatchObject({
+      title: "SEV2 · INC-1",
+      body: "Checkout is down",
+      incident,
+      workspace: event.workspaceId,
+      receipt: { url: "https://brigade.example.com/api/receipts", token: expect.any(String) },
+    });
+    // An iPhone's body is unchanged: no platform, so every relay takes it.
+    const ios = fake.requests.find((r) => r.body.deviceToken === iphone.pushToken)!;
+    expect(ios.body.platform).toBeUndefined();
+    expect((await ws.timeline(incident)).map((row) => row.kind)).toEqual(["declared"]);
+  });
+
+  test("FCM's refusals: a token that is done drops the Android phone; quota and outages are retried", async () => {
+    for (const answer of [
+      { status: 404, reason: "UNREGISTERED", tokenInvalid: true },
+      { status: 400, reason: "INVALID_ARGUMENT", tokenInvalid: true },
+    ]) {
+      const ws = await workspace();
+      const phone = await ws.device(bia, { platform: "android", environment: "production" });
+      const { incident, event } = await ws.declare(MONITOR_ACTOR);
+      const fake = relay(() => Response.json(answer, { status: 502 }));
+      expect((await deliver(event, fake.send)).retried, answer.reason).toHaveLength(1);
+      expect(
+        await ws.withShard((shard) => shard.store.get("devices", phone.deviceId)),
+      ).toBeUndefined();
+      await deliver(event, fake.send, { attempts: 2 });
+      expect(await ws.timeline(incident)).toContainEqual(
+        expect.objectContaining({
+          kind: "page_failed",
+          userId: "usr_bia",
+          reason: "token_invalid",
+        }),
+      );
+    }
+    for (const answer of [
+      { status: 429, reason: "QUOTA_EXCEEDED" },
+      { status: 503, reason: "UNAVAILABLE" },
+      { status: 500, reason: "INTERNAL" },
+      { error: "fcm_unreachable" },
+    ]) {
+      const ws = await workspace();
+      const phone = await ws.device(bia, { platform: "android", environment: "production" });
+      const { event } = await ws.declare(MONITOR_ACTOR);
+      let refused = true;
+      const fake = relay(() =>
+        refused ? Response.json(answer, { status: 502 }) : Response.json({ status: 200 }),
+      );
+      expect((await deliver(event, fake.send)).retried, JSON.stringify(answer)).toHaveLength(1);
+      // Kept, and its delivery row says the push service was busy, with FCM's own code.
+      expect(
+        await ws.withShard((shard) => shard.store.get("devices", phone.deviceId)),
+      ).toBeDefined();
+      const row = await ws.withShard((shard) =>
+        shard.store.scan("deliveries").find((r) => r.deviceId === phone.deviceId),
+      );
+      expect(row).toMatchObject({
+        error: "apns_unavailable",
+        reason: "reason" in answer ? answer.reason : null,
+      });
+      refused = false;
+      expect((await deliver(event, fake.send, { attempts: 2 })).acked).toEqual(["msg-0"]);
+    }
+  });
+
+  test("FCM's SENDER_ID_MISMATCH keeps the Android phone: the relay's service account is wrong, not the token", async () => {
+    // Also as a relay from before flagged it as a dead token.
+    for (const answer of [
+      { status: 403, reason: "SENDER_ID_MISMATCH" },
+      { status: 403, reason: "SENDER_ID_MISMATCH", tokenInvalid: true },
+    ]) {
+      const ws = await workspace();
+      const phone = await ws.device(bia, { platform: "android", environment: "production" });
+      const { incident, event } = await ws.declare(MONITOR_ACTOR);
+      const fake = relay(() => Response.json(answer, { status: 502 }));
+      // Refused again on every try, so not retried.
+      expect((await deliver(event, fake.send)).retried, JSON.stringify(answer)).toHaveLength(0);
+      expect(
+        await ws.withShard((shard) => shard.store.get("devices", phone.deviceId)),
+      ).toBeDefined();
+      expect((await ws.events()).map((e) => e.type)).not.toContain("device.unregistered");
+      const row = await ws.withShard((shard) =>
+        shard.store.scan("deliveries").find((r) => r.deviceId === phone.deviceId),
+      );
+      expect(row).toMatchObject({ error: "apns_refused", reason: "SENDER_ID_MISMATCH" });
+      expect(await ws.timeline(incident)).toContainEqual(
+        expect.objectContaining({ kind: "page_failed", userId: "usr_bia" }),
+      );
+    }
   });
 
   test("a monitor's incident with nobody to page says so; a member's own declaration does not", async () => {

@@ -12,10 +12,10 @@ export type Timeline_Pages_FailedInputs = {
 * | "no_devices" | * | "Couldn't page {countFormatted} people: no registered device" |
 * | "undelivered" | "one" | "Couldn't page {countFormatted} person: the push didn't go through" |
 * | "undelivered" | * | "Couldn't page {countFormatted} people: the push didn't go through" |
-* | "token_invalid" | "one" | "Couldn't page {countFormatted} person: Apple refused their phone's token, so it was removed" |
-* | "token_invalid" | * | "Couldn't page {countFormatted} people: Apple refused their phones' tokens, so they were removed" |
-* | "unsupported" | "one" | "Couldn't page {countFormatted} person: Brigade can't push to Android phones yet" |
-* | "unsupported" | * | "Couldn't page {countFormatted} people: Brigade can't push to Android phones yet" |
+* | "token_invalid" | "one" | "Couldn't page {countFormatted} person: Apple or Google refused their phone's token, so it was removed" |
+* | "token_invalid" | * | "Couldn't page {countFormatted} people: Apple or Google refused their phones' tokens, so they were removed" |
+* | "unsupported" | "one" | "Couldn't page {countFormatted} person: Brigade couldn't push to Android phones then" |
+* | "unsupported" | * | "Couldn't page {countFormatted} people: Brigade couldn't push to Android phones then" |
 * | "not_configured" | "one" | "Couldn't page {countFormatted} person: push notifications aren't set up on this server" |
 * | "not_configured" | * | "Couldn't page {countFormatted} people: push notifications aren't set up on this server" |
 * | "over_limit" | "one" | "Couldn't page {countFormatted} person: this page went to too many phones" |

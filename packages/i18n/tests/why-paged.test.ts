@@ -93,10 +93,10 @@ describe("the step-by-step view", () => {
       pages: [page(1, { misses: [{ reason: "token_invalid", at: T, schedule: null }] })],
     };
     expect(verdictText(why, "you")).toBe(
-      "Brigade couldn't page you: Apple refused this phone's token, so it was removed. Opening the Brigade app registers it again",
+      "Brigade couldn't page you: Apple or Google refused this phone's token, so it was removed. Opening the Brigade app registers it again",
     );
     void setLocale("pt-BR");
-    expect(verdictText(why, "Inês")).toContain("a Apple recusou o token deste celular");
+    expect(verdictText(why, "Inês")).toContain("a Apple ou o Google recusou o token deste celular");
   });
 
   test("twenty pages with the same outcome read as one per level, the latest", () => {

@@ -66,19 +66,19 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "calls" | "Takes calls" |
 * | "stage_planned" | "Planned" |
 * | "stage_sent" | "Sent by Brigade" |
-* | "stage_accepted" | "Accepted by Apple" |
+* | "stage_accepted" | "Accepted by Apple or Google" |
 * | "stage_delivered" | "Opened on the phone" |
 * | "no_receipt" | "No receipt from the phone. Receipts are best effort: the page may still have shown." |
 * | "attempts" | "Attempts: {detail}" |
 * | "error_not_configured" | "Push notifications aren't set up on this server" |
-* | "error_unsupported" | "Brigade can't push to Android phones yet" |
+* | "error_unsupported" | "Brigade couldn't push to Android phones then" |
 * | "error_seal_failed" | "The page couldn't be encrypted for this phone" |
 * | "error_relay_unreachable" | "Brigade's sending service didn't answer" |
 * | "error_relay_refused" | "Brigade's sending service refused the request" |
-* | "error_token_invalid" | "Apple said this phone's token is no longer valid, so the phone was removed" |
-* | "error_apns_refused" | "Apple refused the push" |
-* | "error_apns_unavailable" | "Apple was busy or failing" |
-* | "apns_reason" | "Apple said: {detail}" |
+* | "error_token_invalid" | "Apple or Google said this phone's token is no longer valid, so the phone was removed" |
+* | "error_apns_refused" | "Apple or Google refused the push" |
+* | "error_apns_unavailable" | "Apple or Google was busy or failing" |
+* | "apns_reason" | "Apple or Google said: {detail}" |
 * | "email_expected" | "Brigade will email {name} once about a page that missed them." |
 * | "email_failed" | "Couldn't email {name} about the missed page." |
 * | "email_capped" | "Not emailed: the limit on Brigade's emails was reached." |
@@ -97,8 +97,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "pages_show_all" | "Show all {detail} pages" |
 * | "miss_no_devices" | "no phone registered" |
 * | "miss_undelivered" | "the page didn't go through" |
-* | "miss_token_invalid" | "Apple refused this phone's token, so it was removed. Opening the Brigade app registers it again" |
-* | "miss_unsupported" | "Brigade can't page Android phones yet" |
+* | "miss_token_invalid" | "Apple or Google refused this phone's token, so it was removed. Opening the Brigade app registers it again" |
+* | "miss_unsupported" | "Brigade couldn't page Android phones then" |
 * | "miss_not_configured" | "notifications aren't set up on this server" |
 * | "miss_over_limit" | "the page went to too many phones" |
 * | "miss_dead_lettered" | "the page was lost on the way" |
@@ -108,8 +108,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "miss_escalation_stalled" | "the escalation stalled" |
 * | "miss_nobody_else" | "nobody else could respond" |
 * | "call_label" | "Call · {detail}" |
-* | "call_not_sent" | "Not rung: Brigade rings a phone only after the page's notification gets through to Apple." |
-* | "call_error_token_invalid" | "Apple said this phone's call token is no longer valid, so Brigade stopped calling it. Pages still reach it as notifications." |
+* | "call_not_sent" | "Not rung: Brigade rings a phone only after the page's notification gets through to Apple or Google." |
+* | "call_error_token_invalid" | "Apple or Google said this phone's call token is no longer valid, so Brigade stopped calling it. Pages still reach it as notifications." |
 * | "call_note" | "Calls ring after the notification and never change whether the page got through." |
 * | "short_call_accepted" | "Call sent" |
 * | "short_call_sending" | "Calling" |
@@ -183,19 +183,19 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "calls") return /** @type {LocalizedString} */ (`Recebe chamadas`);
 		if (i?.text === "stage_planned") return /** @type {LocalizedString} */ (`Planejado`);
 		if (i?.text === "stage_sent") return /** @type {LocalizedString} */ (`Enviado pelo Brigade`);
-		if (i?.text === "stage_accepted") return /** @type {LocalizedString} */ (`Aceito pela Apple`);
+		if (i?.text === "stage_accepted") return /** @type {LocalizedString} */ (`Aceito pela Apple ou pelo Google`);
 		if (i?.text === "stage_delivered") return /** @type {LocalizedString} */ (`Aberto no celular`);
 		if (i?.text === "no_receipt") return /** @type {LocalizedString} */ (`O celular não confirmou. A confirmação é feita sem garantia: o acionamento pode ter aparecido mesmo assim.`);
 		if (i?.text === "attempts") return /** @type {LocalizedString} */ (`Tentativas: ${i?.detail}`);
 		if (i?.text === "error_not_configured") return /** @type {LocalizedString} */ (`As notificações não estão configuradas neste servidor`);
-		if (i?.text === "error_unsupported") return /** @type {LocalizedString} */ (`O Brigade ainda não aciona celulares Android`);
+		if (i?.text === "error_unsupported") return /** @type {LocalizedString} */ (`O Brigade ainda não acionava celulares Android`);
 		if (i?.text === "error_seal_failed") return /** @type {LocalizedString} */ (`Não foi possível criptografar o acionamento para este celular`);
 		if (i?.text === "error_relay_unreachable") return /** @type {LocalizedString} */ (`O serviço de envio do Brigade não respondeu`);
 		if (i?.text === "error_relay_refused") return /** @type {LocalizedString} */ (`O serviço de envio do Brigade recusou o pedido`);
-		if (i?.text === "error_token_invalid") return /** @type {LocalizedString} */ (`A Apple disse que o token deste celular não vale mais, então o celular foi removido`);
-		if (i?.text === "error_apns_refused") return /** @type {LocalizedString} */ (`A Apple recusou a notificação`);
-		if (i?.text === "error_apns_unavailable") return /** @type {LocalizedString} */ (`A Apple estava ocupada ou falhando`);
-		if (i?.text === "apns_reason") return /** @type {LocalizedString} */ (`A Apple disse: ${i?.detail}`);
+		if (i?.text === "error_token_invalid") return /** @type {LocalizedString} */ (`A Apple ou o Google disse que o token deste celular não vale mais, então o celular foi removido`);
+		if (i?.text === "error_apns_refused") return /** @type {LocalizedString} */ (`A Apple ou o Google recusou a notificação`);
+		if (i?.text === "error_apns_unavailable") return /** @type {LocalizedString} */ (`A Apple ou o Google estava ocupado ou falhando`);
+		if (i?.text === "apns_reason") return /** @type {LocalizedString} */ (`A Apple ou o Google disse: ${i?.detail}`);
 		if (i?.text === "email_expected") return /** @type {LocalizedString} */ (`O Brigade vai enviar um email a ${i?.name}, uma vez, sobre um acionamento que não chegou.`);
 		if (i?.text === "email_failed") return /** @type {LocalizedString} */ (`Não foi possível enviar o email a ${i?.name} sobre o acionamento perdido.`);
 		if (i?.text === "email_capped") return /** @type {LocalizedString} */ (`Sem email: o limite de emails do Brigade foi atingido.`);
@@ -214,8 +214,8 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "pages_show_all") return /** @type {LocalizedString} */ (`Mostrar todos os ${i?.detail} acionamentos`);
 		if (i?.text === "miss_no_devices") return /** @type {LocalizedString} */ (`nenhum celular registrado`);
 		if (i?.text === "miss_undelivered") return /** @type {LocalizedString} */ (`o acionamento não foi entregue`);
-		if (i?.text === "miss_token_invalid") return /** @type {LocalizedString} */ (`a Apple recusou o token deste celular, então ele foi removido. Abrir o app do Brigade registra o celular de novo`);
-		if (i?.text === "miss_unsupported") return /** @type {LocalizedString} */ (`o Brigade ainda não aciona celulares Android`);
+		if (i?.text === "miss_token_invalid") return /** @type {LocalizedString} */ (`a Apple ou o Google recusou o token deste celular, então ele foi removido. Abrir o app do Brigade registra o celular de novo`);
+		if (i?.text === "miss_unsupported") return /** @type {LocalizedString} */ (`o Brigade ainda não acionava celulares Android`);
 		if (i?.text === "miss_not_configured") return /** @type {LocalizedString} */ (`as notificações não estão configuradas neste servidor`);
 		if (i?.text === "miss_over_limit") return /** @type {LocalizedString} */ (`o acionamento foi para celulares demais`);
 		if (i?.text === "miss_dead_lettered") return /** @type {LocalizedString} */ (`o acionamento se perdeu no caminho`);
@@ -225,8 +225,8 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "miss_escalation_stalled") return /** @type {LocalizedString} */ (`o escalonamento travou`);
 		if (i?.text === "miss_nobody_else") return /** @type {LocalizedString} */ (`ninguém mais podia responder`);
 		if (i?.text === "call_label") return /** @type {LocalizedString} */ (`Chamada · ${i?.detail}`);
-		if (i?.text === "call_not_sent") return /** @type {LocalizedString} */ (`Não tocou: o Brigade só liga para um celular depois que a notificação do acionamento chega à Apple.`);
-		if (i?.text === "call_error_token_invalid") return /** @type {LocalizedString} */ (`A Apple disse que o token de chamadas deste celular não vale mais, então o Brigade parou de ligar para ele. Os acionamentos continuam chegando como notificações.`);
+		if (i?.text === "call_not_sent") return /** @type {LocalizedString} */ (`Não tocou: o Brigade só liga para um celular depois que a notificação do acionamento chega à Apple ou ao Google.`);
+		if (i?.text === "call_error_token_invalid") return /** @type {LocalizedString} */ (`A Apple ou o Google disse que o token de chamadas deste celular não vale mais, então o Brigade parou de ligar para ele. Os acionamentos continuam chegando como notificações.`);
 		if (i?.text === "call_note") return /** @type {LocalizedString} */ (`As chamadas tocam depois da notificação e nunca mudam se o acionamento chegou.`);
 		if (i?.text === "short_call_accepted") return /** @type {LocalizedString} */ (`Chamada enviada`);
 		if (i?.text === "short_call_sending") return /** @type {LocalizedString} */ (`Chamando`);
@@ -294,19 +294,19 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "calls") return /** @type {LocalizedString} */ (`Takes calls`);
 		if (i?.text === "stage_planned") return /** @type {LocalizedString} */ (`Planned`);
 		if (i?.text === "stage_sent") return /** @type {LocalizedString} */ (`Sent by Brigade`);
-		if (i?.text === "stage_accepted") return /** @type {LocalizedString} */ (`Accepted by Apple`);
+		if (i?.text === "stage_accepted") return /** @type {LocalizedString} */ (`Accepted by Apple or Google`);
 		if (i?.text === "stage_delivered") return /** @type {LocalizedString} */ (`Opened on the phone`);
 		if (i?.text === "no_receipt") return /** @type {LocalizedString} */ (`No receipt from the phone. Receipts are best effort: the page may still have shown.`);
 		if (i?.text === "attempts") return /** @type {LocalizedString} */ (`Attempts: ${i?.detail}`);
 		if (i?.text === "error_not_configured") return /** @type {LocalizedString} */ (`Push notifications aren't set up on this server`);
-		if (i?.text === "error_unsupported") return /** @type {LocalizedString} */ (`Brigade can't push to Android phones yet`);
+		if (i?.text === "error_unsupported") return /** @type {LocalizedString} */ (`Brigade couldn't push to Android phones then`);
 		if (i?.text === "error_seal_failed") return /** @type {LocalizedString} */ (`The page couldn't be encrypted for this phone`);
 		if (i?.text === "error_relay_unreachable") return /** @type {LocalizedString} */ (`Brigade's sending service didn't answer`);
 		if (i?.text === "error_relay_refused") return /** @type {LocalizedString} */ (`Brigade's sending service refused the request`);
-		if (i?.text === "error_token_invalid") return /** @type {LocalizedString} */ (`Apple said this phone's token is no longer valid, so the phone was removed`);
-		if (i?.text === "error_apns_refused") return /** @type {LocalizedString} */ (`Apple refused the push`);
-		if (i?.text === "error_apns_unavailable") return /** @type {LocalizedString} */ (`Apple was busy or failing`);
-		if (i?.text === "apns_reason") return /** @type {LocalizedString} */ (`Apple said: ${i?.detail}`);
+		if (i?.text === "error_token_invalid") return /** @type {LocalizedString} */ (`Apple or Google said this phone's token is no longer valid, so the phone was removed`);
+		if (i?.text === "error_apns_refused") return /** @type {LocalizedString} */ (`Apple or Google refused the push`);
+		if (i?.text === "error_apns_unavailable") return /** @type {LocalizedString} */ (`Apple or Google was busy or failing`);
+		if (i?.text === "apns_reason") return /** @type {LocalizedString} */ (`Apple or Google said: ${i?.detail}`);
 		if (i?.text === "email_expected") return /** @type {LocalizedString} */ (`Brigade will email ${i?.name} once about a page that missed them.`);
 		if (i?.text === "email_failed") return /** @type {LocalizedString} */ (`Couldn't email ${i?.name} about the missed page.`);
 		if (i?.text === "email_capped") return /** @type {LocalizedString} */ (`Not emailed: the limit on Brigade's emails was reached.`);
@@ -325,8 +325,8 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "pages_show_all") return /** @type {LocalizedString} */ (`Show all ${i?.detail} pages`);
 		if (i?.text === "miss_no_devices") return /** @type {LocalizedString} */ (`no phone registered`);
 		if (i?.text === "miss_undelivered") return /** @type {LocalizedString} */ (`the page didn't go through`);
-		if (i?.text === "miss_token_invalid") return /** @type {LocalizedString} */ (`Apple refused this phone's token, so it was removed. Opening the Brigade app registers it again`);
-		if (i?.text === "miss_unsupported") return /** @type {LocalizedString} */ (`Brigade can't page Android phones yet`);
+		if (i?.text === "miss_token_invalid") return /** @type {LocalizedString} */ (`Apple or Google refused this phone's token, so it was removed. Opening the Brigade app registers it again`);
+		if (i?.text === "miss_unsupported") return /** @type {LocalizedString} */ (`Brigade couldn't page Android phones then`);
 		if (i?.text === "miss_not_configured") return /** @type {LocalizedString} */ (`notifications aren't set up on this server`);
 		if (i?.text === "miss_over_limit") return /** @type {LocalizedString} */ (`the page went to too many phones`);
 		if (i?.text === "miss_dead_lettered") return /** @type {LocalizedString} */ (`the page was lost on the way`);
@@ -336,8 +336,8 @@ export const page_why = /** @type {((inputs: Page_WhyInputs, options?: { locale?
 		if (i?.text === "miss_escalation_stalled") return /** @type {LocalizedString} */ (`the escalation stalled`);
 		if (i?.text === "miss_nobody_else") return /** @type {LocalizedString} */ (`nobody else could respond`);
 		if (i?.text === "call_label") return /** @type {LocalizedString} */ (`Call · ${i?.detail}`);
-		if (i?.text === "call_not_sent") return /** @type {LocalizedString} */ (`Not rung: Brigade rings a phone only after the page's notification gets through to Apple.`);
-		if (i?.text === "call_error_token_invalid") return /** @type {LocalizedString} */ (`Apple said this phone's call token is no longer valid, so Brigade stopped calling it. Pages still reach it as notifications.`);
+		if (i?.text === "call_not_sent") return /** @type {LocalizedString} */ (`Not rung: Brigade rings a phone only after the page's notification gets through to Apple or Google.`);
+		if (i?.text === "call_error_token_invalid") return /** @type {LocalizedString} */ (`Apple or Google said this phone's call token is no longer valid, so Brigade stopped calling it. Pages still reach it as notifications.`);
 		if (i?.text === "call_note") return /** @type {LocalizedString} */ (`Calls ring after the notification and never change whether the page got through.`);
 		if (i?.text === "short_call_accepted") return /** @type {LocalizedString} */ (`Call sent`);
 		if (i?.text === "short_call_sending") return /** @type {LocalizedString} */ (`Calling`);

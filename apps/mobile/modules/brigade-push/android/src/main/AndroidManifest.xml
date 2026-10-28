@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!-- Pages from the relay (RFC 0006). Above expo-notifications' service (priority -1), so FCM delivers here; it hands
+         anything not Brigade's, and new tokens, on to expo-notifications. -->
+    <service
+      android:name=".BrigadeMessagingService"
+      android:exported="false">
+      <intent-filter android:priority="1">
+        <action android:name="com.google.firebase.MESSAGING_EVENT" />
+      </intent-filter>
+    </service>
+  </application>
+</manifest>

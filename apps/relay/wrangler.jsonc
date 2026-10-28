@@ -15,7 +15,8 @@
   "upload_source_maps": true,
   // Production APNs; the app's build sets `aps-environment` to match.
   "vars": { "APNS_ENVIRONMENT": "production", "APNS_TOPIC": "app.freecorps.brigade" },
-  // Set with `wrangler secret put` from files outside the repository; never in this file.
+  // Set with `wrangler secret put` from files outside the repository; never in this file. `FCM_SERVICE_ACCOUNT` (the
+  // Google service account's JSON key, for Android) is optional: without it the relay serves iPhones only (README).
   "secrets": { "required": ["APNS_KEY", "APNS_KEY_ID", "APNS_TEAM_ID", "RELAY_SEND_TOKEN"] },
   "env": {
     "dev": {

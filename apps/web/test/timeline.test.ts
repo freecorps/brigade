@@ -111,7 +111,7 @@ test("every kind of entry reads as a sentence, in English and Portuguese", async
     "Bia Lima paused Checkout API, so its alert resolved",
     "Bia Lima deleted Checkout API, so its alert resolved",
     "Couldn't page Bia Lima: the push didn't go through",
-    "Couldn't page you: Brigade can't push to Android phones yet",
+    "Couldn't page you: Brigade couldn't push to Android phones then",
     "Couldn't page Bia Lima: push notifications aren't set up on this server",
     "Nobody was paged: no one who can respond has Brigade on their phone",
     "Couldn't page Bia Lima: no registered device",

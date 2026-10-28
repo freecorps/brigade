@@ -1,15 +1,16 @@
 # @freecorps/brigade-relay
 
-The push relay (RFC 0006): a Cloudflare Worker that forwards encrypted pushes to APNs. It never sees content, only
-a device token, an envelope sealed with [`@freecorps/brigade-push`](../../packages/push/README.md) and an urgency.
-For now it is spike S1's relay ([write-up](../../docs/spikes/s1-apns-encryption.md)): no instance registration,
-handles, rate limits or FCM yet.
+The push relay (RFC 0006): a Cloudflare Worker that forwards encrypted pushes to APNs (iPhones) and FCM (Android). It
+never sees content, only a device token, an envelope sealed with
+[`@freecorps/brigade-push`](../../packages/push/README.md) and an urgency. For now it is spike S1's relay
+([write-up](../../docs/spikes/s1-apns-encryption.md)) plus FCM: no instance registration, handles or rate limits yet.
 
 | Route         | Response                                                                                                                       |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `GET /health` | `200 {"ok":true}`                                                                                                              |
 | `POST /send`  | `Authorization: Bearer <RELAY_SEND_TOKEN>`; body `{ deviceToken, envelope, urgency?, collapseId?, ttlSeconds?, environment? }` |
 |               | A call (RFC 0010): `{ kind: "call", callId, deviceToken: <PushKit token>, envelope }`, see below                               |
+|               | Android: `platform: "android"` and the FCM token as `deviceToken` (alerts and calls), see "Android (FCM)"                      |
 |               | `200 { status, apnsId, apnsUniqueId, ms }` when APNs accepts; `502` with APNs' `reason` when it does not                       |
 |               | `502 {"error":"apns_unreachable"}` when `fetch` fails; `400` for a bad body; `401` without the token                           |
 |               | `500 {"error":"relay_misconfigured"}` when `APNS_KEY` cannot sign a provider token                                             |
@@ -36,6 +37,33 @@ topic `<APNS_TOPIC>.voip`, `apns-push-type: voip`, body `{ call: { id }, brigade
 call, so the relay refuses anything the app could not ring for. The App ID needs the VoIP Services capability; the
 same `.p8` token key signs for the `.voip` topic.
 
+## Android (FCM)
+
+`platform: "android"` sends through FCM's HTTP v1 API (`src/fcm.ts`) as a data message only: `data` is `{ v, enc, ct,
+kind, urgency, callId?, tag? }` (`tag` is `collapseId`, the app's notification tag), `android.priority` is `HIGH`
+(`NORMAL` for `low`) and `android.ttl` the same `ttlSeconds` defaults as APNs. The relay signs an RS256 JWT with the
+service account's key and exchanges it at Google's token endpoint for an access token, kept until 5 minutes before it
+expires (and fetched again if FCM answers 401). Answers: `200 { status, fcmId, ms }`; `502 { status, reason,
+tokenInvalid? }` with FCM's error code (`UNREGISTERED`, `QUOTA_EXCEEDED`, `UNAVAILABLE`, …), `tokenInvalid: true`
+when the token is gone (the instance drops the device; never for `SENDER_ID_MISMATCH`, which is logged as an error:
+`FCM_SERVICE_ACCOUNT` is not the app's Firebase project); `502 {"error":"fcm_unreachable"}` when FCM or the token
+endpoint cannot be reached; `500 {"error":"relay_misconfigured"}` without a usable `FCM_SERVICE_ACCOUNT`. FCM speaks
+HTTP/1.1, so unlike APNs it also works from `vp dev`.
+
+### Setting up FCM
+
+1. Create a Firebase project (console.firebase.google.com) and add an Android app with the package name
+   `app.freecorps.brigade`. Download its `google-services.json` **outside the repository** for the app build
+   (apps/mobile/README.md, "Android pages"); never commit it.
+2. In Google Cloud's IAM for that project, create a service account for the relay and give it the **Firebase Cloud
+   Messaging API Admin** role (`roles/firebasecloudmessaging.admin`), the narrowest predefined role that can send.
+   Make sure the "Firebase Cloud Messaging API" (v1) is enabled.
+3. Create a JSON key for it and keep the file outside the repository (`~/.config/brigade/…`). Its `project_id` is
+   the project the relay sends through.
+4. Set it on the relay as the `FCM_SERVICE_ACCOUNT` secret: the whole JSON text, e.g. in the secrets file passed to
+   `wrangler deploy --secrets-file` (as a JSON string value) or with `wrangler secret put FCM_SERVICE_ACCOUNT <
+   key.json`. A relay without it still serves iPhones.
+
 ## Configuration
 
 `wrangler.jsonc`: production is the top-level config (`brigade-relay`, no workers.dev URL, production APNs); `dev`
@@ -49,10 +77,13 @@ the config:
 | `APNS_TEAM_ID`     | The Apple team id                      |
 | `RELAY_SEND_TOKEN` | The bearer token `/send` requires      |
 
+Optional, for Android: `FCM_SERVICE_ACCOUNT`, the Google service account's JSON key (see "Setting up FCM"). Not in
+`secrets.required`, so a relay without it still deploys and serves iPhones.
+
 ```bash
 vp run build:dev                                                          # builds the dev environment into dist/
 bunx wrangler deploy --secrets-file ~/.config/brigade/relay-dev-secrets.json  # deploys it with its secrets
-vp test                                                                   # JWT, request builder and /send (Node, fetch stubbed)
+vp test                                                                   # JWTs, request builders and /send (Node, fetch stubbed)
 ```
 
 ## Sending a test push

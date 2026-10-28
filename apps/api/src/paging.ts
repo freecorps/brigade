@@ -546,7 +546,7 @@ export class Pager {
       ...target,
       call:
         rings &&
-        target.platform === "ios" &&
+        // An iPhone's PushKit token, or an Android phone's FCM token registered for calls (RFC 0010).
         Boolean(target.voipToken) &&
         wantsCall(callChoiceOf(settings, target.userId), incident.severity),
     }));

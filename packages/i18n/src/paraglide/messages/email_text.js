@@ -14,8 +14,8 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "unpaged_intro" | "Brigade tried to page you about {incident} in {workspace}, but the page didn't reach your phone: {reason}." |
 * | "unpaged_reason_no_devices" | "you have no phone registered with Brigade" |
 * | "unpaged_reason_undelivered" | "the push notification didn't go through" |
-* | "unpaged_reason_token_invalid" | "Apple refused your phone's token, so Brigade removed that phone" |
-* | "unpaged_reason_unsupported" | "Brigade can't send pages to Android phones yet" |
+* | "unpaged_reason_token_invalid" | "Apple or Google refused your phone's token, so Brigade removed that phone" |
+* | "unpaged_reason_unsupported" | "Brigade couldn't send pages to Android phones then" |
 * | "unpaged_reason_not_configured" | "push notifications aren't set up on this Brigade server" |
 * | "unpaged_reason_over_limit" | "the page went to more phones than one page can reach" |
 * | "unpaged_hint" | "To get pages on your phone, install the Brigade app, sign in and allow notifications." |
@@ -40,8 +40,8 @@ export const email_text = /** @type {((inputs: Email_TextInputs, options?: { loc
 		if (i?.part === "unpaged_intro") return /** @type {LocalizedString} */ (`O Brigade tentou chamar você sobre ${i?.incident} em ${i?.workspace}, mas a chamada não chegou ao seu celular: ${i?.reason}.`);
 		if (i?.part === "unpaged_reason_no_devices") return /** @type {LocalizedString} */ (`você não tem nenhum celular registrado no Brigade`);
 		if (i?.part === "unpaged_reason_undelivered") return /** @type {LocalizedString} */ (`a notificação push não foi entregue`);
-		if (i?.part === "unpaged_reason_token_invalid") return /** @type {LocalizedString} */ (`a Apple recusou o token do seu celular, então o Brigade removeu esse celular`);
-		if (i?.part === "unpaged_reason_unsupported") return /** @type {LocalizedString} */ (`o Brigade ainda não envia chamadas para celulares Android`);
+		if (i?.part === "unpaged_reason_token_invalid") return /** @type {LocalizedString} */ (`a Apple ou o Google recusou o token do seu celular, então o Brigade removeu esse celular`);
+		if (i?.part === "unpaged_reason_unsupported") return /** @type {LocalizedString} */ (`o Brigade ainda não enviava acionamentos para celulares Android`);
 		if (i?.part === "unpaged_reason_not_configured") return /** @type {LocalizedString} */ (`as notificações push não estão configuradas neste servidor do Brigade`);
 		if (i?.part === "unpaged_reason_over_limit") return /** @type {LocalizedString} */ (`a chamada foi para mais celulares do que uma chamada alcança`);
 		if (i?.part === "unpaged_hint") return /** @type {LocalizedString} */ (`Para receber chamadas no celular, instale o app do Brigade, entre na sua conta e permita notificações.`);
@@ -60,8 +60,8 @@ export const email_text = /** @type {((inputs: Email_TextInputs, options?: { loc
 		if (i?.part === "unpaged_intro") return /** @type {LocalizedString} */ (`Brigade tried to page you about ${i?.incident} in ${i?.workspace}, but the page didn't reach your phone: ${i?.reason}.`);
 		if (i?.part === "unpaged_reason_no_devices") return /** @type {LocalizedString} */ (`you have no phone registered with Brigade`);
 		if (i?.part === "unpaged_reason_undelivered") return /** @type {LocalizedString} */ (`the push notification didn't go through`);
-		if (i?.part === "unpaged_reason_token_invalid") return /** @type {LocalizedString} */ (`Apple refused your phone's token, so Brigade removed that phone`);
-		if (i?.part === "unpaged_reason_unsupported") return /** @type {LocalizedString} */ (`Brigade can't send pages to Android phones yet`);
+		if (i?.part === "unpaged_reason_token_invalid") return /** @type {LocalizedString} */ (`Apple or Google refused your phone's token, so Brigade removed that phone`);
+		if (i?.part === "unpaged_reason_unsupported") return /** @type {LocalizedString} */ (`Brigade couldn't send pages to Android phones then`);
 		if (i?.part === "unpaged_reason_not_configured") return /** @type {LocalizedString} */ (`push notifications aren't set up on this Brigade server`);
 		if (i?.part === "unpaged_reason_over_limit") return /** @type {LocalizedString} */ (`the page went to more phones than one page can reach`);
 		if (i?.part === "unpaged_hint") return /** @type {LocalizedString} */ (`To get pages on your phone, install the Brigade app, sign in and allow notifications.`);

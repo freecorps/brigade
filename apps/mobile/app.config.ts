@@ -2,6 +2,7 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 // By path, not "@freecorps/brigade-ui": Expo's config loader does not use the @freecorps/source
 // condition, so the package name would need packages/ui built first.
 import { themes } from "../../packages/ui/src/tokens.ts";
+import { googleServicesFile } from "./plugins/google-services.ts";
 import { withIncomingCall } from "./plugins/incoming-call.ts";
 import { withNotificationService } from "./plugins/notification-service.ts";
 import { withPendingBackup } from "./plugins/pending-backup.ts";
@@ -20,6 +21,10 @@ const APS_ENVIRONMENT = process.env.EAS_BUILD === "true" ? "production" : "devel
 // for them. Off by default: Apple has not granted the entitlement to the team yet, and a profile without it fails
 // the build. Without it, pages are time-sensitive, as on every build so far.
 const CRITICAL_ALERTS = process.env.BRIGADE_CRITICAL_ALERTS === "1";
+
+// Android pages through FCM (RFC 0006): the Firebase project's `google-services.json`, from outside the repository.
+// Without it the app builds with no FCM token and says pages are not set up on the phone.
+const GOOGLE_SERVICES_FILE = googleServicesFile();
 
 export default ({ config }: ConfigContext): ExpoConfig =>
   // iOS: the Notification Service Extension that decrypts pushes (spike S1), the "I'm on call" widget (after the
@@ -73,6 +78,7 @@ const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
       backgroundColor: themes.light.primary,
     },
     predictiveBackGestureEnabled: false,
+    ...(GOOGLE_SERVICES_FILE ? { googleServicesFile: GOOGLE_SERVICES_FILE } : {}),
   },
   web: {
     output: "single",

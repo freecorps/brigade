@@ -1,4 +1,5 @@
-// This phone's side of device registration (src/lib/device.ts): its key, notification permission, APNs and PushKit tokens,
+// This phone's side of device registration (src/lib/device.ts): its key, notification permission, APNs and PushKit
+// tokens (FCM's on Android),
 // and the member's sync client to send `device.register` and `device.unregister` through; and finishing a sign-out
 // kept from offline (src/lib/sign-out.ts) with the kept session.
 import Constants from "expo-constants";
@@ -73,11 +74,15 @@ export function phoneDeps(
   registerAll?: DeviceDeps["registerAll"],
 ): DeviceDeps {
   const keys = BrigadePush;
+  const android = process.env.EXPO_OS === "android";
+  // Android pages through FCM (RFC 0006): a build without Firebase has no token to give, and says so ("unsupported").
+  const pageable = keys !== null && (!android || keys.fcmAvailable === true);
+  const pushToken = async () => String((await Notifications.getDevicePushTokenAsync()).data);
   return {
     platform: process.env.EXPO_OS === "ios" ? "ios" : "android",
     apsEnvironment: Constants.expoConfig?.extra?.apsEnvironment,
-    // iOS only for now (spike S1): Android has no device key until FCM (RFC 0006).
-    publicKey: keys ? () => keys.getPublicKey() : null,
+    // In the Keychain on iOS, the Android Keystore on Android (modules/brigade-push).
+    publicKey: pageable ? () => keys.getPublicKey() : null,
     permission: async () => {
       const { status } = await Notifications.requestPermissionsAsync({
         ios: {
@@ -96,9 +101,10 @@ export function phoneDeps(
             (await Notifications.getPermissionsAsync()).ios?.allowsCriticalAlerts === true,
         }
       : {}),
-    pushToken: async () => String((await Notifications.getDevicePushTokenAsync()).data),
-    // Pages that ring as calls (RFC 0010): the module reports every VoIP push to CallKit, so its token is safe to give.
-    ...(BrigadeCall ? { voipToken: () => BrigadeCall!.getVoipToken() } : {}),
+    pushToken,
+    // Pages that ring as calls (RFC 0010). iOS: the module reports every VoIP push to CallKit, so its token is safe to
+    // give. Android: a call is an FCM data message the app rings for, so the call token is the FCM token again.
+    ...(BrigadeCall ? { voipToken: android ? pushToken : () => BrigadeCall!.getVoipToken() } : {}),
     mutate: (name, args) => sync.client.mutate(sync.shard, name, args as never),
     ...(registerAll ? { registerAll } : {}),
     // Delivery receipts go only to the instance this phone registered with (RFC 0006 "Delivery receipts").
@@ -112,11 +118,15 @@ export function phoneDeps(
 
 /**
  * This phone's device id, sent on sign-out (`DEVICE_HEADER`) so the server takes it off every workspace of the member,
- * not only the one the app has open. Undefined without a device key (Android until FCM), which registers nowhere.
+ * not only the one the app has open. Undefined without a device key (an Android build without Firebase), which
+ * registers nowhere.
  */
 export async function phoneDeviceId(): Promise<string | undefined> {
   try {
-    return BrigadePush ? deviceId(await BrigadePush.getPublicKey()) : undefined;
+    if (!BrigadePush || (process.env.EXPO_OS === "android" && BrigadePush.fcmAvailable !== true)) {
+      return undefined;
+    }
+    return deviceId(await BrigadePush.getPublicKey());
   } catch {
     return undefined;
   }

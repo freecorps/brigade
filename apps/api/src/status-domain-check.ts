@@ -12,7 +12,10 @@ import type { Shard } from "./shard.ts";
 export const DOMAIN_RECHECK_MIN_MS = 60 * 1000;
 /** …and at most this long. */
 export const DOMAIN_RECHECK_MAX_MS = 60 * 60 * 1000;
-/** A domain still pending this long after it was added is no longer asked about on its own: "Check again" still is. */
+/**
+ * A domain pending this long since it became pending (`stateAt`: added, or an active one Cloudflare stopped serving)
+ * is no longer asked about on its own: "Check again" still is.
+ */
 export const DOMAIN_PENDING_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 /** An active domain is asked about again this often. */
 export const DOMAIN_ACTIVE_RECHECK_MS = 24 * 60 * 60 * 1000;
@@ -21,8 +24,11 @@ export const DOMAIN_ACTIVE_RECHECK_MS = 24 * 60 * 60 * 1000;
 export function domainCheckDue(row: StatusDomainRow, now: number): number | null {
   if (row.state === "failed") return null;
   if (row.state === "active") return row.checkedAt + DOMAIN_ACTIVE_RECHECK_MS;
-  if (now - row.createdAt > DOMAIN_PENDING_MAX_MS) return null;
-  const pending = row.checkedAt - row.createdAt;
+  // From when it became pending, not when it was added: an old active domain that turns pending for a moment (a
+  // certificate renewal) is still asked about until it comes back.
+  const since = row.stateAt ?? row.createdAt;
+  if (now - since > DOMAIN_PENDING_MAX_MS) return null;
+  const pending = row.checkedAt - since;
   return row.checkedAt + Math.min(DOMAIN_RECHECK_MAX_MS, Math.max(DOMAIN_RECHECK_MIN_MS, pending));
 }
 

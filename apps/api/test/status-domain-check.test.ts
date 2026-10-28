@@ -7,7 +7,9 @@ import type { Shard } from "../src/shard.ts";
 import type { SaasConfig } from "../src/status-domain-cf.ts";
 import {
   DOMAIN_RECHECK_MAX_MS,
+  DOMAIN_PENDING_MAX_MS,
   DOMAIN_RECHECK_MIN_MS,
+  domainCheckDue,
   DomainChecker,
 } from "../src/status-domain-check.ts";
 
@@ -145,5 +147,17 @@ describe("the shard's domain checker", () => {
     expect(checks).toMatchObject([
       { hostname: ROW.hostname, cloudflareId: "cfh-1", state: "pending", error: null },
     ]);
+  });
+});
+
+describe("domainCheckDue", () => {
+  test("the 7 days count from when it became pending, so an old domain that turns pending is still asked about", () => {
+    const old = T - 30 * 24 * 60 * 60 * 1000;
+    // Added a month ago, active until a check just now found it pending (a certificate renewal).
+    const renewing = { ...ROW, createdAt: old, stateAt: T, checkedAt: T };
+    expect(domainCheckDue(renewing, T + 1000)).toBe(T + DOMAIN_RECHECK_MIN_MS);
+    // Pending since it was added, a week and more ago: no longer asked about on its own.
+    const stale = { ...ROW, createdAt: old, stateAt: old, checkedAt: T };
+    expect(domainCheckDue(stale, old + DOMAIN_PENDING_MAX_MS + 1)).toBeNull();
   });
 });

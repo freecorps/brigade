@@ -55,7 +55,7 @@ import { getLocale, experimentalStaticLocale } from '../runtime.js';
 * | "reason_moved" | "The domain no longer points at this Brigade instance. Put the CNAME back, then check again." |
 * | "reason_blocked" | "Cloudflare blocked this domain. Remove it, or use another one." |
 * | "reason_deleted" | "Cloudflare no longer has this domain. Remove it and add it again." |
-* | "reason_other" | "Cloudflare couldn't verify the domain. Check the records, then check again." |
+* | "reason_other" | "Cloudflare reported a problem with the domain. Check the records, then check again." |
 * | "error_failed" | "Couldn't save. Try again." |
 * | * | "Custom domain" |
 *
@@ -111,7 +111,7 @@ export const status_domain_card = /** @type {((inputs: Status_Domain_CardInputs,
 		if (i?.part === "reason_moved") return /** @type {LocalizedString} */ (`O domínio não aponta mais para esta instância do Brigade. Recoloque o CNAME e verifique de novo.`);
 		if (i?.part === "reason_blocked") return /** @type {LocalizedString} */ (`A Cloudflare bloqueou este domínio. Remova-o ou use outro.`);
 		if (i?.part === "reason_deleted") return /** @type {LocalizedString} */ (`A Cloudflare não tem mais este domínio. Remova-o e adicione de novo.`);
-		if (i?.part === "reason_other") return /** @type {LocalizedString} */ (`A Cloudflare não conseguiu verificar o domínio. Confira os registros e verifique de novo.`);
+		if (i?.part === "reason_other") return /** @type {LocalizedString} */ (`A Cloudflare informou um problema com o domínio. Confira os registros e verifique de novo.`);
 		if (i?.part === "error_failed") return /** @type {LocalizedString} */ (`Não foi possível salvar. Tente de novo.`);
 		return /** @type {LocalizedString} */ (`Domínio próprio`)
 	}
@@ -161,7 +161,7 @@ export const status_domain_card = /** @type {((inputs: Status_Domain_CardInputs,
 		if (i?.part === "reason_moved") return /** @type {LocalizedString} */ (`The domain no longer points at this Brigade instance. Put the CNAME back, then check again.`);
 		if (i?.part === "reason_blocked") return /** @type {LocalizedString} */ (`Cloudflare blocked this domain. Remove it, or use another one.`);
 		if (i?.part === "reason_deleted") return /** @type {LocalizedString} */ (`Cloudflare no longer has this domain. Remove it and add it again.`);
-		if (i?.part === "reason_other") return /** @type {LocalizedString} */ (`Cloudflare couldn't verify the domain. Check the records, then check again.`);
+		if (i?.part === "reason_other") return /** @type {LocalizedString} */ (`Cloudflare reported a problem with the domain. Check the records, then check again.`);
 		if (i?.part === "error_failed") return /** @type {LocalizedString} */ (`Couldn't save. Try again.`);
 		return /** @type {LocalizedString} */ (`Custom domain`)
 	}

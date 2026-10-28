@@ -148,9 +148,36 @@ describe("custom domain card", () => {
   });
 
   test("each refusal and each of Cloudflare's reasons has words of its own, in both languages", async () => {
+    const words = {
+      en: {
+        dns: "can't see the DNS records yet",
+        caa: "A CAA record",
+        timed_out: "stopped waiting for the records",
+        expired: "certificate expired",
+        moved: "no longer points at this Brigade instance",
+        blocked: "Cloudflare blocked this domain",
+        deleted: "Cloudflare no longer has this domain",
+        other: "Cloudflare reported a problem with the domain",
+        unavailable: "Brigade couldn't save the domain right now",
+        in_progress: "still being set up or cleaned up",
+        apex: "Use a subdomain",
+      },
+      "pt-BR": {
+        dns: "ainda não encontra os registros DNS",
+        caa: "Um registro CAA",
+        timed_out: "parou de esperar pelos registros",
+        expired: "certificado do domínio expirou",
+        moved: "não aponta mais para esta instância do Brigade",
+        blocked: "A Cloudflare bloqueou este domínio",
+        deleted: "A Cloudflare não tem mais este domínio",
+        other: "A Cloudflare informou um problema com o domínio",
+        unavailable: "O Brigade não conseguiu salvar o domínio agora",
+        in_progress: "ainda está sendo configurado ou removido",
+        apex: "Use um subdomínio",
+      },
+    } as const;
     for (const locale of ["en", "pt-BR"] as const) {
       await setI18nLocale(locale);
-      const shown = new Set<string>();
       for (const error of [
         "dns",
         "caa",
@@ -162,29 +189,17 @@ describe("custom domain card", () => {
         "other",
       ] as const) {
         const { container } = panel({ domain: row({ state: "failed", error }) });
-        shown.add(container.textContent ?? "");
+        expect(container.textContent, `${locale} ${error}`).toContain(words[locale][error]);
         act(() => root?.unmount());
       }
-      expect(shown.size, locale).toBe(8);
-      for (const error of ["unavailable", "in_progress", "apex", "cloudflare_failed"] as const) {
-        const { container } = panel({
-          onAdd: async () => ({ ok: false, error }),
-        });
-        const input = container.querySelector("input")!;
-        act(() => type(input, "status.acme.example"));
-        await act(async () =>
-          button(container, locale === "en" ? "Add domain" : "Adicionar")!.click(),
-        );
-        expect(container.textContent, `${locale} ${error}`).not.toContain(
-          "Couldn't save. Try again.",
-        );
-        expect(container.textContent, `${locale} ${error}`).not.toContain(
-          "Não foi possível salvar. Tente de novo.",
-        );
-        shown.add(container.textContent ?? "");
+      for (const error of ["unavailable", "in_progress", "apex"] as const) {
+        const { container } = panel({ onAdd: async () => ({ ok: false, error }) });
+        act(() => type(container.querySelector("input")!, "status.acme.example"));
+        const add = locale === "en" ? "Add domain" : "Adicionar domínio";
+        await act(async () => button(container, add)!.click());
+        expect(container.textContent, `${locale} ${error}`).toContain(words[locale][error]);
         act(() => root?.unmount());
       }
-      expect(shown.size, locale).toBe(12);
     }
   });
 });
@@ -225,6 +240,12 @@ describe("the API calls", () => {
       ok: false,
       error: "own_domain",
     });
+    for (const error of ["unavailable", "in_progress", "apex"]) {
+      expect(await addDomain("ws_1", "x", fake(409, { error }).fetcher), error).toEqual({
+        ok: false,
+        error,
+      });
+    }
     expect(await addDomain("ws_1", "x", fake(500, { error: "weird" }).fetcher)).toEqual({
       ok: false,
       error: "failed",

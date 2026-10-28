@@ -3699,7 +3699,7 @@
         "part=reason_moved": "The domain no longer points at this Brigade instance. Put the CNAME back, then check again.",
         "part=reason_blocked": "Cloudflare blocked this domain. Remove it, or use another one.",
         "part=reason_deleted": "Cloudflare no longer has this domain. Remove it and add it again.",
-        "part=reason_other": "Cloudflare couldn't verify the domain. Check the records, then check again.",
+        "part=reason_other": "Cloudflare reported a problem with the domain. Check the records, then check again.",
         "part=error_failed": "Couldn't save. Try again.",
         "part=*": "Custom domain"
       }

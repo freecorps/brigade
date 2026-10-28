@@ -54,7 +54,7 @@ export type Status_Domain_CardInputs = {
 * | "reason_moved" | "The domain no longer points at this Brigade instance. Put the CNAME back, then check again." |
 * | "reason_blocked" | "Cloudflare blocked this domain. Remove it, or use another one." |
 * | "reason_deleted" | "Cloudflare no longer has this domain. Remove it and add it again." |
-* | "reason_other" | "Cloudflare couldn't verify the domain. Check the records, then check again." |
+* | "reason_other" | "Cloudflare reported a problem with the domain. Check the records, then check again." |
 * | "error_failed" | "Couldn't save. Try again." |
 * | * | "Custom domain" |
 *

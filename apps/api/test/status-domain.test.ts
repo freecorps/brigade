@@ -4,7 +4,13 @@
 // the API Worker's own routes left exactly as they were.
 import { env, exports } from "cloudflare:workers";
 import { createExecutionContext, createMessageBatch, runInDurableObject } from "cloudflare:test";
-import { alertSourceToken, newHeartbeatSecret, newId, type Actor } from "@freecorps/brigade-schema";
+import {
+  alertSourceToken,
+  newHeartbeatSecret,
+  newId,
+  STATUS_DOMAIN_ID,
+  type Actor,
+} from "@freecorps/brigade-schema";
 import type { StatusPagesApi } from "@freecorps/brigade-status-edge/api";
 import { describe, expect, test, vi } from "vite-plus/test";
 import worker, { workerAuth } from "../src/index.ts";
@@ -670,6 +676,27 @@ describe("the shard re-checks the domain on its own", () => {
     expect((await outbox(t, "status_domain.checked")).at(-1)).toMatchObject({
       data: { state: "failed", previous: "active" },
     });
+  });
+
+  test("the shard's alarm runs a check that is due", async () => {
+    const t = await team();
+    const fake = cloudflare();
+    await route(t, t.ana, "PUT", fake, { hostname: hostname() });
+    await checker(t, fake);
+    const row = fake.hostnames.get("cfh-1")!;
+    row.status = "active";
+    row.ssl = "active";
+    await runInDurableObject(t.stub, async (instance: WorkspaceDO) => {
+      // Added two minutes ago: its first check is due.
+      const shard = Reflect.get(instance, "shard") as Shard;
+      const past = Date.now() - 2 * DOMAIN_RECHECK_MIN_MS;
+      shard.store.update("status_domain", STATUS_DOMAIN_ID, { createdAt: past, checkedAt: past });
+      await instance.alarm();
+    });
+    expect(await domainRow(t)).toMatchObject({ state: "active" });
+    expect(await outbox(t, "status_domain.checked")).toMatchObject([
+      { data: { state: "active", previous: "pending" }, actor: { id: "sys_account" } },
+    ]);
   });
 
   test("Cloudflare failing backs off; a domain pending too long is no longer asked about", async () => {

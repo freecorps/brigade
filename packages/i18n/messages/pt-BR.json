@@ -3699,7 +3699,7 @@
         "part=reason_moved": "O domínio não aponta mais para esta instância do Brigade. Recoloque o CNAME e verifique de novo.",
         "part=reason_blocked": "A Cloudflare bloqueou este domínio. Remova-o ou use outro.",
         "part=reason_deleted": "A Cloudflare não tem mais este domínio. Remova-o e adicione de novo.",
-        "part=reason_other": "A Cloudflare não conseguiu verificar o domínio. Confira os registros e verifique de novo.",
+        "part=reason_other": "A Cloudflare informou um problema com o domínio. Confira os registros e verifique de novo.",
         "part=error_failed": "Não foi possível salvar. Tente de novo.",
         "part=*": "Domínio próprio"
       }

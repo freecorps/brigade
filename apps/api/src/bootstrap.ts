@@ -81,13 +81,14 @@ export async function bootstrapFirstUser(
   if (!latch) return json({ error: "already_set_up" }, 409);
   const release = () => db.prepare(`delete from "rateLimit" where key = ?`).bind(LATCH_KEY).run();
 
-  const users = await db.prepare(`select count(*) as n from "user"`).first<{ n: number }>();
-  if ((users?.n ?? 0) > 0) return json({ error: "already_set_up" }, 409);
-
-  const auth = lazyAuth();
-  const context = await auth.$context;
   let userId: string | undefined;
   try {
+    const users = await db.prepare(`select count(*) as n from "user"`).first<{ n: number }>();
+    // Kept: the instance is set up, so the latch stays claimed for good.
+    if ((users?.n ?? 0) > 0) return json({ error: "already_set_up" }, 409);
+
+    const auth = lazyAuth();
+    const context = await auth.$context;
     const hash = await context.password.hash(password);
     const user = await context.internalAdapter.createUser(
       {
@@ -114,13 +115,17 @@ export async function bootstrapFirstUser(
     console.error(
       JSON.stringify({ message: "creating the first user failed", error: String(error) }),
     );
-    // Back to no user, so the script can run again.
+    // Back to no user, so the script can run again: any workspace the run made (the only ones on a new instance),
+    // then the user, whose accounts, sessions and memberships go with it (`on delete cascade`).
     if (userId) {
-      await context.adapter.deleteMany({
-        model: "account",
-        where: [{ field: "userId", value: userId }],
-      });
-      await context.adapter.delete({ model: "user", where: [{ field: "id", value: userId }] });
+      await db.batch([
+        db
+          .prepare(
+            `delete from organization where id in (select "organizationId" from member where "userId" = ?)`,
+          )
+          .bind(userId),
+        db.prepare(`delete from "user" where id = ?`).bind(userId),
+      ]);
     }
     await release();
     return json({ error: "internal" }, 500);

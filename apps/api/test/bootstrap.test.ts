@@ -3,7 +3,8 @@
 import { env } from "cloudflare:workers";
 import { createExecutionContext, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, test } from "vite-plus/test";
-import worker from "../src/index.ts";
+import { bootstrapFirstUser } from "../src/bootstrap.ts";
+import worker, { workerAuth } from "../src/index.ts";
 import type { WorkspaceDO } from "../src/workspace.ts";
 import { sessionCookie } from "./session.ts";
 
@@ -98,6 +99,37 @@ describe("POST /setup/first-user", () => {
     ]).then((responses) => responses.map((response) => response.status).sort((a, b) => a - b));
     expect(statuses).toEqual([201, 409]);
     expect(await count("user")).toBe(1);
+  });
+
+  test("a run that fails leaves no user, workspace or latch, so the script can run again", async () => {
+    const failing = (auth: () => ReturnType<typeof workerAuth>) =>
+      bootstrapFirstUser(
+        new Request(`${ORIGIN}/setup/first-user`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
+          body: JSON.stringify(FIRST),
+        }),
+        TOKEN,
+        env.DB,
+        auth,
+      );
+    const request = new Request(ORIGIN);
+    // The shard fails after Better Auth made the workspace.
+    const shardFails = await failing(() =>
+      workerAuth(env, createExecutionContext(), request, async () => {
+        throw new Error("shard down");
+      }),
+    );
+    expect(shardFails.status).toBe(500);
+    // Better Auth itself fails, before any user.
+    const authFails = await failing(() => {
+      throw new Error("auth down");
+    });
+    expect(authFails.status).toBe(500);
+    for (const table of ["user", "account", "member", "organization", "rateLimit"]) {
+      expect(await count(table)).toBe(0);
+    }
+    expect((await setup()).status).toBe(201);
   });
 
   test("does not exist without the secret", async () => {

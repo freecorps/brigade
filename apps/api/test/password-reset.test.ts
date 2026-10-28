@@ -697,6 +697,55 @@ describe("an address someone else signed up with", () => {
     expect((await planted.ping()).status).toBe(202);
   });
 
+  test("a Slack connection the account made is disconnected, its bot token given back, and the notice says so (Q21)", async () => {
+    const yan = await signUp("Yan");
+    const w = await workspaceOf(yan);
+    const actor: Actor = { kind: "user", id: yan.id, role: "owner" };
+    const sealed = `v1.${"A".repeat(16)}.${"B".repeat(40)}`;
+    await run(w, actor, "slack.connect", {
+      teamId: "T0SQUAT001",
+      teamName: "Squat Slack",
+      botUserId: "U0BOT00001",
+      token: sealed,
+      scopes: ["commands", "chat:write"],
+      locale: "en",
+    });
+    await signOutWith(env, 0)(yan.id, { takeOver: true, at: Date.now() });
+    // As Disconnect: the connection is gone, its token kept for the notifier to revoke on `slack.disconnected`.
+    const after = await w.withShard((shard, state) => ({
+      slack: shard.store.get("slack", "slack"),
+      token: shard.store.get("slack_tokens", "slack"),
+      revocation: shard.store.get("slack_revocations", "T0SQUAT001")?.token,
+      events: state.storage.sql
+        .exec<{ event: string }>("select event from outbox order by seq")
+        .toArray()
+        .map((row) => JSON.parse(row.event) as BrigadeEvent)
+        .filter((event) => event.type === "slack.disconnected")
+        .map((event) => event.data),
+    }));
+    expect(after).toEqual({
+      slack: undefined,
+      token: undefined,
+      revocation: sealed,
+      events: [{ teamId: "T0SQUAT001", reason: "takeover" }],
+    });
+    const row = await env.DB.prepare(`select workspaces from takeover_notice where "userId" = ?`)
+      .bind(yan.id)
+      .first<{ workspaces: string }>();
+    expect(JSON.parse(row!.workspaces)).toEqual([
+      {
+        id: w.id,
+        name: "Squat",
+        paused: [],
+        revoked: 0,
+        sources: 0,
+        routes: 0,
+        slack: "Squat Slack",
+        failed: false,
+      },
+    ]);
+  });
+
   test("two takeovers at once leave one notice with what either of them paused", async () => {
     const xia = await signUp("Xia");
     const w = await workspaceOf(xia);

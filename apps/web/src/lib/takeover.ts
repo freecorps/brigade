@@ -13,6 +13,8 @@ export type InheritedWorkspace = {
   /** Alert source URLs turned off, and alert routes the account created turned off (absent on older notices). */
   sources?: number;
   routes?: number;
+  /** The Slack team whose connection the account made, disconnected (absent when none, or on older notices). */
+  slack?: string;
   failed: boolean;
 };
 
@@ -25,13 +27,27 @@ export function parseTakeover(body: unknown): InheritedWorkspace[] | undefined {
   if (!Array.isArray(workspaces)) return undefined;
   const parsed = workspaces.flatMap((one: unknown): InheritedWorkspace[] => {
     if (typeof one !== "object" || one === null) return [];
-    const { id, name, paused, revoked, sources, routes, failed } = one as Record<string, unknown>;
+    const { id, name, paused, revoked, sources, routes, slack, failed } = one as Record<
+      string,
+      unknown
+    >;
     if (typeof id !== "string" || typeof name !== "string") return [];
     if (!Array.isArray(paused) || !paused.every((item) => typeof item === "string")) return [];
     if (typeof revoked !== "number" || typeof failed !== "boolean") return [];
     const count = (value: unknown) =>
       typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 0;
-    return [{ id, name, paused, revoked, sources: count(sources), routes: count(routes), failed }];
+    return [
+      {
+        id,
+        name,
+        paused,
+        revoked,
+        sources: count(sources),
+        routes: count(routes),
+        ...(typeof slack === "string" && slack !== "" ? { slack } : {}),
+        failed,
+      },
+    ];
   });
   return parsed.length > 0 ? parsed : undefined;
 }

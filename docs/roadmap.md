@@ -121,9 +121,11 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Done: sign-up locked per environment and closed by default (`SIGNUP`: `open`, `invite`, `closed`; `dev` open;
     an invitation still creates its account), and the first owner from `vp run setup:first-user` with a one-time
     `BOOTSTRAP_TOKEN` (RFC 0002 "Sign-up modes", "The first owner").
-  - Left (decided, Q21; RFC 0002 "Auth"): sign-up always closed on an instance without email; "require a verified
-    email before sign-in" as an instance
-    setting, off by default; a workspace locale set at sign-up and editable by owners (Q15, RFC 0008).
+  - Done (Q21, Q15): sign-up always closed on an instance without email (`GET /config` says `signUpClosedBy:
+    "no_email"`, logged once); "require a verified email before sign-in" as an instance setting
+    (`REQUIRE_VERIFIED_EMAIL`, off by default, ignored without email); a workspace locale set from its creator's
+    language and changed by owners (`workspace.setLocale`, the dashboard's Workspace language card, RFC 0008); a
+    takeover also disconnects a Slack connection the account made (RFC 0002 "Taking back an address").
 - [ ] Monitors (HTTP/TCP/heartbeat) with quorum → alerts → incidents
   - Done: HTTP, TCP and heartbeat monitors as mutations in `packages/schema` (owners and admins manage, everyone reads),
     one `ProbeDO` per workspace and region with `locationHint` (only the six regions where objects spawn, S2), each
@@ -154,8 +156,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
   - Left: whether "No data" pages (Q17); TLS expiry, which Workers cannot read (RFC 0007 "Check types": neither
     `fetch` nor the Sockets API exposes the peer certificate); paging, not only a notice, on a stalled probe (RFC 0007
     "Watching the watcher"); `AlertGroupDO`, which waits for alert volume (RFC 0007);
-    `apac-ne` and `apac-se` as further regions (S2); the incident title in the workspace locale (decided, Q15, RFC
-    0008).
+    `apac-ne` and `apac-se` as further regions (S2).
+  - Done since: the incident a monitor or an alert source opens is titled in the workspace locale (Q15, RFC 0008).
 - [x] Incidents: declare, severity, status, roles, timeline, updates
   - Timeline as its own synced table written by every incident mutation (and the monitor recovery note), written
     updates, three incident roles checked against the shard's member list, and an incident page in the dashboard
@@ -322,8 +324,9 @@ Validate the risky assumptions before writing product code. Each spike produces 
     people invited), the Acknowledge button, `!update`, `/inc sev`, `/inc resolve` and the message shortcut.
   - Left: the app and secrets for staging and production (owner's call, integrations/slack/README.md; Freecorps
     creates the hosted app, Q22); App Home; Enterprise Grid and distribution beyond one app per instance.
-  - Left (decided, Q22; RFC 0011): an incident channel for a severity raised to SEV1 or SEV2 after declaring; channel
-    messages in the workspace locale once it exists (Q15).
+  - Left (decided, Q22; RFC 0011): an incident channel for a severity raised to SEV1 or SEV2 after declaring.
+  - Done since: channel messages in the workspace locale (Q15, Q22); the card names it instead of a picker of its
+    own.
 - [ ] Email notifier; in-app VoIP call paging (RFC 0010); optional PSTN notifier (provider-agnostic)
   - Done: the email notifier (RFC 0005 "Email"): a provider-agnostic `EmailSender`, Cloudflare Email Sending through
     the `send_email` binding (every environment; the sender is the secret `EMAIL_FROM`, so no domain is in the repo),
@@ -340,8 +343,8 @@ Validate the risky assumptions before writing product code. Each spike produces 
     longer blocks it. Done on the same sender: the owners' email when a member leaves the rotations (Q20); the
     operators' email when the paging pipeline degrades is done (Q19, `OPERATOR_EMAILS`). The PSTN notifier is deferred
     (Q13).
-  - Left (decided, Q21; RFC 0005 "Abuse"): 5 invitation emails a day per invited address (was 3); a Brigade-wide
-    daily email ceiling before open sign-up on a shared instance.
+  - Done (Q21; RFC 0005 "Abuse"): 5 invitation emails a day per invited address (was 3); a Brigade-wide daily email
+    ceiling counted in D1 (`EMAIL_DAILY_CEILING`, default 2000), which never drops an email about a failed page.
   - Done since: the dashboard's switch for the two workspace settings (owners and admins); a per-member opt-out of
     the missed-page email (`member.setEmail`, dashboard and app), while the owners' "a page reached nobody" email stays
     on for owners as the fallback; the mobile app sending the user's language (RFC 0005 "Email", RFC 0008).
@@ -455,7 +458,7 @@ Validate the risky assumptions before writing product code. Each spike produces 
     page with who saved each and restored from there as a save; owners turning AI drafts off per workspace
     (`workspace.setAiDrafts`); reminders stopping once a follow-up is 14 days overdue; a still-blank postmortem
     following its incident's new type.
-  - Left (decided, Q24): the draft in the workspace locale, once the workspace locale (Q15) exists.
+  - Done since: the AI draft is written in the workspace locale (Q15, Q24).
 - [ ] Public status page with email subscriptions
   - Done (RFC 0012): one page per workspace with a name, an address (`/status/<slug>`, unique across the instance,
     claimed in D1) and a language (en, pt-BR), public or a draft; components in optional groups with a status set by

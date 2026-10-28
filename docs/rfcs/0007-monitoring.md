@@ -279,8 +279,8 @@ results (a new monitor is up on its first success).
   until then the workspace shard is the alert's home: the server-only mutation `monitor.report`, run as the system actor
   `sys_monitors` (RFC 0004 "Server-side writes"), records the result, and when the quorum turns down it fires one alert
   per monitor (`alerts` table, fingerprint `monitor:<id>`; no second one while it fires) and opens an incident through
-  `incident.declare` (the monitor's severity, SEV2 unless it sets one; "<name> is down", in English
-  until the workspace locale is built, then in it (RFC 0008, Q15); or as a route that names it
+  `incident.declare` (the monitor's severity, SEV2 unless it sets one; "<name> is down", in the
+  workspace locale (RFC 0008, Q15); or as a route that names it
   says) in the same transaction, so there is never an alert without its
   incident (its `incident.declared` event comes before `alert.fired`). When the quorum turns up again the alert resolves; the incident is left for people, since incidents have no
   timeline yet. Pausing or deleting a monitor resolves its alert too. Every step is an event in the outbox

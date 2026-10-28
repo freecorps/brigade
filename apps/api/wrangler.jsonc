@@ -147,7 +147,9 @@
   // Durable Object, D1, Queue, email, rate limit, service, vars and secrets settings are not inherited, so each
   // environment repeats them.
   // SIGNUP (src/sign-up.ts) is who may create an account: `open`, `invite` or `closed`. Unset, as in production and
-  // staging, it is `closed` (RFC 0002 "Sign-up modes"); only `dev` sets it, to `open`.
+  // staging, it is `closed` (RFC 0002 "Sign-up modes"); only `dev` sets it, to `open`. Without an email sender it is
+  // always `closed`. REQUIRE_VERIFIED_EMAIL (`true`) keeps unverified accounts from signing in; unset is off.
+  // EMAIL_DAILY_CEILING (src/email-ceiling.ts) is the most emails a day from the whole instance; unset is 2000.
   // No other `vars`: no deployed environment may set SYNC_DEV_ACTOR (src/actor.ts); only local runs and the tests do,
   // in their Vite configs.
   "env": {

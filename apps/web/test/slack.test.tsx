@@ -201,13 +201,23 @@ describe("SlackPanel", () => {
       {
         channelId: "G0PRIVATE1",
         channelName: "sre-oncall",
-        locale: "en",
         incidentChannels: "off",
         privateChannels: false,
         archiveAfterHours: null,
       },
     ]);
     expect(container.textContent).toContain("Saved.");
+  });
+
+  test("channel messages follow the workspace's language, which the card names and does not pick (Q15)", () => {
+    const { container } = render({ connection, workspaceLocale: "pt-BR" });
+    expect(container.textContent).toContain(
+      "Channel messages are written in the workspace's language: Português (Brasil).",
+    );
+    // One select (the channel) and the incident channels' ones: no language picker among them.
+    for (const select of container.querySelectorAll("select")) {
+      expect([...select.options].map((one) => one.value)).not.toContain("pt-BR");
+    }
   });
 
   test("a saved channel Slack no longer lists stays a choice", () => {
@@ -255,7 +265,7 @@ describe("SlackPanel", () => {
 
   test("a channel per incident: off until chosen, then private and archiving can be set", async () => {
     const { container, calls } = render({ connection });
-    const [, , perIncident, archive] = [...container.querySelectorAll("select")];
+    const [, perIncident, archive] = [...container.querySelectorAll("select")];
     const checkbox = container.querySelector<HTMLInputElement>("input[type=checkbox]")!;
     expect(archive!.disabled).toBe(true);
     expect(checkbox.disabled).toBe(true);

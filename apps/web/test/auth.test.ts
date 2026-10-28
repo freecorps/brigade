@@ -323,6 +323,8 @@ describe("after a sign-up, a sign-in refused", () => {
     const message = authErrorMessage({ status: 401, code: "EMAIL_NOT_VERIFIED" }, "after-sign-up");
     expect(message).toBe(authErrorMessage({ status: 403, code: "EMAIL_NOT_VERIFIED" }, "sign-in"));
     expect(message).not.toContain("we've emailed its owner");
+    // A server that requires it sends no new link at sign-in (Q21): the way back without the link is a reset.
+    expect(message).toContain("Reset your password");
   });
 });
 

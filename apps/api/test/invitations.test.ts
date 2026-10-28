@@ -575,6 +575,8 @@ describe("the limits", () => {
   });
 
   test("one address gets at most `INVITATIONS_PER_ADDRESS_DAILY_CAP` invitation emails a day, from every workspace", async () => {
+    // 5 a day (Q21; it was 3), so someone invited to several teams at once is not cut off.
+    expect(INVITATIONS_PER_ADDRESS_DAILY_CAP).toBe(5);
     const [first, second] = await Promise.all([team(), team()]);
     const email = address();
     await invited(first!, email);

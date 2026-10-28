@@ -180,9 +180,8 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
   row): the prompt lists each key with its title and hint (a built-in without either reads as its own name and what
   it asks for), the model must answer exactly those keys (`response_format`), and the share of `POSTMORTEM_TOTAL_MAX`
   each may use. Titles and hints are given as data, as the team's words about the sections.
-- **Language**: the status page's language when the workspace has one (the closest thing to a workspace language
-  today), else the asker's dashboard language. Decided (Q24), still to build: the workspace locale (RFC 0008, Q15)
-  once it exists. The prompt asks for a blameless draft that only uses facts from the
+- **Language**: the workspace locale (RFC 0008 "Workspace locale", Q15 and Q24, built), since a postmortem is shared
+  text; the asker's `locale` in the body, sent by older clients, is ignored. The prompt asks for a blameless draft that only uses facts from the
   data and says what is unknown.
 - **Marked until reviewed.** A written draft sets `ai` on the row (the model, when, and who asked) and appends a
   `postmortem` entry (`ai_drafted`). The dashboard shows "AI draft — review before sharing" until a member saves the
@@ -247,4 +246,4 @@ change is a named mutation with RBAC and an outbox event (RFC 0004, RFC 0005).
 
 ## Not in this slice
 
-The mobile app's follow-ups and postmortem screens; push notifications for follow-ups due; publishing a postmortem to the status page; issue-tracker sync; the AI draft in the workspace locale (waits for Q15).
+The mobile app's follow-ups and postmortem screens; push notifications for follow-ups due; publishing a postmortem to the status page; issue-tracker sync.

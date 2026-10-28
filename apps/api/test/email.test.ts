@@ -15,6 +15,7 @@ import {
   type EmailSender,
   type OutgoingEmail,
 } from "../src/email.ts";
+import { withEmailCeiling } from "../src/email-ceiling.ts";
 import { escapeHtml, incidentLink, renderEmail } from "../src/email-templates.ts";
 import {
   asksForEmail,
@@ -459,6 +460,45 @@ describe("who is emailed when paging fails", () => {
     const second = { ...failed!, id: newId("evt", Date.now(), random) };
     await deliver([second], mail.sender);
     expect(mail.sent).toHaveLength(1);
+  });
+
+  test("the instance's daily email ceiling, reached, never drops an email about a page that failed (Q21)", async () => {
+    // A day the ceiling of 1 is already spent on (another workspace's sign-ups, say).
+    const at = Date.UTC(2002, 5, 1);
+    await env.DB.prepare(`insert into "email_day" ("day", "sent") values (?, 1)`)
+      .bind(new Date(at).toISOString().slice(0, 10))
+      .run();
+    const ws = await workspace();
+    const { event } = await ws.declare(MONITOR_ACTOR, "sev2");
+    await deliver([event], undefined);
+    const failures = await ws.failures();
+    const mail = recorder();
+    const capped = withEmailCeiling(mail.sender, env.DB, 1, () => at);
+    // The failures of one page in one batch: the second waits on the owners' email, then finds it done.
+    const first = await deliver(failures, capped);
+    for (const { msgId } of first.retried) {
+      const held = failures[msgId === "msg-0" ? 0 : 1]!;
+      await deliver([held], capped, { attempts: 2 });
+    }
+    // Ana and Bia (no phones) are told, and every owner is told the page reached nobody.
+    expect(mail.to()).toEqual(
+      [
+        ws.address(ws.people.ana),
+        ws.address(ws.people.bia),
+        ws.address(ws.people.ana),
+        ws.address(ws.people.olga),
+      ].sort(),
+    );
+    expect(mail.sent.every((one) => one.priority === "paging")).toBe(true);
+    // Anything else that day is dropped.
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(
+        await capped.send({ to: { email: "x@example.com" }, subject: "s", text: "t", html: "h" }),
+      ).toMatchObject({ ok: false, retry: false });
+    } finally {
+      error.mockRestore();
+    }
   });
 
   test("a SEV3 or SEV4 page that missed a member emails nobody", async () => {

@@ -162,7 +162,12 @@ relay's bearer token):
   again at once, but never within 5 s of the last try (`MIN_TRY_GAP_MS`), so the app stays under the route's 30 a
   minute; Try again never waits. A token counts as new only if it is not the one the app last fetched:
   expo-notifications fires its token listener with the token each `getDevicePushTokenAsync` returns, on iOS and
-  Android, and taking that as new made every registration ask for the next, about once a second. The route logs each
+  Android, and taking that as new made every registration ask for the next, about once a second; the event can come
+  before the fetch's answer does, so one heard during a fetch is compared once the fetch is back. Nor does the app's
+  own permission request count as the foreground: on Android every request, granted already or not, shows the
+  system's permission screen over the app for a moment, so each registration asked for the next every 5 s. Android
+  asks only when notifications are not allowed yet (iOS still asks every time, for Critical Alerts), and a return to
+  the foreground from a request the app made does not try again. The route logs each
   answer that is not `ok` (workspace and code, never a token or key), so a phone that is not paged shows in the
   Worker's logs. An instance from
   before the route (404) registers the open workspace over its socket, as before. The account section lists, under

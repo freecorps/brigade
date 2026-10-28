@@ -17,7 +17,7 @@ import {
 } from "@/lib/sign-out";
 import { memberActor, neverOpened, type Server } from "@/lib/sync";
 import { createWorkspaceSync, type WorkspaceSync } from "@/lib/sync-client";
-import { knownTokens } from "@/lib/paging";
+import { knownTokens, permissionAsks } from "@/lib/paging";
 import { BrigadeCall } from "../../modules/brigade-call";
 import { BrigadePush } from "../../modules/brigade-push";
 
@@ -72,6 +72,9 @@ export const phoneWorkspaces = phoneWorkspacesStore({
 /** The push tokens fetched to register, so the token listener asks for a registration only for a new one. */
 export const pushTokens = knownTokens();
 
+/** The app's notification permission requests, so coming back from one is not taken as the member coming back. */
+export const permissions = permissionAsks();
+
 export function phoneDeps(
   sync: WorkspaceSync,
   server?: Server,
@@ -81,25 +84,27 @@ export function phoneDeps(
   const android = process.env.EXPO_OS === "android";
   // Android pages through FCM (RFC 0006): a build without Firebase has no token to give, and says so ("unsupported").
   const pageable = keys !== null && (!android || keys.fcmAvailable === true);
-  const pushToken = async () => {
-    const token = String((await Notifications.getDevicePushTokenAsync()).data);
-    pushTokens.fetched(token);
-    return token;
-  };
+  const pushToken = () =>
+    pushTokens.fetch(async () => String((await Notifications.getDevicePushTokenAsync()).data));
   return {
     platform: process.env.EXPO_OS === "ios" ? "ios" : "android",
     apsEnvironment: Constants.expoConfig?.extra?.apsEnvironment,
     // In the Keychain on iOS, the Android Keystore on Android (modules/brigade-push).
     publicKey: pageable ? () => keys.getPublicKey() : null,
     permission: async () => {
-      const { status } = await Notifications.requestPermissionsAsync({
-        ios: {
-          allowAlert: true,
-          allowSound: true,
-          allowBadge: false,
-          ...(CRITICAL_ALERTS ? { allowCriticalAlerts: true } : {}),
-        },
-      });
+      // Android shows its permission screen for every request, even one granted already: asked only when it is not.
+      // iOS asks again for Critical Alerts, which a phone granted notifications before the entitlement never was.
+      if (android && (await Notifications.getPermissionsAsync()).status === "granted") return true;
+      const { status } = await permissions.ask(() =>
+        Notifications.requestPermissionsAsync({
+          ios: {
+            allowAlert: true,
+            allowSound: true,
+            allowBadge: false,
+            ...(CRITICAL_ALERTS ? { allowCriticalAlerts: true } : {}),
+          },
+        }),
+      );
       return status === "granted";
     },
     // Read every registration: the member can turn them off in Settings at any time.

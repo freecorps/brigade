@@ -8,6 +8,7 @@ import {
 } from "./device";
 import {
   knownTokens,
+  pagingNudges,
   MIN_TRY_GAP_MS,
   pagingCycle,
   retryDelay,
@@ -365,11 +366,11 @@ test("fetching the push token to register does not ask for another registration 
     apsEnvironment: undefined,
     publicKey: async () => `BA${"abcdefghij".repeat(9).slice(0, 85)}`,
     permission: async () => true,
-    pushToken: async () => {
-      tokens.fetched(token);
-      queueMicrotask(() => listeners.forEach((listener) => listener(token)));
-      return token;
-    },
+    pushToken: () =>
+      tokens.fetch(async () => {
+        queueMicrotask(() => listeners.forEach((listener) => listener(token)));
+        return token;
+      }),
     registerAll: async (_, workspaces) => {
       calls += 1;
       // A failure the shard keeps answering, so the phone stays `failed` and on the backoff.
@@ -388,9 +389,8 @@ test("fetching the push token to register does not ask for another registration 
     now: Date.now,
     random: () => 0.5,
   });
-  listeners.push((value) => {
-    if (tokens.changed(value)) cycle.nudge();
-  });
+  const nudges = pagingNudges(cycle, tokens, { asking: () => false }, "active");
+  listeners.push((value) => nudges.pushToken({ data: value }));
   await vi.advanceTimersByTimeAsync(60_000);
   // At once, 5 s later, then 30 s later: three tries in the first minute, not one a second.
   expect(calls).toBe(3);
@@ -404,4 +404,23 @@ test("fetching the push token to register does not ask for another registration 
   await cycle.retry();
   expect(calls).toBe(7);
   void cycle.stop();
+});
+
+test("a token the listener hears before the fetch that fired it answered is not new", async () => {
+  const tokens = knownTokens();
+  const token = "c".repeat(64);
+  let answer!: (token: string) => void;
+  const fetched = tokens.fetch(() => new Promise((resolve) => (answer = resolve)));
+  // Android emits the event as it answers the fetch: it can reach the listener first.
+  const heard = tokens.changed(token);
+  answer(token);
+  await fetched;
+  expect(await heard).toBe(false);
+  expect(await tokens.changed(token)).toBe(false);
+  // A rotated token is new, once.
+  expect(await tokens.changed("d".repeat(64))).toBe(true);
+  expect(await tokens.changed("d".repeat(64))).toBe(false);
+  // A fetch that fails leaves the token known as it was.
+  await tokens.fetch(() => Promise.reject(new Error("no FCM"))).catch(() => {});
+  expect(await tokens.changed("d".repeat(64))).toBe(false);
 });

@@ -187,20 +187,104 @@ export function pagingCycle(deps: PagingDeps): PagingCycle {
   };
 }
 
+/** Whether the app is asking for notification permission now; `ask` wraps each request. */
+export type PermissionAsks = {
+  ask: <T>(request: () => Promise<T>) => Promise<T>;
+  asking: () => boolean;
+};
+
+/**
+ * The app's own permission requests. On Android every request (granted already or not) shows the system's
+ * permission screen over the app, if only for a moment, so the app goes to the background and comes back: taken as
+ * the member coming back, every registration asked for the next one, every `MIN_TRY_GAP_MS`, for as long as the app
+ * was open.
+ */
+export function permissionAsks(): PermissionAsks {
+  let open = 0;
+  return {
+    ask: async (request) => {
+      open += 1;
+      try {
+        return await request();
+      } finally {
+        open -= 1;
+      }
+    },
+    asking: () => open > 0,
+  };
+}
+
+/** What the app hears that may need a registration, as src/components/session.tsx wires it to the cycle. */
+export type PagingNudges = {
+  /** AppState's `change` event. */
+  appState: (state: string) => void;
+  /** expo-notifications' push token listener. */
+  pushToken: (token: { data: unknown }) => void;
+  /** iOS: a new or withdrawn PushKit token. */
+  voipToken: () => void;
+};
+
+/**
+ * Nudges `cycle` when the app comes back to the foreground, unless it left only for its own permission request
+ * (`asks`); when the push token listener hears a token that is not the one fetched last (`tokens`); and on every new
+ * VoIP token. `initial` is AppState's state when the listeners are added (null while React Native does not know it).
+ */
+export function pagingNudges(
+  cycle: Pick<PagingCycle, "nudge">,
+  tokens: KnownTokens,
+  asks: Pick<PermissionAsks, "asking">,
+  initial: string | null | undefined,
+): PagingNudges {
+  /** Why the app is out of the foreground: the member left (or it started there), or it asked for permission. */
+  let away: "member" | "asked" | undefined = initial === "active" ? undefined : "member";
+  return {
+    appState: (state) => {
+      if (state !== "active") {
+        away ??= asks.asking() ? "asked" : "member";
+        return;
+      }
+      const back = away === "member";
+      away = undefined;
+      if (back) cycle.nudge();
+    },
+    pushToken: (token) => {
+      void tokens.changed(String(token.data)).then((changed) => {
+        if (changed) cycle.nudge();
+      });
+    },
+    voipToken: () => cycle.nudge(),
+  };
+}
+
+export type KnownTokens = ReturnType<typeof knownTokens>;
+
 /**
  * Which push tokens the app already knows, so only a new one asks for a registration. Fetching the token
  * (`getDevicePushTokenAsync`) also fires expo-notifications' token listener with it, on iOS and Android alike: taken
- * as new, every registration asked for the next one, about once a second, for as long as the app was open.
+ * as new, every registration asked for the next one, about once a second, for as long as the app was open. The event
+ * can come before the fetch's answer does, so a token heard while a fetch is out is compared once it is back.
  */
 export function knownTokens() {
   let known: string | undefined;
+  let fetching: Promise<unknown> = Promise.resolve();
   return {
-    /** A token the app fetched itself to register. */
-    fetched(token: string): void {
-      known = token;
+    /** Fetches a token to register (`get`), and knows it. */
+    fetch(get: () => Promise<string>): Promise<string> {
+      const token = get().then((value) => {
+        known = value;
+        return value;
+      });
+      const before = fetching;
+      fetching = Promise.allSettled([before, token]);
+      return token;
     },
     /** A token the listener reported: true when it is not the one known (a new one, worth registering). */
-    changed(token: string): boolean {
+    async changed(token: string): Promise<boolean> {
+      let settled: Promise<unknown>;
+      do {
+        settled = fetching;
+        await settled;
+      } while (settled !== fetching);
       if (token === known) return false;
       known = token;
       return true;

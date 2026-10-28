@@ -20,12 +20,13 @@ import { useUserLocale } from "@/hooks/use-user-locale";
 import { authClient, forgetSession, server } from "@/lib/auth-client";
 import { registerEverywhere, unregisterPhone, type Paging, type Registrations } from "@/lib/device";
 import { drainer, type Drainable } from "@/lib/drain";
-import { pagingCycle } from "@/lib/paging";
+import { pagingCycle, pagingNudges } from "@/lib/paging";
 import { dropQueues, openQueue } from "@/lib/pending";
 import { pendingFiles } from "@/lib/pending-files";
 import {
   finishDeps,
   keptSignOuts,
+  permissions,
   phoneDeps,
   phoneDeviceId,
   phoneWorkspaces,
@@ -150,17 +151,14 @@ function usePaging(
       random: Math.random,
     });
     cycle.current = made;
-    const foreground = AppState.addEventListener("change", (state) => {
-      if (state === "active") made.nudge();
-    });
     // iOS: a new or withdrawn PushKit token is registered at once, so calls only go to a token the app holds; and a new
     // APNs or FCM token likewise, in every workspace, or the others page a dead one. Only a new one: the listener also
     // hears the token each registration fetches. Critical Alerts or notifications turned on or off happen in Settings,
-    // so coming back to the foreground registers them.
-    const voipToken = BrigadeCall?.addListener("onVoipToken", () => made.nudge());
-    const pushToken = Notifications.addPushTokenListener((token) => {
-      if (pushTokens.changed(String(token.data))) made.nudge();
-    });
+    // so coming back to the foreground registers them; not coming back from the app's own permission request.
+    const nudges = pagingNudges(made, pushTokens, permissions, AppState.currentState);
+    const foreground = AppState.addEventListener("change", nudges.appState);
+    const voipToken = BrigadeCall?.addListener("onVoipToken", nudges.voipToken);
+    const pushToken = Notifications.addPushTokenListener(nudges.pushToken);
     return () => {
       foreground.remove();
       voipToken?.remove();

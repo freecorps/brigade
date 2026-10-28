@@ -99,6 +99,11 @@ Schema changes are SQL files in `migrations/`, applied with wrangler. `test/migr
 test database and asks Better Auth what is missing; when an upgrade or a plugin needs more, it fails and prints the
 SQL for the next migration.
 
+Production applies them on its own: `.github/workflows/deploy.yml` runs `wrangler d1 migrations apply DB --remote`
+before each API deploy (RFC 0002 "Continuous delivery"). The old API still serves while that runs and until the new
+one is live, so a migration keeps it working: add a table or a nullable column now, and drop or rename one only in a
+later deploy, once no deployed code reads it.
+
 ```bash
 vp run --filter @freecorps/brigade-web db:migrate      # the local database `vp run dev` uses
 wrangler d1 migrations apply DB --remote --env dev     # brigade-db-dev (in apps/api)
@@ -390,6 +395,12 @@ wrangler deploy --dry-run   # validates the built output (drop --dry-run to depl
 ```
 
 Durable Object and `send_email` bindings are not inherited by environments, so each one repeats them.
+
+Production deploys from CI: `.github/workflows/deploy.yml`, after CI passes on `main`, deploys the relay, this
+Worker and the dashboard when their code, or a package they bundle, changed (RFC 0002 "Continuous delivery"). Run it
+by hand (Actions, Deploy, "Run workflow") to deploy `dev` or every Worker. It needs `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` in the GitHub environment of the same name. The steps below are for a first deploy, or
+without CI.
 
 Local secrets go in `apps/api/.dev.vars` (`.dev.vars.<env>` per environment), which is gitignored. Their names
 come from `secrets.required` in `wrangler.jsonc`, so `wrangler types` no longer reads `.dev.vars` and the committed

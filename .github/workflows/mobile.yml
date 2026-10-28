@@ -1,0 +1,171 @@
+# Ships apps/mobile from main, once CI passed, when it or a package it bundles changed since the last successful run
+# (scripts/affected.mjs). Per platform, the native fingerprint (the runtime version, apps/mobile/app.config.ts)
+# decides how:
+#
+# - a build with that fingerprint was made here before: the change is JavaScript only, so an EAS Update goes to the
+#   `production` channel, and installed builds pick it up on their next launches;
+# - none was: the native code changed, and no installed build could run an update, so a new production build is
+#   made instead, with `eas build --local` on this runner (no EAS build credits, apps/mobile/README.md). The .ipa or
+#   .aab is kept as a run artifact for 14 days; submitting it to the stores waits for roadmap Phase 4. A small
+#   `mobile-build-<platform>-<fingerprint>` artifact, kept 90 days, records that the fingerprint was built.
+#
+# Repository settings: secrets EXPO_TOKEN (an EAS robot token of the freecorps organisation) and GOOGLE_SERVICES_JSON
+# (the Firebase file, apps/mobile/README.md "Android pages"); variable EXPO_PUBLIC_BRIGADE_URL (the hosted
+# dashboard's origin). Nothing ships without them: a build without a server cannot sign in, and an Android one
+# without Firebase cannot be paged.
+name: Mobile
+run-name: Mobile ${{ github.event.workflow_run.head_sha || github.sha }}
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: mobile
+  cancel-in-progress: false
+
+env:
+  EAS_CLI: eas-cli@27.1.0
+
+jobs:
+  changes:
+    name: Changed
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      mobile: ${{ contains(fromJSON(steps.changes.outputs.packages), '@freecorps/brigade-mobile') }}
+      sha: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+      - id: changes
+        uses: ./.github/actions/changes
+        with:
+          prefix: Mobile
+          all: ${{ github.event_name == 'workflow_dispatch' }}
+
+  ship:
+    name: ${{ matrix.platform == 'ios' && 'iOS' || 'Android' }}
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            runner: ubuntu-24.04
+            extension: aab
+          - platform: ios
+            runner: macos-26
+            extension: ipa
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: apps/mobile
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_PUBLIC_BRIGADE_URL: ${{ vars.EXPO_PUBLIC_BRIGADE_URL }}
+      # The fingerprint covers the app config, so everything it reads from the environment is pinned here: the same
+      # values when this job computes it, when `eas update` stamps an update with it, and inside the build. A
+      # production build is App Store signed (apsEnvironment `production`); an update saying `development` would
+      # register phones with the APNs sandbox, where no page reaches them.
+      # The Android job also sets GOOGLE_SERVICES_FILE, in the runner's temp directory: the same path every run.
+      BRIGADE_APS_ENVIRONMENT: production
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - name: Required settings
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          missing=0
+          [ -n "$EXPO_TOKEN" ] || { echo "::error::The EXPO_TOKEN secret is not set"; missing=1; }
+          [ -n "$EXPO_PUBLIC_BRIGADE_URL" ] || { echo "::error::The EXPO_PUBLIC_BRIGADE_URL variable is not set"; missing=1; }
+          if [ "$PLATFORM" = android ]; then
+            [ -n "$GOOGLE_SERVICES_JSON" ] || { echo "::error::The GOOGLE_SERVICES_JSON secret is not set"; missing=1; }
+            printf %s "$GOOGLE_SERVICES_JSON" > "$RUNNER_TEMP/google-services.json"
+            echo "GOOGLE_SERVICES_FILE=$RUNNER_TEMP/google-services.json" >> "$GITHUB_ENV"
+          fi
+          exit "$missing"
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version: "24"
+          cache: true
+      - name: Fingerprint
+        id: fingerprint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          # --json still prints progress lines before the JSON on stdout: keep from the first `{`.
+          hash=$(vpx "$EAS_CLI" fingerprint:generate --platform "$PLATFORM" --environment production --json --non-interactive \
+            | sed -n '/^{/,$p' | jq -r .hash)
+          [ -n "$hash" ] && [ "$hash" != null ] || { echo "::error::No fingerprint"; exit 1; }
+          marker="mobile-build-$PLATFORM-$hash"
+          built=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$marker" --jq '[.artifacts[] | select(.expired | not)] | length')
+          {
+            echo "hash=$hash"
+            echo "marker=$marker"
+            echo "built=$([ "$built" -gt 0 ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+          echo "$PLATFORM fingerprint $hash: $([ "$built" -gt 0 ] && echo 'built before, publishing an update' || echo 'new, building')" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the update
+        if: steps.fingerprint.outputs.built == 'true'
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          SHA: ${{ needs.changes.outputs.sha }}
+        run: |
+          message="$(git log -1 --format=%s "$SHA") (${SHA::12})"
+          vpx "$EAS_CLI" update --channel production --environment production --platform "$PLATFORM" \
+            --message "$message" --non-interactive
+
+      - name: Select Xcode
+        if: steps.fingerprint.outputs.built != 'true' && matrix.platform == 'ios'
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          # App Store Connect takes no beta Xcode builds.
+          xcode-version: latest-stable
+      - name: Build
+        if: steps.fingerprint.outputs.built != 'true'
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          OUTPUT: ${{ runner.temp }}/brigade-${{ matrix.platform }}-production-${{ needs.changes.outputs.sha }}.${{ matrix.extension }}
+        run: vpx "$EAS_CLI" build --local --platform "$PLATFORM" --profile production --non-interactive --output "$OUTPUT"
+      - name: Keep the build
+        if: steps.fingerprint.outputs.built != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: brigade-${{ matrix.platform }}-production-${{ needs.changes.outputs.sha }}
+          path: ${{ runner.temp }}/brigade-${{ matrix.platform }}-production-${{ needs.changes.outputs.sha }}.${{ matrix.extension }}
+          retention-days: 14
+          if-no-files-found: error
+      # Only after the build succeeded: a failed one leaves the fingerprint unbuilt, so the next run tries again.
+      - name: Record the fingerprint as built
+        if: steps.fingerprint.outputs.built != 'true'
+        working-directory: ${{ runner.temp }}
+        env:
+          HASH: ${{ steps.fingerprint.outputs.hash }}
+          SHA: ${{ needs.changes.outputs.sha }}
+        run: printf '%s\n' "$HASH $SHA" > fingerprint.txt
+      - if: steps.fingerprint.outputs.built != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.fingerprint.outputs.marker }}
+          path: ${{ runner.temp }}/fingerprint.txt
+          retention-days: 90

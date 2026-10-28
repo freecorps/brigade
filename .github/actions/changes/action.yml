@@ -1,0 +1,41 @@
+# Which workspace packages changed since this workflow last succeeded for the same target (scripts/affected.mjs).
+# Each run's title ends in the commit it shipped (`run-name: <prefix> <sha>`), so the last successful run with the
+# same prefix names the base. A failed or cancelled run is not a base: its changes ship again on the next run. Needs a
+# full-history checkout and `actions: read`.
+name: Changed packages
+description: List the workspace packages changed since the last successful run of this workflow.
+inputs:
+  prefix:
+    description: The run title before the commit, such as "Deploy production"
+    required: true
+  all:
+    description: "true: count every package as changed"
+    default: "false"
+outputs:
+  packages:
+    description: JSON array of affected package names
+    value: ${{ steps.affected.outputs.packages }}
+  base:
+    description: The commit the last successful run shipped, empty when there is none
+    value: ${{ steps.base.outputs.base }}
+runs:
+  using: composite
+  steps:
+    - id: base
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PREFIX: ${{ inputs.prefix }}
+        WORKFLOW: ${{ github.workflow_ref }}
+      run: |
+        # github.workflow_ref is owner/repo/.github/workflows/<file>@<ref>: keep the file name.
+        file="${WORKFLOW%@*}"; file="${file##*/}"
+        base=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$file" --status success --limit 50 \
+          --json displayTitle --jq "[.[].displayTitle | select(startswith(\"$PREFIX \"))][0] // \"\" | split(\" \") | last // \"\"")
+        echo "Last successful \"$PREFIX\": ${base:-none}"
+        echo "base=$base" >> "$GITHUB_OUTPUT"
+    - id: affected
+      shell: bash
+      env:
+        BASE: ${{ inputs.all != 'true' && steps.base.outputs.base || '' }}
+      run: node scripts/affected.mjs --base "$BASE"

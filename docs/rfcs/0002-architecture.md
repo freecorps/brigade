@@ -449,11 +449,28 @@ runs `scripts/check-dist.mjs`: the built files import nothing and verify those d
 - `dev` — local (`vp dev`, Miniflare for DOs), and a deployable `brigade-<app>-dev` Workers environment for shared
   testing.
 - `staging` — the `brigade-<app>-staging` Workers environment.
-- `production` — the top-level (unsuffixed) Wrangler config, deployed only with owner approval. The hosted instance
-  runs at `brigade.freecorps.com.br`.
+- `production` — the top-level (unsuffixed) Wrangler config, deployed from `main` by CI (below). The hosted
+  instance runs at `brigade.freecorps.com.br`.
 - With the Cloudflare Vite plugin the environment is picked at build time (`CLOUDFLARE_ENV=staging vp build`);
   `wrangler deploy` then deploys what was built and takes no `--env`.
 - The mobile app points at staging or production via build profile.
+- **Continuous delivery** (decided 2026-10-29; it replaces "production deployed only with owner approval"). Every
+  push to `main` whose CI passes ships what it changed, each by its own workflow, run after CI (`workflow_run`):
+  - `.github/workflows/deploy.yml`: the Workers whose package, or a workspace package they depend on, changed since
+    the last successful deploy (`scripts/affected.mjs`; a change to `bun.lock` or a root config counts as all), in
+    binding order: relay, then the API (its D1 migrations first), then the dashboard. Status-edge and Slack join
+    once their production Workers exist. By hand, it also deploys `dev`, or every Worker. Since migrations apply
+    while the previous API still serves, a migration keeps that API working (add a column now, drop it in a later
+    deploy).
+  - `.github/workflows/mobile.yml`: when the app or a package it bundles changed, per platform, an EAS Update to the
+    `production` channel if a build with the same native fingerprint (the runtime version) was made before, else a
+    new production build with `eas build --local` on GitHub's runners, kept as a run artifact (no EAS build credits).
+  - `.github/workflows/release-sdk.yml`: `@freecorps/brigade-sdk` to npm when its version is not published yet and
+    its CHANGELOG heading is no longer "(unreleased)" (packages/sdk README "Releasing"). The other packages are not
+    published.
+    A failed or cancelled run is not a base for the next one, so what it did not ship goes out with the next run.
+    Rolling back is the previous Worker version (`wrangler rollback`, or the dashboard; D1 is not rolled back with
+    it), and for the app, `eas update:republish` of the previous update.
 - Self-hosted — one Cloudflare account, one `deploy` command, guided setup (Slack app manifest, relay registration).
   The setup steps (apps/api README "Self-host setup") create the `STATUS` KV namespace with the instance's other
   resources and bind it at the top level of `apps/api/wrangler.jsonc` (decided, Q23), then run `vp run

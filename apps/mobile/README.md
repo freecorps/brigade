@@ -105,6 +105,28 @@ vp run mobile:install --from ~/brigade-builds/brigade-ios-preview-<commit>.ipa
   iPhone should not need one: a local build goes through the same credentials step, which updates the ad hoc
   profile (not tried yet).
 
+## Over-the-air updates and CI builds
+
+`expo-updates` is in the app: a release build checks the `production` channel (`preview` and `development` for those
+profiles, `eas.json`) at launch, downloads a newer update in the background and runs it from the next launch, so a
+change shows up within two cold launches. The runtime version is the native fingerprint (`runtimeVersion: { policy:
+"fingerprint" }`): an update reaches only builds with the same native code, never one it could crash.
+
+From `main`, `.github/workflows/mobile.yml` ships the app after CI passes, when it or a package it bundles changed
+(RFC 0002 "Continuous delivery"). Per platform it computes the fingerprint: if a build with it was made there
+before, it publishes an EAS Update to `production`; if not (a native dependency, a config plugin or `app.config.ts`
+changed), it builds a production .ipa or .aab with `eas build --local` on GitHub's runners and keeps it as a run
+artifact for 14 days. Install one from the run's artifacts with `vp run mobile:install --from <file>`.
+
+- The fingerprint covers the app config, so the workflow pins what the config reads from the environment:
+  `BRIGADE_APS_ENVIRONMENT=production` and `GOOGLE_SERVICES_FILE` in the runner's temp directory. A build made on
+  your computer reads the Firebase file from another path, so its Android fingerprint differs and CI updates do not
+  reach it; use the CI build for phones that should follow `main`.
+- Repository settings: the `EXPO_TOKEN` secret (an EAS robot token), `GOOGLE_SERVICES_JSON` (the Firebase file's
+  contents) and the `EXPO_PUBLIC_BRIGADE_URL` variable. Without them nothing ships: no server, no sign-in; no
+  Firebase, no pages.
+- Rolling an update back: `bunx eas-cli@latest update:republish --group <previous group id>` (`eas update:list`).
+
 `android/` and `ios/` are generated from `app.config.ts` and gitignored; change native settings there, never in
 the generated folders.
 

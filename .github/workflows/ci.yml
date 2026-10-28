@@ -80,11 +80,21 @@ jobs:
       # Fails if a build changed a committed file (package.json exports, compiled messages) or left a new one.
       - run: test -z "$(git status --porcelain)" || { git status --porcelain; git diff; exit 1; }
 
+  # The workflows deploy production and publish to npm and EAS, and a mistake in one shows only after a merge:
+  # actionlint (with shellcheck for `run:` scripts) catches most of them first.
+  workflows:
+    name: Workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+
   # The one required check: green only when every job above is. `always()` so a failed job above fails this one
   # rather than skipping it, which the ruleset would not count as a pass either way.
   gate:
     name: Check, test and build
-    needs: [check, test, build]
+    needs: [check, test, build, workflows]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -92,5 +102,5 @@ jobs:
       - env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          echo "check, test, build: $RESULTS"
+          echo "check, test, build, workflows: $RESULTS"
           for result in $RESULTS; do [ "$result" = success ] || exit 1; done

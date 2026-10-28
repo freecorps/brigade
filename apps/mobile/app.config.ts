@@ -14,8 +14,13 @@ import { withWidget } from "./plugins/widget.ts";
 const APP_ID = "app.freecorps.brigade";
 
 // APNs environment the build's signing matches. Local Xcode builds use a development profile (sandbox device
-// tokens); every EAS build is ad hoc or App Store signed, whose profiles carry `production`.
-const APS_ENVIRONMENT = process.env.EAS_BUILD === "true" ? "production" : "development";
+// tokens); every EAS build is ad hoc or App Store signed, whose profiles carry `production`. The release workflow
+// (.github/workflows/mobile.yml) sets BRIGADE_APS_ENVIRONMENT so the fingerprint it computes outside a build, for
+// `eas update`, is the build's own.
+const APS_ENVIRONMENT =
+  process.env.BRIGADE_APS_ENVIRONMENT === "production" || process.env.EAS_BUILD === "true"
+    ? "production"
+    : "development";
 
 // Critical Alerts (RFC 0006 "Critical Alerts"): `BRIGADE_CRITICAL_ALERTS=1` adds the entitlement and has the app ask
 // for them. Off by default: Apple has not granted the entitlement to the team yet, and a profile without it fails
@@ -104,6 +109,10 @@ const appConfig = (config: ConfigContext["config"]): ExpoConfig => ({
       },
     ],
   ],
+  // EAS Update (over the air). The runtime version is the native fingerprint: an update reaches only builds whose
+  // native code is the same, and a native change needs a new build (.github/workflows/mobile.yml decides which).
+  runtimeVersion: { policy: "fingerprint" },
+  updates: { url: "https://u.expo.dev/67e9e504-0692-4883-88d5-8e17863f661d" },
   // EAS project `@freecorps/brigade`. `eas init` cannot write to a dynamic config, so it lives here. Not a
   // secret.
   extra: {

@@ -229,4 +229,14 @@ sdk-fixture`), the client's methods, paths and error codes against `docs/api/ope
 imports app code. `vp run build` packs and then runs `scripts/check-dist.mjs`: the built files import nothing, load in
 plain Node and verify those deliveries. `src/` is type-checked without Node types.
 
+## Releasing
+
+A release is a pull request that sets `version` in `package.json` and dates its heading in `CHANGELOG.md`
+(`## 0.3.0 (2026-11-02)` instead of `(unreleased)`). Once it is on `main` and CI passes,
+`.github/workflows/release-sdk.yml` builds and tests the package, packs it with Bun, publishes it to npm with
+provenance, and tags `sdk-v<version>` with a GitHub release carrying that section of the changelog. A version still
+marked "(unreleased)", or already on npm, publishes nothing. Publishing uses npm trusted publishing (this repository
+and `release-sdk.yml`, set on the package's npm settings), or an `NPM_TOKEN` secret in the `npm` environment until
+then, which the first publish needs.
+
 License: MIT.

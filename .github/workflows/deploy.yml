@@ -1,0 +1,173 @@
+# Deploys the Workers a push to main changed, to production, once CI passed on that commit (RFC 0002
+# "Environments"). Only what changed since the last successful deploy ships, with its dependents: a change to
+# packages/schema redeploys every Worker that bundles it (scripts/affected.mjs). Run by hand to deploy `dev`, or
+# every Worker at once.
+#
+# Order matters: a service binding to a Worker that does not exist fails the deploy, so the relay goes before the API
+# (its `RELAY` binding) and the API before the dashboard (`API`). The API's D1 migrations run just before it deploys.
+# Not here yet: status-edge and Slack, which have no production Worker (their READMEs; owner's call to create).
+#
+# Secrets, in the GitHub environment of the same name (`production`, `dev`): CLOUDFLARE_API_TOKEN (Workers Scripts,
+# D1, Queues, Workers KV, R2 and Workers AI edit on the account) and CLOUDFLARE_ACCOUNT_ID.
+name: Deploy
+run-name: Deploy ${{ inputs.environment || 'production' }} ${{ github.event.workflow_run.head_sha || github.sha }}
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Where to deploy (production only from main)
+        type: choice
+        options: [production, dev]
+        default: production
+      all:
+        description: Every Worker, not only what changed since the last successful deploy
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+# One deploy per environment at a time, never cancelled halfway: the next waits. GitHub keeps only the newest waiting
+# run; the ones it drops ship with it, since its base is the last successful deploy.
+concurrency:
+  group: deploy-${{ inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    name: Changed Workers
+    # Only a CI run of a push to main (never of a pull request), and only when it passed.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      packages: ${{ steps.changes.outputs.packages }}
+      environment: ${{ steps.target.outputs.environment }}
+      sha: ${{ steps.target.outputs.sha }}
+    steps:
+      - id: target
+        env:
+          ENVIRONMENT: ${{ inputs.environment || 'production' }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          if [ "$ENVIRONMENT" = production ] && [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Production deploys only from main (this run is on $GITHUB_REF)"; exit 1
+          fi
+          echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.target.outputs.sha }}
+          fetch-depth: 0
+      - id: changes
+        uses: ./.github/actions/changes
+        with:
+          prefix: Deploy ${{ steps.target.outputs.environment }}
+          all: ${{ inputs.all || 'false' }}
+      - run: echo "Deploying to $ENVIRONMENT, changed packages $PACKAGES" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          ENVIRONMENT: ${{ steps.target.outputs.environment }}
+          PACKAGES: ${{ steps.changes.outputs.packages }}
+
+  relay:
+    name: Relay
+    needs: changes
+    if: contains(fromJSON(needs.changes.outputs.packages), '@freecorps/brigade-relay')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ${{ needs.changes.outputs.environment }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version: "24"
+          cache: true
+      - uses: ./.github/actions/deploy-worker
+        with:
+          package: "@freecorps/brigade-relay"
+          directory: apps/relay
+          environment: ${{ needs.changes.outputs.environment }}
+          sha: ${{ needs.changes.outputs.sha }}
+
+  api:
+    name: API
+    needs: [changes, relay]
+    # Runs when the relay was skipped (unchanged) but not when it failed: the API would bind to a relay out of step.
+    if: >-
+      !failure() && !cancelled() &&
+      contains(fromJSON(needs.changes.outputs.packages), '@freecorps/brigade-api')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ${{ needs.changes.outputs.environment }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version: "24"
+          cache: true
+      # Before the code that reads them, while the previous API still serves: a migration must keep that one working
+      # too (add, then remove in a later deploy; apps/api README "D1"). Non-interactive, so wrangler skips its prompt
+      # and still takes a backup. Migrations already applied are skipped.
+      - name: Apply D1 migrations
+        working-directory: apps/api
+        env:
+          ENVIRONMENT: ${{ needs.changes.outputs.environment }}
+        run: |
+          if [ "$ENVIRONMENT" = production ]; then
+            vpx wrangler d1 migrations apply DB --remote
+          else
+            vpx wrangler d1 migrations apply DB --remote --env "$ENVIRONMENT"
+          fi
+      - uses: ./.github/actions/deploy-worker
+        with:
+          package: "@freecorps/brigade-api"
+          directory: apps/api
+          environment: ${{ needs.changes.outputs.environment }}
+          sha: ${{ needs.changes.outputs.sha }}
+
+  web:
+    name: Dashboard
+    needs: [changes, api]
+    if: >-
+      !failure() && !cancelled() &&
+      contains(fromJSON(needs.changes.outputs.packages), '@freecorps/brigade-web')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ${{ needs.changes.outputs.environment }}
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
+        with:
+          node-version: "24"
+          cache: true
+      # No --domain: the custom domain was attached at the first deploy, and a deploy whose config has no routes
+      # leaves it as it is.
+      - uses: ./.github/actions/deploy-worker
+        with:
+          package: "@freecorps/brigade-web"
+          directory: apps/web
+          environment: ${{ needs.changes.outputs.environment }}
+          sha: ${{ needs.changes.outputs.sha }}

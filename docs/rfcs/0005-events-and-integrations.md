@@ -395,9 +395,11 @@ It also sends the account emails: email verification (RFC 0002 "Auth", sent by B
   left, made a viewer), each schedule by name, saying which now has a layer with nobody in it, and a link to the
   dashboard's On-call card. Nothing else about the member. Each owner's locale (`email_rotation`), escaped like the
   others. A schedule deleted since is left out; none left is nothing to send. Claimed in the email ledger
-  (`rotation:<event id>`, held 60 s, so a redelivery emails no owner twice), within the notifier's caps
-  (`EMAIL_USER_HOURLY_CAP`, `EMAIL_WORKSPACE_DAILY_CAP`; it counts toward them), retried like the others (30 s to 4
-  minutes, 5 attempts) skipping owners it reached, then only logged: it has no incident timeline. Tests:
+  (`rotation:<event id>`, held 60 s, so a redelivery emails no owner twice), within caps of its own, like reminders
+  (`ROTATION_USER_DAILY_CAP` 20 per owner and `ROTATION_WORKSPACE_DAILY_CAP` 100 per workspace a day). It never
+  counts toward the paging caps: an offboarding hour that emptied a layer must not cap the email about the page that
+  then reaches nobody. Retried like the others (30 s to 4 minutes, 5 attempts) skipping owners it reached, then only
+  logged: it has no incident timeline. No verified owner is logged too (admins are not a fallback). Tests:
   `apps/api/test/email.test.ts` ("the owners' email about a member taken out of schedules").
 - **Not yet (decided, to build).** An email to Brigade's operators (`OPERATOR_EMAILS`) on `brigade.status_changed`
   (Q19, RFC 0007 "Watching the watcher"), on the `EmailSender`.

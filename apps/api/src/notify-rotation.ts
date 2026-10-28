@@ -8,7 +8,7 @@
 import { resolveLocale } from "@freecorps/brigade-i18n";
 import { dashboardLink, renderRotationEmail } from "./email-templates.ts";
 import type { EmailSender } from "./email.ts";
-import { EMAIL_USER_HOURLY_CAP, type EmailOutcome } from "./mailer.ts";
+import { ROTATION_USER_DAILY_CAP, type EmailOutcome } from "./mailer.ts";
 import {
   emailRetryDelay,
   heldDelay,
@@ -52,6 +52,10 @@ export async function notifyRotation(
     await workspace.recordRotationEmail(event, [], last);
     return last ? undefined : emailRetryDelay(attempts);
   }
+  if (owners.length === 0) {
+    // Admins are not a fallback: the email is the owners' (RFC 0003 "Schedules").
+    log("rotation email had no recipient", { event: event.id });
+  }
   // The On-call card on the overview (`id="oncall"`).
   const home = dashboardLink("/", {}, env.DASHBOARD_URL, undefined);
   const url = home && `${home}#oncall`;
@@ -63,7 +67,7 @@ export async function notifyRotation(
       .map(async (owner): Promise<EmailOutcome & { retry: boolean }> => {
         // Spent before the first await, so the sends in parallel never overdraw the caps.
         const sends = users[owner.userId] ?? 0;
-        if (left <= 0 || sends >= EMAIL_USER_HOURLY_CAP) {
+        if (left <= 0 || sends >= ROTATION_USER_DAILY_CAP) {
           return { userId: owner.userId, ok: false, capped: true, retry: false };
         }
         left--;

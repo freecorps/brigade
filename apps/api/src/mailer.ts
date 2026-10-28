@@ -50,6 +50,13 @@ export const EMAIL_WORKSPACE_DAILY_CAP = 200;
  */
 export const REMINDER_WORKSPACE_DAILY_CAP = 200;
 export const REMINDER_USER_DAILY_CAP = 2;
+/**
+ * The owners' emails about a member taken out of schedules have caps of their own too (RFC 0005 "Rotations"): an
+ * offboarding day must never use up the sends an email about a page that failed needs, least of all after a removal
+ * that emptied a layer.
+ */
+export const ROTATION_WORKSPACE_DAILY_CAP = 100;
+export const ROTATION_USER_DAILY_CAP = 20;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -150,6 +157,8 @@ export function asksForReminder(event: BrigadeEvent): boolean {
 const reminderKey = (userId: string, date: string) => `reminder:${userId}:${date}`;
 /** Ledger rows that are reminders (`reminderKey`), in SQL. */
 const IS_REMINDER = "substr(key, 1, 9) = 'reminder:'";
+/** Ledger rows that are rotation emails (`rotationKey`), in SQL. */
+const IS_ROTATION = "substr(key, 1, 9) = 'rotation:'";
 
 /**
  * Why a member left the rotations, as the owners' email words it: removed (by an owner or admin, or caught up from
@@ -471,7 +480,7 @@ export class Mailer {
         emptied: emptied === true,
       })),
       sent: this.sent(key),
-      budget: this.budget(now, "paging"),
+      budget: this.budget(now, "rotation"),
     };
   }
 
@@ -574,11 +583,18 @@ export class Mailer {
    * What the caps leave now (see `EmailBudget`); capped recipients do not count. `paging`: the emails about pages
    * (`EMAIL_WORKSPACE_DAILY_CAP`, `EMAIL_USER_HOURLY_CAP`, `users` over the last hour), reminders left out;
    * `reminder`: the reminders' own (`REMINDER_WORKSPACE_DAILY_CAP`, `REMINDER_USER_DAILY_CAP`, `users` over the last
-   * day), nothing else counted.
+   * day), nothing else counted; `rotation`: the rotation emails' own (`ROTATION_WORKSPACE_DAILY_CAP`,
+   * `ROTATION_USER_DAILY_CAP`, `users` over the last day), nothing else counted. Neither of the last two counts
+   * toward the paging caps.
    */
-  private budget(now: number, kind: "paging" | "reminder"): EmailBudget {
+  private budget(now: number, kind: "paging" | "reminder" | "rotation"): EmailBudget {
     const { sql } = this.options.storage;
-    const which = kind === "reminder" ? IS_REMINDER : `not ${IS_REMINDER}`;
+    const which =
+      kind === "reminder"
+        ? IS_REMINDER
+        : kind === "rotation"
+          ? IS_ROTATION
+          : `not ${IS_REMINDER} and not ${IS_ROTATION}`;
     const today = sql
       .exec<{ sends: number }>(
         `select count(*) as sends from email_sends where capped = 0 and at > ? and ${which}`,
@@ -588,11 +604,16 @@ export class Mailer {
     const users: Record<string, number> = {};
     for (const row of sql.exec<{ user_id: string; sends: number }>(
       `select user_id, count(*) as sends from email_sends where capped = 0 and at > ? and ${which} group by user_id`,
-      now - (kind === "reminder" ? DAY_MS : HOUR_MS),
+      now - (kind === "paging" ? HOUR_MS : DAY_MS),
     )) {
       users[row.user_id] = row.sends;
     }
-    const cap = kind === "reminder" ? REMINDER_WORKSPACE_DAILY_CAP : EMAIL_WORKSPACE_DAILY_CAP;
+    const cap =
+      kind === "reminder"
+        ? REMINDER_WORKSPACE_DAILY_CAP
+        : kind === "rotation"
+          ? ROTATION_WORKSPACE_DAILY_CAP
+          : EMAIL_WORKSPACE_DAILY_CAP;
     return { workspace: Math.max(0, cap - today), users };
   }
 

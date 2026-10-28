@@ -21,6 +21,7 @@ import {
   EMAIL_CLAIM_MS,
   EMAIL_USER_HOURLY_CAP,
   EMAIL_WORKSPACE_DAILY_CAP,
+  ROTATION_USER_DAILY_CAP,
   REMINDER_USER_DAILY_CAP,
   REMINDER_WORKSPACE_DAILY_CAP,
 } from "../src/mailer.ts";
@@ -1478,15 +1479,15 @@ describe("the owners' email about a member taken out of schedules", () => {
     expect(left.sent[0]!.text).toContain("bia left Acme, so Brigade took them out");
   });
 
-  test("within the email caps: an owner who got an hour's emails gets none; a failing send is retried, skipping who got it", async () => {
+  test("within their own caps: an owner who got a day's rotation emails gets none; a failing send is retried, skipping who got it", async () => {
     const { ws } = await setUp();
     await ws.withShard((_shard, sql) => {
-      for (let i = 0; i < EMAIL_USER_HOURLY_CAP; i++) {
+      for (let i = 0; i < ROTATION_USER_DAILY_CAP; i++) {
         sql.exec(
           "insert into email_sends (key, user_id, at) values (?, ?, ?)",
-          `seed:${i}`,
+          `rotation:evt_seed${i}`,
           ws.people.ana.id,
-          Date.now() - 60_000,
+          Date.now() - 2 * 60 * 60_000,
         );
       }
     });
@@ -1506,13 +1507,33 @@ describe("the owners' email about a member taken out of schedules", () => {
       acked: [],
       retried: [{ msgId: "msg-0", delaySeconds: emailRetryDelay(1) }],
     });
-    // Ana is over her hour's cap: never sent, never retried.
+    // Ana is over her day's cap: never sent, never retried.
     expect(mail.to()).toEqual([ws.address(ws.people.olga)]);
     fail = false;
     expect((await deliver([removed!], mail.sender, { attempts: 2 })).acked).toEqual(["msg-0"]);
     expect(mail.to()).toEqual([ws.address(ws.people.olga), ws.address(ws.people.olga)]);
     await deliver([removed!], mail.sender, { attempts: 3 });
     expect(mail.sent).toHaveLength(2);
+  });
+
+  test("rotation emails never spend the paging caps: an offboarding hour leaves a failed page's email its sends", async () => {
+    const ws = await workspace();
+    await ws.device(ws.people.ana);
+    const { event } = await ws.declare(MONITOR_ACTOR);
+    await deliver([event], undefined);
+    await ws.withShard((_shard, sql) => {
+      for (let i = 0; i < EMAIL_USER_HOURLY_CAP; i++) {
+        sql.exec(
+          "insert into email_sends (key, user_id, at) values (?, ?, ?)",
+          `rotation:evt_seed${i}`,
+          ws.people.bia.id,
+          Date.now() - 60_000,
+        );
+      }
+    });
+    const mail = recorder();
+    await deliver([await ws.failureOf(ws.people.bia)], mail.sender);
+    expect(mail.to()).toContain(ws.address(ws.people.bia));
   });
 
   test("without a sender nothing is planned or sent, and the event is acked", async () => {

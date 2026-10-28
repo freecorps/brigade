@@ -153,7 +153,12 @@ export function OnCallCard() {
   // scroll finds nothing: once they render, bring the schedule it names into view.
   useEffect(() => {
     if (status !== "ready") return;
-    const target = decodeURIComponent(window.location.hash.slice(1));
+    let target = window.location.hash.slice(1);
+    try {
+      target = decodeURIComponent(target);
+    } catch {
+      // A malformed escape (a pasted `#%E0`): the raw text, which names no row, so nothing scrolls.
+    }
     if (target) document.getElementById(target)?.scrollIntoView({ block: "start" });
   }, [status]);
   const choices = rotationChoices(members.rows);

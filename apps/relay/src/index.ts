@@ -264,7 +264,7 @@ async function sendFcm(
       return json({ error: "fcm_unreachable", detail: String(error) }, 502);
     }
     if (response.status !== 401) break;
-    googleTokens.clear();
+    await googleTokens.clear(accessToken);
     if (attempt === 0) await response.body?.cancel();
   }
   const answer = response!;
@@ -282,6 +282,15 @@ async function sendFcm(
     };
   } else {
     const { reason, tokenInvalid } = parseFcmError(text);
+    if (reason === "SENDER_ID_MISMATCH") {
+      // Every Android page fails until it is fixed, so say it loudly; the devices are kept.
+      console.error(
+        JSON.stringify({
+          message:
+            "FCM refused the sender: FCM_SERVICE_ACCOUNT is not the Firebase project the app was built with",
+        }),
+      );
+    }
     result = { status: answer.status, reason, ...(tokenInvalid ? { tokenInvalid: true } : {}) };
   }
   result.ms = Date.now() - started;

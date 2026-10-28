@@ -142,9 +142,17 @@ export class GoogleTokenCache {
     return (await this.#token.value).token;
   }
 
-  /** After FCM answers 401: the token was revoked or the key rotated. */
-  clear(): void {
-    this.#token = undefined;
+  /**
+   * After FCM answers 401 to `refused`: the token was revoked or the key rotated. Only that token is dropped, so
+   * sends refused together fetch one new token between them, not one each, and a token fetched since stays.
+   */
+  async clear(refused: string): Promise<void> {
+    const cached = this.#token;
+    if (cached === undefined) return;
+    const token = await cached.value.catch(() => undefined);
+    if (this.#token === cached && (token === undefined || token.token === refused)) {
+      this.#token = undefined;
+    }
   }
 }
 
@@ -271,8 +279,10 @@ export function buildFcmRequest(
 
 /**
  * What an FCM error says: its `errorCode` (FcmError details) or else its `status`, and whether the token itself is
- * done (`UNREGISTERED`, a token FCM calls invalid, or one from another Firebase project): the instance drops the device,
- * as for APNs' `BadDeviceToken`.
+ * done (`UNREGISTERED`, or a token FCM calls invalid): the instance drops the device, as for APNs' `BadDeviceToken`.
+ * `SENDER_ID_MISMATCH` is not: it says the token belongs to another Firebase project than the relay's service
+ * account, which is a relay configured with the wrong account far more often than a phone gone, and treating it as a
+ * dead token would drop every Android device on the first page. It is a refusal that is not retried (403).
  */
 export function parseFcmError(text: string): { reason: string; tokenInvalid: boolean } {
   let error: Record<string, unknown> = {};
@@ -297,7 +307,6 @@ export function parseFcmError(text: string): { reason: string; tokenInvalid: boo
     (typeof error.message === "string" && /registration token/i.test(error.message));
   const tokenInvalid =
     reason === "UNREGISTERED" ||
-    reason === "SENDER_ID_MISMATCH" ||
     (reason === "INVALID_ARGUMENT" && aboutToken);
   return { reason, tokenInvalid };
 }

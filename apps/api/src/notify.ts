@@ -478,7 +478,8 @@ function refusal(
   if (
     answer.status === 410 ||
     TOKEN_GONE.includes(answer.reason as string) ||
-    answer.tokenInvalid === true
+    // A token of another Firebase project is the relay's service account, not a dead phone: never dropped.
+    (answer.tokenInvalid === true && answer.reason !== "SENDER_ID_MISMATCH")
   ) {
     return { error: "token_invalid", ...reason, gone: true, permanent: true };
   }

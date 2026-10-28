@@ -90,9 +90,12 @@ Device ──(5) iOS Notification Service Extension / Android data message decry
   callId?, tag? }`, all strings, at most 4 KB (the 2 KB plaintext seals to about 2.8 KB), with `android.priority:
   HIGH` (`NORMAL` for `low`) and `android.ttl` from the same expirations as APNs (pages 15 minutes, calls 60 s).
   `tag` is the APNs collapse id's role: the app's notification tag, so a repeat replaces it. FCM's refusals are
-  answered like APNs' (`502` with FCM's `status` and its error code as `reason`): `UNREGISTERED`, `SENDER_ID_MISMATCH`
-  and an `INVALID_ARGUMENT` about the token add `tokenInvalid: true`, which the instance treats as APNs'
-  `BadDeviceToken` (the device dropped, or for a call its call token cleared); `QUOTA_EXCEEDED` (429), `UNAVAILABLE`
+  answered like APNs' (`502` with FCM's `status` and its error code as `reason`): `UNREGISTERED` and an
+  `INVALID_ARGUMENT` about the token add `tokenInvalid: true`, which the instance treats as APNs' `BadDeviceToken`
+  (the device dropped, or for a call its call token cleared); `SENDER_ID_MISMATCH` (403) does not: a token of another
+  Firebase project is almost always a relay holding the wrong service account, so the relay logs it as an error and
+  the instance keeps the device, recording a refusal that is not retried (`apns_refused`), like a misconfiguration;
+  `QUOTA_EXCEEDED` (429), `UNAVAILABLE`
   and `INTERNAL` (5xx) are retried, like APNs' 429 and 5xx; FCM or Google's token endpoint out of reach is `502
   fcm_unreachable`, retried; a missing or refused service account is `500 relay_misconfigured`. The delivery rows keep
   their names (`apns_refused`, `apns_unavailable` mean the push service, Apple's or Google's) and FCM's code as the

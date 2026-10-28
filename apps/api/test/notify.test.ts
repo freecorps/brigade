@@ -1120,7 +1120,6 @@ describe("when paging fails (the paging path's fallback)", () => {
     for (const answer of [
       { status: 404, reason: "UNREGISTERED", tokenInvalid: true },
       { status: 400, reason: "INVALID_ARGUMENT", tokenInvalid: true },
-      { status: 403, reason: "SENDER_ID_MISMATCH", tokenInvalid: true },
     ]) {
       const ws = await workspace();
       const phone = await ws.device(bia, { platform: "android", environment: "production" });
@@ -1166,6 +1165,32 @@ describe("when paging fails (the paging path's fallback)", () => {
       });
       refused = false;
       expect((await deliver(event, fake.send, { attempts: 2 })).acked).toEqual(["msg-0"]);
+    }
+  });
+
+  test("FCM's SENDER_ID_MISMATCH keeps the Android phone: the relay's service account is wrong, not the token", async () => {
+    // Also as a relay from before flagged it as a dead token.
+    for (const answer of [
+      { status: 403, reason: "SENDER_ID_MISMATCH" },
+      { status: 403, reason: "SENDER_ID_MISMATCH", tokenInvalid: true },
+    ]) {
+      const ws = await workspace();
+      const phone = await ws.device(bia, { platform: "android", environment: "production" });
+      const { incident, event } = await ws.declare(MONITOR_ACTOR);
+      const fake = relay(() => Response.json(answer, { status: 502 }));
+      // Refused again on every try, so not retried.
+      expect((await deliver(event, fake.send)).retried, JSON.stringify(answer)).toHaveLength(0);
+      expect(
+        await ws.withShard((shard) => shard.store.get("devices", phone.deviceId)),
+      ).toBeDefined();
+      expect((await ws.events()).map((e) => e.type)).not.toContain("device.unregistered");
+      const row = await ws.withShard((shard) =>
+        shard.store.scan("deliveries").find((r) => r.deviceId === phone.deviceId),
+      );
+      expect(row).toMatchObject({ error: "apns_refused", reason: "SENDER_ID_MISMATCH" });
+      expect(await ws.timeline(incident)).toContainEqual(
+        expect.objectContaining({ kind: "page_failed", userId: "usr_bia" }),
+      );
     }
   });
 

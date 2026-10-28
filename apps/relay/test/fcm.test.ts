@@ -170,7 +170,10 @@ describe("service account and access token", () => {
     const almost = now + 3599 * 1000 - ACCESS_TOKEN_MARGIN_MS - 1;
     expect(await cache.get(account, almost, google.send)).toBe("access-1");
     expect(await cache.get(account, almost + 1, google.send)).toBe("access-2");
-    cache.clear();
+    // Another token refused (one already replaced) keeps this one; this one refused drops it.
+    await cache.clear("access-1");
+    expect(await cache.get(account, almost + 1, google.send)).toBe("access-2");
+    await cache.clear("access-2");
     expect(await cache.get(account, almost + 1, google.send)).toBe("access-3");
     // A rotated key gets its own.
     expect(await cache.get({ ...account, privateKeyId: "key-2" }, almost + 1, google.send)).toBe(
@@ -279,8 +282,9 @@ describe("the FCM message", () => {
       parse(fcmError(400, "INVALID_ARGUMENT", "INVALID_ARGUMENT", "Invalid ttl")).then((r) =>
         expect(r).toEqual({ reason: "INVALID_ARGUMENT", tokenInvalid: false }),
       ),
+      // Another Firebase project's token: the relay's service account, not a dead phone.
       parse(fcmError(403, "PERMISSION_DENIED", "SENDER_ID_MISMATCH")).then((r) =>
-        expect(r.tokenInvalid).toBe(true),
+        expect(r).toEqual({ reason: "SENDER_ID_MISMATCH", tokenInvalid: false }),
       ),
       parse(fcmError(429, "RESOURCE_EXHAUSTED", "QUOTA_EXCEEDED")).then((r) =>
         expect(r).toEqual({ reason: "QUOTA_EXCEEDED", tokenInvalid: false }),
@@ -337,6 +341,11 @@ describe("POST /send to an Android device", () => {
         fcmError(429, "RESOURCE_EXHAUSTED", "QUOTA_EXCEEDED"),
         { status: 429, reason: "QUOTA_EXCEEDED" },
       ],
+      // Another Firebase project's token: the relay's service account is wrong, the phone is kept.
+      [
+        fcmError(403, "PERMISSION_DENIED", "SENDER_ID_MISMATCH"),
+        { status: 403, reason: "SENDER_ID_MISMATCH" },
+      ],
       [fcmError(503, "UNAVAILABLE", "UNAVAILABLE"), { status: 503, reason: "UNAVAILABLE" }],
       [fcmError(500, "INTERNAL", "INTERNAL"), { status: 500, reason: "INTERNAL" }],
     ] as const) {
@@ -371,6 +380,25 @@ describe("POST /send to an Android device", () => {
     const refused = await handle(post(await sendBody()), env, always.send);
     expect(refused.status).toBe(502);
     expect(always.fcmRequests).toHaveLength(2);
+  });
+
+  test("sends refused together fetch one new access token between them, not one each", async () => {
+    // Its own account, so no token cached by another test answers for it.
+    const own = { ...env, FCM_SERVICE_ACCOUNT: serviceAccount({ private_key_id: "key-401" }) };
+    // The refusals come back one after another, each after the first one's retry has a new token.
+    const google = fakeGoogle(async (request, count) => {
+      if (request.headers.get("authorization") !== "Bearer access-1") {
+        return Response.json({ name: "projects/brigade-test/messages/0:9" });
+      }
+      await new Promise((resolve) => setTimeout(resolve, count * 10));
+      return fcmError(401, "UNAUTHENTICATED");
+    });
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, async () => handle(post(await sendBody()), own, google.send)),
+    );
+    expect(responses.map((r) => r.status)).toEqual([200, 200, 200, 200, 200]);
+    expect(google.tokenRequests).toHaveLength(2);
+    expect(google.fcmRequests).toHaveLength(10);
   });
 
   test("FCM or the token endpoint out of reach is fcm_unreachable; a refused key is the relay's error", async () => {

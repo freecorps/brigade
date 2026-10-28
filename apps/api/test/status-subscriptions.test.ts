@@ -391,7 +391,11 @@ describe("double opt-in", () => {
     expect(await verifyLink(secret, token, "m", Date.now())).toBeUndefined();
     expect(await verifyLink(secret, token, "c", Date.now() + 2000)).toBeUndefined();
     expect(await verifyLink("another secret", token, "c", Date.now())).toBeUndefined();
-    expect(await verifyLink(secret, `${token.slice(0, -2)}AA`, "c", Date.now())).toBeUndefined();
+    // One signature character changed. Not the last ones: a token that already ended in what replaces them would
+    // still verify, and base64url's last character carries padding bits a decoder may ignore.
+    const at = token.length - 3;
+    const tampered = `${token.slice(0, at)}${token[at] === "A" ? "B" : "A"}${token.slice(at + 1)}`;
+    expect(await verifyLink(secret, tampered, "c", Date.now())).toBeUndefined();
     const t = await team();
     const forged = await exports.default.fetch(
       `${ORIGIN}/status/${t.address}/confirm?t=c.x.y.1.z`,

@@ -305,8 +305,6 @@ export function parseFcmError(text: string): { reason: string; tokenInvalid: boo
         ),
     ) ||
     (typeof error.message === "string" && /registration token/i.test(error.message));
-  const tokenInvalid =
-    reason === "UNREGISTERED" ||
-    (reason === "INVALID_ARGUMENT" && aboutToken);
+  const tokenInvalid = reason === "UNREGISTERED" || (reason === "INVALID_ARGUMENT" && aboutToken);
   return { reason, tokenInvalid };
 }
